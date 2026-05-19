@@ -955,13 +955,13 @@ pre, code { background:#f7f7f7; color:#111; }
 .oa-md code:not(pre code){background:#f2f2f2;border:1px solid #e7e7e7;border-radius:5px;padding:1px 5px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9em;color:#0f172a}
 .oa-md a{color:#0b57d0;text-decoration:none}.oa-md a:hover{text-decoration:underline}
 .oa-list{margin:4px 0 13px 1.15em;padding:0}.oa-list li{margin:3px 0;padding-left:3px}
-.oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:#0d0d0d;border:1px solid #2f2f2f;box-shadow:0 8px 24px rgba(0,0,0,.08)}
-.oa-code-head{height:38px;background:#2f2f2f;color:#f5f5f5;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;text-transform:none}
-.oa-code-head span{color:#d4d4d4;font-weight:500}
-.oa-code-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:#0d0d0d;color:#f8f8f2;font-size:13px;line-height:1.65;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
+.oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:#f7f7f8;border:1px solid #e5e5e5;box-shadow:none}
+.oa-code-head{height:38px;background:#f1f1f2;color:#4b5563;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;text-transform:none;border-bottom:1px solid #e5e5e5}
+.oa-code-head span{color:#4b5563;font-weight:500}
+.oa-code-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:#f7f7f8;color:#1f2937;font-size:13px;line-height:1.65;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
+.oa-code-head .oa-mini-copy{color:#666}.oa-code-head .oa-mini-copy:hover{background:#e7e7e8;color:#111}
 .oa-copy,.oa-mini-copy{border:0;background:transparent;color:#666;display:inline-flex;align-items:center;gap:5px;border-radius:7px;cursor:pointer;font-size:12px;height:28px;padding:0 7px}
 .oa-copy:hover,.oa-mini-copy:hover{background:#f1f1f1;color:#111}
-.oa-code-head .oa-mini-copy{color:#e8e8e8}.oa-code-head .oa-mini-copy:hover{background:#454545;color:#fff}
 .oa-meta{gap:8px}.oa-meta .oa-mini-copy{margin-left:auto;opacity:0}.oa-message:hover .oa-meta .oa-mini-copy{opacity:1}
 .oa-agent-output .oa-run-card{margin-bottom:14px}
 .oa-run-list span em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:560px;display:inline-block;vertical-align:bottom}
