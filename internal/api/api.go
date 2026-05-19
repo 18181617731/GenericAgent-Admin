@@ -42,6 +42,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/schedule/create", s.scheduleCreate)
 	mux.HandleFunc("/api/schedule/delete", s.scheduleDelete)
 	mux.HandleFunc("/api/schedule/toggle", s.scheduleToggle)
+	mux.HandleFunc("/api/schedule/artifact", s.scheduleArtifact)
 	mux.HandleFunc("/api/config", s.configHandler)
 	mux.HandleFunc("/api/services", s.services)
 	mux.HandleFunc("/api/services/summary", s.summary)
@@ -131,6 +132,19 @@ func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 	default:
 		bad(w, 405, "method not allowed")
 	}
+}
+
+func (s *Server) scheduleArtifact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	content, entry, err := ga.ReadScheduleArtifact(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), 256*1024)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"entry": entry, "content": content})
 }
 
 func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {

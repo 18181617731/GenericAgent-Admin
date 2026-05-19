@@ -3,6 +3,7 @@ package ga
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,6 +53,8 @@ type ScheduleTask struct {
 	MaxDelayHours any       `json:"max_delay_hours,omitempty"`
 	ModTime       time.Time `json:"mod_time,omitempty"`
 	Status        string    `json:"status"`
+	NextHint      string    `json:"next_hint,omitempty"`
+	LastReport    *Entry    `json:"last_report,omitempty"`
 	Error         string    `json:"error,omitempty"`
 	RecentReports []Entry   `json:"recent_reports,omitempty"`
 }
@@ -60,6 +63,9 @@ type ScheduleOverview struct {
 	TaskCount  int            `json:"task_count"`
 	Enabled    int            `json:"enabled"`
 	Disabled   int            `json:"disabled"`
+	Overdue    int            `json:"overdue"`
+	Errors     int            `json:"errors"`
+	NeverRun   int            `json:"never_run"`
 	DoneCount  int            `json:"done_count"`
 	Log        FileStatus     `json:"log"`
 	DoneRecent []Entry        `json:"done_recent"`
@@ -179,16 +185,149 @@ func BuildSchedule(root string) ScheduleOverview {
 		}
 		t.MaxDelayHours = raw["max_delay_hours"]
 		t.RecentReports = reportsFor(ov.DoneRecent, id)
+		if len(t.RecentReports) > 0 {
+			last := t.RecentReports[0]
+			t.LastReport = &last
+		}
+		applyScheduleHealth(&t)
+		switch t.Status {
+		case "DISABLED":
+			ov.Disabled++
+		case "OVERDUE":
+			ov.Overdue++
+		case "NEVER_RUN":
+			ov.NeverRun++
+		case "ERROR":
+			ov.Errors++
+		}
 		if t.Enabled {
 			ov.Enabled++
-		} else {
-			ov.Disabled++
 		}
 		ov.Tasks = append(ov.Tasks, t)
 	}
 	sort.Slice(ov.Tasks, func(i, j int) bool { return ov.Tasks[i].ID < ov.Tasks[j].ID })
 	ov.TaskCount = len(ov.Tasks)
 	return ov
+}
+
+func applyScheduleHealth(t *ScheduleTask) {
+	if t.Error != "" {
+		t.Status = "ERROR"
+		return
+	}
+	if !t.Enabled {
+		t.Status = "DISABLED"
+		return
+	}
+	if strings.TrimSpace(t.Schedule) == "" || strings.TrimSpace(t.Repeat) == "" || strings.TrimSpace(t.Prompt) == "" {
+		t.Status = "ERROR"
+		t.Error = "schedule, repeat and prompt are required"
+		return
+	}
+	if _, err := time.Parse("15:04", t.Schedule); err != nil && !strings.HasPrefix(t.Repeat, "every_") {
+		t.Status = "ERROR"
+		t.Error = "schedule must be HH:MM unless repeat is every_Nh/every_Nd"
+		return
+	}
+	if !validRepeat(t.Repeat) {
+		t.Status = "ERROR"
+		t.Error = "repeat must be daily/weekday/weekly/monthly/once/every_Nh/every_Nd"
+		return
+	}
+	if t.LastReport == nil {
+		t.Status = "NEVER_RUN"
+		t.NextHint = "waiting for scheduler first run; report will appear in sche_tasks/done"
+		return
+	}
+	age := time.Since(t.LastReport.ModTime)
+	if maxAge, ok := repeatMaxAge(t.Repeat); ok && age > maxAge {
+		t.Status = "OVERDUE"
+		t.NextHint = fmt.Sprintf("last report %.1f hours ago", age.Hours())
+		return
+	}
+	t.Status = "HEALTHY"
+}
+
+func validRepeat(rep string) bool {
+	switch rep {
+	case "daily", "weekday", "weekly", "monthly", "once":
+		return true
+	}
+	if strings.HasPrefix(rep, "every_") && (strings.HasSuffix(rep, "h") || strings.HasSuffix(rep, "d")) {
+		mid := strings.TrimSuffix(strings.TrimPrefix(rep, "every_"), rep[len(rep)-1:])
+		if mid == "" {
+			return false
+		}
+		for _, r := range mid {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func repeatMaxAge(rep string) (time.Duration, bool) {
+	switch rep {
+	case "daily", "weekday":
+		return 36 * time.Hour, true
+	case "weekly":
+		return 8 * 24 * time.Hour, true
+	case "monthly":
+		return 35 * 24 * time.Hour, true
+	case "once":
+		return 0, false
+	}
+	if strings.HasPrefix(rep, "every_") {
+		unit := rep[len(rep)-1]
+		mid := strings.TrimSuffix(strings.TrimPrefix(rep, "every_"), string(unit))
+		n := 0
+		for _, r := range mid {
+			n = n*10 + int(r-'0')
+		}
+		if n <= 0 {
+			return 0, false
+		}
+		if unit == 'h' {
+			return time.Duration(n+1) * time.Hour, true
+		}
+		if unit == 'd' {
+			return time.Duration(n+1) * 24 * time.Hour, true
+		}
+	}
+	return 0, false
+}
+
+func ReadScheduleArtifact(root, rel string, maxBytes int64) (string, Entry, error) {
+	clean := filepath.ToSlash(filepath.Clean(rel))
+	if strings.HasPrefix(clean, "../") || clean == ".." || filepath.IsAbs(clean) {
+		return "", Entry{}, errors.New("invalid path")
+	}
+	if !(strings.HasPrefix(clean, "sche_tasks/done/") || clean == "sche_tasks/scheduler.log") {
+		return "", Entry{}, errors.New("only schedule reports and scheduler.log can be read here")
+	}
+	p := filepath.Join(root, filepath.FromSlash(clean))
+	info, err := os.Stat(p)
+	if err != nil {
+		return "", Entry{}, err
+	}
+	start := int64(0)
+	if maxBytes > 0 && info.Size() > maxBytes {
+		start = info.Size() - maxBytes
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return "", Entry{}, err
+	}
+	defer f.Close()
+	if start > 0 {
+		_, _ = f.Seek(start, 0)
+	}
+	buf := make([]byte, info.Size()-start)
+	n, _ := f.Read(buf)
+	e := Entry{Name: filepath.Base(clean), Path: clean, Kind: "file", Size: info.Size(), ModTime: info.ModTime(), Domain: "schedule"}
+	return string(buf[:n]), e, nil
 }
 
 func SchedulePath(root, id string) (string, string, error) {
