@@ -233,6 +233,9 @@ export default function ChatApp() {
           if (!line.trim()) continue
           const ev = JSON.parse(line)
           if (ev.type === 'user') setMessages(xs => xs.map(m => m.id === clientUserID ? ev.message : m))
+          if (ev.type === 'delta' && typeof ev.delta === 'string') {
+            setMessages(xs => xs.map(m => m.id === pending.id ? { ...m, content: (m.content || '') + ev.delta } : m))
+          }
           if (ev.message && (ev.type === 'done' || ev.type === 'error')) setMessages(xs => xs.map(m => m.id === pending.id ? ev.message : m))
         }
       }
