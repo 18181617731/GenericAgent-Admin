@@ -97,6 +97,11 @@ func BuildInventory(root string) Inventory {
 }
 
 func BuildHealth(root string) Health {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		checks := map[string]string{"ga_root": "empty"}
+		return Health{OK: false, Root: root, Checks: checks, Inventory: Inventory{Root: root, Generated: time.Now()}, Generated: time.Now()}
+	}
 	inv := BuildInventory(root)
 	checks := map[string]string{}
 	ok := true
