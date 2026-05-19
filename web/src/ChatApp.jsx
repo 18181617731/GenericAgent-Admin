@@ -479,8 +479,8 @@ export default function ChatApp() {
           {editing === s.id ? <div className="oa-rename">
             <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
             <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
-          </div> : <button className="oa-session" onClick={()=>openSession(s.id)}>
-            <span>{shortTitle(s)}</span><small><Clock3 size={11}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条</small>
+          </div> : <button className="oa-session" onClick={()=>openSession(s.id)} title={shortTitle(s)}>
+            <span title={shortTitle(s)}>{shortTitle(s)}</span><small><Clock3 size={11}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条</small>
           </button>}
           {editing !== s.id && <button className={`oa-session-more ${menuOpen === s.id ? 'is-open' : ''}`} onClick={(e)=>{e.stopPropagation(); setMenuOpen(menuOpen === s.id ? '' : s.id)}} aria-label="会话操作"><MoreHorizontal size={16}/></button>}
           {menuOpen === s.id && <div className="oa-session-menu">

@@ -1245,3 +1245,30 @@ pre, code { background:#f7f7f7; color:#111; }
 .oa-composer .oa-send{
   flex:0 0 36px !important;
 }
+
+/* Sidebar session titles: single-line ellipsis with native hover title */
+.oa-session-row,
+.oa-session{
+  min-width:0 !important;
+  overflow:hidden;
+}
+.oa-session{
+  padding-right:42px !important;
+}
+.oa-session span{
+  display:block !important;
+  width:100% !important;
+  max-width:100% !important;
+  min-width:0 !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  white-space:nowrap !important;
+  line-height:1.35;
+}
+.oa-session small{
+  max-width:100% !important;
+  min-width:0 !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  white-space:nowrap !important;
+}
