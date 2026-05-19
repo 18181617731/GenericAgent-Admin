@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
 )
@@ -27,6 +28,10 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.health)
+	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
+	mux.HandleFunc("/api/ga/health", s.gaHealth)
+	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
+	mux.HandleFunc("/api/schedule/toggle", s.scheduleToggle)
 	mux.HandleFunc("/api/config", s.configHandler)
 	mux.HandleFunc("/api/services", s.services)
 	mux.HandleFunc("/api/services/summary", s.summary)
@@ -70,8 +75,42 @@ func decode(r *http.Request, v interface{}) error {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]interface{}{"ok": true, "config": s.CfgStore.Cfg})
+	writeJSON(w, map[string]interface{}{"ok": true, "config": s.CfgStore.Cfg, "services": s.Svc.Summary()})
 }
+
+func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, ga.BuildInventory(s.CfgStore.Cfg.GARoot))
+}
+
+func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, ga.BuildHealth(s.CfgStore.Cfg.GARoot))
+}
+
+func (s *Server) scheduleTasks(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, ga.BuildSchedule(s.CfgStore.Cfg.GARoot))
+}
+
+func (s *Server) scheduleToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := decode(r, &req); err != nil || req.ID == "" {
+		bad(w, 400, "bad request")
+		return
+	}
+	task, err := ga.ToggleTask(s.CfgStore.Cfg.GARoot, req.ID, req.Enabled)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "task": task})
+}
+
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		writeJSON(w, s.CfgStore.Cfg)
