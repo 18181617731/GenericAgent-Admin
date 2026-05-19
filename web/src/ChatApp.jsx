@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, ChevronLeft, Clock3, Menu, MessageSquarePlus, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { Bot, ChevronLeft, Clock3, Menu, MessageSquarePlus, RefreshCw, Send, Sparkles, Trash2 } from 'lucide-react'
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options })
@@ -13,7 +13,12 @@ const fmtTime = (v) => {
 }
 
 const shortTitle = (s) => s?.title || '新会话'
-const examples = ['概览当前 GenericAgent 状态', '帮我检查最近的错误日志', '规划下一步自主进化任务', '总结当前模型配置风险']
+const examples = [
+  ['巡检系统', '概览当前 GenericAgent 状态'],
+  ['定位错误', '帮我检查最近的错误日志'],
+  ['规划进化', '规划下一步自主进化任务'],
+  ['审查模型', '总结当前模型配置风险'],
+]
 
 export default function ChatApp() {
   const [sessions, setSessions] = useState([])
@@ -95,19 +100,20 @@ export default function ChatApp() {
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
-      let content = ''
       while (true) {
-        const {done, value} = await reader.read()
+        const { done, value } = await reader.read()
         if (done) break
-        buf += dec.decode(value, {stream:true})
-        const lines = buf.split('\n')
-        buf = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          const ev = JSON.parse(line)
-          if (ev.type === 'delta') {
-            content += ev.delta || ''
-            setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content} : m))
+        buf += dec.decode(value, { stream:true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() || ''
+        for (const part of parts) {
+          const line = part.split('\n').find(x=>x.startsWith('data:'))
+          if (!line) continue
+          const raw = line.slice(5).trim()
+          if (!raw) continue
+          const ev = JSON.parse(raw)
+          if (ev.type === 'message' && ev.message) {
+            setMessages(ms => ms.map(m => m.id === assistant.id ? ev.message : m))
           }
           if ((ev.type === 'done' || ev.type === 'error') && ev.message) {
             setMessages(ms => ms.map(m => m.id === assistant.id ? ev.message : m))
@@ -126,26 +132,30 @@ export default function ChatApp() {
 
   return <div className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className="oa-sidebar">
-      <div className="oa-sidebar-top">
+      <div className="oa-brand-row">
+        <div className="oa-brand-mark"><Sparkles size={17}/></div>
+        <div><b>GenericAgent</b><span>Command Chat</span></div>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title="收起侧栏"><Menu size={18}/></button>
-        <button className="oa-new-chat" onClick={newSession}><MessageSquarePlus size={16}/>新对话</button>
       </div>
+      <button className="oa-new-chat" onClick={newSession}><MessageSquarePlus size={16}/><span>开启新对话</span></button>
+      <div className="oa-section-label">最近会话</div>
       <div className="oa-session-list">
         {sessions.map(s => <button key={s.id} className={`oa-session ${s.id===sid?'active':''}`} onClick={()=>openSession(s.id)}>
           <span>{shortTitle(s)}</span>
-          <small><Clock3 size={11}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0}</small>
+          <small><Clock3 size={11}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条</small>
         </button>)}
+        {!sessions.length && <div className="oa-empty-list">暂无历史会话</div>}
       </div>
       <div className="oa-sidebar-foot">
-        <button onClick={()=>loadSessions().catch(e=>setErr(e.message))}><RefreshCw size={15}/>刷新</button>
-        <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>管理台</button>
+        <button onClick={()=>loadSessions().catch(e=>setErr(e.message))}><RefreshCw size={15}/>刷新会话</button>
+        <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>返回管理台</button>
       </div>
     </aside>
 
     <main className="oa-main">
       <header className="oa-topbar">
         {collapsed && <button className="oa-icon-btn" onClick={()=>setCollapsed(false)} title="展开侧栏"><Menu size={18}/></button>}
-        <div className="oa-title"><b>GenericAgent</b><span>{current ? shortTitle(current) : 'Chat'}</span></div>
+        <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>OpenAI-style workspace for local agent operations</span></div>
         <div className="oa-top-actions">
           <button onClick={newSession}>新对话</button>
           <button disabled={!sid} onClick={()=>deleteSession(sid)}><Trash2 size={15}/>删除</button>
@@ -156,10 +166,10 @@ export default function ChatApp() {
 
       <section className="oa-thread">
         {messages.length === 0 && <div className="oa-empty">
-          <div className="oa-mark"><Bot size={24}/></div>
-          <h1>我可以帮你管理 GenericAgent</h1>
-          <p>选择一个建议开始，或直接输入你的任务。</p>
-          <div className="oa-prompts">{examples.map(x => <button key={x} onClick={()=>setPrompt(x)}>{x}</button>)}</div>
+          <div className="oa-hero-badge"><Sparkles size={16}/>Agent cockpit</div>
+          <h1>今天想让 GenericAgent 做什么？</h1>
+          <p>像 ChatGPT 一样对话，但面向本地生命周期管理、排错、模型配置和自主进化。</p>
+          <div className="oa-prompts">{examples.map(([k, x]) => <button key={x} onClick={()=>setPrompt(x)}><b>{k}</b><span>{x}</span></button>)}</div>
         </div>}
         {messages.map(m => <article key={m.id} className={`oa-message ${m.role} ${m.error?'error':''}`}>
           <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
@@ -173,10 +183,10 @@ export default function ChatApp() {
 
       <footer className="oa-composer-wrap">
         <div className="oa-composer">
-          <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) send() }} placeholder="询问或安排一个任务…" rows={1}/>
+          <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) send() }} placeholder="向 GenericAgent 发送消息…" rows={1}/>
           <button className="oa-send" disabled={busy || !prompt.trim()} onClick={send}><Send size={17}/></button>
         </div>
-        <p>GenericAgent 可能会执行本地操作。发送前请确认任务意图清晰。</p>
+        <p>Ctrl / ⌘ + Enter 发送 · 本地执行前请确认意图清晰</p>
       </footer>
     </main>
   </div>
