@@ -2,6 +2,7 @@ package ga
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -190,12 +191,97 @@ func BuildSchedule(root string) ScheduleOverview {
 	return ov
 }
 
-func ToggleTask(root, id string, enabled bool) (ScheduleTask, error) {
-	base := filepath.Base(id)
-	if !strings.HasSuffix(base, ".json") {
+func SchedulePath(root, id string) (string, string, error) {
+	base := filepath.Base(strings.TrimSpace(id))
+	if base == "." || base == "" {
+		return "", "", errors.New("empty task id")
+	}
+	if !strings.HasSuffix(strings.ToLower(base), ".json") {
 		base += ".json"
 	}
-	p := filepath.Join(root, "sche_tasks", base)
+	if strings.Contains(base, "..") || strings.ContainsAny(base, `/\`) {
+		return "", "", errors.New("invalid task id")
+	}
+	return filepath.Join(root, "sche_tasks", base), strings.TrimSuffix(base, filepath.Ext(base)), nil
+}
+
+func ReadTask(root, id string) (map[string]any, string, error) {
+	p, cleanID, err := SchedulePath(root, id)
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, cleanID, err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, cleanID, err
+	}
+	return raw, cleanID, nil
+}
+
+func SaveTask(root, id string, raw map[string]any) (ScheduleTask, error) {
+	p, cleanID, err := SchedulePath(root, id)
+	if err != nil {
+		return ScheduleTask{}, err
+	}
+	if raw == nil {
+		return ScheduleTask{}, errors.New("empty task")
+	}
+	if old, err := os.ReadFile(p); err == nil {
+		_ = os.WriteFile(p+".bak."+time.Now().Format("20060102_150405"), old, 0644)
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return ScheduleTask{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return ScheduleTask{}, err
+	}
+	if err := os.WriteFile(p, out, 0644); err != nil {
+		return ScheduleTask{}, err
+	}
+	for _, t := range BuildSchedule(root).Tasks {
+		if t.ID == cleanID {
+			return t, nil
+		}
+	}
+	return ScheduleTask{ID: cleanID, Path: filepath.ToSlash(filepath.Join("sche_tasks", cleanID+".json")), Status: "OK"}, nil
+}
+
+func CreateTask(root, id string, raw map[string]any) (ScheduleTask, error) {
+	p, _, err := SchedulePath(root, id)
+	if err != nil {
+		return ScheduleTask{}, err
+	}
+	if _, err := os.Stat(p); err == nil {
+		return ScheduleTask{}, errors.New("task already exists")
+	}
+	return SaveTask(root, id, raw)
+}
+
+func DeleteTask(root, id string) error {
+	p, _, err := SchedulePath(root, id)
+	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	bak := p + ".bak." + time.Now().Format("20060102_150405")
+	if err := os.WriteFile(bak, old, 0644); err != nil {
+		return err
+	}
+	return os.Remove(p)
+}
+
+func ToggleTask(root, id string, enabled bool) (ScheduleTask, error) {
+	p, want, err := SchedulePath(root, id)
+	if err != nil {
+		return ScheduleTask{}, err
+	}
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return ScheduleTask{}, err
@@ -213,7 +299,6 @@ func ToggleTask(root, id string, enabled bool) (ScheduleTask, error) {
 	if err := os.WriteFile(p, out, 0644); err != nil {
 		return ScheduleTask{}, err
 	}
-	want := strings.TrimSuffix(base, ".json")
 	for _, t := range BuildSchedule(root).Tasks {
 		if t.ID == want {
 			return t, nil

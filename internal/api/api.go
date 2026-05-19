@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	"genericagent-admin-go/internal/config"
@@ -30,7 +31,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/health", s.health)
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
+	mux.HandleFunc("/api/ga/control", s.gaControl)
+	mux.HandleFunc("/api/files/list", s.filesList)
+	mux.HandleFunc("/api/files/read", s.filesRead)
+	mux.HandleFunc("/api/files/tail", s.filesTail)
+	mux.HandleFunc("/api/files/search", s.filesSearch)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
+	mux.HandleFunc("/api/schedule/task", s.scheduleTask)
+	mux.HandleFunc("/api/schedule/create", s.scheduleCreate)
+	mux.HandleFunc("/api/schedule/delete", s.scheduleDelete)
 	mux.HandleFunc("/api/schedule/toggle", s.scheduleToggle)
 	mux.HandleFunc("/api/config", s.configHandler)
 	mux.HandleFunc("/api/services", s.services)
@@ -86,8 +95,87 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, ga.BuildHealth(s.CfgStore.Cfg.GARoot))
 }
 
+func (s *Server) gaControl(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, ga.BuildControlPlane(s.CfgStore.Cfg.GARoot))
+}
+
 func (s *Server) scheduleTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, ga.BuildSchedule(s.CfgStore.Cfg.GARoot))
+}
+
+func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		raw, id, err := ga.ReadTask(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("id"))
+		if err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, map[string]interface{}{"id": id, "task": raw})
+	case http.MethodPut:
+		var req struct {
+			ID   string         `json:"id"`
+			Task map[string]any `json:"task"`
+		}
+		if err := decode(r, &req); err != nil || req.ID == "" {
+			bad(w, 400, "bad request")
+			return
+		}
+		t, err := ga.SaveTask(s.CfgStore.Cfg.GARoot, req.ID, req.Task)
+		if err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "task": t})
+	default:
+		bad(w, 405, "method not allowed")
+	}
+}
+
+func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		ID   string         `json:"id"`
+		Task map[string]any `json:"task"`
+	}
+	if err := decode(r, &req); err != nil || req.ID == "" {
+		bad(w, 400, "bad request")
+		return
+	}
+	t, err := ga.CreateTask(s.CfgStore.Cfg.GARoot, req.ID, req.Task)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "task": t})
+}
+
+func (s *Server) scheduleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if r.Method == http.MethodDelete {
+		req.ID = r.URL.Query().Get("id")
+	} else if err := decode(r, &req); err != nil {
+		bad(w, 400, "bad request")
+		return
+	}
+	if req.ID == "" {
+		bad(w, 400, "empty id")
+		return
+	}
+	if err := ga.DeleteTask(s.CfgStore.Cfg.GARoot, req.ID); err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) scheduleToggle(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +197,60 @@ func (s *Server) scheduleToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "task": task})
+}
+
+func (s *Server) filesList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	items, err := ga.ListSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"))
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"items": items})
+}
+
+func (s *Server) filesRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	d, err := ga.ReadSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"))
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, d)
+}
+
+func (s *Server) filesTail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	lines, _ := strconv.Atoi(r.URL.Query().Get("lines"))
+	d, err := ga.TailSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), lines)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, d)
+}
+
+func (s *Server) filesSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	hits, err := ga.SearchSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), r.URL.Query().Get("q"), limit)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"hits": hits})
 }
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
