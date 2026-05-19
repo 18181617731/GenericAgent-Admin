@@ -1337,3 +1337,46 @@ pre, code { background:#f7f7f7; color:#111; }
 .setup-env span { font-size: 13px; padding: 6px 10px; border-radius: 999px; background: var(--surface-strong); border: 1px solid var(--border); }
 .setup-env .ok { color: #15803d; }
 .setup-env .err { color: #b91c1c; }
+
+.autostart-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(16,163,127,.16);
+  background: linear-gradient(135deg, rgba(16,163,127,.09), rgba(255,255,255,.76));
+}
+.autostart-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #24211d;
+}
+.autostart-head svg { color: var(--green); }
+.autostart-head strong { flex: 1; letter-spacing: -0.02em; }
+.autostart-head span {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 750;
+  background: rgba(23,23,23,.07);
+}
+.autostart-head span.ok { color: #08745c; background: rgba(16,163,127,.13); }
+.autostart-card p { margin: 0; color: var(--muted); line-height: 1.55; }
+.autostart-card code {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: #3b352d;
+  background: rgba(255,255,255,.68);
+  border: 1px solid rgba(23,23,23,.08);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.autostart-card button { width: fit-content; }

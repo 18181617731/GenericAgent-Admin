@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/modelconfig"
@@ -63,6 +64,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
 	mux.HandleFunc("/api/setup/validate", s.setupValidate)
 	mux.HandleFunc("/api/setup/install", s.setupInstall)
+	mux.HandleFunc("/api/autostart/status", s.autostartStatus)
+	mux.HandleFunc("/api/autostart/enable", s.autostartEnable)
+	mux.HandleFunc("/api/autostart/disable", s.autostartDisable)
 	mux.HandleFunc("/api/services", s.services)
 	mux.HandleFunc("/api/services/summary", s.summary)
 	mux.HandleFunc("/api/services/start", s.start)
@@ -499,6 +503,40 @@ func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "root": abs, "health": h})
+}
+
+func (s *Server) autostartStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	writeJSON(w, autostart.StatusForCurrent())
+}
+
+func (s *Server) autostartEnable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	st, err := autostart.EnableCurrent()
+	if err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, st)
+}
+
+func (s *Server) autostartDisable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	st, err := autostart.DisableCurrent()
+	if err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, st)
 }
 
 func (s *Server) services(w http.ResponseWriter, r *http.Request) {
