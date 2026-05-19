@@ -149,10 +149,18 @@ const parseToolArgsBlock = (block = '') => {
 }
 
 function ToolCallBlock({ call }) {
-  return <div className="oa-tool-call">
-    <div className="oa-tool-head"><span className="oa-tool-icon">🛠️</span><span>Tool</span><b>{call.name || 'unknown'}</b></div>
-    {call.args && <div className="oa-tool-args"><span>📥 args</span><pre>{call.args}</pre></div>}
-    {call.result && <div className="oa-tool-result"><span>📤 result</span><pre>{call.result}</pre></div>}
+  const [open, setOpen] = useState(false)
+  const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
+  return <div className={`oa-tool-call ${open ? 'open' : 'collapsed'}`}>
+    <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
+      <span className="oa-tool-icon">🛠️</span><span>Tool</span><b>{call.name || 'unknown'}</b>
+      {resultStatus && <em>{resultStatus}</em>}
+      <ChevronDown size={15} className="oa-tool-chevron" />
+    </button>
+    {open && <>
+      {call.args && <div className="oa-tool-args"><span>📥 args</span><pre>{call.args}</pre></div>}
+      {call.result && <div className="oa-tool-result"><span>📤 result</span><pre>{call.result}</pre></div>}
+    </>}
   </div>
 }
 
