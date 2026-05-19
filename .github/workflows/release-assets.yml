@@ -94,7 +94,7 @@ jobs:
             zip -r "package/$name.zip" "$name"
           fi
           cd package
-          shasum -a 256 "$name.zip" > "$name.zip.sha256"
+          python -c "import hashlib, pathlib; [p.with_suffix(p.suffix + '.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\\n', encoding='utf-8') for p in pathlib.Path('.').glob('*.zip')]"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
