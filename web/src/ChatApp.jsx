@@ -204,22 +204,55 @@ const parseToolArgsBlock = (block = '') => {
   return m ? (m[1] || '').trim() : null
 }
 
+const parseAskUserPayload = (raw = '') => {
+  const text = String(raw || '').trim().replace(/^```(?:json|text)?\s*/i, '').replace(/```$/i, '').trim()
+  if (!text) return { question:'', candidates:[], raw:'' }
+  try {
+    const data = JSON.parse(text)
+    const question = String(data?.question || data?.prompt || data?.message || '').trim()
+    const candidates = Array.isArray(data?.candidates) ? data.candidates.map(x => String(x || '').trim()).filter(Boolean) : []
+    return { question, candidates, raw:text }
+  } catch {
+    const q = text.match(/"question"\s*:\s*"([\s\S]*?)"/i)?.[1]
+    return { question: q ? q.replace(/\\n/g, '\n') : text, candidates:[], raw:text }
+  }
+}
+
+function AskUserPanel({ call }) {
+  const ask = getAskUserPayload(call)
+  const hasStructured = Boolean(ask.question || ask.candidates.length)
+  return <div className="oa-ask-panel">
+    <div className="oa-ask-banner">
+      <span className="oa-ask-avatar">?</span>
+      <div><b>{'\u9700\u8981\u7528\u6237\u786e\u8ba4'}</b><p>{'\u667a\u80fd\u4f53\u6b63\u5728\u7b49\u5f85\u4f60\u7684\u9009\u62e9\u6216\u8865\u5145\u4fe1\u606f'}</p></div>
+    </div>
+    {hasStructured ? <div className="oa-ask-body">
+      {ask.question && <div className="oa-ask-question"><span>{'\u95ee\u9898'}</span><p>{ask.question}</p></div>}
+      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{'\u5feb\u6377\u56de\u590d'}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(e)=>{e.stopPropagation(); navigator.clipboard?.writeText(x)}} title={'\u70b9\u51fb\u590d\u5236\u8be5\u56de\u590d'}>{x}</button>)}</div></div>}
+    </div> : call.args && <div className="oa-tool-args"><span>{'\ud83d\udcac question'}</span><pre>{call.args}</pre></div>}
+    {call.result && <div className="oa-tool-result oa-ask-result"><span>{'\ud83d\udce4 result'}</span><pre>{call.result}</pre></div>}
+  </div>
+}
+
 function ToolCallBlock({ call }) {
   const toolName = String(call.name || 'unknown').trim()
   const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
   const [open, setOpen] = useState(isAskUser)
   const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
+  const askPayload = isAskUser ? getAskUserPayload(call) : null
+  const askSummary = askPayload?.question || '\u7b49\u5f85\u7528\u6237\u786e\u8ba4'
   return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
       <span className="oa-tool-icon">{isAskUser ? '\u2753' : '\ud83d\udee0\ufe0f'}</span><span>{isAskUser ? 'Ask user' : 'Tool'}</span><b>{toolName}</b>
+      {isAskUser && <strong className="oa-ask-headline">{askSummary}</strong>}
       {resultStatus && <em>{resultStatus}</em>}
-      {isAskUser && !resultStatus && <em>{'\u7b49\u5f85\u7528\u6237\u786e\u8ba4'}</em>}
+      {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? `${askPayload.candidates.length} \u4e2a\u9009\u9879` : '\u7b49\u5f85\u56de\u590d'}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
     </button>
-    {open && <>
-      {call.args && <div className="oa-tool-args"><span>{isAskUser ? '\ud83d\udcac question' : '\ud83d\udce5 args'}</span><pre>{call.args}</pre></div>}
+    {open && (isAskUser ? <AskUserPanel call={call} /> : <>
+      {call.args && <div className="oa-tool-args"><span>{'\ud83d\udce5 args'}</span><pre>{call.args}</pre></div>}
       {call.result && <div className="oa-tool-result"><span>{'\ud83d\udce4 result'}</span><pre>{call.result}</pre></div>}
-    </>}
+    </>)}
   </div>
 }
 
