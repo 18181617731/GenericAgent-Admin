@@ -66,10 +66,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
 	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
 	mux.HandleFunc("/api/models/export", s.modelsExport)
-	mux.HandleFunc("/api/reactapp/status", s.reactAppStatus)
-	mux.HandleFunc("/api/reactapp/start", s.reactAppStart)
-	mux.HandleFunc("/api/reactapp/stop", s.reactAppStop)
-	mux.HandleFunc("/reactapp/", s.reactAppProxy)
+	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
+	mux.HandleFunc("/api/chat/", s.chatHandler)
+	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
 	return cors(mux)
 }
