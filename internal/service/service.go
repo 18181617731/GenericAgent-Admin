@@ -183,6 +183,7 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 	m.mu.Unlock()
 	cmd := exec.Command(s.Command[0], s.Command[1:]...)
 	cmd.Dir = m.GARoot
+	hideChildWindow(cmd)
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

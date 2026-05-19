@@ -502,12 +502,13 @@ print(json.dumps(items, ensure_ascii=False))`
 
 func startChatWorker(root string, payload map[string]interface{}) (*exec.Cmd, io.ReadCloser, io.ReadCloser, error) {
 	py := pythonForRoot(root)
-	script := filepath.Join("cmd", "chat_worker.py")
-	if _, err := os.Stat(script); err != nil {
+	script, err := resolveChatWorkerScript()
+	if err != nil {
 		return nil, nil, nil, err
 	}
 	cmd := exec.Command(py, script)
-	cmd.Dir = mustGetwd()
+	cmd.Dir = root
+	hideChildWindow(cmd)
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -526,6 +527,23 @@ func startChatWorker(root string, payload map[string]interface{}) (*exec.Cmd, io
 	}
 	go func() { defer stdin.Close(); _ = json.NewEncoder(stdin).Encode(payload) }()
 	return cmd, stdout, stderr, nil
+}
+
+func resolveChatWorkerScript() (string, error) {
+	candidates := []string{}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "cmd", "chat_worker.py"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "cmd", "chat_worker.py"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(filepath.Dir(exe)), "cmd", "chat_worker.py"))
+	}
+	for _, script := range candidates {
+		if st, err := os.Stat(script); err == nil && !st.IsDir() {
+			return script, nil
+		}
+	}
+	return "", fmt.Errorf("chat_worker.py not found; checked: %s", strings.Join(candidates, "; "))
 }
 
 func mustGetwd() string { wd, _ := os.Getwd(); return wd }
