@@ -359,7 +359,57 @@ export default function ChatApp() {
   const threadRef = useRef(null)
   const endRef = useRef(null)
   const fileRef = useRef(null)
+  const streamAbortRef = useRef(null)
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+
+  const applyStreamEvent = (ev, pendingId, clientUserID = '') => {
+    if (ev.type === 'user' && ev.message) {
+      setMessages(xs => clientUserID
+        ? xs.map(m => m.id === clientUserID ? ev.message : m)
+        : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message]))
+    }
+    if (ev.type === 'delta' && typeof ev.delta === 'string') {
+      setMessages(xs => xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + ev.delta } : m))
+    }
+    if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
+      setMessages(xs => xs.map(m => m.id === pendingId ? ev.message : m))
+    }
+  }
+
+  const readStream = async (res, pendingId, clientUserID = '') => {
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream:true })
+      const lines = buf.split('\n'); buf = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        applyStreamEvent(JSON.parse(line), pendingId, clientUserID)
+      }
+    }
+  }
+
+  const attachRunningStream = async (id) => {
+    if (!id) return
+    streamAbortRef.current?.abort?.()
+    const ctrl = new AbortController()
+    streamAbortRef.current = ctrl
+    const pendingId = `resume-${Date.now()}`
+    setBusy(true); setAutoFollow(true); setShowFollow(false)
+    setMessages(xs => xs.some(m => m.role === 'assistant' && !m.content) ? xs : [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }])
+    try {
+      const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
+      if (res.status === 204) return
+      if (!res.ok) throw new Error(await res.text())
+      await readStream(res, pendingId)
+      await loadSessions(id)
+    } catch (e) {
+      if (e.name !== 'AbortError') setErr(e.message || String(e))
+    } finally {
+      if (streamAbortRef.current === ctrl) { streamAbortRef.current = null; setBusy(false) }
+    }
+  }
 
   const loadChatState = async (id) => {
     if (!id) return
@@ -368,6 +418,7 @@ export default function ChatApp() {
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
+    if (st.running) attachRunningStream(id)
   }
 
   const openSession = async (id, refreshList = true) => {
@@ -471,29 +522,14 @@ export default function ChatApp() {
       setMessages(xs => [...xs, optimistic, pending])
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: llmNo }, client_user_id:clientUserID }) })
       if (!res.ok) throw new Error(await res.text())
-      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream:true })
-        const lines = buf.split('\n'); buf = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          const ev = JSON.parse(line)
-          if (ev.type === 'user') setMessages(xs => xs.map(m => m.id === clientUserID ? ev.message : m))
-          if (ev.type === 'delta' && typeof ev.delta === 'string') {
-            setMessages(xs => xs.map(m => m.id === pending.id ? { ...m, content: (m.content || '') + ev.delta } : m))
-          }
-          if (ev.message && (ev.type === 'done' || ev.type === 'error')) setMessages(xs => xs.map(m => m.id === pending.id ? ev.message : m))
-        }
-      }
+      await readStream(res, pending.id, clientUserID)
       await loadSessions(id)
     } catch (e) {
       setErr(e.message || String(e))
     } finally { setBusy(false) }
   }
 
-  useEffect(() => { loadSessions().catch(e=>setErr(e.message)) }, [])
+  useEffect(() => { loadSessions().catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
 
   const scrollToThreadEnd = (behavior = 'smooth') => endRef.current?.scrollIntoView({ behavior, block:'end' })
   const resumeFollow = () => {

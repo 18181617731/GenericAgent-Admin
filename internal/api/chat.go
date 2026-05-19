@@ -40,6 +40,13 @@ type chatSession struct {
 
 type chatUpload struct{ Name, Type, DataURL string }
 
+type chatRun struct {
+	SID         string
+	Events      [][]byte
+	Done        bool
+	Subscribers map[chan []byte]bool
+}
+
 func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		bad(w, 405, "method not allowed")
@@ -98,6 +105,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 	case "state":
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatState(w, r, parts[1])
+			return
+		}
+	case "stream":
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.chatStream(w, r, parts[1])
 			return
 		}
 	case "file":
@@ -178,7 +190,8 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 	if err != nil {
 		backend["warning"] = err.Error()
 	}
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend})
+	running := s.chatRunActive(sid)
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running})
 }
 
 func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
@@ -193,6 +206,10 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		return
 	}
 	sid = safeChatID(sid)
+	if !s.beginChatRun(sid) {
+		bad(w, 409, "chat is already running")
+		return
+	}
 	cs, _ := loadChatSession(s.CfgStore.Cfg.GARoot, sid)
 	if cs.ID == "" {
 		cs.ID = sid
@@ -203,6 +220,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	}
 	saved, refs, err := saveChatUploads(s.CfgStore.Cfg.GARoot, req.Files)
 	if err != nil {
+		s.endChatRun(sid)
 		bad(w, 400, err.Error())
 		return
 	}
@@ -218,20 +236,20 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	cs.Messages = append(cs.Messages, userMsg)
 	updateChatTitle(&cs)
 	_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
-
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	flusher, _ := w.(http.Flusher)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(map[string]interface{}{"type": "user", "message": userMsg})
-	if flusher != nil {
-		flusher.Flush()
-	}
-
+	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	cmdReq := map[string]interface{}{"prompt": display, "llm_no": cs.Settings.LLMNo, "history": cs.Messages, "ga_root": s.CfgStore.Cfg.GARoot}
+	go s.runChatWorker(sid, cs, cmdReq)
+	s.streamChatRun(w, r, sid, 0)
+}
+
+func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
 	cmd, stdout, stderr, err := startChatWorker(s.CfgStore.Cfg.GARoot, cmdReq)
 	if err != nil {
-		s.finishChatError(w, enc, flusher, &cs, err)
+		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
+		cs.Messages = append(cs.Messages, msg)
+		_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
+		s.endChatRun(sid)
 		return
 	}
 	go io.Copy(io.Discard, stderr)
@@ -239,8 +257,8 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var final chatMessage
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
 			continue
 		}
 		var ev map[string]interface{}
@@ -251,10 +269,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
 		}
-		_, _ = w.Write(append(line, '\n'))
-		if flusher != nil {
-			flusher.Flush()
-		}
+		s.publishChatLine(sid, line)
 	}
 	_ = cmd.Wait()
 	if final.ID == "" {
@@ -263,6 +278,133 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	cs.Messages = append(cs.Messages, final)
 	cs.UpdatedAt = time.Now().Unix()
 	_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+	s.endChatRun(sid)
+}
+
+func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) {
+	from := 0
+	if v := strings.TrimSpace(r.URL.Query().Get("from")); v != "" {
+		_, _ = fmt.Sscanf(v, "%d", &from)
+	}
+	s.streamChatRun(w, r, safeChatID(sid), from)
+}
+
+func (s *Server) chatRunActive(sid string) bool {
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	r := s.ChatRuns[safeChatID(sid)]
+	return r != nil && !r.Done
+}
+
+func (s *Server) beginChatRun(sid string) bool {
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	if s.ChatRuns == nil {
+		s.ChatRuns = map[string]*chatRun{}
+	}
+	if r := s.ChatRuns[sid]; r != nil && !r.Done {
+		return false
+	}
+	s.ChatRuns[sid] = &chatRun{SID: sid, Subscribers: map[chan []byte]bool{}}
+	return true
+}
+
+func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {
+	b, _ := json.Marshal(ev)
+	s.publishChatLine(sid, b)
+}
+
+func (s *Server) publishChatLine(sid string, line []byte) {
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	r := s.ChatRuns[sid]
+	if r == nil {
+		return
+	}
+	b := append([]byte(nil), line...)
+	r.Events = append(r.Events, b)
+	for ch := range r.Subscribers {
+		select {
+		case ch <- b:
+		default:
+		}
+	}
+}
+
+func (s *Server) endChatRun(sid string) {
+	s.ChatMu.Lock()
+	r := s.ChatRuns[sid]
+	if r != nil && !r.Done {
+		r.Done = true
+		for ch := range r.Subscribers {
+			close(ch)
+		}
+		r.Subscribers = map[chan []byte]bool{}
+	}
+	s.ChatMu.Unlock()
+	go func() {
+		time.Sleep(5 * time.Minute)
+		s.ChatMu.Lock()
+		if rr := s.ChatRuns[sid]; rr != nil && rr.Done {
+			delete(s.ChatRuns, sid)
+		}
+		s.ChatMu.Unlock()
+	}()
+}
+
+func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid string, from int) {
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	flusher, _ := w.(http.Flusher)
+	s.ChatMu.Lock()
+	run := s.ChatRuns[sid]
+	if run == nil {
+		s.ChatMu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if from < 0 {
+		from = 0
+	}
+	if from > len(run.Events) {
+		from = len(run.Events)
+	}
+	initial := append([][]byte(nil), run.Events[from:]...)
+	ch := make(chan []byte, 128)
+	if !run.Done {
+		run.Subscribers[ch] = true
+	}
+	done := run.Done
+	s.ChatMu.Unlock()
+	for _, line := range initial {
+		_, _ = w.Write(append(append([]byte(nil), line...), '\n'))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	if done {
+		return
+	}
+	defer func() {
+		s.ChatMu.Lock()
+		if rr := s.ChatRuns[sid]; rr != nil && rr.Subscribers != nil {
+			delete(rr.Subscribers, ch)
+		}
+		s.ChatMu.Unlock()
+	}()
+	for {
+		select {
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
+			_, _ = w.Write(append(append([]byte(nil), line...), '\n'))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flusher http.Flusher, cs *chatSession, err error) {

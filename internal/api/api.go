@@ -31,10 +31,12 @@ type Server struct {
 	Models   *modelconfig.Store
 	Static   fs.FS
 	ReactApp *reactAppBridge
+	ChatMu   sync.Mutex
+	ChatRuns map[string]*chatRun
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge()}
+	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}}
 }
 
 func (s *Server) Routes() http.Handler {
