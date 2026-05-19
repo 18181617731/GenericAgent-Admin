@@ -1,0 +1,4 @@
+226f0cbaccc1b40cf7ac256a698843e38d1391719c372f605b7b6c035b0cfa42  ga-admin-v0.0.4-windows-amd64.zip
+ba7df8382656bb225d19ecb81e58f29f7b3109cef059746a0767fab913218620  ga-admin-v0.0.4-windows-arm64.zip
+35848cfa2f412d7c5a774431bf74c05c9f482188cc43fead9a3fa9727322cf81  ga-admin-v0.0.4-darwin-amd64.tar.gz
+4713f479691ba192e2266ade32251df4482ba21d90ade905875a354de8aa59ca  ga-admin-v0.0.4-darwin-arm64.tar.gz

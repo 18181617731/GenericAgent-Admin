@@ -184,7 +184,7 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 	cmd := exec.Command(s.Command[0], s.Command[1:]...)
 	cmd.Dir = m.GARoot
 	hideChildWindow(cmd)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return s, err
