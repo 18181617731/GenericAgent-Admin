@@ -280,7 +280,7 @@ func pyVal(v interface{}) string {
 	}
 }
 
-func Export(gaRoot string, profiles []Profile, activateIfSafe bool) (map[string]interface{}, error) {
+func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string]interface{}, error) {
 	text, err := Render(profiles)
 	if err != nil {
 		return nil, err
@@ -289,9 +289,20 @@ func Export(gaRoot string, profiles []Profile, activateIfSafe bool) (map[string]
 	if err := os.WriteFile(gen, []byte(text), 0600); err != nil {
 		return nil, err
 	}
-	res := map[string]interface{}{"generated_path": gen, "activated": false, "active_path": nil}
 	active := filepath.Join(gaRoot, "mykey.py")
-	if activateIfSafe && !exists(active) {
+	res := map[string]interface{}{"generated_path": gen, "activated": false, "active_path": nil, "backup_path": nil}
+	if overwriteActive {
+		if exists(active) {
+			bak := filepath.Join(gaRoot, fmt.Sprintf("mykey.py.bak-%s", time.Now().Format("20060102-150405")))
+			data, err := os.ReadFile(active)
+			if err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(bak, data, 0600); err != nil {
+				return nil, err
+			}
+			res["backup_path"] = bak
+		}
 		if err := os.WriteFile(active, []byte(text), 0600); err != nil {
 			return nil, err
 		}

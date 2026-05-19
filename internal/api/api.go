@@ -225,15 +225,15 @@ func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 	var p struct {
-		Profiles       []modelconfig.Profile `json:"profiles"`
-		ActivateIfSafe bool                  `json:"activate_if_safe"`
+		Profiles        []modelconfig.Profile `json:"profiles"`
+		OverwriteActive bool                  `json:"overwrite_active"`
 	}
 	if err := decode(r, &p); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
 	_, _ = s.Models.Save(p.Profiles)
-	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, p.Profiles, p.ActivateIfSafe)
+	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, p.Profiles, p.OverwriteActive)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
