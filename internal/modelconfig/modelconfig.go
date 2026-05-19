@@ -1,10 +1,12 @@
 package modelconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -110,10 +112,91 @@ func SourceStatus(gaRoot string) map[string]interface{} {
 	gen := filepath.Join(gaRoot, "mykey_admin.generated.py")
 	return map[string]interface{}{
 		"mykey_py_exists": exists(mykey), "mykey_json_exists": exists(jsonp), "generated_exists": exists(gen), "generated_path": gen,
-		"safe_note": "Existing mykey.py is never read or overwritten by this admin UI.",
+		"safe_note": "mykey.py can be imported with explicit user authorization. Import uses Python AST parsing only and never executes mykey.py.",
 	}
 }
 func exists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
+
+func ImportMyKey(gaRoot string, reveal bool) (Draft, error) {
+	mykey := filepath.Join(gaRoot, "mykey.py")
+	if !exists(mykey) {
+		return Draft{}, fmt.Errorf("mykey.py not found: %s", mykey)
+	}
+	py := pythonExe(gaRoot)
+	script := `import ast, json, sys
+path=sys.argv[1]
+reveal=sys.argv[2]=='1'
+text=open(path,'r',encoding='utf-8').read()
+tree=ast.parse(text, filename=path)
+
+def val(n):
+    if isinstance(n, ast.Constant): return n.value
+    if isinstance(n, ast.Dict): return {val(k): val(v) for k,v in zip(n.keys,n.values) if k is not None}
+    if isinstance(n, (ast.List, ast.Tuple)): return [val(x) for x in n.elts]
+    if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub) and isinstance(n.operand, ast.Constant) and isinstance(n.operand.value,(int,float)): return -n.operand.value
+    return None
+
+def mask(s):
+    if not isinstance(s,str) or not s: return s
+    if reveal: return s
+    if len(s)<=8: return '******'
+    return s[:3]+'****'+s[-4:]
+profiles=[]
+for node in tree.body:
+    if not isinstance(node, ast.Assign): continue
+    names=[t.id for t in node.targets if isinstance(t, ast.Name)]
+    if not names: continue
+    var=names[0]
+    low=var.lower()
+    if not any(x in low for x in ('api','config','cookie')): continue
+    d=val(node.value)
+    if not isinstance(d, dict): continue
+    def pop_any(keys, default=''):
+        for k in keys:
+            if k in d: return d.pop(k)
+        return default
+    apikey=pop_any(['apikey','api_key','key','token','cookie'], '')
+    typ='native_oai'
+    if 'claude' in low or 'anthropic' in str(d).lower() or 'fake_cc_system_prompt' in d: typ='native_claude'
+    if 'gemini' in low or 'generativelanguage' in str(d).lower(): typ='gemini'
+    p={'var_name':var,'type':typ,'name':str(pop_any(['name'], var) or var),'apibase':str(pop_any(['apibase','api_base','base_url','baseURL'], '') or ''),'model':str(pop_any(['model','model_name'], '') or ''),'apikey':mask(str(apikey) if apikey is not None else '')}
+    for src,dst in [('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
+        if src in d: p[dst]=d.pop(src)
+    p['extra']=d
+    profiles.append(p)
+print(json.dumps({'updated_at':'','profiles':profiles}, ensure_ascii=False))`
+	cmd := exec.Command(py, "-c", script, mykey, boolArg(reveal))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return Draft{}, fmt.Errorf("parse mykey.py failed via %s: %v: %s", py, err, strings.TrimSpace(stderr.String()))
+	}
+	var d Draft
+	if err := json.Unmarshal(out, &d); err != nil {
+		return Draft{}, err
+	}
+	if len(d.Profiles) == 0 {
+		return Draft{}, errors.New("no supported api/config/cookie dict assignments found in mykey.py")
+	}
+	return d, nil
+}
+
+func pythonExe(gaRoot string) string {
+	candidates := []string{filepath.Join(gaRoot, ".venv", "Scripts", "python.exe"), filepath.Join(gaRoot, "venv", "Scripts", "python.exe"), "python"}
+	for _, c := range candidates {
+		if c == "python" || exists(c) {
+			return c
+		}
+	}
+	return "python"
+}
+func boolArg(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
 
 func Render(profiles []Profile) (string, error) {
 	if err := Validate(profiles); err != nil {

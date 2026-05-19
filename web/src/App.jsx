@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Play, Square, RefreshCw, Server, FolderCog, Terminal, Search, SlidersHorizontal, Plus, Trash2, Save, FileCode2, UploadCloud, Eye } from 'lucide-react'
+import { Play, Square, RefreshCw, Server, FolderCog, Terminal, Search, SlidersHorizontal, Plus, Trash2, Save, FileCode2, UploadCloud, Eye, Download } from 'lucide-react'
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options })
@@ -99,6 +99,7 @@ export default function App() {
   const cloneProfiles = () => profiles.map((p) => ({ ...p, apikey: p.apikey === '***SET***' ? '' : p.apikey }))
   const saveModels = () => run(async () => { const data = await api('/api/models', { method: 'PUT', body: JSON.stringify({ profiles: cloneProfiles() }) }); setProfiles(data.profiles || cloneProfiles()); setModelSource(data.source) }, '模型草稿已保存')
   const previewModels = () => run(async () => { const data = await api('/api/models/preview', { method: 'POST', body: JSON.stringify({ profiles: cloneProfiles() }) }); setPreview(data.python || '') }, '已生成预览')
+  const importMyKey = () => run(async () => { const data = await api('/api/models/import-mykey', { method: 'POST', body: JSON.stringify({ save: true, reveal: false }) }); setProfiles(data.profiles || []); await loadModels(false); setPreview(`已从 mykey.py 导入 ${data.profiles?.length || 0} 个配置。密钥默认脱敏；如需替换请在密钥框输入新值。`) }, '已从 mykey.py 导入')
   const exportModels = () => run(async () => { const ret = await api('/api/models/export', { method: 'POST', body: JSON.stringify({ profiles: cloneProfiles(), activate_if_safe: false }) }); await loadModels(false); setPreview(`已导出：${ret.generated_path}\nactivated=${ret.activated}`) }, '已导出到 GA')
 
   return <div className="app">
@@ -126,7 +127,7 @@ export default function App() {
       </section>}
 
       {tab === 'models' && <section className="models-layout">
-        <div className="panel model-top"><div><h2>模型配置</h2><p>页面维护管理端草稿，避免读取或覆盖现有 GA 密钥文件。GA 发现变量名需包含 api/config/cookie。</p>{modelSource && <small>当前 GA 源：<code>{modelSource.active_source}</code> · 生成文件：<code>{modelSource.generated_path}</code></small>}</div><div className="actions"><button onClick={() => setProfiles([...profiles, emptyProfile(profiles.length)])}><Plus size={16}/> 新增</button><button onClick={saveModels} disabled={busy}><Save size={16}/> 保存草稿</button><button onClick={previewModels} disabled={busy}><FileCode2 size={16}/> 预览</button><button onClick={exportModels} disabled={busy}><UploadCloud size={16}/> 导出</button></div></div>
+        <div className="panel model-top"><div><h2>模型配置</h2><p>可从 GA 的 mykey.py 安全导入：仅 AST 解析赋值字典，不执行文件；密钥默认脱敏。GA 发现变量名需包含 api/config/cookie。</p>{modelSource && <small>当前 GA 源：<code>{modelSource.active_source}</code> · 生成文件：<code>{modelSource.generated_path}</code></small>}</div><div className="actions"><button onClick={importMyKey} disabled={busy}><Download size={16}/> 从 mykey.py 导入</button><button onClick={() => setProfiles([...profiles, emptyProfile(profiles.length)])}><Plus size={16}/> 新增</button><button onClick={saveModels} disabled={busy}><Save size={16}/> 保存草稿</button><button onClick={previewModels} disabled={busy}><FileCode2 size={16}/> 预览</button><button onClick={exportModels} disabled={busy}><UploadCloud size={16}/> 导出</button></div></div>
         <div className="model-grid">
           <div className="profiles">{profiles.map((p, idx) => <div className="profile-card" key={`${p.var_name}-${idx}`}>
             <div className="profile-head"><label><input type="checkbox" checked={!!p.enabled} onChange={(e) => patchProfile(idx, { enabled: e.target.checked })}/> 启用</label><button className="ghost danger-text" onClick={() => setProfiles(profiles.filter((_, i) => i !== idx))}><Trash2 size={14}/> 删除</button></div>

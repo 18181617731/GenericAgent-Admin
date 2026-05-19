@@ -37,6 +37,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models", s.models)
 	mux.HandleFunc("/api/models/raw", s.modelsRaw)
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
+	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
 	mux.HandleFunc("/api/models/export", s.modelsExport)
 	mux.HandleFunc("/", s.static)
 	return cors(mux)
@@ -191,6 +192,36 @@ func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"python": txt})
+}
+func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var p struct {
+		Reveal bool `json:"reveal"`
+		Save   bool `json:"save"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decode(r, &p); err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+	}
+	d, err := modelconfig.ImportMyKey(s.CfgStore.Cfg.GARoot, p.Reveal)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	if p.Save {
+		if saved, err := s.Models.Save(d.Profiles); err == nil {
+			d = saved
+		} else {
+			bad(w, 400, err.Error())
+			return
+		}
+	}
+	writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "updated_at": d.UpdatedAt, "saved": p.Save, "masked": !p.Reveal})
 }
 func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 	var p struct {
