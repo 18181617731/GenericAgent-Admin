@@ -205,17 +205,20 @@ const parseToolArgsBlock = (block = '') => {
 }
 
 function ToolCallBlock({ call }) {
-  const [open, setOpen] = useState(false)
+  const toolName = String(call.name || 'unknown').trim()
+  const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
+  const [open, setOpen] = useState(isAskUser)
   const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
-  return <div className={`oa-tool-call ${open ? 'open' : 'collapsed'}`}>
+  return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-      <span className="oa-tool-icon">🛠️</span><span>Tool</span><b>{call.name || 'unknown'}</b>
+      <span className="oa-tool-icon">{isAskUser ? '\u2753' : '\ud83d\udee0\ufe0f'}</span><span>{isAskUser ? 'Ask user' : 'Tool'}</span><b>{toolName}</b>
       {resultStatus && <em>{resultStatus}</em>}
+      {isAskUser && !resultStatus && <em>{'\u7b49\u5f85\u7528\u6237\u786e\u8ba4'}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
     </button>
     {open && <>
-      {call.args && <div className="oa-tool-args"><span>📥 args</span><pre>{call.args}</pre></div>}
-      {call.result && <div className="oa-tool-result"><span>📤 result</span><pre>{call.result}</pre></div>}
+      {call.args && <div className="oa-tool-args"><span>{isAskUser ? '\ud83d\udcac question' : '\ud83d\udce5 args'}</span><pre>{call.args}</pre></div>}
+      {call.result && <div className="oa-tool-result"><span>{'\ud83d\udce4 result'}</span><pre>{call.result}</pre></div>}
     </>}
   </div>
 }

@@ -1045,6 +1045,18 @@ pre, code { background:#f7f7f7; color:#111; }
 .oa-tool-args pre,.oa-tool-result pre{margin:0;padding:10px 12px;border-radius:10px;background:#f6f6f6;border:1px solid #ececec;white-space:pre-wrap;word-break:break-word;color:#1f2937;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .oa-tool-result pre{background:#f7fbf9;border-color:#dcefe8;color:#164e3f}
 
+.oa-tool-call.oa-tool-ask-user{border-color:#fde68a;background:#fffbeb;box-shadow:0 1px 2px rgba(180,83,9,.06)}
+.oa-tool-ask-user .oa-tool-head{background:#fff7d6;border-bottom-color:#fde68a;color:#92400e}
+.oa-tool-ask-user.collapsed .oa-tool-head{border-bottom:0}
+.oa-tool-ask-user .oa-tool-head:hover{background:#fef3c7}
+.oa-tool-ask-user .oa-tool-icon{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+.oa-tool-ask-user .oa-tool-head b{color:#78350f}
+.oa-tool-ask-user .oa-tool-head em{color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:999px;padding:1px 7px}
+.oa-tool-ask-user .oa-tool-args{background:#fffdf4}
+.oa-tool-ask-user .oa-tool-args>span{color:#92400e}
+.oa-tool-ask-user .oa-tool-args pre{background:#fffaf0;border-color:#fde68a;color:#3f2a04}
+
+
 /* Chat file attachment marker: [FILE:C:\\path\\to\\file] */
 .oa-file-card{
   display:inline-flex;
