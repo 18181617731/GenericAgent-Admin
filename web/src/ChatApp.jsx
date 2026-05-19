@@ -39,10 +39,21 @@ function CopyButton({ text, compact = false }) {
 function FileAttachment({ path }) {
   const clean = String(path || '').trim()
   const name = clean.split(/[\\/]/).filter(Boolean).pop() || clean || '文件'
+  const open = async (mode) => {
+    try {
+      await api('/api/files/open', { method:'POST', body: JSON.stringify({ path: clean, mode }) })
+    } catch (e) {
+      alert(`打开失败：${e?.message || e}`)
+    }
+  }
   return <span className="oa-file-card">
     <span className="oa-file-icon"><FileText size={18}/></span>
     <span className="oa-file-meta"><b>{name}</b><em>{clean}</em></span>
-    <CopyButton text={clean} compact />
+    <span className="oa-file-actions">
+      <button type="button" onClick={() => open('file')}>打开</button>
+      <button type="button" onClick={() => open('folder')}>位置</button>
+      <CopyButton text={clean} compact />
+    </span>
   </span>
 }
 

@@ -48,6 +48,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/write", s.filesWrite)
 	mux.HandleFunc("/api/files/tail", s.filesTail)
 	mux.HandleFunc("/api/files/search", s.filesSearch)
+	mux.HandleFunc("/api/files/open", s.filesOpen)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
 	mux.HandleFunc("/api/schedule/task", s.scheduleTask)
 	mux.HandleFunc("/api/schedule/create", s.scheduleCreate)
@@ -703,4 +704,64 @@ func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func (s *Server) filesOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+		Mode string `json:"mode"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, 400, "bad request")
+		return
+	}
+	p := strings.TrimSpace(req.Path)
+	if p == "" || !filepath.IsAbs(p) {
+		bad(w, 400, "absolute path required")
+		return
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		bad(w, 404, err.Error())
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "file"
+	}
+	if err := openLocalPath(p, info.IsDir(), mode); err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func openLocalPath(p string, isDir bool, mode string) error {
+	switch runtime.GOOS {
+	case "windows":
+		if mode == "folder" {
+			if isDir {
+				return exec.Command("explorer", p).Start()
+			}
+			return exec.Command("explorer", "/select,"+p).Start()
+		}
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", p).Start()
+	case "darwin":
+		if mode == "folder" {
+			if isDir {
+				return exec.Command("open", p).Start()
+			}
+			return exec.Command("open", "-R", p).Start()
+		}
+		return exec.Command("open", p).Start()
+	default:
+		if mode == "folder" && !isDir {
+			p = filepath.Dir(p)
+		}
+		return exec.Command("xdg-open", p).Start()
+	}
 }

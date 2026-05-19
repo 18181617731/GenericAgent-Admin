@@ -1063,3 +1063,25 @@ pre, code { background:#f7f7f7; color:#111; }
 .oa-file-card .oa-mini-copy{
   flex:0 0 auto;
 }
+
+.oa-file-actions{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  flex:0 0 auto;
+}
+.oa-file-actions > button{
+  border:1px solid #d8d8d8;
+  background:#fff;
+  color:#2f2f2f;
+  border-radius:8px;
+  min-height:28px;
+  padding:0 9px;
+  font-size:12px;
+  font-weight:500;
+  cursor:pointer;
+}
+.oa-file-actions > button:hover{
+  background:#f5f5f5;
+  border-color:#cfcfcf;
+}
