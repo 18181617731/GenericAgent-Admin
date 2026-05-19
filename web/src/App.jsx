@@ -51,6 +51,7 @@ export default function App() {
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
   const [filePath, setFilePath] = useState('memory'), [fileList, setFileList] = useState([]), [fileContent, setFileContent] = useState(''), [fileSearch, setFileSearch] = useState(''), [searchHits, setSearchHits] = useState([]), [tailLines, setTailLines] = useState(200)
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
+  const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
 
   const inv = health?.inventory || {}
   const schedule = inv.schedule || {}
