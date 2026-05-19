@@ -28,17 +28,18 @@ import (
 )
 
 type Server struct {
-	CfgStore *config.Store
-	Svc      *service.Manager
-	Models   *modelconfig.Store
-	Static   fs.FS
-	ReactApp *reactAppBridge
-	ChatMu   sync.Mutex
-	ChatRuns map[string]*chatRun
+	CfgStore    *config.Store
+	Svc         *service.Manager
+	Models      *modelconfig.Store
+	Static      fs.FS
+	ReactApp    *reactAppBridge
+	ChatMu      sync.Mutex
+	ChatRuns    map[string]*chatRun
+	ChatWorkers map[string]*chatWorker
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}}
+	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -978,4 +979,24 @@ func openLocalPath(p string, isDir bool, mode string) error {
 		}
 		return exec.Command("xdg-open", p).Start()
 	}
+}
+
+// StopManagedServices stops GenericAgent child services managed by the Admin UI.
+func (s *Server) StopManagedServices() {
+	if s == nil || s.Svc == nil {
+		return
+	}
+	s.Svc.StopAll()
+}
+
+// ShutdownCleanup stops child processes before the Admin process exits.
+func (s *Server) ShutdownCleanup() {
+	if s == nil {
+		return
+	}
+	s.StopManagedServices()
+	if s.ReactApp != nil {
+		_ = s.ReactApp.stop()
+	}
+	s.CloseChatWorkers()
 }

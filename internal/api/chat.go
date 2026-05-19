@@ -49,6 +49,15 @@ type chatRun struct {
 	Subscribers map[chan []byte]bool
 }
 
+type chatWorker struct {
+	SID    string
+	Cmd    *exec.Cmd
+	Stdin  io.WriteCloser
+	Stdout io.ReadCloser
+	Stderr io.ReadCloser
+	Dead   bool
+}
+
 func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		bad(w, 405, "method not allowed")
@@ -244,13 +253,14 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	updateChatTitle(&cs)
 	_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
-	cmdReq := map[string]interface{}{"prompt": display, "llm_no": cs.Settings.LLMNo, "history": cs.Messages, "ga_root": s.CfgStore.Cfg.GARoot}
+	workerPrompt := buildPromptWithHistory(display, cs.Messages)
+	cmdReq := map[string]interface{}{"prompt": workerPrompt, "llm_no": cs.Settings.LLMNo, "ga_root": s.CfgStore.Cfg.GARoot}
 	go s.runChatWorker(sid, cs, cmdReq)
 	s.streamChatRun(w, r, sid, 0)
 }
 
 func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
-	cmd, stdout, stderr, err := startChatWorker(s.CfgStore.Cfg.GARoot, cmdReq)
+	worker, err := s.getChatWorker(sid)
 	if err != nil {
 		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
 		cs.Messages = append(cs.Messages, msg)
@@ -259,9 +269,17 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		s.endChatRun(sid)
 		return
 	}
-	s.setChatRunCmd(sid, cmd)
-	go io.Copy(io.Discard, stderr)
-	scanner := bufio.NewScanner(stdout)
+	s.setChatRunCmd(sid, worker.Cmd)
+	if err := json.NewEncoder(worker.Stdin).Encode(cmdReq); err != nil {
+		s.dropChatWorker(sid, worker)
+		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
+		cs.Messages = append(cs.Messages, msg)
+		_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
+		s.endChatRun(sid)
+		return
+	}
+	scanner := bufio.NewScanner(worker.Stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var final chatMessage
 	for scanner.Scan() {
@@ -276,19 +294,24 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
+			s.publishChatLine(sid, line)
+			break
 		}
 		s.publishChatLine(sid, line)
 	}
-	waitErr := cmd.Wait()
-	if s.chatRunCanceled(sid) {
-		final = chatMessage{ID: newChatID(), Role: "assistant", Content: "\u5df2\u505c\u6b62\u751f\u6210", CreatedAt: time.Now().Unix(), Error: true}
-		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
-	} else if final.ID == "" {
-		content := ""
-		if waitErr != nil {
-			content = fmt.Sprintf("\u751f\u6210\u5931\u8d25\uff1a%v", waitErr)
+	if final.ID == "" {
+		if s.chatRunCanceled(sid) {
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: "已停止生成", CreatedAt: time.Now().Unix(), Error: true}
+			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
+		} else {
+			err := scanner.Err()
+			if err == nil {
+				err = fmt.Errorf("worker exited before done")
+			}
+			s.dropChatWorker(sid, worker)
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("生成失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
+			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
-		final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: waitErr != nil}
 	}
 	cs.Messages = append(cs.Messages, final)
 	cs.UpdatedAt = time.Now().Unix()
@@ -342,6 +365,7 @@ func (s *Server) chatRunCanceled(sid string) bool {
 func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
 	sid = safeChatID(sid)
 	var cmd *exec.Cmd
+	var worker *chatWorker
 	s.ChatMu.Lock()
 	run := s.ChatRuns[sid]
 	if run == nil || run.Done {
@@ -351,8 +375,11 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	}
 	run.Canceled = true
 	cmd = run.Cmd
+	worker = s.ChatWorkers[sid]
 	s.ChatMu.Unlock()
-	if cmd != nil && cmd.Process != nil {
+	if worker != nil {
+		s.dropChatWorker(sid, worker)
+	} else if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
@@ -501,33 +528,74 @@ print(json.dumps(items, ensure_ascii=False))`
 	return llms, nil
 }
 
-func startChatWorker(root string, payload map[string]interface{}) (*exec.Cmd, io.ReadCloser, io.ReadCloser, error) {
+func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	if s.ChatWorkers == nil {
+		s.ChatWorkers = map[string]*chatWorker{}
+	}
+	if w := s.ChatWorkers[sid]; w != nil && !w.Dead && w.Cmd != nil && w.Cmd.Process != nil {
+		s.ChatMu.Unlock()
+		return w, nil
+	}
+	s.ChatMu.Unlock()
+	worker, err := startChatWorker(s.CfgStore.Cfg.GARoot, sid)
+	if err != nil {
+		return nil, err
+	}
+	s.ChatMu.Lock()
+	if s.ChatWorkers == nil {
+		s.ChatWorkers = map[string]*chatWorker{}
+	}
+	s.ChatWorkers[sid] = worker
+	s.ChatMu.Unlock()
+	return worker, nil
+}
+
+func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	if s.ChatWorkers[sid] == worker {
+		delete(s.ChatWorkers, sid)
+	}
+	if worker != nil {
+		worker.Dead = true
+	}
+	s.ChatMu.Unlock()
+	if worker != nil && worker.Cmd != nil && worker.Cmd.Process != nil {
+		_ = worker.Cmd.Process.Kill()
+		_, _ = worker.Cmd.Process.Wait()
+	}
+}
+
+func startChatWorker(root string, sid string) (*chatWorker, error) {
 	py := pythonForRoot(root)
 	script, err := resolveChatWorkerScript()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	cmd := exec.Command(py, script)
 	cmd.Dir = root
 	hideChildWindow(cmd)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	go func() { defer stdin.Close(); _ = json.NewEncoder(stdin).Encode(payload) }()
-	return cmd, stdout, stderr, nil
+	worker := &chatWorker{SID: sid, Cmd: cmd, Stdin: stdin, Stdout: stdout, Stderr: stderr}
+	go io.Copy(io.Discard, stderr)
+	return worker, nil
 }
 
 func resolveChatWorkerScript() (string, error) {
@@ -647,4 +715,87 @@ func newChatID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:4]) + "-" + hex.EncodeToString(b[4:6]) + "-" + hex.EncodeToString(b[6:8]) + "-" + hex.EncodeToString(b[8:10]) + "-" + hex.EncodeToString(b[10:])
+}
+
+func chatMessageLabel(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "assistant":
+		return "ASSISTANT"
+	case "system":
+		return "SYSTEM"
+	default:
+		return "USER"
+	}
+}
+
+func compactChatText(v string, limit int) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	v = strings.Join(strings.Fields(v), " ")
+	r := []rune(v)
+	if len(r) > limit {
+		return string(r[:limit]) + "..."
+	}
+	return v
+}
+
+func buildPromptWithHistory(prompt string, messages []chatMessage) string {
+	prompt = strings.TrimSpace(prompt)
+	if len(messages) <= 1 {
+		return prompt
+	}
+	previous := []string{}
+	// chatPost appends the current user message before building the worker prompt.
+	for _, msg := range messages[:len(messages)-1] {
+		if msg.Error {
+			continue
+		}
+		label := chatMessageLabel(msg.Role)
+		limit := 3000
+		if label == "ASSISTANT" {
+			limit = 5000
+		}
+		content := compactChatText(msg.Content, limit)
+		if content != "" {
+			previous = append(previous, fmt.Sprintf("[%s]: %s", label, content))
+		}
+	}
+	if len(previous) == 0 {
+		return prompt
+	}
+	if len(previous) > 24 {
+		previous = previous[len(previous)-24:]
+	}
+	text := strings.Join(previous, "\n\n")
+	textRunes := []rune(text)
+	if len(textRunes) > 28000 {
+		text = "...[older history omitted]\n" + string(textRunes[len(textRunes)-28000:])
+	}
+	return "以下是当前会话的历史上下文，请在回答时延续这些上下文，不要把它当作用户的新问题。\n" +
+		"<history>\n" + text + "\n</history>\n\n" +
+		"### 用户当前消息\n" + prompt
+}
+
+// CloseChatWorkers terminates all persistent chat worker child processes.
+func (s *Server) CloseChatWorkers() {
+	if s == nil {
+		return
+	}
+	var workers []*chatWorker
+	s.ChatMu.Lock()
+	for sid, w := range s.ChatWorkers {
+		if w != nil {
+			workers = append(workers, w)
+		}
+		delete(s.ChatWorkers, sid)
+	}
+	s.ChatMu.Unlock()
+	for _, w := range workers {
+		if w.Cmd != nil && w.Cmd.Process != nil {
+			_ = w.Cmd.Process.Kill()
+			_, _ = w.Cmd.Process.Wait()
+		}
+	}
 }

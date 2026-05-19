@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -38,12 +39,25 @@ func main() {
 	srv := api.New(cfgStore, svc, models, static)
 	addr := fmt.Sprintf("%s:%d", cfgStore.Cfg.Host, cfgStore.Cfg.Port)
 	url := "http://" + addr
-	go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
 	server := &http.Server{Addr: addr, Handler: srv.Routes()}
-	log.Printf("GenericAgent Admin Go listening on %s", url)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("listen %s failed: %v; if the port is occupied, edit config.local.json and change port", addr, err)
-	}
+	go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
+	go func() {
+		log.Printf("GenericAgent Admin Go listening on %s", url)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen %s failed: %v; if the port is occupied, edit config.local.json and change port", addr, err)
+		}
+	}()
+	runTray(url,
+		func() { openBrowser(url) },
+		func() { openBrowser(url + "/chat") },
+		func() { srv.StopManagedServices() },
+		func() {
+			srv.ShutdownCleanup()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		},
+	)
 }
 
 func openBrowser(url string) {
