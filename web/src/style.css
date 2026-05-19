@@ -720,7 +720,8 @@ pre, code { background:#f7f7f7; color:#111; }
 .oa-prompt:hover { background:#f7f7f7; border-color:#d0d0d0; transform:none; }
 .oa-message {
   width:min(100% - 48px, 768px);
-  grid-template-columns:0 minmax(0,1fr);
+  display:flex;
+  align-items:flex-start;
   gap:0;
   padding:14px 0;
 }
@@ -735,7 +736,8 @@ pre, code { background:#f7f7f7; color:#111; }
   font-size:15px;
   line-height:1.7;
 }
-.oa-message.user { justify-items:end; }
+.oa-message.user { justify-content:flex-end; }
+.oa-message.assistant { justify-content:flex-start; }
 .oa-message.user .oa-bubble {
   max-width:70%;
   padding:10px 16px;
@@ -820,21 +822,28 @@ pre, code { background:#f7f7f7; color:#111; }
   justify-self:end !important;
 }
 
-/* Chat message readability and UTF-8-safe wrapping */
+/* Chat message readability: keep paragraphs, avoid Chinese per-character wrapping */
 .oa-content {
+  display:block !important;
+  width:100% !important;
+  max-width:100% !important;
   white-space:pre-wrap !important;
-  overflow-wrap:anywhere !important;
-  word-break:break-word !important;
+  overflow-wrap:break-word !important;
+  word-break:normal !important;
+  line-break:auto !important;
   line-height:1.72 !important;
 }
 .oa-content code,
 .oa-content pre {
   font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   white-space:pre-wrap;
-  overflow-wrap:anywhere;
+  overflow-wrap:break-word;
+  word-break:normal;
 }
 .oa-message.assistant .oa-bubble {
-  max-width:min(100%, 760px);
+  flex:1 1 auto;
+  max-width:760px;
+  min-width:0;
 }
 .oa-message.user .oa-bubble {
   max-width:min(82%, 680px);
