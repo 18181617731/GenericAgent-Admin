@@ -241,7 +241,7 @@ function TextMarkdown({ text = '' }) {
 }
 
 const FINAL_MARKER_RE = /```+\s*\n?\[Info\]\s*Final response to user\.\s*\n?```+/i
-const TURN_HEADER_RE = /\*\*\s*LLM Running \(Turn\s+(\d+)\)\s*\.\.\.\s*\*\*/gi
+const TURN_HEADER_RE = /(?:^|\n)\s*(?:\*\*)?\s*LLM Running\s*\(Turn\s+(\d+)(?:\))?\s*(?:\.\.\.)?\s*(?:\*\*)?/gi
 
 const cleanRunBody = (s = '') => String(s || '')
   .replace(/<summary>[\s\S]*?<\/summary>/gi, '')
