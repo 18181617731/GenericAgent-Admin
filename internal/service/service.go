@@ -71,7 +71,7 @@ func (m *Manager) python() string {
 
 func excluded(name string) bool {
 	switch name {
-	case "chatapp_common.py":
+	case "chatapp_common.py", "goal_mode.py":
 		return true
 	}
 	return false

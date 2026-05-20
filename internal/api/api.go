@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -61,6 +62,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/schedule/delete", s.scheduleDelete)
 	mux.HandleFunc("/api/schedule/toggle", s.scheduleToggle)
 	mux.HandleFunc("/api/schedule/artifact", s.scheduleArtifact)
+	mux.HandleFunc("/api/goals/start", s.goalsStart)
+	mux.HandleFunc("/api/goals/list", s.goalsList)
+	mux.HandleFunc("/api/goals/stop", s.goalsStop)
+	mux.HandleFunc("/api/goals/output", s.goalsOutput)
 	mux.HandleFunc("/api/config", s.configHandler)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
@@ -111,7 +116,18 @@ func bad(w http.ResponseWriter, code int, msg string) {
 }
 func decode(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(v)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +178,101 @@ func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 	default:
 		bad(w, 405, "method not allowed")
 	}
+}
+
+func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		Objective     string `json:"objective"`
+		BudgetSeconds int    `json:"budget_seconds"`
+		BudgetMinutes int    `json:"budget_minutes"`
+		MaxTurns      int    `json:"max_turns"`
+		LLMNo         *int   `json:"llm_no"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	if req.BudgetSeconds > 0 && req.BudgetMinutes > 0 {
+		bad(w, 400, "use either budget_seconds or budget_minutes, not both")
+		return
+	}
+	if req.BudgetSeconds <= 0 && req.BudgetMinutes > 0 {
+		if req.BudgetMinutes > 30*24*60 {
+			bad(w, 400, "budget_minutes must be <= 43200")
+			return
+		}
+		req.BudgetSeconds = req.BudgetMinutes * 60
+	}
+	meta, err := ga.StartGoal(s.CfgStore.Cfg.GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo})
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "goal": meta})
+}
+
+func (s *Server) goalsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	items, err := ga.ListGoals(s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"goals": items})
+}
+
+func (s *Server) goalsStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		ID  string `json:"id"`
+		PID int    `json:"pid"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	meta, err := ga.StopGoal(s.CfgStore.Cfg.GARoot, req.ID, req.PID)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "goal": meta})
+}
+
+func (s *Server) goalsOutput(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	maxBytes := int64(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_bytes")); raw != "" {
+		var err error
+		maxBytes, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			bad(w, 400, "invalid max_bytes")
+			return
+		}
+		if maxBytes < 0 {
+			bad(w, 400, "max_bytes must be >= 0")
+			return
+		}
+	}
+	result, err := ga.GoalOutput(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("id"), maxBytes)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) scheduleArtifact(w http.ResponseWriter, r *http.Request) {

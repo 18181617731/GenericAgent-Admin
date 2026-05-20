@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Eye, FileCode2, FolderCog, Globe2, MessageSquare, Play, RefreshCw, Save, Search, Server, ShieldAlert, Power, SlidersHorizontal, Square, Terminal, UploadCloud, XCircle } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Copy, Eye, FileCode2, FolderCog, Globe2, MessageSquare, Play, RefreshCw, Save, Search, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, UploadCloud, XCircle } from 'lucide-react'
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options })
@@ -10,7 +10,7 @@ const api = async (url, options = {}) => {
   return body
 }
 
-const NAV_ITEMS = ['overview','chat','control','files','tasks','memory','channels','autonomous','models','logs']
+const NAV_ITEMS = ['overview','chat','control','files','tasks','memory','channels','autonomous','goals','models','logs']
 const ROUTE_TABS = NAV_ITEMS.filter(n => n !== 'chat')
 const TASK_SUB_TABS = ['services','scheduled','reports']
 
@@ -25,28 +25,48 @@ const buildRoute = (tab, taskSubTab = 'services') => tab === 'tasks' ? `#/${tab}
 
 const I18N = {
   zh: {
-    appName: 'GA Admin', tagline: 'GenericAgent 生命周期控制面', root: 'GenericAgent 根目录', setupTitle: '首次配置 GenericAgent', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', validateRoot: '验证并使用', installGA: '安装 GA', installPath: '安装目录', setupOk: 'GA 路径已配置', installDone: 'GA 已安装并配置', browse: '选择目录', checkEnv: '检查 Python / Git', envReady: '环境已就绪', envMissing: '环境缺失', save: '保存', refresh: '刷新', busy: '执行中', ready: '就绪', error: '错误', empty: '暂无', enabled: '启用', disabled: '停用', start: '启动', stop: '停止', running: '运行中', stopped: '已停止', language: '语言', show: '显示', hide: '隐藏', search: '搜索', read: '读取', create: '创建', remove: '删除', backup: '写操作会自动备份', autostart: '开机自启', enableAutostart: '开启自启', disableAutostart: '关闭自启', unsupported: '不支持',
-    nav: { overview: '总览', chat: '对话', control: '控制面', files: '文件', tasks: '任务', memory: '记忆', channels: '通道', autonomous: '自主进化', schedule: '定时', models: '模型', logs: '日志' },
-    desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', control: '运行前检查、能力地图、风险摘要与最近报告。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '普通会话、任务文件、批处理入口、任务型服务与 sche_tasks 定时任务。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '反思、自主运行、Goal Mode 与团队 Worker。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', models: '读取/预览/写回 GA mykey.py 模型配置。', logs: '进程状态与输出日志。' },
+    appName: 'GA Admin', tagline: 'GenericAgent 生命周期控制面', root: 'GenericAgent 根目录', setupTitle: '首次配置 GenericAgent', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', validateRoot: '验证并使用', installGA: '安装 GA', installPath: '安装目录', setupOk: 'GA 路径已配置', installDone: 'GA 已安装并配置', browse: '选择目录', checkEnv: '检查 Python / Git', envReady: '环境已就绪', envMissing: '环境缺失', save: '保存', refresh: '刷新', busy: '执行中', ready: '就绪', error: '错误', empty: '暂无', enabled: '启用', disabled: '停用', start: '启动', stop: '停止', running: '运行中', stopped: '已停止', language: '语言', copy: '复制', clear: '清空', show: '显示', hide: '隐藏', search: '搜索', read: '读取', create: '创建', remove: '删除', backup: '写操作会自动备份', autostart: '开机自启', enableAutostart: '开启自启', disableAutostart: '关闭自启', unsupported: '不支持',
+    nav: { overview: '总览', chat: '对话', control: '控制面', files: '文件', tasks: '任务', memory: '记忆', channels: '通道', autonomous: '自主进化', schedule: '定时', goals: 'Goal 模式', models: '模型', logs: '日志' },
+    desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', control: '运行前检查、能力地图、风险摘要与最近报告。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '普通会话、任务文件、批处理入口、任务型服务与 sche_tasks 定时任务。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '反思、自主运行、Goal Mode 与团队 Worker。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '读取/预览/写回 GA mykey.py 模型配置。', logs: '进程状态与输出日志。' },
     cards: { processes: '进程', running: '运行中', stopped: '已停止', memoryLayers: '记忆层', sopTools: 'SOP/工具', schedule: '定时任务', enabledTasks: '已启用', reports: '报告', coreFiles: '核心文件', reflect: '反思脚本', health: 'GA 健康', capabilities: '能力', risks: '风险' },
     lists: { serviceGroups: '服务域', coreFiles: '核心文件', reflect: 'Reflect / Autonomous', frontends: '前端 / 通道', memory: '记忆层级', sop: 'SOP 与工具', taskServices: '任务服务', frontendServices: '前端服务', reflectServices: '反思服务', reflectScripts: '反思脚本', scheduledTasks: '定时任务', recentReports: '最近报告', processes: '进程', generatedPreview: '生成预览', riskHints: '接管提示', autostart: '开机自启', capabilities: '能力地图', readiness: '运行前检查', fileList: '文件列表', filePreview: '文件预览', searchResults: '搜索结果', editor: '编辑器' },
-    hints: { rootSaved: 'GA 根目录已保存', taskSaved: '任务已保存并备份旧文件', taskDeleted: '任务已删除并备份', taskToggled: '任务状态已更新', modelsSaved: 'mykey.py 已备份并写回', savedSecret: '已保存；输入新值可替换', secret: 'API Key / Token', noFrontend: '未发现前端服务', noReflect: '未发现 reflect 服务', noTasks: '暂无 sche_tasks/*.json', noLogs: '暂无日志', previewHelp: '点击“预览”查看配置；点击“写回 mykey.py”会先备份再覆盖 GA 的 mykey.py。', modelSource: '来源', secretHidden: '已隐藏真实密钥', addProfile: '新增 Profile', preview: '预览', writeMykey: '写回 mykey.py', filePath: '相对路径', searchText: '搜索文本', tailLines: '尾部行数', newTaskId: 'new_task', jsonHelp: 'JSON 需为对象；保存/删除会生成 .bak 时间戳。', autostartEnabled: '已开启：用户登录后自动启动 GA Admin。', autostartDisabled: '未开启：需要手动启动 GA Admin。', autostartUnsupported: '当前平台暂不支持自动注册。', autostartChanged: '开机自启状态已更新' },
-    fields: { varName: '变量名', type: '类型', name: '名称', model: '模型', apiBase: 'API Base', apiKey: 'API Key', stream: '流式', maxRetries: '重试', readTimeout: '超时', reasoningEffort: '推理强度', editor: 'JSON 内容' }
+    hints: { rootSaved: 'GA 根目录已保存', taskSaved: '任务已保存并备份旧文件', taskDeleted: '任务已删除并备份', taskToggled: '任务状态已更新', modelsSaved: 'mykey.py 已备份并写回', savedSecret: '已保存；输入新值可替换', secret: 'API Key / Token', noFrontend: '未发现前端服务', noReflect: '未发现 reflect 服务', noTasks: '暂无 sche_tasks/*.json', noLogs: '暂无日志', previewHelp: '点击“预览”查看配置；点击“写回 mykey.py”会先备份再覆盖 GA 的 mykey.py。', modelSource: '来源', secretHidden: '已隐藏真实密钥', addProfile: '新增 Profile', preview: '预览', writeMykey: '写回 mykey.py', filePath: '相对路径', searchText: '搜索文本', tailLines: '尾部行数', newTaskId: 'new_task', jsonHelp: 'JSON 需为对象；保存/删除会生成 .bak 时间戳。', autostartEnabled: '已开启：用户登录后自动启动 GA Admin。', autostartDisabled: '未开启：需要手动启动 GA Admin。', autostartUnsupported: '当前平台暂不支持自动注册。', autostartChanged: '开机自启状态已更新', goalObjectiveRequired: '目标不能为空', goalObjectiveTooLarge: '目标超过 16384 字节', goalBudgetInteger: '预算分钟必须是整数', goalBudgetPositive: '预算分钟必须大于 0', goalBudgetTooLarge: '预算分钟不能超过 43200', goalTurnsInteger: '最大轮次必须是整数', goalTurnsNonNegative: '最大轮次不能为负数', goalTurnsTooLarge: '最大轮次不能超过 10000', goalLLMInteger: 'LLM # 必须是整数', goalLLMNonNegative: 'LLM # 不能为负数', goalStarted: 'Goal 已启动', goalStopped: 'Goal 已停止', goalStopConfirm: '确认停止 Goal {id}？将仅终止该 Goal 记录的精确 PID {pid}。', goalOutputTruncated: '仅显示输出尾部，前面内容已截断', goalOutputCapped: '请求字节数超过后端上限，已按上限读取', goalOutputDefault: '未指定读取字节数，已使用默认值', goalOutputBytesInteger: '输出字节数必须是整数', goalOutputBytesNonNegative: '输出字节数不能为负数', goalOutputBytesTooLarge: '输出字节数不能超过 1048576', goalOutputCopied: '输出已复制', goalOutputCleared: '输出已清空', goalOutputLogMissing: '日志文件尚未创建，当前无可读取输出' },
+    goalOutputStatus: { full: '完整', tail_truncated: '尾部截断', empty_log: '空日志', missing_log: '日志缺失' },
+    fields: { varName: '变量名', type: '类型', name: '名称', model: '模型', apiBase: 'API Base', apiKey: 'API Key', stream: '流式', maxRetries: '重试', readTimeout: '超时', reasoningEffort: '推理强度', editor: 'JSON 内容', objective: '目标', budgetMinutes: '预算分钟', maxTurns: '最大轮次', llmNo: 'LLM #（可选）', goalRuns: 'Goal 运行', outputTail: '输出尾部', maxBytes: '最大字节', outputPreset64k: '64K', outputPreset256k: '256K', outputPreset1m: '1M', outputDefault: '默认64K', outputShown: '已显示', outputLines: '行数', outputLimit: '读取上限', autoRefresh: '自动刷新', notRunning: '未运行', startGoalMode: '启动 Goal Mode', goalPlaceholder: '描述要让 GA Goal Mode 持续推进的目标', pid: 'PID', turn: '轮次', remaining: '剩余', elapsed: '已用', started: '开始', ended: '结束', updated: '更新', stateFile: '状态', logFile: '日志', logMissing: '日志未创建', logReady: '日志就绪', outputStatus: '输出状态' }
   },
   en: {
-    appName: 'GA Admin', tagline: 'GenericAgent lifecycle control plane', root: 'GenericAgent root', setupTitle: 'First-time GenericAgent setup', setupDesc: 'Select an existing GA root, or install GA into a new directory.', validateRoot: 'Validate & use', installGA: 'Install GA', installPath: 'Install path', setupOk: 'GA root configured', installDone: 'GA installed and configured', browse: 'Choose directory', checkEnv: 'Check Python / Git', envReady: 'Environment ready', envMissing: 'Environment missing', save: 'Save', refresh: 'Refresh', busy: 'Busy', ready: 'Ready', error: 'Error', empty: 'Empty', enabled: 'Enabled', disabled: 'Disabled', start: 'Start', stop: 'Stop', running: 'Running', stopped: 'Stopped', language: 'Language', show: 'Show', hide: 'Hide', search: 'Search', read: 'Read', create: 'Create', remove: 'Delete', backup: 'writes create backups', autostart: 'Autostart', enableAutostart: 'Enable autostart', disableAutostart: 'Disable autostart', unsupported: 'Unsupported',
-    nav: { overview: 'Overview', chat: 'Chat', control: 'Control', files: 'Files', tasks: 'Tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', schedule: 'Schedule', models: 'Models', logs: 'Logs' },
+    appName: 'GA Admin', tagline: 'GenericAgent lifecycle control plane', root: 'GenericAgent root', setupTitle: 'First-time GenericAgent setup', setupDesc: 'Select an existing GA root, or install GA into a new directory.', validateRoot: 'Validate & use', installGA: 'Install GA', installPath: 'Install path', setupOk: 'GA root configured', installDone: 'GA installed and configured', browse: 'Choose directory', checkEnv: 'Check Python / Git', envReady: 'Environment ready', envMissing: 'Environment missing', save: 'Save', refresh: 'Refresh', busy: 'Busy', ready: 'Ready', error: 'Error', empty: 'Empty', enabled: 'Enabled', disabled: 'Disabled', start: 'Start', stop: 'Stop', running: 'Running', stopped: 'Stopped', language: 'Language', copy: 'Copy', clear: 'Clear', show: 'Show', hide: 'Hide', search: 'Search', read: 'Read', create: 'Create', remove: 'Delete', backup: 'writes create backups', autostart: 'Autostart', enableAutostart: 'Enable autostart', disableAutostart: 'Disable autostart', unsupported: 'Unsupported',
+    nav: { overview: 'Overview', chat: 'Chat', control: 'Control', files: 'Files', tasks: 'Tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', schedule: 'Schedule', goals: 'Goal Mode', models: 'Models', logs: 'Logs' },
     desc: { overview: 'Understand and take over GA lifecycle by native domains.', chat: 'GA native conversation, uploads and streaming UI migrated from reactapp.', control: 'Readiness, capability map, risks and recent reports.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Conversations, task files, batch entrypoints and task services.', memory: 'Layered memory, SOPs and utility indexes.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Reflection, autonomous runs, Goal Mode and team workers.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', models: 'Import, preview and write GA mykey.py model config.', logs: 'Process state and output logs.' },
     cards: { processes: 'Processes', running: 'Running', stopped: 'Stopped', memoryLayers: 'Memory layers', sopTools: 'SOP/tools', schedule: 'Scheduled jobs', enabledTasks: 'Enabled', reports: 'Reports', coreFiles: 'Core files', reflect: 'Reflect scripts', health: 'GA health', capabilities: 'Capabilities', risks: 'Risks' },
     lists: { serviceGroups: 'Service domains', coreFiles: 'Core files', reflect: 'Reflect / Autonomous', frontends: 'Frontends / Channels', memory: 'Memory layers', sop: 'SOPs and tools', taskServices: 'Task services', frontendServices: 'Frontend services', reflectServices: 'Reflect services', reflectScripts: 'Reflect scripts', scheduledTasks: 'Scheduled jobs', recentReports: 'Recent reports', processes: 'Processes', generatedPreview: 'Generated preview', riskHints: 'Takeover hints', autostart: 'Autostart', capabilities: 'Capability map', readiness: 'Readiness', fileList: 'Files', filePreview: 'Preview', searchResults: 'Search results', editor: 'Editor' },
-    hints: { rootSaved: 'GA root saved', taskSaved: 'Task saved with backup', taskDeleted: 'Task deleted with backup', taskToggled: 'Task state updated', modelsSaved: 'mykey.py backed up and written', savedSecret: 'Saved; type a new value to replace', secret: 'API Key / Token', noFrontend: 'No frontend service found', noReflect: 'No reflect service found', noTasks: 'No sche_tasks/*.json', noLogs: 'No logs', previewHelp: 'Preview generated config; writing mykey.py backs up first.', modelSource: 'Source', secretHidden: 'Real secret hidden', addProfile: 'Add profile', preview: 'Preview', writeMykey: 'Write mykey.py', filePath: 'relative path', searchText: 'search text', tailLines: 'tail lines', newTaskId: 'new_task', jsonHelp: 'JSON must be an object; save/delete creates timestamped .bak.' },
-    fields: { varName: 'Var name', type: 'Type', name: 'Name', model: 'Model', apiBase: 'API Base', apiKey: 'API Key', stream: 'Stream', maxRetries: 'Retries', readTimeout: 'Timeout', reasoningEffort: 'Reasoning effort', editor: 'JSON content' }
+    hints: { rootSaved: 'GA root saved', taskSaved: 'Task saved with backup', taskDeleted: 'Task deleted with backup', taskToggled: 'Task state updated', modelsSaved: 'mykey.py backed up and written', savedSecret: 'Saved; type a new value to replace', secret: 'API Key / Token', noFrontend: 'No frontend service found', noReflect: 'No reflect service found', noTasks: 'No sche_tasks/*.json', noLogs: 'No logs', previewHelp: 'Preview generated config; writing mykey.py backs up first.', modelSource: 'Source', secretHidden: 'Real secret hidden', addProfile: 'Add profile', preview: 'Preview', writeMykey: 'Write mykey.py', filePath: 'relative path', searchText: 'search text', tailLines: 'tail lines', newTaskId: 'new_task', jsonHelp: 'JSON must be an object; save/delete creates timestamped .bak.', goalObjectiveRequired: 'Objective is required', goalObjectiveTooLarge: 'Objective exceeds 16384 bytes', goalBudgetInteger: 'Budget minutes must be an integer', goalBudgetPositive: 'Budget minutes must be positive', goalBudgetTooLarge: 'Budget minutes exceeds 43200', goalTurnsInteger: 'Max turns must be an integer', goalTurnsNonNegative: 'Max turns must be non-negative', goalTurnsTooLarge: 'Max turns exceeds 10000', goalLLMInteger: 'LLM # must be an integer', goalLLMNonNegative: 'LLM # cannot be negative', goalStarted: 'Goal started', goalStopped: 'Goal stopped', goalStopConfirm: 'Stop Goal {id}? Only the exact PID {pid} recorded for this Goal will be terminated.', goalOutputTruncated: 'Showing tail only; earlier output was truncated', goalOutputCapped: 'Requested bytes exceeded backend limit; reading at the cap', goalOutputDefault: 'No byte limit specified; using default', goalOutputBytesInteger: 'Output bytes must be an integer', goalOutputBytesNonNegative: 'Output bytes cannot be negative', goalOutputBytesTooLarge: 'Output bytes cannot exceed 1048576', goalOutputCopied: 'Output copied', goalOutputCleared: 'Output cleared', goalOutputLogMissing: 'Log file has not been created yet; no output is available' },
+    goalOutputStatus: { full: 'full', tail_truncated: 'tail truncated', empty_log: 'empty log', missing_log: 'missing log' },
+    fields: { varName: 'Var name', type: 'Type', name: 'Name', model: 'Model', apiBase: 'API Base', apiKey: 'API Key', stream: 'Stream', maxRetries: 'Retries', readTimeout: 'Timeout', reasoningEffort: 'Reasoning effort', editor: 'JSON content', objective: 'Objective', budgetMinutes: 'Budget minutes', maxTurns: 'Max turns', llmNo: 'LLM # (optional)', goalRuns: 'Goal runs', outputTail: 'Output tail', maxBytes: 'Max bytes', outputPreset64k: '64K', outputPreset256k: '256K', outputPreset1m: '1M', outputDefault: 'Default 64K', outputShown: 'Shown', outputLines: 'Lines', outputLimit: 'Limit', autoRefresh: 'Auto refresh', notRunning: 'not running', startGoalMode: 'Start Goal Mode', goalPlaceholder: 'Describe the sustained objective for GA Goal Mode', pid: 'PID', turn: 'turn', remaining: 'remaining', elapsed: 'elapsed', started: 'started', ended: 'ended', updated: 'updated', stateFile: 'state', logFile: 'log', logMissing: 'log not created', logReady: 'log ready', outputStatus: 'output status' }
   }
 }
 
 const emptyProfile = (idx = 0) => ({ var_name: `MODEL_${idx + 1}`, type: 'openai', name: '', model: '', apibase: '', apikey: '', stream: true, max_retries: 3, read_timeout: 300, reasoning_effort: '', enabled: true })
 const safeJson = (v) => JSON.stringify(v ?? {}, null, 2)
 const group = (items, pred) => (items || []).filter(pred)
+const formatDuration = (seconds) => {
+  const n = Math.max(0, Number(seconds) || 0)
+  const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = Math.floor(n % 60)
+  return h ? `${h}h ${m}m` : (m ? `${m}m ${s}s` : `${s}s`)
+}
+const formatGoalTime = (value) => value ? new Date(value).toLocaleString() : '-'
+const formatBytes = (bytes) => {
+  const n = Math.max(0, Number(bytes) || 0)
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 ? 0 : 1)} MiB`
+  if (n >= 1024) return `${(n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1)} KiB`
+  return `${n} B`
+}
+const outputLineCount = (text) => {
+  if (!text) return 0
+  const normalized = String(text).replace(/\r?\n$/, '')
+  return normalized ? normalized.split(/\r?\n/).length : 0
+}
+
 
 function Stat({ label, value, icon }) { return <div className="stat"><div>{icon}</div><span>{label}</span><b>{value}</b></div> }
 function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
@@ -70,6 +90,10 @@ export default function App() {
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
+  const [goals, setGoals] = useState([]), [goalObjective, setGoalObjective] = useState(''), [goalBudget, setGoalBudget] = useState(480), [goalMaxTurns, setGoalMaxTurns] = useState(200), [goalLLMNo, setGoalLLMNo] = useState(''), [selectedGoal, setSelectedGoal] = useState(''), [goalOutput, setGoalOutput] = useState(''), [goalOutputMeta, setGoalOutputMeta] = useState(null)
+  const [goalOutputBytes, setGoalOutputBytes] = useState(() => localStorage.getItem('ga-admin-goal-output-bytes') || '120000')
+  const [goalAutoRefresh, setGoalAutoRefresh] = useState(() => localStorage.getItem('ga-admin-goal-auto-refresh') !== 'false')
+  const goalOutputSeq = useRef(0), goalRefreshBusy = useRef(false)
 
   const inv = health?.inventory || {}
   const schedule = inv.schedule || {}
@@ -87,9 +111,9 @@ export default function App() {
         setServices([]); setControl(null); setLogs([]); setFileList([])
         return
       }
-      const [svc, ctrl] = await Promise.all([api('/api/services'), api('/api/ga/control')])
+      const [svc, ctrl, goalData] = await Promise.all([api('/api/services'), api('/api/ga/control'), api('/api/goals/list').catch(() => ({ goals: [] }))])
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
-      setServices(serviceList); setControl(ctrl)
+      setServices(serviceList); setControl(ctrl); setGoals(goalData.goals || [])
       const first = serviceList[0]?.name; if (!selected && first) setSelected(first)
       await loadFiles(filePath)
     } catch (e) { setMsg(e.message) } finally { setBusy(false) }
@@ -109,6 +133,8 @@ export default function App() {
     if (window.location.hash !== next) window.history.replaceState(null, '', next)
   }, [tab, taskSubTab])
   useEffect(() => { localStorage.setItem('ga-admin-lang', lang) }, [lang])
+  useEffect(() => { localStorage.setItem('ga-admin-goal-output-bytes', String(goalOutputBytes)) }, [goalOutputBytes])
+  useEffect(() => { localStorage.setItem('ga-admin-goal-auto-refresh', goalAutoRefresh ? 'true' : 'false') }, [goalAutoRefresh])
   useEffect(() => { if (selected) api(`/api/logs/${encodeURIComponent(selected)}`).then(d => setLogs(d.lines || [])).catch(e => setMsg(e.message)) }, [selected])
 
   const toggleAutostart = async () => { setBusy(true); setMsg(''); try { const next = !autostart?.enabled; const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -121,6 +147,90 @@ export default function App() {
   const toggleServiceAutostart = async (name, enabled) => { setBusy(true); try { const d = await api('/api/services/autostart', { method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = async (name = selected) => { if (!name) return; setSelected(name); setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) }
   const viewServiceLogs = async (name) => { setTab('logs'); await loadServiceLogs(name) }
+  const loadGoals = async () => { const d = await api('/api/goals/list'); setGoals(d.goals || []); return d.goals || [] }
+  const startGoal = async () => {
+    setBusy(true); setMsg('')
+    try {
+      const objective = goalObjective.trim()
+      const budgetMinutes = Number(goalBudget)
+      const maxTurns = Number(goalMaxTurns)
+      const llmNo = goalLLMNo === '' ? null : Number(goalLLMNo)
+      if (!objective) throw new Error(t.hints.goalObjectiveRequired)
+      if (new TextEncoder().encode(objective).length > 16384) throw new Error(t.hints.goalObjectiveTooLarge)
+      if (!Number.isInteger(budgetMinutes)) throw new Error(t.hints.goalBudgetInteger)
+      if (budgetMinutes <= 0) throw new Error(t.hints.goalBudgetPositive)
+      if (budgetMinutes > 43200) throw new Error(t.hints.goalBudgetTooLarge)
+      if (!Number.isInteger(maxTurns)) throw new Error(t.hints.goalTurnsInteger)
+      if (maxTurns < 0) throw new Error(t.hints.goalTurnsNonNegative)
+      if (maxTurns > 10000) throw new Error(t.hints.goalTurnsTooLarge)
+      if (llmNo !== null && !Number.isInteger(llmNo)) throw new Error(t.hints.goalLLMInteger)
+      if (llmNo !== null && llmNo < 0) throw new Error(t.hints.goalLLMNonNegative)
+      const body = { objective, budget_minutes: budgetMinutes, max_turns: maxTurns }
+      if (llmNo !== null) body.llm_no = llmNo
+      const d = await api('/api/goals/start', { method:'POST', body: JSON.stringify(body) })
+      setMsg(`${t.hints.goalStarted}: ${d.goal?.id || ''}`); setGoalObjective(''); setSelectedGoal(d.goal?.id || selectedGoal); await loadGoals(); if (d.goal?.id) await loadGoalOutput(d.goal.id)
+    } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
+  }
+  const stopGoal = async (g) => { if (!g) return; const confirmText = t.hints.goalStopConfirm.replace('{id}', g.id || '-').replace('{pid}', g.pid || '-'); if (!window.confirm(confirmText)) return; setBusy(true); setMsg(''); try { await api('/api/goals/stop', { method:'POST', body: JSON.stringify({ id: g.id, pid: g.pid }) }); setMsg(`${t.hints.goalStopped}: ${g.id}`); await loadGoals(); if (selectedGoal === g.id) await loadGoalOutput(g.id) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const loadGoalOutput = async (id = selectedGoal) => {
+    if (!id) return
+    setSelectedGoal(id)
+    const seq = ++goalOutputSeq.current
+    try {
+      const maxBytes = Number(goalOutputBytes || 0)
+      if (!Number.isInteger(maxBytes)) throw new Error(t.hints.goalOutputBytesInteger)
+      if (maxBytes < 0) throw new Error(t.hints.goalOutputBytesNonNegative)
+      if (maxBytes > 1048576) throw new Error(t.hints.goalOutputBytesTooLarge)
+      const d = await api(`/api/goals/output?id=${encodeURIComponent(id)}&max_bytes=${encodeURIComponent(maxBytes)}`)
+      if (seq !== goalOutputSeq.current) return
+      setGoalOutput(d.output || '')
+      setGoalOutputMeta({
+        truncated: !!d.truncated,
+        totalBytes: d.total_bytes || 0,
+        bytesReturned: d.bytes_returned || 0,
+        linesReturned: d.lines_returned || 0,
+        totalLines: d.total_lines || 0,
+        requestedBytes: d.requested_bytes || 0,
+        maxBytes: d.max_bytes || 0,
+        defaultBytes: d.default_bytes || 0,
+        defaultBytesUsed: !!d.default_bytes_used,
+        maxBytesCapped: !!d.max_bytes_capped,
+        outputStatus: d.output_status || '',
+        goal: d.goal || null,
+      })
+      if (d.goal) setGoals(gs => gs.map(g => g.id === d.goal.id ? d.goal : g))
+    } catch (e) {
+      if (seq !== goalOutputSeq.current) return
+      setMsg(e.message)
+      setGoalOutput(e.message)
+      setGoalOutputMeta({
+        error: e.message,
+        bytesReturned: new Blob([e.message || '']).size,
+        totalBytes: new Blob([e.message || '']).size,
+        requestedBytes: Number(goalOutputBytes || 0),
+        maxBytes: Number(goalOutputBytes || 0),
+      })
+    }
+  }
+  useEffect(() => {
+    if (tab !== 'goals' || !goalAutoRefresh) return
+    const refreshGoals = async () => {
+      if (goalRefreshBusy.current) return
+      goalRefreshBusy.current = true
+      try {
+        const gs = await loadGoals()
+        const active = selectedGoal || (gs || []).find(g => g.running)?.id || (gs || [])[0]?.id
+        if (active) await loadGoalOutput(active)
+      } catch (e) {
+        setMsg(e.message)
+      } finally {
+        goalRefreshBusy.current = false
+      }
+    }
+    refreshGoals()
+    const timer = setInterval(refreshGoals, 3000)
+    return () => clearInterval(timer)
+  }, [tab, selectedGoal, goalOutputBytes, goalAutoRefresh])
   const toggleTask = async (id, enabled) => { setBusy(true); try { await api('/api/schedule/toggle', { method:'POST', body: JSON.stringify({ id, enabled }) }); setMsg(t.hints.taskToggled); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
   const loadFiles = async (path = '') => { const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`); setFileList(d.items || d.entries || []); setFilePath(path || '') }
@@ -217,6 +327,7 @@ export default function App() {
       {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
       {tab==='channels' && <section className="channels-page"><div className="stats"><Stat label={t.lists.frontendServices} value={frontendSvcs.length} icon={<Server/>}/><Stat label={t.running} value={frontendSvcs.filter(s=>s.running).length} icon={<CheckCircle2/>}/><Stat label={t.stopped} value={frontendSvcs.filter(s=>!s.running).length} icon={<XCircle/>}/></div><Panel title={t.lists.frontendServices} className="channels-panel"><p className="muted">{t.desc.channels}</p><ChannelServiceTable services={frontendSvcs} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/></Panel></section>}
       {tab==='autonomous' && <section><div className="grid2"><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.reflectScripts}><EntryList items={inv.reflect || []} empty={t.hints.noReflect}/></Panel></div><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
+      {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} onFile={readFile} setMsg={setMsg}/>}
       {tab==='models' && <Models t={t} profiles={profiles} setProfiles={setProfiles} patchProfile={patchProfile} importModels={importModels} previewModels={previewModels} saveModels={saveModels} modelPreview={modelPreview}/>} 
       {tab==='logs' && <section className="logs-page"><div className="logs-layout"><Panel title={t.lists.processes} className="logs-side"><div className="logs-toolbar"><label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label><button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button></div><div className="logs-service-list">{services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}><span className={s.running?'dot running':'dot'}></span><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></button>)}</div></Panel><Panel title={`Logs · ${selected || '-'}`} className="log-panel"><div className="log-head"><div>{selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}<span className="log-count">{logs.length} lines · UTF-8</span></div><div className="actions"><button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button><button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button></div></div><pre className="log-view">{logs.join('\n') || t.hints.noLogs}</pre></Panel></div></section>}
     </main>
@@ -257,6 +368,169 @@ function ChatPage({ t }) {
   return <section className="chat-shell native-chat"><div className="chat-top"><div><h3>{t.nav.chat}</h3><p>Admin 原生对话：由 Go API 管理会话，按需启动 Python GA Worker。</p></div><div className="actions"><button onClick={loadSessions}><RefreshCw size={14}/>{t.refresh}</button><button onClick={newSession}><Play size={14}/>新会话</button><span className="ok">Native</span></div></div>{err && <div className="message">{err}</div>}<div className="chat-grid"><aside className="chat-sessions"><button className="primary" onClick={newSession}>+ 新会话</button>{sessions.map(s => <button key={s.id} className={s.id===sid?'active':''} onClick={()=>openSession(s.id)}><b>{s.title || '新会话'}</b><small>{s.count || 0} 条</small></button>)}</aside><main className="chat-main"><div className="chat-messages">{messages.length===0 && <div className="empty-chat">选择或创建会话后开始对话</div>}{messages.map(m => <div key={m.id} className={`bubble ${m.role} ${m.error?'error':''}`}><div className="role">{m.role}</div><div className="content">{m.content}</div></div>)}</div><div className="chat-compose"><textarea value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && e.ctrlKey) send() }} placeholder="输入给 GenericAgent 的任务，Ctrl+Enter 发送"/><button disabled={busy || !prompt.trim()} onClick={send}>{busy?'执行中...':'发送'}</button></div></main></div></section>
 }
 
+
+const copyText = async (text) => {
+  const value = text || ''
+  if (!value) return
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  const el = document.createElement('textarea')
+  el.value = value
+  el.setAttribute('readonly', '')
+  el.style.position = 'fixed'
+  el.style.left = '-9999px'
+  document.body.appendChild(el)
+  el.select()
+  document.execCommand('copy')
+  document.body.removeChild(el)
+}
+
+const clampPercent = (value) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0))
+const goalTurnPercent = (g) => {
+  const serverPct = Number(g?.turn_percent)
+  if (Number.isFinite(serverPct)) return clampPercent(serverPct)
+  const maxTurns = Number(g?.max_turns || 0)
+  if (!maxTurns) return 0
+  return clampPercent((Number(g?.turns_used || 0) / maxTurns) * 100)
+}
+const goalBudgetPercent = (g) => {
+  const serverPct = Number(g?.budget_percent)
+  if (Number.isFinite(serverPct)) return clampPercent(serverPct)
+  const elapsed = Number(g?.elapsed_seconds || 0)
+  const remaining = Number(g?.remaining_seconds || 0)
+  const total = elapsed + Math.max(0, remaining)
+  if (!total) return 0
+  return clampPercent((elapsed / total) * 100)
+}
+
+function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onRefresh, onOutput, onClearOutput, onFile, setMsg }) {
+  const goalList = goals || []
+  const running = goalList.filter(g => g.running).length
+  const selectedGoal = goalList.find(g => g.id === selected) || outputMeta?.goal || null
+  const outputBadges = []
+  if (outputMeta?.error) outputBadges.push(`${t.error}: ${outputMeta.error}`)
+  if (outputMeta?.truncated) outputBadges.push(`${t.hints.goalOutputTruncated}: ${formatBytes(outputMeta.bytesReturned)}/${formatBytes(outputMeta.totalBytes)}`)
+  if (outputMeta?.maxBytesCapped) outputBadges.push(`${t.hints.goalOutputCapped}: ${formatBytes(outputMeta.requestedBytes)} -> ${formatBytes(outputMeta.maxBytes)}`)
+  if (outputMeta?.defaultBytesUsed) outputBadges.push(`${t.hints.goalOutputDefault}: ${formatBytes(outputMeta.defaultBytes || outputMeta.maxBytes)}`)
+  if (outputMeta?.outputStatus) outputBadges.push(`${t.fields.outputStatus}: ${t.goalOutputStatus?.[outputMeta.outputStatus] || outputMeta.outputStatus}`)
+  if (outputMeta?.goal?.missing_log) outputBadges.push(t.hints.goalOutputLogMissing)
+
+  const outputBytesShown = outputMeta?.bytesReturned ?? new Blob([output || '']).size
+  const outputTotalBytes = outputMeta?.totalBytes ?? outputBytesShown
+  const outputLinesShown = outputMeta?.linesReturned ?? outputLineCount(output)
+  const outputTotalLines = outputMeta?.totalLines ?? outputLinesShown
+  const outputLimitLabel = Number(outputBytes || 0) > 0 ? formatBytes(outputBytes) : t.fields.outputDefault
+  const selectedTurnPct = selectedGoal ? goalTurnPercent(selectedGoal) : 0
+  const selectedBudgetPct = selectedGoal ? goalBudgetPercent(selectedGoal) : 0
+
+  const copyOutput = async () => {
+    try { await copyText(output || ''); setMsg(t.hints.goalOutputCopied) }
+    catch (e) { setMsg(e.message) }
+  }
+
+  return <section className="goals-page">
+    <div className="stats schedule-stats goal-stats">
+      <div className="stat"><Target/><span>{t.nav.goals}</span><b>{goalList.length}</b></div>
+      <div className="stat"><Activity/><span>{t.running}</span><b>{running}</b></div>
+      <div className="stat"><Terminal/><span>reflect/goal_mode.py</span><b>{running ? t.running : t.ready}</b></div>
+    </div>
+
+    <div className="goal-shell">
+      <div className="goal-left">
+        <Panel title={t.fields.startGoalMode} className="goal-start-panel">
+          <p className="muted">{t.desc.goals}</p>
+          <label className="goal-field">{t.fields.objective}
+            <textarea className="goal-objective" value={objective} maxLength={16384} onChange={e=>setObjective(e.target.value)} placeholder={t.fields.goalPlaceholder}/>
+          </label>
+          <div className="form-grid compact-form goal-params">
+            <label>{t.fields.budgetMinutes}<input type="number" min="1" max="43200" value={budget} onChange={e=>setBudget(e.target.value)}/></label>
+            <label>{t.fields.maxTurns}<input type="number" min="0" max="10000" value={maxTurns} onChange={e=>setMaxTurns(e.target.value)}/></label>
+            <label>{t.fields.llmNo}<input type="number" min="0" value={llmNo} onChange={e=>setLLMNo(e.target.value)} placeholder="0"/></label>
+          </div>
+          <div className="actions goal-start-actions">
+            <button className="primary" disabled={busy || !objective.trim()} onClick={onStart}><Play size={14}/>{t.start}</button>
+            <button disabled={busy} onClick={onRefresh}><RefreshCw size={14}/>{t.refresh}</button>
+          </div>
+        </Panel>
+
+        <Panel title={t.fields.goalRuns} className="goals-list-panel">
+          <div className="goal-list clean-list">
+            {goalList.length ? goalList.map(g => <GoalRunCard key={g.id} g={g} t={t} selected={selected} onOutput={onOutput} onFile={onFile} onStop={onStop}/>) : <p className="muted">{t.empty}</p>}
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title={`${t.fields.outputTail} · ${selected || '-'}`} className="log-panel goal-output-panel">
+        <div className="goal-toolbar">
+          <label className="inline-field">{t.fields.maxBytes}
+            <input type="number" min="0" max="1048576" step="4096" value={outputBytes} onChange={e=>setOutputBytes(e.target.value)}/>
+          </label>
+          <div className="goal-output-presets">
+            <button type="button" onClick={()=>setOutputBytes('65536')}>{t.fields.outputPreset64k}</button>
+            <button type="button" onClick={()=>setOutputBytes('262144')}>{t.fields.outputPreset256k}</button>
+            <button type="button" onClick={()=>setOutputBytes('1048576')}>{t.fields.outputPreset1m}</button>
+            <button type="button" onClick={()=>setOutputBytes('0')}>{t.fields.outputDefault}</button>
+          </div>
+          <label className="toggle-inline"><input type="checkbox" checked={!!autoRefresh} onChange={e=>setAutoRefresh(e.target.checked)} />{t.fields.autoRefresh}</label>
+          <button disabled={!selected} onClick={()=>onOutput(selected)}><RefreshCw size={14}/>{t.refresh}</button>
+          <button disabled={!output} onClick={copyOutput}><Copy size={14}/>{t.copy}</button>
+          <button disabled={!output && !outputMeta} onClick={onClearOutput}><XCircle size={14}/>{t.clear}</button>
+        </div>
+
+        <div className="goal-output-stats">
+          <span>{t.fields.outputShown}: {formatBytes(outputBytesShown)} / {formatBytes(outputTotalBytes)}</span>
+          <span>{t.fields.outputLines}: {outputLinesShown}{outputTotalLines !== outputLinesShown ? ` / ${outputTotalLines}` : ''}</span>
+          <span>{t.fields.outputLimit}: {outputLimitLabel}</span>
+        </div>
+        {outputBadges.length > 0 && <div className="goal-output-meta">{outputBadges.map(m => <span key={m}>{m}</span>)}</div>}
+        {selectedGoal && <div className="goal-output-summary">
+          <div className="goal-summary-head"><b>{selectedGoal.id}</b><span className={selectedGoal.running ? 'ok' : ''}>{selectedGoal.status || (selectedGoal.running ? t.running : t.fields.notRunning)}</span></div>
+          <p>{selectedGoal.objective || t.empty}</p>
+          <div className="goal-summary-grid">
+            <span>{t.fields.turn}: {selectedGoal.turns_used || 0}/{selectedGoal.max_turns || '-'}</span>
+            <span>{t.fields.elapsed}: {formatDuration(selectedGoal.elapsed_seconds)}</span>
+            <span>{t.fields.remaining}: {formatDuration(selectedGoal.remaining_seconds)}</span>
+            <span>{t.fields.started}: {formatGoalTime(selectedGoal.start_time ? selectedGoal.start_time * 1000 : 0)}</span>
+            <span>{t.fields.updated}: {formatGoalTime(selectedGoal.mod_time)}</span>
+            <span>{t.fields.pid}: {selectedGoal.pid || '-'}</span>
+          </div>
+          <div className="goal-progress summary-progress"><span title={`${t.fields.turn} ${Math.round(selectedTurnPct)}%`}><i style={{width: `${selectedTurnPct}%`}} /></span><span title={`${t.fields.elapsed} ${Math.round(selectedBudgetPct)}%`}><i style={{width: `${selectedBudgetPct}%`}} /></span></div>
+          <div className="goal-summary-files"><button disabled={!selectedGoal.state_file} onClick={()=>onFile(selectedGoal.state_file)}>{t.fields.stateFile}</button><button disabled={!selectedGoal.log_file || selectedGoal.missing_log} onClick={()=>onFile(selectedGoal.log_file)}>{t.fields.logFile}</button></div>
+        </div>}
+        <pre className="log-view goal-output">{output || t.empty}</pre>
+      </Panel>
+    </div>
+  </section>
+}
+
+function GoalRunCard({ g, t, selected, onOutput, onFile, onStop }) {
+  const turnPct = goalTurnPercent(g)
+  const budgetPct = goalBudgetPercent(g)
+  return <div className={`goal-row ${g.running ? 'running' : ''} ${selected===g.id ? 'selected' : ''}`}>
+    <button className="goal-row-main" onClick={()=>onOutput(g.id)}>
+      <div className="goal-row-title"><b>{g.id}</b><span className={g.running ? 'ok' : ''}>{g.status || '-'}</span></div>
+      <div className="goal-row-meta">
+        <span>{g.running ? `${t.fields.pid} ${g.pid}` : t.fields.notRunning}</span>
+        <span>{t.fields.turn} {g.turns_used || 0}/{g.max_turns || '-'}</span>
+        <span>{t.fields.elapsed} {formatDuration(g.elapsed_seconds)}</span>
+        <span>{t.fields.remaining} {formatDuration(g.remaining_seconds)}</span>
+      </div>
+      <div className="goal-progress"><span title={`${t.fields.turn} ${Math.round(turnPct)}%`}><i style={{width: `${turnPct}%`}} /></span><span title={`${t.fields.elapsed} ${Math.round(budgetPct)}%`}><i style={{width: `${budgetPct}%`}} /></span></div>
+      <p>{g.objective || t.empty}</p>
+      <small>{t.fields.started} {formatGoalTime(g.start_time ? g.start_time * 1000 : 0)} · {t.fields.updated} {formatGoalTime(g.mod_time)}{g.end_time ? ` · ${t.fields.ended} ${formatGoalTime(g.end_time * 1000)}` : ''}</small>
+      <em><span className={g.missing_log ? 'err-text' : 'ok'}>{g.missing_log ? t.fields.logMissing : t.fields.logReady}</span></em>
+    </button>
+    <div className="actions goal-row-actions">
+      <button onClick={()=>onOutput(g.id)}><Eye size={14}/>{t.read}</button>
+      <button disabled={!g.state_file} onClick={()=>onFile(g.state_file)}>{t.fields.stateFile}</button>
+      <button disabled={!g.log_file || g.missing_log} onClick={()=>onFile(g.log_file)}>{t.fields.logFile}</button>
+      <button disabled={!g.running || !g.pid} onClick={()=>onStop(g)}><Square size={14}/>{t.stop}</button>
+    </div>
+  </div>
+}
+
 function TaskRow({ task, t, onToggle, onEdit, onArtifact }) { return <div className={`task-row status-${(task.status||'').toLowerCase()}`}><div><b>{task.id}</b><span>{task.schedule} · {task.repeat} · {task.status}</span>{task.error && <em className="err-text">{task.error}</em>}{task.next_hint && <em>{task.next_hint}</em>}<p>{task.prompt}</p>{task.recent_reports?.length > 0 && <div className="mini-reports">{task.recent_reports.map(r=><button key={r.path} onClick={()=>onArtifact(r.path)}>{r.name}</button>)}</div>}</div><div className="actions"><button onClick={()=>onEdit(task.id)}><Eye size={14}/>{t.read}</button><button onClick={()=>onToggle(task.id, !task.enabled)}>{task.enabled ? t.disabled : t.enabled}</button></div></div> }
 function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, modelPreview }) { return <section><div className="model-top"><div><h3>{t.nav.models}</h3><p>{t.hints.previewHelp}</p></div><div className="actions"><button onClick={importModels}><RefreshCw size={14}/>{t.hints.modelSource}</button><button onClick={() => setProfiles([...profiles, emptyProfile(profiles.length)])}>{t.hints.addProfile}</button><button onClick={previewModels}><Eye size={14}/>{t.hints.preview}</button><button onClick={saveModels}><UploadCloud size={14}/>{t.hints.writeMykey}</button></div></div><div className="models-layout"><div className="profiles">{profiles.map((p, idx) => <div className="profile" key={idx}><div className="profile-head"><b>#{idx + 1} {p.name || p.var_name}</b><label><input type="checkbox" checked={!!p.enabled} onChange={(e) => patchProfile(idx, { enabled: e.target.checked })}/> enabled</label></div><div className="form-grid"><label>{t.fields.varName}<input value={p.var_name || ''} onChange={(e) => patchProfile(idx, { var_name: e.target.value })}/></label><label>{t.fields.type}<input value={p.type || ''} onChange={(e) => patchProfile(idx, { type: e.target.value })}/></label><label>{t.fields.name}<input value={p.name || ''} onChange={(e) => patchProfile(idx, { name: e.target.value })}/></label><label>{t.fields.model}<input value={p.model || ''} onChange={(e) => patchProfile(idx, { model: e.target.value })}/></label><label className="span2">{t.fields.apiBase}<input value={p.apibase || ''} onChange={(e) => patchProfile(idx, { apibase: e.target.value })}/></label><label className="span2">{t.fields.apiKey}<SecretInput value={p.apikey} onChange={(v) => patchProfile(idx, { apikey: v })} t={t}/></label><label>{t.fields.stream}<select value={String(!!p.stream)} onChange={(e) => patchProfile(idx, { stream: e.target.value === 'true' })}><option value="true">true</option><option value="false">false</option></select></label><label>{t.fields.maxRetries}<input type="number" value={p.max_retries ?? 3} onChange={(e) => patchProfile(idx, { max_retries: Number(e.target.value) })}/></label><label>{t.fields.readTimeout}<input type="number" value={p.read_timeout ?? 300} onChange={(e) => patchProfile(idx, { read_timeout: Number(e.target.value) })}/></label><label>{t.fields.reasoningEffort}<input value={p.reasoning_effort || ''} onChange={(e) => patchProfile(idx, { reasoning_effort: e.target.value })}/></label></div></div>)}</div><Panel title={t.lists.generatedPreview} className="preview"><pre>{modelPreview || t.empty}</pre></Panel></div></section> }
-function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, control:<ShieldAlert size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, schedule:<CalendarClock size={16}/>, models:<SlidersHorizontal size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }
+function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, control:<ShieldAlert size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }
