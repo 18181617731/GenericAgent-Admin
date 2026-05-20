@@ -12,6 +12,7 @@ type AppConfig struct {
 	Port             int      `json:"port"`
 	LogTailLines     int      `json:"log_tail_lines"`
 	BufferLines      int      `json:"buffer_lines"`
+	PythonPath       string   `json:"python_path"`
 	ServiceAutostart []string `json:"service_autostart"`
 }
 

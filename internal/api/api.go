@@ -192,7 +192,6 @@ func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
 		BudgetMinutes int    `json:"budget_minutes"`
 		MaxTurns      int    `json:"max_turns"`
 		LLMNo         *int   `json:"llm_no"`
-		PythonPath    string `json:"python_path"`
 	}
 	if err := decode(r, &req); err != nil {
 		bad(w, 400, err.Error())
@@ -209,7 +208,7 @@ func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
 		}
 		req.BudgetSeconds = req.BudgetMinutes * 60
 	}
-	meta, err := ga.StartGoal(s.CfgStore.Cfg.GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: req.PythonPath})
+	meta, err := ga.StartGoal(s.CfgStore.Cfg.GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: s.CfgStore.Cfg.PythonPath})
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
