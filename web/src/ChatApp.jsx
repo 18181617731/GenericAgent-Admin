@@ -60,6 +60,8 @@ function CopyButton({ text, compact = false }) {
 function FileAttachment({ path }) {
   const clean = String(path || '').trim()
   const name = clean.split(/[\\/]/).filter(Boolean).pop() || clean || '文件'
+  const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(clean.split(/[?#]/)[0] || clean)
+  const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
   const open = async (mode) => {
     try {
       await api('/api/files/open', { method:'POST', body: JSON.stringify({ path: clean, mode }) })
@@ -67,8 +69,10 @@ function FileAttachment({ path }) {
       alert(`打开失败：${e?.message || e}`)
     }
   }
-  return <span className="oa-file-card">
-    <span className="oa-file-icon"><FileText size={18}/></span>
+  return <span className={`oa-file-card ${isImage ? 'oa-file-card-image' : ''}`}>
+    {isImage ? <button type="button" className="oa-file-preview" onClick={() => open('file')} title="打开图片">
+      <img src={imageUrl} alt={name} loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />
+    </button> : <span className="oa-file-icon"><FileText size={18}/></span>}
     <span className="oa-file-meta"><b>{name}</b><em>{clean}</em></span>
     <span className="oa-file-actions">
       <button type="button" onClick={() => open('file')}>打开</button>
@@ -632,7 +636,10 @@ export default function ChatApp() {
   const removeAttachment = (id) => setAttachments(xs => xs.filter(x => x.id !== id))
   const onPaste = (e) => {
     const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type?.startsWith('image/'))
-    if (imgs.length) addImageFiles(imgs)
+    if (imgs.length) {
+      e.preventDefault()
+      addImageFiles(imgs)
+    }
   }
   const onDropImages = (e) => {
     e.preventDefault(); setDragging(false)
@@ -774,9 +781,9 @@ export default function ChatApp() {
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
         <MessageList messages={messages} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} />
+        {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
-      {showFollow && <button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button>}
 
       <footer className="oa-composer-wrap">
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropImages}>

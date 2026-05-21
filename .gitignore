@@ -1,5 +1,4 @@
 /dist/
-/web/dist/
 *.exe
 config.local.json
 model_profiles.json

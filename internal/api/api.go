@@ -75,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/tail", s.filesTail)
 	mux.HandleFunc("/api/files/search", s.filesSearch)
 	mux.HandleFunc("/api/files/open", s.filesOpen)
+	mux.HandleFunc("/api/files/image", s.filesImage)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
 	mux.HandleFunc("/api/schedule/task", s.scheduleTask)
 	mux.HandleFunc("/api/schedule/create", s.scheduleCreate)
@@ -464,6 +465,51 @@ func (s *Server) filesRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, d)
+}
+
+func (s *Server) filesImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	p := strings.TrimSpace(r.URL.Query().Get("path"))
+	if p == "" {
+		bad(w, 400, "path required")
+		return
+	}
+	if !filepath.IsAbs(p) {
+		abs, _, err := ga.SafeResolve(s.CfgStore.Cfg.GARoot, p)
+		if err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+		p = abs
+	}
+	ext := strings.ToLower(filepath.Ext(p))
+	mime := map[string]string{
+		".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+		".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml",
+	}[ext]
+	if mime == "" {
+		bad(w, 415, "not a supported image")
+		return
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		bad(w, 404, err.Error())
+		return
+	}
+	if info.IsDir() {
+		bad(w, 400, "path is directory")
+		return
+	}
+	if info.Size() > 20*1024*1024 {
+		bad(w, 413, "image too large")
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	http.ServeFile(w, r, p)
 }
 
 func (s *Server) filesWrite(w http.ResponseWriter, r *http.Request) {
