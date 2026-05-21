@@ -495,16 +495,15 @@ export default function ChatApp() {
     }
   }
 
-  const loadChatState = async (id) => {
-    if (!id) return
-    const st = await api(`/api/chat/state/${id}`)
+  const loadChatState = async (id = '') => {
+    const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
-    if (st.running) {
+    if (id && st.running) {
       attachRunningStream(id)
-    } else if (streamingSid && streamingSid !== id) {
+    } else if (id && streamingSid && streamingSid !== id) {
       streamAbortRef.current?.abort?.()
       streamAbortRef.current = null
       setBusy(false)
@@ -531,6 +530,7 @@ export default function ChatApp() {
     setSessions(list)
     const next = prefer || list[0]?.id || ''
     if (next) await openSession(next, false)
+    else await loadChatState('')
     return list
   }
 

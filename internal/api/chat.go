@@ -116,6 +116,10 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "state":
+		if len(parts) == 1 && r.Method == http.MethodGet {
+			s.chatState(w, r, "")
+			return
+		}
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatState(w, r, parts[1])
 			return
