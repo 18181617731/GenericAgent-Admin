@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"genericagent-admin-go/internal/config"
 )
 
 type chatMessage struct {
@@ -201,7 +203,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 }
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 	cs, _ := loadChatSession(s.CfgStore.Cfg.GARoot, safeChatID(sid))
-	llms, err := listGARuntimeLLMs(s.CfgStore.Cfg.GARoot)
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg.GARoot)
 	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
 		backend["warning"] = err.Error()
@@ -300,8 +302,15 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		s.publishChatLine(sid, line)
 	}
 	if final.ID == "" {
+		partial := s.chatRunPartialContent(sid)
 		if s.chatRunCanceled(sid) {
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: "已停止生成", CreatedAt: time.Now().Unix(), Error: true}
+			content := strings.TrimSpace(partial)
+			if content != "" {
+				content += "\n\n[已中止生成]"
+			} else {
+				content = "已停止生成"
+			}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
 			err := scanner.Err()
@@ -309,7 +318,13 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 				err = fmt.Errorf("worker exited before done")
 			}
 			s.dropChatWorker(sid, worker)
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("生成失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
+			content := strings.TrimSpace(partial)
+			if content != "" {
+				content += fmt.Sprintf("\n\n[生成中断：%v]", err)
+			} else {
+				content = fmt.Sprintf("生成失败：%v", err)
+			}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}
@@ -360,6 +375,27 @@ func (s *Server) chatRunCanceled(sid string) bool {
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
 	return r != nil && r.Canceled
+}
+
+func (s *Server) chatRunPartialContent(sid string) string {
+	s.ChatMu.Lock()
+	r := s.ChatRuns[safeChatID(sid)]
+	var events [][]byte
+	if r != nil {
+		events = append(events, r.Events...)
+	}
+	s.ChatMu.Unlock()
+	var b strings.Builder
+	for _, line := range events {
+		var ev map[string]interface{}
+		if json.Unmarshal(line, &ev) != nil {
+			continue
+		}
+		if delta, ok := ev["delta"].(string); ok && delta != "" {
+			b.WriteString(delta)
+		}
+	}
+	return b.String()
 }
 
 func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
@@ -493,7 +529,7 @@ func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flush
 	}
 }
 
-func listGARuntimeLLMs(root string) ([]map[string]interface{}, error) {
+func (s *Server) listGARuntimeLLMs(root string) ([]map[string]interface{}, error) {
 	py := pythonForRoot(root)
 	code := `import json, os, sys
 root = sys.argv[1]
@@ -512,7 +548,7 @@ print(json.dumps(items, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", code, root)
 	cmd.Dir = root
 	hideChildWindow(cmd)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	cmd.Env = pythonEnvWithAdminProxy(s.CfgStore.Cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return []map[string]interface{}{}, fmt.Errorf("list GA LLMs failed: %v: %s", err, strings.TrimSpace(string(out)))
@@ -558,7 +594,7 @@ func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
 		return w, nil
 	}
 	s.ChatMu.Unlock()
-	worker, err := startChatWorker(s.CfgStore.Cfg.GARoot, sid)
+	worker, err := startChatWorker(s.CfgStore.Cfg, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -587,7 +623,8 @@ func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
 	}
 }
 
-func startChatWorker(root string, sid string) (*chatWorker, error) {
+func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {
+	root := cfg.GARoot
 	py := pythonForRoot(root)
 	script, err := resolveChatWorkerScript()
 	if err != nil {
@@ -596,7 +633,7 @@ func startChatWorker(root string, sid string) (*chatWorker, error) {
 	cmd := exec.Command(py, script)
 	cmd.Dir = root
 	hideChildWindow(cmd)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root)
+	cmd.Env = pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -615,6 +652,43 @@ func startChatWorker(root string, sid string) (*chatWorker, error) {
 	worker := &chatWorker{SID: sid, Cmd: cmd, Stdin: stdin, Stdout: stdout, Stderr: stderr}
 	go io.Copy(io.Discard, stderr)
 	return worker, nil
+}
+
+func pythonEnvWithAdminProxy(cfg config.AppConfig, extra ...string) []string {
+	proxyKeys := map[string]bool{
+		"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+		"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true,
+	}
+	env := []string{}
+	for _, kv := range os.Environ() {
+		key := kv
+		if i := strings.Index(kv, "="); i >= 0 {
+			key = kv[:i]
+		}
+		if proxyKeys[key] && cfg.ProxyMode != "system" {
+			continue
+		}
+		env = append(env, kv)
+	}
+	if cfg.ProxyMode != "system" {
+		env = append(env, "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY=", "http_proxy=", "https_proxy=", "all_proxy=", "no_proxy=")
+	}
+	if cfg.ProxyMode == "custom" {
+		if cfg.HTTPProxy != "" {
+			env = append(env, "HTTP_PROXY="+cfg.HTTPProxy, "http_proxy="+cfg.HTTPProxy)
+		}
+		if cfg.HTTPSProxy != "" {
+			env = append(env, "HTTPS_PROXY="+cfg.HTTPSProxy, "https_proxy="+cfg.HTTPSProxy)
+		}
+		if cfg.AllProxy != "" {
+			env = append(env, "ALL_PROXY="+cfg.AllProxy, "all_proxy="+cfg.AllProxy)
+		}
+		if cfg.NoProxy != "" {
+			env = append(env, "NO_PROXY="+cfg.NoProxy, "no_proxy="+cfg.NoProxy)
+		}
+	}
+	env = append(env, extra...)
+	return env
 }
 
 func resolveChatWorkerScript() (string, error) {

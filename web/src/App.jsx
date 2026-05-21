@@ -88,6 +88,7 @@ export default function App() {
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
   const [bbsStatus, setBbsStatus] = useState(null), [bbsPosts, setBbsPosts] = useState([]), [bbsTitle, setBbsTitle] = useState(''), [bbsContent, setBbsContent] = useState(''), [bbsAuthor, setBbsAuthor] = useState('admin')
+  const [bbsConfig, setBbsConfig] = useState({ mode:'builtin', base_url:'', board_key:'ga-team' })
   const [filePath, setFilePath] = useState('memory'), [fileList, setFileList] = useState([]), [fileContent, setFileContent] = useState(''), [fileSearch, setFileSearch] = useState(''), [searchHits, setSearchHits] = useState([]), [tailLines, setTailLines] = useState(200)
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
@@ -103,11 +104,30 @@ export default function App() {
   const taskSvcs = useMemo(() => group(services, s => s.kind === 'task' || s.name?.includes('task')), [services])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => group(services, s => s.kind === 'reflect' || s.name?.includes('reflect') || s.name?.includes('autonomous')), [services])
+  const bbsWorkerSvc = useMemo(() => services.find(s => s.name === 'agent_team_worker.py' || s.name?.includes('agent_team_worker.py')), [services])
 
   const loadBBS = async () => {
-    const [status, posts] = await Promise.all([api('/api/bbs/status'), api('/api/bbs/posts?limit=100')])
-    setBbsStatus(status); setBbsPosts(Array.isArray(posts) ? posts : [])
-    return { status, posts }
+    const [status, cfg, posts] = await Promise.all([api('/api/bbs/status'), api('/api/bbs/config'), api('/api/bbs/posts?limit=100')])
+    setBbsStatus(status); setBbsConfig({ mode: cfg.mode || 'builtin', base_url: cfg.base_url || '', board_key: cfg.board_key || 'ga-team', builtin_base_url: cfg.builtin_base_url || status?.builtin_base_url || status?.base_url || '' }); setBbsPosts(Array.isArray(posts) ? posts : [])
+    return { status, cfg, posts }
+  }
+  const saveBBSConfig = async (next = bbsConfig) => {
+    setBusy(true); setMsg('')
+    try {
+      const cfg = await api('/api/bbs/config', { method:'POST', body: JSON.stringify(next) })
+      setBbsConfig({ mode: cfg.mode || 'builtin', base_url: cfg.base_url || '', board_key: cfg.board_key || 'ga-team', builtin_base_url: cfg.builtin_base_url || '' })
+      setMsg('BBS 服务配置已保存')
+      await loadBBS()
+    } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
+  }
+  const testBBSConnection = async () => {
+    setBusy(true); setMsg('正在测试 BBS 连接…')
+    try {
+      const { status, posts } = await loadBBS()
+      const mode = status?.mode === 'external' ? '外置' : '内置'
+      const count = Array.isArray(posts) ? posts.length : 0
+      setMsg(`BBS ${mode}服务连接正常，已读取 ${count} 条任务`)
+    } catch(e){ setMsg(`BBS 连接失败：${e.message}`) } finally{ setBusy(false) }
   }
   const createBBSPost = async () => {
     setBusy(true); setMsg('')
@@ -126,8 +146,8 @@ export default function App() {
   const load = async () => {
     setBusy(true); setMsg('')
     try {
-      const [c, h, auto, ver, vstat, gstat] = await Promise.all([api('/api/config'), api('/api/ga/health'), api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })), api('/api/version/info').catch(e => ({ error:e.message })), api('/api/version/status').catch(() => null), api('/api/ga/git-status').catch(e => ({ ok:false, error:e.message }))])
-      setCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setGitStatus(gstat); if (vstat?.id || vstat?.stage) setVersionStatus(vstat)
+      const [c, h, auto, ver, vstat] = await Promise.all([api('/api/config'), api('/api/ga/health'), api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })), api('/api/version/info').catch(e => ({ error:e.message })), api('/api/version/status').catch(() => null)])
+      setCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); if (vstat?.id || vstat?.stage) setVersionStatus(vstat)
       if (!h?.ok) {
         setServices([]); setControl(null); setLogs([]); setFileList([])
         return
@@ -162,7 +182,7 @@ export default function App() {
   useEffect(() => { if (selected) api(`/api/logs/${encodeURIComponent(selected)}`).then(d => setLogs(d.lines || [])).catch(e => setMsg(e.message)) }, [selected])
 
   const toggleAutostart = async () => { setBusy(true); setMsg(''); try { const next = !autostart?.enabled; const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status'); setGitStatus(d); setMsg(d.latest ? 'GA 源代码已是最新' : `GA 源代码落后 ${d.behind || 0} 个提交`) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
+  const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status?remote=1'); setGitStatus(d); setMsg(d.latest ? 'GA 源代码已是最新' : `GA 源代码落后 ${d.behind || 0} 个提交`) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
   const updateGASource = async () => { if (!window.confirm('使用 git pull --ff-only 更新当前 GA 源代码？请确保本地修改已提交或可快进。')) return; setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-update', { method:'POST', body: '{}' }); setGitResult(d); setGitStatus(d); setMsg(d.changed ? `GA 源代码已更新: ${d.before} → ${d.after}` : 'GA 源代码已是最新'); await load() } catch(e){ setMsg(e.message) } finally{ setGitBusy(false) } }
   const saveConfig = async () => { setBusy(true); try { const c = await api('/api/config', { method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) }); setCfg(c); setMsg(t.hints.rootSaved); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkSetupEnv = async () => { setBusy(true); try { const d = await api('/api/setup/env'); setSetupEnv(d); setMsg(d.ok ? t.envReady : t.envMissing) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -326,7 +346,7 @@ export default function App() {
   if (needsSetup) return <div className="setup-shell"><div className="setup-card"><div className="brand setup-brand"><Bot/><div><h1>{t.setupTitle}</h1><p>{t.setupDesc}</p></div></div><div className="setup-env"><button className="secondary" onClick={checkSetupEnv} disabled={busy}>{t.checkEnv}</button>{setupEnv?.tools?.map(tool => <span key={tool.name} className={tool.ok ? 'ok' : 'err'} title={[tool.path, tool.version, tool.error].filter(Boolean).join('\n')}>{tool.ok ? '✓' : '×'} {tool.name}</span>)}</div><label>{t.root}<div className="setup-path-row"><input value={root} onChange={e=>setRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('root')} disabled={busy}>{t.browse}</button></div></label><button onClick={validateSetupRoot} disabled={busy || !root}>{busy ? t.busy : t.validateRoot}</button><div className="setup-divider"><span>or</span></div><label>{t.installPath}<div className="setup-path-row"><input value={installRoot} onChange={e=>setInstallRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('install')} disabled={busy}>{t.browse}</button></div></label><button className="secondary" onClick={installGA} disabled={busy || !(installRoot || root)}>{t.installGA}</button>{msg && <div className="message">{msg}</div>}<p className="setup-note">git clone https://github.com/lsdefine/GenericAgent</p></div></div>
 
   return <div className="app">
-    <aside className="sidebar"><div className="brand"><Bot/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15}/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" className={lang === 'zh' ? 'active' : ''} onClick={()=>setLang('zh')}>中</button><button type="button" className={lang === 'en' ? 'active' : ''} onClick={()=>setLang('en')}>EN</button></div></div><div className="root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/></button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/></button></div></div><nav>{nav.map(n => <button key={n} className={tab===n?'active':''} onClick={()=> n === 'chat' ? window.open('/chat', '_blank', 'noopener,noreferrer') : setTab(n)}>{icon(n)}{t.nav[n]}{n === 'chat' && <span className="nav-pop">open</span>}</button>)}</nav><button className="refresh" onClick={load} disabled={busy}><RefreshCw size={15}/>{busy ? t.busy : t.refresh}</button>{msg && <div className="message">{msg}</div>}</aside>
+    <aside className="sidebar"><div className="brand"><Bot/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15}/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" className={lang === 'zh' ? 'active' : ''} onClick={()=>setLang('zh')}>中</button><button type="button" className={lang === 'en' ? 'active' : ''} onClick={()=>setLang('en')}>EN</button></div></div><div className="root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/></button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/></button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/></button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><nav>{nav.map(n => <button key={n} className={tab===n?'active':''} onClick={()=> n === 'chat' ? window.open('/chat', '_blank', 'noopener,noreferrer') : setTab(n)}>{icon(n)}{t.nav[n]}{n === 'chat' && <span className="nav-pop">open</span>}</button>)}</nav><button className="refresh" onClick={load} disabled={busy}><RefreshCw size={15}/>{busy ? t.busy : t.refresh}</button>{msg && <div className="message">{msg}</div>}</aside>
     <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       {tab==='overview' && <section><div className="stats"><Stat label={t.cards.processes} value={services.length} icon={<Server/>}/><Stat label={t.cards.running} value={services.filter(s=>s.running).length} icon={<Activity/>}/><Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/><Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/></div><div className="grid2"><Panel title={t.cards.version}><div className="version-card"><div className="autostart-head"><Download size={18}/><strong>GA Admin {versionInfo?.version || 'dev'}</strong><span className={versionCheck?.update ? 'err' : 'ok'}>{versionCheck ? (versionCheck.update ? 'Update' : 'Latest') : (versionInfo?.goos ? `${versionInfo.goos}/${versionInfo.goarch}` : t.empty)}</span></div><p className="muted">commit {versionInfo?.commit || 'unknown'} · {versionInfo?.date || 'unknown'}</p>{versionCheck?.latest && <p>Latest: <a href={versionCheck.latest.html_url} target="_blank" rel="noreferrer">{versionCheck.latest.tag_name}</a></p>}{versionCheck?.asset && <code>{versionCheck.asset.name}</code>}{versionStatus?.stage && <div className="update-progress"><div className="update-progress-head"><span>{versionStatus.running ? '升级中' : (versionStatus.error ? '升级失败' : '升级状态')}</span><b>{versionStatus.progress || 0}%</b></div><div className="progress-bar"><span style={{width:`${Math.max(0, Math.min(100, versionStatus.progress || 0))}%`}}/></div><p className={versionStatus.error ? 'err' : 'muted'}>{versionStatus.message || versionStatus.stage}</p>{versionStatus.stage && <code>{versionStatus.stage}</code>}</div>}<div className="actions"><button onClick={checkVersion} disabled={versionBusy || versionStatus?.running}>{versionBusy ? t.busy : '检查更新'}</button><button onClick={updateVersion} disabled={versionBusy || versionStatus?.running || !versionCheck?.update}>{versionStatus?.running ? '升级中…' : '一键升级'}</button><button className="secondary" onClick={()=>refreshVersionStatus().catch(e=>setMsg(e.message))}>刷新进度</button></div></div></Panel><Panel title="GA 源代码更新"><div className="version-card"><div className="version-head"><GitPullRequest size={18}/><strong>Git 更新</strong><span className={gitStatus?.error ? 'err' : (gitStatus?.latest ? 'ok' : 'warn')}>{gitStatus?.error ? '检查失败' : (gitStatus ? (gitStatus.latest ? '已是最新' : `落后 ${gitStatus.behind || 0} 个提交`) : '未检查')}</span></div><p className="muted">自动 fetch 后对比上游分支；更新只执行 git pull --ff-only。</p>{gitStatus?.root && <code>{gitStatus.root}</code>}<p>分支: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>{gitStatus?.upstream && <p>上游: {gitStatus.upstream}　领先 {gitStatus.ahead || 0} / 落后 {gitStatus.behind || 0}</p>}{gitStatus?.dirty && <p className="warn">工作区有未提交修改</p>}{gitStatus?.error && <p className="err">{gitStatus.error}</p>}{gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}{gitResult?.pull && <pre className="mini-log">{gitResult.pull}</pre>}<div className="actions"><button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : '检查是否最新'}</button><button onClick={updateGASource} disabled={gitBusy || busy || gitStatus?.latest}>{gitBusy ? t.busy : '更新 GA 源代码'}</button></div></div></Panel><Panel title={t.lists.autostart}><div className="autostart-card"><div className="autostart-head"><Power size={18}/><strong>{t.autostart}</strong><span className={autostart?.enabled ? 'ok' : 'muted'}>{autostart?.supported ? (autostart?.enabled ? t.enabled : t.disabled) : t.unsupported}</span></div><p>{!autostart?.supported ? t.hints.autostartUnsupported : (autostart?.enabled ? t.hints.autostartEnabled : t.hints.autostartDisabled)}</p>{autostart?.path && <code>{autostart.path}</code>}<button onClick={toggleAutostart} disabled={busy || !autostart?.supported}>{autostart?.enabled ? t.disableAutostart : t.enableAutostart}</button></div></Panel><Panel title={t.lists.riskHints}><ul className="risk"><li>{t.root}: {root}</li><li>sche_tasks JSON: {t.backup}</li><li>mykey.py: {t.backup}</li></ul></Panel></div></section>}
       {tab==='chat' && <ChatPage t={t}/>}
@@ -393,7 +413,7 @@ export default function App() {
           </Panel>
         </div>}
       </section>}
-      {tab==='bbs' && <BBSPage status={bbsStatus} posts={bbsPosts} title={bbsTitle} setTitle={setBbsTitle} content={bbsContent} setContent={setBbsContent} author={bbsAuthor} setAuthor={setBbsAuthor} onCreate={createBBSPost} onReply={createBBSReply} onRefresh={loadBBS} busy={busy}/>}
+      {tab==='bbs' && <BBSPage status={bbsStatus} config={bbsConfig} setConfig={setBbsConfig} onSaveConfig={saveBBSConfig} posts={bbsPosts} title={bbsTitle} setTitle={setBbsTitle} content={bbsContent} setContent={setBbsContent} author={bbsAuthor} setAuthor={setBbsAuthor} onCreate={createBBSPost} onReply={createBBSReply} onRefresh={loadBBS} onTestConnection={testBBSConnection} workerService={bbsWorkerSvc} onWorkerStart={n=>serviceAction(n,'start')} onWorkerStop={n=>serviceAction(n,'stop')} onWorkerLogs={viewServiceLogs} onWorkerAutostart={toggleServiceAutostart} busy={busy}/>}
       {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
       {tab==='channels' && <section className="channels-page"><div className="stats"><Stat label={t.lists.frontendServices} value={frontendSvcs.length} icon={<Server/>}/><Stat label={t.running} value={frontendSvcs.filter(s=>s.running).length} icon={<CheckCircle2/>}/><Stat label={t.stopped} value={frontendSvcs.filter(s=>!s.running).length} icon={<XCircle/>}/></div><Panel title={t.lists.frontendServices} className="channels-panel"><p className="muted">{t.desc.channels}</p><ChannelServiceTable services={frontendSvcs} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/></Panel></section>}
       {tab==='autonomous' && <section><div className="grid2"><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.reflectScripts}><EntryList items={inv.reflect || []} empty={t.hints.noReflect}/></Panel></div><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
@@ -405,42 +425,81 @@ export default function App() {
 }
 
 
-function BBSPage({ status, posts = [], title, setTitle, content, setContent, author, setAuthor, onCreate, onReply, onRefresh, busy }) {
-  return <section className="bbs-page">
-    <div className="grid2">
-      <Panel title="内置 BBS 服务">
-        <div className="bbs-status">
-          <p><b>Base URL</b><code>{status?.base_url || '-'}</code></p>
-          <p><b>Board Key</b><code>{status?.board_key || '-'}</code></p>
-          <p><b>Worker 设置</b><code>{`reflect/agent_team_setting.json: {"base_url":"${status?.base_url || 'http://127.0.0.1:8787'}","board_key":"${status?.board_key || 'ga-team'}","name":"worker-1"}`}</code></p>
-          {status?.readme && <p><b>Readme</b><code>{status.readme}</code></p>}
-          {status?.path && <p className="muted">存储: {status.path}</p>}
-          {status?.error && <p className="err">{status.error}</p>}
-          <button onClick={onRefresh} disabled={busy}><RefreshCw size={14}/>刷新</button>
-        </div>
-      </Panel>
-      <Panel title="发布任务帖">
-        <div className="bbs-editor">
-          <label>作者<input value={author} onChange={e=>setAuthor(e.target.value)} /></label>
-          <label>标题<input value={title} onChange={e=>setTitle(e.target.value)} placeholder="例如：请 worker A 检查日志并修复" /></label>
-          <label>内容<textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="写清任务目标、约束、验收方式；worker 会通过 /posts 看到并回复抢单。" /></label>
+function BBSPage({ status, config, setConfig, onSaveConfig, posts = [], title, setTitle, content, setContent, author, setAuthor, onCreate, onReply, onRefresh, onTestConnection, workerService, onWorkerStart, onWorkerStop, onWorkerLogs, onWorkerAutostart, busy }) {
+  const [bbsTab, setBbsTab] = useState('board')
+  const totalReplies = posts.reduce((n, p) => n + (p.replies?.length || 0), 0)
+  const mode = config?.mode || status?.mode || 'builtin'
+  const activeBase = mode === 'external' ? (config?.base_url || status?.base_url || '') : (status?.builtin_base_url || status?.base_url || config?.builtin_base_url || '')
+  const activeKey = config?.board_key || status?.board_key || 'ga-team'
+  const workerConfig = `{"base_url":"${activeBase || 'http://127.0.0.1:8787'}","board_key":"${activeKey}","name":"worker-1"}`
+  const workerState = workerService?.running ? '运行中' : (workerService ? '已停止' : '未发现')
+  const patchConfig = (patch) => setConfig({ ...(config || {}), ...patch })
+  return <section className="bbs-page compact-bbs bbs-console">
+    <div className="bbs-strip" aria-label="BBS status">
+      <div className="bbs-titleline">
+        <span className="eyebrow">team_work</span>
+        <h2>协作频道</h2>
+        <span className="muted">{posts.length} 任务 · {totalReplies} 回复 · {mode === 'external' ? '外置' : '内置'}</span>
+      </div>
+      <div className="bbs-worker-pill" title={workerService?.command?.join(' ') || 'reflect/agent_team_worker.py'}>
+        <span className={workerService?.running ? 'dot running' : 'dot'}></span>
+        <span>worker {workerState}</span>
+        {workerService?.pid && <small>PID {workerService.pid}</small>}
+        <button className="ghost mini" disabled={!workerService || workerService.running || busy} onClick={()=>onWorkerStart?.(workerService.name)}><Play size={13}/>启动</button>
+        <button className="ghost mini" disabled={!workerService} onClick={()=>onWorkerLogs?.(workerService.name)}><Eye size={13}/>日志</button>
+      </div>
+    </div>
+
+    <div className="bbs-tabs" role="tablist" aria-label="BBS sections">
+      <button role="tab" aria-selected={bbsTab === 'board'} className={bbsTab === 'board' ? 'active' : ''} onClick={()=>setBbsTab('board')}><MessageSquare size={15}/>任务板</button>
+      <button role="tab" aria-selected={bbsTab === 'config'} className={bbsTab === 'config' ? 'active' : ''} onClick={()=>setBbsTab('config')}><SlidersHorizontal size={15}/>服务</button>
+      <button className="ghost bbs-refresh" onClick={onRefresh} disabled={busy}><RefreshCw size={14}/>刷新</button>
+    </div>
+
+    {bbsTab === 'board' && <div className="bbs-tab-panel bbs-board-panel" role="tabpanel">
+      <div className="bbs-compose">
+        <input className="bbs-title-input" value={title} onChange={e=>setTitle(e.target.value)} placeholder="一句话说明任务" />
+        <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="补充目标、约束、验收方式……" />
+        <div className="bbs-compose-foot">
+          <input value={author} onChange={e=>setAuthor(e.target.value)} placeholder="作者 admin" />
           <button onClick={onCreate} disabled={busy || !title.trim() || !content.trim()}><Play size={14}/>发布</button>
         </div>
-      </Panel>
-    </div>
-    <Panel title="帖子列表">
-      <div className="bbs-list">{posts.length ? posts.map(p => <BBSPost key={p.id} post={p} author={author} onReply={onReply} busy={busy}/>) : <p className="muted">暂无帖子</p>}</div>
-    </Panel>
+      </div>
+      <div className="bbs-feed">{posts.length ? posts.map(p => <BBSPost key={p.id} post={p} author={author} onReply={onReply} busy={busy}/>) : <div className="empty-card bbs-empty"><b>频道空闲</b><span>发布第一条任务，worker 会从这里开始协作。</span></div>}</div>
+    </div>}
+
+    {bbsTab === 'config' && <div className="bbs-tab-panel" role="tabpanel">
+      <section className="bbs-config-card tabbed">
+        <div className="bbs-config-head"><div><p className="eyebrow">service</p><h3>接入与 worker</h3></div>{status?.error && <p className="err">{status.error}</p>}</div>
+        <div className="bbs-mode-row">
+          <label className={mode === 'builtin' ? 'selected' : ''}><input type="radio" checked={mode === 'builtin'} onChange={()=>patchConfig({ mode:'builtin' })}/><span><b>内置</b><small>Admin 自带</small></span></label>
+          <label className={mode === 'external' ? 'selected' : ''}><input type="radio" checked={mode === 'external'} onChange={()=>patchConfig({ mode:'external' })}/><span><b>外置</b><small>远端共享</small></span></label>
+        </div>
+        <div className="bbs-config-grid">
+          <label><span>内置地址</span><input value={status?.builtin_base_url || config?.builtin_base_url || status?.base_url || ''} readOnly /></label>
+          <label><span>外置地址</span><input value={config?.base_url || ''} onChange={e=>patchConfig({ base_url:e.target.value })} placeholder="http://host:8787" disabled={mode !== 'external'} /></label>
+          <label><span>Board Key</span><input value={config?.board_key || ''} onChange={e=>patchConfig({ board_key:e.target.value })} placeholder="ga-team" /></label>
+          <label><span>当前接入</span><input value={activeBase || '-'} readOnly /></label>
+        </div>
+        <div className="bbs-config-actions"><button onClick={()=>onSaveConfig(config)} disabled={busy || (mode === 'external' && !String(config?.base_url || '').trim())}><Save size={14}/>保存</button><button className="ghost" onClick={onTestConnection || onRefresh} disabled={busy}><RefreshCw size={14}/>测试连接</button><button className="ghost" disabled={!workerService || !workerService.running || busy} onClick={()=>onWorkerStop?.(workerService.name)}><Square size={14}/>停止 worker</button><label className="toggle-inline"><input type="checkbox" disabled={!workerService} checked={!!workerService?.autostart} onChange={e=>onWorkerAutostart?.(workerService.name, e.target.checked)} />自启动</label></div>
+        <details className="bbs-setup"><summary>Worker 接入参数</summary><div><span>Base</span><code>{activeBase || '-'}</code></div><div><span>Key</span><code>{activeKey || '-'}</code></div><div><span>setting</span><code>{workerConfig}</code></div></details>
+      </section>
+    </div>}
   </section>
 }
+
 function BBSPost({ post, author, onReply, busy }) {
   const [reply, setReply] = useState('')
-  return <div className="bbs-post">
-    <div className="bbs-post-head"><b>#{post.id} {post.title}</b><span>{post.author || 'anonymous'} · {post.created_at ? new Date(post.created_at).toLocaleString() : ''}</span></div>
-    <pre>{post.content}</pre>
-    <div className="bbs-replies">{(post.replies || []).map(r => <div className="bbs-reply" key={r.id}><b>{r.author || 'agent'}</b><span>{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span><p>{r.content}</p></div>)}</div>
-    <div className="bbs-reply-box"><input value={reply} onChange={e=>setReply(e.target.value)} placeholder={`以 ${author || 'admin'} 回复`} /><button disabled={busy || !reply.trim()} onClick={()=>{ onReply(post.id, reply); setReply('') }}>回复</button></div>
-  </div>
+  const lastTime = post.updated_at || post.created_at
+  return <article className="bbs-post compact-post">
+    <header>
+      <div><span className="post-id">#{post.id}</span><h3>{post.title}</h3></div>
+      <time>{lastTime ? new Date(lastTime).toLocaleString() : ''}</time>
+    </header>
+    <p className="post-body">{post.content}</p>
+    {!!post.replies?.length && <div className="reply-stack">{post.replies.map(r => <div className="reply-line" key={r.id}><b>{r.author || 'agent'}</b><p>{r.content}</p></div>)}</div>}
+    <div className="inline-reply"><input value={reply} onChange={e=>setReply(e.target.value)} placeholder={`回复 ${post.author || '任务'}`} /><button disabled={busy || !reply.trim()} onClick={()=>{ onReply(post.id, reply); setReply('') }}>发送</button></div>
+  </article>
 }
 
 function TurnBubble({ message }) {

@@ -57,8 +57,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
 	mux.HandleFunc("/api/ga/control", s.gaControl)
 	mux.HandleFunc("/api/ga/git-update", s.gaGitUpdate)
+	mux.HandleFunc("/api/ga/git-status", s.gaGitStatus)
 	// Built-in BBS service compatible with GA reflect/agent_team_worker.py
 	mux.HandleFunc("/api/bbs/status", s.bbsStatus)
+	mux.HandleFunc("/api/bbs/config", s.bbsConfigHandler)
 	mux.HandleFunc("/api/bbs/posts", s.bbsPosts)
 	mux.HandleFunc("/api/bbs/post", s.bbsPost)
 	mux.HandleFunc("/api/bbs/reply", s.bbsReply)
@@ -634,6 +636,74 @@ func runGitCommand(ctx context.Context, root string, args ...string) (string, er
 		return text, fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
 	}
 	return text, nil
+}
+
+func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}, error) {
+	if st, err := os.Stat(filepath.Join(abs, ".git")); err != nil || !st.IsDir() {
+		return nil, errors.New("GA root is not a git repository")
+	}
+	branch, _ := runGitCommand(ctx, abs, "branch", "--show-current")
+	if strings.TrimSpace(branch) == "" {
+		branch, _ = runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
+	}
+	commit, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
+	status, _ := runGitCommand(ctx, abs, "status", "--short")
+	upstream, _ := runGitCommand(ctx, abs, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	aheadBehind := ""
+	ahead := 0
+	behind := 0
+	if strings.TrimSpace(upstream) != "" {
+		aheadBehind, _ = runGitCommand(ctx, abs, "rev-list", "--left-right", "--count", "HEAD...@{u}")
+		parts := strings.Fields(aheadBehind)
+		if len(parts) >= 2 {
+			ahead, _ = strconv.Atoi(parts[0])
+			behind, _ = strconv.Atoi(parts[1])
+		}
+	}
+	return map[string]interface{}{
+		"ok": true, "root": abs, "branch": strings.TrimSpace(branch), "commit": strings.TrimSpace(commit),
+		"upstream": strings.TrimSpace(upstream), "ahead": ahead, "behind": behind,
+		"latest": behind == 0, "dirty": strings.TrimSpace(status) != "", "status": status,
+	}, nil
+}
+
+func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
+	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	if root == "" {
+		bad(w, 400, "ga_root is not configured")
+		return
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+
+	// Keep page load fast: local git status by default. Network fetch can block
+	// on slow remotes or credential prompts, so run it only when explicitly asked.
+	remote := r.URL.Query().Get("remote") == "1" || strings.EqualFold(r.URL.Query().Get("fetch"), "true")
+	timeout := 5 * time.Second
+	if remote {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	var fetchOut string
+	var fetchErr error
+	if remote {
+		fetchOut, fetchErr = runGitCommand(ctx, abs, "fetch", "--all", "--prune")
+	}
+	st, err := gaGitStatusForRoot(ctx, abs)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	st["remote_checked"] = remote
+	if fetchErr != nil {
+		st["fetch_error"] = strings.TrimSpace(fetchOut + "\n" + fetchErr.Error())
+	}
+	writeJSON(w, st)
 }
 
 func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, RefreshCw, Send, Square, Trash2, X } from 'lucide-react'
 
 const api = async (url, options = {}) => {
@@ -170,8 +170,8 @@ const normalizeToolParts = (parts = []) => {
   return out
 }
 
-function MarkdownBlock({ text = '', onAskReply }) {
-  const parts = normalizeToolParts(splitMarkdownParts(text))
+const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
+  const parts = useMemo(() => normalizeToolParts(splitMarkdownParts(text)), [text])
   return <div className="oa-md">
     {parts.map((p, idx) => p.type === 'code'
       ? <div className="oa-code-card" key={idx}>
@@ -180,9 +180,9 @@ function MarkdownBlock({ text = '', onAskReply }) {
         </div>
       : p.type === 'tool'
         ? <ToolCallBlock key={idx} call={p.call} onAskReply={onAskReply} />
-        : <TextMarkdown key={idx} text={p.text}/>) }
+        : <TextMarkdown key={idx} text={p.text} onAskReply={onAskReply}/>) }
   </div>
-}
+})
 
 const parseToolCallBlock = (block = '') => {
   const text = String(block || '').trim()
@@ -344,10 +344,10 @@ const parseAssistantContent = (raw = '') => {
   return { runs: [], body: full.replace(FINAL_MARKER_RE, '').replace(/\n{3,}/g, '\n\n').trim() }
 }
 
-function AssistantContent({ content, pending, onAskReply }) {
+const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply }) {
   const [openTurns, setOpenTurns] = useState({})
+  const parsed = useMemo(() => parseAssistantContent(content), [content])
   if (!content && pending) return <div className="oa-content oa-thinking">正在思考…</div>
-  const parsed = parseAssistantContent(content)
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
@@ -382,7 +382,31 @@ function AssistantContent({ content, pending, onAskReply }) {
       <MarkdownBlock text={parsed.body || content || ''} onAskReply={onAskReply} />
     </div>}
   </div>
-}
+})
+
+const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply }) {
+  return <article className={`oa-message ${m.role} ${m.error?'error':''}`}>
+    <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
+    <div className="oa-bubble">
+      <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.content} compact />}</div>
+      {Array.isArray(m.files) && m.files.some(f => String(f.type || '').startsWith('image/')) && <div className="oa-message-images">{m.files.filter(f => String(f.type || '').startsWith('image/')).map((f, i) => <img key={f.name || i} src={f.dataURL || f.url} alt={f.name || 'image'} />)}</div>}
+      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending && !m.content} onAskReply={onAskReply} /> : <MarkdownBlock text={m.content} />}
+    </div>
+  </article>
+})
+
+const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAskReply }) {
+  return <>
+    {messages.flatMap((m, i) => {
+      const day = timelineKey(m.created_at)
+      const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
+      const nodes = []
+      if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
+      nodes.push(<ChatMessage key={m.id} message={m} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} />)
+      return nodes
+    })}
+  </>
+})
 export default function ChatApp() {
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState('')
@@ -572,7 +596,7 @@ export default function ChatApp() {
   }
 
 
-  const fillAskReply = (text) => {
+  const fillAskReply = useCallback((text) => {
     const value = String(text || '')
     setPrompt(value)
     setNotice('已填入快捷回复，确认后可发送')
@@ -585,7 +609,7 @@ export default function ChatApp() {
     }
     requestAnimationFrame(focusPrompt)
     setTimeout(focusPrompt, 0)
-  }
+  }, [])
 
   const send = async () => {
     const text = prompt.trim()
@@ -705,21 +729,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        {messages.flatMap((m, i) => {
-          const day = timelineKey(m.created_at)
-          const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
-          const nodes = []
-          if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-          nodes.push(<article key={m.id} className={`oa-message ${m.role} ${m.error?'error':''}`}>
-            <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
-            <div className="oa-bubble">
-              <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.content} compact />}</div>
-              {Array.isArray(m.files) && m.files.some(f => String(f.type || '').startsWith('image/')) && <div className="oa-message-images">{m.files.filter(f => String(f.type || '').startsWith('image/')).map((f, i) => <img key={f.name || i} src={f.dataURL || f.url} alt={f.name || 'image'} />)}</div>}
-              {m.role === 'assistant' ? <AssistantContent content={m.content} pending={isCurrentRunning && !m.content} onAskReply={fillAskReply} /> : <MarkdownBlock text={m.content} />}
-            </div>
-          </article>)
-          return nodes
-        })}
+        <MessageList messages={messages} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} />
         <div ref={endRef}/>
       </section>
       {showFollow && <button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button>}

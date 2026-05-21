@@ -13,11 +13,16 @@ type AppConfig struct {
 	LogTailLines     int      `json:"log_tail_lines"`
 	BufferLines      int      `json:"buffer_lines"`
 	PythonPath       string   `json:"python_path"`
+	ProxyMode        string   `json:"proxy_mode"` // off | system | custom
+	HTTPProxy        string   `json:"http_proxy"`
+	HTTPSProxy       string   `json:"https_proxy"`
+	AllProxy         string   `json:"all_proxy"`
+	NoProxy          string   `json:"no_proxy"`
 	ServiceAutostart []string `json:"service_autostart"`
 }
 
 func Default() AppConfig {
-	return AppConfig{GARoot: "E:/Work/GenericAgent", Host: "127.0.0.1", Port: 8787, LogTailLines: 200, BufferLines: 1000}
+	return AppConfig{GARoot: "E:/Work/GenericAgent", Host: "127.0.0.1", Port: 8787, LogTailLines: 200, BufferLines: 1000, ProxyMode: "off"}
 }
 
 type Store struct {
@@ -54,6 +59,9 @@ func (s *Store) Load() error {
 	if cfg.BufferLines == 0 {
 		cfg.BufferLines = 1000
 	}
+	if cfg.ProxyMode == "" {
+		cfg.ProxyMode = "off"
+	}
 	s.Cfg = cfg
 	return nil
 }
@@ -70,6 +78,9 @@ func (s *Store) Save(cfg AppConfig) error {
 	}
 	if cfg.BufferLines == 0 {
 		cfg.BufferLines = 1000
+	}
+	if cfg.ProxyMode == "" {
+		cfg.ProxyMode = "off"
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
