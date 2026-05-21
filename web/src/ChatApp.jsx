@@ -440,25 +440,69 @@ export default function ChatApp() {
         ? xs.map(m => m.id === clientUserID ? ev.message : m)
         : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message]))
     }
-    if (ev.type === 'delta' && typeof ev.delta === 'string') {
-      setMessages(xs => xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + ev.delta } : m))
-    }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
       setMessages(xs => xs.map(m => m.id === pendingId ? ev.message : m))
     }
   }
 
+  const createStreamBatcher = (pendingId) => {
+    let pendingDelta = ''
+    let raf = 0
+    const flush = () => {
+      raf = 0
+      if (!pendingDelta) return
+      const chunk = pendingDelta
+      pendingDelta = ''
+      setMessages(xs => xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m))
+    }
+    const schedule = () => {
+      if (raf) return
+      raf = window.requestAnimationFrame ? window.requestAnimationFrame(flush) : window.setTimeout(flush, 16)
+    }
+    return {
+      push(delta) {
+        if (!delta) return
+        pendingDelta += delta
+        schedule()
+      },
+      flushNow() {
+        if (raf) {
+          if (window.cancelAnimationFrame) window.cancelAnimationFrame(raf)
+          else window.clearTimeout(raf)
+          raf = 0
+        }
+        flush()
+      },
+    }
+  }
+
   const readStream = async (res, pendingId, clientUserID = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buf += dec.decode(value, { stream:true })
-      const lines = buf.split('\n'); buf = lines.pop() || ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        applyStreamEvent(JSON.parse(line), pendingId, clientUserID)
+    const batcher = createStreamBatcher(pendingId)
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream:true })
+        const lines = buf.split('\n'); buf = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          const ev = JSON.parse(line)
+          if (ev.type === 'delta' && typeof ev.delta === 'string') {
+            batcher.push(ev.delta)
+          } else {
+            batcher.flushNow()
+            applyStreamEvent(ev, pendingId, clientUserID)
+          }
+        }
       }
+      if (buf.trim()) {
+        const ev = JSON.parse(buf)
+        if (ev.type === 'delta' && typeof ev.delta === 'string') batcher.push(ev.delta)
+        else { batcher.flushNow(); applyStreamEvent(ev, pendingId, clientUserID) }
+      }
+    } finally {
+      batcher.flushNow()
     }
   }
 
