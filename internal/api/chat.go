@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"genericagent-admin-go/internal/config"
@@ -66,13 +67,14 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []map[string]interface{}{}
-	_ = os.MkdirAll(chatSessionDir(s.CfgStore.Cfg.GARoot), 0755)
-	entries, _ := os.ReadDir(chatSessionDir(s.CfgStore.Cfg.GARoot))
+	ensureChatDataMigrated(s.CfgStore.Cfg)
+	_ = os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755)
+	entries, _ := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		cs, err := loadChatSession(s.CfgStore.Cfg.GARoot, strings.TrimSuffix(e.Name(), ".json"))
+		cs, err := loadChatSession(s.CfgStore.Cfg, strings.TrimSuffix(e.Name(), ".json"))
 		if err != nil {
 			continue
 		}
@@ -150,14 +152,14 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: chatSettings{}}
-	if err := saveChatSession(s.CfgStore.Cfg.GARoot, cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, cs)
 }
 func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, err := loadChatSession(s.CfgStore.Cfg.GARoot, safeChatID(sid))
+	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
@@ -180,33 +182,33 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 	if len([]rune(title)) > 80 {
 		title = string([]rune(title)[:80])
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg.GARoot, safeChatID(sid))
+	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	cs.Title = title
 	cs.UpdatedAt = time.Now().Unix()
-	if err := saveChatSession(s.CfgStore.Cfg.GARoot, cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, cs)
 }
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {
-	_ = os.Remove(chatSessionPath(s.CfgStore.Cfg.GARoot, safeChatID(sid)))
+	_ = os.Remove(chatSessionPath(s.CfgStore.Cfg, safeChatID(sid)))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid string) {
 	var st chatSettings
 	_ = decode(r, &st)
-	cs, _ := loadChatSession(s.CfgStore.Cfg.GARoot, safeChatID(sid))
+	cs, _ := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
 	cs.Settings = st
-	_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+	_ = saveChatSession(s.CfgStore.Cfg, cs)
 	writeJSON(w, map[string]interface{}{"ok": true, "settings": st})
 }
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, _ := loadChatSession(s.CfgStore.Cfg.GARoot, safeChatID(sid))
+	cs, _ := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
 	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg.GARoot)
 	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
@@ -232,7 +234,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		bad(w, 409, "chat is already running")
 		return
 	}
-	cs, _ := loadChatSession(s.CfgStore.Cfg.GARoot, sid)
+	cs, _ := loadChatSession(s.CfgStore.Cfg, sid)
 	if cs.ID == "" {
 		cs.ID = sid
 		cs.Title = "新会话"
@@ -240,7 +242,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	if req.Settings.LLMNo != 0 {
 		cs.Settings = req.Settings
 	}
-	saved, refs, err := saveChatUploads(s.CfgStore.Cfg.GARoot, req.Files)
+	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
 	if err != nil {
 		s.endChatRun(sid)
 		bad(w, 400, err.Error())
@@ -257,7 +259,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
 	cs.Messages = append(cs.Messages, userMsg)
 	updateChatTitle(&cs)
-	_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+	_ = saveChatSession(s.CfgStore.Cfg, cs)
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerPrompt := buildPromptWithHistory(display, cs.Messages)
 	cmdReq := map[string]interface{}{"prompt": workerPrompt, "llm_no": cs.Settings.LLMNo, "ga_root": s.CfgStore.Cfg.GARoot}
@@ -270,7 +272,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	if err != nil {
 		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
 		cs.Messages = append(cs.Messages, msg)
-		_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+		_ = saveChatSession(s.CfgStore.Cfg, cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
 		s.endChatRun(sid)
 		return
@@ -280,7 +282,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		s.dropChatWorker(sid, worker)
 		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
 		cs.Messages = append(cs.Messages, msg)
-		_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+		_ = saveChatSession(s.CfgStore.Cfg, cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
 		s.endChatRun(sid)
 		return
@@ -334,7 +336,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	}
 	cs.Messages = append(cs.Messages, final)
 	cs.UpdatedAt = time.Now().Unix()
-	_ = saveChatSession(s.CfgStore.Cfg.GARoot, cs)
+	_ = saveChatSession(s.CfgStore.Cfg, cs)
 	s.endChatRun(sid)
 }
 
@@ -526,7 +528,7 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flusher http.Flusher, cs *chatSession, err error) {
 	msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
 	cs.Messages = append(cs.Messages, msg)
-	_ = saveChatSession(s.CfgStore.Cfg.GARoot, *cs)
+	_ = saveChatSession(s.CfgStore.Cfg, *cs)
 	_ = enc.Encode(map[string]interface{}{"type": "error", "message": msg})
 	if flusher != nil {
 		flusher.Flush()
@@ -740,17 +742,71 @@ func safeChatID(v string) string {
 	}
 	return v
 }
-func chatSessionDir(root string) string {
-	return filepath.Join(root, "temp", "react_frontend_sessions")
+var chatDataMigrationMu sync.Mutex
+var chatDataMigrated = map[string]bool{}
+
+func chatDataDir(cfg config.AppConfig) string {
+	dir := strings.TrimSpace(cfg.ChatDataDir)
+	if dir == "" {
+		dir = config.DefaultChatDataDir()
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
 }
-func chatUploadDir(root string) string { return filepath.Join(root, "temp", "react_frontend_uploads") }
-func chatSessionPath(root, sid string) string {
-	return filepath.Join(chatSessionDir(root), safeChatID(sid)+".json")
+func chatSessionDir(cfg config.AppConfig) string { return filepath.Join(chatDataDir(cfg), "chat_sessions") }
+func chatUploadDir(cfg config.AppConfig) string  { return filepath.Join(chatDataDir(cfg), "chat_uploads") }
+func legacyChatSessionDir(root string) string    { return filepath.Join(root, "temp", "react_frontend_sessions") }
+func legacyChatUploadDir(root string) string     { return filepath.Join(root, "temp", "react_frontend_uploads") }
+func chatSessionPath(cfg config.AppConfig, sid string) string {
+	return filepath.Join(chatSessionDir(cfg), safeChatID(sid)+".json")
 }
-func loadChatSession(root, sid string) (chatSession, error) {
+func ensureChatDataMigrated(cfg config.AppConfig) {
+	key := cfg.GARoot + "|" + chatDataDir(cfg)
+	chatDataMigrationMu.Lock()
+	if chatDataMigrated[key] {
+		chatDataMigrationMu.Unlock()
+		return
+	}
+	chatDataMigrated[key] = true
+	chatDataMigrationMu.Unlock()
+	_ = copyDirIfTargetEmpty(legacyChatSessionDir(cfg.GARoot), chatSessionDir(cfg))
+	_ = copyDirIfTargetEmpty(legacyChatUploadDir(cfg.GARoot), chatUploadDir(cfg))
+}
+func copyDirIfTargetEmpty(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	if existing, err := os.ReadDir(dst); err == nil && len(existing) > 0 {
+		return nil
+	}
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		in := filepath.Join(src, e.Name())
+		out := filepath.Join(dst, e.Name())
+		if _, err := os.Stat(out); err == nil {
+			continue
+		}
+		b, err := os.ReadFile(in)
+		if err != nil {
+			continue
+		}
+		_ = os.WriteFile(out, b, 0644)
+	}
+	return nil
+}
+func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
+	ensureChatDataMigrated(cfg)
 	sid = safeChatID(sid)
 	cs := chatSession{ID: sid, Title: "新会话", Messages: []chatMessage{}, Settings: chatSettings{}}
-	b, err := os.ReadFile(chatSessionPath(root, sid))
+	b, err := os.ReadFile(chatSessionPath(cfg, sid))
 	if err != nil {
 		return cs, nil
 	}
@@ -763,11 +819,12 @@ func loadChatSession(root, sid string) (chatSession, error) {
 	}
 	return cs, nil
 }
-func saveChatSession(root string, cs chatSession) error {
-	_ = os.MkdirAll(chatSessionDir(root), 0755)
+func saveChatSession(cfg config.AppConfig, cs chatSession) error {
+	ensureChatDataMigrated(cfg)
+	_ = os.MkdirAll(chatSessionDir(cfg), 0755)
 	cs.UpdatedAt = time.Now().Unix()
 	b, _ := json.MarshalIndent(cs, "", "  ")
-	return os.WriteFile(chatSessionPath(root, cs.ID), b, 0644)
+	return os.WriteFile(chatSessionPath(cfg, cs.ID), b, 0644)
 }
 func updateChatTitle(cs *chatSession) {
 	if cs.Title != "" && cs.Title != "新会话" {
@@ -785,11 +842,12 @@ func updateChatTitle(cs *chatSession) {
 	}
 }
 
-func saveChatUploads(root string, files []chatUpload) ([]map[string]interface{}, []string, error) {
+func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]interface{}, []string, error) {
 	if len(files) == 0 {
 		return nil, nil, nil
 	}
-	_ = os.MkdirAll(chatUploadDir(root), 0755)
+	ensureChatDataMigrated(cfg)
+	_ = os.MkdirAll(chatUploadDir(cfg), 0755)
 	var saved []map[string]interface{}
 	var refs []string
 	for _, f := range files {
@@ -806,7 +864,7 @@ func saveChatUploads(root string, files []chatUpload) ([]map[string]interface{},
 			return nil, nil, fmt.Errorf("decode %s: %w", name, err)
 		}
 		name = fmt.Sprintf("%d_%s", time.Now().UnixNano(), name)
-		target := filepath.Join(chatUploadDir(root), name)
+		target := filepath.Join(chatUploadDir(cfg), name)
 		if err := os.WriteFile(target, raw, 0644); err != nil {
 			return nil, nil, err
 		}
@@ -818,7 +876,7 @@ func saveChatUploads(root string, files []chatUpload) ([]map[string]interface{},
 }
 
 func (s *Server) chatFile(w http.ResponseWriter, r *http.Request, name string) {
-	http.ServeFile(w, r, filepath.Join(chatUploadDir(s.CfgStore.Cfg.GARoot), filepath.Base(name)))
+	http.ServeFile(w, r, filepath.Join(chatUploadDir(s.CfgStore.Cfg), filepath.Base(name)))
 }
 
 func newChatID() string {

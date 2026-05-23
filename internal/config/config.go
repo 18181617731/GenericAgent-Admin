@@ -8,6 +8,7 @@ import (
 
 type AppConfig struct {
 	GARoot           string   `json:"ga_root"`
+	ChatDataDir      string   `json:"chat_data_dir"`
 	Host             string   `json:"host"`
 	Port             int      `json:"port"`
 	LogTailLines     int      `json:"log_tail_lines"`
@@ -21,8 +22,18 @@ type AppConfig struct {
 	ServiceAutostart []string `json:"service_autostart"`
 }
 
+func DefaultChatDataDir() string {
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "GenericAgent-Admin")
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".genericagent-admin")
+	}
+	return "GenericAgent-Admin"
+}
+
 func Default() AppConfig {
-	return AppConfig{GARoot: "E:/Work/GenericAgent", Host: "127.0.0.1", Port: 8787, LogTailLines: 200, BufferLines: 1000, ProxyMode: "off"}
+	return AppConfig{GARoot: "E:/Work/GenericAgent", ChatDataDir: DefaultChatDataDir(), Host: "127.0.0.1", Port: 8787, LogTailLines: 200, BufferLines: 1000, ProxyMode: "off"}
 }
 
 type Store struct {
@@ -46,6 +57,9 @@ func (s *Store) Load() error {
 	cfg := Default()
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
+	}
+	if cfg.ChatDataDir == "" {
+		cfg.ChatDataDir = DefaultChatDataDir()
 	}
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"

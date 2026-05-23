@@ -320,20 +320,79 @@ function renderMarkdownTable(table, key) {
   </div>
 }
 
+function renderListBlock(lines, i, ordered) {
+  const itemRe = ordered ? /^\s*(\d+)[.)]\s+/ : /^\s*[-*+]\s+/
+  const Tag = ordered ? 'ol' : 'ul'
+  const firstNumber = ordered ? Number(String(lines[0] || '').match(itemRe)?.[1] || 1) : undefined
+  const props = ordered ? { start: firstNumber } : {}
+  return <Tag key={i} className={`oa-list ${ordered ? 'oa-list-ordered' : 'oa-list-unordered'}`} {...props}>
+    {lines.map((x,j)=>{
+      const itemNumber = ordered ? Number(String(x || '').match(itemRe)?.[1] || firstNumber + j) : undefined
+      const liProps = ordered ? { value: itemNumber } : {}
+      return <li key={j} {...liProps}><InlineRichText text={x.replace(itemRe, '')} /></li>
+    })}
+  </Tag>
+}
+
+function renderPlainTextBlock(b, key) {
+  const trimmed = String(b || '').trim()
+  if (!trimmed) return null
+  const lines = trimmed.split('\n')
+  const orderedOnly = lines.every(x => /^\s*\d+[.)]\s+/.test(x))
+  const unorderedOnly = lines.every(x => /^\s*[-*+]\s+/.test(x))
+  if (orderedOnly) return renderListBlock(lines, key, true)
+  if (unorderedOnly) return renderListBlock(lines, key, false)
+  if (/^#{1,3}\s+/.test(trimmed)) {
+    const level = Math.min(3, trimmed.match(/^#+/)[0].length)
+    const body = trimmed.replace(/^#{1,3}\s+/, '')
+    const Tag = `h${level + 2}`
+    return <Tag key={key}><InlineRichText text={body} /></Tag>
+  }
+  return <p key={key}><InlineRichText text={trimmed} /></p>
+}
+
 function renderTextBlock(b, i) {
-  const lines = b.split('\n')
   const table = parseMarkdownTable(b)
   if (table) return renderMarkdownTable(table, i)
-  if (lines.every(x => /^\s*([-*]|\d+\.)\s+/.test(x)) && lines.length > 1) {
-    return <ul key={i} className="oa-list">{lines.map((x,j)=><li key={j}><InlineRichText text={x.replace(/^\s*([-*]|\d+\.)\s+/, '')} /></li>)}</ul>
+
+  const lines = String(b || '').split('\n')
+  const nodes = []
+  let paragraph = []
+  let list = []
+  let listOrdered = null
+  let seq = 0
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    const node = renderPlainTextBlock(paragraph.join('\n'), `${i}-p-${seq++}`)
+    if (node) nodes.push(node)
+    paragraph = []
   }
-  if (/^#{1,3}\s+/.test(b.trim())) {
-    const level = Math.min(3, b.trim().match(/^#+/)[0].length)
-    const body = b.trim().replace(/^#{1,3}\s+/, '')
-    const Tag = `h${level + 2}`
-    return <Tag key={i}><InlineRichText text={body} /></Tag>
+  const flushList = () => {
+    if (!list.length) return
+    nodes.push(renderListBlock(list, `${i}-l-${seq++}`, listOrdered === true))
+    list = []
+    listOrdered = null
   }
-  return <p key={i}><InlineRichText text={b} /></p>
+
+  for (const line of lines) {
+    const isOrdered = /^\s*\d+[.)]\s+/.test(line)
+    const isUnordered = /^\s*[-*+]\s+/.test(line)
+    if (isOrdered || isUnordered) {
+      flushParagraph()
+      const ordered = isOrdered
+      if (list.length && listOrdered !== ordered) flushList()
+      listOrdered = ordered
+      list.push(line)
+    } else {
+      flushList()
+      paragraph.push(line)
+    }
+  }
+  flushParagraph()
+  flushList()
+  if (nodes.length === 1) return nodes[0]
+  if (nodes.length > 1) return <div key={i} className="oa-md-fragment">{nodes}</div>
+  return null
 }
 
 function TextMarkdown({ text = '', onAskReply }) {
@@ -475,6 +534,8 @@ export default function ChatApp() {
   const [draftTitle, setDraftTitle] = useState('')
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
+  const [queueEditingId, setQueueEditingId] = useState('')
+  const [queueDraft, setQueueDraft] = useState('')
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
@@ -621,13 +682,18 @@ export default function ChatApp() {
     await loadChatState(d.id)
   }
 
-  const loadSessions = async (prefer = sid) => {
+  const loadSessions = async (prefer = sid, options = {}) => {
+    const { open = false } = options
     const d = await api('/api/chat/sessions')
     const list = d.sessions || []
     setSessions(list)
-    const next = prefer || list[0]?.id || ''
-    if (next) await openSession(next, false)
-    else await loadChatState('')
+    if (open) {
+      const next = prefer || list[0]?.id || ''
+      if (next) await openSession(next, false)
+      else await loadChatState('')
+    } else if (!prefer && !sid) {
+      await loadChatState('')
+    }
     return list
   }
 
@@ -645,7 +711,7 @@ export default function ChatApp() {
     setMenuOpen('')
     setMenuPos(null)
     if (id === sid) { setSid(''); setMessages([]); setNotice('会话已删除') }
-    setTimeout(() => loadSessions('').catch(()=>{}), 0)
+    setTimeout(() => loadSessions('', { open:true }).catch(()=>{}), 0)
   }
 
   const startRename = (s) => { setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null) }
@@ -696,33 +762,36 @@ export default function ChatApp() {
   }
   const removeQueued = (id) => {
     syncQueue(queuedRef.current.filter(x => x.id !== id))
+    if (queueEditingId === id) { setQueueEditingId(''); setQueueDraft('') }
   }
   const editQueued = (id) => {
     const item = queuedRef.current.find(x => x.id === id)
     if (!item) return
-    syncQueue(queuedRef.current.filter(x => x.id !== id))
-    setPrompt(item.text || '')
-    setAttachments((item.files || []).map((f, i) => ({
-      id:`edit-img-${Date.now()}-${i}`,
-      name:f.name || `queued-${i + 1}.png`,
-      type:f.type || 'image/png',
-      size:f.size || 0,
-      dataURL:f.dataURL || '',
-    })).filter(f => f.dataURL))
-    setNotice('已移入输入框，可编辑后重新发送')
-    requestAnimationFrame(() => {
-      const el = promptRef.current
-      if (!el) return
-      el.focus()
-      const len = (item.text || '').length
-      el.setSelectionRange?.(len, len)
-    })
+    setQueueEditingId(id)
+    setQueueDraft(item.text || '')
+    setNotice('正在编辑队列消息')
+  }
+  const cancelQueueEdit = () => {
+    setQueueEditingId('')
+    setQueueDraft('')
+    setNotice('')
+  }
+  const saveQueueEdit = (id) => {
+    const text = queueDraft.trim()
+    const item = queuedRef.current.find(x => x.id === id)
+    if (!item) return
+    if (!text && !(item.files || []).length) { setErr('队列消息不能为空'); return }
+    syncQueue(queuedRef.current.map(x => x.id === id ? { ...x, text } : x))
+    setQueueEditingId('')
+    setQueueDraft('')
+    setErr('')
+    setNotice('队列消息已更新')
   }
   const guideQueuedItem = (id) => {
     const item = queuedRef.current.find(x => x.id === id)
     if (!item) return
-    syncQueue([item, ...queuedRef.current.filter(x => x.id !== id)])
-    guideQueued()
+    syncQueue(queuedRef.current.filter(x => x.id !== id))
+    guideQueued(item)
   }
   const onPaste = (e) => {
     const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type?.startsWith('image/'))
@@ -757,6 +826,9 @@ export default function ChatApp() {
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
     const runToken = ++runSeqRef.current
+    const ctrl = new AbortController()
+    streamAbortRef.current?.abort?.()
+    streamAbortRef.current = ctrl
     setBusy(true); setStreamingSid(sid || 'new'); setErr(''); setNotice('')
     let id = sid
     try {
@@ -772,7 +844,7 @@ export default function ChatApp() {
       const optimistic = { id:clientUserID, role:'user', content:(text || '请分析这张图片') + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }
       setMessages(xs => [...xs, optimistic, pending])
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo }, client_user_id:clientUserID }) })
+      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo }, client_user_id:clientUserID }) })
       if (!res.ok) throw new Error(await res.text())
       await readStream(res, pending.id, clientUserID)
     } catch (e) {
@@ -804,8 +876,8 @@ export default function ChatApp() {
     await runSend(item)
   }
 
-  const guideQueued = async () => {
-    const next = popQueued()
+  const guideQueued = async (item = null) => {
+    const next = item || popQueued()
     if (!next) return
     const id = sid
     const wasRunning = busy && streamingSid === sid
@@ -826,7 +898,7 @@ export default function ChatApp() {
     }
   }
 
-  useEffect(() => { loadSessions().catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
+  useEffect(() => { loadSessions('', { open:true }).catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
 
   const scrollToThreadEnd = (behavior = 'smooth') => endRef.current?.scrollIntoView({ behavior, block:'end' })
   const resumeFollow = () => {
@@ -921,19 +993,28 @@ export default function ChatApp() {
 
       <footer className="oa-composer-wrap">
         {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
-          {queuedMessages.map((q, i) => <div key={q.id} className="oa-queued-item">
-            <span className="oa-queue-index">消息{i + 1}</span>
-            <div className="oa-queue-content" title={q.text || '请分析这张图片'}>
-              <b>{q.text || '请分析这张图片'}</b>
-              {q.files?.length ? <em>{q.files.length} 张图片</em> : null}
+          {queuedMessages.map((q, i) => {
+            const isEditingQueue = queueEditingId === q.id
+            return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''}`}>
+              <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '请分析这张图片')}>
+                {isEditingQueue ? <textarea className="oa-queue-edit-input" value={queueDraft} autoFocus rows={2} onChange={e=>setQueueDraft(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) saveQueueEdit(q.id); if(e.key==='Escape') cancelQueueEdit() }} /> : <>
+                  <b>{q.text || '请分析这张图片'}</b>
+                  {q.files?.length ? <em>{q.files.length} 张图片</em> : null}
+                </>}
+              </div>
+              <div className="oa-queue-actions">
+                <span className="oa-queue-index">消息{i + 1}</span>
+                {isEditingQueue ? <>
+                  <button className="oa-queue-action" type="button" onClick={()=>saveQueueEdit(q.id)} title="保存队列消息" aria-label="保存队列消息"><Check size={14}/></button>
+                  <button className="oa-queue-action" type="button" onClick={cancelQueueEdit} title="取消编辑" aria-label="取消编辑"><X size={14}/></button>
+                </> : <>
+                  <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning} title={isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : 'AI 回复时可引导'}><Sparkles size={14}/>引导</button>
+                  <button className="oa-queue-action" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息" aria-label="删除这条队列消息"><Trash2 size={14}/></button>
+                  <button className="oa-queue-action" type="button" onClick={()=>editQueued(q.id)} title="编辑这条队列消息" aria-label="编辑这条队列消息"><Edit3 size={14}/></button>
+                </>}
+              </div>
             </div>
-            <span className="oa-queue-arrow" aria-hidden="true">→</span>
-            <div className="oa-queue-actions">
-              <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning} title={isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : 'AI 回复时可引导'}><Sparkles size={14}/>引导</button>
-              <button className="oa-queue-action" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息"><Trash2 size={14}/><span>删除</span></button>
-              <button className="oa-queue-action" type="button" onClick={()=>editQueued(q.id)} title="编辑这条队列消息"><Edit3 size={14}/><span>编辑</span></button>
-            </div>
-          </div>)}
+          })}
         </div>}
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropImages}>
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{ addImageFiles(e.target.files); e.target.value='' }} />
