@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -210,6 +211,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 	cs, _ := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
 	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg.GARoot)
+	markChatLLMActive(llms, cs.Settings.LLMNo)
 	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
 		backend["warning"] = err.Error()
@@ -220,10 +222,10 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 
 func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	var req struct {
-		Prompt       string       `json:"prompt"`
-		Files        []chatUpload `json:"files"`
-		Settings     chatSettings `json:"settings"`
-		ClientUserID string       `json:"client_user_id"`
+		Prompt       string        `json:"prompt"`
+		Files        []chatUpload  `json:"files"`
+		Settings     *chatSettings `json:"settings"`
+		ClientUserID string        `json:"client_user_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		bad(w, 400, "bad request")
@@ -239,8 +241,8 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		cs.ID = sid
 		cs.Title = "新会话"
 	}
-	if req.Settings.LLMNo != 0 {
-		cs.Settings = req.Settings
+	if req.Settings != nil {
+		cs.Settings = *req.Settings
 	}
 	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
 	if err != nil {
@@ -589,6 +591,56 @@ func parseLLMJSONArrayFromMixedOutput(out []byte) ([]map[string]interface{}, err
 	return nil, fmt.Errorf("no JSON array found")
 }
 
+func markChatLLMActive(llms []map[string]interface{}, llmNo int) {
+	for _, item := range llms {
+		idx, ok := chatLLMIndex(item["index"])
+		item["active"] = ok && idx == llmNo
+	}
+}
+
+func chatLLMIndex(v interface{}) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int8:
+		return int(x), true
+	case int16:
+		return int(x), true
+	case int32:
+		return int(x), true
+	case int64:
+		return int(x), true
+	case uint:
+		return int(x), true
+	case uint8:
+		return int(x), true
+	case uint16:
+		return int(x), true
+	case uint32:
+		return int(x), true
+	case uint64:
+		return int(x), true
+	case float32:
+		return int(x), true
+	case float64:
+		return int(x), true
+	case json.Number:
+		n, err := x.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(n), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(x))
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
+}
+
 func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
 	sid = safeChatID(sid)
 	s.ChatMu.Lock()
@@ -742,6 +794,7 @@ func safeChatID(v string) string {
 	}
 	return v
 }
+
 var chatDataMigrationMu sync.Mutex
 var chatDataMigrated = map[string]bool{}
 
@@ -755,10 +808,18 @@ func chatDataDir(cfg config.AppConfig) string {
 	}
 	return dir
 }
-func chatSessionDir(cfg config.AppConfig) string { return filepath.Join(chatDataDir(cfg), "chat_sessions") }
-func chatUploadDir(cfg config.AppConfig) string  { return filepath.Join(chatDataDir(cfg), "chat_uploads") }
-func legacyChatSessionDir(root string) string    { return filepath.Join(root, "temp", "react_frontend_sessions") }
-func legacyChatUploadDir(root string) string     { return filepath.Join(root, "temp", "react_frontend_uploads") }
+func chatSessionDir(cfg config.AppConfig) string {
+	return filepath.Join(chatDataDir(cfg), "chat_sessions")
+}
+func chatUploadDir(cfg config.AppConfig) string {
+	return filepath.Join(chatDataDir(cfg), "chat_uploads")
+}
+func legacyChatSessionDir(root string) string {
+	return filepath.Join(root, "temp", "react_frontend_sessions")
+}
+func legacyChatUploadDir(root string) string {
+	return filepath.Join(root, "temp", "react_frontend_uploads")
+}
 func chatSessionPath(cfg config.AppConfig, sid string) string {
 	return filepath.Join(chatSessionDir(cfg), safeChatID(sid)+".json")
 }

@@ -332,7 +332,7 @@ func TestStartGoalFailurePersistsFailedStateAndLog(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("state files = %d, want 1: %v", len(files), files)
 	}
-	state, readErr := readGoalState(files[0])
+	state, _, readErr := readGoalState(files[0])
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
@@ -384,7 +384,7 @@ func TestStopGoalRequiresExactPID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exact PID mismatch") {
 		t.Fatalf("StopGoal error = %v, want exact PID mismatch", err)
 	}
-	state, readErr := readGoalState(statePath)
+	state, _, readErr := readGoalState(statePath)
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
@@ -496,7 +496,7 @@ func TestStopGoalSuccessClearsPIDAndEnds(t *testing.T) {
 	if meta.Status != "stopped_by_admin" || meta.PID != 0 || meta.Running || meta.EndTime == nil {
 		t.Fatalf("unexpected stopped meta: %#v", meta)
 	}
-	state, err := readGoalState(statePath)
+	state, _, err := readGoalState(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +525,7 @@ func TestStopGoalRejectsInvalidIDAndPIDMismatch(t *testing.T) {
 	if _, err := StopGoal(root, id, 54321); err == nil || !strings.Contains(err.Error(), "exact PID mismatch") {
 		t.Fatalf("StopGoal PID mismatch error = %v", err)
 	}
-	state, err := readGoalState(statePath)
+	state, _, err := readGoalState(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +557,7 @@ func TestStopGoalRejectsEndedStateWithStalePID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "goal is not running") {
 		t.Fatalf("StopGoal ended-state error = %v", err)
 	}
-	state, readErr := readGoalState(statePath)
+	state, _, readErr := readGoalState(statePath)
 	if readErr != nil {
 		t.Fatal(readErr)
 	}

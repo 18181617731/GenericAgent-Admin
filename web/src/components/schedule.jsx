@@ -1,0 +1,3 @@
+import { Eye } from 'lucide-react'
+
+export function TaskRow({ task, t, onToggle, onEdit, onArtifact }) { return <div className={`task-row status-${(task.status||'').toLowerCase()}`}><div><b>{task.id}</b><span>{task.schedule} · {task.repeat} · {task.status}</span>{task.error && <em className="err-text">{task.error}</em>}{task.next_hint && <em>{task.next_hint}</em>}<p>{task.prompt}</p>{task.recent_reports?.length > 0 && <div className="mini-reports">{task.recent_reports.map(r=><button key={r.path} onClick={()=>onArtifact(r.path)}>{r.name}</button>)}</div>}</div><div className="actions"><button onClick={()=>onEdit(task.id)}><Eye size={14}/>{t.read}</button><button onClick={()=>onToggle(task.id, !task.enabled)}>{task.enabled ? t.disabled : t.enabled}</button></div></div> }

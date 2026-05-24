@@ -44,6 +44,7 @@ time.sleep(30)
 	body := `{"objective":"route start smoke","budget_minutes":2,"max_turns":7,"llm_no":1}`
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/goals/start", strings.NewReader(body))
+	markDangerous(req)
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("start status=%d want=200 body=%s", rr.Code, rr.Body.String())
@@ -75,6 +76,7 @@ time.sleep(30)
 		stopBody := `{"id":"` + resp.Goal.ID + `","pid":` + strconv.Itoa(resp.Goal.PID) + `}`
 		stopRR := httptest.NewRecorder()
 		stopReq := httptest.NewRequest(http.MethodPost, "/api/goals/stop", strings.NewReader(stopBody))
+		markDangerous(stopReq)
 		h.ServeHTTP(stopRR, stopReq)
 		if stopRR.Code != http.StatusOK {
 			t.Fatalf("stop status=%d want=200 body=%s", stopRR.Code, stopRR.Body.String())
@@ -125,6 +127,7 @@ func TestGoalsStartRejectsTooLargeBudgetMinutesBeforeLaunch(t *testing.T) {
 	h := newGoalTestServer(t, root).Routes()
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/goals/start", strings.NewReader(`{"objective":"too long","budget_minutes":43201}`))
+	markDangerous(req)
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("start status=%d want=400 body=%s", rr.Code, rr.Body.String())
@@ -156,6 +159,7 @@ func TestGoalsStartRejectsMultipleJSONValuesBeforeLaunch(t *testing.T) {
 	h := newGoalTestServer(t, root).Routes()
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/goals/start", strings.NewReader(`{"objective":"multi json"}{"objective":"second"}`))
+	markDangerous(req)
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("start status=%d want=400 body=%s", rr.Code, rr.Body.String())
@@ -169,6 +173,19 @@ func TestGoalsStartRejectsMultipleJSONValuesBeforeLaunch(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("multi-json request should not create goal state files: %v", matches)
+	}
+}
+
+func TestGoalsDangerousRoutesRequireConfirmHeader(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/goals/start", strings.NewReader(`{"objective":"needs confirm","budget_seconds":60}`))
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("start status=%d want=428 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "X-GA-Confirm") {
+		t.Fatalf("unexpected error body: %s", rr.Body.String())
 	}
 }
 
@@ -452,6 +469,9 @@ func TestGoalsRouteMethodsAndBadInput(t *testing.T) {
 	for _, tc := range cases {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		if tc.method == http.MethodPost && (strings.HasPrefix(tc.path, "/api/goals/start") || strings.HasPrefix(tc.path, "/api/goals/stop")) {
+			markDangerous(req)
+		}
 		h.ServeHTTP(rr, req)
 		if rr.Code != tc.want {
 			t.Fatalf("%s %s status=%d want=%d body=%s", tc.method, tc.path, rr.Code, tc.want, rr.Body.String())
@@ -488,7 +508,7 @@ func TestGoalsStopRouteRejectsEndedStateWithStalePID(t *testing.T) {
 	h := newGoalTestServer(t, root).Routes()
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/goals/stop", strings.NewReader(`{"id":"ended_api","pid":99999}`))
-	req.Header.Set("Content-Type", "application/json")
+	markDangerous(req)
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "goal is not running") {
 		t.Fatalf("stop ended route status=%d body=%s", rr.Code, rr.Body.String())
@@ -500,6 +520,11 @@ func TestGoalsStopRouteRejectsEndedStateWithStalePID(t *testing.T) {
 	if string(after) != string(b) {
 		t.Fatalf("ended state should remain unchanged\nbefore=%s\nafter=%s", b, after)
 	}
+}
+
+func markDangerous(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
 }
 
 func newGoalTestServer(t *testing.T, gaRoot string) *Server {

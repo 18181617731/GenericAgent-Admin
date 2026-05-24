@@ -33,43 +33,47 @@ type MemorySummary struct {
 	Raw     []Entry    `json:"raw_sessions"`
 }
 type Inventory struct {
-	Root              string           `json:"root"`
-	CoreFiles         []FileStatus     `json:"core_files"`
-	Tools             []FileStatus     `json:"tools"`
-	Frontends         []Entry          `json:"frontends"`
-	Reflect           []Entry          `json:"reflect"`
-	Plugins           []Entry          `json:"plugins"`
-	Memory            MemorySummary    `json:"memory"`
-	Schedule          ScheduleOverview `json:"schedule"`
-	AutonomousReports []Entry          `json:"autonomous_reports"`
-	Generated         time.Time        `json:"generated_at"`
+	Root                  string           `json:"root"`
+	CoreFiles             []FileStatus     `json:"core_files"`
+	Tools                 []FileStatus     `json:"tools"`
+	Frontends             []Entry          `json:"frontends"`
+	Reflect               []Entry          `json:"reflect"`
+	Plugins               []Entry          `json:"plugins"`
+	Memory                MemorySummary    `json:"memory"`
+	Schedule              ScheduleOverview `json:"schedule"`
+	AutonomousReports     []Entry          `json:"autonomous_reports"`
+	AutonomousReportIndex ReportIndex      `json:"autonomous_report_index"`
+	Generated             time.Time        `json:"generated_at"`
 }
 type ScheduleTask struct {
-	ID            string    `json:"id"`
-	Path          string    `json:"path"`
-	Schedule      string    `json:"schedule"`
-	Repeat        string    `json:"repeat"`
-	Enabled       bool      `json:"enabled"`
-	Prompt        string    `json:"prompt"`
-	MaxDelayHours any       `json:"max_delay_hours,omitempty"`
-	ModTime       time.Time `json:"mod_time,omitempty"`
-	Status        string    `json:"status"`
-	NextHint      string    `json:"next_hint,omitempty"`
-	LastReport    *Entry    `json:"last_report,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	RecentReports []Entry   `json:"recent_reports,omitempty"`
+	SchemaVersion int          `json:"schema_version"`
+	Contract      ContractMeta `json:"contract"`
+	ID            string       `json:"id"`
+	Path          string       `json:"path"`
+	Schedule      string       `json:"schedule"`
+	Repeat        string       `json:"repeat"`
+	Enabled       bool         `json:"enabled"`
+	Prompt        string       `json:"prompt"`
+	MaxDelayHours any          `json:"max_delay_hours,omitempty"`
+	ModTime       time.Time    `json:"mod_time,omitempty"`
+	Status        string       `json:"status"`
+	NextHint      string       `json:"next_hint,omitempty"`
+	LastReport    *Entry       `json:"last_report,omitempty"`
+	Error         string       `json:"error,omitempty"`
+	RecentReports []Entry      `json:"recent_reports,omitempty"`
 }
 type ScheduleOverview struct {
-	Tasks      []ScheduleTask `json:"tasks"`
-	TaskCount  int            `json:"task_count"`
-	Enabled    int            `json:"enabled"`
-	Disabled   int            `json:"disabled"`
-	Overdue    int            `json:"overdue"`
-	Errors     int            `json:"errors"`
-	NeverRun   int            `json:"never_run"`
-	DoneCount  int            `json:"done_count"`
-	Log        FileStatus     `json:"log"`
-	DoneRecent []Entry        `json:"done_recent"`
+	SchemaVersion int            `json:"schema_version"`
+	Tasks         []ScheduleTask `json:"tasks"`
+	TaskCount     int            `json:"task_count"`
+	Enabled       int            `json:"enabled"`
+	Disabled      int            `json:"disabled"`
+	Overdue       int            `json:"overdue"`
+	Errors        int            `json:"errors"`
+	NeverRun      int            `json:"never_run"`
+	DoneCount     int            `json:"done_count"`
+	Log           FileStatus     `json:"log"`
+	DoneRecent    []Entry        `json:"done_recent"`
 }
 type Health struct {
 	OK        bool              `json:"ok"`
@@ -93,6 +97,7 @@ func BuildInventory(root string) Inventory {
 	inv.Memory = buildMemory(root)
 	inv.Schedule = BuildSchedule(root)
 	inv.AutonomousReports = buildAutonomousReports(root)
+	inv.AutonomousReportIndex = buildReportIndex(root, inv.AutonomousReports)
 	return inv
 }
 
@@ -160,7 +165,7 @@ func buildMemory(root string) MemorySummary {
 }
 
 func BuildSchedule(root string) ScheduleOverview {
-	ov := ScheduleOverview{Log: status(root, "sche_tasks/scheduler.log")}
+	ov := ScheduleOverview{SchemaVersion: 1, Log: status(root, "sche_tasks/scheduler.log")}
 	ov.DoneRecent = listDir(root, "sche_tasks/done", func(name string, isDir bool) string { return "report" })
 	ov.DoneCount = len(ov.DoneRecent)
 	if len(ov.DoneRecent) > 20 {
@@ -176,24 +181,19 @@ func BuildSchedule(root string) ScheduleOverview {
 		}
 		p := filepath.Join(root, "sche_tasks", de.Name())
 		id := strings.TrimSuffix(de.Name(), filepath.Ext(de.Name()))
-		t := ScheduleTask{ID: id, Path: filepath.ToSlash(filepath.Join("sche_tasks", de.Name())), Status: "OK"}
+		t := ScheduleTask{SchemaVersion: 1, ID: id, Path: filepath.ToSlash(filepath.Join("sche_tasks", de.Name())), Status: "OK"}
 		if info, err := de.Info(); err == nil {
 			t.ModTime = info.ModTime()
 		}
-		data, err := os.ReadFile(p)
+		var raw map[string]any
+		meta, err := readContractJSON(p, contractDomainScheduleTask, &raw)
 		if err != nil {
 			t.Status = "ERROR"
 			t.Error = err.Error()
 			ov.Tasks = append(ov.Tasks, t)
 			continue
 		}
-		var raw map[string]any
-		if err := json.Unmarshal(data, &raw); err != nil {
-			t.Status = "ERROR"
-			t.Error = err.Error()
-			ov.Tasks = append(ov.Tasks, t)
-			continue
-		}
+		t.Contract = meta
 		t.Schedule, _ = raw["schedule"].(string)
 		t.Repeat, _ = raw["repeat"].(string)
 		t.Prompt, _ = raw["prompt"].(string)
@@ -392,7 +392,7 @@ func SaveTask(root, id string, raw map[string]any) (ScheduleTask, error) {
 	if old, err := os.ReadFile(p); err == nil {
 		_ = os.WriteFile(p+".bak."+time.Now().Format("20060102_150405"), old, 0644)
 	}
-	out, err := json.MarshalIndent(raw, "", "  ")
+	out, err := marshalContractJSON(raw, contractDomainScheduleTask)
 	if err != nil {
 		return ScheduleTask{}, err
 	}
@@ -447,12 +447,12 @@ func ToggleTask(root, id string, enabled bool) (ScheduleTask, error) {
 		return ScheduleTask{}, err
 	}
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if _, err := readContractJSON(p, contractDomainScheduleTask, &raw); err != nil {
 		return ScheduleTask{}, err
 	}
 	_ = os.WriteFile(p+".bak."+time.Now().Format("20060102_150405"), data, 0644)
 	raw["enabled"] = enabled
-	out, err := json.MarshalIndent(raw, "", "  ")
+	out, err := marshalContractJSON(raw, contractDomainScheduleTask)
 	if err != nil {
 		return ScheduleTask{}, err
 	}

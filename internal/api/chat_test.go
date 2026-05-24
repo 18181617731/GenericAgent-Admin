@@ -18,3 +18,35 @@ func TestParseLLMJSONArrayFromMixedOutputIgnoresGAStartupLogs(t *testing.T) {
 		t.Fatalf("unexpected llms: %#v", llms)
 	}
 }
+
+func TestMarkChatLLMActiveUsesSessionLLMNo(t *testing.T) {
+	llms := []map[string]interface{}{
+		{"index": float64(0), "active": true},
+		{"index": float64(3), "active": false},
+	}
+
+	markChatLLMActive(llms, 3)
+
+	if llms[0]["active"] != false {
+		t.Fatalf("llms[0].active=%v want false", llms[0]["active"])
+	}
+	if llms[1]["active"] != true {
+		t.Fatalf("llms[1].active=%v want true", llms[1]["active"])
+	}
+}
+
+func TestMarkChatLLMActiveAllowsIndexZero(t *testing.T) {
+	llms := []map[string]interface{}{
+		{"index": "0", "active": false},
+		{"index": "3", "active": true},
+	}
+
+	markChatLLMActive(llms, 0)
+
+	if llms[0]["active"] != true {
+		t.Fatalf("llms[0].active=%v want true", llms[0]["active"])
+	}
+	if llms[1]["active"] != false {
+		t.Fatalf("llms[1].active=%v want false", llms[1]["active"])
+	}
+}

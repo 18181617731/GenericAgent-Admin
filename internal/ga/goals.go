@@ -29,6 +29,8 @@ const (
 
 // GoalState mirrors memory/goal_mode_sop.md and reflect/goal_mode.py state.
 type GoalState struct {
+	SchemaVersion int      `json:"schema_version,omitempty"`
+	Domain        string   `json:"domain,omitempty"`
 	Objective     string   `json:"objective"`
 	BudgetSeconds int      `json:"budget_seconds"`
 	StartTime     float64  `json:"start_time"`
@@ -47,27 +49,29 @@ type GoalState struct {
 
 // GoalMeta is the Admin-Go console view of one Goal Mode run.
 type GoalMeta struct {
-	ID               string    `json:"id"`
-	Objective        string    `json:"objective"`
-	BudgetSeconds    int       `json:"budget_seconds"`
-	StartTime        float64   `json:"start_time"`
-	ElapsedSeconds   int       `json:"elapsed_seconds"`
-	RemainingSeconds int       `json:"remaining_seconds"`
-	BudgetPercent    int       `json:"budget_percent"`
-	TurnsUsed        int       `json:"turns_used"`
-	MaxTurns         int       `json:"max_turns"`
-	TurnPercent      int       `json:"turn_percent"`
-	Status           string    `json:"status"`
-	PID              int       `json:"pid,omitempty"`
-	Running          bool      `json:"running"`
-	StateFile        string    `json:"state_file"`
-	LogFile          string    `json:"log_file"`
-	LogExists        bool      `json:"log_exists"`
-	MissingLog       bool      `json:"missing_log"`
-	LLMNo            *int      `json:"llm_no,omitempty"`
-	PythonPath       string    `json:"python_path,omitempty"`
-	ModTime          time.Time `json:"mod_time"`
-	EndTime          *float64  `json:"end_time,omitempty"`
+	SchemaVersion    int          `json:"schema_version"`
+	Contract         ContractMeta `json:"contract"`
+	ID               string       `json:"id"`
+	Objective        string       `json:"objective"`
+	BudgetSeconds    int          `json:"budget_seconds"`
+	StartTime        float64      `json:"start_time"`
+	ElapsedSeconds   int          `json:"elapsed_seconds"`
+	RemainingSeconds int          `json:"remaining_seconds"`
+	BudgetPercent    int          `json:"budget_percent"`
+	TurnsUsed        int          `json:"turns_used"`
+	MaxTurns         int          `json:"max_turns"`
+	TurnPercent      int          `json:"turn_percent"`
+	Status           string       `json:"status"`
+	PID              int          `json:"pid,omitempty"`
+	Running          bool         `json:"running"`
+	StateFile        string       `json:"state_file"`
+	LogFile          string       `json:"log_file"`
+	LogExists        bool         `json:"log_exists"`
+	MissingLog       bool         `json:"missing_log"`
+	LLMNo            *int         `json:"llm_no,omitempty"`
+	PythonPath       string       `json:"python_path,omitempty"`
+	ModTime          time.Time    `json:"mod_time"`
+	EndTime          *float64     `json:"end_time,omitempty"`
 }
 
 type GoalStartOptions struct {
@@ -125,7 +129,7 @@ func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
 	if err != nil {
 		return GoalMeta{}, err
 	}
-	state := GoalState{Objective: strings.TrimSpace(opt.Objective), BudgetSeconds: opt.BudgetSeconds, StartTime: float64(time.Now().UnixNano()) / 1e9, TurnsUsed: 0, MaxTurns: opt.MaxTurns, Status: "running", DonePrompt: "", ID: id, StateFile: filepath.ToSlash(filepath.Join("temp", filepath.Base(statePath))), LogFile: filepath.ToSlash(filepath.Join("temp", filepath.Base(logPath))), LLMNo: opt.LLMNo, PythonPath: pythonPath}
+	state := GoalState{SchemaVersion: 1, Objective: strings.TrimSpace(opt.Objective), BudgetSeconds: opt.BudgetSeconds, StartTime: float64(time.Now().UnixNano()) / 1e9, TurnsUsed: 0, MaxTurns: opt.MaxTurns, Status: "running", DonePrompt: "", ID: id, StateFile: filepath.ToSlash(filepath.Join("temp", filepath.Base(statePath))), LogFile: filepath.ToSlash(filepath.Join("temp", filepath.Base(logPath))), LLMNo: opt.LLMNo, PythonPath: pythonPath}
 	if err := writeGoalState(statePath, state); err != nil {
 		return GoalMeta{}, err
 	}
@@ -171,7 +175,7 @@ func ListGoals(root string) ([]GoalMeta, error) {
 	}
 	items := make([]GoalMeta, 0, len(files))
 	for _, f := range files {
-		state, err := readGoalState(f)
+		state, meta, err := readGoalState(f)
 		if err != nil {
 			continue
 		}
@@ -182,7 +186,9 @@ func ListGoals(root string) ([]GoalMeta, error) {
 		if st != nil {
 			mod = st.ModTime()
 		}
-		items = append(items, metaFromState(root, id, f, logPath, state, mod))
+		goalMeta := metaFromState(root, id, f, logPath, state, mod)
+		goalMeta.Contract = meta
+		items = append(items, goalMeta)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ModTime.After(items[j].ModTime) })
 	return items, nil
@@ -194,7 +200,7 @@ func DeleteGoal(root, id string) error {
 		return errors.New("id is required")
 	}
 	statePath := filepath.Join(root, "temp", goalStatePrefix+id+".json")
-	state, err := readGoalState(statePath)
+	state, _, err := readGoalState(statePath)
 	if err != nil {
 		return err
 	}
@@ -217,7 +223,7 @@ func StopGoal(root, id string, pid int) (GoalMeta, error) {
 		return GoalMeta{}, errors.New("id is required")
 	}
 	statePath := filepath.Join(root, "temp", goalStatePrefix+id+".json")
-	state, err := readGoalState(statePath)
+	state, _, err := readGoalState(statePath)
 	if err != nil {
 		return GoalMeta{}, err
 	}
@@ -237,11 +243,11 @@ func StopGoal(root, id string, pid int) (GoalMeta, error) {
 	state.Status = "stopped_by_admin"
 	state.PID = 0
 	state.EndTime = &now
-	meta := metaFromState(root, id, statePath, filepath.Join(root, "temp", goalStatePrefix+id+".log"), state, time.Now())
+	goalMeta := metaFromState(root, id, statePath, filepath.Join(root, "temp", goalStatePrefix+id+".log"), state, time.Now())
 	if err := writeGoalState(statePath, state); err != nil {
-		return meta, err
+		return goalMeta, err
 	}
-	return meta, nil
+	return goalMeta, nil
 }
 
 type GoalOutputResult struct {
@@ -266,7 +272,7 @@ func GoalOutput(root, id string, maxBytes int64) (GoalOutputResult, error) {
 		return GoalOutputResult{}, errors.New("id is required")
 	}
 	statePath := filepath.Join(root, "temp", goalStatePrefix+id+".json")
-	state, err := readGoalState(statePath)
+	state, meta, err := readGoalState(statePath)
 	if err != nil {
 		return GoalOutputResult{}, err
 	}
@@ -283,10 +289,11 @@ func GoalOutput(root, id string, maxBytes int64) (GoalOutputResult, error) {
 		maxBytesCapped = true
 	}
 	out, totalBytes, truncated, err := tailFile(logPath, maxBytes)
-	meta := metaFromState(root, id, statePath, logPath, state, time.Now())
+	goalMeta := metaFromState(root, id, statePath, logPath, state, time.Now())
+	goalMeta.Contract = meta
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return GoalOutputResult{Goal: meta, RequestedBytes: requestedBytes, MaxBytes: maxBytes, DefaultBytes: defaultGoalOutputBytes, DefaultBytesUsed: defaultBytesUsed, MaxBytesCapped: maxBytesCapped, OutputStatus: "missing_log"}, nil
+			return GoalOutputResult{Goal: goalMeta, RequestedBytes: requestedBytes, MaxBytes: maxBytes, DefaultBytes: defaultGoalOutputBytes, DefaultBytesUsed: defaultBytesUsed, MaxBytesCapped: maxBytesCapped, OutputStatus: "missing_log"}, nil
 		}
 		return GoalOutputResult{}, err
 	}
@@ -300,10 +307,14 @@ func GoalOutput(root, id string, maxBytes int64) (GoalOutputResult, error) {
 	if err != nil {
 		return GoalOutputResult{}, err
 	}
-	return GoalOutputResult{Output: out, Goal: meta, Truncated: truncated, BytesReturned: int64(len([]byte(out))), TotalBytes: totalBytes, LinesReturned: countDisplayLinesString(out), TotalLines: totalLines, RequestedBytes: requestedBytes, MaxBytes: maxBytes, DefaultBytes: defaultGoalOutputBytes, DefaultBytesUsed: defaultBytesUsed, MaxBytesCapped: maxBytesCapped, OutputStatus: outputStatus}, nil
+	return GoalOutputResult{Output: out, Goal: goalMeta, Truncated: truncated, BytesReturned: int64(len([]byte(out))), TotalBytes: totalBytes, LinesReturned: countDisplayLinesString(out), TotalLines: totalLines, RequestedBytes: requestedBytes, MaxBytes: maxBytes, DefaultBytes: defaultGoalOutputBytes, DefaultBytesUsed: defaultBytesUsed, MaxBytesCapped: maxBytesCapped, OutputStatus: outputStatus}, nil
 }
 
 func writeGoalState(path string, state GoalState) error {
+	if state.SchemaVersion == 0 {
+		state.SchemaVersion = adminContractSchemaVersion
+	}
+	state.Domain = contractDomainGoalState
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
@@ -311,16 +322,19 @@ func writeGoalState(path string, state GoalState) error {
 	return os.WriteFile(path, b, 0644)
 }
 
-func readGoalState(path string) (GoalState, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return GoalState{}, err
-	}
+func readGoalState(path string) (GoalState, ContractMeta, error) {
 	var state GoalState
-	if err := json.Unmarshal(b, &state); err != nil {
-		return GoalState{}, err
+	meta, err := readContractJSON(path, contractDomainGoalState, &state)
+	if err != nil {
+		return GoalState{}, meta, err
 	}
-	return state, nil
+	if state.SchemaVersion == 0 {
+		state.SchemaVersion = adminContractSchemaVersion
+	}
+	if strings.TrimSpace(state.Domain) == "" {
+		state.Domain = contractDomainGoalState
+	}
+	return state, meta, nil
 }
 
 func metaFromState(root, id, statePath, logPath string, state GoalState, mod time.Time) GoalMeta {
@@ -357,7 +371,7 @@ func metaFromState(root, id, statePath, logPath string, state GoalState, mod tim
 		status = "exited"
 	}
 	logExists := existsFile(logPath)
-	return GoalMeta{ID: id, Objective: state.Objective, BudgetSeconds: state.BudgetSeconds, StartTime: state.StartTime, ElapsedSeconds: elapsed, RemainingSeconds: remaining, BudgetPercent: budgetPercent, TurnsUsed: turnsUsed, MaxTurns: state.MaxTurns, TurnPercent: turnPercent, Status: status, PID: state.PID, Running: running, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LogExists: logExists, MissingLog: !logExists, LLMNo: state.LLMNo, ModTime: mod, EndTime: state.EndTime}
+	return GoalMeta{SchemaVersion: 1, ID: id, Objective: state.Objective, BudgetSeconds: state.BudgetSeconds, StartTime: state.StartTime, ElapsedSeconds: elapsed, RemainingSeconds: remaining, BudgetPercent: budgetPercent, TurnsUsed: turnsUsed, MaxTurns: state.MaxTurns, TurnPercent: turnPercent, Status: status, PID: state.PID, Running: running, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LogExists: logExists, MissingLog: !logExists, LLMNo: state.LLMNo, ModTime: mod, EndTime: state.EndTime}
 }
 
 func percentOf(used, total int) int {

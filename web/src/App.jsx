@@ -1,27 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Copy, Eye, FileCode2, FolderCog, Globe2, MessageSquare, Play, RefreshCw, Save, Search, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, XCircle, Download, GitPullRequest, Users } from 'lucide-react'
-
-const api = async (url, options = {}) => {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options })
-  const text = await res.text()
-  let body = null
-  try { body = text ? JSON.parse(text) : null } catch { throw new Error(`Expected JSON from ${url}, got ${text.slice(0, 40)}`) }
-  if (!res.ok) throw new Error(body?.detail || `${res.status} ${res.statusText}`)
-  return body
-}
-
-const NAV_ITEMS = ['overview','chat','control','files','tasks','bbs','memory','channels','autonomous','goals','models','settings','logs']
-const ROUTE_TABS = NAV_ITEMS.filter(n => n !== 'chat')
-const TASK_SUB_TABS = ['services','scheduled','reports']
-
-const parseRoute = () => {
-  const parts = (window.location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)
-  const tab = ROUTE_TABS.includes(parts[0]) ? parts[0] : 'overview'
-  const taskSubTab = tab === 'tasks' && TASK_SUB_TABS.includes(parts[1]) ? parts[1] : 'services'
-  return { tab, taskSubTab }
-}
-
-const buildRoute = (tab, taskSubTab = 'services') => tab === 'tasks' ? `#/${tab}/${taskSubTab}` : `#/${tab}`
+import { api } from './lib/api'
+import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
+import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, outputLineCount, safeJson } from './lib/format'
+import { ChannelServiceTable, EntryList, Panel, SecretInput, ServiceRow, Stat } from './components/common'
+import { TurnList } from './components/turns'
+import { TaskRow } from './components/schedule'
+import { BBSPage } from './pages/BBSPage'
+import { ChatPage } from './pages/ChatPage'
+import { GoalsPage } from './pages/GoalsPage'
+import { Models } from './pages/ModelsPage'
 
 const I18N = {
   zh: {
@@ -45,35 +33,6 @@ const I18N = {
     fields: { varName: 'Var name', type: 'Type', name: 'Name', model: 'Model', apiBase: 'API Base', apiKey: 'API Key', stream: 'Stream', maxRetries: 'Retries', readTimeout: 'Timeout', reasoningEffort: 'Reasoning effort', editor: 'JSON content', objective: 'Objective', budgetMinutes: 'Budget minutes', maxTurns: 'Max turns', llmNo: 'LLM # (optional)', pythonPath: 'Python interpreter (optional)', pythonAuto: 'leave empty for auto', chatDataDir: 'Chat data directory (optional)', chatDataAuto: 'empty = %APPDATA%\\GenericAgent-Admin', goalRuns: 'Goal runs', outputTail: 'Output tail', maxBytes: 'Max bytes', outputPreset64k: '64K', outputPreset256k: '256K', outputPreset1m: '1M', outputDefault: 'Default 64K', outputShown: 'Shown', outputLines: 'Lines', outputLimit: 'Limit', autoRefresh: 'Auto refresh', notRunning: 'not running', startGoalMode: 'Start Goal Mode', goalPlaceholder: 'Describe the sustained objective for GA Goal Mode', pid: 'PID', turn: 'turn', remaining: 'remaining', elapsed: 'elapsed', started: 'started', ended: 'ended', updated: 'updated', stateFile: 'state', logFile: 'log', logMissing: 'log not created', logReady: 'log ready', outputStatus: 'output status' }
   }
 }
-
-const emptyProfile = (idx = 0) => ({ var_name: `MODEL_${idx + 1}`, type: 'openai', name: '', model: '', apibase: '', apikey: '', stream: true, max_retries: 3, read_timeout: 300, reasoning_effort: '', enabled: true })
-const safeJson = (v) => JSON.stringify(v ?? {}, null, 2)
-const group = (items, pred) => (items || []).filter(pred)
-const formatDuration = (seconds) => {
-  const n = Math.max(0, Number(seconds) || 0)
-  const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = Math.floor(n % 60)
-  return h ? `${h}h ${m}m` : (m ? `${m}m ${s}s` : `${s}s`)
-}
-const formatGoalTime = (value) => value ? new Date(value).toLocaleString() : '-'
-const formatBytes = (bytes) => {
-  const n = Math.max(0, Number(bytes) || 0)
-  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 ? 0 : 1)} MiB`
-  if (n >= 1024) return `${(n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1)} KiB`
-  return `${n} B`
-}
-const outputLineCount = (text) => {
-  if (!text) return 0
-  const normalized = String(text).replace(/\r?\n$/, '')
-  return normalized ? normalized.split(/\r?\n/).length : 0
-}
-
-
-function Stat({ label, value, icon }) { return <div className="stat"><div>{icon}</div><span>{label}</span><b>{value}</b></div> }
-function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
-function EntryList({ items = [], empty }) { return <div className="entry-list">{items.length ? items.map((e, i) => <div className="entry" key={`${e.path || e.name}-${i}`}><b>{e.name || e.path}</b><span>{e.path}{e.kind ? ` · ${e.kind}` : ''}{e.size ? ` · ${e.size} B` : ''}</span></div>) : <p className="muted">{empty}</p>}</div> }
-function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, t }) { return <div className="service-card"><div><b>{svc.name}</b><span title={svc.command?.join(' ')}>{svc.command?.join(' ')}</span><em>{svc.kind}{svc.pid ? ` · PID ${svc.pid}` : ''}</em></div><div className={svc.running ? 'ok' : 'err'}>{svc.running ? t.running : t.stopped}</div><div className="svc-actions"><button disabled={svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button><button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button><label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label></div></div> }
-function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, t }) { return <div className="channel-table-wrap"><table className="channel-table"><thead><tr><th>{t.fields?.name || 'Name'}</th><th>{t.fields?.status || 'Status'}</th><th>PID</th><th>{t.fields?.command || 'Command'}</th><th>{t.autostart}</th><th>{t.actions || 'Actions'}</th></tr></thead><tbody>{services.length ? services.map(svc => <tr key={svc.name}><td><b>{svc.name}</b><small>{svc.kind}</small></td><td><span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span></td><td>{svc.pid || '-'}</td><td><code title={svc.command?.join(' ')}>{svc.command?.join(' ') || '-'}</code></td><td><label className="toggle-inline table-toggle"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label></td><td><div className="svc-actions table-actions"><button disabled={svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button><button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div></td></tr>) : <tr><td colSpan="6" className="empty-cell">{t.hints.noFrontend}</td></tr>}</tbody></table></div> }
-function SecretInput({ value, onChange, t }) { const [show, setShow] = useState(false); return <div className="secret-row"><input type={show ? 'text' : 'password'} value={value || ''} placeholder={t.hints.savedSecret} onChange={e => onChange(e.target.value)} /><button type="button" onClick={() => setShow(!show)}>{show ? t.hide : t.show}</button></div> }
 
 export default function App() {
   const defaultLang = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en'
@@ -114,7 +73,7 @@ export default function App() {
   const saveBBSConfig = async (next = bbsConfig) => {
     setBusy(true); setMsg('')
     try {
-      const cfg = await api('/api/bbs/config', { method:'POST', body: JSON.stringify(next) })
+      const cfg = await api('/api/bbs/config', { dangerous:true, method:'POST', body: JSON.stringify(next) })
       setBbsConfig({ mode: cfg.mode || 'builtin', base_url: cfg.base_url || '', board_key: cfg.board_key || 'ga-team', builtin_base_url: cfg.builtin_base_url || '' })
       setMsg('BBS 服务配置已保存')
       await loadBBS()
@@ -132,7 +91,7 @@ export default function App() {
   const createBBSPost = async () => {
     setBusy(true); setMsg('')
     try {
-      await api('/api/bbs/posts', { method:'POST', body: JSON.stringify({ title:bbsTitle, content:bbsContent, author:bbsAuthor || 'admin', tags:['task'] }) })
+      await api('/api/bbs/posts', { dangerous:true, method:'POST', body: JSON.stringify({ title:bbsTitle, content:bbsContent, author:bbsAuthor || 'admin', tags:['task'] }) })
       setBbsTitle(''); setBbsContent(''); setMsg('BBS 任务帖已发布')
       await loadBBS()
     } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
@@ -140,7 +99,7 @@ export default function App() {
   const createBBSReply = async (post_id, content) => {
     if (!content?.trim()) return
     setBusy(true); setMsg('')
-    try { await api('/api/bbs/reply', { method:'POST', body: JSON.stringify({ post_id, author:bbsAuthor || 'admin', content }) }); await loadBBS() } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
+    try { await api('/api/bbs/reply', { dangerous:true, method:'POST', body: JSON.stringify({ post_id, author:bbsAuthor || 'admin', content }) }); await loadBBS() } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
   }
 
   const load = async () => {
@@ -181,16 +140,16 @@ export default function App() {
   useEffect(() => { localStorage.setItem('ga-admin-goal-auto-refresh', goalAutoRefresh ? 'true' : 'false') }, [goalAutoRefresh])
   useEffect(() => { if (selected) api(`/api/logs/${encodeURIComponent(selected)}`).then(d => setLogs(d.lines || [])).catch(e => setMsg(e.message)) }, [selected])
 
-  const toggleAutostart = async () => { setBusy(true); setMsg(''); try { const next = !autostart?.enabled; const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const toggleAutostart = async () => { setBusy(true); setMsg(''); try { const next = !autostart?.enabled; const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { dangerous:true, method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status?remote=1'); setGitStatus(d); setMsg(d.latest ? 'GA 源代码已是最新' : `GA 源代码落后 ${d.behind || 0} 个提交`) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
-  const updateGASource = async () => { if (!window.confirm('使用 git pull --ff-only 更新当前 GA 源代码？请确保本地修改已提交或可快进。')) return; setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-update', { method:'POST', body: '{}' }); setGitResult(d); setGitStatus(d); setMsg(d.changed ? `GA 源代码已更新: ${d.before} → ${d.after}` : 'GA 源代码已是最新'); await load() } catch(e){ setMsg(e.message) } finally{ setGitBusy(false) } }
+  const updateGASource = async () => { if (!window.confirm('使用 git pull --ff-only 更新当前 GA 源代码？请确保本地修改已提交或可快进。')) return; setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-update', { dangerous:true, method:'POST', body: '{}' }); setGitResult(d); setGitStatus(d); setMsg(d.changed ? `GA 源代码已更新: ${d.before} → ${d.after}` : 'GA 源代码已是最新'); await load() } catch(e){ setMsg(e.message) } finally{ setGitBusy(false) } }
   const saveConfig = async () => { setBusy(true); try { const c = await api('/api/config', { method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) }); setCfg(c); setMsg(t.hints.rootSaved); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkSetupEnv = async () => { setBusy(true); try { const d = await api('/api/setup/env'); setSetupEnv(d); setMsg(d.ok ? t.envReady : t.envMissing) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const browseSetupDir = async (target = 'root') => { setBusy(true); try { const base = target === 'install' ? installRoot : root; const d = await api('/api/setup/browse', { method:'POST', body: JSON.stringify({ path: base }) }); if (d.path) { target === 'install' ? setInstallRoot(d.path) : setRoot(d.path) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const validateSetupRoot = async () => { setBusy(true); try { const d = await api('/api/setup/validate', { method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const installGA = async () => { setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const serviceAction = async (name, action) => { setBusy(true); try { await api(`/api/services/${action}`, { method:'POST', body: JSON.stringify({ name }) }); await load(); if (selected === name) setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const toggleServiceAutostart = async (name, enabled) => { setBusy(true); try { const d = await api('/api/services/autostart', { method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const validateSetupRoot = async () => { setBusy(true); try { const d = await api('/api/setup/validate', { method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const installGA = async () => { setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const serviceAction = async (name, action) => { setBusy(true); try { await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify({ name }) }); await load(); if (selected === name) setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const toggleServiceAutostart = async (name, enabled) => { setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = async (name = selected) => { if (!name) return; setSelected(name); setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) }
   const viewServiceLogs = async (name) => { setTab('logs'); await loadServiceLogs(name) }
   const pickGoalId = (items = [], preferred = '') => {
@@ -217,12 +176,12 @@ export default function App() {
       if (llmNo !== null && llmNo < 0) throw new Error(t.hints.goalLLMNonNegative)
       const body = { objective, budget_minutes: budgetMinutes, max_turns: maxTurns }
       if (llmNo !== null) body.llm_no = llmNo
-      const d = await api('/api/goals/start', { method:'POST', body: JSON.stringify(body) })
+      const d = await api('/api/goals/start', { dangerous:true, method:'POST', body: JSON.stringify(body) })
       setMsg(`${t.hints.goalStarted}: ${d.goal?.id || ''}`); setGoalObjective(''); setSelectedGoal(d.goal?.id || selectedGoal); await loadGoals(); if (d.goal?.id) await loadGoalOutput(d.goal.id)
     } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
   }
-  const stopGoal = async (g) => { if (!g) return; const confirmText = t.hints.goalStopConfirm.replace('{id}', g.id || '-').replace('{pid}', g.pid || '-'); if (!window.confirm(confirmText)) return; setBusy(true); setMsg(''); try { await api('/api/goals/stop', { method:'POST', body: JSON.stringify({ id: g.id, pid: g.pid }) }); setMsg(`${t.hints.goalStopped}: ${g.id}`); await loadGoals(); if (selectedGoal === g.id) await loadGoalOutput(g.id) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const deleteGoal = async (g) => { if (!g) return; const confirmText = t.hints.goalDeleteConfirm.replace('{id}', g.id || '-'); if (!window.confirm(confirmText)) return; setBusy(true); setMsg(''); try { await api('/api/goals/delete', { method:'POST', body: JSON.stringify({ id: g.id }) }); setMsg(`${t.hints.goalDeleted}: ${g.id}`); const gs = await loadGoals(); if (selectedGoal === g.id) { const next = pickGoalId(gs, ''); setSelectedGoal(next); setGoalOutput(''); setGoalOutputMeta({}); if (next) await loadGoalOutput(next) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const stopGoal = async (g) => { if (!g) return; const confirmText = t.hints.goalStopConfirm.replace('{id}', g.id || '-').replace('{pid}', g.pid || '-'); if (!window.confirm(confirmText)) return; setBusy(true); setMsg(''); try { await api('/api/goals/stop', { dangerous:true, method:'POST', body: JSON.stringify({ id: g.id, pid: g.pid }) }); setMsg(`${t.hints.goalStopped}: ${g.id}`); await loadGoals(); if (selectedGoal === g.id) await loadGoalOutput(g.id) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const deleteGoal = async (g) => { if (!g) return; const confirmText = t.hints.goalDeleteConfirm.replace('{id}', g.id || '-'); if (!window.confirm(confirmText)) return; setBusy(true); setMsg(''); try { await api('/api/goals/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: g.id }) }); setMsg(`${t.hints.goalDeleted}: ${g.id}`); const gs = await loadGoals(); if (selectedGoal === g.id) { const next = pickGoalId(gs, ''); setSelectedGoal(next); setGoalOutput(''); setGoalOutputMeta({}); if (next) await loadGoalOutput(next) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadGoalOutput = async (id = selectedGoal) => {
     if (!id) return
     setSelectedGoal(id)
@@ -283,12 +242,12 @@ export default function App() {
     const timer = setInterval(refreshGoals, 3000)
     return () => clearInterval(timer)
   }, [tab, selectedGoal, goalOutputBytes, goalAutoRefresh])
-  const toggleTask = async (id, enabled) => { setBusy(true); try { await api('/api/schedule/toggle', { method:'POST', body: JSON.stringify({ id, enabled }) }); setMsg(t.hints.taskToggled); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const toggleTask = async (id, enabled) => { setBusy(true); try { await api('/api/schedule/toggle', { dangerous:true, method:'POST', body: JSON.stringify({ id, enabled }) }); setMsg(t.hints.taskToggled); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
   const loadFiles = async (path = '') => { const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`); setFileList(d.items || d.entries || []); setFilePath(path || '') }
   const readFile = async (path = filePath) => { setBusy(true); try { const d = await api(`/api/files/read?path=${encodeURIComponent(path)}`); setFileContent(d.content || ''); setFilePath(path); setTab('files') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const tailFile = async (path = filePath) => { if (!path) return; setBusy(true); try { const d = await api(`/api/files/tail?path=${encodeURIComponent(path)}&lines=${tailLines}`); setFileContent(d.content || ''); setFilePath(path); setTab('files') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const saveFile = async () => { if (!filePath) return; setBusy(true); try { const d = await api('/api/files/write', { method:'POST', body: JSON.stringify({ path:filePath, content:fileContent }) }); setFileContent(d.content || fileContent); setMsg(t.hints.fileSaved || t.saved || 'Saved'); await loadFiles(filePath.includes('/') ? filePath.split('/').slice(0,-1).join('/') : '') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const saveFile = async () => { if (!filePath) return; setBusy(true); try { const d = await api('/api/files/write', { dangerous:true, method:'POST', body: JSON.stringify({ path:filePath, content:fileContent }) }); setFileContent(d.content || fileContent); setMsg(t.hints.fileSaved || t.saved || 'Saved'); await loadFiles(filePath.includes('/') ? filePath.split('/').slice(0,-1).join('/') : '') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
 
   const refreshVersionStatus = async () => {
@@ -322,22 +281,22 @@ export default function App() {
   const updateVersion = async () => {
     if (!window.confirm('下载并重启 GA Admin 以完成升级？页面可刷新，进度会自动恢复。')) return
     setVersionBusy(true)
-    try { const d = await api('/api/version/update', { method:'POST', body:'{}' }); setVersionStatus(d); setMsg(d.message || '升级已启动') }
+    try { const d = await api('/api/version/update', { dangerous:true, method:'POST', body:'{}' }); setVersionStatus(d); setMsg(d.message || '升级已启动') }
     catch(e){ setMsg(e.message) }
     finally{ setVersionBusy(false) }
   }
   const runSearch = async () => { setBusy(true); try { const d = await api(`/api/files/search?path=${encodeURIComponent(filePath)}&q=${encodeURIComponent(fileSearch)}&limit=80`); setSearchHits(d.hits || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
   const loadTask = async (id) => { setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); setTaskId(d.id || id); setTaskEditor(safeJson(d.raw)); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const saveTask = async () => { setBusy(true); try { await api('/api/schedule/task', { method:'PUT', body: JSON.stringify({ id: taskId || newTaskId, raw: JSON.parse(taskEditor) }) }); setMsg(t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const saveTask = async () => { setBusy(true); try { await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id: taskId || newTaskId, raw: JSON.parse(taskEditor) }) }); setMsg(t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const createTask = async () => { setTaskId(newTaskId); setTaskEditor(safeJson({ schedule: '09:00', repeat: 'daily', enabled: false, prompt: '' })); setTaskSubTab('scheduled') }
-  const deleteTask = async () => { if (!taskId) return; setBusy(true); try { await api('/api/schedule/delete', { method:'POST', body: JSON.stringify({ id: taskId }) }); setMsg(t.hints.taskDeleted); setTaskId(''); setTaskEditor('{}'); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const deleteTask = async () => { if (!taskId) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: taskId }) }); setMsg(t.hints.taskDeleted); setTaskId(''); setTaskEditor('{}'); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const readScheduleArtifact = async (path, targetTab = 'tasks') => { setBusy(true); try { const d = await api(`/api/schedule/artifact?path=${encodeURIComponent(path)}`); setScheduleArtifactTitle(path); setScheduleArtifact(d.content || ''); setTab(targetTab); setTaskSubTab('reports') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
   const importModels = async () => { setBusy(true); try { const d = await api('/api/models/import-mykey', { method:'POST', body: JSON.stringify({ reveal:false, save:false }) }); setProfiles(d.profiles?.length ? d.profiles : [emptyProfile(0)]); setModelPreview(safeJson(d)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   useEffect(() => { if (tab === 'models' && profiles.length === 0) importModels() }, [tab])
   const previewModels = async () => { setBusy(true); try { const d = await api('/api/models/preview', { method:'POST', body: JSON.stringify({ profiles }) }); setModelPreview(d.python || safeJson(d)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const saveModels = async () => { setBusy(true); try { const d = await api('/api/models/export', { method:'POST', body: JSON.stringify({ profiles, overwrite_active:true }) }); setModelPreview(safeJson(d)); setMsg(t.hints.modelsSaved) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const saveModels = async () => { setBusy(true); try { const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles, overwrite_active:true }) }); setModelPreview(safeJson(d)); setMsg(t.hints.modelsSaved) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const patchProfile = (idx, patch) => setProfiles(ps => ps.map((p, i) => i === idx ? { ...p, ...patch } : p))
 
   const nav = NAV_ITEMS
@@ -350,19 +309,49 @@ export default function App() {
     <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       {tab==='overview' && <section><div className="stats"><Stat label={t.cards.processes} value={services.length} icon={<Server/>}/><Stat label={t.cards.running} value={services.filter(s=>s.running).length} icon={<Activity/>}/><Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/><Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/></div><div className="grid2"><Panel title={t.cards.version}><div className="version-card"><div className="autostart-head"><Download size={18}/><strong>GA Admin {versionInfo?.version || 'dev'}</strong><span className={versionCheck?.update ? 'err' : 'ok'}>{versionCheck ? (versionCheck.update ? 'Update' : 'Latest') : (versionInfo?.goos ? `${versionInfo.goos}/${versionInfo.goarch}` : t.empty)}</span></div><p className="muted">commit {versionInfo?.commit || 'unknown'} · {versionInfo?.date || 'unknown'}</p>{versionCheck?.latest && <p>Latest: <a href={versionCheck.latest.html_url} target="_blank" rel="noreferrer">{versionCheck.latest.tag_name}</a></p>}{versionCheck?.asset && <code>{versionCheck.asset.name}</code>}{versionStatus?.stage && <div className="update-progress"><div className="update-progress-head"><span>{versionStatus.running ? '升级中' : (versionStatus.error ? '升级失败' : '升级状态')}</span><b>{versionStatus.progress || 0}%</b></div><div className="progress-bar"><span style={{width:`${Math.max(0, Math.min(100, versionStatus.progress || 0))}%`}}/></div><p className={versionStatus.error ? 'err' : 'muted'}>{versionStatus.message || versionStatus.stage}</p>{versionStatus.stage && <code>{versionStatus.stage}</code>}</div>}<div className="actions"><button onClick={checkVersion} disabled={versionBusy || versionStatus?.running}>{versionBusy ? t.busy : '检查更新'}</button><button onClick={updateVersion} disabled={versionBusy || versionStatus?.running || !versionCheck?.update}>{versionStatus?.running ? '升级中…' : '一键升级'}</button><button className="secondary" onClick={()=>refreshVersionStatus().catch(e=>setMsg(e.message))}>刷新进度</button></div></div></Panel><Panel title="GA 源代码更新"><div className="version-card"><div className="version-head"><GitPullRequest size={18}/><strong>Git 更新</strong><span className={gitStatus?.error ? 'err' : (gitStatus?.latest ? 'ok' : 'warn')}>{gitStatus?.error ? '检查失败' : (gitStatus ? (gitStatus.latest ? '已是最新' : `落后 ${gitStatus.behind || 0} 个提交`) : '未检查')}</span></div><p className="muted">自动 fetch 后对比上游分支；更新只执行 git pull --ff-only。</p>{gitStatus?.root && <code>{gitStatus.root}</code>}<p>分支: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>{gitStatus?.upstream && <p>上游: {gitStatus.upstream}　领先 {gitStatus.ahead || 0} / 落后 {gitStatus.behind || 0}</p>}{gitStatus?.dirty && <p className="warn">工作区有未提交修改</p>}{gitStatus?.error && <p className="err">{gitStatus.error}</p>}{gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}{gitResult?.pull && <pre className="mini-log">{gitResult.pull}</pre>}<div className="actions"><button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : '检查是否最新'}</button><button onClick={updateGASource} disabled={gitBusy || busy || gitStatus?.latest}>{gitBusy ? t.busy : '更新 GA 源代码'}</button></div></div></Panel><Panel title={t.lists.autostart}><div className="autostart-card"><div className="autostart-head"><Power size={18}/><strong>{t.autostart}</strong><span className={autostart?.enabled ? 'ok' : 'muted'}>{autostart?.supported ? (autostart?.enabled ? t.enabled : t.disabled) : t.unsupported}</span></div><p>{!autostart?.supported ? t.hints.autostartUnsupported : (autostart?.enabled ? t.hints.autostartEnabled : t.hints.autostartDisabled)}</p>{autostart?.path && <code>{autostart.path}</code>}<button onClick={toggleAutostart} disabled={busy || !autostart?.supported}>{autostart?.enabled ? t.disableAutostart : t.enableAutostart}</button></div></Panel><Panel title={t.lists.riskHints}><ul className="risk"><li>{t.root}: {root}</li><li>sche_tasks JSON: {t.backup}</li><li>mykey.py: {t.backup}</li></ul></Panel></div></section>}
       {tab==='chat' && <ChatPage t={t}/>}
-      {tab==='control' && <section><div className="stats"><Stat label={t.cards.health} value={health?.ok ? 'OK' : 'FAIL'} icon={<ShieldAlert/>}/><Stat label={t.cards.capabilities} value={control?.capabilities?.length || 0} icon={<Brain/>}/><Stat label="TMWebDriver" value={tmwdStatus?.ok ? 'OK' : 'CHECK'} icon={<Globe2/>}/><Stat label={t.cards.risks} value={control?.risks?.length || 0} icon={<ShieldAlert/>}/><Stat label={t.cards.reports} value={control?.reports?.length || 0} icon={<FileCode2/>}/></div><div className="grid2"><Panel title={t.lists.readiness}><EntryList items={(control?.readiness || []).map((r,i)=>({name:r.area, path:r.text, kind:r.level}))} empty="OK"/></Panel><Panel title={t.lists.capabilities}><EntryList items={(control?.capabilities || []).map(c=>({name:c.name,path:c.path,kind:c.kind}))} empty={t.empty}/></Panel><Panel title="TMWebDriver 监控" className="tmwd-panel"><div className="tmwd-head"><div><b className={tmwdStatus?.ok ? 'ok' : 'err-text'}>{tmwdStatus?.ok ? '基础状态正常' : '需要检查'}</b><p className="muted">{tmwdStatus?.recommendation || tmwdStatus?.error || '检测浏览器进程、18766 master 端口和 tmwd_cdp_bridge 扩展。'}</p></div><button onClick={refreshTMWebDriverStatus} disabled={busy}><RefreshCw size={14}/>{t.refresh}</button></div><div className="tmwd-checks">{(tmwdStatus?.checks || []).map(c => <div key={c.name} className={c.ok ? 'status-pill ok' : 'status-pill bad'}><span>{c.ok ? '✓' : '!'}</span><b>{c.name}</b><small>{c.detail}</small></div>)}</div>{tmwdStatus?.extension_paths?.length > 0 && <pre className="tmwd-paths">{tmwdStatus.extension_paths.join(String.fromCharCode(10))}</pre>}</Panel><Panel title={t.lists.recentReports}><EntryList items={control?.reports || []} empty={t.empty}/></Panel><Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="OK"/></Panel></div></section>}
+      {tab==='control' && <section>
+        <div className="stats">
+          <Stat label={t.cards.health} value={health?.ok ? 'OK' : 'FAIL'} icon={<ShieldAlert/>}/>
+          <Stat label="GA Version" value={control?.workspace?.version || '-'} icon={<FileCode2/>}/>
+          <Stat label={t.cards.capabilities} value={control?.capabilities?.length || 0} icon={<Brain/>}/>
+          <Stat label="Logs" value={control?.logs?.items?.length || 0} icon={<Terminal/>}/>
+          <Stat label={t.cards.risks} value={control?.risks?.length || 0} icon={<ShieldAlert/>}/>
+        </div>
+        <div className="grid2">
+          <Panel title="GA Workspace">
+            <EntryList items={[
+              { name: 'Root', path: control?.workspace?.root || root, kind: 'path' },
+              { name: 'Python entry', path: control?.workspace?.python?.path || 'agentmain.py', kind: control?.workspace?.python?.exists ? 'ready' : 'missing' },
+              { name: 'Memory', path: control?.workspace?.memory?.path || 'memory/global_mem.txt', kind: control?.workspace?.memory?.exists ? 'ready' : 'missing' },
+              { name: 'Integration plan', path: control?.workspace?.plan?.path || 'temp/plan_ga_admin_ga_integration/plan.md', kind: control?.workspace?.plan?.exists ? 'ready' : 'missing' },
+            ]} empty={t.empty}/>
+          </Panel>
+          <Panel title="Model Config">
+            <p className="muted">{control?.models?.hint || 'Model settings are managed by GA defaults/memory unless config files exist.'}</p>
+            <EntryList items={(control?.models?.files || []).filter(f=>f.exists).map(f=>({ name:f.path, path:`${f.size || 0} bytes`, kind:'config' }))} empty="No model config file discovered"/>
+          </Panel>
+          <Panel title={t.lists.readiness}><EntryList items={(control?.readiness || []).map((r,i)=>({name:r.area, path:r.text, kind:r.level}))} empty="OK"/></Panel>
+          <Panel title={t.lists.capabilities}><EntryList items={(control?.capabilities || []).map(c=>({name:c.name,path:c.path,kind:c.kind}))} empty={t.empty}/></Panel>
+          <Panel title="TMWebDriver 监控" className="tmwd-panel"><div className="tmwd-head"><div><b className={tmwdStatus?.ok ? 'ok' : 'err-text'}>{tmwdStatus?.ok ? '基础状态正常' : '需要检查'}</b><p className="muted">{tmwdStatus?.recommendation || tmwdStatus?.error || '检测浏览器进程、18766 master 端口和 tmwd_cdp_bridge 扩展。'}</p></div><button onClick={refreshTMWebDriverStatus} disabled={busy}><RefreshCw size={14}/>{t.refresh}</button></div><div className="tmwd-checks">{(tmwdStatus?.checks || []).map(c => <div key={c.name} className={c.ok ? 'status-pill ok' : 'status-pill bad'}><span>{c.ok ? '✓' : '!'}</span><b>{c.name}</b><small>{c.detail}</small></div>)}</div>{tmwdStatus?.extension_paths?.length > 0 && <pre className="tmwd-paths">{tmwdStatus.extension_paths.join(String.fromCharCode(10))}</pre>}</Panel>
+          <Panel title="Recent Logs"><EntryList items={control?.logs?.items || []} empty={t.empty}/></Panel>
+          <Panel title={t.lists.recentReports}><EntryList items={control?.reports || []} empty={t.empty}/></Panel>
+          <Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="OK"/></Panel>
+        </div>
+      </section>}
       {tab==='files' && <section><div className="workspace"><Panel title={t.lists.fileList}><div className="inline-form"><input value={filePath} onChange={e=>setFilePath(e.target.value)} placeholder={t.hints.filePath}/><button onClick={()=>loadFiles(filePath)}>{t.read}</button></div><div className="inline-form"><input value={fileSearch} onChange={e=>setFileSearch(e.target.value)} placeholder={t.hints.searchText}/><button onClick={runSearch}><Search size={14}/>{t.search}</button></div><div className="inline-form"><input type="number" value={tailLines} onChange={e=>setTailLines(Number(e.target.value))}/><span>{t.hints.tailLines}</span><button onClick={()=>tailFile(filePath)}>{t.tail || 'Tail'}</button><button onClick={saveFile} disabled={!filePath}><Save size={14}/>{t.save}</button></div><div className="file-list">{fileList.map(e=><button key={e.path} onClick={()=> e.kind==='dir' ? loadFiles(e.path) : readFile(e.path)}>{e.kind==='dir'?'📁':'📄'} {e.path}</button>)}</div><h4>{t.lists.searchResults}</h4>{searchHits.map(h=><button className="hit" key={`${h.path}:${h.line}`} onClick={()=>readFile(h.path)}>{h.path}:{h.line} · {h.preview}</button>)}</Panel><Panel title={t.lists.filePreview} className="log-panel"><textarea className="file-editor" value={fileContent} onChange={e=>setFileContent(e.target.value)} placeholder={t.empty}/></Panel></div></section>}
       {tab==='tasks' && <section className="tasks-page">
         <div className="stats schedule-stats">
           <div className="stat"><Activity/><span>{t.lists.taskServices}</span><b>{taskSvcs.length}</b></div>
           <div className="stat"><CalendarClock/><span>{t.cards.enabledTasks || t.enabled}</span><b>{schedule.enabled || 0}</b></div>
           <div className="stat"><FolderCog/><span>{t.cards.reports || 'Reports'}</span><b>{schedule.done_count || 0}</b></div>
+          <div className="stat"><Target/><span>{t.nav.goals}</span><b>{goals.filter(g=>g.running).length}/{goals.length}</b></div>
           <div className="stat"><ShieldAlert/><span>{t.error}</span><b>{schedule.errors || 0}</b></div>
         </div>
 
         <div className="subtabs task-subtabs">
           <button className={taskSubTab==='services' ? 'active' : ''} onClick={()=>setTaskSubTab('services')}><Server size={14}/>{t.lists.taskServices}</button>
           <button className={taskSubTab==='scheduled' ? 'active' : ''} onClick={()=>setTaskSubTab('scheduled')}><CalendarClock size={14}/>{t.lists.scheduledTasks}</button>
+          <button className={taskSubTab==='runs' ? 'active' : ''} onClick={()=>setTaskSubTab('runs')}><Target size={14}/>{t.nav.goals} / {t.nav.autonomous}</button>
           <button className={taskSubTab==='reports' ? 'active' : ''} onClick={()=>setTaskSubTab('reports')}><FolderCog size={14}/>{t.lists.recentReports}</button>
         </div>
 
@@ -400,6 +389,22 @@ export default function App() {
           </Panel>
         </div>}
 
+
+        {taskSubTab==='runs' && <div className="workspace tasks-workspace">
+          <Panel title={`${t.nav.goals} · ${goals.filter(g=>g.running).length}/${goals.length}`}>
+            <div className="actions"><button onClick={()=>setTab('goals')}><Target size={14}/>{t.nav.goals}</button><button onClick={loadGoals}><RefreshCw size={14}/>{t.refresh}</button></div>
+            <div className="goal-list compact-goals">
+              {goals.length
+                ? goals.map(g => <button className="goal-row" key={g.id} onClick={()=>{ setTab('goals'); setSelectedGoal(g.id) }}><div><b>{g.objective || g.id}</b><span>{g.status || '-'} · {g.running ? `${t.fields.pid} ${g.pid}` : t.fields.notRunning}</span></div><small>{t.fields.turn} {g.turns_used || 0}/{g.max_turns || '-'}</small></button>)
+                : <p className="muted">{t.empty}</p>}
+            </div>
+          </Panel>
+          <Panel title={t.nav.autonomous}>
+            <div className="actions"><button onClick={()=>setTab('autonomous')}><Bot size={14}/>{t.nav.autonomous}</button></div>
+            <EntryList items={[...(reflectSvcs || []).map(s=>({ name:s.name, path:s.running ? `${t.running}${s.pid ? ` · PID ${s.pid}` : ''}` : t.stopped, kind:s.kind || 'reflect' })), ...((inv.autonomous_reports || []).slice(0, 8).map(r=>({ name:r.name, path:new Date(r.mod_time).toLocaleString(), kind:'report' })))]} empty={t.empty}/>
+          </Panel>
+        </div>}
+
         {taskSubTab==='reports' && <div className="workspace tasks-workspace">
           <Panel title={t.lists.recentReports}>
             <div className="report-list clean-list">
@@ -426,365 +431,4 @@ export default function App() {
 }
 
 
-function BBSPage({ status, config, setConfig, onSaveConfig, posts = [], title, setTitle, content, setContent, author, setAuthor, onCreate, onReply, onRefresh, onTestConnection, workerService, onWorkerStart, onWorkerStop, onWorkerLogs, onWorkerAutostart, busy }) {
-  const [bbsTab, setBbsTab] = useState('board')
-  const totalReplies = posts.reduce((n, p) => n + (p.replies?.length || 0), 0)
-  const mode = config?.mode || status?.mode || 'builtin'
-  const activeBase = mode === 'external' ? (config?.base_url || status?.base_url || '') : (status?.builtin_base_url || status?.base_url || config?.builtin_base_url || '')
-  const activeKey = config?.board_key || status?.board_key || 'ga-team'
-  const workerConfig = `{"base_url":"${activeBase || 'http://127.0.0.1:8787'}","board_key":"${activeKey}","name":"worker-1"}`
-  const workerState = workerService?.running ? '运行中' : (workerService ? '已停止' : '未发现')
-  const patchConfig = (patch) => setConfig({ ...(config || {}), ...patch })
-  return <section className="bbs-page compact-bbs bbs-console">
-    <div className="bbs-strip" aria-label="BBS status">
-      <div className="bbs-titleline">
-        <span className="eyebrow">team_work</span>
-        <h2>协作频道</h2>
-        <span className="muted">{posts.length} 任务 · {totalReplies} 回复 · {mode === 'external' ? '外置' : '内置'}</span>
-      </div>
-      <div className="bbs-worker-pill" title={workerService?.command?.join(' ') || 'reflect/agent_team_worker.py'}>
-        <span className={workerService?.running ? 'dot running' : 'dot'}></span>
-        <span>worker {workerState}</span>
-        {workerService?.pid && <small>PID {workerService.pid}</small>}
-        <button className="ghost mini" disabled={!workerService || workerService.running || busy} onClick={()=>onWorkerStart?.(workerService.name)}><Play size={13}/>启动</button>
-        <button className="ghost mini" disabled={!workerService} onClick={()=>onWorkerLogs?.(workerService.name)}><Eye size={13}/>日志</button>
-      </div>
-    </div>
-
-    <div className="bbs-tabs" role="tablist" aria-label="BBS sections">
-      <button role="tab" aria-selected={bbsTab === 'board'} className={bbsTab === 'board' ? 'active' : ''} onClick={()=>setBbsTab('board')}><MessageSquare size={15}/>任务板</button>
-      <button role="tab" aria-selected={bbsTab === 'config'} className={bbsTab === 'config' ? 'active' : ''} onClick={()=>setBbsTab('config')}><SlidersHorizontal size={15}/>服务</button>
-      <button className="ghost bbs-refresh" onClick={onRefresh} disabled={busy}><RefreshCw size={14}/>刷新</button>
-    </div>
-
-    {bbsTab === 'board' && <div className="bbs-tab-panel bbs-board-panel" role="tabpanel">
-      <div className="bbs-compose">
-        <input className="bbs-title-input" value={title} onChange={e=>setTitle(e.target.value)} placeholder="一句话说明任务" />
-        <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="补充目标、约束、验收方式……" />
-        <div className="bbs-compose-foot">
-          <input value={author} onChange={e=>setAuthor(e.target.value)} placeholder="作者 admin" />
-          <button onClick={onCreate} disabled={busy || !title.trim() || !content.trim()}><Play size={14}/>发布</button>
-        </div>
-      </div>
-      <div className="bbs-feed">{posts.length ? posts.map(p => <BBSPost key={p.id} post={p} author={author} onReply={onReply} busy={busy}/>) : <div className="empty-card bbs-empty"><b>频道空闲</b><span>发布第一条任务，worker 会从这里开始协作。</span></div>}</div>
-    </div>}
-
-    {bbsTab === 'config' && <div className="bbs-tab-panel" role="tabpanel">
-      <section className="bbs-config-card tabbed">
-        <div className="bbs-config-head"><div><p className="eyebrow">service</p><h3>接入与 worker</h3></div>{status?.error && <p className="err">{status.error}</p>}</div>
-        <div className="bbs-mode-row">
-          <label className={mode === 'builtin' ? 'selected' : ''}><input type="radio" checked={mode === 'builtin'} onChange={()=>patchConfig({ mode:'builtin' })}/><span><b>内置</b><small>Admin 自带</small></span></label>
-          <label className={mode === 'external' ? 'selected' : ''}><input type="radio" checked={mode === 'external'} onChange={()=>patchConfig({ mode:'external' })}/><span><b>外置</b><small>远端共享</small></span></label>
-        </div>
-        <div className="bbs-config-grid">
-          <label><span>内置地址</span><input value={status?.builtin_base_url || config?.builtin_base_url || status?.base_url || ''} readOnly /></label>
-          <label><span>外置地址</span><input value={config?.base_url || ''} onChange={e=>patchConfig({ base_url:e.target.value })} placeholder="http://host:8787" disabled={mode !== 'external'} /></label>
-          <label><span>Board Key</span><input value={config?.board_key || ''} onChange={e=>patchConfig({ board_key:e.target.value })} placeholder="ga-team" /></label>
-          <label><span>当前接入</span><input value={activeBase || '-'} readOnly /></label>
-        </div>
-        <div className="bbs-config-actions"><button onClick={()=>onSaveConfig(config)} disabled={busy || (mode === 'external' && !String(config?.base_url || '').trim())}><Save size={14}/>保存</button><button className="ghost" onClick={onTestConnection || onRefresh} disabled={busy}><RefreshCw size={14}/>测试连接</button><button className="ghost" disabled={!workerService || !workerService.running || busy} onClick={()=>onWorkerStop?.(workerService.name)}><Square size={14}/>停止 worker</button><label className="toggle-inline"><input type="checkbox" disabled={!workerService} checked={!!workerService?.autostart} onChange={e=>onWorkerAutostart?.(workerService.name, e.target.checked)} />自启动</label></div>
-        <details className="bbs-setup"><summary>Worker 接入参数</summary><div><span>Base</span><code>{activeBase || '-'}</code></div><div><span>Key</span><code>{activeKey || '-'}</code></div><div><span>setting</span><code>{workerConfig}</code></div></details>
-      </section>
-    </div>}
-  </section>
-}
-
-function BBSPost({ post, author, onReply, busy }) {
-  const [reply, setReply] = useState('')
-  const lastTime = post.updated_at || post.created_at
-  return <article className="bbs-post compact-post">
-    <header>
-      <div><span className="post-id">#{post.id}</span><h3>{post.title}</h3></div>
-      <time>{lastTime ? new Date(lastTime).toLocaleString() : ''}</time>
-    </header>
-    <p className="post-body">{post.content}</p>
-    {!!post.replies?.length && <div className="reply-stack">{post.replies.map(r => <div className="reply-line" key={r.id}><b>{r.author || 'agent'}</b><p>{r.content}</p></div>)}</div>}
-    <div className="inline-reply"><input value={reply} onChange={e=>setReply(e.target.value)} placeholder={`回复 ${post.author || '任务'}`} /><button disabled={busy || !reply.trim()} onClick={()=>{ onReply(post.id, reply); setReply('') }}>发送</button></div>
-  </article>
-}
-
-function TurnBubble({ message }) {
-  const m = message || {}
-  return <div className={`bubble ${m.role || 'assistant'} ${m.type || ''} ${m.error?'error':''}`}>
-    <div className="role">{m.title || m.role || 'assistant'}</div>
-    <div className="content">{m.content || ''}</div>
-  </div>
-}
-
-function TurnList({ messages, empty, className = '' }) {
-  const items = messages || []
-  return <div className={`chat-messages turn-list ${className}`}>
-    {items.length===0 && <div className="empty-chat">{empty}</div>}
-    {items.map((m, i) => <TurnBubble key={m.id || i} message={m} />)}
-  </div>
-}
-
-function ChatPage({ t }) {
-  const [sessions, setSessions] = useState([]), [sid, setSid] = useState(''), [messages, setMessages] = useState([])
-  const [prompt, setPrompt] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
-  const loadSessions = async () => { const d = await api('/api/chat/sessions'); setSessions(d.sessions || []); if (!sid && d.sessions?.[0]) await openSession(d.sessions[0].id) }
-  const openSession = async (id) => { const d = await api(`/api/chat/session/${id}`); setSid(d.id); setMessages(d.messages || []) }
-  const newSession = async () => { const d = await api('/api/chat/session/new', { method:'POST', body:'{}' }); setSid(d.id); setMessages([]); await loadSessions() }
-  useEffect(()=>{ loadSessions().catch(e=>setErr(e.message)) }, [])
-  const send = async () => {
-    if (!prompt.trim() || busy) return
-    let cur = sid
-    if (!cur) { const d = await api('/api/chat/session/new', { method:'POST', body:'{}' }); cur = d.id; setSid(cur) }
-    const text = prompt; setPrompt(''); setBusy(true); setErr('')
-    const user = { id: `u-${Date.now()}`, role:'user', content:text, created_at: Math.floor(Date.now()/1000) }
-    const assistant = { id: `a-${Date.now()}`, role:'assistant', content:'', created_at: Math.floor(Date.now()/1000) }
-    setMessages(ms => [...ms, user, assistant])
-    try {
-      const res = await fetch(`/api/chat/${cur}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt:text, client_user_id:user.id }) })
-      if (!res.ok) throw new Error(await res.text())
-      const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '', content = ''
-      while (true) {
-        const {value, done} = await reader.read(); if (done) break
-        buf += dec.decode(value, {stream:true}); const lines = buf.split('\n'); buf = lines.pop() || ''
-        for (const line of lines) { if (!line.trim()) continue; const ev = JSON.parse(line)
-          if (ev.type === 'delta') { content += ev.delta || ''; setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content} : m)) }
-          if ((ev.type === 'done' || ev.type === 'error') && ev.message) { setMessages(ms => ms.map(m => m.id === assistant.id ? ev.message : m)); if (ev.type === 'error') setErr(ev.message.content || 'error') }
-        }
-      }
-      await loadSessions()
-    } catch(e) { setErr(e.message); setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content:`失败：${e.message}`, error:true} : m)) }
-    finally { setBusy(false) }
-  }
-  return <section className="chat-shell native-chat"><div className="chat-top"><div><h3>{t.nav.chat}</h3><p>Admin 原生对话：由 Go API 管理会话，按需启动 Python GA Worker。</p></div><div className="actions"><button onClick={loadSessions}><RefreshCw size={14}/>{t.refresh}</button><button onClick={newSession}><Play size={14}/>新会话</button><span className="ok">Native</span></div></div>{err && <div className="message">{err}</div>}<div className="chat-grid"><aside className="chat-sessions"><button className="primary" onClick={newSession}>+ 新会话</button>{sessions.map(s => <button key={s.id} className={s.id===sid?'active':''} onClick={()=>openSession(s.id)}><b>{s.title || '新会话'}</b><small>{s.count || 0} 条</small></button>)}</aside><main className="chat-main"><TurnList messages={messages} empty="选择或创建会话后开始对话"/><div className="chat-compose"><textarea value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && e.ctrlKey) send() }} placeholder="输入给 GenericAgent 的任务，Ctrl+Enter 发送"/><button disabled={busy || !prompt.trim()} onClick={send}>{busy?'执行中...':'发送'}</button></div></main></div></section>
-}
-
-
-const copyText = async (text) => {
-  const value = text || ''
-  if (!value) return
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value)
-    return
-  }
-  const el = document.createElement('textarea')
-  el.value = value
-  el.setAttribute('readonly', '')
-  el.style.position = 'fixed'
-  el.style.left = '-9999px'
-  document.body.appendChild(el)
-  el.select()
-  document.execCommand('copy')
-  document.body.removeChild(el)
-}
-
-const clampPercent = (value) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0))
-const goalTurnPercent = (g) => {
-  const serverPct = Number(g?.turn_percent)
-  if (Number.isFinite(serverPct)) return clampPercent(serverPct)
-  const maxTurns = Number(g?.max_turns || 0)
-  if (!maxTurns) return 0
-  return clampPercent((Number(g?.turns_used || 0) / maxTurns) * 100)
-}
-const goalBudgetPercent = (g) => {
-  const serverPct = Number(g?.budget_percent)
-  if (Number.isFinite(serverPct)) return clampPercent(serverPct)
-  const elapsed = Number(g?.elapsed_seconds || 0)
-  const remaining = Number(g?.remaining_seconds || 0)
-  const total = elapsed + Math.max(0, remaining)
-  if (!total) return 0
-  return clampPercent((elapsed / total) * 100)
-}
-
-function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
-  const goalList = goals || []
-  const running = goalList.filter(g => g.running).length
-  const selectedGoal = goalList.find(g => g.id === selected) || outputMeta?.goal || null
-  const [goalTab, setGoalTab] = useState('runs')
-  const outputBadges = []
-  if (outputMeta?.error) outputBadges.push(`${t.error}: ${outputMeta.error}`)
-  if (outputMeta?.truncated) outputBadges.push(`${t.hints.goalOutputTruncated}: ${formatBytes(outputMeta.bytesReturned)}/${formatBytes(outputMeta.totalBytes)}`)
-  if (outputMeta?.maxBytesCapped) outputBadges.push(`${t.hints.goalOutputCapped}: ${formatBytes(outputMeta.requestedBytes)} -> ${formatBytes(outputMeta.maxBytes)}`)
-  if (outputMeta?.defaultBytesUsed) outputBadges.push(`${t.hints.goalOutputDefault}: ${formatBytes(outputMeta.defaultBytes || outputMeta.maxBytes)}`)
-  if (outputMeta?.outputStatus) outputBadges.push(`${t.fields.outputStatus}: ${t.goalOutputStatus?.[outputMeta.outputStatus] || outputMeta.outputStatus}`)
-  if (outputMeta?.goal?.missing_log) outputBadges.push(t.hints.goalOutputLogMissing)
-
-  const outputBytesShown = outputMeta?.bytesReturned ?? new Blob([output || '']).size
-  const outputTotalBytes = outputMeta?.totalBytes ?? outputBytesShown
-  const outputLinesShown = outputMeta?.linesReturned ?? outputLineCount(output)
-  const outputTotalLines = outputMeta?.totalLines ?? outputLinesShown
-  const outputLimitLabel = Number(outputBytes || 0) > 0 ? formatBytes(outputBytes) : t.fields.outputDefault
-  const selectedTurnPct = selectedGoal ? goalTurnPercent(selectedGoal) : 0
-  const selectedBudgetPct = selectedGoal ? goalBudgetPercent(selectedGoal) : 0
-
-  const copyOutput = async () => {
-    try { await copyText(output || ''); setMsg(t.hints.goalOutputCopied) }
-    catch (e) { setMsg(e.message) }
-  }
-  const openOutput = (id) => { onOutput(id); setGoalTab('output') }
-  const showStatePath = (path) => { if (path) setMsg(`${t.fields.stateFile}: ${path}`) }
-
-  return <section className="goals-page">
-    <div className="stats schedule-stats goal-stats">
-      <div className="stat"><Target/><span>{t.nav.goals}</span><b>{goalList.length}</b></div>
-      <div className="stat"><Activity/><span>{t.running}</span><b>{running}</b></div>
-      <div className="stat"><Terminal/><span>reflect/goal_mode.py</span><b>{running ? t.running : t.ready}</b></div>
-    </div>
-
-    <div className="goal-tabs" role="tablist" aria-label={t.nav.goals}>
-      <button role="tab" aria-selected={goalTab==='runs'} className={goalTab==='runs' ? 'active' : ''} onClick={()=>setGoalTab('runs')}>{t.fields.goalRuns}<span>{goalList.length}</span></button>
-      <button role="tab" aria-selected={goalTab==='start'} className={goalTab==='start' ? 'active' : ''} onClick={()=>setGoalTab('start')}>{t.fields.startGoalMode}</button>
-      <button role="tab" aria-selected={goalTab==='output'} className={goalTab==='output' ? 'active' : ''} onClick={()=>setGoalTab('output')}>{t.fields.outputTail}<span>{selected || '-'}</span></button>
-    </div>
-
-    {goalTab==='start' && <Panel title={t.fields.startGoalMode} className="goal-start-panel goal-tab-panel">
-      <p className="muted">{t.desc.goals}</p>
-      <label className="goal-field">{t.fields.objective}
-        <textarea className="goal-objective" value={objective} maxLength={16384} onChange={e=>setObjective(e.target.value)} placeholder={t.fields.goalPlaceholder}/>
-      </label>
-      <div className="form-grid compact-form goal-params">
-        <label>{t.fields.budgetMinutes}<input type="number" min="1" max="43200" value={budget} onChange={e=>setBudget(e.target.value)}/></label>
-        <label>{t.fields.maxTurns}<input type="number" min="0" max="10000" value={maxTurns} onChange={e=>setMaxTurns(e.target.value)}/></label>
-        <label>{t.fields.llmNo}<input type="number" min="0" value={llmNo} onChange={e=>setLLMNo(e.target.value)} placeholder="0"/></label>
-      </div>
-      <div className="actions goal-start-actions">
-        <button className="primary" disabled={busy || !objective.trim()} onClick={onStart}><Play size={14}/>{t.start}</button>
-        <button disabled={busy} onClick={onRefresh}><RefreshCw size={14}/>{t.refresh}</button>
-      </div>
-    </Panel>}
-
-    {goalTab==='runs' && <Panel title={t.fields.goalRuns} className="goals-list-panel goal-tab-panel">
-      <div className="goal-list clean-list goal-list-tabbed">
-        {goalList.length ? goalList.map(g => <GoalRunCard key={g.id} g={g} t={t} selected={selected} onOutput={openOutput} onState={showStatePath} onStop={onStop} onDelete={onDelete}/>) : <p className="muted">{t.empty}</p>}
-      </div>
-    </Panel>}
-
-    {goalTab==='output' && <Panel title={`${t.fields.outputTail} · ${selected || '-'}`} className="log-panel goal-output-panel goal-tab-panel">
-      {selectedGoal ? <div className="goal-focus-card">
-        <div className="goal-focus-main">
-          <div className="goal-summary-head"><b>{selectedGoal.id}</b><span className={selectedGoal.running ? 'ok' : ''}>{selectedGoal.status || (selectedGoal.running ? t.running : t.fields.notRunning)}</span></div>
-          <p>{selectedGoal.objective || t.empty}</p>
-          <div className="goal-progress summary-progress"><span title={`${t.fields.turn} ${Math.round(selectedTurnPct)}%`}><i style={{width: `${selectedTurnPct}%`}} /></span><span title={`${t.fields.elapsed} ${Math.round(selectedBudgetPct)}%`}><i style={{width: `${selectedBudgetPct}%`}} /></span></div>
-        </div>
-        <div className="goal-summary-grid goal-focus-grid">
-          <span>{t.fields.turn}: {selectedGoal.turns_used || 0}/{selectedGoal.max_turns || '-'}</span>
-          <span>{t.fields.elapsed}: {formatDuration(selectedGoal.elapsed_seconds)}</span>
-          <span>{t.fields.remaining}: {formatDuration(selectedGoal.remaining_seconds)}</span>
-          <span>{t.fields.updated}: {formatGoalTime(selectedGoal.mod_time)}</span>
-        </div>
-        <div className="goal-summary-files"><button disabled={!selectedGoal.state_file} onClick={()=>showStatePath(selectedGoal.state_file)}>{t.fields.stateFile}</button><button disabled={!selectedGoal.id || selectedGoal.missing_log} onClick={()=>openOutput(selectedGoal.id)}>{t.fields.logFile}</button></div>
-      </div> : <div className="goal-focus-empty">{t.empty}</div>}
-
-      <details className="goal-controls-details">
-        <summary>{t.fields.maxBytes} / {t.fields.outputLimit} · {outputLimitLabel}</summary>
-        <div className="goal-toolbar">
-          <label className="inline-field">{t.fields.maxBytes}
-            <input type="number" min="0" max="1048576" step="4096" value={outputBytes} onChange={e=>setOutputBytes(e.target.value)}/>
-          </label>
-          <div className="goal-output-presets">
-            <button type="button" onClick={()=>setOutputBytes('65536')}>{t.fields.outputPreset64k}</button>
-            <button type="button" onClick={()=>setOutputBytes('262144')}>{t.fields.outputPreset256k}</button>
-            <button type="button" onClick={()=>setOutputBytes('1048576')}>{t.fields.outputPreset1m}</button>
-            <button type="button" onClick={()=>setOutputBytes('0')}>{t.fields.outputDefault}</button>
-          </div>
-          <label className="toggle-inline"><input type="checkbox" checked={!!autoRefresh} onChange={e=>setAutoRefresh(e.target.checked)} />{t.fields.autoRefresh}</label>
-          <button disabled={!selected} onClick={()=>onOutput(selected)}><RefreshCw size={14}/>{t.refresh}</button>
-          <button disabled={!output} onClick={copyOutput}><Copy size={14}/>{t.copy}</button>
-          <button disabled={!output && !outputMeta} onClick={onClearOutput}><XCircle size={14}/>{t.clear}</button>
-        </div>
-      </details>
-
-      <div className="goal-output-stats compact">
-        <span>{t.fields.outputShown}: {formatBytes(outputBytesShown)} / {formatBytes(outputTotalBytes)}</span>
-        <span>{t.fields.outputLines}: {outputLinesShown}{outputTotalLines !== outputLinesShown ? ` / ${outputTotalLines}` : ''}</span>
-      </div>
-      {outputBadges.length > 0 && <div className="goal-output-meta">{outputBadges.map(m => <span key={m}>{m}</span>)}</div>}
-      <GoalChatView output={output} empty={t.empty} />
-    </Panel>}
-  </section>
-}
-
-function parseGoalOutput(output) {
-  const text = output || ''
-  const lines = text.split(/\r?\n/)
-  const items = []
-  let current = null
-  const push = () => {
-    if (!current) return
-    current.content = current.content.join('\n').trimEnd()
-    if (current.content || current.title) items.push(current)
-    current = null
-  }
-  const classify = (raw) => {
-    const line = raw.trim()
-    if (!line) return null
-    let m = line.match(/^<summary>(.*?)<\/summary>\s*(.*)$/i)
-    if (m) return { type:'summary', role:'assistant', title:'summary', content:[m[1] || '', m[2] || ''].filter(Boolean).join('\n') }
-    m = line.match(/^\[Agent\]\s*(.*)$/i)
-    if (m) return { type:'agent', role:'assistant', title:'Agent', content:m[1] }
-    m = line.match(/^\[(USER|ASSISTANT|SYSTEM|TOOL|FUNCTION|DEVELOPER)\]\s*:?\s*(.*)$/i)
-    if (m) return { type:m[1].toLowerCase(), role:m[1].toLowerCase()==='user'?'user':'assistant', title:m[1].toLowerCase(), content:m[2] }
-    m = line.match(/^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,\.]\d+)?)(?:\s+|\s*[-|]\s*)(.*)$/)
-    if (m) return { type:'log', role:'system', title:m[1], content:m[2] }
-    if (/^(ERROR|ERR|FAIL|FAILED|EXCEPTION|TRACEBACK)\b/i.test(line)) return { type:'error', role:'system', title:'error', content:raw }
-    if (/^(WARN|WARNING)\b/i.test(line)) return { type:'warn', role:'system', title:'warning', content:raw }
-    if (/^(INFO|DEBUG|STATUS|STEP|TURN|GOAL|PLAN|ACTION|OBSERVATION|RESULT)\b[:：\]]?/i.test(line)) return { type:'event', role:'system', title:line.split(/[:：\]]/)[0].slice(0,24), content:raw }
-    return null
-  }
-  for (const raw of lines) {
-    const hit = classify(raw)
-    if (hit) {
-      push()
-      current = { role:hit.role, type:hit.type, title:hit.title, content:[hit.content || ''] }
-    } else if (current) {
-      current.content.push(raw)
-    } else if (raw.trim()) {
-      current = { role:'system', type:'raw', title:'log', content:[raw] }
-    }
-  }
-  push()
-  return items.map((m, i) => ({ id:`goal-${i}`, ...m }))
-}
-
-function GoalChatView({ output, empty }) {
-  const items = useMemo(() => parseGoalOutput(output), [output])
-  const endRef = useRef(null)
-  useEffect(() => { endRef.current?.scrollIntoView({ block:'end' }) }, [items.length, output])
-  if (!output) return <div className="goal-chat-empty">{empty}</div>
-  return <div className="goal-chat-wrap">
-    <div className="goal-chat-stream" aria-live="polite">
-      <TurnList messages={items} empty={empty} className="goal-turn-list"/>
-      <div ref={endRef} />
-    </div>
-    <details className="goal-raw-details">
-      <summary>Raw log</summary>
-      <pre className="log-view goal-output">{output}</pre>
-    </details>
-  </div>
-}
-
-function GoalRunCard({ g, t, selected, onOutput, onState, onStop, onDelete }) {
-  const turnPct = goalTurnPercent(g)
-  const budgetPct = goalBudgetPercent(g)
-  return <div className={`goal-row ${g.running ? 'running' : ''} ${selected===g.id ? 'selected' : ''}`}>
-    <button className="goal-row-main" onClick={()=>onOutput(g.id)}>
-      <div className="goal-row-title"><b>{g.id}</b><span className={g.running ? 'ok' : ''}>{g.status || '-'}</span></div>
-      <div className="goal-row-meta">
-        <span>{g.running ? `${t.fields.pid} ${g.pid}` : t.fields.notRunning}</span>
-        <span>{t.fields.turn} {g.turns_used || 0}/{g.max_turns || '-'}</span>
-        <span>{t.fields.elapsed} {formatDuration(g.elapsed_seconds)}</span>
-        <span>{t.fields.remaining} {formatDuration(g.remaining_seconds)}</span>
-        {g.python_path ? <span>Python {g.python_path}</span> : null}
-      </div>
-      <div className="goal-progress"><span title={`${t.fields.turn} ${Math.round(turnPct)}%`}><i style={{width: `${turnPct}%`}} /></span><span title={`${t.fields.elapsed} ${Math.round(budgetPct)}%`}><i style={{width: `${budgetPct}%`}} /></span></div>
-      <p>{g.objective || t.empty}</p>
-      <small>{t.fields.started} {formatGoalTime(g.start_time ? g.start_time * 1000 : 0)} · {t.fields.updated} {formatGoalTime(g.mod_time)}{g.end_time ? ` · ${t.fields.ended} ${formatGoalTime(g.end_time * 1000)}` : ''}</small>
-      <em><span className={g.missing_log ? 'err-text' : 'ok'}>{g.missing_log ? t.fields.logMissing : t.fields.logReady}</span></em>
-    </button>
-    <div className="actions goal-row-actions">
-      <button onClick={()=>onOutput(g.id)}><Eye size={14}/>{t.read}</button>
-      <button disabled={!g.state_file} onClick={()=>onState(g.state_file)}>{t.fields.stateFile}</button>
-      <button disabled={!g.id || g.missing_log} onClick={()=>onOutput(g.id)}>{t.fields.logFile}</button>
-      <button disabled={!g.running || !g.pid} onClick={()=>onStop(g)}><Square size={14}/>{t.stop}</button>
-      <button className="danger" disabled={!!g.running} title={g.running ? t.hints.goalDeleteRunning : t.hints.goalDeleteConfirm.replace('{id}', g.id || '-')} onClick={()=>onDelete?.(g)}><Trash2 size={14}/>{t.delete}</button>
-    </div>
-  </div>
-}
-
-function TaskRow({ task, t, onToggle, onEdit, onArtifact }) { return <div className={`task-row status-${(task.status||'').toLowerCase()}`}><div><b>{task.id}</b><span>{task.schedule} · {task.repeat} · {task.status}</span>{task.error && <em className="err-text">{task.error}</em>}{task.next_hint && <em>{task.next_hint}</em>}<p>{task.prompt}</p>{task.recent_reports?.length > 0 && <div className="mini-reports">{task.recent_reports.map(r=><button key={r.path} onClick={()=>onArtifact(r.path)}>{r.name}</button>)}</div>}</div><div className="actions"><button onClick={()=>onEdit(task.id)}><Eye size={14}/>{t.read}</button><button onClick={()=>onToggle(task.id, !task.enabled)}>{task.enabled ? t.disabled : t.enabled}</button></div></div> }
-function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, modelPreview }) { return <section><div className="model-top"><div><h3>{t.nav.models}</h3><p>{t.hints.previewHelp}</p></div><div className="actions"><button onClick={importModels}><RefreshCw size={14}/>{t.hints.modelSource}</button><button onClick={() => setProfiles([...profiles, emptyProfile(profiles.length)])}>{t.hints.addProfile}</button><button onClick={previewModels}><Eye size={14}/>{t.hints.preview}</button><button onClick={saveModels}><UploadCloud size={14}/>{t.hints.writeMykey}</button></div></div><div className="models-layout"><div className="profiles">{profiles.map((p, idx) => <div className="profile" key={idx}><div className="profile-head"><b>#{idx + 1} {p.name || p.var_name}</b><label><input type="checkbox" checked={!!p.enabled} onChange={(e) => patchProfile(idx, { enabled: e.target.checked })}/> enabled</label></div><div className="form-grid"><label>{t.fields.varName}<input value={p.var_name || ''} onChange={(e) => patchProfile(idx, { var_name: e.target.value })}/></label><label>{t.fields.type}<input value={p.type || ''} onChange={(e) => patchProfile(idx, { type: e.target.value })}/></label><label>{t.fields.name}<input value={p.name || ''} onChange={(e) => patchProfile(idx, { name: e.target.value })}/></label><label>{t.fields.model}<input value={p.model || ''} onChange={(e) => patchProfile(idx, { model: e.target.value })}/></label><label className="span2">{t.fields.apiBase}<input value={p.apibase || ''} onChange={(e) => patchProfile(idx, { apibase: e.target.value })}/></label><label className="span2">{t.fields.apiKey}<SecretInput value={p.apikey} onChange={(v) => patchProfile(idx, { apikey: v })} t={t}/></label><label>{t.fields.stream}<select value={String(!!p.stream)} onChange={(e) => patchProfile(idx, { stream: e.target.value === 'true' })}><option value="true">true</option><option value="false">false</option></select></label><label>{t.fields.maxRetries}<input type="number" value={p.max_retries ?? 3} onChange={(e) => patchProfile(idx, { max_retries: Number(e.target.value) })}/></label><label>{t.fields.readTimeout}<input type="number" value={p.read_timeout ?? 300} onChange={(e) => patchProfile(idx, { read_timeout: Number(e.target.value) })}/></label><label>{t.fields.reasoningEffort}<input value={p.reasoning_effort || ''} onChange={(e) => patchProfile(idx, { reasoning_effort: e.target.value })}/></label></div></div>)}</div><Panel title={t.lists.generatedPreview} className="preview"><pre>{modelPreview || t.empty}</pre></Panel></div></section> }
 function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, control:<ShieldAlert size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, bbs:<Users size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }

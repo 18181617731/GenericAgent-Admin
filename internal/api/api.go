@@ -53,19 +53,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/info", s.versionInfo)
 	mux.HandleFunc("/api/version/check", s.versionCheck)
 	mux.HandleFunc("/api/version/status", s.versionStatus)
-	mux.HandleFunc("/api/version/update", s.versionUpdate)
+	mux.HandleFunc("/api/risk/catalog", s.riskCatalog)
+	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
 	mux.HandleFunc("/api/ga/control", s.gaControl)
-	mux.HandleFunc("/api/ga/git-update", s.gaGitUpdate)
+	mux.HandleFunc("/api/ga/git-update", s.requireDangerousConfirm(s.gaGitUpdate))
 	mux.HandleFunc("/api/ga/git-status", s.gaGitStatus)
 	mux.HandleFunc("/api/tmwebdriver/status", s.tmwebdriverStatus)
 	// Built-in BBS service compatible with GA reflect/agent_team_worker.py
 	mux.HandleFunc("/api/bbs/status", s.bbsStatus)
-	mux.HandleFunc("/api/bbs/config", s.bbsConfigHandler)
-	mux.HandleFunc("/api/bbs/posts", s.bbsPosts)
+	mux.HandleFunc("/api/bbs/config", s.requireDangerousConfirm(s.bbsConfigHandler))
+	mux.HandleFunc("/api/bbs/posts", s.requireDangerousConfirm(s.bbsPosts))
 	mux.HandleFunc("/api/bbs/post", s.bbsPost)
-	mux.HandleFunc("/api/bbs/reply", s.bbsReply)
+	mux.HandleFunc("/api/bbs/reply", s.requireDangerousConfirm(s.bbsReply))
 	mux.HandleFunc("/api/bbs/readme", s.bbsReadme)
 	mux.HandleFunc("/posts", s.bbsPostsCompat)
 	mux.HandleFunc("/post", s.bbsPostCompat)
@@ -73,42 +74,42 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/readme", s.bbsReadmeCompat)
 	mux.HandleFunc("/api/files/list", s.filesList)
 	mux.HandleFunc("/api/files/read", s.filesRead)
-	mux.HandleFunc("/api/files/write", s.filesWrite)
+	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.filesWrite))
 	mux.HandleFunc("/api/files/tail", s.filesTail)
 	mux.HandleFunc("/api/files/search", s.filesSearch)
 	mux.HandleFunc("/api/files/open", s.filesOpen)
 	mux.HandleFunc("/api/files/image", s.filesImage)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
-	mux.HandleFunc("/api/schedule/task", s.scheduleTask)
-	mux.HandleFunc("/api/schedule/create", s.scheduleCreate)
-	mux.HandleFunc("/api/schedule/delete", s.scheduleDelete)
-	mux.HandleFunc("/api/schedule/toggle", s.scheduleToggle)
+	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.scheduleTask))
+	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.scheduleCreate))
+	mux.HandleFunc("/api/schedule/delete", s.requireDangerousConfirm(s.scheduleDelete))
+	mux.HandleFunc("/api/schedule/toggle", s.requireDangerousConfirm(s.scheduleToggle))
 	mux.HandleFunc("/api/schedule/artifact", s.scheduleArtifact)
-	mux.HandleFunc("/api/goals/start", s.goalsStart)
+	mux.HandleFunc("/api/goals/start", s.requireDangerousConfirm(s.goalsStart))
 	mux.HandleFunc("/api/goals/list", s.goalsList)
-	mux.HandleFunc("/api/goals/stop", s.goalsStop)
-	mux.HandleFunc("/api/goals/delete", s.goalsDelete)
+	mux.HandleFunc("/api/goals/stop", s.requireDangerousConfirm(s.goalsStop))
+	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.goalsDelete))
 	mux.HandleFunc("/api/goals/output", s.goalsOutput)
-	mux.HandleFunc("/api/config", s.configHandler)
+	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
 	mux.HandleFunc("/api/setup/validate", s.setupValidate)
-	mux.HandleFunc("/api/setup/install", s.setupInstall)
+	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
 	mux.HandleFunc("/api/autostart/status", s.autostartStatus)
-	mux.HandleFunc("/api/autostart/enable", s.autostartEnable)
-	mux.HandleFunc("/api/autostart/disable", s.autostartDisable)
+	mux.HandleFunc("/api/autostart/enable", s.requireDangerousConfirm(s.autostartEnable))
+	mux.HandleFunc("/api/autostart/disable", s.requireDangerousConfirm(s.autostartDisable))
 	mux.HandleFunc("/api/services", s.services)
 	mux.HandleFunc("/api/services/summary", s.summary)
-	mux.HandleFunc("/api/services/start", s.start)
-	mux.HandleFunc("/api/services/stop", s.stop)
-	mux.HandleFunc("/api/services/stop-all", s.stopAll)
-	mux.HandleFunc("/api/services/autostart", s.serviceAutostart)
+	mux.HandleFunc("/api/services/start", s.requireDangerousConfirm(s.start))
+	mux.HandleFunc("/api/services/stop", s.requireDangerousConfirm(s.stop))
+	mux.HandleFunc("/api/services/stop-all", s.requireDangerousConfirm(s.stopAll))
+	mux.HandleFunc("/api/services/autostart", s.requireDangerousConfirm(s.serviceAutostart))
 	mux.HandleFunc("/api/logs/", s.logs)
 	mux.HandleFunc("/api/models", s.models)
 	mux.HandleFunc("/api/models/raw", s.modelsRaw)
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
 	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
-	mux.HandleFunc("/api/models/export", s.modelsExport)
+	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
 	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
 	mux.HandleFunc("/api/chat/", s.chatHandler)
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
@@ -119,7 +120,7 @@ func (s *Server) Routes() http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
@@ -128,6 +129,57 @@ func cors(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+type riskCatalogItem struct {
+	Path   string `json:"path"`
+	Level  string `json:"level"`
+	Action string `json:"action"`
+	Reason string `json:"reason"`
+}
+
+var riskCatalogItems = []riskCatalogItem{
+	{Path: "/api/files/write", Level: "dangerous", Action: "write_file", Reason: "writes into GA workspace; handler creates backup before overwrite"},
+	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone and changes configured GA root"},
+	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_pull", Reason: "executes git pull --ff-only in GA root"},
+	{Path: "/api/bbs/config", Level: "dangerous", Action: "save_bbs_config", Reason: "changes built-in/external BBS integration settings"},
+	{Path: "/api/bbs/posts", Level: "dangerous", Action: "create_bbs_post", Reason: "writes a built-in BBS task post"},
+	{Path: "/api/bbs/reply", Level: "dangerous", Action: "create_bbs_reply", Reason: "writes a built-in BBS task reply"},
+	{Path: "/api/version/update", Level: "dangerous", Action: "self_update", Reason: "downloads and applies Admin-Go release"},
+	{Path: "/api/services/start", Level: "dangerous", Action: "start_process", Reason: "starts GA Python service process"},
+	{Path: "/api/services/stop", Level: "dangerous", Action: "stop_process", Reason: "stops a managed GA service process"},
+	{Path: "/api/services/stop-all", Level: "dangerous", Action: "stop_all_processes", Reason: "stops all managed GA services"},
+	{Path: "/api/services/autostart", Level: "reversible", Action: "toggle_service_autostart", Reason: "changes Admin-Go service autostart list"},
+	{Path: "/api/autostart/enable", Level: "dangerous", Action: "enable_os_autostart", Reason: "writes OS autostart entry"},
+	{Path: "/api/autostart/disable", Level: "reversible", Action: "disable_os_autostart", Reason: "removes OS autostart entry"},
+	{Path: "/api/schedule/task", Level: "dangerous", Action: "edit_schedule_task", Reason: "changes scheduled task JSON"},
+	{Path: "/api/schedule/create", Level: "dangerous", Action: "create_schedule_task", Reason: "creates scheduled task JSON"},
+	{Path: "/api/schedule/delete", Level: "dangerous", Action: "delete_schedule_task", Reason: "deletes scheduled task JSON"},
+	{Path: "/api/schedule/toggle", Level: "reversible", Action: "toggle_schedule_task", Reason: "enables or disables scheduled task"},
+	{Path: "/api/goals/start", Level: "dangerous", Action: "start_goal", Reason: "starts autonomous GA goal process"},
+	{Path: "/api/goals/stop", Level: "dangerous", Action: "stop_goal", Reason: "stops autonomous GA goal process by recorded PID"},
+	{Path: "/api/goals/delete", Level: "dangerous", Action: "delete_goal", Reason: "deletes goal state/output files"},
+	{Path: "/api/models/export", Level: "dangerous", Action: "export_models", Reason: "writes active GA model configuration"},
+}
+
+func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	writeJSON(w, map[string]interface{}{"items": riskCatalogItems})
+}
+
+func (s *Server) requireDangerousConfirm(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Header.Get("X-GA-Confirm") != "dangerous" {
+			bad(w, 428, "dangerous operation requires X-GA-Confirm: dangerous")
+			return
+		}
+		next(w, r)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)

@@ -268,13 +268,39 @@ func (m *Manager) appendLocked(name, line string) {
 func (m *Manager) Stop(name string) error {
 	m.mu.Lock()
 	p := m.procs[name]
-	m.mu.Unlock()
 	if p == nil || p.cmd.Process == nil || p.ret != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	pid := p.cmd.Process.Pid
+	m.appendLocked(name, fmt.Sprintf("[admin] stopping pid %d", pid))
+	m.mu.Unlock()
+
+	if pid <= 0 {
+		return errors.New("invalid process pid")
+	}
+	if !processAlive(pid) {
+		m.mu.Lock()
+		m.appendLocked(name, fmt.Sprintf("[admin] pid %d is already stopped", pid))
+		m.mu.Unlock()
 		return nil
 	}
 	if err := p.cmd.Process.Kill(); err != nil {
+		if !processAlive(pid) {
+			return nil
+		}
 		return err
 	}
+	deadline := time.Now().Add(5 * time.Second)
+	for processAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if processAlive(pid) {
+		return fmt.Errorf("process %d still alive after stop", pid)
+	}
+	m.mu.Lock()
+	m.appendLocked(name, fmt.Sprintf("[admin] stopped pid %d", pid))
+	m.mu.Unlock()
 	return nil
 }
 

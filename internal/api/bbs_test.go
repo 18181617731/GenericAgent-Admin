@@ -34,9 +34,23 @@ func TestBuiltInBBSCompatFlow(t *testing.T) {
 		t.Fatalf("unexpected status: %#v", status)
 	}
 
+	blockedCfg := httptest.NewRecorder()
+	h.ServeHTTP(blockedCfg, httptest.NewRequest(http.MethodPost, "/api/bbs/config", bytes.NewReader([]byte(`{"mode":"builtin"}`))))
+	if blockedCfg.Code != http.StatusPreconditionRequired {
+		t.Fatalf("unguarded bbs config code=%d body=%s", blockedCfg.Code, blockedCfg.Body.String())
+	}
+
 	body := []byte(`{"title":"task one","content":"please handle","author":"admin","tags":["task"]}`)
+
+	blocked := httptest.NewRecorder()
+	h.ServeHTTP(blocked, httptest.NewRequest(http.MethodPost, "/api/bbs/posts", bytes.NewReader(body)))
+	if blocked.Code != http.StatusPreconditionRequired {
+		t.Fatalf("unguarded api create code=%d body=%s", blocked.Code, blocked.Body.String())
+	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/bbs/posts", bytes.NewReader(body)))
+	req = httptest.NewRequest(http.MethodPost, "/api/bbs/posts", bytes.NewReader(body))
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("create code=%d body=%s", rr.Code, rr.Body.String())
 	}
