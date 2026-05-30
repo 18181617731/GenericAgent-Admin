@@ -43,6 +43,8 @@ type GoalState struct {
 	ID            string   `json:"id,omitempty"`
 	StateFile     string   `json:"state_file,omitempty"`
 	LogFile       string   `json:"log_file,omitempty"`
+	ManagedBy     string   `json:"managed_by,omitempty"`
+	OutputSource  string   `json:"output_source,omitempty"`
 	LLMNo         *int     `json:"llm_no,omitempty"`
 	PythonPath    string   `json:"python_path,omitempty"`
 }
@@ -64,6 +66,10 @@ type GoalMeta struct {
 	Status           string       `json:"status"`
 	PID              int          `json:"pid,omitempty"`
 	Running          bool         `json:"running"`
+	Origin           string       `json:"origin"`
+	Managed          bool         `json:"managed"`
+	PIDTrusted       bool         `json:"pid_trusted"`
+	StopLevel        string       `json:"stop_level"`
 	StateFile        string       `json:"state_file"`
 	LogFile          string       `json:"log_file"`
 	LogExists        bool         `json:"log_exists"`
@@ -168,8 +174,7 @@ func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
 }
 
 func ListGoals(root string) ([]GoalMeta, error) {
-	pattern := filepath.Join(root, "temp", goalStatePrefix+"*.json")
-	files, err := filepath.Glob(pattern)
+	files, err := goalStateFiles(root)
 	if err != nil {
 		return nil, err
 	}
@@ -180,18 +185,152 @@ func ListGoals(root string) ([]GoalMeta, error) {
 			continue
 		}
 		st, _ := os.Stat(f)
-		id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), goalStatePrefix), ".json")
-		logPath := filepath.Join(filepath.Dir(f), goalStatePrefix+id+".log")
+		id, origin, managed := goalIdentity(f, state)
+		logPath := goalLogPath(root, f, id, state, managed)
 		mod := time.Now()
 		if st != nil {
 			mod = st.ModTime()
 		}
 		goalMeta := metaFromState(root, id, f, logPath, state, mod)
 		goalMeta.Contract = meta
+		goalMeta.Origin = origin
+		goalMeta.Managed = managed
+		goalMeta.PIDTrusted = managed && state.PID > 0
+		goalMeta.StopLevel = goalStopLevel(goalMeta, managed)
 		items = append(items, goalMeta)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ModTime.After(items[j].ModTime) })
 	return items, nil
+}
+
+func goalStateFiles(root string) ([]string, error) {
+	tempDir := filepath.Join(root, "temp")
+	patterns := []string{filepath.Join(tempDir, goalStatePrefix+"*.json"), filepath.Join(tempDir, "goal_state.json"), filepath.Join(tempDir, "goal_*.json")}
+	seen := map[string]bool{}
+	files := []string{}
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range matches {
+			clean := filepath.Clean(f)
+			if seen[clean] {
+				continue
+			}
+			seen[clean] = true
+			if existsFile(clean) {
+				files = append(files, clean)
+			}
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func resolveGoalState(root, id string) (string, GoalState, ContractMeta, bool, error) {
+	id = sanitizeGoalID(id)
+	if id == "" {
+		return "", GoalState{}, ContractMeta{}, false, errors.New("id is required")
+	}
+	files, err := goalStateFiles(root)
+	if err != nil {
+		return "", GoalState{}, ContractMeta{}, false, err
+	}
+	for _, f := range files {
+		state, meta, err := readGoalState(f)
+		if err != nil {
+			continue
+		}
+		goalID, _, managed := goalIdentity(f, state)
+		if goalID == id {
+			return f, state, meta, managed, nil
+		}
+	}
+	return "", GoalState{}, ContractMeta{}, false, os.ErrNotExist
+}
+
+func goalIdentity(path string, state GoalState) (id, origin string, managed bool) {
+	base := strings.TrimSuffix(filepath.Base(path), ".json")
+	managed = isAdminGoalStatePath(path)
+	if managed {
+		id = strings.TrimPrefix(base, goalStatePrefix)
+		origin = "admin"
+	} else {
+		id = sanitizeGoalID(state.ID)
+		if id == "" {
+			id = sanitizeGoalID(base)
+		}
+		origin = "external"
+	}
+	return id, origin, managed
+}
+
+func isAdminGoalStatePath(path string) bool {
+	base := filepath.Base(path)
+	return strings.HasPrefix(base, goalStatePrefix) && strings.HasSuffix(base, ".json")
+}
+
+func goalLogPath(root, statePath, id string, state GoalState, managed bool) string {
+	if strings.TrimSpace(state.LogFile) != "" {
+		return cleanGoalPath(root, filepath.Dir(statePath), state.LogFile)
+	}
+	if managed {
+		return filepath.Join(filepath.Dir(statePath), goalStatePrefix+id+".log")
+	}
+	return filepath.Join(filepath.Dir(statePath), strings.TrimSuffix(filepath.Base(statePath), ".json")+".log")
+}
+
+func cleanGoalPath(root, baseDir, p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	cand := filepath.Join(root, filepath.FromSlash(p))
+	if strings.HasPrefix(filepath.Clean(cand), filepath.Clean(root)) {
+		return cand
+	}
+	return filepath.Join(baseDir, filepath.FromSlash(p))
+}
+
+func goalStopLevel(meta GoalMeta, managed bool) string {
+	if !meta.Running {
+		return "unsupported"
+	}
+	if managed && meta.PID > 0 {
+		return "safe"
+	}
+	if !managed {
+		return "state_only"
+	}
+	return "unsupported"
+}
+
+func latestModelResponseFile(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if best == "" || info.ModTime().After(bestMod) {
+			best = path
+			bestMod = info.ModTime()
+		}
+	}
+	return best
 }
 
 func DeleteGoal(root, id string) error {
@@ -204,7 +343,7 @@ func DeleteGoal(root, id string) error {
 	if err != nil {
 		return err
 	}
-	if isPIDRunning(state.PID) {
+	if state.EndTime == nil && state.Status == "running" && isPIDRunning(state.PID) {
 		return errors.New("goal is running; stop it before deleting")
 	}
 	logPath := filepath.Join(root, "temp", goalStatePrefix+id+".log")
@@ -218,32 +357,44 @@ func DeleteGoal(root, id string) error {
 }
 
 func StopGoal(root, id string, pid int) (GoalMeta, error) {
-	id = sanitizeGoalID(id)
-	if id == "" {
-		return GoalMeta{}, errors.New("id is required")
-	}
-	statePath := filepath.Join(root, "temp", goalStatePrefix+id+".json")
-	state, _, err := readGoalState(statePath)
+	statePath, state, meta, managed, err := resolveGoalState(root, id)
 	if err != nil {
 		return GoalMeta{}, err
 	}
-	if pid <= 0 {
-		return GoalMeta{}, errors.New("pid is required for exact stop")
+	goalID, origin, managedByFile := goalIdentity(statePath, state)
+	if managedByFile {
+		managed = true
 	}
+	logPath := goalLogPath(root, statePath, goalID, state, managed)
 	if state.EndTime != nil || state.Status != "running" {
-		return GoalMeta{}, errors.New("goal is not running; refusing to stop stale PID")
+		return GoalMeta{}, errors.New("goal is not running")
 	}
-	if state.PID != pid {
-		return GoalMeta{}, errors.New("exact PID mismatch; refusing to stop")
-	}
-	if err := killGoalPID(pid); err != nil {
-		return GoalMeta{}, err
+	if managed {
+		if pid <= 0 {
+			return GoalMeta{}, errors.New("pid is required for exact stop")
+		}
+		if state.PID != pid {
+			return GoalMeta{}, errors.New("exact PID mismatch; refusing to stop")
+		}
+		if err := killGoalPID(pid); err != nil {
+			return GoalMeta{}, err
+		}
+		state.PID = 0
+	} else if state.PID > 0 && pid > 0 && state.PID != pid {
+		return GoalMeta{}, errors.New("PID mismatch; refusing external soft stop")
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
 	state.Status = "stopped_by_admin"
-	state.PID = 0
 	state.EndTime = &now
-	goalMeta := metaFromState(root, id, statePath, filepath.Join(root, "temp", goalStatePrefix+id+".log"), state, time.Now())
+	if !managed && strings.TrimSpace(state.ManagedBy) == "" {
+		state.ManagedBy = "ga-admin-soft-stop"
+	}
+	goalMeta := metaFromState(root, goalID, statePath, logPath, state, time.Now())
+	goalMeta.Contract = meta
+	goalMeta.Origin = origin
+	goalMeta.Managed = managed
+	goalMeta.PIDTrusted = managed && pid > 0
+	goalMeta.StopLevel = goalStopLevel(goalMeta, managed)
 	if err := writeGoalState(statePath, state); err != nil {
 		return goalMeta, err
 	}
@@ -267,16 +418,15 @@ type GoalOutputResult struct {
 }
 
 func GoalOutput(root, id string, maxBytes int64) (GoalOutputResult, error) {
-	id = sanitizeGoalID(id)
-	if id == "" {
-		return GoalOutputResult{}, errors.New("id is required")
-	}
-	statePath := filepath.Join(root, "temp", goalStatePrefix+id+".json")
-	state, meta, err := readGoalState(statePath)
+	statePath, state, meta, managed, err := resolveGoalState(root, id)
 	if err != nil {
 		return GoalOutputResult{}, err
 	}
-	logPath := filepath.Join(root, "temp", goalStatePrefix+id+".log")
+	goalID, origin, managedByFile := goalIdentity(statePath, state)
+	if managedByFile {
+		managed = true
+	}
+	logPath := goalLogPath(root, statePath, goalID, state, managed)
 	requestedBytes := maxBytes
 	defaultBytesUsed := false
 	if maxBytes <= 0 {
@@ -288,38 +438,42 @@ func GoalOutput(root, id string, maxBytes int64) (GoalOutputResult, error) {
 		maxBytes = maxGoalOutputBytes
 		maxBytesCapped = true
 	}
-	out, totalBytes, truncated, err := tailFile(logPath, maxBytes)
-	goalMeta := metaFromState(root, id, statePath, logPath, state, time.Now())
+	goalMeta := metaFromState(root, goalID, statePath, logPath, state, time.Now())
 	goalMeta.Contract = meta
+	goalMeta.Origin = origin
+	goalMeta.Managed = managed
+	goalMeta.PIDTrusted = managed && state.PID > 0
+	goalMeta.StopLevel = goalStopLevel(goalMeta, managed)
+	out, totalBytes, truncated, err := tailFile(logPath, maxBytes)
+	outputPath := logPath
+	outputStatusPrefix := ""
+	if err != nil && errors.Is(err, os.ErrNotExist) && !managed {
+		if fallback := latestModelResponseFile(filepath.Join(root, "temp", "model_responses")); fallback != "" {
+			outputPath = fallback
+			out, totalBytes, truncated, err = tailFile(outputPath, maxBytes)
+			outputStatusPrefix = "model_responses_"
+			goalMeta.LogFile = relGoalPath(root, outputPath)
+			goalMeta.LogExists = true
+			goalMeta.MissingLog = false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return GoalOutputResult{Goal: goalMeta, RequestedBytes: requestedBytes, MaxBytes: maxBytes, DefaultBytes: defaultGoalOutputBytes, DefaultBytesUsed: defaultBytesUsed, MaxBytesCapped: maxBytesCapped, OutputStatus: "missing_log"}, nil
 		}
 		return GoalOutputResult{}, err
 	}
-	outputStatus := "full"
+	outputStatus := outputStatusPrefix + "full"
 	if totalBytes == 0 {
-		outputStatus = "empty_log"
+		outputStatus = outputStatusPrefix + "empty_log"
 	} else if truncated {
-		outputStatus = "tail_truncated"
+		outputStatus = outputStatusPrefix + "tail_truncated"
 	}
-	totalLines, err := countDisplayLinesFile(logPath)
+	totalLines, err := countDisplayLinesFile(outputPath)
 	if err != nil {
 		return GoalOutputResult{}, err
 	}
 	return GoalOutputResult{Output: out, Goal: goalMeta, Truncated: truncated, BytesReturned: int64(len([]byte(out))), TotalBytes: totalBytes, LinesReturned: countDisplayLinesString(out), TotalLines: totalLines, RequestedBytes: requestedBytes, MaxBytes: maxBytes, DefaultBytes: defaultGoalOutputBytes, DefaultBytesUsed: defaultBytesUsed, MaxBytesCapped: maxBytesCapped, OutputStatus: outputStatus}, nil
-}
-
-func writeGoalState(path string, state GoalState) error {
-	if state.SchemaVersion == 0 {
-		state.SchemaVersion = adminContractSchemaVersion
-	}
-	state.Domain = contractDomainGoalState
-	b, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0644)
 }
 
 func readGoalState(path string) (GoalState, ContractMeta, error) {
@@ -337,9 +491,23 @@ func readGoalState(path string) (GoalState, ContractMeta, error) {
 	return state, meta, nil
 }
 
+func writeGoalState(path string, state GoalState) error {
+	if state.SchemaVersion == 0 {
+		state.SchemaVersion = adminContractSchemaVersion
+	}
+	state.Domain = contractDomainGoalState
+	b, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0644)
+}
+
 func metaFromState(root, id, statePath, logPath string, state GoalState, mod time.Time) GoalMeta {
 	now := time.Now()
-	running := state.EndTime == nil && state.PID > 0 && isPIDRunning(state.PID)
+	managed := isAdminGoalStatePath(statePath)
+	processRunning := state.PID > 0 && isPIDRunning(state.PID)
+	running := state.EndTime == nil && ((managed && processRunning) || (!managed && state.Status == "running"))
 	status := state.Status
 	end := now
 	if state.EndTime != nil && *state.EndTime > 0 {
@@ -371,7 +539,16 @@ func metaFromState(root, id, statePath, logPath string, state GoalState, mod tim
 		status = "exited"
 	}
 	logExists := existsFile(logPath)
-	return GoalMeta{SchemaVersion: 1, ID: id, Objective: state.Objective, BudgetSeconds: state.BudgetSeconds, StartTime: state.StartTime, ElapsedSeconds: elapsed, RemainingSeconds: remaining, BudgetPercent: budgetPercent, TurnsUsed: turnsUsed, MaxTurns: state.MaxTurns, TurnPercent: turnPercent, Status: status, PID: state.PID, Running: running, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LogExists: logExists, MissingLog: !logExists, LLMNo: state.LLMNo, ModTime: mod, EndTime: state.EndTime}
+	goalMeta := GoalMeta{SchemaVersion: 1, ID: id, Objective: state.Objective, BudgetSeconds: state.BudgetSeconds, StartTime: state.StartTime, ElapsedSeconds: elapsed, RemainingSeconds: remaining, BudgetPercent: budgetPercent, TurnsUsed: turnsUsed, MaxTurns: state.MaxTurns, TurnPercent: turnPercent, Status: status, PID: state.PID, Running: running, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LogExists: logExists, MissingLog: !logExists, LLMNo: state.LLMNo, ModTime: mod, EndTime: state.EndTime}
+	goalMeta.Managed = managed
+	if managed {
+		goalMeta.Origin = "admin"
+		goalMeta.PIDTrusted = state.PID > 0
+	} else {
+		goalMeta.Origin = "external"
+	}
+	goalMeta.StopLevel = goalStopLevel(goalMeta, managed)
+	return goalMeta
 }
 
 func percentOf(used, total int) int {

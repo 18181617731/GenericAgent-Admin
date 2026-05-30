@@ -174,11 +174,19 @@ function GoalChatView({ output, empty }) {
 function GoalRunCard({ g, t, selected, onOutput, onState, onStop, onDelete }) {
   const turnPct = goalTurnPercent(g)
   const budgetPct = goalBudgetPercent(g)
-  return <div className={`goal-row ${g.running ? 'running' : ''} ${selected===g.id ? 'selected' : ''}`}>
+  const originLabel = t.goalOrigins?.[g.origin] || g.origin || '-'
+  const stopLevelLabel = t.goalStopLevels?.[g.stop_level] || g.stop_level || '-'
+  const trustLabel = g.pid_trusted ? (t.goalTrust?.trusted || 'PID trusted') : (t.goalTrust?.untrusted || 'PID untrusted')
+  const pidLabel = g.running ? (g.pid ? `${t.fields.pid} ${g.pid}` : t.running) : t.fields.notRunning
+  const canStop = !!g.running && !!g.id && (!g.managed || !!g.pid)
+  return <div className={`goal-row ${g.running ? 'running' : ''} ${g.origin === 'external' ? 'external' : ''} ${selected===g.id ? 'selected' : ''}`}>
     <button className="goal-row-main" onClick={()=>onOutput(g.id)}>
       <div className="goal-row-title"><b>{g.id}</b><span className={g.running ? 'ok' : ''}>{g.status || '-'}</span></div>
       <div className="goal-row-meta">
-        <span>{g.running ? `${t.fields.pid} ${g.pid}` : t.fields.notRunning}</span>
+        <span>{pidLabel}</span>
+        <span>{t.fields.source} {originLabel}</span>
+        <span>{t.fields.control} {stopLevelLabel}</span>
+        <span className={g.pid_trusted ? 'ok' : 'warn-text'}>{trustLabel}</span>
         <span>{t.fields.turn} {g.turns_used || 0}/{g.max_turns || '-'}</span>
         <span>{t.fields.elapsed} {formatDuration(g.elapsed_seconds)}</span>
         <span>{t.fields.remaining} {formatDuration(g.remaining_seconds)}</span>
@@ -193,7 +201,7 @@ function GoalRunCard({ g, t, selected, onOutput, onState, onStop, onDelete }) {
       <button onClick={()=>onOutput(g.id)}><Eye size={14}/>{t.read}</button>
       <button disabled={!g.state_file} onClick={()=>onState(g.state_file)}>{t.fields.stateFile}</button>
       <button disabled={!g.id || g.missing_log} onClick={()=>onOutput(g.id)}>{t.fields.logFile}</button>
-      <button disabled={!g.running || !g.pid} onClick={()=>onStop(g)}><Square size={14}/>{t.stop}</button>
+      <button disabled={!canStop} title={g.managed ? (g.pid_trusted ? t.goalStopLevels?.exact_pid : t.goalTrust?.untrusted) : t.goalStopLevels?.soft_state} onClick={()=>onStop(g)}><Square size={14}/>{t.stop}</button>
       <button className="danger" disabled={!!g.running} title={g.running ? t.hints.goalDeleteRunning : t.hints.goalDeleteConfirm.replace('{id}', g.id || '-')} onClick={()=>onDelete?.(g)}><Trash2 size={14}/>{t.delete}</button>
     </div>
   </div>

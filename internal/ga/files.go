@@ -37,6 +37,7 @@ type FileSearchHit struct {
 }
 
 const maxReadBytes int64 = 512 * 1024
+const maxReadLines = 5000
 const maxSearchFileBytes int64 = 1024 * 1024
 
 func SafeResolve(root, rel string) (string, string, error) {
@@ -142,8 +143,25 @@ func ReadSafe(root, rel string) (SafeFileDetail, error) {
 		d.Truncated = info.Size() > limit
 		return d, nil
 	}
-	d.Content = string(buf)
-	d.Truncated = info.Size() > limit
+	content := string(buf)
+	lineCount := 0
+	cutAt := -1
+	for i, r := range content {
+		if r == '\n' {
+			lineCount++
+			if lineCount >= maxReadLines {
+				cutAt = i + 1
+				break
+			}
+		}
+	}
+	if cutAt >= 0 && cutAt < len(content) {
+		d.Content = content[:cutAt]
+		d.Truncated = true
+	} else {
+		d.Content = content
+		d.Truncated = info.Size() > limit
+	}
 	return d, nil
 }
 
@@ -151,14 +169,57 @@ func TailSafe(root, rel string, lines int) (SafeFileDetail, error) {
 	if lines <= 0 || lines > 2000 {
 		lines = 200
 	}
-	d, err := ReadSafe(root, rel)
+	full, clean, err := SafeResolve(root, rel)
+	if err != nil {
+		return SafeFileDetail{}, err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return SafeFileDetail{}, err
+	}
+	kind := "file"
+	if info.IsDir() {
+		kind = "dir"
+	}
+	d := SafeFileDetail{Path: clean, Name: filepath.Base(full), Kind: kind, Size: info.Size(), ModTime: info.ModTime()}
+	if info.IsDir() {
+		return d, nil
+	}
+
+	readBytes := maxReadBytes
+	if info.Size() < readBytes {
+		readBytes = info.Size()
+	}
+	f, err := os.Open(full)
 	if err != nil {
 		return d, err
 	}
-	parts := strings.Split(d.Content, "\n")
+	defer f.Close()
+	start := info.Size() - readBytes
+	buf := make([]byte, readBytes)
+	n, err := f.ReadAt(buf, start)
+	if err != nil && err != io.EOF {
+		return d, err
+	}
+	buf = buf[:n]
+	if start > 0 {
+		for len(buf) > 0 && !utf8.RuneStart(buf[0]) {
+			buf = buf[1:]
+			start++
+		}
+	}
+	if !utf8.Valid(buf) {
+		d.Content = "[binary or non-utf8 file]"
+		d.Truncated = start > 0
+		return d, nil
+	}
+	parts := strings.Split(string(buf), "\n")
 	if len(parts) > lines {
 		d.Content = strings.Join(parts[len(parts)-lines:], "\n")
 		d.Truncated = true
+	} else {
+		d.Content = string(buf)
+		d.Truncated = start > 0
 	}
 	return d, nil
 }

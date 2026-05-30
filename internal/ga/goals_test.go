@@ -2,6 +2,7 @@ package ga
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -563,6 +564,33 @@ func TestStopGoalRejectsEndedStateWithStalePID(t *testing.T) {
 	}
 	if state.Status != "done" || state.PID != 22222 || state.EndTime == nil {
 		t.Fatalf("ended state should not change: %#v", state)
+	}
+}
+
+func TestDeleteGoalAllowsEndedStateWithLiveReusedPID(t *testing.T) {
+	root := t.TempDir()
+	temp := filepath.Join(root, "temp")
+	if err := os.MkdirAll(temp, 0755); err != nil {
+		t.Fatal(err)
+	}
+	id := "delete_ended"
+	statePath := filepath.Join(temp, goalStatePrefix+id+".json")
+	logPath := filepath.Join(temp, goalStatePrefix+id+".log")
+	start := float64(time.Now().Add(-time.Minute).Unix())
+	end := start + 10
+	writeStateForTest(t, statePath, GoalState{Objective: "done", BudgetSeconds: 60, StartTime: start, EndTime: &end, MaxTurns: 3, Status: "done", PID: os.Getpid()})
+	if err := os.WriteFile(logPath, []byte("done"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DeleteGoal(root, id); err != nil {
+		t.Fatalf("DeleteGoal ended state with live stale PID error = %v", err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state file should be deleted, stat err=%v", err)
+	}
+	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("log file should be deleted, stat err=%v", err)
 	}
 }
 

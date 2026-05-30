@@ -61,6 +61,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/ga/git-update", s.requireDangerousConfirm(s.gaGitUpdate))
 	mux.HandleFunc("/api/ga/git-status", s.gaGitStatus)
 	mux.HandleFunc("/api/tmwebdriver/status", s.tmwebdriverStatus)
+	mux.HandleFunc("/api/tmwebdriver/repair", s.requireDangerousConfirm(s.tmwebdriverRepair))
 	// Built-in BBS service compatible with GA reflect/agent_team_worker.py
 	mux.HandleFunc("/api/bbs/status", s.bbsStatus)
 	mux.HandleFunc("/api/bbs/config", s.requireDangerousConfirm(s.bbsConfigHandler))
@@ -150,6 +151,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/services/stop", Level: "dangerous", Action: "stop_process", Reason: "stops a managed GA service process"},
 	{Path: "/api/services/stop-all", Level: "dangerous", Action: "stop_all_processes", Reason: "stops all managed GA services"},
 	{Path: "/api/services/autostart", Level: "reversible", Action: "toggle_service_autostart", Reason: "changes Admin-Go service autostart list"},
+	{Path: "/api/tmwebdriver/repair", Level: "reversible", Action: "start_tmwebdriver_master", Reason: "starts a persistent TMWebDriver master process on localhost:18766"},
 	{Path: "/api/autostart/enable", Level: "dangerous", Action: "enable_os_autostart", Reason: "writes OS autostart entry"},
 	{Path: "/api/autostart/disable", Level: "reversible", Action: "disable_os_autostart", Reason: "removes OS autostart entry"},
 	{Path: "/api/schedule/task", Level: "dangerous", Action: "edit_schedule_task", Reason: "changes scheduled task JSON"},
@@ -291,6 +293,82 @@ func (s *Server) tmwebdriverStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	st := buildTMWebDriverStatus()
 	writeJSON(w, st)
+}
+
+type tmwebdriverRepairResponse struct {
+	Started bool                      `json:"started"`
+	PID     int                       `json:"pid,omitempty"`
+	Command []string                  `json:"command,omitempty"`
+	Status  tmwebdriverStatusResponse `json:"status"`
+	Message string                    `json:"message,omitempty"`
+}
+
+func (s *Server) tmwebdriverRepair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	before := buildTMWebDriverStatus()
+	if before.PortListening {
+		writeJSON(w, tmwebdriverRepairResponse{Started: false, Status: before, Message: "18766 master 已在监听，无需重复启动。"})
+		return
+	}
+	pid, cmdline, err := s.startTMWebDriverMaster()
+	if err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	var after tmwebdriverStatusResponse
+	for i := 0; i < 20; i++ {
+		time.Sleep(250 * time.Millisecond)
+		after = buildTMWebDriverStatus()
+		if after.PortListening {
+			break
+		}
+	}
+	writeJSON(w, tmwebdriverRepairResponse{Started: true, PID: pid, Command: cmdline, Status: after, Message: "已启动 TMWebDriver master；若仍未 OK，请确认浏览器已打开且扩展已安装。"})
+}
+
+func (s *Server) startTMWebDriverMaster() (int, []string, error) {
+	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	if gaRoot == "" {
+		return 0, nil, errors.New("ga_root is empty")
+	}
+	python := resolvePythonForRoot(gaRoot, s.CfgStore.Cfg.PythonPath)
+	code := "from TMWebDriver import TMWebDriver; TMWebDriver()"
+	cmd := exec.Command(python, "-c", code)
+	cmd.Dir = gaRoot
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	hideChildWindow(cmd)
+	if err := cmd.Start(); err != nil {
+		return 0, []string{python, "-c", code}, err
+	}
+	return cmd.Process.Pid, []string{python, "-c", code}, nil
+}
+
+func resolvePythonForRoot(gaRoot, configured string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		return configured
+	}
+	var candidates []string
+	if runtime.GOOS == "windows" {
+		candidates = append(candidates, filepath.Join(gaRoot, ".venv", "Scripts", "python.exe"), filepath.Join(gaRoot, "venv", "Scripts", "python.exe"), "python")
+	} else {
+		candidates = append(candidates, filepath.Join(gaRoot, ".venv", "bin", "python"), filepath.Join(gaRoot, "venv", "bin", "python"), "python3", "python")
+	}
+	for _, c := range candidates {
+		if strings.ContainsRune(c, filepath.Separator) {
+			if st, err := os.Stat(c); err == nil && !st.IsDir() {
+				return c
+			}
+			continue
+		}
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	return "python"
 }
 
 func buildTMWebDriverStatus() tmwebdriverStatusResponse {
@@ -460,6 +538,14 @@ func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &req); err != nil {
 		bad(w, 400, err.Error())
+		return
+	}
+	if req.BudgetSeconds < 0 {
+		bad(w, 400, "budget_seconds must be >= 0")
+		return
+	}
+	if req.BudgetMinutes < 0 {
+		bad(w, 400, "budget_minutes must be >= 0")
 		return
 	}
 	if req.BudgetSeconds > 0 && req.BudgetMinutes > 0 {
@@ -739,7 +825,15 @@ func (s *Server) filesTail(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	lines, _ := strconv.Atoi(r.URL.Query().Get("lines"))
+	lines := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("lines")); raw != "" {
+		var err error
+		lines, err = strconv.Atoi(raw)
+		if err != nil || lines <= 0 {
+			bad(w, 400, "lines must be a positive integer")
+			return
+		}
+	}
 	d, err := ga.TailSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), lines)
 	if err != nil {
 		bad(w, 400, err.Error())
@@ -753,7 +847,15 @@ func (s *Server) filesSearch(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			bad(w, 400, "limit must be a positive integer")
+			return
+		}
+	}
 	hits, err := ga.SearchSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), r.URL.Query().Get("q"), limit)
 	if err != nil {
 		bad(w, 400, err.Error())
@@ -1148,6 +1250,10 @@ type nameReq struct {
 }
 
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	var q nameReq
 	if err := decode(r, &q); err != nil {
 		bad(w, 400, err.Error())
@@ -1161,6 +1267,10 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, svc)
 }
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	var q nameReq
 	if err := decode(r, &q); err != nil {
 		bad(w, 400, err.Error())
@@ -1174,6 +1284,10 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, svc)
 }
 func (s *Server) stopAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	s.Svc.StopAll()
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -1302,6 +1416,10 @@ func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "updated_at": d.UpdatedAt, "saved": p.Save, "masked": !p.Reveal})
 }
 func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	var p struct {
 		Profiles        []modelconfig.Profile `json:"profiles"`
 		OverwriteActive bool                  `json:"overwrite_active"`

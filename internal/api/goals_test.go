@@ -144,6 +144,38 @@ func TestGoalsStartRejectsTooLargeBudgetMinutesBeforeLaunch(t *testing.T) {
 	}
 }
 
+func TestGoalsStartRejectsNegativeBudgetSecondsBeforeLaunch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "reflect"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "reflect", "goal_mode.py"), []byte("# test reflect hook\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "agentmain.py"), []byte("raise SystemExit('should not launch')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newGoalTestServer(t, root).Routes()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/goals/start", strings.NewReader(`{"objective":"negative seconds","budget_seconds":-5,"budget_minutes":1}`))
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("start status=%d want=400 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "budget_seconds") {
+		t.Fatalf("unexpected error body: %s", rr.Body.String())
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "temp", "goal_admin_*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("negative budget should not create goal state files: %v", matches)
+	}
+}
+
 func TestGoalsStartRejectsMultipleJSONValuesBeforeLaunch(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "reflect"), 0755); err != nil {
@@ -519,6 +551,25 @@ func TestGoalsStopRouteRejectsEndedStateWithStalePID(t *testing.T) {
 	}
 	if string(after) != string(b) {
 		t.Fatalf("ended state should remain unchanged\nbefore=%s\nafter=%s", b, after)
+	}
+}
+
+func TestDangerousMutationRoutesRejectGET(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	for _, path := range []string{
+		"/api/services/start",
+		"/api/services/stop",
+		"/api/services/stop-all",
+		"/api/models/export",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("GET %s status=%d want=%d body=%s", path, rr.Code, http.StatusMethodNotAllowed, rr.Body.String())
+			}
+		})
 	}
 }
 

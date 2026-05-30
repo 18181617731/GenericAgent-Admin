@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -22,9 +23,12 @@ import (
 var webFS embed.FS
 
 func main() {
-	cwd, err := os.Getwd()
+	cwd, err := appRoot()
 	if err != nil {
 		log.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		log.Fatalf("chdir %s failed: %v", cwd, err)
 	}
 	cfgStore := config.NewStore(cwd)
 	if err := cfgStore.Load(); err != nil {
@@ -59,6 +63,17 @@ func main() {
 			_ = server.Shutdown(ctx)
 		},
 	)
+}
+
+func appRoot() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if exe != "" {
+		return filepath.Dir(exe), nil
+	}
+	return os.Getwd()
 }
 
 func openBrowser(url string) {
