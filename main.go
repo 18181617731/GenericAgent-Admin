@@ -52,11 +52,15 @@ func main() {
 			log.Fatalf("listen %s failed: %v; if the port is occupied, edit config.local.json and change port", addr, err)
 		}
 	}()
+	stopPet := startDesktopPet()
 	runTray(url,
 		func() { openBrowser(url) },
 		func() { openBrowser(url + "/chat") },
+		func() { showDesktopPet() },
+		func() { hideDesktopPet() },
 		func() { srv.StopManagedServices() },
 		func() {
+			stopPet()
 			srv.ShutdownCleanup()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()

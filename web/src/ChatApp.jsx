@@ -1,11 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, RefreshCw, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
-
-const api = async (url, options = {}) => {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
-}
+import { api, apiStream } from './lib/api'
+import { confirmDanger } from './lib/danger'
 
 const fmtTime = (v) => {
   if (!v) return ''
@@ -35,12 +31,34 @@ const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - 
 const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
 
-const escapeHtml = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]))
-const inlineMarkdown = (s = '') => escapeHtml(s)
-  .replace(/`([^`]+)`/g, '<code>$1</code>')
-  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+const tokenizeInlineMarkdown = (text = '') => {
+  const src = String(text || '')
+  const tokens = []
+  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g
+  let last = 0, m
+  while ((m = re.exec(src)) !== null) {
+    if (m.index > last) tokens.push({ type:'text', text:src.slice(last, m.index) })
+    if (m[2]) tokens.push({ type:'code', text:m[2] })
+    else if (m[4]) tokens.push({ type:'strong', text:m[4] })
+    else if (m[6]) tokens.push({ type:'em', text:m[6] })
+    else if (m[8] && m[9]) tokens.push({ type:'link', text:m[8], href:m[9] })
+    last = re.lastIndex
+  }
+  if (last < src.length) tokens.push({ type:'text', text:src.slice(last) })
+  return tokens
+}
+
+function InlineMarkdown({ text = '' }) {
+  return <>
+    {tokenizeInlineMarkdown(text).map((t, i) => {
+      if (t.type === 'code') return <code key={i}>{t.text}</code>
+      if (t.type === 'strong') return <strong key={i}>{t.text}</strong>
+      if (t.type === 'em') return <em key={i}>{t.text}</em>
+      if (t.type === 'link') return <a key={i} href={t.href} target="_blank" rel="noreferrer">{t.text}</a>
+      return <span key={i}>{t.text}</span>
+    })}
+  </>
+}
 
 function CopyButton({ text, compact = false }) {
   const [ok, setOk] = useState(false)
@@ -88,11 +106,11 @@ function InlineRichText({ text = '' }) {
   const nodes = []
   let last = 0, m, n = 0
   while ((m = re.exec(src)) !== null) {
-    if (m.index > last) nodes.push(<span key={`t${n++}`} dangerouslySetInnerHTML={{__html:inlineMarkdown(src.slice(last, m.index))}} />)
+    if (m.index > last) nodes.push(<InlineMarkdown key={`t${n++}`} text={src.slice(last, m.index)} />)
     nodes.push(<FileAttachment key={`f${n++}`} path={m[1]} />)
     last = re.lastIndex
   }
-  if (last < src.length) nodes.push(<span key={`t${n++}`} dangerouslySetInnerHTML={{__html:inlineMarkdown(src.slice(last))}} />)
+  if (last < src.length) nodes.push(<InlineMarkdown key={`t${n++}`} text={src.slice(last)} />)
   return <>{nodes}</>
 }
 
@@ -705,7 +723,7 @@ export default function ChatApp() {
   }
 
   const deleteSession = async (id) => {
-    if (!id || !confirm('删除此会话？此操作不可恢复。')) return
+    if (!id || !confirmDanger('chat-session-delete', '删除此会话？此操作不可恢复。')) return
     await api(`/api/chat/session/${id}`, { method:'DELETE' })
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')

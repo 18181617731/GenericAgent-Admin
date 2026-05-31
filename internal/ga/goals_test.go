@@ -39,19 +39,25 @@ func TestListGoalsSkipsInvalidAndSorts(t *testing.T) {
 	if err := os.Chtimes(newer, now, now); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chtimes(invalid, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 
 	items, err := ListGoals(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 {
-		t.Fatalf("len(items) = %d, want 2: %#v", len(items), items)
+	if len(items) != 3 {
+		t.Fatalf("len(items) = %d, want 3 including corrupt placeholder: %#v", len(items), items)
 	}
-	if items[0].ID != "newer" || items[1].ID != "older" {
+	if items[0].ID != "bad" || items[1].ID != "newer" || items[2].ID != "older" {
 		t.Fatalf("items not sorted by mtime desc: %#v", items)
 	}
-	if !strings.HasPrefix(items[0].StateFile, "temp/") || !strings.HasPrefix(items[0].LogFile, "temp/") {
-		t.Fatalf("paths should be GA-root relative slash paths: %#v", items[0])
+	if items[0].Status != "unknown" || items[0].ErrorClass != "state_corrupt" || items[0].StateReadable {
+		t.Fatalf("corrupt state should be recoverable placeholder: %#v", items[0])
+	}
+	if !strings.HasPrefix(items[1].StateFile, "temp/") || !strings.HasPrefix(items[1].LogFile, "temp/") {
+		t.Fatalf("paths should be GA-root relative slash paths: %#v", items[1])
 	}
 }
 
@@ -79,8 +85,8 @@ func TestMetaFromStateFreezesExitedRunningStateAtModTime(t *testing.T) {
 	startTime := time.Now().Add(-2 * time.Hour)
 	modTime := startTime.Add(2 * time.Minute)
 	meta := metaFromState(root, "stale", filepath.Join(root, "temp", goalStatePrefix+"stale.json"), filepath.Join(root, "temp", goalStatePrefix+"stale.log"), GoalState{Objective: "stale", BudgetSeconds: 600, StartTime: float64(startTime.Unix()), TurnsUsed: 6, MaxTurns: 5, Status: "running", PID: 0}, modTime)
-	if meta.Status != "exited" || meta.Running {
-		t.Fatalf("stale running state should be reported as exited/not running: %#v", meta)
+	if meta.Status != "unknown" || meta.RawStatus != "running" || meta.ErrorClass != "stale_running" || meta.LastEvent != "stale_running" || meta.Running {
+		t.Fatalf("stale running state should be reported as unknown stale/not running: %#v", meta)
 	}
 	if meta.ElapsedSeconds < 119 || meta.ElapsedSeconds > 121 {
 		t.Fatalf("ElapsedSeconds = %d, want frozen near 120 from mod_time-start_time", meta.ElapsedSeconds)
@@ -227,6 +233,40 @@ func TestGoalOutputAllowsMissingLog(t *testing.T) {
 	}
 }
 
+func TestGoalOutputRejectsSymlinkLogOutsideTemp(t *testing.T) {
+	root := t.TempDir()
+	temp := filepath.Join(root, "temp")
+	if err := os.MkdirAll(temp, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(outside, "secret.log")
+	if err := os.WriteFile(secret, []byte("do-not-read"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(temp, "linked-out")
+	if err := os.Symlink(outside, linkDir); err != nil {
+		t.Skipf("symlink not available: %v", err)
+	}
+	id := "symlink_log"
+	statePath := filepath.Join(temp, goalStatePrefix+id+".json")
+	writeStateForTest(t, statePath, GoalState{Objective: "symlink", BudgetSeconds: 30, StartTime: float64(time.Now().Unix()), MaxTurns: 5, Status: "done", LogFile: filepath.ToSlash(filepath.Join("temp", "linked-out", "secret.log"))})
+
+	res, err := GoalOutput(root, id, 100)
+	if err != nil {
+		t.Fatalf("GoalOutput should fall back to default missing log instead of reading symlink target: %v", err)
+	}
+	if res.Output != "" || res.OutputStatus != "missing_log" || strings.Contains(res.Output, "do-not-read") {
+		t.Fatalf("symlinked log outside temp should not be read: %#v", res)
+	}
+	if res.Goal.LogFile != filepath.ToSlash(filepath.Join("temp", goalStatePrefix+id+".log")) || res.Goal.LogExists || !res.Goal.MissingLog {
+		t.Fatalf("unexpected fallback log metadata: %#v", res.Goal)
+	}
+}
+
 func TestGoalOutputEmptyLogMetadata(t *testing.T) {
 	root := t.TempDir()
 	temp := filepath.Join(root, "temp")
@@ -300,6 +340,55 @@ func TestGoalOutputSanitizesID(t *testing.T) {
 	}
 }
 
+func TestStartGoalTruncatesPreexistingOutputLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "agentmain.py"), []byte("# fake\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	reflectDir := filepath.Join(root, "reflect")
+	if err := os.MkdirAll(reflectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reflectDir, "goal_mode.py"), []byte("# fake\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	venvScripts := filepath.Join(root, ".venv", "Scripts")
+	if err := os.MkdirAll(venvScripts, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fakePython := filepath.Join(venvScripts, "python.exe")
+	if err := os.WriteFile(fakePython, []byte("not an executable"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldNewGoalID := newGoalID
+	newGoalID = func() string { return "fixed_log_id" }
+	t.Cleanup(func() { newGoalID = oldNewGoalID })
+	goalDir := standardGoalDir(root, "fixed_log_id")
+	if err := os.MkdirAll(goalDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(goalDir, goalStandardOutputFile)
+	if err := os.WriteFile(logPath, []byte("stale previous output\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := StartGoal(root, GoalStartOptions{Objective: "start fails", BudgetSeconds: 60, MaxTurns: 1})
+	if err == nil {
+		t.Fatal("StartGoal error = nil, want failure for invalid interpreter")
+	}
+	logBytes, readLogErr := os.ReadFile(logPath)
+	if readLogErr != nil {
+		t.Fatal(readLogErr)
+	}
+	if strings.Contains(string(logBytes), "stale previous output") {
+		t.Fatalf("output log was appended instead of truncated: %q", string(logBytes))
+	}
+	if !strings.Contains(string(logBytes), "[goal start failed]") {
+		t.Fatalf("failure log missing marker: %q", string(logBytes))
+	}
+}
+
 func TestStartGoalFailurePersistsFailedStateAndLog(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "agentmain.py"), []byte("# fake\n"), 0644); err != nil {
@@ -326,7 +415,7 @@ func TestStartGoalFailurePersistsFailedStateAndLog(t *testing.T) {
 		t.Fatal("StartGoal error = nil, want failure for invalid interpreter")
 	}
 
-	files, globErr := filepath.Glob(filepath.Join(root, "temp", goalStatePrefix+"*.json"))
+	files, globErr := filepath.Glob(filepath.Join(root, "temp", goalStandardDir, "*", goalStandardStateFile))
 	if globErr != nil {
 		t.Fatal(globErr)
 	}
@@ -340,7 +429,7 @@ func TestStartGoalFailurePersistsFailedStateAndLog(t *testing.T) {
 	if state.Status != "start_failed" || state.EndTime == nil || state.PID != 0 {
 		t.Fatalf("unexpected failed state: %#v", state)
 	}
-	logPath := strings.TrimSuffix(files[0], ".json") + ".log"
+	logPath := filepath.Join(filepath.Dir(files[0]), goalStandardOutputFile)
 	logBytes, readLogErr := os.ReadFile(logPath)
 	if readLogErr != nil {
 		t.Fatal(readLogErr)
@@ -455,7 +544,7 @@ func TestStartGoalRecordsStartFailure(t *testing.T) {
 	if len(goals) != 1 {
 		t.Fatalf("len(goals)=%d, want 1: %#v", len(goals), goals)
 	}
-	if goals[0].Status != "start_failed" || goals[0].EndTime == nil || goals[0].Running {
+	if goals[0].Status != "failed" || goals[0].RawStatus != "start_failed" || goals[0].ErrorClass != "start_failed" || goals[0].EndTime == nil || goals[0].Running {
 		t.Fatalf("unexpected failed goal meta: %#v", goals[0])
 	}
 	res, outErr := GoalOutput(root, goals[0].ID, 4096)
@@ -494,7 +583,7 @@ func TestStopGoalSuccessClearsPIDAndEnds(t *testing.T) {
 	if killed != 22222 {
 		t.Fatalf("kill pid = %d, want 22222", killed)
 	}
-	if meta.Status != "stopped_by_admin" || meta.PID != 0 || meta.Running || meta.EndTime == nil {
+	if meta.Status != "cancelled" || meta.RawStatus != "stopped_by_admin" || meta.PID != 0 || meta.PIDTrusted || meta.Running || meta.EndTime == nil {
 		t.Fatalf("unexpected stopped meta: %#v", meta)
 	}
 	state, _, err := readGoalState(statePath)

@@ -83,9 +83,44 @@ func (s *Store) Save(profiles []Profile) (Draft, error) {
 	if err != nil {
 		return d, err
 	}
-	return d, os.WriteFile(s.path(), data, 0600)
+	return d, writeFileAtomic(s.path(), data, 0600)
 }
 
+func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return nil
+}
 func Validate(profiles []Profile) error {
 	seen := map[string]bool{}
 	for _, p := range profiles {
@@ -102,8 +137,18 @@ func Validate(profiles []Profile) error {
 		if p.Name == "" || p.APIBase == "" || p.Model == "" {
 			return errors.New("name, apibase and model are required")
 		}
+		if IsMaskedSecret(p.APIKey) {
+			return fmt.Errorf("masked apikey cannot be saved or exported for %s; reveal/import with authorization or enter the full key", p.VarName)
+		}
 	}
 	return nil
+}
+
+func IsMaskedSecret(s string) bool {
+	if s == "******" {
+		return true
+	}
+	return strings.Contains(s, "****")
 }
 
 func SourceStatus(gaRoot string) map[string]interface{} {
@@ -242,12 +287,16 @@ func Render(profiles []Profile) (string, error) {
 				m[k] = v
 			}
 		}
-		b.WriteString(fmt.Sprintf("%s = %s\n\n", p.VarName, pyDict(m)))
+		dict, err := pyDict(m)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(fmt.Sprintf("%s = %s\n\n", p.VarName, dict))
 	}
 	return b.String(), nil
 }
 
-func pyDict(m map[string]interface{}) string {
+func pyDict(m map[string]interface{}) (string, error) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -255,28 +304,35 @@ func pyDict(m map[string]interface{}) string {
 	sort.Strings(keys)
 	parts := []string{}
 	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%q: %s", k, pyVal(m[k])))
+		val, err := pyVal(m[k])
+		if err != nil {
+			return "", fmt.Errorf("render %q: %w", k, err)
+		}
+		parts = append(parts, fmt.Sprintf("%q: %s", k, val))
 	}
-	return "{" + strings.Join(parts, ", ") + "}"
+	return "{" + strings.Join(parts, ", ") + "}", nil
 }
-func pyVal(v interface{}) string {
+func pyVal(v interface{}) (string, error) {
 	switch x := v.(type) {
 	case string:
-		return fmt.Sprintf("%q", x)
+		return fmt.Sprintf("%q", x), nil
 	case bool:
 		if x {
-			return "True"
+			return "True", nil
 		}
-		return "False"
+		return "False", nil
 	case float64:
-		return fmt.Sprintf("%v", x)
+		return fmt.Sprintf("%v", x), nil
 	case int:
-		return fmt.Sprintf("%d", x)
+		return fmt.Sprintf("%d", x), nil
 	case nil:
-		return "None"
+		return "None", nil
 	default:
-		data, _ := json.Marshal(x)
-		return string(data)
+		data, err := json.Marshal(x)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
 	}
 }
 
@@ -286,7 +342,7 @@ func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string
 		return nil, err
 	}
 	gen := filepath.Join(gaRoot, "mykey_admin.generated.py")
-	if err := os.WriteFile(gen, []byte(text), 0600); err != nil {
+	if err := writeFileAtomic(gen, []byte(text), 0600); err != nil {
 		return nil, err
 	}
 	active := filepath.Join(gaRoot, "mykey.py")
@@ -298,12 +354,12 @@ func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string
 			if err != nil {
 				return nil, err
 			}
-			if err := os.WriteFile(bak, data, 0600); err != nil {
+			if err := writeFileAtomic(bak, data, 0600); err != nil {
 				return nil, err
 			}
 			res["backup_path"] = bak
 		}
-		if err := os.WriteFile(active, []byte(text), 0600); err != nil {
+		if err := writeFileAtomic(active, []byte(text), 0600); err != nil {
 			return nil, err
 		}
 		res["activated"] = true

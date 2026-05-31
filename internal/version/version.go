@@ -26,7 +26,7 @@ var (
 	Date    = "unknown"
 )
 
-const repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
+var repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
 
 type BuildInfo struct {
 	Version string `json:"version"`
@@ -83,9 +83,15 @@ type UpdateStatus struct {
 	EndedAt   time.Time    `json:"ended_at,omitempty"`
 }
 
-var updateMu sync.Mutex
+var (
+	updateMu           sync.Mutex
+	statusPathOverride string
+)
 
 func statusPath() string {
+	if statusPathOverride != "" {
+		return statusPathOverride
+	}
 	exe, err := os.Executable()
 	if err == nil && exe != "" {
 		return filepath.Join(filepath.Dir(exe), "ga-admin-update-status.json")
@@ -102,21 +108,69 @@ func CurrentUpdateStatus() UpdateStatus {
 func readStatusLocked() UpdateStatus {
 	var st UpdateStatus
 	b, err := os.ReadFile(statusPath())
-	if err == nil {
-		_ = json.Unmarshal(b, &st)
+	if err != nil {
+		return st
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		now := time.Now()
+		return UpdateStatus{
+			Running:   false,
+			Stage:     "error",
+			Progress:  100,
+			Message:   "读取升级状态失败: " + err.Error(),
+			Error:     err.Error(),
+			UpdatedAt: now,
+			EndedAt:   now,
+		}
 	}
 	return st
 }
 
-func writeStatus(st UpdateStatus) {
+func writeStatus(st UpdateStatus) error {
 	updateMu.Lock()
 	defer updateMu.Unlock()
 	st.UpdatedAt = time.Now()
 	if st.ID == "" {
 		st.ID = fmt.Sprintf("update-%d", st.UpdatedAt.Unix())
 	}
-	b, _ := json.MarshalIndent(st, "", "  ")
-	_ = os.WriteFile(statusPath(), b, 0600)
+	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(statusPath(), b, 0600)
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func StartApplyLatest() (UpdateStatus, error) {
@@ -128,7 +182,15 @@ func StartApplyLatest() (UpdateStatus, error) {
 	}
 	now := time.Now()
 	st := UpdateStatus{ID: fmt.Sprintf("update-%d", now.Unix()), Running: true, Stage: "queued", Progress: 1, Message: "升级任务已启动", StartedAt: now, UpdatedAt: now}
-	writeStatus(st)
+	if err := writeStatus(st); err != nil {
+		st.Running = false
+		st.Stage = "error"
+		st.Progress = 100
+		st.Error = err.Error()
+		st.Message = "写入升级状态失败: " + err.Error()
+		st.EndedAt = time.Now()
+		return st, fmt.Errorf("write update status: %w", err)
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
@@ -143,7 +205,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 			if check != nil {
 				st.Check = check
 			}
-			writeStatus(st)
+			_ = writeStatus(st)
 		})
 		if err != nil {
 			st.Running = false
@@ -152,7 +214,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 			st.Error = err.Error()
 			st.Message = err.Error()
 			st.EndedAt = time.Now()
-			writeStatus(st)
+			_ = writeStatus(st)
 			return
 		}
 		st.Running = false
@@ -161,7 +223,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 		st.Message = res.Message
 		st.Script = res.Script
 		st.EndedAt = time.Now()
-		writeStatus(st)
+		_ = writeStatus(st)
 	}()
 	return st, nil
 }
@@ -295,7 +357,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	script := filepath.Join(work, "apply-update.cmd")
 	backup := exe + ".bak"
 	content := windowsUpdateScript(exe, newExe, backup)
-	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
+	if err := writeFileAtomic(script, []byte(content), 0600); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("restarting", "升级包已就绪，正在重启服务", 95, &check)
@@ -327,24 +389,31 @@ start "" "%%OLD%%"
 `, oldExe, newExe, backup)
 }
 
-func fetchLatest(ctx context.Context) (*Release, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, repoLatestURL, nil)
+func fetchLatest(ctx context.Context) (rel *Release, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoLatestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create github release request: %w", err)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "ga-admin-updater")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close github release response: %w", closeErr)
+		}
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, fmt.Errorf("github release check failed: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	var rel Release
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	var out Release
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
-	return &rel, nil
+	return &out, nil
 }
 
 func selectAssets(rel Release) (*Asset, *Asset) {
@@ -392,23 +461,60 @@ func splitVer(s string) [3]int {
 	return out
 }
 
-func download(ctx context.Context, url, dest string) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func download(ctx context.Context, url, dest string) (err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("create download request: %w", err)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close download response: %w", closeErr)
+		}
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download failed: %s", resp.Status)
 	}
-	f, err := os.Create(dest)
+	if err := writeStreamAtomic(dest, resp.Body, 0600); err != nil {
+		return fmt.Errorf("write download file: %w", err)
+	}
+	return nil
+}
+
+func writeStreamAtomic(path string, r io.Reader, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = io.Copy(tmp, r); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func verifySHA256(file, sumFile string) error {
@@ -443,35 +549,50 @@ func unzip(src, dest string) error {
 		return err
 	}
 	defer r.Close()
+
+	destClean, err := filepath.Abs(dest)
+	if err != nil {
+		return err
+	}
+	destClean = filepath.Clean(destClean)
 	for _, f := range r.File {
-		name := filepath.Clean(f.Name)
-		if strings.Contains(name, "..") {
+		if strings.Contains(f.Name, `\\`) {
 			return fmt.Errorf("unsafe zip path: %s", f.Name)
 		}
-		path := filepath.Join(dest, name)
+		name := filepath.Clean(f.Name)
+		if name == "." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(filepath.Separator)) || name == ".." {
+			return fmt.Errorf("unsafe zip path: %s", f.Name)
+		}
+		path := filepath.Join(destClean, name)
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		absPath = filepath.Clean(absPath)
+		if absPath != destClean && !strings.HasPrefix(absPath, destClean+string(filepath.Separator)) {
+			return fmt.Errorf("unsafe zip path: %s", f.Name)
+		}
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(path, 0755); err != nil {
+			if err := os.MkdirAll(absPath, 0755); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 			return err
 		}
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
-		out, err := os.Create(path)
-		if err != nil {
-			rc.Close()
-			return err
+		writeErr := writeStreamAtomic(absPath, rc, f.Mode())
+		rcErr := rc.Close()
+		if writeErr != nil {
+			return writeErr
 		}
-		_, err = io.Copy(out, rc)
-		rc.Close()
-		out.Close()
-		if err != nil {
-			return err
+		if rcErr != nil {
+			_ = os.Remove(absPath)
+			return rcErr
 		}
 	}
 	return nil
@@ -479,12 +600,17 @@ func unzip(src, dest string) error {
 
 func findFile(dir, name string) (string, error) {
 	var hits []string
-	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.EqualFold(d.Name(), name) {
+	if err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), name) {
 			hits = append(hits, p)
 		}
 		return nil
-	})
+	}); err != nil {
+		return "", fmt.Errorf("walk package for %s: %w", name, err)
+	}
 	sort.Strings(hits)
 	if len(hits) == 0 {
 		return "", fmt.Errorf("%s not found in package", name)

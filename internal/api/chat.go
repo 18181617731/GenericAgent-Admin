@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +41,12 @@ type chatSession struct {
 	Settings  chatSettings  `json:"settings"`
 }
 
+const (
+	maxChatUploadFiles        = 8
+	maxChatUploadBytesPerFile = 20 << 20
+	maxChatUploadBytesTotal   = 40 << 20
+)
+
 type chatUpload struct{ Name, Type, DataURL string }
 
 type chatRun struct {
@@ -60,213 +65,6 @@ type chatWorker struct {
 	Stdout io.ReadCloser
 	Stderr io.ReadCloser
 	Dead   bool
-}
-
-func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		bad(w, 405, "method not allowed")
-		return
-	}
-	items := []map[string]interface{}{}
-	ensureChatDataMigrated(s.CfgStore.Cfg)
-	_ = os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755)
-	entries, _ := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		cs, err := loadChatSession(s.CfgStore.Cfg, strings.TrimSuffix(e.Name(), ".json"))
-		if err != nil {
-			continue
-		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID)})
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	if len(items) > 80 {
-		items = items[:80]
-	}
-	writeJSON(w, map[string]interface{}{"sessions": items})
-}
-
-func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
-	p := strings.TrimPrefix(r.URL.Path, "/api/chat/")
-	parts := strings.Split(strings.Trim(p, "/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		bad(w, 404, "not found")
-		return
-	}
-	switch parts[0] {
-	case "session":
-		if len(parts) == 2 && parts[1] == "new" && r.Method == http.MethodPost {
-			s.chatNewSession(w, r)
-			return
-		}
-		if len(parts) == 2 && r.Method == http.MethodGet {
-			s.chatGetSession(w, r, parts[1])
-			return
-		}
-		if len(parts) == 2 && r.Method == http.MethodPatch {
-			s.chatRenameSession(w, r, parts[1])
-			return
-		}
-		if len(parts) == 2 && r.Method == http.MethodDelete {
-			s.chatDeleteSession(w, r, parts[1])
-			return
-		}
-	case "settings":
-		if len(parts) == 2 && r.Method == http.MethodPost {
-			s.chatSaveSettings(w, r, parts[1])
-			return
-		}
-	case "state":
-		if len(parts) == 1 && r.Method == http.MethodGet {
-			s.chatState(w, r, "")
-			return
-		}
-		if len(parts) == 2 && r.Method == http.MethodGet {
-			s.chatState(w, r, parts[1])
-			return
-		}
-	case "stream":
-		if len(parts) == 2 && r.Method == http.MethodGet {
-			s.chatStream(w, r, parts[1])
-			return
-		}
-	case "cancel":
-		if len(parts) == 2 && r.Method == http.MethodPost {
-			s.chatCancel(w, r, parts[1])
-			return
-		}
-	case "file":
-		if len(parts) >= 2 && r.Method == http.MethodGet {
-			s.chatFile(w, r, strings.Join(parts[1:], "/"))
-			return
-		}
-	default:
-		if len(parts) == 1 && r.Method == http.MethodPost {
-			s.chatPost(w, r, parts[0])
-			return
-		}
-	}
-	bad(w, 404, "not found")
-}
-
-func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: chatSettings{}}
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
-		bad(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, cs)
-}
-func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
-	if err != nil {
-		bad(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, cs)
-}
-func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid string) {
-	var req struct {
-		Title string `json:"title"`
-	}
-	if err := decode(r, &req); err != nil {
-		bad(w, 400, err.Error())
-		return
-	}
-	title := strings.TrimSpace(req.Title)
-	if title == "" {
-		bad(w, 400, "title required")
-		return
-	}
-	if len([]rune(title)) > 80 {
-		title = string([]rune(title)[:80])
-	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
-	if err != nil {
-		bad(w, 500, err.Error())
-		return
-	}
-	cs.Title = title
-	cs.UpdatedAt = time.Now().Unix()
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
-		bad(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, cs)
-}
-func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {
-	_ = os.Remove(chatSessionPath(s.CfgStore.Cfg, safeChatID(sid)))
-	writeJSON(w, map[string]bool{"ok": true})
-}
-func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid string) {
-	var st chatSettings
-	_ = decode(r, &st)
-	cs, _ := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
-	cs.Settings = st
-	_ = saveChatSession(s.CfgStore.Cfg, cs)
-	writeJSON(w, map[string]interface{}{"ok": true, "settings": st})
-}
-func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, _ := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
-	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg.GARoot)
-	markChatLLMActive(llms, cs.Settings.LLMNo)
-	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
-	if err != nil {
-		backend["warning"] = err.Error()
-	}
-	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running})
-}
-
-func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
-	var req struct {
-		Prompt       string        `json:"prompt"`
-		Files        []chatUpload  `json:"files"`
-		Settings     *chatSettings `json:"settings"`
-		ClientUserID string        `json:"client_user_id"`
-	}
-	if err := decode(r, &req); err != nil {
-		bad(w, 400, "bad request")
-		return
-	}
-	sid = safeChatID(sid)
-	if !s.beginChatRun(sid) {
-		bad(w, 409, "chat is already running")
-		return
-	}
-	cs, _ := loadChatSession(s.CfgStore.Cfg, sid)
-	if cs.ID == "" {
-		cs.ID = sid
-		cs.Title = "新会话"
-	}
-	if req.Settings != nil {
-		cs.Settings = *req.Settings
-	}
-	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
-	if err != nil {
-		s.endChatRun(sid)
-		bad(w, 400, err.Error())
-		return
-	}
-	display := req.Prompt
-	if len(refs) > 0 {
-		display += "\n\n[附件已保存]\n" + strings.Join(refs, "\n")
-	}
-	uid := safeChatID(req.ClientUserID)
-	if uid == "" {
-		uid = newChatID()
-	}
-	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
-	cs.Messages = append(cs.Messages, userMsg)
-	updateChatTitle(&cs)
-	_ = saveChatSession(s.CfgStore.Cfg, cs)
-	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
-	workerPrompt := buildPromptWithHistory(display, cs.Messages)
-	cmdReq := map[string]interface{}{"prompt": workerPrompt, "llm_no": cs.Settings.LLMNo, "ga_root": s.CfgStore.Cfg.GARoot}
-	go s.runChatWorker(sid, cs, cmdReq)
-	s.streamChatRun(w, r, sid, 0)
 }
 
 func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
@@ -342,14 +140,6 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	s.endChatRun(sid)
 }
 
-func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) {
-	from := 0
-	if v := strings.TrimSpace(r.URL.Query().Get("from")); v != "" {
-		_, _ = fmt.Sscanf(v, "%d", &from)
-	}
-	s.streamChatRun(w, r, safeChatID(sid), from)
-}
-
 func (s *Server) chatRunActive(sid string) bool {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
@@ -404,29 +194,6 @@ func (s *Server) chatRunPartialContent(sid string) string {
 		}
 	}
 	return b.String()
-}
-
-func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
-	sid = safeChatID(sid)
-	var cmd *exec.Cmd
-	var worker *chatWorker
-	s.ChatMu.Lock()
-	run := s.ChatRuns[sid]
-	if run == nil || run.Done {
-		s.ChatMu.Unlock()
-		writeJSON(w, map[string]interface{}{"ok": true, "running": false})
-		return
-	}
-	run.Canceled = true
-	cmd = run.Cmd
-	worker = s.ChatWorkers[sid]
-	s.ChatMu.Unlock()
-	if worker != nil {
-		s.dropChatWorker(sid, worker)
-	} else if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
 }
 
 func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {
@@ -652,7 +419,7 @@ func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
 		return w, nil
 	}
 	s.ChatMu.Unlock()
-	worker, err := startChatWorker(s.CfgStore.Cfg, sid)
+	worker, err := startChatWorkerFunc(s.CfgStore.Cfg, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -664,6 +431,8 @@ func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
 	s.ChatMu.Unlock()
 	return worker, nil
 }
+
+var startChatWorkerFunc = startChatWorker
 
 func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
 	sid = safeChatID(sid)
@@ -823,17 +592,24 @@ func legacyChatUploadDir(root string) string {
 func chatSessionPath(cfg config.AppConfig, sid string) string {
 	return filepath.Join(chatSessionDir(cfg), safeChatID(sid)+".json")
 }
-func ensureChatDataMigrated(cfg config.AppConfig) {
+func ensureChatDataMigrated(cfg config.AppConfig) error {
 	key := cfg.GARoot + "|" + chatDataDir(cfg)
 	chatDataMigrationMu.Lock()
 	if chatDataMigrated[key] {
 		chatDataMigrationMu.Unlock()
-		return
+		return nil
 	}
+	chatDataMigrationMu.Unlock()
+	if err := copyDirIfTargetEmpty(legacyChatSessionDir(cfg.GARoot), chatSessionDir(cfg)); err != nil {
+		return err
+	}
+	if err := copyDirIfTargetEmpty(legacyChatUploadDir(cfg.GARoot), chatUploadDir(cfg)); err != nil {
+		return err
+	}
+	chatDataMigrationMu.Lock()
 	chatDataMigrated[key] = true
 	chatDataMigrationMu.Unlock()
-	_ = copyDirIfTargetEmpty(legacyChatSessionDir(cfg.GARoot), chatSessionDir(cfg))
-	_ = copyDirIfTargetEmpty(legacyChatUploadDir(cfg.GARoot), chatUploadDir(cfg))
+	return nil
 }
 func copyDirIfTargetEmpty(src, dst string) error {
 	entries, err := os.ReadDir(src)
@@ -857,21 +633,30 @@ func copyDirIfTargetEmpty(src, dst string) error {
 		}
 		b, err := os.ReadFile(in)
 		if err != nil {
-			continue
+			return err
 		}
-		_ = os.WriteFile(out, b, 0644)
+		if err := writeChatFileAtomic(out, b, 0644); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
-	ensureChatDataMigrated(cfg)
+	if err := ensureChatDataMigrated(cfg); err != nil {
+		return chatSession{}, err
+	}
 	sid = safeChatID(sid)
 	cs := chatSession{ID: sid, Title: "新会话", Messages: []chatMessage{}, Settings: chatSettings{}}
 	b, err := os.ReadFile(chatSessionPath(cfg, sid))
 	if err != nil {
-		return cs, nil
+		if os.IsNotExist(err) {
+			return cs, nil
+		}
+		return cs, err
 	}
-	_ = json.Unmarshal(b, &cs)
+	if err := json.Unmarshal(b, &cs); err != nil {
+		return cs, err
+	}
 	if cs.ID == "" {
 		cs.ID = sid
 	}
@@ -881,11 +666,48 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	return cs, nil
 }
 func saveChatSession(cfg config.AppConfig, cs chatSession) error {
-	ensureChatDataMigrated(cfg)
-	_ = os.MkdirAll(chatSessionDir(cfg), 0755)
+	if err := ensureChatDataMigrated(cfg); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(chatSessionDir(cfg), 0755); err != nil {
+		return err
+	}
 	cs.UpdatedAt = time.Now().Unix()
 	b, _ := json.MarshalIndent(cs, "", "  ")
-	return os.WriteFile(chatSessionPath(cfg, cs.ID), b, 0644)
+	return writeChatFileAtomic(chatSessionPath(cfg, cs.ID), b, 0644)
+}
+
+func writeChatFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 func updateChatTitle(cs *chatSession) {
 	if cs.Title != "" && cs.Title != "新会话" {
@@ -907,15 +729,20 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 	if len(files) == 0 {
 		return nil, nil, nil
 	}
-	ensureChatDataMigrated(cfg)
-	_ = os.MkdirAll(chatUploadDir(cfg), 0755)
+	if len(files) > maxChatUploadFiles {
+		return nil, nil, fmt.Errorf("too many upload files: %d > %d", len(files), maxChatUploadFiles)
+	}
+	if err := ensureChatDataMigrated(cfg); err != nil {
+		return nil, nil, err
+	}
+	if err := os.MkdirAll(chatUploadDir(cfg), 0755); err != nil {
+		return nil, nil, err
+	}
 	var saved []map[string]interface{}
 	var refs []string
+	totalBytes := 0
 	for _, f := range files {
-		name := filepath.Base(f.Name)
-		if name == "." || name == string(filepath.Separator) || name == "" {
-			name = "upload.bin"
-		}
+		name := sanitizeChatUploadName(f.Name)
 		data := f.DataURL
 		if i := strings.Index(data, ","); i >= 0 {
 			data = data[i+1:]
@@ -924,9 +751,16 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 		if err != nil {
 			return nil, nil, fmt.Errorf("decode %s: %w", name, err)
 		}
+		if len(raw) > maxChatUploadBytesPerFile {
+			return nil, nil, fmt.Errorf("upload %s too large: %d > %d bytes", name, len(raw), maxChatUploadBytesPerFile)
+		}
+		totalBytes += len(raw)
+		if totalBytes > maxChatUploadBytesTotal {
+			return nil, nil, fmt.Errorf("chat uploads too large: %d > %d bytes", totalBytes, maxChatUploadBytesTotal)
+		}
 		name = fmt.Sprintf("%d_%s", time.Now().UnixNano(), name)
 		target := filepath.Join(chatUploadDir(cfg), name)
-		if err := os.WriteFile(target, raw, 0644); err != nil {
+		if err := writeChatFileAtomic(target, raw, 0644); err != nil {
 			return nil, nil, err
 		}
 		meta := map[string]interface{}{"path": target, "name": name, "mime": f.Type, "url": "/api/chat/file/" + name}
@@ -936,8 +770,26 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 	return saved, refs, nil
 }
 
-func (s *Server) chatFile(w http.ResponseWriter, r *http.Request, name string) {
-	http.ServeFile(w, r, filepath.Join(chatUploadDir(s.CfgStore.Cfg), filepath.Base(name)))
+func sanitizeChatUploadName(name string) string {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "upload.bin"
+	}
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
+			return '_'
+		case r < 32:
+			return '_'
+		default:
+			return r
+		}
+	}, name)
+	name = strings.Trim(name, " .")
+	if name == "" {
+		return "upload.bin"
+	}
+	return name
 }
 
 func newChatID() string {

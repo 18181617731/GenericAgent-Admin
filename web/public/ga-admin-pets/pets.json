@@ -1,0 +1,12 @@
+{
+  "runtime": "ga-admin-pets",
+  "description": "Standalone GA Admin pets served from the GA Admin web bundle; no Codex dependency.",
+  "pets": [
+    {
+      "id": "upload-pet",
+      "name": "GA Admin Upload Pet",
+      "manifest": "/ga-admin-pets/upload-pet/pet.json",
+      "spritesheet": "/ga-admin-pets/upload-pet/spritesheet.webp"
+    }
+  ]
+}

@@ -56,6 +56,25 @@ func SafeResolve(root, rel string) (string, string, error) {
 		return "", "", err
 	}
 	full := filepath.Join(rootAbs, filepath.FromSlash(clean))
+	return ensureWithinRoot(rootAbs, full)
+}
+
+func SafeResolveAny(root, p string) (string, string, error) {
+	if root == "" {
+		return "", "", errors.New("GA root is empty")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", err
+	}
+	p = strings.TrimSpace(p)
+	if filepath.IsAbs(p) {
+		return ensureWithinRoot(rootAbs, p)
+	}
+	return SafeResolve(root, p)
+}
+
+func ensureWithinRoot(rootAbs, full string) (string, string, error) {
 	fullAbs, err := filepath.Abs(full)
 	if err != nil {
 		return "", "", err
@@ -241,7 +260,7 @@ func WriteSafe(root, rel, content string) (SafeFileDetail, error) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
 		return SafeFileDetail{}, err
 	}
-	if err := os.WriteFile(abs, []byte(content), 0644); err != nil {
+	if err := writeFileAtomic(abs, []byte(content), 0644); err != nil {
 		return SafeFileDetail{}, err
 	}
 	return ReadSafe(root, clean)
@@ -263,8 +282,11 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 	hits := []FileSearchHit{}
 	lowerQ := strings.ToLower(q)
 	err = filepath.WalkDir(base, func(p string, de os.DirEntry, err error) error {
-		if err != nil || len(hits) >= maxHits {
-			return nil
+		if err != nil {
+			return err
+		}
+		if len(hits) >= maxHits {
+			return filepath.SkipAll
 		}
 		name := de.Name()
 		if strings.HasPrefix(name, ".") || name == "__pycache__" {
@@ -277,14 +299,16 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 			return nil
 		}
 		info, err := de.Info()
-		if err != nil || info.Size() > maxSearchFileBytes {
+		if err != nil {
+			return err
+		}
+		if info.Size() > maxSearchFileBytes {
 			return nil
 		}
 		f, err := os.Open(p)
 		if err != nil {
-			return nil
+			return err
 		}
-		defer f.Close()
 		s := bufio.NewScanner(f)
 		s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		lineNo := 0
@@ -303,7 +327,14 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 				}
 			}
 		}
-		return nil
+		if scanErr := s.Err(); scanErr != nil {
+			_ = f.Close()
+			return scanErr
+		}
+		return f.Close()
 	})
-	return hits, err
+	if err != nil && err != filepath.SkipAll {
+		return hits, err
+	}
+	return hits, nil
 }

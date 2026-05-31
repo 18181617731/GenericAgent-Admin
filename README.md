@@ -1,38 +1,80 @@
 # GenericAgent Admin Go
 
-Go 后端 + Vite React 前端的 GenericAgent 管理端，目标是方便打包成单个 `ga-admin.exe` 分发。
+GenericAgent Admin Go 是 GenericAgent 的桌面级管理面板：Go 后端负责进程、文件、配置、更新和系统集成，React/Vite 前端提供控制台界面，最终可打包为单个 `ga-admin.exe` 分发。它的目标不是替代 GenericAgent，而是把本机 GA 的运行状态、任务入口、模型配置、团队协作和桌面辅助能力收拢到一个可维护的控制面。
 
-## 功能
+## 能做什么
 
-- Web 页面管理 GA 服务。
-- 自动发现 `reflect/*.py`，按 `python agentmain.py --reflect reflect/<file>.py` 启动。
-- Goal 模式：通过 `reflect/goal_mode.py` 启动带预算的持续目标，支持列表、查看输出、可配置输出读取字节数、运行时长/剩余预算/状态文件/日志路径展示、日志缺失容错和精确 PID 停止；启动时会把 `GOAL_STATE` 指向 `temp/goal_admin_<id>.json`，并将 stdout/stderr 追加到 `temp/goal_admin_<id>.log`；输出尾部接口会返回 `truncated`、`bytes_returned`、`total_bytes`、`requested_bytes`、`max_bytes`、`default_bytes_used`、`max_bytes_capped`，用于区分默认读取、截断和 1MiB 安全上限。
-- TMWebDriver 监控：检测浏览器进程、`18766` master 端口和 `tmwd_cdp_bridge` 扩展路径，方便确认 GA 浏览器自动化环境是否就绪。
-- 自动发现 `frontends/*app.py`（文件名 stem 必须以 `app` 结尾），其中 `stapp.py` 使用 `python -m streamlit run`。
-- 查看服务 stdout/stderr 日志。
-- 页面配置 GA 根目录。
-- 页面配置模型，保存独立草稿 `model_profiles.json`。
-- 导出 `mykey_admin.generated.py`，也可显式写回生成首次安装所需的 `mykey.py`。
-- 安全策略：`mykey.py` 是私有可选文件，官方源码不随包提供；没有它时管理端仍可启动，并在模型页用默认草稿引导创建。
-- Vite 构建产物通过 Go `embed` 打进 exe。
+- **一键管理 GA 服务**：发现并启动 `reflect/*.py`、`frontends/*app.py`、任务型服务与 Streamlit 前端，查看 stdout/stderr，支持停止单个服务或停止全部服务。
+- **原生 Chat 面板**：复用 GenericAgent 的模型配置与 `cmd/chat_worker.py`，支持流式回复、会话导航、文件/图片上传、复制与多轮对话。
+- **Goal 模式**：通过 `reflect/goal_mode.py` 启动长期目标，设置预算、最大轮次、LLM 编号，查看状态文件、日志路径、运行时长、剩余预算和截断后的输出尾部。
+- **BBS 团队协作**：内置轻量任务看板，GA worker 可通过兼容接口领取任务、发帖和回复；管理端提供配置、测试连接与危险写入确认。
+- **文件与任务编辑**：在 GA 根目录内安全浏览、搜索、tail、编辑文本文件，并为保存/删除操作生成备份。
+- **模型配置向导**：首次安装无需随包提供私有 `mykey.py`；可在页面填写 API Base、Model、API Key，预览后写回生成 `mykey.py`，草稿保存在 `model_profiles.json`。
+- **TMWebDriver 监控**：检查浏览器自动化环境、`18766` master 端口和 `tmwd_cdp_bridge` 扩展路径，并提供启动/修复入口。
+- **Windows 桌面集成**：托盘菜单、开机自启、桌面宠物、窗口显示/隐藏和常用动作触发。
+- **自更新能力**：展示构建版本、提交与时间；按 GitHub Release 资产约定下载 `ga-admin-<tag>-<goos>-<goarch>.zip` 与 `.sha256` 进行更新。
 
-## 构建
+## 界面模块
+
+| 模块 | 说明 |
+| --- | --- |
+| 总览 / Control | 运行前检查、能力地图、风险摘要、最近报告和 TMWebDriver 状态。 |
+| Chat | GA 原生聊天界面，支持流式输出、上传、复制、会话导航与 worker 调用。 |
+| 文件 | 限定在 GA 根目录内的文本文件浏览、搜索、tail、编辑和备份保存。 |
+| 任务 | 普通任务、批处理入口、任务型服务、`sche_tasks` 定时任务与服务生命周期管理。 |
+| BBS 协作 | 内置团队任务板，支持帖子、回复、board key 与 worker 接入说明。 |
+| 记忆 / 通道 / 自主进化 / 定时 | 面向 GenericAgent 现有目录与脚本的管理入口。 |
+| Goal 模式 | 长目标启动、停止、日志查看、状态追踪和输出读取上限控制。 |
+| 模型 | `mykey.py` 首次生成、模型草稿、API Key 保存与导出。 |
+| 配置 / 日志 | GA 根目录、端口、缓冲行数、Python 路径、服务日志等基础配置。 |
+
+## 目录约定
+
+```text
+GenericAgent-Admin-Go/
+├─ main.go                         # 程序入口，启动 API、静态前端、托盘与桌宠
+├─ internal/                       # Go 后端模块：api/config/ga/service/version 等
+├─ cmd/chat_worker.py              # Chat worker，发布包必须保留 cmd/ 路径
+├─ web/                            # React/Vite 前端源码
+│  ├─ src/
+│  ├─ public/ga-admin-pets/         # Web 端桌宠资产
+│  └─ dist/                         # Vite 构建产物，会被 Go embed
+├─ assets/ga-admin-pets/            # Windows 桌面宠物 embed 资产
+├─ build.bat                       # 本地 Windows 构建入口
+├─ config.example.json             # 配置示例
+└─ dist/                           # 本地构建输出，不提交
+```
+
+## 快速开始
+
+### 1. 准备 GenericAgent
+
+管理端默认控制本机已有 GenericAgent 目录。第一次启动后可以在页面配置 GA 根目录；也可以先创建 `config.local.json`：
+
+```json
+{
+  "ga_root": "E:/Work/GenericAgent",
+  "host": "127.0.0.1",
+  "port": 8787,
+  "log_tail_lines": 200,
+  "buffer_lines": 1000,
+  "python_path": "",
+  "service_autostart": []
+}
+```
+
+`python_path` 留空时使用系统默认 Python；如果 GA 有固定虚拟环境，建议填写该解释器路径。
+
+### 2. 安装前端依赖
 
 ```bat
 cd /d C:\Users\Fwind43\Desktop\code\GenericAgent-Admin-Go
-build.bat
+npm.cmd --prefix web install
 ```
 
-产物：
-
-```text
-dist\ga-admin.exe
-```
-
-## 开发运行
+### 3. 开发运行
 
 ```bat
-npm.cmd --prefix web install
 npm.cmd --prefix web run build
 go run .
 ```
@@ -43,72 +85,162 @@ go run .
 http://127.0.0.1:8787
 ```
 
-## Goal Mode 控制台
+前端开发时也可以在 `web/` 下运行 Vite dev server；正式 Go 程序使用 `web/dist` 的 embed 产物。
 
-Admin-Go 只负责调用和监管 GA 现有 Goal Mode 执行器，不重造执行器。通过页面启动时复用 `reflect/goal_mode.py`，并把 `GOAL_STATE` 指向 `temp/goal_admin_<id>.json`；AI/其它入口自行开启 Goal Mode 时，Admin-Go 也会扫描标准状态文件并纳入只读/软控制视图。
+## 本地构建
 
-状态与日志发现规则：
+Windows 推荐直接运行：
 
-- Admin 托管运行：`temp/goal_admin_<id>.json` + `temp/goal_admin_<id>.log`。
-- 外部自启运行：`temp/goal_state.json`、`temp/goal_*.json` 等标准 Goal 状态文件。
-- 外部运行通常没有 Admin 专属日志；输出接口会优先读取状态文件声明的 log 路径，缺失时回退到 `temp/model_responses` 最近输出。
+```bat
+cd /d C:\Users\Fwind43\Desktop\code\GenericAgent-Admin-Go
+build.bat
+```
 
-控制边界：
+产物：
 
-- `origin=admin` / `managed=true`：PID 来自 Admin 启动记录，属于可信 PID；停止时仍要求 `id` + 精确 `pid` 匹配，只终止该记录对应进程，避免误杀无关 Python。
-- `origin=external` / `managed=false`：状态由 AI 或其它入口自启产生，PID 不视为可信；停止只把状态文件写为 `stopped_by_admin`，不杀进程，让 Goal 循环自行观察状态后退出。
-- 列表会展示来源、控制级别和 PID 可信度；前端停止前会根据控制级别显示不同二次确认文案。
+```text
+dist\ga-admin.exe
+dist\cmd\chat_worker.py
+```
 
-主要接口：
+`build.bat` 会执行前端构建，然后用 `go build` 生成 exe，并通过 `-ldflags -X` 写入版本元数据：
+
+- `internal/version.Version`：来自 `git describe --tags --dirty --always`，失败时为 `dev`。
+- `internal/version.Commit`：来自 `git rev-parse --short HEAD`，失败时为 `unknown`。
+- `internal/version.Date`：UTC 构建时间，如 `2026-06-01T12:00:00Z`。
+
+## 发布包约定
+
+自更新模块会在 Release 中查找与当前平台匹配的资产：
+
+```text
+ga-admin-<tag>-<goos>-<goarch>.zip
+ga-admin-<tag>-<goos>-<goarch>.zip.sha256
+```
+
+zip 内必须包含：
+
+```text
+ga-admin.exe          # Windows
+cmd/chat_worker.py    # Chat worker 固定相对路径
+README.txt            # 简短运行说明
+```
+
+仓库的 `.github/workflows/release-assets.yml` 会在推送 `v*` tag 后构建 Windows/macOS 资产并上传到 GitHub Release。
+
+## 配置与私密文件
+
+官方源码和发布包不携带私有密钥文件。首次安装时，如果 GA 根目录没有 `mykey.py`，管理端仍可启动；进入“模型”页后可以：
+
+1. 填写 API Base / Model / API Key。
+2. 预览将生成的 Python 配置。
+3. 显式写回 GA 根目录的 `mykey.py`。
+
+本仓库忽略以下本机文件：
+
+```text
+config.local.json
+model_profiles.json
+dist/
+*.exe
+web/node_modules/
+```
+
+请不要把真实 API Key、Token 或本机绝对私密路径提交到仓库。
+
+## Goal 模式细节
+
+Goal 模式由后端调用：
+
+```text
+python agentmain.py --reflect reflect/goal_mode.py
+```
+
+启动时会注入：
+
+- `GOAL_STATE=temp/goal_admin_<id>.json`
+- stdout/stderr 追加到 `temp/goal_admin_<id>.log`
+
+输出读取接口会返回 `truncated`、`bytes_returned`、`total_bytes`、`requested_bytes`、`max_bytes`、`default_bytes_used`、`max_bytes_capped` 等字段，用于区分默认读取、用户指定读取、截断和 1MiB 安全上限。
+
+## BBS 协作接口
+
+页面接口位于 `/api/bbs/*`；面向 worker 的兼容精简接口位于根路径。默认 board key 为 `ga-team`，可在 BBS 配置页调整。
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/goals/start` | 启动 Admin 托管 Goal Mode；支持 `objective`、`budget_seconds` 或 `budget_minutes`、`max_turns`、`llm_no`。 |
-| `GET` | `/api/goals/list` | 列出 Admin 托管和外部自启 Goal，展示预算、剩余时间、状态/日志路径、PID、来源、控制级别与运行状态。 |
-| `POST` | `/api/goals/stop` | Admin 托管运行执行精确 PID 停止；外部自启运行执行状态文件软停止，成功后把状态改为 `stopped_by_admin`。 |
-| `GET` | `/api/goals/output?id=<id>&max_bytes=<n>` | 读取日志/输出尾部；`max_bytes=0` 使用默认值，超大值会被限制到 1MiB，并在响应元数据中标记。 |
+| `GET` | `/readme?key=BOARD_KEY` | 返回 worker 接入说明。 |
+| `GET` | `/posts?limit=10&key=BOARD_KEY` | 按新到旧列出帖子；`limit` 最大 200，缺省 50。 |
+| `POST` | `/posts?key=BOARD_KEY` | 创建帖子；JSON `{title, content, author, tags}`。 |
+| `GET` | `/post?id=1&key=BOARD_KEY` | 读取单帖和 replies。 |
+| `POST` | `/reply?key=BOARD_KEY` | 回复帖子；JSON `{post_id, author, content}`，兼容 `{id, ...}`。 |
 
-前端输出区提供 64K / 256K / 1M / 默认 64K 快捷按钮，会根据接口元数据显示“已截断 / 使用默认值 / 后端上限裁剪”等提示；复制按钮支持 Clipboard API，也会在非安全上下文中回退到临时 `textarea` 复制。
+`key` 也可通过 `X-API-Key` 请求头传入。管理端写入类接口 `/api/bbs/config`、`/api/bbs/posts`、`/api/bbs/reply` 需要 `X-GA-Confirm: dangerous`；根路径兼容接口面向 worker，使用 board key 做轻量鉴权。
 
 ## TMWebDriver 监控
 
-首页会调用 `/api/tmwebdriver/status` 展示 GA 浏览器自动化运行环境的基础状态：
+首页会调用 `/api/tmwebdriver/status` 检查：
 
-- 浏览器/调试端口：检查本机 `18766` master 端口是否可访问。
-- 扩展：扫描常见位置中的 `tmwd_cdp_bridge` 扩展路径。
-- 建议：当环境不完整时，接口会返回 `recommendation` 供页面直接展示。
-- 一键修复：当 master 端口未监听时，可通过 `/api/tmwebdriver/repair` 或页面“修复/启动”按钮启动 TMWebDriver master；接口只负责启动 master，不会停止浏览器进程。
+- 浏览器自动化 master 端口 `18766` 是否监听。
+- `tmwd_cdp_bridge` 扩展路径是否存在。
+- 当前环境缺口和建议修复动作。
 
-## 验证
+当 master 端口未监听时，可通过页面按钮或 `/api/tmwebdriver/repair` 启动 master。该接口只负责启动 master，不会停止浏览器进程。
 
-常规改动建议至少执行：
+## Windows 桌面宠物
+
+Windows 版本内置 `ga-admin-pets` runtime 资产：
+
+- Web 预览资产：`web/public/ga-admin-pets/<pet_id>/`
+- 桌面 embed 资产：`assets/ga-admin-pets/<pet_id>/`
+- 当前 embed 入口：`pet_assets_windows.go`
+
+标准 spritesheet 为 `192 x 208` 单帧、`8` 列、`9` 行，总尺寸 `1536 x 1872`。九行动作依次为：`idle`、`running-right`、`running-left`、`waving`、`jumping`、`failed`、`waiting`、`running`、`review`。
+
+## 常用验证
+
+提交前建议至少执行：
 
 ```bat
+npm.cmd --prefix web test -- --run
 npm.cmd --prefix web run build
+gofmt -w main.go tray.go desktop_pet_windows.go desktop_pet_other.go pet_assets_windows.go internal
 go test ./...
 go build ./...
 git diff --check
 ```
 
-其中 `npm.cmd --prefix web run build` 会刷新 `web/dist`，Go 后端通过 `embed` 打包该目录。
+说明：
 
-## 配置
+- `npm.cmd --prefix web run build` 会刷新 `web/dist`，Go 后端通过 `embed` 打包该目录。
+- `go test ./...` 覆盖 API、配置、进程管理、Goal、文件安全、版本更新等后端测试。
+- `git diff --check` 用于拦截尾随空格和补丁格式问题。
 
-### 首次安装与 `mykey.py`
+## 发布流程
 
-官方源码不会包含私有密钥文件 `mykey.py`。GA Admin 不再把它视为启动必需项：首次安装时可以先进入页面，打开“模型”页填写 API Base / Model / API Key，预览后写回生成 `mykey.py`。
+1. 确认工作区只包含本次要发布的改动。
+2. 执行前端测试、前端构建、Go 测试、Go 构建和 `git diff --check`。
+3. 提交代码。
+4. 打新 tag，例如 `v0.0.16`。
+5. 推送 `main` 和 tag。
+6. GitHub Actions 根据 tag 构建并上传 Release assets。
+7. 在管理端“版本/更新”能力中验证新版本可发现、可下载且 sha256 校验通过。
 
-首次运行会读取默认配置，也可以创建 `config.local.json`：
+## 故障排查
 
-```json
-{
-  "ga_root": "E:/Work/GenericAgent",
-  "host": "127.0.0.1",
-  "port": 8787,
-  "log_tail_lines": 200,
-  "buffer_lines": 1000,
-  "python_path": ""
-}
-```
+- 页面打开但功能为空：先检查 `config.local.json` 的 `ga_root` 是否指向真实 GenericAgent 根目录。
+- Chat 无响应：确认 `cmd/chat_worker.py` 在发布包中存在，且 GA Python 环境可 import 所需依赖。
+- Goal 无日志：检查 `temp/goal_admin_<id>.log` 路径、Python 解释器和 `reflect/goal_mode.py` 是否存在。
+- 自更新找不到资产：确认 Release 资产名严格匹配 `ga-admin-<tag>-<goos>-<goarch>.zip`，并带有同名 `.sha256`。
+- TMWebDriver 不就绪：先使用页面“修复/启动”按钮，再检查 `18766` 端口和扩展目录。
 
-Go 管理端本身可以单 exe 分发；GA 服务仍依赖 GA 目录中的 Python/venv 环境。
+## 安全边界
+
+- 写入、删除、停止进程、保存模型密钥等危险操作要求前端显式确认，后端接口使用 `X-GA-Confirm: dangerous` 保护。
+- 文件操作限制在配置的 GA 根目录内，避免越权访问本机其他目录。
+- `mykey.py`、真实 API Key、Token、Cookie 等私密文件不应提交、不应随发布包分发。
+- 管理端适合在本机或可信局域网使用；如需公网暴露，应额外增加认证、TLS 和访问控制。
+
+## License
+
+本项目随 GenericAgent 生态内部使用；如需对外分发，请先确认上游 GenericAgent 与依赖项目的许可要求。

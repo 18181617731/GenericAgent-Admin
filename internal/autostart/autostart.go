@@ -108,7 +108,7 @@ func Enable(target string) (Status, error) {
 </dict>
 </plist>
 `, appID, xmlEscape(target), xmlEscape(filepath.Dir(target)), xmlEscape(filepath.Join(os.TempDir(), "genericagent-admin.out.log")), xmlEscape(filepath.Join(os.TempDir(), "genericagent-admin.err.log")))
-		if err := os.WriteFile(p, []byte(plist), 0644); err != nil {
+		if err := writeFileAtomic(p, []byte(plist), 0644); err != nil {
 			return StatusFor(target), err
 		}
 		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), p).Run()
@@ -136,6 +136,39 @@ func Disable(target string) (Status, error) {
 		return StatusFor(target), nil
 	}
 	return StatusFor(target), errors.New("autostart is only supported on Windows and macOS")
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Chmod(perm); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func launchAgentPath() string {

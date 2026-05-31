@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Play, RefreshCw } from 'lucide-react'
-import { api } from '../lib/api'
+import { api, apiStream } from '../lib/api'
 import { TurnList } from '../components/turns'
 
 export function ChatPage({ t }) {
@@ -19,8 +19,7 @@ export function ChatPage({ t }) {
     const assistant = { id: `a-${Date.now()}`, role:'assistant', content:'', created_at: Math.floor(Date.now()/1000) }
     setMessages(ms => [...ms, user, assistant])
     try {
-      const res = await fetch(`/api/chat/${cur}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt:text, client_user_id:user.id }) })
-      if (!res.ok) throw new Error(await res.text())
+      const res = await apiStream(`/api/chat/${cur}`, { method:'POST', body: JSON.stringify({ prompt:text, client_user_id:user.id }) })
       const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '', content = ''
       while (true) {
         const {value, done} = await reader.read(); if (done) break

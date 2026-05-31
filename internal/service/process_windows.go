@@ -4,6 +4,7 @@ package service
 
 import (
 	"encoding/csv"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,12 +64,15 @@ func listPythonProcesses() ([]processRow, error) {
 		return nil, err
 	}
 	r := csv.NewReader(strings.NewReader(string(out)))
-	recs, err := r.ReadAll()
-	if err != nil {
-		return nil, err
-	}
 	var rows []processRow
-	for i, rec := range recs {
+	for i := 0; ; i++ {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
 		if i == 0 || len(rec) < 2 {
 			continue
 		}
@@ -116,8 +120,20 @@ func commandLineContainsScript(cmd, gaRoot, scriptArg string) bool {
 	script := filepath.Clean(filepath.Join(gaRoot, filepath.FromSlash(scriptArg)))
 	scriptAbs := strings.ToLower(normalizePathText(script))
 	scriptRel := strings.ToLower(normalizePathText(filepath.ToSlash(mustRel(gaRoot, script))))
-	base := strings.ToLower(filepath.Base(script))
-	return strings.Contains(cmd, scriptAbs) || strings.Contains(cmd, scriptRel) || strings.Contains(cmd, base)
+	return commandLineContainsPathToken(cmd, scriptAbs) || commandLineContainsPathToken(cmd, scriptRel)
+}
+
+func commandLineContainsPathToken(cmd, token string) bool {
+	if token == "" {
+		return false
+	}
+	for _, field := range strings.Fields(cmd) {
+		field = normalizePathText(strings.Trim(field, `'"`))
+		if field == token {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizePathText(s string) string {

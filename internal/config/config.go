@@ -2,8 +2,11 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type AppConfig struct {
@@ -20,6 +23,70 @@ type AppConfig struct {
 	AllProxy         string   `json:"all_proxy"`
 	NoProxy          string   `json:"no_proxy"`
 	ServiceAutostart []string `json:"service_autostart"`
+}
+
+func Validate(cfg AppConfig) error {
+	if cfg.Port < 0 {
+		return fmt.Errorf("port must be positive")
+	}
+	if cfg.LogTailLines < 0 {
+		return fmt.Errorf("log_tail_lines must be positive")
+	}
+	if cfg.BufferLines < 0 {
+		return fmt.Errorf("buffer_lines must be positive")
+	}
+	if root := strings.TrimSpace(cfg.GARoot); root != "" {
+		st, err := os.Stat(root)
+		if err != nil {
+			return fmt.Errorf("ga_root does not exist: %w", err)
+		}
+		if !st.IsDir() {
+			return fmt.Errorf("ga_root is not a directory")
+		}
+	}
+	if chatDir := strings.TrimSpace(cfg.ChatDataDir); chatDir != "" {
+		if st, err := os.Stat(chatDir); err == nil && !st.IsDir() {
+			return fmt.Errorf("chat_data_dir is not a directory")
+		}
+	}
+	if py := strings.TrimSpace(cfg.PythonPath); py != "" {
+		st, err := os.Stat(py)
+		if err != nil {
+			return fmt.Errorf("python_path does not exist: %w", err)
+		}
+		if st.IsDir() {
+			return fmt.Errorf("python_path is a directory")
+		}
+	}
+	switch strings.TrimSpace(cfg.ProxyMode) {
+	case "", "off", "system":
+	case "custom":
+		for name, value := range map[string]string{"http_proxy": cfg.HTTPProxy, "https_proxy": cfg.HTTPSProxy, "all_proxy": cfg.AllProxy} {
+			if err := validateProxyURL(name, value); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("proxy_mode must be off, system, or custom")
+	}
+	return nil
+}
+
+func validateProxyURL(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("%s must be a valid proxy URL", name)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+		return nil
+	default:
+		return fmt.Errorf("%s has unsupported proxy scheme %q", name, u.Scheme)
+	}
 }
 
 func DefaultChatDataDir() string {
@@ -81,6 +148,9 @@ func (s *Store) Load() error {
 }
 
 func (s *Store) Save(cfg AppConfig) error {
+	if strings.TrimSpace(cfg.ChatDataDir) == "" {
+		cfg.ChatDataDir = DefaultChatDataDir()
+	}
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
 	}
@@ -96,13 +166,52 @@ func (s *Store) Save(cfg AppConfig) error {
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
 	}
+	if err := Validate(cfg); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.path(), data, 0644); err != nil {
+	if err := writeFileAtomic(s.path(), data, 0644); err != nil {
 		return err
 	}
 	s.Cfg = cfg
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpName, path); err != nil {
+		return err
+	}
 	return nil
 }

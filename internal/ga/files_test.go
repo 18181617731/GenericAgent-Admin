@@ -76,3 +76,58 @@ func TestTailSafeDoesNotTreatMidRuneStartAsBinary(t *testing.T) {
 		t.Fatal("TailSafe should report truncation when dropping leading bytes")
 	}
 }
+
+func TestSafeResolveAnyRejectsAbsolutePathOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := SafeResolveAny(root, outside); err == nil || !strings.Contains(err.Error(), "escapes GA root") {
+		t.Fatalf("SafeResolveAny outside absolute err = %v, want escapes GA root", err)
+	}
+
+	inside := filepath.Join(root, "inside.txt")
+	if err := os.WriteFile(inside, []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	abs, rel, err := SafeResolveAny(root, inside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if abs != inside || rel != "inside.txt" {
+		t.Fatalf("SafeResolveAny inside = (%q, %q), want (%q, inside.txt)", abs, rel, inside)
+	}
+}
+
+func TestSearchSafeStopsAfterMaxHitsWithoutError(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("needle\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hits, err := SearchSafe(root, ".", "needle", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+}
+
+func TestSearchSafeReportsScannerError(t *testing.T) {
+	root := t.TempDir()
+	longLine := strings.Repeat("x", int(maxSearchFileBytes))
+	if err := os.WriteFile(filepath.Join(root, "long.txt"), []byte(longLine), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := SearchSafe(root, ".", "needle", 10)
+	if err == nil || !strings.Contains(err.Error(), "token too long") {
+		t.Fatalf("SearchSafe scanner err = %v, want token too long", err)
+	}
+}

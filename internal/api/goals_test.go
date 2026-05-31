@@ -69,9 +69,6 @@ time.sleep(30)
 	if !resp.OK || resp.Goal.ID == "" || resp.Goal.PID <= 0 || !resp.Goal.Running || resp.Goal.Objective != "route start smoke" || resp.Goal.BudgetSeconds != 120 || resp.Goal.MaxTurns != 7 || resp.Goal.LLMNo == nil || *resp.Goal.LLMNo != 1 {
 		t.Fatalf("unexpected start response: %#v body=%s", resp, rr.Body.String())
 	}
-	if !strings.HasPrefix(resp.Goal.StateFile, "temp/goal_admin_") || !strings.HasSuffix(resp.Goal.StateFile, ".json") || !strings.HasPrefix(resp.Goal.LogFile, "temp/goal_admin_") || !strings.HasSuffix(resp.Goal.LogFile, ".log") {
-		t.Fatalf("unexpected relative paths: state=%q log=%q", resp.Goal.StateFile, resp.Goal.LogFile)
-	}
 	defer func() {
 		stopBody := `{"id":"` + resp.Goal.ID + `","pid":` + strconv.Itoa(resp.Goal.PID) + `}`
 		stopRR := httptest.NewRecorder()
@@ -82,6 +79,9 @@ time.sleep(30)
 			t.Fatalf("stop status=%d want=200 body=%s", stopRR.Code, stopRR.Body.String())
 		}
 	}()
+	if !strings.HasPrefix(resp.Goal.StateFile, "temp/goals/") || !strings.HasSuffix(resp.Goal.StateFile, "/state.json") || !strings.HasPrefix(resp.Goal.LogFile, "temp/goals/") || !strings.HasSuffix(resp.Goal.LogFile, "/output.log") || strings.TrimSuffix(resp.Goal.StateFile, "/state.json") != strings.TrimSuffix(resp.Goal.LogFile, "/output.log") {
+		t.Fatalf("unexpected relative paths: state=%q log=%q", resp.Goal.StateFile, resp.Goal.LogFile)
+	}
 	statePath := filepath.Join(root, filepath.FromSlash(resp.Goal.StateFile))
 	for i := 0; i < 20; i++ {
 		b, err := os.ReadFile(statePath)
@@ -256,12 +256,19 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	}
 	var list struct {
 		Goals []struct {
-			ID         string `json:"id"`
-			Objective  string `json:"objective"`
-			StateFile  string `json:"state_file"`
-			LogFile    string `json:"log_file"`
-			LogExists  bool   `json:"log_exists"`
-			MissingLog bool   `json:"missing_log"`
+			ID            string   `json:"id"`
+			Objective     string   `json:"objective"`
+			Status        string   `json:"status"`
+			StopLevel     string   `json:"stop_level"`
+			Actions       []string `json:"actions"`
+			RawStatus     string   `json:"raw_status"`
+			LastEvent     string   `json:"last_event"`
+			ErrorClass    string   `json:"error_class"`
+			StateFile     string   `json:"state_file"`
+			LogFile       string   `json:"log_file"`
+			LogExists     bool     `json:"log_exists"`
+			MissingLog    bool     `json:"missing_log"`
+			StateReadable bool     `json:"state_readable"`
 		} `json:"goals"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil {
@@ -271,22 +278,28 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 		t.Fatalf("unexpected list count: %s", rr.Body.String())
 	}
 	seen := map[string]struct{}{}
+	healthyRouteFlag := false
 	missingLogFlag := false
 	emptyLogFlag := false
 	for _, g := range list.Goals {
 		seen[g.ID] = struct{}{}
-		if g.ID == "route_missing_log" {
-			missingLogFlag = g.MissingLog && !g.LogExists
-		}
-		if g.ID == "route_empty_log" {
-			emptyLogFlag = !g.MissingLog && g.LogExists
+		if g.Status == "" || len(g.Actions) == 0 || g.StopLevel == "" || !g.StateReadable {
+			t.Fatalf("expected normalized goal contract fields in response: %#v", g)
 		}
 		if !strings.HasPrefix(g.StateFile, "temp/") || !strings.HasPrefix(g.LogFile, "temp/") {
 			t.Fatalf("expected relative files in response: %#v", g)
 		}
+		switch g.ID {
+		case "route_1":
+			healthyRouteFlag = g.Objective != "" && g.Status == "done" && g.RawStatus == "done" && g.LastEvent == "done" && g.ErrorClass == ""
+		case "route_missing_log":
+			missingLogFlag = g.MissingLog && !g.LogExists && g.Status == "unknown" && g.RawStatus == "running" && g.LastEvent != "" && g.ErrorClass != ""
+		case "route_empty_log":
+			emptyLogFlag = !g.MissingLog && g.LogExists && g.Status == "unknown" && g.RawStatus == "running" && g.LastEvent != "" && g.ErrorClass != ""
+		}
 	}
-	if _, ok := seen["route_1"]; !ok || list.Goals[0].Objective == "" {
-		t.Fatalf("missing route_1 in list response: %s", rr.Body.String())
+	if _, ok := seen["route_1"]; !ok || !healthyRouteFlag {
+		t.Fatalf("missing healthy route_1 in list response: %s", rr.Body.String())
 	}
 	if _, ok := seen["route_missing_log"]; !ok {
 		t.Fatalf("missing route_missing_log in list response: %s", rr.Body.String())
@@ -307,7 +320,7 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("output status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	var out struct {
+	type goalOutputResp struct {
 		Output           string `json:"output"`
 		Truncated        bool   `json:"truncated"`
 		BytesReturned    int64  `json:"bytes_returned"`
@@ -321,13 +334,20 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 		MaxBytesCapped   bool   `json:"max_bytes_capped"`
 		OutputStatus     string `json:"output_status"`
 		Goal             struct {
-			ID string `json:"id"`
+			ID         string   `json:"id"`
+			Status     string   `json:"status"`
+			StopLevel  string   `json:"stop_level"`
+			Actions    []string `json:"actions"`
+			RawStatus  string   `json:"raw_status"`
+			LastEvent  string   `json:"last_event"`
+			ErrorClass string   `json:"error_class"`
 		} `json:"goal"`
 	}
+	var out goalOutputResp
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Output != "vwxyz" || out.Goal.ID != "route_1" || !out.Truncated || out.BytesReturned != 5 || out.TotalBytes != 26 || out.RequestedBytes != 5 || out.MaxBytes != 5 || out.DefaultBytes != 64*1024 || out.DefaultBytesUsed || out.MaxBytesCapped || out.OutputStatus != "tail_truncated" {
+	if out.Output != "vwxyz" || out.Goal.ID != "route_1" || out.Goal.Status != "done" || out.Goal.StopLevel == "" || len(out.Goal.Actions) == 0 || out.Goal.RawStatus != "done" || out.Goal.LastEvent != "done" || out.Goal.ErrorClass != "" || !out.Truncated || out.BytesReturned != 5 || out.TotalBytes != 26 || out.RequestedBytes != 5 || out.MaxBytes != 5 || out.DefaultBytes != 64*1024 || out.DefaultBytesUsed || out.MaxBytesCapped || out.OutputStatus != "tail_truncated" {
 		t.Fatalf("unexpected output response: %#v body=%s", out, rr.Body.String())
 	}
 
@@ -350,27 +370,11 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("missing-log output status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	out = struct {
-		Output           string `json:"output"`
-		Truncated        bool   `json:"truncated"`
-		BytesReturned    int64  `json:"bytes_returned"`
-		TotalBytes       int64  `json:"total_bytes"`
-		LinesReturned    int64  `json:"lines_returned"`
-		TotalLines       int64  `json:"total_lines"`
-		RequestedBytes   int64  `json:"requested_bytes"`
-		MaxBytes         int64  `json:"max_bytes"`
-		DefaultBytes     int64  `json:"default_bytes"`
-		DefaultBytesUsed bool   `json:"default_bytes_used"`
-		MaxBytesCapped   bool   `json:"max_bytes_capped"`
-		OutputStatus     string `json:"output_status"`
-		Goal             struct {
-			ID string `json:"id"`
-		} `json:"goal"`
-	}{}
+	out = goalOutputResp{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Output != "" || out.Goal.ID != "route_missing_log" || out.RequestedBytes != 5 || out.MaxBytes != 5 || out.DefaultBytes != 64*1024 || out.DefaultBytesUsed || out.MaxBytesCapped || out.OutputStatus != "missing_log" {
+	if out.Output != "" || out.Goal.ID != "route_missing_log" || out.Goal.Status != "unknown" || out.Goal.RawStatus != "running" || out.Goal.LastEvent == "" || out.Goal.ErrorClass == "" || out.RequestedBytes != 5 || out.MaxBytes != 5 || out.DefaultBytes != 64*1024 || out.DefaultBytesUsed || out.MaxBytesCapped || out.OutputStatus != "missing_log" {
 		t.Fatalf("unexpected missing-log output response: %#v body=%s", out, rr.Body.String())
 	}
 
@@ -380,27 +384,11 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("empty-log output status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	out = struct {
-		Output           string `json:"output"`
-		Truncated        bool   `json:"truncated"`
-		BytesReturned    int64  `json:"bytes_returned"`
-		TotalBytes       int64  `json:"total_bytes"`
-		LinesReturned    int64  `json:"lines_returned"`
-		TotalLines       int64  `json:"total_lines"`
-		RequestedBytes   int64  `json:"requested_bytes"`
-		MaxBytes         int64  `json:"max_bytes"`
-		DefaultBytes     int64  `json:"default_bytes"`
-		DefaultBytesUsed bool   `json:"default_bytes_used"`
-		MaxBytesCapped   bool   `json:"max_bytes_capped"`
-		OutputStatus     string `json:"output_status"`
-		Goal             struct {
-			ID string `json:"id"`
-		} `json:"goal"`
-	}{}
+	out = goalOutputResp{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Output != "" || out.Goal.ID != "route_empty_log" || out.Truncated || out.BytesReturned != 0 || out.TotalBytes != 0 || out.LinesReturned != 0 || out.TotalLines != 0 || out.RequestedBytes != 5 || out.MaxBytes != 5 || out.DefaultBytes != 64*1024 || out.DefaultBytesUsed || out.MaxBytesCapped || out.OutputStatus != "empty_log" {
+	if out.Output != "" || out.Goal.ID != "route_empty_log" || out.Goal.Status != "unknown" || out.Goal.RawStatus != "running" || out.Goal.LastEvent == "" || out.Goal.ErrorClass == "" || out.Truncated || out.BytesReturned != 0 || out.TotalBytes != 0 || out.LinesReturned != 0 || out.TotalLines != 0 || out.RequestedBytes != 5 || out.MaxBytes != 5 || out.DefaultBytes != 64*1024 || out.DefaultBytesUsed || out.MaxBytesCapped || out.OutputStatus != "empty_log" {
 		t.Fatalf("unexpected empty-log output response: %#v body=%s", out, rr.Body.String())
 	}
 
@@ -410,23 +398,7 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("default output status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	out = struct {
-		Output           string `json:"output"`
-		Truncated        bool   `json:"truncated"`
-		BytesReturned    int64  `json:"bytes_returned"`
-		TotalBytes       int64  `json:"total_bytes"`
-		LinesReturned    int64  `json:"lines_returned"`
-		TotalLines       int64  `json:"total_lines"`
-		RequestedBytes   int64  `json:"requested_bytes"`
-		MaxBytes         int64  `json:"max_bytes"`
-		DefaultBytes     int64  `json:"default_bytes"`
-		DefaultBytesUsed bool   `json:"default_bytes_used"`
-		MaxBytesCapped   bool   `json:"max_bytes_capped"`
-		OutputStatus     string `json:"output_status"`
-		Goal             struct {
-			ID string `json:"id"`
-		} `json:"goal"`
-	}{}
+	out = goalOutputResp{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -443,23 +415,7 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("capped output status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	out = struct {
-		Output           string `json:"output"`
-		Truncated        bool   `json:"truncated"`
-		BytesReturned    int64  `json:"bytes_returned"`
-		TotalBytes       int64  `json:"total_bytes"`
-		LinesReturned    int64  `json:"lines_returned"`
-		TotalLines       int64  `json:"total_lines"`
-		RequestedBytes   int64  `json:"requested_bytes"`
-		MaxBytes         int64  `json:"max_bytes"`
-		DefaultBytes     int64  `json:"default_bytes"`
-		DefaultBytesUsed bool   `json:"default_bytes_used"`
-		MaxBytesCapped   bool   `json:"max_bytes_capped"`
-		OutputStatus     string `json:"output_status"`
-		Goal             struct {
-			ID string `json:"id"`
-		} `json:"goal"`
-	}{}
+	out = goalOutputResp{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}

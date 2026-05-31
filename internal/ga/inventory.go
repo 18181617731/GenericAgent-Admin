@@ -329,15 +329,30 @@ func ReadScheduleArtifact(root, rel string, maxBytes int64) (string, Entry, erro
 		return "", Entry{}, errors.New("only schedule reports, autonomous reports and scheduler.log can be read here")
 	}
 	p := filepath.Join(root, filepath.FromSlash(clean))
-	info, err := os.Stat(p)
+	rootEval, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", Entry{}, err
+	}
+	targetEval, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", Entry{}, err
+	}
+	relToRoot, err := filepath.Rel(rootEval, targetEval)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) || filepath.IsAbs(relToRoot) {
+		return "", Entry{}, errors.New("artifact path escapes GA root")
+	}
+	info, err := os.Stat(targetEval)
+	if err != nil {
+		return "", Entry{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", Entry{}, errors.New("artifact path is not a regular file")
 	}
 	start := int64(0)
 	if maxBytes > 0 && info.Size() > maxBytes {
 		start = info.Size() - maxBytes
 	}
-	f, err := os.Open(p)
+	f, err := os.Open(targetEval)
 	if err != nil {
 		return "", Entry{}, err
 	}
@@ -390,7 +405,9 @@ func SaveTask(root, id string, raw map[string]any) (ScheduleTask, error) {
 		return ScheduleTask{}, errors.New("empty task")
 	}
 	if old, err := os.ReadFile(p); err == nil {
-		_ = os.WriteFile(p+".bak."+time.Now().Format("20060102_150405"), old, 0644)
+		if err := backupScheduleTaskFile(p, old); err != nil {
+			return ScheduleTask{}, err
+		}
 	}
 	out, err := marshalContractJSON(raw, contractDomainScheduleTask)
 	if err != nil {
@@ -399,7 +416,7 @@ func SaveTask(root, id string, raw map[string]any) (ScheduleTask, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return ScheduleTask{}, err
 	}
-	if err := os.WriteFile(p, out, 0644); err != nil {
+	if err := writeFileAtomic(p, out, 0644); err != nil {
 		return ScheduleTask{}, err
 	}
 	for _, t := range BuildSchedule(root).Tasks {
@@ -421,6 +438,14 @@ func CreateTask(root, id string, raw map[string]any) (ScheduleTask, error) {
 	return SaveTask(root, id, raw)
 }
 
+const scheduleBackupTimestampLayout = "20060102_150405.000000000"
+
+var scheduleBackupNow = time.Now
+
+func backupScheduleTaskFile(p string, data []byte) error {
+	return writeFileAtomic(p+".bak."+scheduleBackupNow().Format(scheduleBackupTimestampLayout), data, 0644)
+}
+
 func DeleteTask(root, id string) error {
 	p, _, err := SchedulePath(root, id)
 	if err != nil {
@@ -430,8 +455,8 @@ func DeleteTask(root, id string) error {
 	if err != nil {
 		return err
 	}
-	bak := p + ".bak." + time.Now().Format("20060102_150405")
-	if err := os.WriteFile(bak, old, 0644); err != nil {
+	bak := p + ".bak." + scheduleBackupNow().Format(scheduleBackupTimestampLayout)
+	if err := writeFileAtomic(bak, old, 0644); err != nil {
 		return err
 	}
 	return os.Remove(p)
@@ -450,13 +475,15 @@ func ToggleTask(root, id string, enabled bool) (ScheduleTask, error) {
 	if _, err := readContractJSON(p, contractDomainScheduleTask, &raw); err != nil {
 		return ScheduleTask{}, err
 	}
-	_ = os.WriteFile(p+".bak."+time.Now().Format("20060102_150405"), data, 0644)
+	if err := backupScheduleTaskFile(p, data); err != nil {
+		return ScheduleTask{}, err
+	}
 	raw["enabled"] = enabled
 	out, err := marshalContractJSON(raw, contractDomainScheduleTask)
 	if err != nil {
 		return ScheduleTask{}, err
 	}
-	if err := os.WriteFile(p, out, 0644); err != nil {
+	if err := writeFileAtomic(p, out, 0644); err != nil {
 		return ScheduleTask{}, err
 	}
 	for _, t := range BuildSchedule(root).Tasks {

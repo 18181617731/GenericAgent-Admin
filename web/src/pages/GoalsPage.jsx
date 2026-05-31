@@ -178,15 +178,22 @@ function GoalRunCard({ g, t, selected, onOutput, onState, onStop, onDelete }) {
   const stopLevelLabel = t.goalStopLevels?.[g.stop_level] || g.stop_level || '-'
   const trustLabel = g.pid_trusted ? (t.goalTrust?.trusted || 'PID trusted') : (t.goalTrust?.untrusted || 'PID untrusted')
   const pidLabel = g.running ? (g.pid ? `${t.fields.pid} ${g.pid}` : t.running) : t.fields.notRunning
-  const canStop = !!g.running && !!g.id && (!g.managed || !!g.pid)
+  const actions = Array.isArray(g.actions) ? g.actions : []
+  const canStop = actions.length ? actions.includes('stop') : (!!g.running && !!g.id && (!g.managed || !!g.pid))
+  const canDelete = actions.length ? actions.includes('delete') : !g.running
+  const statusTitle = [g.raw_status && `${t.fields.rawStatus}: ${g.raw_status}`, g.last_event && `${t.fields.lastEvent}: ${g.last_event}`, g.error_class && `${t.fields.errorClass}: ${g.error_class}`].filter(Boolean).join(' · ')
+  const statusClass = g.error_class ? 'err-text' : (g.running ? 'ok' : '')
   return <div className={`goal-row ${g.running ? 'running' : ''} ${g.origin === 'external' ? 'external' : ''} ${selected===g.id ? 'selected' : ''}`}>
     <button className="goal-row-main" onClick={()=>onOutput(g.id)}>
-      <div className="goal-row-title"><b>{g.id}</b><span className={g.running ? 'ok' : ''}>{g.status || '-'}</span></div>
+      <div className="goal-row-title"><b>{g.id}</b><span className={statusClass} title={statusTitle}>{g.status || '-'}</span></div>
       <div className="goal-row-meta">
         <span>{pidLabel}</span>
         <span>{t.fields.source} {originLabel}</span>
         <span>{t.fields.control} {stopLevelLabel}</span>
         <span className={g.pid_trusted ? 'ok' : 'warn-text'}>{trustLabel}</span>
+        {g.raw_status && g.raw_status !== g.status ? <span>{t.fields.rawStatus} {g.raw_status}</span> : null}
+        {g.last_event ? <span title={g.last_event}>{t.fields.lastEvent} {g.last_event}</span> : null}
+        {g.error_class ? <span className="err-text">{t.fields.errorClass} {g.error_class}</span> : null}
         <span>{t.fields.turn} {g.turns_used || 0}/{g.max_turns || '-'}</span>
         <span>{t.fields.elapsed} {formatDuration(g.elapsed_seconds)}</span>
         <span>{t.fields.remaining} {formatDuration(g.remaining_seconds)}</span>
@@ -202,7 +209,7 @@ function GoalRunCard({ g, t, selected, onOutput, onState, onStop, onDelete }) {
       <button disabled={!g.state_file} onClick={()=>onState(g.state_file)}>{t.fields.stateFile}</button>
       <button disabled={!g.id || g.missing_log} onClick={()=>onOutput(g.id)}>{t.fields.logFile}</button>
       <button disabled={!canStop} title={g.managed ? (g.pid_trusted ? t.goalStopLevels?.exact_pid : t.goalTrust?.untrusted) : t.goalStopLevels?.soft_state} onClick={()=>onStop(g)}><Square size={14}/>{t.stop}</button>
-      <button className="danger" disabled={!!g.running} title={g.running ? t.hints.goalDeleteRunning : t.hints.goalDeleteConfirm.replace('{id}', g.id || '-')} onClick={()=>onDelete?.(g)}><Trash2 size={14}/>{t.delete}</button>
+      <button className="danger" disabled={!canDelete} title={!canDelete ? t.hints.goalDeleteRunning : t.hints.goalDeleteConfirm.replace('{id}', g.id || '-')} onClick={()=>onDelete?.(g)}><Trash2 size={14}/>{t.delete}</button>
     </div>
   </div>
 }

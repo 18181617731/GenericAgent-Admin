@@ -135,3 +135,95 @@ func TestReportIndexContract(t *testing.T) {
 		t.Fatalf("reports = %#v", idx.Reports)
 	}
 }
+
+func TestReadScheduleArtifactSafePathAndContract(t *testing.T) {
+	root := t.TempDir()
+	done := filepath.Join(root, "sche_tasks", "done")
+	if err := os.MkdirAll(done, 0755); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(done, "task.report.txt")
+	if err := os.WriteFile(artifact, []byte("report body"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	content, entry, err := ReadScheduleArtifact(root, "sche_tasks/done/task.report.txt", 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "report body" || entry.Path != "sche_tasks/done/task.report.txt" || entry.Domain != "schedule" {
+		t.Fatalf("artifact content/entry = %q %#v", content, entry)
+	}
+
+	badPaths := []string{
+		"../secret.txt",
+		"sche_tasks/../secret.txt",
+		"memory/global_mem.txt",
+		"sche_tasks/done/../../memory/global_mem.txt",
+	}
+	for _, rel := range badPaths {
+		if _, _, err := ReadScheduleArtifact(root, rel, 1024); err == nil {
+			t.Fatalf("ReadScheduleArtifact(%q) succeeded; want error", rel)
+		}
+	}
+}
+
+func TestReadScheduleArtifactRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	done := filepath.Join(root, "sche_tasks", "done")
+	if err := os.MkdirAll(done, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(done, "outside.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, _, err := ReadScheduleArtifact(root, "sche_tasks/done/outside.txt", 1024); err == nil {
+		t.Fatal("symlink escape artifact read succeeded; want error")
+	}
+}
+
+func TestBackupScheduleTaskFileReportsWriteError(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, "task.json")
+	if err := os.WriteFile(p, []byte(`{"enabled":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fixed := time.Date(2026, 5, 31, 18, 50, 0, 123456789, time.UTC)
+	oldNow := scheduleBackupNow
+	scheduleBackupNow = func() time.Time { return fixed }
+	defer func() { scheduleBackupNow = oldNow }()
+	blocker := p + ".bak." + fixed.Format(scheduleBackupTimestampLayout)
+	if err := os.Mkdir(blocker, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupScheduleTaskFile(p, []byte("old")); err == nil {
+		t.Fatal("expected backup write error")
+	}
+}
+
+func TestToggleTaskReportsBackupWriteError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sche_tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]any{"schedule": "daily", "repeat": "daily", "enabled": true, "prompt": "x"}
+	if _, err := SaveTask(root, "toggle-backup", raw); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, "sche_tasks", "toggle-backup.json")
+	fixed := time.Date(2026, 5, 31, 18, 50, 1, 987654321, time.UTC)
+	oldNow := scheduleBackupNow
+	scheduleBackupNow = func() time.Time { return fixed }
+	defer func() { scheduleBackupNow = oldNow }()
+	blocker := p + ".bak." + fixed.Format(scheduleBackupTimestampLayout)
+	if err := os.Mkdir(blocker, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ToggleTask(root, "toggle-backup", false); err == nil {
+		t.Fatal("expected toggle backup write error")
+	}
+}

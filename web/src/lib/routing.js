@@ -24,10 +24,12 @@ const TASK_ROUTE_ALIASES = {
   reports: 'reports',
 }
 
+const baseURL = () => (import.meta.env?.BASE_URL || '/').replace(/\/$/, '')
+
 const routeParts = () => {
   const rawHash = (window.location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)
   if (rawHash.length) return rawHash
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
+  const base = baseURL()
   let path = window.location.pathname || '/'
   if (base && base !== '/' && path.startsWith(base)) path = path.slice(base.length) || '/'
   return path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -48,6 +50,6 @@ export const parseRoute = () => {
 export const buildRoute = (tab, taskSubTab = 'services') => {
   const safeTab = ROUTE_TABS.includes(tab) ? tab : 'overview'
   const suffix = safeTab === 'tasks' ? `/${TASK_SUB_TABS.includes(taskSubTab) ? taskSubTab : 'services'}` : ''
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
+  const base = baseURL()
   return `${base}/${safeTab}${suffix}`.replace(/\/+/g, '/')
 }
