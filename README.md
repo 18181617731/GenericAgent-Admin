@@ -1,6 +1,6 @@
 # GenericAgent Admin Go
 
-GenericAgent Admin Go 是 GenericAgent 的桌面级管理面板：Go 后端负责进程、文件、配置、更新和系统集成，React/Vite 前端提供控制台界面，最终可打包为单个 `ga-admin.exe` 分发。它的目标不是替代 GenericAgent，而是把本机 GA 的运行状态、任务入口、模型配置、团队协作和桌面辅助能力收拢到一个可维护的控制面。
+GenericAgent Admin Go 是 GenericAgent 的桌面级管理面板：Go 后端负责进程、文件、配置、更新和系统集成，React/Vite 前端提供控制台界面，最终可打包为单个 `ga-admin`/`ga-admin.exe` 分发。它的目标不是替代 GenericAgent，而是把本机 GA 的运行状态、任务入口、模型配置、团队协作和桌面辅助能力收拢到一个可维护的控制面。
 
 ## 能做什么
 
@@ -88,6 +88,28 @@ http://127.0.0.1:8787
 
 前端开发时也可以在 `web/` 下运行 Vite dev server；正式 Go 程序使用 `web/dist` 的 embed 产物。
 
+## Linux / 无桌面环境启动
+
+GA Admin 支持 Linux server-only/headless 运行。Linux 下如果没有检测到 `DISPLAY`、`WAYLAND_DISPLAY` 或 `MIR_SOCKET`，程序会自动进入 headless 模式：只启动 Go HTTP 服务，不打开浏览器、不启动系统托盘、不启动桌宠。
+
+也可以显式指定：
+
+```bash
+./ga-admin --headless
+# 或
+GA_ADMIN_HEADLESS=1 ./ga-admin
+```
+
+如果只是有桌面但不想自动打开浏览器：
+
+```bash
+./ga-admin --no-browser
+# 或
+GA_ADMIN_NO_BROWSER=1 ./ga-admin
+```
+
+无桌面服务器需要远程访问时，请把 `config.local.json` 中的 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`，并通过浏览器访问 `http://<server-ip>:<port>`。管理端适合本机或可信局域网使用；公网暴露前应额外配置认证、TLS 和访问控制。
+
 ## 本地构建
 
 Windows 推荐直接运行：
@@ -123,11 +145,12 @@ zip 内必须包含：
 
 ```text
 ga-admin.exe          # Windows
+ga-admin              # macOS/Linux
 cmd/chat_worker.py    # Chat worker 固定相对路径
 README.txt            # 简短运行说明
 ```
 
-仓库的 `.github/workflows/release-assets.yml` 会在推送 `v*` tag 后构建 Windows/macOS 资产并上传到 GitHub Release。
+仓库的 `.github/workflows/release-assets.yml` 会在推送 `v*` tag 后构建 Windows/macOS/Linux 资产并上传到 GitHub Release。
 
 ## 配置与私密文件
 

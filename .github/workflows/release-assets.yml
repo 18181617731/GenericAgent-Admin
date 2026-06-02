@@ -25,15 +25,27 @@ jobs:
           - goos: windows
             goarch: amd64
             runner: windows-latest
+            cgo: '1'
           - goos: windows
             goarch: arm64
             runner: windows-latest
+            cgo: '1'
           - goos: darwin
             goarch: amd64
             runner: macos-latest
+            cgo: '1'
           - goos: darwin
             goarch: arm64
             runner: macos-latest
+            cgo: '1'
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            cgo: '0'
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+            cgo: '0'
 
     steps:
       - name: Checkout tag
@@ -66,7 +78,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '1'
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           mkdir -p dist/cmd
           cp cmd/chat_worker.py dist/cmd/chat_worker.py
@@ -91,7 +103,8 @@ jobs:
           cat > "$name/README.txt" <<EOF
           GenericAgent Admin Go ${tag}
 
-          Run ga-admin.exe on Windows, or ga-admin on macOS.
+          Run ga-admin.exe on Windows, or ga-admin on macOS/Linux.
+          Linux servers without DISPLAY/Wayland enter headless mode automatically; use --headless or GA_ADMIN_HEADLESS=1 to force it.
           The executable embeds the React/Vite web UI.
           GenericAgent services still require your local GenericAgent Python environment.
           EOF

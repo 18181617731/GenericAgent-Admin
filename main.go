@@ -3,16 +3,19 @@ package main
 import (
 	"context"
 	"embed"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"genericagent-admin-go/internal/api"
@@ -25,6 +28,7 @@ import (
 var webFS embed.FS
 
 func main() {
+	launch := parseLaunchOptions()
 	cwd, err := appRoot()
 	if err != nil {
 		log.Fatal(err)
@@ -50,13 +54,24 @@ func main() {
 	url := "http://" + addr
 	server := &http.Server{Addr: addr, Handler: srv.Routes()}
 	go srv.StartAutostartServices()
-	go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
 	go func() {
 		log.Printf("GenericAgent Admin Go listening on %s", url)
+		if launch.Headless {
+			log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
+		}
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen %s failed: %v; if the port is occupied, edit config.local.json and change port", addr, err)
 		}
 	}()
+
+	if launch.Headless {
+		waitForShutdownSignal(server, srv.ShutdownCleanup)
+		return
+	}
+
+	if !launch.NoBrowser {
+		go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
+	}
 	if activePet := srv.ActivePetID(); activePet != "" {
 		if err := switchDesktopPet(activePet); err != nil {
 			log.Printf("load active desktop pet %q failed: %v", activePet, err)
@@ -77,6 +92,60 @@ func main() {
 			_ = server.Shutdown(ctx)
 		},
 	)
+}
+
+type launchOptions struct {
+	Headless  bool
+	NoBrowser bool
+}
+
+func parseLaunchOptions() launchOptions {
+	headlessFlag := flag.Bool("headless", false, "run without browser, tray, or desktop pet; intended for Linux servers")
+	serverOnlyFlag := flag.Bool("server-only", false, "alias for --headless")
+	noBrowserFlag := flag.Bool("no-browser", false, "do not open the web UI automatically")
+	flag.Parse()
+
+	headless := *headlessFlag || *serverOnlyFlag || envBool("GA_ADMIN_HEADLESS") || envBool("GA_ADMIN_SERVER_ONLY")
+	if !headless && runtime.GOOS == "linux" && !hasGraphicalSession() {
+		headless = true
+		log.Printf("no Linux graphical session detected; enabling headless/server-only mode")
+	}
+	return launchOptions{
+		Headless:  headless,
+		NoBrowser: *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
+	}
+}
+
+func envBool(name string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch value {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasGraphicalSession() bool {
+	for _, name := range []string{"DISPLAY", "WAYLAND_DISPLAY", "MIR_SOCKET"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForShutdownSignal(server *http.Server, cleanup func()) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	log.Printf("shutdown signal received; stopping GenericAgent Admin Go")
+	if cleanup != nil {
+		cleanup()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = server.Shutdown(ctx)
 }
 
 var (
