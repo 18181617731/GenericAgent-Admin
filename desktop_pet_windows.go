@@ -217,6 +217,7 @@ type desktopPet struct {
 	lastDragX       int32
 	dragging        bool
 	dragOffset      point
+	dragRestoreBase string
 	framesByAction  map[string][][]byte
 	idleTicks       int
 	idleNudge       int
@@ -409,28 +410,19 @@ func (p *desktopPet) wndProc(hwnd syscall.Handle, message uint32, wparam, lparam
 		procGetCursorPos.Call(uintptr(unsafe.Pointer(&cur)))
 		var wr rect
 		procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&wr)))
-		p.dragging = true
-		p.dragOffset = point{X: cur.X - wr.Left, Y: cur.Y - wr.Top}
-		p.lastDragX = cur.X
-		p.applyAction(petActionWaving, 24)
+		p.beginDrag(cur.X, point{X: cur.X - wr.Left, Y: cur.Y - wr.Top})
 		procSetCapture.Call(uintptr(hwnd))
 		return 0
 	case wmMouseMove:
 		if p.dragging {
 			var cur point
 			procGetCursorPos.Call(uintptr(unsafe.Pointer(&cur)))
-			if cur.X > p.lastDragX+1 {
-				p.applyAction(petActionRunningRight, 0)
-			} else if cur.X < p.lastDragX-1 {
-				p.applyAction(petActionRunningLeft, 0)
-			}
-			p.lastDragX = cur.X
+			p.updateDrag(cur.X)
 			procSetWindowPos.Call(uintptr(hwnd), ^uintptr(0), uintptr(cur.X-p.dragOffset.X), uintptr(cur.Y-p.dragOffset.Y), 0, 0, 0x0001|0x0010|0x0040)
 		}
 		return 0
 	case wmLButtonUp:
-		p.dragging = false
-		p.applyAction(petActionIdle, 0)
+		p.finishDrag()
 		procReleaseCapture.Call()
 		return 0
 	case wmRButtonUp:
@@ -584,6 +576,48 @@ func (p *desktopPet) stepRoam() {
 	}
 }
 
+func (p *desktopPet) beginDrag(cursorX int32, offset point) {
+	p.dragging = true
+	p.dragOffset = offset
+	p.lastDragX = cursorX
+	p.dragRestoreBase = p.base
+	if p.dragRestoreBase == "" || p.dragRestoreBase == petActionRunningRight || p.dragRestoreBase == petActionRunningLeft {
+		p.dragRestoreBase = petActionIdle
+	}
+	p.roamTicks = 0
+	p.roamDX = 0
+	p.roamRestoreBase = ""
+	p.oneshot = ""
+	p.oneshtTicks = 0
+	p.active = petActionRunningRight
+	p.frameIndex = 0
+	p.updateActionFrame(p.active, 0)
+}
+
+func (p *desktopPet) updateDrag(cursorX int32) {
+	if cursorX > p.lastDragX+1 {
+		p.setDragAction(petActionRunningRight)
+	} else if cursorX < p.lastDragX-1 {
+		p.setDragAction(petActionRunningLeft)
+	}
+	p.lastDragX = cursorX
+}
+
+func (p *desktopPet) finishDrag() {
+	p.dragging = false
+	restore := p.dragRestoreBase
+	if restore == "" {
+		restore = petActionIdle
+	}
+	p.dragRestoreBase = ""
+	p.active = restore
+	p.base = restore
+	p.oneshot = ""
+	p.oneshtTicks = 0
+	p.frameIndex = 0
+	p.updateActionFrame(p.active, 0)
+}
+
 func (p *desktopPet) currentAction() string {
 	if p.oneshot != "" && p.oneshtTicks > 0 {
 		return p.oneshot
@@ -592,6 +626,20 @@ func (p *desktopPet) currentAction() string {
 		return p.active
 	}
 	return petActionIdle
+}
+
+func (p *desktopPet) setDragAction(action string) {
+	if _, ok := p.framesByAction[action]; !ok {
+		action = petActionIdle
+	}
+	if p.active == action && p.oneshot == "" {
+		return
+	}
+	p.active = action
+	p.oneshot = ""
+	p.oneshtTicks = 0
+	p.frameIndex = 0
+	p.updateActionFrame(action, 0)
 }
 
 func (p *desktopPet) applyAction(action string, ticks int) {
