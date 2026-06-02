@@ -21,6 +21,10 @@ const (
 	petFrameW = 192
 	petFrameH = 208
 
+	petRoamStep     int32 = 6
+	petRoamMinTicks       = 24
+	petRoamMaxTicks       = 44
+
 	petActionIdle         = "idle"
 	petActionRunningRight = "running-right"
 	petActionRunningLeft  = "running-left"
@@ -203,20 +207,23 @@ type desktopPet struct {
 	height int32
 	hwnd   syscall.Handle
 
-	mu             sync.Mutex
-	visible        bool
-	frameIndex     int
-	active         string
-	base           string
-	oneshot        string
-	oneshtTicks    int
-	lastDragX      int32
-	dragging       bool
-	dragOffset     point
-	framesByAction map[string][][]byte
-	idleTicks      int
-	idleNudge      int
-	autoActionStep int
+	mu              sync.Mutex
+	visible         bool
+	frameIndex      int
+	active          string
+	base            string
+	oneshot         string
+	oneshtTicks     int
+	lastDragX       int32
+	dragging        bool
+	dragOffset      point
+	framesByAction  map[string][][]byte
+	idleTicks       int
+	idleNudge       int
+	autoActionStep  int
+	roamTicks       int
+	roamDX          int32
+	roamRestoreBase string
 }
 
 var petInstance *desktopPet
@@ -448,7 +455,9 @@ func (p *desktopPet) onTimer() {
 	if !p.visible {
 		return
 	}
-	if p.oneshot == "" && p.active == petActionIdle && p.base == petActionIdle {
+	if !p.dragging && p.roamTicks > 0 {
+		p.stepRoam()
+	} else if p.oneshot == "" {
 		p.idleTicks++
 		if p.idleTicks >= 32 { // about 4 seconds at petFrameInterval=130ms
 			p.idleTicks = 0
@@ -472,6 +481,15 @@ func (p *desktopPet) onTimer() {
 }
 
 func (p *desktopPet) playNextIdleAction() {
+	if p.autoActionStep%2 == 0 {
+		dx := -petRoamStep
+		if (p.autoActionStep/2)%2 == 1 {
+			dx = petRoamStep
+		}
+		p.autoActionStep++
+		p.startRoam(dx, petRoamMinTicks+(p.autoActionStep%(petRoamMaxTicks-petRoamMinTicks+1)))
+		return
+	}
 	sequence := []struct {
 		action string
 		ticks  int
@@ -483,7 +501,7 @@ func (p *desktopPet) playNextIdleAction() {
 		{petActionReview, 18},
 	}
 	for tries := 0; tries < len(sequence); tries++ {
-		item := sequence[p.autoActionStep%len(sequence)]
+		item := sequence[(p.autoActionStep/2)%len(sequence)]
 		p.autoActionStep++
 		if _, ok := p.framesByAction[item.action]; ok {
 			p.applyAction(item.action, item.ticks)
@@ -491,6 +509,79 @@ func (p *desktopPet) playNextIdleAction() {
 		}
 	}
 	p.applyAction(petActionWaving, 14)
+}
+
+func (p *desktopPet) startRoam(dx int32, ticks int) {
+	if dx == 0 {
+		return
+	}
+	if ticks <= 0 {
+		ticks = petRoamMinTicks
+	}
+	p.roamDX = dx
+	p.roamTicks = ticks
+	p.roamRestoreBase = p.base
+	if p.roamRestoreBase == "" || p.roamRestoreBase == petActionRunningRight || p.roamRestoreBase == petActionRunningLeft {
+		p.roamRestoreBase = petActionIdle
+	}
+	p.oneshot = ""
+	p.oneshtTicks = 0
+	p.base = petActionRunningRight
+	if dx < 0 {
+		p.base = petActionRunningLeft
+	}
+	p.active = p.base
+	p.frameIndex = 0
+	p.stepRoam()
+}
+
+func (p *desktopPet) stepRoam() {
+	if p.hwnd == 0 || p.roamTicks <= 0 {
+		return
+	}
+	var wr rect
+	procGetWindowRect.Call(uintptr(p.hwnd), uintptr(unsafe.Pointer(&wr)))
+	sw, _, _ := procGetSystemMetrics.Call(0)
+	sh, _, _ := procGetSystemMetrics.Call(1)
+	maxX := int32(sw) - p.width
+	maxY := int32(sh) - p.height
+	if maxX < 0 {
+		maxX = 0
+	}
+	if maxY < 0 {
+		maxY = 0
+	}
+	x := wr.Left + p.roamDX
+	y := wr.Top
+	if y < 0 {
+		y = 0
+	} else if y > maxY {
+		y = maxY
+	}
+	if x < 0 {
+		x = 0
+		p.roamDX = petRoamStep
+		p.active = petActionRunningRight
+		p.base = petActionRunningRight
+	} else if x > maxX {
+		x = maxX
+		p.roamDX = -petRoamStep
+		p.active = petActionRunningLeft
+		p.base = petActionRunningLeft
+	}
+	procSetWindowPos.Call(uintptr(p.hwnd), ^uintptr(0), uintptr(x), uintptr(y), 0, 0, 0x0001|0x0010|0x0040)
+	p.roamTicks--
+	if p.roamTicks <= 0 {
+		p.roamDX = 0
+		restore := p.roamRestoreBase
+		if restore == "" {
+			restore = petActionIdle
+		}
+		p.roamRestoreBase = ""
+		p.active = restore
+		p.base = restore
+		p.frameIndex = 0
+	}
 }
 
 func (p *desktopPet) currentAction() string {
