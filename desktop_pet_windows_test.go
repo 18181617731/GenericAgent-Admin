@@ -26,8 +26,8 @@ func TestDesktopPetDragUsesDirectionalRunningActions(t *testing.T) {
 	if !p.dragging {
 		t.Fatalf("beginDrag did not mark dragging")
 	}
-	if p.active != petActionRunningRight || p.base != petActionWaiting || p.dragAction != petActionRunningRight {
-		t.Fatalf("beginDrag active/base/dragAction=%q/%q/%q, want running-right/waiting/running-right", p.active, p.base, p.dragAction)
+	if p.active != petActionRunningRight || p.base != petActionIdle || p.dragAction != petActionRunningRight {
+		t.Fatalf("beginDrag active/base/dragAction=%q/%q/%q, want running-right/idle/running-right", p.active, p.base, p.dragAction)
 	}
 	if p.oneshot != "" || p.oneshtTicks != 0 {
 		t.Fatalf("beginDrag should clear oneshot, got %q/%d", p.oneshot, p.oneshtTicks)
@@ -37,26 +37,26 @@ func TestDesktopPetDragUsesDirectionalRunningActions(t *testing.T) {
 	}
 
 	p.updateDrag(140)
-	if p.active != petActionRunningRight || p.base != petActionWaiting || p.oneshot != "" || p.oneshtTicks != 0 {
-		t.Fatalf("right drag state active/base/oneshot/ticks=%q/%q/%q/%d, want running-right/waiting/empty/0", p.active, p.base, p.oneshot, p.oneshtTicks)
+	if p.active != petActionRunningRight || p.base != petActionIdle || p.oneshot != "" || p.oneshtTicks != 0 {
+		t.Fatalf("right drag state active/base/oneshot/ticks=%q/%q/%q/%d, want running-right/idle/empty/0", p.active, p.base, p.oneshot, p.oneshtTicks)
 	}
 	p.onTimer()
 	p.onTimer()
 	p.onTimer()
-	if p.active != petActionRunningRight || p.base != petActionWaiting || p.dragAction != petActionRunningRight {
+	if p.active != petActionRunningRight || p.base != petActionIdle || p.dragAction != petActionRunningRight {
 		t.Fatalf("right drag should keep running while held, got active/base/dragAction=%q/%q/%q", p.active, p.base, p.dragAction)
 	}
 	p.updateDrag(80)
-	if p.active != petActionRunningLeft || p.base != petActionWaiting || p.dragAction != petActionRunningLeft {
-		t.Fatalf("left drag state active/base/dragAction=%q/%q/%q, want running-left/waiting/running-left", p.active, p.base, p.dragAction)
+	if p.active != petActionRunningLeft || p.base != petActionIdle || p.dragAction != petActionRunningLeft {
+		t.Fatalf("left drag state active/base/dragAction=%q/%q/%q, want running-left/idle/running-left", p.active, p.base, p.dragAction)
 	}
 
 	p.finishDrag()
 	if p.dragging {
 		t.Fatalf("finishDrag left dragging=true")
 	}
-	if p.active != petActionWaiting || p.base != petActionWaiting {
-		t.Fatalf("finishDrag restored active/base=%q/%q, want %q", p.active, p.base, petActionWaiting)
+	if p.active != petActionIdle || p.base != petActionIdle {
+		t.Fatalf("finishDrag restored active/base=%q/%q, want idle after temporary waiting", p.active, p.base)
 	}
 }
 
@@ -75,6 +75,27 @@ func TestDesktopPetDragRestoresIdleFromRunningBase(t *testing.T) {
 	p.finishDrag()
 	if p.active != petActionIdle || p.base != petActionIdle {
 		t.Fatalf("running base should restore to idle, got active/base=%q/%q", p.active, p.base)
+	}
+}
+
+func TestDesktopPetDragPreservesLongRunningBase(t *testing.T) {
+	p := &desktopPet{
+		visible: true,
+		base:    petActionRunning,
+		active:  petActionRunning,
+		framesByAction: map[string][][]byte{
+			petActionIdle:         {{0}},
+			petActionRunning:      {{1}},
+			petActionRunningLeft:  {{2}},
+			petActionRunningRight: {{3}},
+		},
+	}
+
+	p.beginDrag(50, point{})
+	p.updateDrag(20)
+	p.finishDrag()
+	if p.active != petActionRunning || p.base != petActionRunning {
+		t.Fatalf("long running base should survive drag, got active/base=%q/%q", p.active, p.base)
 	}
 }
 

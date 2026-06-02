@@ -832,10 +832,7 @@ func (p *desktopPet) beginDrag(cursorX int32, offset point) {
 	p.dragging = true
 	p.dragOffset = offset
 	p.lastDragX = cursorX
-	p.dragRestoreBase = p.base
-	if p.dragRestoreBase == "" || p.dragRestoreBase == petActionRunningRight || p.dragRestoreBase == petActionRunningLeft {
-		p.dragRestoreBase = petActionIdle
-	}
+	p.dragRestoreBase = restoredDragBase(p.base)
 	p.roamTicks = 0
 	p.roamDX = 0
 	p.roamRestoreBase = ""
@@ -859,6 +856,15 @@ func (p *desktopPet) updateDrag(cursorX int32) {
 	p.lastDragX = cursorX
 	p.dragAction = action
 	p.setDragAction(action)
+}
+
+func restoredDragBase(action string) string {
+	switch action {
+	case petActionRunning:
+		return petActionRunning
+	default:
+		return petActionIdle
+	}
 }
 
 func (p *desktopPet) finishDrag() {
