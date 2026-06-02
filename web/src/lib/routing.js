@@ -1,4 +1,4 @@
-export const NAV_ITEMS = ['overview','chat','control','files','tasks','bbs','memory','channels','autonomous','goals','models','settings','logs']
+export const NAV_ITEMS = ['overview','chat','control','files','tasks','bbs','pets','memory','channels','autonomous','goals','models','settings','logs']
 export const ROUTE_TABS = NAV_ITEMS
 export const TASK_SUB_TABS = ['services','scheduled','runs','reports']
 
@@ -11,6 +11,10 @@ const TAB_ALIASES = {
   tmwebdriver: 'control',
   tmwd: 'control',
   config: 'settings',
+  pet: 'pets',
+  pets: 'pets',
+  desktop_pet: 'pets',
+  hatch_pet: 'pets',
 }
 
 const TASK_ROUTE_ALIASES = {
