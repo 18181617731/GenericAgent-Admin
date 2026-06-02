@@ -3018,3 +3018,16 @@ pre, code { font-variant-ligatures: none; }
 .pet-card-body small { color:var(--muted); }
 .pet-card-body button { justify-content:center; }
 @media (max-width: 760px) { .pet-manager-head { flex-direction:column; } }
+
+/* ===== 加载反馈：路由级回退 / 行内 spinner / 骨架屏 ===== */
+.ga-route-fallback{display:flex;align-items:center;justify-content:center;min-height:240px;padding:48px;width:100%}
+.ga-loading{display:inline-flex;align-items:center;gap:10px;color:var(--muted)}
+.ga-spinner{width:18px;height:18px;border-radius:50%;border:2px solid var(--border-strong);border-top-color:var(--green);animation:ga-spin .7s linear infinite}
+.ga-loading-label{font-size:13px;letter-spacing:.01em}
+.ga-skeleton{display:flex;flex-direction:column;gap:10px;width:100%}
+.ga-skeleton-line{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--surface-muted) 25%,var(--bg-soft) 37%,var(--surface-muted) 63%);background-size:400% 100%;animation:ga-shimmer 1.4s ease infinite}
+.ga-skeleton-line:nth-child(odd){width:92%}
+.ga-skeleton-line:nth-child(3n){width:70%}
+@keyframes ga-spin{to{transform:rotate(360deg)}}
+@keyframes ga-shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
+@media (prefers-reduced-motion: reduce){.ga-spinner,.ga-skeleton-line{animation:none}}
