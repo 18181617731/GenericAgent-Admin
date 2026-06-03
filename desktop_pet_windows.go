@@ -47,6 +47,21 @@ const (
 
 	petMenuOpenChat = 1091
 	petMenuHide     = 1101
+	petMenuSayHello = 1111
+
+	// Dynamic submenu command IDs are allocated by adding the item index to
+	// these bases, so keep the ranges far enough apart to never overlap.
+	petMenuActionBase = 1200
+	petMenuPetBase    = 1300
+
+	mfPopup = 0x00000010
+
+	// petBubbleHoldTicks controls how long a speech bubble stays on screen
+	// (timer fires every petFrameInterval ms).
+	petBubbleHoldTicks = 36
+	// petClickDragThreshold is the pixel distance below which a press+release
+	// counts as a click rather than a drag.
+	petClickDragThreshold = 4
 )
 
 const (
@@ -287,6 +302,14 @@ type desktopPet struct {
 	jumpTotalTicks  int
 	jumpBaseY       int32
 	jumpOffsetY     int32
+
+	bubble      *petBubble
+	bubbleTicks int
+	dragStart   point
+	dragMoved   bool
+	clickStep   int
+	menuActions []string
+	menuPetIDs  []string
 }
 
 var petInstance *desktopPet
@@ -465,6 +488,13 @@ func (p *desktopPet) run(ready chan<- struct{}) {
 	p.hwnd = hwnd
 	p.placeInitial()
 	p.updateFrame(0)
+	if b := newPetBubble(); b != nil {
+		if err := b.createWindow(); err != nil {
+			log.Printf("create desktop pet bubble window failed: %v", err)
+		} else {
+			p.bubble = b
+		}
+	}
 	procShowWindow.Call(uintptr(hwnd), swShowNoAct)
 	procUpdateWindow.Call(uintptr(hwnd))
 	procSetTimer.Call(uintptr(hwnd), 1, petFrameInterval, 0)
@@ -549,6 +579,8 @@ func (p *desktopPet) wndProc(hwnd syscall.Handle, message uint32, wparam, lparam
 		procGetCursorPos.Call(uintptr(unsafe.Pointer(&cur)))
 		var wr rect
 		procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&wr)))
+		p.dragStart = cur
+		p.dragMoved = false
 		p.beginDrag(cur.X, point{X: cur.X - wr.Left, Y: cur.Y - wr.Top})
 		procSetCapture.Call(uintptr(hwnd))
 		return 0
@@ -556,13 +588,23 @@ func (p *desktopPet) wndProc(hwnd syscall.Handle, message uint32, wparam, lparam
 		if p.dragging {
 			var cur point
 			procGetCursorPos.Call(uintptr(unsafe.Pointer(&cur)))
+			if abs32(cur.X-p.dragStart.X) > petClickDragThreshold || abs32(cur.Y-p.dragStart.Y) > petClickDragThreshold {
+				p.dragMoved = true
+			}
 			p.updateDrag(cur.X)
 			procSetWindowPos.Call(uintptr(hwnd), ^uintptr(0), uintptr(cur.X-p.dragOffset.X), uintptr(cur.Y-p.dragOffset.Y), 0, 0, 0x0001|0x0010|0x0040)
+			if p.bubble != nil && p.bubbleTicks > 0 {
+				p.bubble.reposition(p.petWindowRect())
+			}
 		}
 		return 0
 	case wmLButtonUp:
+		moved := p.dragMoved
 		p.finishDrag()
 		procReleaseCapture.Call()
+		if !moved {
+			p.onPetClick()
+		}
 		return 0
 	case wmRButtonUp:
 		p.showContextMenu(hwnd)
@@ -593,6 +635,38 @@ func (p *desktopPet) showContextMenu(hwnd syscall.Handle) {
 	defer procDestroyMenu.Call(menu)
 
 	p.appendMenuItem(menu, petMenuOpenChat, "打开对话 (/chat)")
+	p.appendMenuItem(menu, petMenuSayHello, "说句话 💬")
+
+	// Action submenu: trigger fun one-shot animations.
+	if actionMenu, _, _ := procCreatePopupMenu.Call(); actionMenu != 0 {
+		p.menuActions = p.menuActions[:0]
+		for _, it := range petActionMenuItems {
+			if _, ok := p.framesByAction[it.action]; !ok {
+				continue
+			}
+			id := uint16(petMenuActionBase + len(p.menuActions))
+			p.appendMenuItem(actionMenu, id, it.label)
+			p.menuActions = append(p.menuActions, it.action)
+		}
+		if len(p.menuActions) > 0 {
+			p.appendSubMenu(menu, actionMenu, "动作 🎭")
+		} else {
+			procDestroyMenu.Call(actionMenu)
+		}
+	}
+
+	// Pet switching submenu: enumerate embedded spritesheets.
+	if ids := listEmbeddedPetIDs(); len(ids) > 1 {
+		if petsMenu, _, _ := procCreatePopupMenu.Call(); petsMenu != 0 {
+			p.menuPetIDs = ids
+			for i, id := range ids {
+				p.appendMenuItem(petsMenu, uint16(petMenuPetBase+i), id)
+			}
+			p.appendSubMenu(menu, petsMenu, "切换形象 🐾")
+		}
+	}
+
+	p.appendSeparator(menu)
 	p.appendMenuItem(menu, petMenuHide, "隐藏桌宠")
 
 	var cur point
@@ -604,26 +678,63 @@ func (p *desktopPet) showContextMenu(hwnd syscall.Handle) {
 	}
 }
 
+func (p *desktopPet) appendSubMenu(menu, sub uintptr, text string) {
+	label, _ := syscall.UTF16PtrFromString(text)
+	procAppendMenu.Call(menu, mfPopup, sub, uintptr(unsafe.Pointer(label)))
+}
+
+func (p *desktopPet) appendSeparator(menu uintptr) {
+	procAppendMenu.Call(menu, mfSeparator, 0, 0)
+}
+
 func (p *desktopPet) appendMenuItem(menu uintptr, id uint16, text string) {
 	label, _ := syscall.UTF16PtrFromString(text)
 	procAppendMenu.Call(menu, mfString, uintptr(id), uintptr(unsafe.Pointer(label)))
 }
 
 func (p *desktopPet) handleMenuCommand(id uint16) {
-	switch id {
-	case petMenuOpenChat:
+	switch {
+	case id == petMenuOpenChat:
 		if p.openChat != nil {
 			go p.openChat()
 		}
-	case petMenuHide:
+	case id == petMenuSayHello:
+		p.onPetClick()
+	case id == petMenuHide:
 		p.visible = false
+		if p.bubble != nil {
+			p.bubbleTicks = 0
+			p.bubble.hide()
+		}
 		procShowWindow.Call(uintptr(p.hwnd), swHide)
+	case id >= petMenuActionBase && int(id)-petMenuActionBase < len(p.menuActions):
+		action := p.menuActions[id-petMenuActionBase]
+		p.applyAction(action, petDefaultActionTicks(action))
+	case id >= petMenuPetBase && int(id)-petMenuPetBase < len(p.menuPetIDs):
+		target := p.menuPetIDs[id-petMenuPetBase]
+		go func() {
+			if err := switchDesktopPet(target); err != nil {
+				log.Printf("switch desktop pet to %q failed: %v", target, err)
+			}
+		}()
 	}
 }
 
 func (p *desktopPet) onTimer() {
 	if !p.visible {
+		if p.bubble != nil && p.bubbleTicks > 0 {
+			p.bubbleTicks = 0
+			p.bubble.hide()
+		}
 		return
+	}
+	if p.bubble != nil && p.bubbleTicks > 0 {
+		p.bubbleTicks--
+		if p.bubbleTicks <= 0 {
+			p.bubble.hide()
+		} else {
+			p.bubble.reposition(p.petWindowRect())
+		}
 	}
 	if p.jumpTicks > 0 && !p.dragging {
 		p.stepJump()
