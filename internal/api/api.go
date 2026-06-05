@@ -125,6 +125,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
 	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
 	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
+	mux.HandleFunc("/api/channels", s.channels)
 	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
 	mux.HandleFunc("/api/chat/", s.chatHandler)
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
@@ -178,6 +179,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/goals/stop", Level: "dangerous", Action: "stop_goal", Reason: "stops autonomous GA goal process by recorded PID"},
 	{Path: "/api/goals/delete", Level: "dangerous", Action: "delete_goal", Reason: "deletes goal state/output files"},
 	{Path: "/api/models/export", Level: "dangerous", Action: "export_models", Reason: "writes active GA model configuration"},
+	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
 	{Path: "/api/hatch-pet/export", Level: "dangerous", Action: "export_hatch_pet", Reason: "writes embedded hatch-pet toolchain files to the configured GA tools directory"},
 	{Path: "/api/hatch-pet/install-memory", Level: "dangerous", Action: "install_pet_memory_sops", Reason: "writes pet SOPs and updates global_mem_insight.txt under the configured GA memory directory"},
 }

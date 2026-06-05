@@ -513,7 +513,7 @@ export default function App() {
       {tab==='bbs' && <BBSPage status={bbsStatus} config={bbsConfig} setConfig={setBbsConfig} onSaveConfig={saveBBSConfig} posts={bbsPosts} title={bbsTitle} setTitle={setBbsTitle} content={bbsContent} setContent={setBbsContent} author={bbsAuthor} setAuthor={setBbsAuthor} onCreate={createBBSPost} onReply={createBBSReply} onRefresh={loadBBS} onTestConnection={testBBSConnection} workerService={bbsWorkerSvc} onWorkerStart={n=>serviceAction(n,'start')} onWorkerStop={n=>serviceAction(n,'stop')} onWorkerLogs={viewServiceLogs} onWorkerAutostart={toggleServiceAutostart} busy={busy}/>}
       {tab==='pets' && <PetsPage />}
       {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
-      {tab==='channels' && <section className="channels-page"><div className="stats"><Stat label={t.lists.frontendServices} value={frontendSvcs.length} icon={<Server/>}/><Stat label={t.running} value={frontendSvcs.filter(s=>s.running).length} icon={<CheckCircle2/>}/><Stat label={t.stopped} value={frontendSvcs.filter(s=>!s.running).length} icon={<XCircle/>}/></div><Panel title={t.lists.frontendServices} className="channels-panel"><p className="muted">{t.desc.channels}</p><ChannelServiceTable services={frontendSvcs} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/></Panel></section>}
+      {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>}
       {tab==='autonomous' && <section><div className="grid2"><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.reflectScripts}><EntryList items={inv.reflect || []} empty={t.hints.noReflect}/></Panel></div><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div></Panel><HatchPetSettings /></section>}
@@ -524,6 +524,66 @@ export default function App() {
 }
 
 
+
+function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart }) {
+  const [config, setConfig] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const load = async () => {
+    try {
+      const d = await api('/api/channels')
+      setConfig(d)
+      return d
+    } catch (e) {
+      setMsg(`读取通道配置失败：${e.message}`)
+      return null
+    }
+  }
+  useEffect(() => { load() }, [])
+  const patchField = (profileId, fieldName, value) => {
+    setConfig(prev => ({
+      ...(prev || {}),
+      profiles: (prev?.profiles || []).map(p => p.id === profileId ? {
+        ...p,
+        fields: (p.fields || []).map(f => f.name === fieldName ? { ...f, value } : f)
+      } : p)
+    }))
+  }
+  const save = async () => {
+    if (!confirmDanger('channels-save', '写入通道配置会更新 GA mykey.py；Secret 留空将保留原值。确认继续？')) return
+    setBusy(true); setMsg('正在写入 GA mykey.py…')
+    try {
+      const d = await api('/api/channels', { dangerous:true, method:'PUT', body: JSON.stringify({ profiles: config?.profiles || [] }) })
+      setConfig(d)
+      setMsg(`已保存通道配置：${d.path}`)
+    } catch (e) { setMsg(`保存失败：${e.message}`) } finally { setBusy(false) }
+  }
+  return <section className="channels-page">
+    <div className="stats"><Stat label={t.lists.frontendServices} value={frontendSvcs.length} icon={<Server/>}/><Stat label={t.running} value={frontendSvcs.filter(s=>s.running).length} icon={<CheckCircle2/>}/><Stat label={t.stopped} value={frontendSvcs.filter(s=>!s.running).length} icon={<XCircle/>}/></div>
+    <div className="grid2">
+      <Panel title="通道密钥配置" className="channels-panel">
+        <p className="muted">读取并更新 GA 根目录下的 <code>mykey.py</code>；Secret 不会回显，留空会保留 mykey.py 已有值。</p>
+        {config?.path && <p className="muted">配置文件：<code>{config.path}</code> {config.exists ? <span className="ok">已存在</span> : <span className="warn">未创建</span>}</p>}
+        <div className="actions"><button onClick={load} disabled={busy}>{t.refresh}</button><button onClick={save} disabled={busy || !config}>{busy ? t.busy : t.save}</button></div>
+        {msg && <p className={msg.includes('失败') ? 'err' : 'ok'}>{msg}</p>}
+        <div className="channel-config-list">
+          {(config?.profiles || []).map(profile => <div className="channel-config-card" key={profile.id}>
+            <h3>{profile.name}</h3><p className="muted">{profile.description}</p>
+            {(profile.fields || []).map(field => <label key={field.name}>{field.label || field.name}<small className="muted"> {field.name}{field.secret && field.has_value ? ' · 已保存' : ''}</small>
+              {field.secret
+                ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
+                : field.type === 'bool'
+                  ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
+                  : <input value={field.value || ''} placeholder={field.placeholder || ''} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
+            </label>)}
+          </div>)}
+          {!config?.profiles?.length && <p className="muted">{t.empty}</p>}
+        </div>
+      </Panel>
+      <Panel title={t.lists.frontendServices} className="channels-panel"><p className="muted">{t.desc.channels}</p><ChannelServiceTable services={frontendSvcs} t={t} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart}/></Panel>
+    </div>
+  </section>
+}
 
 function PetsPage() {
   const [catalog, setCatalog] = useState(null)

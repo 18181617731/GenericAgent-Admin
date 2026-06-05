@@ -209,7 +209,7 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 	cmd := exec.Command(s.Command[0], s.Command[1:]...)
 	cmd.Dir = m.GARoot
 	hideChildWindow(cmd)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
+	cmd.Env = m.serviceEnv()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return s, err
@@ -244,6 +244,12 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 		m.mu.Unlock()
 	}()
 	return m.withState(s), nil
+}
+
+func (m *Manager) serviceEnv() []string {
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
+	return env
 }
 
 func (m *Manager) readPipe(name string, r io.Reader) {

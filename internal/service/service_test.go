@@ -34,6 +34,44 @@ func TestDiscoverExcludesGoalModeFromGenericReflectList(t *testing.T) {
 	}
 }
 
+func TestDiscoverIncludesChannelFrontendApps(t *testing.T) {
+	root := t.TempDir()
+	frontendsDir := filepath.Join(root, "frontends")
+	if err := os.MkdirAll(frontendsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fsapp.py", "wecomapp.py", "dingtalkapp.py", "notbot.py", "_hiddenapp.py"} {
+		if err := os.WriteFile(filepath.Join(frontendsDir, name), []byte("# test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items := NewManager(root, 100).Discover()
+	seen := map[string]ServiceInfo{}
+	for _, item := range items {
+		seen[item.Name] = item
+	}
+	for _, name := range []string{"fsapp.py", "wecomapp.py", "dingtalkapp.py"} {
+		rel := filepath.ToSlash(filepath.Join("frontends", name))
+		item, ok := seen[rel]
+		if !ok {
+			t.Fatalf("missing channel frontend %s in %#v", rel, items)
+		}
+		if item.Kind != "frontend" {
+			t.Fatalf("%s kind=%s", rel, item.Kind)
+		}
+		if len(item.Command) != 2 || item.Command[1] != rel {
+			t.Fatalf("%s command=%#v", rel, item.Command)
+		}
+	}
+	if _, ok := seen[filepath.ToSlash(filepath.Join("frontends", "notbot.py"))]; ok {
+		t.Fatalf("notbot.py should not be discovered: %#v", items)
+	}
+	if _, ok := seen[filepath.ToSlash(filepath.Join("frontends", "_hiddenapp.py"))]; ok {
+		t.Fatalf("_hiddenapp.py should not be discovered: %#v", items)
+	}
+}
+
 func TestCommandLineMatchesServiceRequiresExactScriptPath(t *testing.T) {
 	root := filepath.Clean(filepath.Join(t.TempDir(), "ga-root"))
 	py := filepath.Join(root, ".venv", "Scripts", "python.exe")
