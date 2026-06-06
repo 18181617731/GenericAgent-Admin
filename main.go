@@ -72,12 +72,17 @@ func main() {
 	if !launch.NoBrowser {
 		go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
 	}
-	if activePet := srv.ActivePetID(); activePet != "" {
-		if err := switchDesktopPet(activePet); err != nil {
-			log.Printf("load active desktop pet %q failed: %v", activePet, err)
+	stopPet := func() {}
+	if cfgStore.Cfg.DesktopPetDisabled {
+		log.Printf("desktop pet disabled by config")
+	} else {
+		if activePet := srv.ActivePetID(); activePet != "" {
+			if err := switchDesktopPet(activePet); err != nil {
+				log.Printf("load active desktop pet %q failed: %v", activePet, err)
+			}
 		}
+		stopPet = startDesktopPet(func() { openBrowser(url + "/chat") })
 	}
-	stopPet := startDesktopPet(func() { openBrowser(url + "/chat") })
 	runTray(url,
 		func() { openBrowser(url) },
 		func() { openBrowser(url + "/chat") },

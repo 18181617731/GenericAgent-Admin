@@ -595,13 +595,18 @@ function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart })
 
 function PetsPage() {
   const [catalog, setCatalog] = useState(null)
+  const [cfg, setCfg] = useState(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const loadPets = async () => {
     try { const d = await api('/api/pets'); setCatalog(d); return d }
     catch (e) { setMsg(`读取形象列表失败：${e.message}`); return null }
   }
-  useEffect(() => { loadPets() }, [])
+  const loadConfig = async () => {
+    try { const d = await api('/api/config'); setCfg(d); return d }
+    catch (e) { setMsg(`读取桌宠启动设置失败：${e.message}`); return null }
+  }
+  useEffect(() => { loadPets(); loadConfig() }, [])
   const switchPet = async (petId) => {
     setBusy(true); setMsg('正在切换桌宠形象…')
     try {
@@ -610,10 +615,20 @@ function PetsPage() {
       setMsg('已切换当前桌面形象')
     } catch(e) { setMsg(`切换失败：${e.message}`) } finally { setBusy(false) }
   }
+  const savePetDisabled = async (disabled) => {
+    if (!cfg) return
+    setBusy(true); setMsg(disabled ? '正在关闭桌宠启动…' : '正在开启桌宠启动…')
+    try {
+      const next = { ...cfg, desktop_pet_disabled: disabled }
+      const saved = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify(next) })
+      setCfg(saved)
+      setMsg(disabled ? '已设置：下次启动不启动桌宠、不创建窗口。当前已运行的桌宠需重启 GA Admin 后生效。' : '已设置：下次启动会创建并显示桌宠。')
+    } catch(e) { setMsg(`保存桌宠启动设置失败：${e.message}`) } finally { setBusy(false) }
+  }
   const pets = catalog?.pets || []
   const active = catalog?.active_pet_id
   return <section className="pets-page">
-    <Panel title="桌宠形象库" className="pet-manager-card"><div className="pet-manager-head"><div><p className="muted">管理 GA Admin 内置人物/宠物形象。点击“设为当前”会立即切换 Windows 桌面宠物，并把 active pet 写入 pets.local.json。</p>{catalog?.description && <small>{catalog.description}</small>}</div><button onClick={loadPets} disabled={busy}><RefreshCw size={15}/>刷新</button></div>{msg && <p className="muted">{msg}</p>}<div className="pet-grid">{pets.length ? pets.map(p => <article key={p.id} className={`pet-card ${active === p.id ? 'active' : ''}`}><div className="pet-preview"><img src={p.spritesheet || p.manifest} alt={p.name || p.id}/></div><div className="pet-card-body"><div className="pet-title"><b>{p.name || p.id}</b>{active === p.id && <span className="badge ok">当前</span>}</div><p>{p.description || 'GA Admin desktop pet asset'}</p><small>{p.id} · {p.frame_width || 192}×{p.frame_height || 208} · {p.columns || 8}×{p.rows || 9}</small><button disabled={busy || active === p.id} onClick={() => switchPet(p.id)}>{active === p.id ? '已启用' : '设为当前'}</button></div></article>) : <p className="muted">暂无宠物资产。请先生成并写入 web/public/ga-admin-pets/pets.json。</p>}</div></Panel>
+    <Panel title="桌宠形象库" className="pet-manager-card"><div className="pet-manager-head"><div><p className="muted">管理 GA Admin 内置人物/宠物形象。点击“设为当前”会立即切换 Windows 桌面宠物，并把 active pet 写入 pets.local.json。</p>{catalog?.description && <small>{catalog.description}</small>}</div><button onClick={() => { loadPets(); loadConfig() }} disabled={busy}><RefreshCw size={15}/>刷新</button></div><div className="pet-startup-setting"><label><input type="checkbox" checked={!!cfg?.desktop_pet_disabled} disabled={busy || !cfg} onChange={e => savePetDisabled(e.target.checked)}/> 关闭桌宠启动</label><small>开启后下次启动 GA Admin 不创建桌宠窗口；关了就是关了。</small></div>{msg && <p className="muted">{msg}</p>}<div className="pet-grid">{pets.length ? pets.map(p => <article key={p.id} className={`pet-card ${active === p.id ? 'active' : ''}`}><div className="pet-preview"><img src={p.spritesheet || p.manifest} alt={p.name || p.id}/></div><div className="pet-card-body"><div className="pet-title"><b>{p.name || p.id}</b>{active === p.id && <span className="badge ok">当前</span>}</div><p>{p.description || 'GA Admin desktop pet asset'}</p><small>{p.id} · {p.frame_width || 192}×{p.frame_height || 208} · {p.columns || 8}×{p.rows || 9}</small><button disabled={busy || active === p.id} onClick={() => switchPet(p.id)}>{active === p.id ? '已启用' : '设为当前'}</button></div></article>) : <p className="muted">暂无宠物资产。请先生成并写入 web/public/ga-admin-pets/pets.json。</p>}</div></Panel>
     <HatchPetSettings />
   </section>
 }

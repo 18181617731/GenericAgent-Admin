@@ -30,7 +30,7 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	if err := os.WriteFile(py, []byte("stub"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "custom", HTTPProxy: "http://127.0.0.1:7890"}
+	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "custom", HTTPProxy: "http://127.0.0.1:7890", DesktopPetDisabled: true}
 	body, _ := json.Marshal(payload)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
@@ -45,6 +45,9 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	}
 	if got.ChatDataDir == "" || !strings.Contains(got.ChatDataDir, "GenericAgent-Admin") {
 		t.Fatalf("chat_data_dir default not applied: %q", got.ChatDataDir)
+	}
+	if !got.DesktopPetDisabled {
+		t.Fatalf("desktop_pet_disabled was not preserved")
 	}
 }
 
