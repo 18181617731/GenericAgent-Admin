@@ -11,6 +11,10 @@ on:
         required: false
         default: 'main'
 
+# Required for GITHUB_TOKEN to push to the fork
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -55,7 +59,6 @@ jobs:
           fi
 
       - name: Push changes to fork
-        if: github.event_name == 'workflow_dispatch'
         run: |
           UPSTREAM_BRANCH=${{ github.event.inputs.upstream_branch || 'main' }}
           git push --force origin "$UPSTREAM_BRANCH"
