@@ -4,3 +4,4 @@
 config.local.json
 model_profiles.json
 web/node_modules/
+.gitnexus

@@ -1,0 +1,62 @@
+name: Sync Fork
+
+on:
+  schedule:
+    # Run at 03:00 every day
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream branch to sync'
+        required: false
+        default: 'main'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/Fwind43/GenericAgent-Admin.git
+          git remote -v
+
+      - name: Fetch upstream
+        run: |
+          UPSTREAM_BRANCH=${{ github.event.inputs.upstream_branch || 'main' }}
+          echo "Fetching upstream/$UPSTREAM_BRANCH"
+          git fetch upstream "$UPSTREAM_BRANCH"
+
+      - name: Sync fork with upstream
+        run: |
+          UPSTREAM_BRANCH=${{ github.event.inputs.upstream_branch || 'main' }}
+          CURRENT_BRANCH=$(git branch --show-current)
+          echo "Current branch: $CURRENT_BRANCH"
+          
+          # Check if there are upstream changes
+          BEHIND=$(git rev-list --count HEAD..upstream/$UPSTREAM_BRANCH) || true
+          echo "Commits behind upstream/$UPSTREAM_BRANCH: $BEHIND"
+          
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "Syncing fork with upstream changes..."
+            git fetch upstream "$UPSTREAM_BRANCH"
+            # Rebase fork branch onto upstream
+            git rebase upstream/$UPSTREAM_BRANCH
+            echo "Sync completed successfully"
+          else
+            echo "Fork is already up-to-date with upstream"
+          fi
+
+      - name: Push changes to fork
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          UPSTREAM_BRANCH=${{ github.event.inputs.upstream_branch || 'main' }}
+          git push --force origin "$UPSTREAM_BRANCH"
+          echo "Pushed updates to fork"
