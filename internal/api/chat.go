@@ -51,6 +51,10 @@ const (
 	// above maxChatUploadBytesTotal. The decoded raw size is still capped by
 	// saveChatUploads, so this only governs the transport payload size.
 	maxChatPostBodyBytes = 64 << 20
+	// Worker stdout is NDJSON, but a single final/error event can contain a large
+	// assistant answer. bufio.Scanner hard-limits tokens unless configured and
+	// drops data above that limit, so runChatWorker uses readChatWorkerLine instead.
+	maxChatWorkerLineBytes = 128 << 20
 )
 
 type chatUpload struct{ Name, Type, DataURL string }
@@ -95,16 +99,25 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		s.endChatRun(sid)
 		return
 	}
-	scanner := bufio.NewScanner(worker.Stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
 	var final chatMessage
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
+	var readErr error
+	for {
+		line, err := readChatWorkerLine(reader)
+		if len(bytes.TrimSpace(line)) == 0 {
+			if err != nil {
+				readErr = err
+				break
+			}
 			continue
 		}
+		line = bytes.TrimSpace(line)
 		var ev map[string]interface{}
 		if json.Unmarshal(line, &ev) != nil {
+			if err != nil {
+				readErr = err
+				break
+			}
 			continue
 		}
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
@@ -114,6 +127,10 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			break
 		}
 		s.publishChatLine(sid, line)
+		if err != nil {
+			readErr = err
+			break
+		}
 	}
 	if final.ID == "" {
 		partial := s.chatRunPartialContent(sid)
@@ -127,8 +144,8 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
-			err := scanner.Err()
-			if err == nil {
+			err := readErr
+			if err == nil || err == io.EOF {
 				err = fmt.Errorf("worker exited before done")
 			}
 			s.dropChatWorker(sid, worker)
@@ -728,6 +745,21 @@ func writeChatFileAtomic(path string, data []byte, perm os.FileMode) (err error)
 	}
 	return os.Rename(tmpName, path)
 }
+func readChatWorkerLine(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > maxChatWorkerLineBytes {
+			return line, fmt.Errorf("chat worker line too large: %d > %d bytes", len(line), maxChatWorkerLineBytes)
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return line, err
+	}
+}
+
 func updateChatTitle(cs *chatSession) {
 	if cs.Title != "" && cs.Title != "新会话" {
 		return
@@ -782,11 +814,21 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 		if err := writeChatFileAtomic(target, raw, 0644); err != nil {
 			return nil, nil, err
 		}
-		meta := map[string]interface{}{"path": target, "name": name, "mime": f.Type, "url": "/api/chat/file/" + name}
+		mime := strings.TrimSpace(f.Type)
+		meta := map[string]interface{}{"path": target, "name": name, "mime": mime, "url": "/api/chat/file/" + name}
 		saved = append(saved, meta)
-		refs = append(refs, "[FILE:"+target+"]")
+		refs = append(refs, chatUploadPromptRef(target, name, mime))
 	}
 	return saved, refs, nil
+}
+
+func chatUploadPromptRef(path, name, mime string) string {
+	lowerMime := strings.ToLower(strings.TrimSpace(mime))
+	lowerName := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lowerMime, "image/") || strings.HasSuffix(lowerName, ".png") || strings.HasSuffix(lowerName, ".jpg") || strings.HasSuffix(lowerName, ".jpeg") || strings.HasSuffix(lowerName, ".gif") || strings.HasSuffix(lowerName, ".webp") || strings.HasSuffix(lowerName, ".bmp") {
+		return "[image:" + path + "]"
+	}
+	return "[FILE:" + path + "]"
 }
 
 func sanitizeChatUploadName(name string) string {

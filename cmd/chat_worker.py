@@ -59,12 +59,35 @@ def _inject_ga_venv(root: Path):
 
 _force_utf8_stdio()
 # stdout is the Go<->worker NDJSON protocol channel.  GA core/tools may
-# print diagnostics while executing (including browser helpers); redirect those
-# ordinary prints to stderr so they cannot interleave with protocol events.
-_PROTOCOL_STDOUT = sys.stdout
+# print diagnostics while executing (including browser helpers).  Keep a
+# private duplicate of the original stdout for protocol events, then point fd 1
+# itself at stderr so Python prints, os.write(1, ...), C extensions, and child
+# processes cannot interleave ordinary output with protocol JSON.
 _PROTOCOL_STDOUT_LOCK = threading.Lock()
-if sys.stderr is not None:
+
+
+def _isolate_protocol_stdout():
+    protocol = sys.stdout
+    if sys.stderr is None:
+        return protocol
+    try:
+        stdout_fd = sys.stdout.fileno()
+        stderr_fd = sys.stderr.fileno()
+        protocol_fd = os.dup(stdout_fd)
+        try:
+            os.set_inheritable(protocol_fd, False)
+        except Exception:
+            pass
+        encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+        protocol = os.fdopen(protocol_fd, 'w', encoding=encoding, errors='replace', buffering=1)
+        os.dup2(stderr_fd, stdout_fd)
+    except Exception:
+        pass
     sys.stdout = sys.stderr
+    return protocol
+
+
+_PROTOCOL_STDOUT = _isolate_protocol_stdout()
 
 
 def emit(ev):

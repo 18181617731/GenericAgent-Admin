@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -148,6 +150,57 @@ func TestSaveChatUploadsRejectsTooLargeTotal(t *testing.T) {
 
 	if _, _, err := saveChatUploads(cfg, files); err == nil || !strings.Contains(err.Error(), "chat uploads too large") {
 		t.Fatalf("saveChatUploads total too large err = %v", err)
+	}
+}
+
+func TestSaveChatUploadsUsesImageRefsForVisionFiles(t *testing.T) {
+	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
+	encoded := base64.StdEncoding.EncodeToString([]byte("fake image bytes"))
+
+	saved, refs, err := saveChatUploads(cfg, []chatUpload{{
+		Name:    "photo.png",
+		Type:    "image/png",
+		DataURL: "data:image/png;base64," + encoded,
+	}})
+	if err != nil {
+		t.Fatalf("saveChatUploads: %v", err)
+	}
+	if len(saved) != 1 || len(refs) != 1 {
+		t.Fatalf("saved=%d refs=%d", len(saved), len(refs))
+	}
+	path, _ := saved[0]["path"].(string)
+	if refs[0] != "[image:"+path+"]" {
+		t.Fatalf("image ref=%q want [image:%s]", refs[0], path)
+	}
+}
+
+func TestSaveChatUploadsKeepsFileRefsForNonImages(t *testing.T) {
+	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
+	encoded := base64.StdEncoding.EncodeToString([]byte("hello"))
+
+	saved, refs, err := saveChatUploads(cfg, []chatUpload{{
+		Name:    "notes.txt",
+		Type:    "text/plain",
+		DataURL: encoded,
+	}})
+	if err != nil {
+		t.Fatalf("saveChatUploads: %v", err)
+	}
+	path, _ := saved[0]["path"].(string)
+	if len(refs) != 1 || refs[0] != "[FILE:"+path+"]" {
+		t.Fatalf("file refs=%#v want [FILE:%s]", refs, path)
+	}
+}
+
+func TestReadChatWorkerLineAcceptsLargeNDJSONLine(t *testing.T) {
+	payload := strings.Repeat("x", 9*1024*1024)
+	input := []byte(`{"type":"delta","delta":"` + payload + `"}` + "\n")
+	line, err := readChatWorkerLine(bufio.NewReaderSize(bytes.NewReader(input), 64*1024))
+	if err != nil {
+		t.Fatalf("readChatWorkerLine: %v", err)
+	}
+	if string(line) != string(input) {
+		t.Fatalf("line length=%d want %d", len(line), len(input))
 	}
 }
 
