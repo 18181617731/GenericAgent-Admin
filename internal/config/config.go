@@ -27,8 +27,8 @@ type AppConfig struct {
 }
 
 func Validate(cfg AppConfig) error {
-	if cfg.Port < 0 {
-		return fmt.Errorf("port must be positive")
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return fmt.Errorf("port must be between 0 and 65535")
 	}
 	if cfg.LogTailLines < 0 {
 		return fmt.Errorf("log_tail_lines must be positive")
@@ -143,6 +143,9 @@ func (s *Store) Load() error {
 	}
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
+	}
+	if err := Validate(cfg); err != nil {
+		return err
 	}
 	s.Cfg = cfg
 	return nil

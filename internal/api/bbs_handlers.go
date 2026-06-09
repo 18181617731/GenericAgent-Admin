@@ -14,12 +14,23 @@ import (
 	"time"
 )
 
-const maxBBSProxyBodyBytes = 1 << 20
+const (
+	maxBBSProxyBodyBytes     = 1 << 20
+	maxBBSStatusBodyBytes    = 1 << 20
+	bbsHTTPClientTimeout     = 30 * time.Second
+	bbsResponseHeaderTimeout = 15 * time.Second
+)
 
 var (
-	bbsProxyHTTPClient  = http.DefaultClient
-	bbsStatusHTTPClient = http.DefaultClient
+	bbsProxyHTTPClient  = newBBSHTTPClient()
+	bbsStatusHTTPClient = newBBSHTTPClient()
 )
+
+func newBBSHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = bbsResponseHeaderTimeout
+	return &http.Client{Timeout: bbsHTTPClientTimeout, Transport: transport}
+}
 
 func (s *Server) bbsStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -66,14 +77,17 @@ func (s *Server) bbsConfigHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"mode": cfg.Mode, "base_url": cfg.BaseURL, "board_key": cfg.BoardKey, "builtin_base_url": s.builtinBBSBaseURL()})
 	case http.MethodPost:
+		if !requireDangerousHeader(w, r) {
+			return
+		}
 		var cfg bbsConfig
 		if err := decode(r, &cfg); err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
-		cfg = normalizeBBSConfig(cfg)
-		if cfg.Mode == "external" && cfg.BaseURL == "" {
-			bad(w, 400, "external base_url required")
+		cfg, err := validateBBSConfig(cfg)
+		if err != nil {
+			bad(w, 400, err.Error())
 			return
 		}
 		if err := s.saveBBSConfig(cfg); err != nil {
@@ -200,13 +214,29 @@ func (s *Server) fetchExternalBBSPosts(ctx context.Context, cfg bbsConfig, limit
 		}
 		return nil, fmt.Errorf("external BBS returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&posts); err != nil {
+	limited := http.MaxBytesReader(nil, resp.Body, maxBBSStatusBodyBytes)
+	dec := json.NewDecoder(limited)
+	if err := dec.Decode(&posts); err != nil {
+		return nil, err
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("external BBS response must contain a single JSON value")
+		}
 		return nil, err
 	}
 	return posts, nil
 }
 
 func (s *Server) bbsPosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	if r.Method == http.MethodPost && !requireDangerousHeader(w, r) {
+		return
+	}
 	if !s.proxyExternalBBS(w, r, "/posts") {
 		s.bbsPostsCore(w, r, true)
 	}
@@ -279,6 +309,10 @@ func (s *Server) bbsPostsCore(w http.ResponseWriter, r *http.Request, admin bool
 }
 
 func (s *Server) bbsPost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	if !s.proxyExternalBBS(w, r, "/post") {
 		s.bbsPostCore(w, r, true)
 	}
@@ -322,6 +356,10 @@ func (s *Server) bbsPostCore(w http.ResponseWriter, r *http.Request, admin bool)
 }
 
 func (s *Server) bbsReply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	if !s.proxyExternalBBS(w, r, "/reply") {
 		s.bbsReplyCore(w, r, true)
 	}
@@ -389,6 +427,10 @@ func (s *Server) bbsReadmeCompat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) bbsReadmeCore(w http.ResponseWriter, r *http.Request, admin bool) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	bbsMu.Lock()
 	st, err := s.loadBBS()
 	bbsMu.Unlock()

@@ -51,6 +51,69 @@ func TestFilesSearchRejectsInvalidLimitQuery(t *testing.T) {
 	}
 }
 
+func TestFilesImageServesSVGWithIsolationHeaders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "x.svg"), []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/files/image?path=x.svg", nil)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
+		t.Fatalf("Content-Type=%q want image/svg+xml", got)
+	}
+	if got := rr.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options=%q want nosniff", got)
+	}
+	if got := rr.Header().Get("Content-Security-Policy"); !strings.Contains(got, "sandbox") || !strings.Contains(got, "default-src 'none'") {
+		t.Fatalf("Content-Security-Policy=%q missing SVG sandbox", got)
+	}
+}
+
+func TestFilesOpenRequiresDangerousConfirm(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("visible"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/files/open", strings.NewReader(`{"path":"sample.txt","mode":"file"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("status=%d want=428 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "X-GA-Confirm") {
+		t.Fatalf("unexpected error body: %s", rr.Body.String())
+	}
+}
+
+func TestFilesOpenRejectsInvalidMode(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("visible"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/files/open", strings.NewReader(`{"path":"sample.txt","mode":"bogus"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "mode") {
+		t.Fatalf("unexpected error body: %s", rr.Body.String())
+	}
+}
+
 func TestFilesEndpointsRejectPathTraversal(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")
@@ -87,7 +150,7 @@ func TestFilesEndpointsRejectPathTraversal(t *testing.T) {
 			}
 			rr := httptest.NewRecorder()
 			req := httptest.NewRequest(tc.method, tc.path, body)
-			if tc.name == "write" {
+			if tc.name == "write" || tc.name == "open absolute" {
 				req.Header.Set("X-GA-Confirm", "dangerous")
 				req.Header.Set("Content-Type", "application/json")
 			}

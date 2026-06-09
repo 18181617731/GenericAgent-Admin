@@ -73,13 +73,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/hatch-pet/status", s.hatchPetStatus)
 	mux.HandleFunc("/api/hatch-pet/export", s.requireDangerousConfirm(s.hatchPetExport))
 	mux.HandleFunc("/api/hatch-pet/install-memory", s.requireDangerousConfirm(s.hatchPetInstallMemory))
-	mux.HandleFunc("/api/hatch-pet/open", s.hatchPetOpen)
+	mux.HandleFunc("/api/hatch-pet/open", s.requireDangerousConfirm(s.hatchPetOpen))
 	mux.HandleFunc("/api/pets", s.petsHandler)
-	mux.HandleFunc("/api/pets/active", s.petsActiveHandler)
+	mux.HandleFunc("/api/pets/active", s.requireDangerousConfirm(s.petsActiveHandler))
 	// Built-in BBS service compatible with GA reflect/agent_team_worker.py
 	mux.HandleFunc("/api/bbs/status", s.bbsStatus)
-	mux.HandleFunc("/api/bbs/config", s.requireDangerousConfirm(s.bbsConfigHandler))
-	mux.HandleFunc("/api/bbs/posts", s.requireDangerousConfirm(s.bbsPosts))
+	mux.HandleFunc("/api/bbs/config", s.bbsConfigHandler)
+	mux.HandleFunc("/api/bbs/posts", s.bbsPosts)
 	mux.HandleFunc("/api/bbs/post", s.bbsPost)
 	mux.HandleFunc("/api/bbs/reply", s.requireDangerousConfirm(s.bbsReply))
 	mux.HandleFunc("/api/bbs/readme", s.bbsReadme)
@@ -92,7 +92,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.filesWrite))
 	mux.HandleFunc("/api/files/tail", s.filesTail)
 	mux.HandleFunc("/api/files/search", s.filesSearch)
-	mux.HandleFunc("/api/files/open", s.filesOpen)
+	mux.HandleFunc("/api/files/open", s.requireDangerousConfirm(s.filesOpen))
 	mux.HandleFunc("/api/files/image", s.filesImage)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
 	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.scheduleTask))
@@ -108,7 +108,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
-	mux.HandleFunc("/api/setup/validate", s.setupValidate)
+	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
 	mux.HandleFunc("/api/autostart/status", s.autostartStatus)
 	mux.HandleFunc("/api/autostart/enable", s.requireDangerousConfirm(s.autostartEnable))
@@ -126,12 +126,23 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
 	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
 	mux.HandleFunc("/api/channels/test", s.channelTest)
-	mux.HandleFunc("/api/channels", s.channels)
+	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
 	mux.HandleFunc("/api/chat/", s.chatHandler)
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
-	return cors(mux)
+	return recoverPanics(cors(mux))
+}
+
+func recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				bad(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func cors(next http.Handler) http.Handler {
@@ -156,7 +167,9 @@ type riskCatalogItem struct {
 
 var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/write", Level: "dangerous", Action: "write_file", Reason: "writes into GA workspace; handler creates backup before overwrite"},
+	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone and changes configured GA root"},
 	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_pull", Reason: "executes git pull --ff-only in GA root"},
 	{Path: "/api/bbs/config", Level: "dangerous", Action: "save_bbs_config", Reason: "changes built-in/external BBS integration settings"},
@@ -169,7 +182,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/services/autostart", Level: "reversible", Action: "toggle_service_autostart", Reason: "changes Admin-Go service autostart list"},
 	{Path: "/api/tmwebdriver/repair", Level: "reversible", Action: "start_tmwebdriver_master", Reason: "starts a persistent TMWebDriver master process on localhost:18766"},
 	{Path: "/api/tmwebdriver/install-deps", Level: "dangerous", Action: "install_tmwebdriver_deps", Reason: "runs pip install with Tsinghua PyPI mirror for TMWebDriver dependencies"},
-	{Path: "/api/git/mirror", Level: "reversible", Action: "configure_git_mirror", Reason: "updates global git insteadOf mirror for github.com URLs"},
+	{Path: "/api/ga/git-mirror", Level: "reversible", Action: "configure_git_mirror", Reason: "updates global git insteadOf mirror for github.com URLs"},
 	{Path: "/api/autostart/enable", Level: "dangerous", Action: "enable_os_autostart", Reason: "writes OS autostart entry"},
 	{Path: "/api/autostart/disable", Level: "reversible", Action: "disable_os_autostart", Reason: "removes OS autostart entry"},
 	{Path: "/api/schedule/task", Level: "dangerous", Action: "edit_schedule_task", Reason: "changes scheduled task JSON"},
@@ -179,10 +192,15 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/goals/start", Level: "dangerous", Action: "start_goal", Reason: "starts autonomous GA goal process"},
 	{Path: "/api/goals/stop", Level: "dangerous", Action: "stop_goal", Reason: "stops autonomous GA goal process by recorded PID"},
 	{Path: "/api/goals/delete", Level: "dangerous", Action: "delete_goal", Reason: "deletes goal state/output files"},
+	{Path: "/api/models", Level: "dangerous", Action: "save_model_draft", Reason: "writes GA Admin model draft profiles, including provider endpoints and credentials when supplied"},
+	{Path: "/api/models/raw", Level: "dangerous", Action: "reveal_model_secrets", Reason: "returns unmasked model provider credentials after explicit dangerous authorization"},
+	{Path: "/api/models/import-mykey", Level: "dangerous", Action: "import_mykey_models", Reason: "can execute mykey import and reveal or persist provider credentials when explicitly authorized"},
 	{Path: "/api/models/export", Level: "dangerous", Action: "export_models", Reason: "writes active GA model configuration"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
 	{Path: "/api/hatch-pet/export", Level: "dangerous", Action: "export_hatch_pet", Reason: "writes embedded hatch-pet toolchain files to the configured GA tools directory"},
 	{Path: "/api/hatch-pet/install-memory", Level: "dangerous", Action: "install_pet_memory_sops", Reason: "writes pet SOPs and updates global_mem_insight.txt under the configured GA memory directory"},
+	{Path: "/api/hatch-pet/open", Level: "reversible", Action: "open_hatch_pet_directory", Reason: "opens the configured hatch-pet tool directory in the desktop shell"},
+	{Path: "/api/pets/active", Level: "reversible", Action: "set_active_pet", Reason: "changes the active desktop pet persisted in GA Admin config"},
 }
 
 func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
@@ -193,9 +211,21 @@ func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"items": riskCatalogItems})
 }
 
+func hasDangerousConfirm(r *http.Request) bool {
+	return r.Header.Get("X-GA-Confirm") == "dangerous"
+}
+
+func requireDangerousHeader(w http.ResponseWriter, r *http.Request) bool {
+	if !hasDangerousConfirm(r) {
+		bad(w, http.StatusPreconditionRequired, "dangerous operation requires X-GA-Confirm: dangerous")
+		return false
+	}
+	return true
+}
+
 func (s *Server) requireDangerousConfirm(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Header.Get("X-GA-Confirm") != "dangerous" {
+		if r.Method != http.MethodGet && !hasDangerousConfirm(r) {
 			bad(w, 428, "dangerous operation requires X-GA-Confirm: dangerous")
 			return
 		}
@@ -204,19 +234,35 @@ func (s *Server) requireDangerousConfirm(next http.HandlerFunc) http.HandlerFunc
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	h := ga.BuildHealth(s.CfgStore.Cfg.GARoot)
 	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Cfg, "services": s.Svc.Summary(), "health": h})
 }
 
 func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	writeJSON(w, ga.BuildInventory(s.CfgStore.Cfg.GARoot))
 }
 
 func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	writeJSON(w, ga.BuildHealth(s.CfgStore.Cfg.GARoot))
 }
 
 func (s *Server) gaControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	writeJSON(w, ga.BuildControlPlane(s.CfgStore.Cfg.GARoot))
 }
 
@@ -303,14 +349,17 @@ func (s *Server) gitMirrorConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	var req gitMirrorRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+		if err := decode(r, &req); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	mirror := strings.TrimSpace(req.Mirror)
 	if mirror == "" {
 		mirror = defaultGitHubMirrorPrefix
 	}
-	if req.Enabled && !strings.HasPrefix(mirror, "https://") && !strings.HasPrefix(mirror, "http://") {
-		bad(w, 400, "mirror must start with http:// or https://")
+	if err := validateGitMirrorPrefix(mirror); err != nil {
+		bad(w, 400, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -334,6 +383,29 @@ func (s *Server) gitMirrorConfig(w http.ResponseWriter, r *http.Request) {
 		resp["error"] = err.Error()
 	}
 	writeJSON(w, resp)
+}
+
+func validateGitMirrorPrefix(mirror string) error {
+	if mirror == "" {
+		return fmt.Errorf("mirror is required")
+	}
+	if strings.ContainsAny(mirror, "\x00\r\n\t") {
+		return fmt.Errorf("mirror must not contain control characters")
+	}
+	u, err := url.Parse(mirror)
+	if err != nil || !u.IsAbs() {
+		return fmt.Errorf("mirror must be an absolute http(s) URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("mirror scheme must be http or https")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("mirror host is required")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("mirror must not include userinfo, query, or fragment")
+	}
+	return nil
 }
 
 func buildGitMirrorArgs(enabled bool, mirror string) []string {
@@ -632,6 +704,10 @@ func chromeSecurePreferencePaths() []string {
 }
 
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	if s.Static == nil {
 		bad(w, 404, "web dist not embedded")
 		return

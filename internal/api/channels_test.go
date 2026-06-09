@@ -3,8 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +42,40 @@ func TestChannelsGetReadsMyKeyAndMasksSecrets(t *testing.T) {
 	secret := findChannelField(t, resp.Profiles, "fs_app_secret")
 	if secret.Value != "" || !secret.HasValue {
 		t.Fatalf("secret should be masked but marked present; value=%q has=%v", secret.Value, secret.HasValue)
+	}
+}
+
+func TestChannelsGetIgnoresUnsafeGARoot(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "mykey.py"), []byte(`fs_app_id = "should-not-read"\n`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	h := newGoalTestServer(t, ".").Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/channels status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp channelsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode channels response: %v", err)
+	}
+	if resp.Path != "" || resp.Exists {
+		t.Fatalf("unsafe root should not expose cwd mykey.py; path=%q exists=%v", resp.Path, resp.Exists)
+	}
+	if got := findChannelField(t, resp.Profiles, "fs_app_id"); got.Value != "" || got.HasValue {
+		t.Fatalf("unsafe root read cwd mykey.py: value=%q has=%v", got.Value, got.HasValue)
 	}
 }
 
@@ -104,6 +140,27 @@ func TestChannelsPutBlankSecretPreservesExistingMyKeyValue(t *testing.T) {
 // by docs/SETUP_FEISHU.md: multi-line allowlists plus inline `#` comments. The old
 // single-line parser corrupted scalar values and left dangling list lines that
 // turned mykey.py into invalid Python on save.
+func TestChannelsRejectUnsafeGARootOnSave(t *testing.T) {
+	for _, root := range []string{"", ".", string(filepath.Separator)} {
+		t.Run(root, func(t *testing.T) {
+			h := newGoalTestServer(t, root).Routes()
+			req := httptest.NewRequest(http.MethodPut, "/api/channels", strings.NewReader(`{"profiles":[]}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-GA-Confirm", "dangerous")
+			rec := httptest.NewRecorder()
+
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("root=%q code=%d body=%s", root, rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "mykey.py") {
+				t.Fatalf("unsafe root leaked writable target: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestChannelsDocStyleMyKeyRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	text := strings.Join([]string{
@@ -190,6 +247,56 @@ func TestChannelsDocStyleMyKeyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestChannelsPutRejectsMalformedBoolean(t *testing.T) {
+	root := t.TempDir()
+	writeTestChannelsMyKey(t, root, "old-secret")
+	h := newGoalTestServer(t, root).Routes()
+	body := []byte(`{"profiles":[{"id":"feishu","fields":[
+		{"name":"fs_app_id","value":"cli-new"},
+		{"name":"fs_app_secret","value":""},
+		{"name":"fs_public_access","value":"definitely"}
+	]}]}`)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channels", bytes.NewReader(body))
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT malformed bool status=%d want=%d body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "fs_public_access") || !strings.Contains(rr.Body.String(), "invalid boolean") {
+		t.Fatalf("response should name malformed boolean field: %s", rr.Body.String())
+	}
+
+	updated, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), `fs_app_id = "cli-new"`) || strings.Contains(string(updated), "definitely") {
+		t.Fatalf("invalid boolean write partially mutated mykey.py:\n%s", string(updated))
+	}
+}
+
+func TestChannelTestEndpointRejectsMalformedBoolean(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	body := []byte(`{"profile_id":"feishu","fields":[
+		{"name":"fs_app_id","value":"cli"},
+		{"name":"fs_app_secret","value":"secret"},
+		{"name":"fs_public_access","value":"maybe"}
+	]}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channels/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want=%d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "fs_public_access") || !strings.Contains(rec.Body.String(), "invalid boolean") {
+		t.Fatalf("response should name malformed boolean field: %s", rec.Body.String())
+	}
+}
+
 func writeTestChannelsMyKey(t *testing.T, root, secret string) {
 	t.Helper()
 	text := strings.Join([]string{
@@ -217,6 +324,34 @@ func findChannelField(t *testing.T, profiles []channelProfile, name string) chan
 	}
 	t.Fatalf("field %s not found", name)
 	return channelField{}
+}
+
+func TestChannelTestRequestJSONRejectsUnsafeUpstreamBodies(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "malformed", body: `{"code":`, want: "invalid channel test JSON response"},
+		{name: "trailing", body: `{"code":0}{"code":1}`, want: "single JSON value"},
+		{name: "oversized", body: strings.Repeat("x", maxChannelTestResponseBytes+1), want: "too large"},
+	}
+	oldClient := channelTestHTTPClient
+	defer func() { channelTestHTTPClient = oldClient }()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer ts.Close()
+			channelTestHTTPClient = ts.Client()
+			_, _, err := channelTestRequestJSON(http.MethodGet, ts.URL, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want substring %q", err, tc.want)
+			}
+		})
+	}
 }
 
 func TestChannelTestEndpointUsesSavedSecret(t *testing.T) {
@@ -260,6 +395,43 @@ func TestChannelTestEndpointUsesSavedSecret(t *testing.T) {
 	}
 	if !called || !resp.OK || !strings.Contains(resp.Message, "飞书") {
 		t.Fatalf("called=%v resp=%+v", called, resp)
+	}
+}
+
+func TestChannelTestMessagesRedactSecrets(t *testing.T) {
+	oldEndpoints := channelTestEndpoints
+	oldClient := channelTestHTTPClient
+	defer func() { channelTestEndpoints = oldEndpoints; channelTestHTTPClient = oldClient }()
+
+	secret := "super-secret-value-12345"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":1,"msg":"upstream echoed super-secret-value-12345"}`))
+	}))
+	defer ts.Close()
+	channelTestEndpoints.Feishu = ts.URL
+	channelTestHTTPClient = ts.Client()
+
+	ok, msg := testFeishuCredentials("cli-id", secret)
+	if ok || strings.Contains(msg, secret) || !strings.Contains(msg, "[REDACTED]") {
+		t.Fatalf("ok=%v msg=%q", ok, msg)
+	}
+}
+
+func TestWeComChannelTestTransportErrorsRedactEscapedSecret(t *testing.T) {
+	oldEndpoints := channelTestEndpoints
+	oldClient := channelTestHTTPClient
+	defer func() { channelTestEndpoints = oldEndpoints; channelTestHTTPClient = oldClient }()
+
+	secret := "wecom secret/with+symbols"
+	channelTestEndpoints.WeCom = "https://wecom.example.test/gettoken"
+	channelTestHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("upstream failed: %s", r.URL.String())
+	})}
+
+	ok, msg := testWeComCredentials("corp-id", secret)
+	if ok || strings.Contains(msg, secret) || strings.Contains(msg, url.QueryEscape(secret)) || !strings.Contains(msg, "[REDACTED]") {
+		t.Fatalf("ok=%v msg=%q", ok, msg)
 	}
 }
 

@@ -86,14 +86,55 @@ func ensureWithinRoot(rootAbs, full string) (string, string, error) {
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 		return "", "", errors.New("path escapes GA root")
 	}
+	if err := ensureRealPathWithinRoot(rootAbs, fullAbs); err != nil {
+		return "", "", err
+	}
 	if relToRoot == "." {
 		relToRoot = ""
 	}
 	return fullAbs, filepath.ToSlash(relToRoot), nil
 }
 
+func ensureRealPathWithinRoot(rootAbs, fullAbs string) error {
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return err
+	}
+	fullReal, err := filepath.EvalSymlinks(fullAbs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	relReal, err := filepath.Rel(rootReal, fullReal)
+	if err != nil {
+		return err
+	}
+	if relReal == ".." || strings.HasPrefix(relReal, ".."+string(filepath.Separator)) {
+		return errors.New("path escapes GA root")
+	}
+	return nil
+}
+
+func ensureWriteParentWithinRoot(root, abs string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(abs)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return err
+	}
+	return ensureRealPathWithinRoot(rootAbs, parent)
+}
+
 func ListSafe(root, rel string) ([]SafeFileEntry, error) {
 	full, clean, err := SafeResolve(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +145,13 @@ func ListSafe(root, rel string) ([]SafeFileEntry, error) {
 	out := []SafeFileEntry{}
 	for _, de := range items {
 		if strings.HasPrefix(de.Name(), ".") || de.Name() == "__pycache__" {
+			continue
+		}
+		if de.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			continue
+		}
+		child := filepath.Join(full, de.Name())
+		if err := ensureRealPathWithinRoot(rootAbs, child); err != nil {
 			continue
 		}
 		info, err := de.Info()
@@ -257,7 +305,7 @@ func WriteSafe(root, rel, content string) (SafeFileDetail, error) {
 	if !utf8.ValidString(content) {
 		return SafeFileDetail{}, errors.New("content is not valid UTF-8")
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+	if err := ensureWriteParentWithinRoot(root, abs); err != nil {
 		return SafeFileDetail{}, err
 	}
 	if err := writeFileAtomic(abs, []byte(content), 0644); err != nil {
@@ -298,6 +346,9 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 		if de.IsDir() {
 			return nil
 		}
+		if err := ensureRealPathWithinRoot(rootAbs, p); err != nil {
+			return nil
+		}
 		info, err := de.Info()
 		if err != nil {
 			return err
@@ -309,27 +360,31 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 		if err != nil {
 			return err
 		}
-		s := bufio.NewScanner(f)
-		s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		reader := bufio.NewReader(f)
 		lineNo := 0
-		for s.Scan() {
-			lineNo++
-			line := s.Text()
-			if strings.Contains(strings.ToLower(line), lowerQ) {
-				rel, _ := filepath.Rel(rootAbs, p)
-				preview := strings.TrimSpace(line)
-				if len([]rune(preview)) > 240 {
-					preview = string([]rune(preview)[:240]) + "…"
-				}
-				hits = append(hits, FileSearchHit{Path: filepath.ToSlash(rel), Line: lineNo, Preview: preview})
-				if len(hits) >= maxHits {
-					break
+		for {
+			line, err := reader.ReadString('\n')
+			if len(line) > 0 {
+				lineNo++
+				if len(line) <= 64*1024 && strings.Contains(strings.ToLower(line), lowerQ) {
+					rel, _ := filepath.Rel(rootAbs, p)
+					preview := strings.TrimSpace(line)
+					if len([]rune(preview)) > 240 {
+						preview = string([]rune(preview)[:240]) + "..."
+					}
+					hits = append(hits, FileSearchHit{Path: filepath.ToSlash(rel), Line: lineNo, Preview: preview})
+					if len(hits) >= maxHits {
+						break
+					}
 				}
 			}
-		}
-		if scanErr := s.Err(); scanErr != nil {
-			_ = f.Close()
-			return scanErr
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				_ = f.Close()
+				return err
+			}
 		}
 		return f.Close()
 	})

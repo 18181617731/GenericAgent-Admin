@@ -2,12 +2,16 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 type bbsPost struct {
@@ -48,16 +52,66 @@ func (s *Server) bbsPath() string       { return filepath.Join(s.bbsDir(), "bbs.
 func (s *Server) bbsConfigPath() string { return filepath.Join(s.bbsDir(), "bbs_config.json") }
 
 func normalizeBBSConfig(c bbsConfig) bbsConfig {
+	cfg, err := validateBBSConfig(c)
+	if err != nil {
+		return bbsConfig{Mode: "builtin", BoardKey: "ga-team"}
+	}
+	return cfg
+}
+
+func validateBBSConfig(c bbsConfig) (bbsConfig, error) {
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
-	if c.Mode != "external" {
+	if c.Mode == "" {
 		c.Mode = "builtin"
+	}
+	if c.Mode != "builtin" && c.Mode != "external" {
+		return c, fmt.Errorf("invalid bbs mode %q", c.Mode)
 	}
 	c.BaseURL = strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
 	c.BoardKey = strings.TrimSpace(c.BoardKey)
 	if c.BoardKey == "" {
 		c.BoardKey = "ga-team"
 	}
-	return c
+	if strings.ContainsFunc(c.BoardKey, unicode.IsSpace) {
+		return c, errors.New("board_key must not contain whitespace")
+	}
+	if c.Mode == "external" {
+		if c.BaseURL == "" {
+			return c, errors.New("base_url required for external bbs")
+		}
+		u, err := url.Parse(c.BaseURL)
+		if err != nil || u.Scheme == "" {
+			return c, errors.New("base_url must be an absolute http(s) URL")
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return c, errors.New("base_url scheme must be http or https")
+		}
+		if u.Host == "" {
+			return c, errors.New("base_url must be an absolute http(s) URL")
+		}
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return c, errors.New("base_url must not include userinfo, query, or fragment")
+		}
+		if isLocalOrPrivateBBSHost(u.Hostname()) {
+			return c, errors.New("base_url host must not be localhost or a private IP")
+		}
+	} else {
+		c.BaseURL = ""
+	}
+	return c, nil
+}
+
+func isLocalOrPrivateBBSHost(host string) bool {
+	h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast()
 }
 
 func (s *Server) loadBBSConfig() (bbsConfig, error) {

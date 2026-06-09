@@ -77,6 +77,10 @@ func (s *Server) filesImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", mime)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if ext == ".svg" {
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'")
+	}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	http.ServeFile(w, r, p)
 }
@@ -178,6 +182,10 @@ func (s *Server) filesOpen(w http.ResponseWriter, r *http.Request) {
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
 	if mode == "" {
 		mode = "file"
+	}
+	if mode != "file" && mode != "folder" {
+		bad(w, 400, "mode must be file or folder")
+		return
 	}
 	if err := openLocalPath(p, info.IsDir(), mode); err != nil {
 		bad(w, 500, err.Error())

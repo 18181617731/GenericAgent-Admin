@@ -776,7 +776,7 @@ func updateChatTitle(cs *chatSession) {
 	}
 }
 
-func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]interface{}, []string, error) {
+func saveChatUploads(cfg config.AppConfig, files []chatUpload) (saved []map[string]interface{}, refs []string, err error) {
 	if len(files) == 0 {
 		return nil, nil, nil
 	}
@@ -789,8 +789,15 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 	if err := os.MkdirAll(chatUploadDir(cfg), 0755); err != nil {
 		return nil, nil, err
 	}
-	var saved []map[string]interface{}
-	var refs []string
+	created := []string{}
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, path := range created {
+			_ = os.Remove(path)
+		}
+	}()
 	totalBytes := 0
 	for _, f := range files {
 		name := sanitizeChatUploadName(f.Name)
@@ -798,9 +805,9 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 		if i := strings.Index(data, ","); i >= 0 {
 			data = data[i+1:]
 		}
-		raw, err := base64.StdEncoding.DecodeString(data)
-		if err != nil {
-			return nil, nil, fmt.Errorf("decode %s: %w", name, err)
+		raw, decodeErr := base64.StdEncoding.DecodeString(data)
+		if decodeErr != nil {
+			return nil, nil, fmt.Errorf("decode %s: %w", name, decodeErr)
 		}
 		if len(raw) > maxChatUploadBytesPerFile {
 			return nil, nil, fmt.Errorf("upload %s too large: %d > %d bytes", name, len(raw), maxChatUploadBytesPerFile)
@@ -811,9 +818,10 @@ func saveChatUploads(cfg config.AppConfig, files []chatUpload) ([]map[string]int
 		}
 		name = fmt.Sprintf("%d_%s", time.Now().UnixNano(), name)
 		target := filepath.Join(chatUploadDir(cfg), name)
-		if err := writeChatFileAtomic(target, raw, 0644); err != nil {
-			return nil, nil, err
+		if writeErr := writeChatFileAtomic(target, raw, 0644); writeErr != nil {
+			return nil, nil, writeErr
 		}
+		created = append(created, target)
 		mime := strings.TrimSpace(f.Type)
 		meta := map[string]interface{}{"path": target, "name": name, "mime": mime, "url": "/api/chat/file/" + name}
 		saved = append(saved, meta)

@@ -79,6 +79,8 @@ type Health struct {
 	OK        bool              `json:"ok"`
 	Root      string            `json:"root"`
 	Checks    map[string]string `json:"checks"`
+	Errors    []string          `json:"errors,omitempty"`
+	Warnings  []string          `json:"warnings,omitempty"`
 	Inventory Inventory         `json:"inventory"`
 	Generated time.Time         `json:"generated_at"`
 }
@@ -103,50 +105,62 @@ func BuildInventory(root string) Inventory {
 
 func BuildHealth(root string) Health {
 	root = strings.TrimSpace(root)
+	generated := time.Now()
 	if root == "" {
 		checks := map[string]string{"ga_root": "empty"}
-		return Health{OK: false, Root: root, Checks: checks, Inventory: Inventory{Root: root, Generated: time.Now()}, Generated: time.Now()}
+		return Health{OK: false, Root: root, Checks: checks, Errors: []string{"ga_root: empty"}, Inventory: Inventory{Root: root, Generated: generated}, Generated: generated}
 	}
 	inv := BuildInventory(root)
 	checks := map[string]string{}
-	ok := true
+	errors := []string{}
+	warnings := []string{}
+	set := func(name, state string) {
+		checks[name] = state
+		switch state {
+		case "ok", "optional_missing":
+			return
+		case "empty":
+			warnings = append(warnings, name+": "+state)
+		default:
+			errors = append(errors, name+": "+state)
+		}
+	}
 	for _, f := range inv.CoreFiles {
 		switch f.Path {
 		case "agentmain.py", "llmcore.py":
 			if f.Exists {
-				checks[f.Path] = "ok"
+				set(f.Path, "ok")
 			} else {
-				checks[f.Path] = "missing"
-				ok = false
+				set(f.Path, "missing")
 			}
 		case "mykey.py":
 			// Official GA source does not ship private credentials. Treat mykey.py as
 			// an optional runtime model configuration file so first-time installs can
 			// open the admin UI and create/export it from the Models page.
 			if f.Exists {
-				checks[f.Path] = "ok"
+				set(f.Path, "ok")
 			} else {
-				checks[f.Path] = "optional_missing"
+				set(f.Path, "optional_missing")
 			}
 		}
 	}
 	if len(inv.Tools) > 0 && inv.Tools[0].Exists {
-		checks["tools_schema"] = "ok"
+		set("tools_schema", "ok")
 	} else {
-		checks["tools_schema"] = "missing"
+		set("tools_schema", "missing")
 	}
 	if len(inv.Reflect) > 0 {
-		checks["reflect"] = "ok"
+		set("reflect", "ok")
 	} else {
-		checks["reflect"] = "empty"
+		set("reflect", "empty")
 	}
 	if len(inv.Memory.SOPs) > 0 {
-		checks["memory_sops"] = "ok"
+		set("memory_sops", "ok")
 	} else {
-		checks["memory_sops"] = "empty"
+		set("memory_sops", "empty")
 	}
-	checks["schedule_tasks"] = "ok"
-	return Health{OK: ok, Root: root, Checks: checks, Inventory: inv, Generated: time.Now()}
+	set("schedule_tasks", "ok")
+	return Health{OK: len(errors) == 0, Root: root, Checks: checks, Errors: errors, Warnings: warnings, Inventory: inv, Generated: generated}
 }
 
 func buildMemory(root string) MemorySummary {
@@ -275,12 +289,14 @@ func validRepeat(rep string) bool {
 		if mid == "" {
 			return false
 		}
+		n := 0
 		for _, r := range mid {
 			if r < '0' || r > '9' {
 				return false
 			}
+			n = n*10 + int(r-'0')
 		}
-		return true
+		return n > 0
 	}
 	return false
 }
@@ -367,14 +383,18 @@ func ReadScheduleArtifact(root, rel string, maxBytes int64) (string, Entry, erro
 }
 
 func SchedulePath(root, id string) (string, string, error) {
-	base := filepath.Base(strings.TrimSpace(id))
-	if base == "." || base == "" {
+	raw := strings.TrimSpace(id)
+	if raw == "." || raw == "" {
 		return "", "", errors.New("empty task id")
 	}
+	if strings.Contains(raw, "..") || strings.ContainsAny(raw, `/\`) || filepath.IsAbs(raw) {
+		return "", "", errors.New("invalid task id")
+	}
+	base := raw
 	if !strings.HasSuffix(strings.ToLower(base), ".json") {
 		base += ".json"
 	}
-	if strings.Contains(base, "..") || strings.ContainsAny(base, `/\`) {
+	if base == ".json" || strings.Contains(base, "..") || strings.ContainsAny(base, `/\`) || filepath.Base(base) != base {
 		return "", "", errors.New("invalid task id")
 	}
 	return filepath.Join(root, "sche_tasks", base), strings.TrimSuffix(base, filepath.Ext(base)), nil

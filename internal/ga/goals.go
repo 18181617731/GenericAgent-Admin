@@ -261,9 +261,9 @@ func goalStateFiles(root string) ([]string, error) {
 }
 
 func resolveGoalState(root, id string) (string, GoalState, ContractMeta, bool, error) {
-	id = sanitizeGoalID(id)
-	if id == "" {
-		return "", GoalState{}, ContractMeta{}, false, errors.New("id is required")
+	id, err := normalizeGoalLookupID(id)
+	if err != nil {
+		return "", GoalState{}, ContractMeta{}, false, err
 	}
 	candidates := []string{standardGoalStatePath(root, id), filepath.Join(root, "temp", goalStatePrefix+id+".json")}
 	if id == "goal_state" {
@@ -786,6 +786,18 @@ func sanitizeGoalID(id string) string {
 		}
 	}
 	return b.String()
+}
+
+func normalizeGoalLookupID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("id is required")
+	}
+	clean := sanitizeGoalID(id)
+	if clean == "" || clean != id {
+		return "", errors.New("invalid goal id")
+	}
+	return clean, nil
 }
 
 func goalCommandEnv(base []string, statePath string) []string {

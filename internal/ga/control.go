@@ -2,6 +2,7 @@ package ga
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -145,28 +146,70 @@ func buildModelSummary(root string) ModelSummary {
 	return ModelSummary{Configured: configured, Files: files, Hint: hint}
 }
 
+const (
+	maxProjectVersionScanBytes = 512 * 1024
+	maxProjectVersionLineBytes = 64 * 1024
+)
+
 func readProjectVersion(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
+	return readProjectVersionReader(f)
+}
+
+func readProjectVersionReader(r *os.File) string {
+	reader := bufio.NewReaderSize(r, 32*1024)
 	inProject := false
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "[") {
-			inProject = line == "[project]"
-			continue
-		}
-		if inProject && strings.HasPrefix(line, "version") {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) == 2 {
-				return strings.Trim(strings.TrimSpace(parts[1]), "\"")
+	var scanned int64
+	for scanned < maxProjectVersionScanBytes {
+		line, truncated, err := readBoundedProjectLine(reader, &scanned)
+		if len(line) > 0 && !truncated {
+			text := strings.TrimSpace(string(line))
+			if strings.HasPrefix(text, "[") {
+				inProject = text == "[project]"
+			} else if inProject && strings.HasPrefix(text, "version") {
+				parts := strings.SplitN(text, "=", 2)
+				if len(parts) == 2 {
+					return strings.Trim(strings.TrimSpace(parts[1]), "\"")
+				}
 			}
+		}
+		if err != nil {
+			return ""
 		}
 	}
 	return ""
+}
+
+func readBoundedProjectLine(reader *bufio.Reader, scanned *int64) ([]byte, bool, error) {
+	var line []byte
+	truncated := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		*scanned += int64(len(chunk))
+		if !truncated {
+			remaining := maxProjectVersionLineBytes - len(line)
+			if len(chunk) <= remaining {
+				line = append(line, chunk...)
+			} else {
+				line = append(line, chunk[:remaining]...)
+				truncated = true
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if *scanned >= maxProjectVersionScanBytes {
+				return line, true, nil
+			}
+			continue
+		}
+		if err != nil {
+			return line, truncated, err
+		}
+		return line, truncated, nil
+	}
 }
 
 func discoverLogs(root string, limit int) []ReportItem {

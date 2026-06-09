@@ -340,3 +340,24 @@ MM web/src/style.css
 - Added explicit `output_status` JSON assertions to `internal/api/goals_test.go` for full, tail_truncated, empty_log, and missing_log output cases.
 - Verified with `go test ./internal/api ./internal/ga` (pass).
 - Next: search adjacent Goal Mode API/UX hardening beyond output_status.
+
+## 2026-06-09T03:43:00 BBS dangerous header guard coverage
+- Added backend regression coverage for `/api/bbs/config` and `/api/bbs/posts` explicit `X-GA-Confirm` guards.
+- Verified backend/API/full build/frontend gates passed; no live 8787/chat-worker/process actions, no commits/releases/secrets.
+
+## 2026-06-09T04:25:00 Files/Logs config load validation hardening
+- Added config load validation so persisted `config.local.json` is checked with `Validate(cfg)` before replacing in-memory defaults.
+- Added regression coverage for invalid persisted `port`, `log_tail_lines`, and `buffer_lines`, ensuring bad runtime bounds are rejected and do not mutate `Store.Cfg`.
+- Verified `go test ./internal/config -count=1`, `go test ./internal/... -count=1`, `go test ./... -count=1`, `npm.cmd --prefix web test`, and `npm.cmd --prefix web run build` all passed.
+- No live 8787/PID189940/chat_worker interaction; no commit/push/release/delete/secret reads.
+
+## 2026-06-09T04:45:00 Schedule raw/task contract compatibility
+- Fixed Schedule task API/frontend contract mismatch by accepting `raw` or `task` in PUT and returning both fields on GET/PUT.
+- Added raw round-trip regression coverage plus existing nested-id dangerous-route coverage.
+- Verified targeted Schedule tests, full internal Go tests, web tests, web build, and `git diff --check`; no live 8787/PID189940/chat_worker interaction; no commit/push/release/delete/secret reads.
+
+## 2026-06-09T05:15:00 Models import-mykey save/reveal guard hardening
+- Hardened `/api/models/import-mykey` conditional dangerous-header guard so both `reveal=true` and `save=true` require explicit `X-GA-Confirm`; masked preview (`reveal:false, save:false`) remains safe and header-free.
+- Added regression coverage for reveal guard, confirmed reveal response, save-with-masked refusal after confirmation, and dangerous-header route coverage for the conditional models import path.
+- Verified `gofmt`, `go test ./internal/api -run TestModelsImportMyKey|TestDangerous|TestRiskCatalog|TestMutatingRoutes|TestDocumentedSafe -count=1`, and `node --test web/src/lib/dangerous_api_contract.test.mjs` all passed.
+- No live 8787/PID189940/chat_worker interaction; no commit/push/release/delete/secret reads.

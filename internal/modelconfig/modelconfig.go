@@ -45,6 +45,24 @@ var nameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 func NewStore(root string) *Store { return &Store{Root: root} }
 func (s *Store) path() string     { return filepath.Join(s.Root, "model_profiles.json") }
 
+func unsafeGARoot(p string) bool {
+	clean := filepath.Clean(strings.TrimSpace(p))
+	if clean == "" || clean == "." {
+		return true
+	}
+	vol := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, vol)
+	rest = filepath.Clean(rest)
+	return rest == "" || rest == "." || rest == string(filepath.Separator)
+}
+
+func validateExportRoot(gaRoot string) error {
+	if unsafeGARoot(gaRoot) {
+		return fmt.Errorf("ga_root must not be empty or a filesystem root")
+	}
+	return nil
+}
+
 func Defaults() []Profile {
 	b := true
 	mr := 3
@@ -76,15 +94,42 @@ func (s *Store) Load(raw bool) (Draft, error) {
 }
 
 func (s *Store) Save(profiles []Profile) (Draft, error) {
-	if err := Validate(profiles); err != nil {
+	merged, err := s.MergePreservedSecrets(profiles)
+	if err != nil {
 		return Draft{}, err
 	}
-	d := Draft{UpdatedAt: time.Now().Format(time.RFC3339), Profiles: profiles}
+	if err := Validate(merged); err != nil {
+		return Draft{}, err
+	}
+	d := Draft{UpdatedAt: time.Now().Format(time.RFC3339), Profiles: merged}
 	data, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return d, err
 	}
 	return d, writeFileAtomic(s.path(), data, 0600)
+}
+
+func (s *Store) MergePreservedSecrets(profiles []Profile) ([]Profile, error) {
+	old, err := s.Load(true)
+	if err != nil {
+		return nil, err
+	}
+	byVar := map[string]string{}
+	for _, p := range old.Profiles {
+		if p.VarName != "" && p.APIKey != "" && !IsMaskedSecret(p.APIKey) {
+			byVar[p.VarName] = p.APIKey
+		}
+	}
+	merged := make([]Profile, len(profiles))
+	copy(merged, profiles)
+	for i := range merged {
+		if merged[i].APIKey == "" {
+			if oldKey := byVar[merged[i].VarName]; oldKey != "" {
+				merged[i].APIKey = oldKey
+			}
+		}
+	}
+	return merged, nil
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
@@ -354,6 +399,9 @@ func pyVal(v interface{}) (string, error) {
 }
 
 func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string]interface{}, error) {
+	if err := validateExportRoot(gaRoot); err != nil {
+		return nil, err
+	}
 	text, err := Render(profiles)
 	if err != nil {
 		return nil, err

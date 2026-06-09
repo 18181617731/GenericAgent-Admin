@@ -45,6 +45,37 @@ func TestStoreSaveCreatesRootAndLoadsMaskedSecrets(t *testing.T) {
 	}
 }
 
+func TestStoreSavePreservesExistingSecretWhenSubmittedBlank(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	profiles := []Profile{{
+		VarName: "api_config_main",
+		Type:    "openai",
+		Name:    "main",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-real-secret",
+	}}
+	if _, err := store.Save(profiles); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	profiles[0].APIKey = ""
+	profiles[0].Model = "gpt-updated"
+	if _, err := store.Save(profiles); err != nil {
+		t.Fatalf("Save(blank secret) error = %v", err)
+	}
+	raw, err := store.Load(true)
+	if err != nil {
+		t.Fatalf("Load(true) error = %v", err)
+	}
+	if got := raw.Profiles[0].APIKey; got != "sk-real-secret" {
+		t.Fatalf("preserved APIKey = %q, want old secret", got)
+	}
+	if got := raw.Profiles[0].Model; got != "gpt-updated" {
+		t.Fatalf("updated model = %q", got)
+	}
+}
+
 func TestStoreSaveRejectsMaskedSecretWithoutWriting(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)
@@ -134,6 +165,23 @@ func TestExportBacksUpExistingActive(t *testing.T) {
 	}
 	if string(activeData) == string(old) || !strings.Contains(string(activeData), "sk-real-secret") {
 		t.Fatalf("active not replaced with rendered key: %q", string(activeData))
+	}
+}
+
+func TestExportRejectsUnsafeGARoot(t *testing.T) {
+	profiles := []Profile{{
+		VarName: "api_config_main",
+		Type:    "openai",
+		Name:    "main",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-real-secret",
+	}}
+	for _, root := range []string{"", ".", filepath.VolumeName(t.TempDir()) + string(filepath.Separator)} {
+		_, err := Export(root, profiles, false)
+		if err == nil || !strings.Contains(err.Error(), "filesystem root") {
+			t.Fatalf("Export(%q) error = %v, want filesystem root rejection", root, err)
+		}
 	}
 }
 

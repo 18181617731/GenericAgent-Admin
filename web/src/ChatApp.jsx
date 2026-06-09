@@ -95,8 +95,9 @@ function FileAttachment({ path }) {
   const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(clean.split(/[?#]/)[0] || clean)
   const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
   const open = async (mode) => {
+    if (!confirmDanger('chat-file-open', `使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`)) return
     try {
-      await api('/api/files/open', { method:'POST', body: JSON.stringify({ path: clean, mode }) })
+      await api('/api/files/open', { dangerous:true, method:'POST', body: JSON.stringify({ path: clean, mode }) })
     } catch (e) {
       alert(`打开失败：${e?.message || e}`)
     }

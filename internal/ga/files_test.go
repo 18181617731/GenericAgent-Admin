@@ -2,7 +2,9 @@ package ga
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -119,15 +121,121 @@ func TestSearchSafeStopsAfterMaxHitsWithoutError(t *testing.T) {
 	}
 }
 
-func TestSearchSafeReportsScannerError(t *testing.T) {
+func TestSearchSafeSkipsVeryLongLinesWithoutFailing(t *testing.T) {
 	root := t.TempDir()
-	longLine := strings.Repeat("x", int(maxSearchFileBytes))
-	if err := os.WriteFile(filepath.Join(root, "long.txt"), []byte(longLine), 0644); err != nil {
+	longLine := strings.Repeat("x", 128*1024)
+	if err := os.WriteFile(filepath.Join(root, "long.txt"), []byte(longLine+"\nneedle\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := SearchSafe(root, ".", "needle", 10)
-	if err == nil || !strings.Contains(err.Error(), "token too long") {
-		t.Fatalf("SearchSafe scanner err = %v, want token too long", err)
+	hits, err := SearchSafe(root, ".", "needle", 10)
+	if err != nil {
+		t.Fatalf("SearchSafe err = %v, want nil", err)
+	}
+	if len(hits) != 1 || hits[0].Line != 2 {
+		t.Fatalf("hits = %#v, want one hit on line 2", hits)
+	}
+}
+
+func TestListSafeSkipsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked-secret.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	items, err := ListSafe(root, ".")
+	if err != nil {
+		t.Fatalf("ListSafe err = %v, want nil", err)
+	}
+	for _, item := range items {
+		if item.Name == "linked-secret.txt" {
+			t.Fatalf("ListSafe item = %#v, want symlink escape skipped", item)
+		}
+	}
+}
+
+func TestListSafeSkipsWindowsJunctionEscape(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows junction test")
+	}
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(root, "linked-dir")
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", linkDir, outsideDir).CombinedOutput()
+	if err != nil {
+		t.Skipf("junction unavailable: %v out=%s", err, out)
+	}
+
+	items, err := ListSafe(root, ".")
+	if err != nil {
+		t.Fatalf("ListSafe err = %v, want nil", err)
+	}
+	for _, item := range items {
+		if item.Name == "linked-dir" {
+			t.Fatalf("ListSafe item = %#v, want junction escape skipped", item)
+		}
+	}
+}
+
+func TestSearchSafeSkipsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outside, []byte("needle outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked-secret.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	hits, err := SearchSafe(root, ".", "needle", 10)
+	if err != nil {
+		t.Fatalf("SearchSafe err = %v, want nil", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("SearchSafe hits = %#v, want none for symlink escape", hits)
+	}
+}
+
+func TestSafeResolveRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if _, _, err := SafeResolve(root, "link.txt"); err == nil || !strings.Contains(err.Error(), "escapes GA root") {
+		t.Fatalf("SafeResolve symlink escape err = %v, want escapes GA root", err)
+	}
+}
+
+func TestWriteSafeRejectsSymlinkParentEscape(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	linkDir := filepath.Join(root, "linked-dir")
+	if err := os.Symlink(outsideDir, linkDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if _, err := WriteSafe(root, "linked-dir/owned.txt", "owned"); err == nil || !strings.Contains(err.Error(), "escapes GA root") {
+		t.Fatalf("WriteSafe symlink parent err = %v, want escapes GA root", err)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "owned.txt")); !os.IsNotExist(err) {
+		t.Fatalf("outside file should not be created, stat err=%v", err)
 	}
 }

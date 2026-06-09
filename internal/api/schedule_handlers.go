@@ -7,6 +7,10 @@ import (
 )
 
 func (s *Server) scheduleTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	writeJSON(w, ga.BuildSchedule(s.CfgStore.Cfg.GARoot))
 }
 
@@ -18,22 +22,27 @@ func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		writeJSON(w, map[string]interface{}{"id": id, "task": raw})
+		writeJSON(w, map[string]interface{}{"id": id, "task": raw, "raw": raw})
 	case http.MethodPut:
 		var req struct {
 			ID   string         `json:"id"`
 			Task map[string]any `json:"task"`
+			Raw  map[string]any `json:"raw"`
 		}
 		if err := decode(r, &req); err != nil || req.ID == "" {
 			bad(w, 400, "bad request")
 			return
 		}
-		t, err := ga.SaveTask(s.CfgStore.Cfg.GARoot, req.ID, req.Task)
+		taskRaw := req.Task
+		if taskRaw == nil {
+			taskRaw = req.Raw
+		}
+		t, err := ga.SaveTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
 		if err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
-		writeJSON(w, map[string]interface{}{"ok": true, "task": t})
+		writeJSON(w, map[string]interface{}{"ok": true, "task": t, "raw": taskRaw})
 	default:
 		bad(w, 405, "method not allowed")
 	}
@@ -60,12 +69,17 @@ func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID   string         `json:"id"`
 		Task map[string]any `json:"task"`
+		Raw  map[string]any `json:"raw"`
 	}
 	if err := decode(r, &req); err != nil || req.ID == "" {
 		bad(w, 400, "bad request")
 		return
 	}
-	t, err := ga.CreateTask(s.CfgStore.Cfg.GARoot, req.ID, req.Task)
+	taskRaw := req.Task
+	if taskRaw == nil {
+		taskRaw = req.Raw
+	}
+	t, err := ga.CreateTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

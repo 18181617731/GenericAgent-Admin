@@ -319,7 +319,7 @@ func TestGoalOutputCapsMaxBytes(t *testing.T) {
 	}
 }
 
-func TestGoalOutputSanitizesID(t *testing.T) {
+func TestGoalOutputRejectsUnsafeID(t *testing.T) {
 	root := t.TempDir()
 	temp := filepath.Join(root, "temp")
 	if err := os.MkdirAll(temp, 0755); err != nil {
@@ -330,13 +330,17 @@ func TestGoalOutputSanitizesID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(temp, goalStatePrefix+id+".log"), []byte("ok"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := GoalOutput(root, "../safe-id", 100)
-	out, meta := res.Output, res.Goal
+	for _, badID := range []string{"../safe-id", "safe/id", "safe id", "中文"} {
+		if _, err := GoalOutput(root, badID, 100); err == nil || !strings.Contains(err.Error(), "invalid goal id") {
+			t.Fatalf("GoalOutput(%q) err=%v, want invalid goal id", badID, err)
+		}
+	}
+	res, err := GoalOutput(root, id, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "ok" || meta.ID != id {
-		t.Fatalf("unexpected sanitized output/meta: %q %#v", out, meta)
+	if res.Output != "ok" || res.Goal.ID != id {
+		t.Fatalf("valid id output/meta mismatch: %#v", res)
 	}
 }
 
@@ -606,7 +610,7 @@ func TestStopGoalRejectsInvalidIDAndPIDMismatch(t *testing.T) {
 	start := float64(time.Now().Unix())
 	writeStateForTest(t, statePath, GoalState{Objective: "stop", BudgetSeconds: 60, StartTime: start, MaxTurns: 3, Status: "running", PID: 12345})
 
-	if _, err := StopGoal(root, " ../!!! ", 0); err == nil || !strings.Contains(err.Error(), "id is required") {
+	if _, err := StopGoal(root, " ../!!! ", 0); err == nil || !strings.Contains(err.Error(), "invalid goal id") {
 		t.Fatalf("StopGoal invalid id error = %v", err)
 	}
 	if _, err := StopGoal(root, id, 0); err == nil || !strings.Contains(err.Error(), "pid is required") {

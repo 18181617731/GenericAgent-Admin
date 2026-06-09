@@ -28,6 +28,29 @@ var (
 
 var repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
 
+const updateResponseHeaderTimeout = 15 * time.Second
+
+var updateHTTPClient = &http.Client{Transport: updateHTTPTransport()}
+
+func updateHTTPTransport() http.RoundTripper {
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ResponseHeaderTimeout: updateResponseHeaderTimeout,
+		}
+	}
+	clone := tr.Clone()
+	clone.ResponseHeaderTimeout = updateResponseHeaderTimeout
+	return clone
+}
+
+const (
+	maxUpdateMetadataBytes = 2 << 20
+	maxUpdatePackageBytes  = 256 << 20
+	maxUpdateChecksumBytes = 1 << 20
+)
+
 type BuildInfo struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
@@ -358,11 +381,11 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	zipPath := filepath.Join(work, check.Asset.Name)
 	sumPath := filepath.Join(work, check.Checksum.Name)
 	emit("downloading", "正在下载升级包", 25, &check)
-	if err := download(ctx, check.Asset.BrowserDownloadURL, zipPath); err != nil {
+	if err := download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("downloading_checksum", "正在下载校验文件", 55, &check)
-	if err := download(ctx, check.Checksum.BrowserDownloadURL, sumPath); err != nil {
+	if err := download(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("verifying", "正在校验 SHA256", 65, &check)
@@ -442,7 +465,7 @@ func fetchLatest(ctx context.Context) (rel *Release, err error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "ga-admin-updater")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +479,17 @@ func fetchLatest(ctx context.Context) (rel *Release, err error) {
 		return nil, fmt.Errorf("github release check failed: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var out Release
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if resp.ContentLength > maxUpdateMetadataBytes {
+		return nil, fmt.Errorf("github release metadata too large: %d bytes exceeds limit %d", resp.ContentLength, maxUpdateMetadataBytes)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxUpdateMetadataBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxUpdateMetadataBytes {
+		return nil, fmt.Errorf("github release metadata too large: exceeds limit %d", maxUpdateMetadataBytes)
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -507,12 +540,12 @@ func splitVer(s string) [3]int {
 	return out
 }
 
-func download(ctx context.Context, url, dest string) (err error) {
+func download(ctx context.Context, url, dest string, maxBytes int64) (err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -524,7 +557,14 @@ func download(ctx context.Context, url, dest string) (err error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download failed: %s", resp.Status)
 	}
-	if err := writeStreamAtomic(dest, resp.Body, 0600); err != nil {
+	if maxBytes > 0 && resp.ContentLength > maxBytes {
+		return fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
+	}
+	r := resp.Body
+	if maxBytes > 0 {
+		r = http.MaxBytesReader(nil, resp.Body, maxBytes)
+	}
+	if err := writeStreamAtomic(dest, r, 0600); err != nil {
 		return fmt.Errorf("write download file: %w", err)
 	}
 	return nil

@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"genericagent-admin-go/internal/config"
 )
@@ -96,6 +99,66 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 	}
 	if len(cs.Messages) != 2 || cs.Messages[1].Role != "assistant" || !cs.Messages[1].Error || !strings.Contains(cs.Messages[1].Content, "boom") {
 		t.Fatalf("unexpected messages: %#v", cs.Messages)
+	}
+}
+
+func TestChatPostSendsPriorMessagesAsStructuredWorkerHistory(t *testing.T) {
+	var captured map[string]interface{}
+	old := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			_ = json.NewDecoder(stdinR).Decode(&captured)
+			done := chatMessage{ID: "a2", Role: "assistant", Content: "ok", CreatedAt: time.Now().Unix()}
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "done", "message": done})
+		}()
+		return &chatWorker{SID: "session-hist", Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() { startChatWorkerFunc = old }()
+
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	seed := chatSession{
+		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2},
+		Messages: []chatMessage{
+			{ID: "u0", Role: "user", Content: "first question", CreatedAt: 1},
+			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
+		},
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-hist", strings.NewReader(`{"prompt":"second question","client_user_id":"u1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if captured == nil {
+		t.Fatalf("worker request was not captured")
+	}
+	if captured["prompt"] != "second question" {
+		t.Fatalf("prompt=%#v", captured["prompt"])
+	}
+	if captured["llm_no"].(float64) != 2 {
+		t.Fatalf("llm_no=%#v want 2", captured["llm_no"])
+	}
+	history, ok := captured["history"].([]interface{})
+	if !ok || len(history) != 2 {
+		t.Fatalf("history=%#v want two prior messages only", captured["history"])
+	}
+	first := history[0].(map[string]interface{})
+	second := history[1].(map[string]interface{})
+	if first["role"] != "user" || first["content"] != "first question" || second["role"] != "assistant" || second["content"] != "first answer" {
+		t.Fatalf("unexpected structured history: %#v", history)
+	}
+	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") {
+		t.Fatalf("stream unexpectedly replayed prior history: %s", rr.Body.String())
 	}
 }
 
@@ -236,6 +299,30 @@ func TestSaveChatUploadsSanitizesUnsafeNames(t *testing.T) {
 	}
 	if !strings.Contains(saved[1]["name"].(string), "upload.bin") {
 		t.Fatalf("fallback sanitized name = %q", saved[1]["name"])
+	}
+}
+
+func TestSaveChatUploadsCleansPartialFilesOnLaterFailure(t *testing.T) {
+	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
+	encoded := base64.StdEncoding.EncodeToString([]byte("ok"))
+
+	_, _, err := saveChatUploads(cfg, []chatUpload{
+		{Name: "kept.txt", DataURL: encoded},
+		{Name: "bad.txt", DataURL: "not-base64!"},
+	})
+	if err == nil {
+		t.Fatalf("saveChatUploads err=nil, want decode error")
+	}
+	entries, readErr := os.ReadDir(chatUploadDir(cfg))
+	if readErr != nil {
+		t.Fatalf("read upload dir: %v", readErr)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("partial upload files left after failure: %v", names)
 	}
 }
 
@@ -393,5 +480,155 @@ func TestLoadChatSessionReportsMigrationCreateDirError(t *testing.T) {
 	cfg := config.AppConfig{GARoot: gaRoot, ChatDataDir: chatDataPath}
 	if _, err := loadChatSession(cfg, "legacy"); err == nil {
 		t.Fatal("expected migration create directory error")
+	}
+}
+
+func TestChatWriteRoutesRejectTrailingJSONValues(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "rename", path: "/api/chat/session/chat-trailing", body: `{"title":"new"} {"extra":true}`},
+		{name: "settings", path: "/api/chat/settings/chat-trailing", body: `{"llm_no":0} {"extra":true}`},
+		{name: "post", path: "/api/chat/chat-trailing", body: `{"prompt":"hello"} {"extra":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			method := http.MethodPost
+			if tc.name == "rename" {
+				method = http.MethodPatch
+			}
+			req := httptest.NewRequest(method, tc.path, strings.NewReader(tc.body))
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "single JSON value") {
+				t.Fatalf("body missing single JSON value guidance: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestChatWriteRoutesRejectOversizedJSONBody(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	for _, tc := range []struct {
+		name       string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{name: "rename", path: "/api/chat/session/chat-big", body: `{"title":"` + strings.Repeat("x", maxJSONBodyBytes) + `"}`, wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "settings", path: "/api/chat/settings/chat-big", body: `{"provider":"` + strings.Repeat("x", maxJSONBodyBytes) + `"}`, wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "post", path: "/api/chat/chat-big", body: `{"prompt":"` + strings.Repeat("x", int(maxChatPostBodyBytes)) + `"}`, wantStatus: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			method := http.MethodPost
+			if tc.name == "rename" {
+				method = http.MethodPatch
+			}
+			req := httptest.NewRequest(method, tc.path, strings.NewReader(tc.body))
+			h.ServeHTTP(rr, req)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), errRequestBodyTooLarge.Error()) {
+				t.Fatalf("body missing too-large guidance: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestChatSessionPathSanitizesUntrustedIDsInsideChatDataDir(t *testing.T) {
+	chatDataDirRoot := t.TempDir()
+	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: chatDataDirRoot}
+	for _, sid := range []string{"../../outside", `..\\outside`, "semi;colon", "space id", "nested/path"} {
+		t.Run(sid, func(t *testing.T) {
+			got := chatSessionPath(cfg, sid)
+			wantRoot := chatSessionDir(cfg) + string(os.PathSeparator)
+			if !strings.HasPrefix(got, wantRoot) {
+				t.Fatalf("chatSessionPath(%q)=%q outside %q", sid, got, wantRoot)
+			}
+			base := filepath.Base(got)
+			if base == sid+".json" || strings.Contains(base, "..") || strings.ContainsAny(base, `/\\ ;`) {
+				t.Fatalf("chatSessionPath(%q) kept unsafe base %q", sid, base)
+			}
+			if filepath.Dir(got) != chatSessionDir(cfg) {
+				t.Fatalf("chatSessionPath(%q) dir=%q want %q", sid, filepath.Dir(got), chatSessionDir(cfg))
+			}
+		})
+	}
+}
+
+func TestChatWriteRoutesWithUnsafeIDsStayInsideChatDataDir(t *testing.T) {
+	gaRoot := t.TempDir()
+	chatDataDirRoot := t.TempDir()
+	s := newGoalTestServer(t, gaRoot)
+	s.CfgStore.Cfg.ChatDataDir = chatDataDirRoot
+	h := s.Routes()
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "rename", method: http.MethodPatch, path: "/api/chat/session/semi;colon", body: `{"title":"kept inside"}`},
+		{name: "settings", method: http.MethodPost, path: "/api/chat/settings/space%20id", body: `{"llm_no":2}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if _, err := os.Stat(filepath.Join(chatDataDirRoot, "outside.json")); !os.IsNotExist(err) {
+				t.Fatalf("unsafe route wrote outside chat session dir: err=%v", err)
+			}
+			entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("session files=%d want=1 entries=%v", len(entries), entries)
+			}
+			if strings.Contains(entries[0].Name(), "outside") || strings.Contains(entries[0].Name(), "..") {
+				t.Fatalf("unsafe id leaked into file name: %q", entries[0].Name())
+			}
+			_ = os.Remove(filepath.Join(chatSessionDir(s.CfgStore.Cfg), entries[0].Name()))
+		})
+	}
+}
+
+func TestChatFileRouteUsesBaseNameOnly(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	if err := os.MkdirAll(chatUploadDir(s.CfgStore.Cfg), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chatUploadDir(s.CfgStore.Cfg), "safe.txt"), []byte("safe upload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := filepath.Dir(chatUploadDir(s.CfgStore.Cfg))
+	if err := os.WriteFile(filepath.Join(outsideDir, "outside.txt"), []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/chat/file/..%2Foutside.txt", nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code == http.StatusOK || strings.Contains(rr.Body.String(), "outside") {
+		t.Fatalf("chat file traversal succeeded status=%d body=%q", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/chat/file/nested/safe.txt", nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "safe upload" {
+		t.Fatalf("chat file basename lookup status=%d body=%q", rr.Code, rr.Body.String())
 	}
 }

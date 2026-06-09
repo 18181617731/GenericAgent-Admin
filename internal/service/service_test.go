@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +96,52 @@ func TestCommandLineMatchesServiceRequiresExactScriptPath(t *testing.T) {
 	otherSimilarRel := py + " other/reflect/custom_reflect.py"
 	if commandLineMatchesService(otherSimilarRel, root, cmd) {
 		t.Fatalf("relative path with extra prefix must not match")
+	}
+}
+
+func TestDiscoverServiceInfoIncludesWorkDir(t *testing.T) {
+	root := t.TempDir()
+	reflectDir := filepath.Join(root, "reflect")
+	if err := os.MkdirAll(reflectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reflectDir, "custom_reflect.py"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	items := NewManager(root, 100).Discover()
+	if len(items) == 0 {
+		t.Fatal("expected discovered services")
+	}
+	for _, item := range items {
+		if item.WorkDir != root {
+			t.Fatalf("%s WorkDir=%q want %q", item.Name, item.WorkDir, root)
+		}
+	}
+}
+
+func TestStopRejectsUnknownServiceName(t *testing.T) {
+	m := NewManager(t.TempDir(), 100)
+	if err := m.Stop("missing.py"); err == nil {
+		t.Fatal("Stop() unknown service should return an error")
+	}
+}
+
+func TestReadPipeContinuesAfterOversizedLine(t *testing.T) {
+	m := NewManager(t.TempDir(), 10)
+	m.readPipe("svc.py", strings.NewReader(strings.Repeat("x", maxLogLineBytes+64)+"\nafter\n"))
+
+	logs := m.Logs("svc.py", 10)
+	if len(logs) != 2 {
+		t.Fatalf("logs len=%d want=2 logs=%#v", len(logs), logs)
+	}
+	if !strings.HasSuffix(logs[0], " [truncated]") {
+		t.Fatalf("oversized line should be marked truncated, got %.80q", logs[0])
+	}
+	if len(logs[0]) > maxLogLineBytes+len(" [truncated]") {
+		t.Fatalf("truncated line len=%d exceeds cap", len(logs[0]))
+	}
+	if logs[1] != "after" {
+		t.Fatalf("second line lost after oversized line: %#v", logs)
 	}
 }

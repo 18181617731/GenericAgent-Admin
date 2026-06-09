@@ -9,7 +9,7 @@ import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, outpu
 import { ChannelServiceTable, EntryList, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
-import { RouteFallback } from './components/feedback'
+import { ErrorBoundary, RouteFallback } from './components/feedback'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const BBSPage = lazy(() => import('./pages/BBSPage').then(m => ({ default: m.BBSPage })))
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
@@ -59,7 +59,7 @@ export default function App() {
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
   const [cfg, setCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
-  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
+  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
@@ -110,6 +110,7 @@ export default function App() {
     return d
   }
   const repairTMWebDriver = async () => {
+    if (!confirmDanger('tmwebdriver-repair', '启动或修复 TMWebDriver master 进程？')) return
     setBusy(true); setMsg('正在启动 TMWebDriver master…')
     try {
       const d = await api('/api/tmwebdriver/repair', { dangerous:true, method:'POST', body: '{}' })
@@ -124,6 +125,7 @@ export default function App() {
     return { status, cfg, posts }
   }
   const saveBBSConfig = async (next = bbsConfig) => {
+    if (!confirmDanger('bbs-config-save', '保存 BBS 服务配置？会写入 GA Admin 配置文件。')) return
     setBusy(true); setMsg('')
     try {
       const cfg = await api('/api/bbs/config', { dangerous:true, method:'POST', body: JSON.stringify(next) })
@@ -142,6 +144,7 @@ export default function App() {
     } catch(e){ setMsg(`BBS 连接失败：${e.message}`) } finally{ setBusy(false) }
   }
   const createBBSPost = async () => {
+    if (!confirmDanger('bbs-post-create', '发布 BBS 任务帖？')) return
     setBusy(true); setMsg('')
     try {
       await api('/api/bbs/posts', { dangerous:true, method:'POST', body: JSON.stringify({ title:bbsTitle, content:bbsContent, author:bbsAuthor || 'admin', tags:['task'] }) })
@@ -151,63 +154,59 @@ export default function App() {
   }
   const createBBSReply = async (post_id, content) => {
     if (!content?.trim()) return
+    if (!confirmDanger('bbs-reply-create', '发布 BBS 回复？')) return
     setBusy(true); setMsg('')
     try { await api('/api/bbs/reply', { dangerous:true, method:'POST', body: JSON.stringify({ post_id, author:bbsAuthor || 'admin', content }) }); await loadBBS() } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
   }
 
   const load = async () => {
-    setBusy(true); setMsg('')
+    setBooting(true)
     try {
-      const [c, h, auto, ver, vstat] = await Promise.all([api('/api/config'), api('/api/ga/health'), api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })), api('/api/version/info').catch(e => ({ error:e.message })), api('/api/version/status').catch(() => null)])
+      const [c, h, auto, ver, vstat] = await Promise.all([
+        api('/api/config'),
+        api('/api/ga/health'),
+        api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })),
+        api('/api/version/info').catch(e => ({ error:e.message })),
+        api('/api/version/status').catch(() => null)
+      ])
       setCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); if (vstat?.id || vstat?.stage) setVersionStatus(vstat)
       if (!h?.ok) {
         setServices([]); setControl(null); setLogs([]); setFileList([])
         return
       }
-      const [svc, ctrl, goalData] = await Promise.all([api('/api/services'), api('/api/ga/control'), api('/api/goals/list').catch(() => ({ goals: [] }))])
+      const [svc, ctrl] = await Promise.all([api('/api/services'), api('/api/ga/control')])
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
-      const goalItems = goalData.goals || []
-      setServices(serviceList); setControl(ctrl); setGoals(goalItems)
+      setServices(serviceList); setControl(ctrl)
       const first = serviceList[0]?.name; if (!selected && first) setSelected(first)
-      const firstGoal = pickGoalId(goalItems, selectedGoal)
-      if (!selectedGoal && firstGoal) setSelectedGoal(firstGoal)
-      await Promise.all([loadFiles(filePath), loadBBS().catch(e => setBbsStatus({ error:e.message })), refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))])
-    } catch (e) { setMsg(e.message) } finally { setBusy(false) }
+      if (tab === 'goals') {
+        const goalData = await api('/api/goals/list').catch(() => ({ goals: [] }))
+        const goalItems = goalData.goals || []
+        setGoals(goalItems)
+        const firstGoal = pickGoalId(goalItems, selectedGoal)
+        if (!selectedGoal && firstGoal) setSelectedGoal(firstGoal)
+      }
+      if (tab === 'files') loadFiles(filePath).catch(e => setMsg(e.message))
+      if (tab === 'bbs') loadBBS().catch(e => setBbsStatus({ error:e.message }))
+      if (tab === 'setup') refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
+    } catch (e) { setMsg(e.message) } finally { setBooting(false) }
   }
   useEffect(() => { load() }, [])
   useEffect(() => {
-    const onRouteChange = () => {
-      const route = parseRoute()
-      setTab(route.tab)
-      setTaskSubTab(route.taskSubTab)
-    }
-    window.addEventListener('hashchange', onRouteChange)
-    window.addEventListener('popstate', onRouteChange)
-    return () => {
-      window.removeEventListener('hashchange', onRouteChange)
-      window.removeEventListener('popstate', onRouteChange)
-    }
-  }, [])
-  useEffect(() => {
-    const next = buildRoute(tab, taskSubTab)
-    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
-    if (current !== next) window.history.replaceState(null, '', next)
-  }, [tab, taskSubTab])
-  useEffect(() => { localStorage.setItem('ga-admin-lang', lang) }, [lang])
-  useEffect(() => { localStorage.setItem('ga-admin-goal-output-bytes', String(goalOutputBytes)) }, [goalOutputBytes])
-  useEffect(() => { localStorage.setItem('ga-admin-goal-auto-refresh', goalAutoRefresh ? 'true' : 'false') }, [goalAutoRefresh])
-  useEffect(() => { if (selected) api(`/api/logs/${encodeURIComponent(selected)}`).then(d => setLogs(d.lines || [])).catch(e => setMsg(e.message)) }, [selected])
-
-  const toggleAutostart = async () => { setBusy(true); setMsg(''); try { const next = !autostart?.enabled; const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { dangerous:true, method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+    if (tab === 'goals' && health?.ok) loadGoals().catch(e => setMsg(e.message))
+    if (tab === 'files' && health?.ok && !fileList.length) loadFiles(filePath).catch(e => setMsg(e.message))
+    if (tab === 'bbs' && health?.ok && !bbsStatus) loadBBS().catch(e => setBbsStatus({ error:e.message }))
+    if (tab === 'setup' && health?.ok && !tmwdStatus) refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
+  }, [tab, health?.ok])
+  const toggleAutostart = async () => { const next = !autostart?.enabled; if (!confirmDanger('admin-autostart', next ? '启用 GA Admin 开机自启动？' : '禁用 GA Admin 开机自启动？')) return; setBusy(true); setMsg(''); try { const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { dangerous:true, method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status?remote=1'); setGitStatus(d); setMsg(d.latest ? 'GA 源代码已是最新' : `GA 源代码落后 ${d.behind || 0} 个提交`) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
   const updateGASource = async () => { if (!confirmDanger('ga-git-update', '使用 git pull --ff-only 更新当前 GA 源代码？请确保本地修改已提交或可快进。')) return; setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-update', { dangerous:true, method:'POST', body: '{}' }); setGitResult(d); setGitStatus(d); setMsg(d.changed ? `GA 源代码已更新: ${d.before} → ${d.after}` : 'GA 源代码已是最新'); await load() } catch(e){ setMsg(e.message) } finally{ setGitBusy(false) } }
-  const saveConfig = async () => { setBusy(true); try { const c = await api('/api/config', { dangerous:true, method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) }); setCfg(c); setMsg(t.hints.rootSaved); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const saveConfig = async () => { if (!confirmDanger('config-save', '保存 GA Admin 配置？会写入配置文件并可能切换 GA 根目录。')) return; setBusy(true); try { const c = await api('/api/config', { dangerous:true, method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) }); setCfg(c); setMsg(t.hints.rootSaved); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkSetupEnv = async () => { setBusy(true); try { const d = await api('/api/setup/env'); setSetupEnv(d); setMsg(d.ok ? t.envReady : t.envMissing) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const browseSetupDir = async (target = 'root') => { setBusy(true); try { const base = target === 'install' ? installRoot : root; const d = await api('/api/setup/browse', { method:'POST', body: JSON.stringify({ path: base }) }); if (d.path) { target === 'install' ? setInstallRoot(d.path) : setRoot(d.path) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const validateSetupRoot = async () => { setBusy(true); try { const d = await api('/api/setup/validate', { method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const installGA = async () => { setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const serviceAction = async (name, action) => { setBusy(true); try { await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify({ name }) }); await load(); if (selected === name) setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const toggleServiceAutostart = async (name, enabled) => { setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const validateSetupRoot = async () => { if (!confirmDanger('setup-validate-root', '验证并保存当前 GA 根目录？')) return; setBusy(true); try { const d = await api('/api/setup/validate', { dangerous:true, method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const installGA = async () => { if (!confirmDanger('setup-install-ga', '安装/克隆 GenericAgent 到目标目录？会写入本地文件。')) return; setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const serviceAction = async (name, action) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify({ name }) }); await load(); if (selected === name) setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', `${enabled ? '启用' : '禁用'}服务 ${name} 自启动？`)) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = async (name = selected) => { if (!name) return; setSelected(name); setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) }
   const viewServiceLogs = async (name) => { setTab('logs'); await loadServiceLogs(name) }
   const pickGoalId = (items = [], preferred = '') => {
@@ -234,6 +233,7 @@ export default function App() {
       if (llmNo !== null && llmNo < 0) throw new Error(t.hints.goalLLMNonNegative)
       const body = { objective, budget_minutes: budgetMinutes, max_turns: maxTurns }
       if (llmNo !== null) body.llm_no = llmNo
+      if (!confirmDanger('goals-start', `启动自主目标？预算 ${budgetMinutes} 分钟，最大轮次 ${maxTurns || '不限'}。`)) return
       const d = await api('/api/goals/start', { dangerous:true, method:'POST', body: JSON.stringify(body) })
       setMsg(`${t.hints.goalStarted}: ${d.goal?.id || ''}`); setGoalObjective(''); setSelectedGoal(d.goal?.id || selectedGoal); await loadGoals(); if (d.goal?.id) await loadGoalOutput(d.goal.id)
     } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
@@ -313,7 +313,11 @@ export default function App() {
     const timer = setInterval(refreshGoals, 3000)
     return () => clearInterval(timer)
   }, [tab, selectedGoal, goalOutputBytes, goalAutoRefresh])
-  const toggleTask = async (id, enabled) => { setBusy(true); try { await api('/api/schedule/toggle', { dangerous:true, method:'POST', body: JSON.stringify({ id, enabled }) }); setMsg(t.hints.taskToggled); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const toggleTask = async (id, enabled) => {
+    if (!confirmDanger('schedule-toggle', `${enabled ? '启用' : '停用'}计划任务 ${id}？`)) return
+    setBusy(true)
+    try { await api('/api/schedule/toggle', { dangerous:true, method:'POST', body: JSON.stringify({ id, enabled }) }); setMsg(t.hints.taskToggled); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
+  }
 
   const loadFiles = async (path = '') => { const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`); setFileList(d.items || d.entries || []); setFilePath(path || '') }
   const readFile = async (path = filePath) => { setBusy(true); try { const d = await api(`/api/files/read?path=${encodeURIComponent(path)}`); setFileContent(d.content || ''); setFilePath(path); setTab('files') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -387,12 +391,17 @@ export default function App() {
   const nav = NAV_ITEMS
 
   const needsSetup = !!health && !health?.ok
-  if (needsSetup) return <div className="setup-shell"><div className="setup-card"><div className="brand setup-brand"><Bot/><div><h1>{t.setupTitle}</h1><p>{t.setupDesc}</p></div></div><div className="setup-env"><button className="secondary" onClick={checkSetupEnv} disabled={busy}>{t.checkEnv}</button>{setupEnv?.tools?.map(tool => <span key={tool.name} className={tool.ok ? 'ok' : 'err'} title={[tool.path, tool.version, tool.error].filter(Boolean).join('\n')}>{tool.ok ? '✓' : '×'} {tool.name}</span>)}</div><label>{t.root}<div className="setup-path-row"><input value={root} onChange={e=>setRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('root')} disabled={busy}>{t.browse}</button></div></label><button onClick={validateSetupRoot} disabled={busy || !root}>{busy ? t.busy : t.validateRoot}</button><div className="setup-divider"><span>or</span></div><label>{t.installPath}<div className="setup-path-row"><input value={installRoot} onChange={e=>setInstallRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('install')} disabled={busy}>{t.browse}</button></div></label><button className="secondary" onClick={installGA} disabled={busy || !(installRoot || root)}>{t.installGA}</button>{msg && <div className="message">{msg}</div>}<p className="setup-note">git clone https://github.com/lsdefine/GenericAgent</p></div></div>
+  if (needsSetup) {
+    const healthErrors = Array.isArray(health?.errors) ? health.errors : []
+    const healthWarnings = Array.isArray(health?.warnings) ? health.warnings : []
+    return <div className="setup-shell"><div className="setup-card"><div className="brand setup-brand"><Bot/><div><h1>{t.setupTitle}</h1><p>{t.setupDesc}</p></div></div>{(healthErrors.length > 0 || healthWarnings.length > 0) && <div className="health-summary" aria-live="polite">{healthErrors.length > 0 && <div><strong>{t.error}</strong><ul>{healthErrors.map(item => <li key={`err-${item}`}>{item}</li>)}</ul></div>}{healthWarnings.length > 0 && <div><strong>{t.cards.health}</strong><ul>{healthWarnings.map(item => <li key={`warn-${item}`}>{item}</li>)}</ul></div>}</div>}<div className="setup-env"><button className="secondary" onClick={checkSetupEnv} disabled={busy}>{t.checkEnv}</button>{setupEnv?.tools?.map(tool => <span key={tool.name} className={tool.ok ? 'ok' : 'err'} title={[tool.path, tool.version, tool.error].filter(Boolean).join('\n')}>{tool.ok ? '✓' : '×'} {tool.name}</span>)}</div><label>{t.root}<div className="setup-path-row"><input value={root} onChange={e=>setRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('root')} disabled={busy}>{t.browse}</button></div></label><button onClick={validateSetupRoot} disabled={busy || !root}>{busy ? t.busy : t.validateRoot}</button><div className="setup-divider"><span>or</span></div><label>{t.installPath}<div className="setup-path-row"><input value={installRoot} onChange={e=>setInstallRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('install')} disabled={busy}>{t.browse}</button></div></label><button className="secondary" onClick={installGA} disabled={busy || !(installRoot || root)}>{t.installGA}</button>{msg && <div className="message">{msg}</div>}<p className="setup-note">git clone https://github.com/lsdefine/GenericAgent</p></div></div>
+  }
 
   return <div ref={appScope} className={`app app-tab-${tab}`}>
     <aside className="sidebar"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>setLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>setLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? (lang === 'zh' ? '切换到浅色模式' : 'Switch to light mode') : (lang === 'zh' ? '切换到深色模式' : 'Switch to dark mode')}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? (lang === 'zh' ? '浅色' : 'Light') : (lang === 'zh' ? '深色' : 'Dark')}</span></button></div><nav aria-label={lang === 'zh' ? '主导航' : 'Main navigation'}>{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav><button type="button" className="refresh" onClick={load} disabled={busy}><RefreshCw size={15} aria-hidden="true"/>{busy ? t.busy : t.refresh}</button>{msg && <div className="message" role="status" aria-live="polite">{msg}</div>}</aside>
     <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
-      <Suspense fallback={<RouteFallback label="正在加载页面…" />}>
+      <ErrorBoundary resetKey={tab}>
+        <Suspense fallback={<RouteFallback label="正在加载页面…" />}>
       {tab==='overview' && <section><div className="stats"><Stat label={t.cards.processes} value={services.length} icon={<Server/>}/><Stat label={t.cards.running} value={services.filter(s=>s.running).length} icon={<Activity/>}/><Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/><Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/></div><div className="grid2"><Panel title={t.cards.version}><div className="version-card"><div className="autostart-head"><Download size={18}/><strong>GA Admin {versionInfo?.version || 'dev'}</strong><span className={versionCheck?.update ? 'err' : 'ok'}>{versionCheck ? (versionCheck.update ? 'Update' : 'Latest') : (versionInfo?.goos ? `${versionInfo.goos}/${versionInfo.goarch}` : t.empty)}</span></div><p className="muted">commit {versionInfo?.commit || 'unknown'} · {versionInfo?.date || 'unknown'}</p>{versionCheck?.latest && <p>Latest: <a href={versionCheck.latest.html_url} target="_blank" rel="noreferrer">{versionCheck.latest.tag_name}</a></p>}{versionCheck?.asset && <code>{versionCheck.asset.name}</code>}{versionStatus?.stage && <div className="update-progress"><div className="update-progress-head"><span>{versionStatus.running ? '升级中' : (versionStatus.error ? '升级失败' : '升级状态')}</span><b>{versionStatus.progress || 0}%</b></div><div className="progress-bar"><span style={{width:`${Math.max(0, Math.min(100, versionStatus.progress || 0))}%`}}/></div><p className={versionStatus.error ? 'err' : 'muted'}>{versionStatus.message || versionStatus.stage}</p>{versionStatus.stage && <code>{versionStatus.stage}</code>}</div>}<div className="actions"><button onClick={checkVersion} disabled={versionBusy || versionStatus?.running}>{versionBusy ? t.busy : '检查更新'}</button><button onClick={updateVersion} disabled={versionBusy || versionStatus?.running || !versionCheck?.update}>{versionStatus?.running ? '升级中…' : '一键升级'}</button><button className="secondary" onClick={()=>refreshVersionStatus().catch(e=>setMsg(e.message))}>刷新进度</button></div></div></Panel><Panel title="GA 源代码更新"><div className="version-card"><div className="version-head"><GitPullRequest size={18}/><strong>Git 更新</strong><span className={gitStatus?.error ? 'err' : (gitStatus?.latest ? 'ok' : 'warn')}>{gitStatus?.error ? '检查失败' : (gitStatus ? (gitStatus.latest ? '已是最新' : `落后 ${gitStatus.behind || 0} 个提交`) : '未检查')}</span></div><p className="muted">自动 fetch 后对比上游分支；更新只执行 git pull --ff-only。</p>{gitStatus?.root && <code>{gitStatus.root}</code>}<p>分支: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>{gitStatus?.upstream && <p>上游: {gitStatus.upstream}　领先 {gitStatus.ahead || 0} / 落后 {gitStatus.behind || 0}</p>}{gitStatus?.dirty && <p className="warn">工作区有未提交修改</p>}{gitStatus?.error && <p className="err">{gitStatus.error}</p>}{gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}{gitResult?.pull && <pre className="mini-log">{gitResult.pull}</pre>}<div className="actions"><button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : '检查是否最新'}</button><button onClick={updateGASource} disabled={gitBusy || busy || gitStatus?.latest}>{gitBusy ? t.busy : '更新 GA 源代码'}</button></div></div></Panel><Panel title={t.lists.autostart}><div className="autostart-card"><div className="autostart-head"><Power size={18}/><strong>{t.autostart}</strong><span className={autostart?.enabled ? 'ok' : 'muted'}>{autostart?.supported ? (autostart?.enabled ? t.enabled : t.disabled) : t.unsupported}</span></div><p>{!autostart?.supported ? t.hints.autostartUnsupported : (autostart?.enabled ? t.hints.autostartEnabled : t.hints.autostartDisabled)}</p>{autostart?.path && <code>{autostart.path}</code>}<button onClick={toggleAutostart} disabled={busy || !autostart?.supported}>{autostart?.enabled ? t.disableAutostart : t.enableAutostart}</button></div></Panel><Panel title={t.lists.riskHints}><ul className="risk"><li>{t.root}: {root}</li><li>sche_tasks JSON: {t.backup}</li><li>mykey.py: {t.backup}</li></ul></Panel></div></section>}
       {tab==='chat' && <ChatPage t={t}/>}
       {tab==='control' && <section>
@@ -518,7 +527,8 @@ export default function App() {
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div></Panel><HatchPetSettings /></section>}
       {tab==='models' && <Models t={t} profiles={profiles} setProfiles={setProfiles} patchProfile={patchProfile} importModels={importModels} previewModels={previewModels} saveModels={saveModels} modelPreview={modelPreview}/>} 
-      {tab==='logs' && <section className="logs-page"><div className="logs-layout"><Panel title={t.lists.processes} className="logs-side"><div className="logs-toolbar"><label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label><button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button></div><div className="logs-service-list">{services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}><span className={s.running?'dot running':'dot'}></span><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></button>)}</div></Panel><Panel title={`Logs · ${selected || '-'}`} className="log-panel"><div className="log-head"><div>{selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}<span className="log-count">{logs.length} lines · UTF-8</span></div><div className="actions"><button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button><button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button></div></div><pre className="log-view">{logs.join('\n') || t.hints.noLogs}</pre></Panel></div></section>}      </Suspense>
+      {tab==='logs' && <section className="logs-page"><div className="logs-layout"><Panel title={t.lists.processes} className="logs-side"><div className="logs-toolbar"><label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label><button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button></div><div className="logs-service-list">{services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}><span className={s.running?'dot running':'dot'}></span><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></button>)}</div></Panel><Panel title={`Logs · ${selected || '-'}`} className="log-panel"><div className="log-head"><div>{selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}<span className="log-count">{logs.length} lines · UTF-8</span></div><div className="actions"><button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button><button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button></div></div><pre className="log-view">{logs.join('\n') || t.hints.noLogs}</pre></Panel></div></section>}        </Suspense>
+      </ErrorBoundary>
     </main>
   </div>
 }
@@ -527,10 +537,12 @@ export default function App() {
 
 function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart }) {
   const [config, setConfig] = useState(null)
-  const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState('')
   const [msg, setMsg] = useState('')
   const load = async () => {
+    setLoading(true)
     try {
       const d = await api('/api/channels')
       setConfig(d)
@@ -538,7 +550,7 @@ function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart })
     } catch (e) {
       setMsg(`读取通道配置失败：${e.message}`)
       return null
-    }
+    } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
   const patchField = (profileId, fieldName, value) => {
@@ -552,12 +564,12 @@ function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart })
   }
   const save = async () => {
     if (!confirmDanger('channels-save', '写入通道配置会更新 GA mykey.py；Secret 留空将保留原值。确认继续？')) return
-    setBusy(true); setMsg('正在写入 GA mykey.py…')
+    setSaving(true); setMsg('正在写入 GA mykey.py…')
     try {
       const d = await api('/api/channels', { dangerous:true, method:'PUT', body: JSON.stringify({ profiles: config?.profiles || [] }) })
       setConfig(d)
       setMsg(`已保存通道配置：${d.path}`)
-    } catch (e) { setMsg(`保存失败：${e.message}`) } finally { setBusy(false) }
+    } catch (e) { setMsg(`保存失败：${e.message}`) } finally { setSaving(false) }
   }
   const testProfile = async (profile) => {
     setTesting(profile.id); setMsg(`正在测试 ${profile.name} 凭据…`)
@@ -566,29 +578,50 @@ function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart })
       setMsg(`${profile.name}：${d.ok ? '测试通过' : '测试失败'} · ${d.message || ''}`)
     } catch (e) { setMsg(`${profile.name} 测试失败：${e.message}`) } finally { setTesting('') }
   }
+  const runningCount = frontendSvcs.filter(s => s.running).length
   return <section className="channels-page">
-    <div className="stats"><Stat label={t.lists.frontendServices} value={frontendSvcs.length} icon={<Server/>}/><Stat label={t.running} value={frontendSvcs.filter(s=>s.running).length} icon={<CheckCircle2/>}/><Stat label={t.stopped} value={frontendSvcs.filter(s=>!s.running).length} icon={<XCircle/>}/></div>
-    <div className="grid2">
-      <Panel title="通道密钥配置" className="channels-panel">
-        <p className="muted">读取并更新 GA 根目录下的 <code>mykey.py</code>；Secret 不会回显，留空会保留 mykey.py 已有值。</p>
-        {config?.path && <p className="muted">配置文件：<code>{config.path}</code> {config.exists ? <span className="ok">已存在</span> : <span className="warn">未创建</span>}</p>}
-        <div className="actions"><button onClick={load} disabled={busy}>{t.refresh}</button><button onClick={save} disabled={busy || !config}>{busy ? t.busy : t.save}</button></div>
-        {msg && <p className={msg.includes('失败') ? 'err' : 'ok'}>{msg}</p>}
+    <div className="channel-hero">
+      <div>
+        <span className="eyebrow">Channels</span>
+        <h2>通道与前端服务</h2>
+        <p>集中管理 GA 的模型通道密钥和上层前端进程。Secret 不回显，留空会保留现有值。</p>
+      </div>
+      <div className="channel-hero-stats">
+        <span><b>{frontendSvcs.length}</b> 服务</span>
+        <span><b>{runningCount}</b> 运行中</span>
+      </div>
+    </div>
+    <div className="channels-layout">
+      <Panel title="密钥配置" className="channels-panel channel-key-panel">
+        <div className="channel-toolbar">
+          <div>{config?.path ? <span>配置文件：<code>{config.path}</code></span> : <span>{loading ? '正在读取配置…' : '未读取到配置路径'}</span>}</div>
+          <div className="actions"><button onClick={load} disabled={loading || saving}>{loading ? '刷新中…' : t.refresh}</button><button onClick={save} disabled={saving || loading || !config}>{saving ? t.busy : t.save}</button></div>
+        </div>
+        {msg && <p className={msg.includes('失败') ? 'err channel-message' : 'ok channel-message'}>{msg}</p>}
         <div className="channel-config-list">
-          {(config?.profiles || []).map(profile => <div className="channel-config-card" key={profile.id}>
-            <div className="channel-config-head"><div><h3>{profile.name}</h3><p className="muted">{profile.description}</p></div><button onClick={()=>testProfile(profile)} disabled={busy || testing === profile.id}>{testing === profile.id ? '测试中…' : '测试连接'}</button></div>
-            {(profile.fields || []).map(field => <label key={field.name}>{field.label || field.name}<small className="muted"> {field.name}{field.secret && field.has_value ? ' · 已保存' : ''}</small>
-              {field.secret
-                ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
-                : field.type === 'bool'
-                  ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
-                  : <input value={field.value || ''} placeholder={field.placeholder || ''} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
-            </label>)}
-          </div>)}
-          {!config?.profiles?.length && <p className="muted">{t.empty}</p>}
+          {(config?.profiles || []).map(profile => <article className="channel-config-card" key={profile.id}>
+            <div className="channel-config-head">
+              <div><h3>{profile.name}</h3><p>{profile.description}</p></div>
+              <button onClick={()=>testProfile(profile)} disabled={saving || testing === profile.id}>{testing === profile.id ? '测试中…' : '测试连接'}</button>
+            </div>
+            <div className="channel-fields">
+              {(profile.fields || []).map(field => <label key={field.name}>
+                <span>{field.label || field.name}<small>{field.name}{field.secret && field.has_value ? ' · 已保存' : ''}</small></span>
+                {field.secret
+                  ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
+                  : field.type === 'bool'
+                    ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
+                    : <input value={field.value || ''} placeholder={field.placeholder || ''} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
+              </label>)}
+            </div>
+          </article>)}
+          {!loading && !config?.profiles?.length && <p className="empty-cell">{t.empty}</p>}
         </div>
       </Panel>
-      <Panel title={t.lists.frontendServices} className="channels-panel"><p className="muted">{t.desc.channels}</p><ChannelServiceTable services={frontendSvcs} t={t} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart}/></Panel>
+      <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
+        <p className="muted">{t.desc.channels}</p>
+        <ChannelServiceTable services={frontendSvcs} t={t} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart}/>
+      </Panel>
     </div>
   </section>
 }
@@ -608,15 +641,17 @@ function PetsPage() {
   }
   useEffect(() => { loadPets(); loadConfig() }, [])
   const switchPet = async (petId) => {
+    if (!confirmDanger('pets-active', '立即切换 Windows 桌面宠物，并写入 pets.local.json？')) return
     setBusy(true); setMsg('正在切换桌宠形象…')
     try {
-      const d = await api('/api/pets/active', { method:'POST', body: JSON.stringify({ pet_id: petId }) })
+      const d = await api('/api/pets/active', { dangerous:true, method:'POST', body: JSON.stringify({ pet_id: petId }) })
       setCatalog(prev => ({ ...(prev || {}), active_pet_id: d.active_pet_id }))
       setMsg('已切换当前桌面形象')
     } catch(e) { setMsg(`切换失败：${e.message}`) } finally { setBusy(false) }
   }
   const savePetDisabled = async (disabled) => {
     if (!cfg) return
+    if (!confirmDanger('pet-startup-config', disabled ? '关闭桌宠启动并保存配置？' : '开启桌宠启动并保存配置？')) return
     setBusy(true); setMsg(disabled ? '正在关闭桌宠启动…' : '正在开启桌宠启动…')
     try {
       const next = { ...cfg, desktop_pet_disabled: disabled }
@@ -643,6 +678,7 @@ function HatchPetSettings() {
   }
   useEffect(() => { refresh() }, [])
   const installToolchain = async () => {
+    if (!confirmDanger('hatch-pet-export', '导出/覆盖 GA Admin 内置 hatch-pet 工具链到 GA 根目录？')) return
     setBusy(true); setMsg('正在安装 GA Admin 内置 hatch-pet 工具链…')
     try {
       const d = await api('/api/hatch-pet/export', { dangerous:true, method:'POST', body: '{}' })
@@ -650,11 +686,13 @@ function HatchPetSettings() {
     } catch(e) { setMsg(`安装失败：${e.message}`) } finally { setBusy(false) }
   }
   const openExportDir = async () => {
+    if (!confirmDanger('hatch-pet-open', '请求系统打开 hatch-pet 工具目录？')) return
     setBusy(true); setMsg('正在打开导出目录…')
     try { await api('/api/hatch-pet/open', { dangerous:true, method:'POST', body: '{}' }); setMsg('已请求系统打开导出目录') }
     catch(e) { setMsg(`打开失败：${e.message}`) } finally { setBusy(false) }
   }
   const installMemory = async () => {
+    if (!confirmDanger('hatch-pet-install-memory', '写入 GA memory 中的桌宠 SOP，并同步 global_mem_insight.txt？')) return
     setBusy(true); setMsg('正在安装 GA 桌宠记忆 SOP…')
     try {
       const mem = await api('/api/hatch-pet/install-memory', { dangerous:true, method:'POST', body: '{}' })

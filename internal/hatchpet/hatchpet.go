@@ -57,6 +57,17 @@ type MemoryStatus struct {
 	Missing        []string    `json:"missing,omitempty"`
 }
 
+func unsafeFilesystemRoot(p string) bool {
+	clean := filepath.Clean(strings.TrimSpace(p))
+	if clean == "" || clean == "." {
+		return true
+	}
+	vol := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, vol)
+	rest = filepath.Clean(rest)
+	return rest == "" || rest == "." || rest == string(filepath.Separator)
+}
+
 func DefaultExportDir() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -129,7 +140,7 @@ func Export(dest string, overwrite bool) (Status, error) {
 		}
 	}
 	cleanDest := filepath.Clean(dest)
-	if cleanDest == string(filepath.Separator) || cleanDest == "." {
+	if unsafeFilesystemRoot(dest) {
 		return Status{}, fmt.Errorf("refusing to export hatch-pet to unsafe path %q", dest)
 	}
 	err := fs.WalkDir(Skill, embeddedRoot, func(p string, d fs.DirEntry, err error) error {
@@ -222,7 +233,7 @@ func MemoryStatusAt(gaRoot string) (MemoryStatus, error) {
 
 func InstallMemorySOPs(gaRoot string, overwrite bool) (MemoryStatus, error) {
 	cleanRoot := filepath.Clean(strings.TrimSpace(gaRoot))
-	if cleanRoot == "" || cleanRoot == "." || cleanRoot == string(filepath.Separator) {
+	if unsafeFilesystemRoot(gaRoot) {
 		return MemoryStatus{}, fmt.Errorf("refusing to install memory SOPs to unsafe ga_root %q", gaRoot)
 	}
 	info, err := os.Stat(cleanRoot)

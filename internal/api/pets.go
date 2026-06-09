@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -174,7 +175,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (s *Server) readStaticOrPublic(name string) ([]byte, error) {
-	clean := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(name)), "/")
+	clean, err := cleanStaticAssetName(name)
+	if err != nil {
+		return nil, err
+	}
 	if s.Static != nil {
 		if data, err := fs.ReadFile(s.Static, clean); err == nil {
 			return data, nil
@@ -186,6 +190,32 @@ func (s *Server) readStaticOrPublic(name string) ([]byte, error) {
 		}
 	}
 	return nil, os.ErrNotExist
+}
+
+func cleanStaticAssetName(name string) (string, error) {
+	raw := strings.TrimSpace(name)
+	if raw == "" {
+		return "", os.ErrNotExist
+	}
+	if strings.Contains(raw, `\`) {
+		return "", os.ErrPermission
+	}
+	slash := filepath.ToSlash(raw)
+	fromSlash := filepath.FromSlash(slash)
+	if filepath.VolumeName(fromSlash) != "" {
+		return "", os.ErrPermission
+	}
+	for _, seg := range strings.Split(slash, "/") {
+		if seg == ".." {
+			return "", os.ErrPermission
+		}
+	}
+	clean := path.Clean("/" + slash)
+	clean = strings.TrimPrefix(clean, "/")
+	if clean == "." || clean == "" {
+		return "", os.ErrNotExist
+	}
+	return clean, nil
 }
 
 func (s *Server) petsStatePath() string {

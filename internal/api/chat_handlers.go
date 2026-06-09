@@ -166,7 +166,7 @@ func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid s
 func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid string) {
 	var st chatSettings
 	if err := decode(r, &st); err != nil {
-		bad(w, 400, "bad request")
+		bad(w, 400, err.Error())
 		return
 	}
 	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
@@ -206,7 +206,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		ClientUserID string        `json:"client_user_id"`
 	}
 	if err := decodeLimited(r, &req, maxChatPostBodyBytes); err != nil {
-		bad(w, 400, "bad request")
+		bad(w, 400, err.Error())
 		return
 	}
 	sid = safeChatID(sid)

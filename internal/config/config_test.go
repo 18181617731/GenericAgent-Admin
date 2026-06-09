@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -63,5 +65,38 @@ func TestStoreSaveCleansTempFileOnValidationError(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("unexpected temp files after validation failure: %v", matches)
+	}
+}
+
+func TestStoreLoadRejectsInvalidPersistedConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.local.json"), []byte(`{"port":-1}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	store := &Store{Root: root, Cfg: Default()}
+	before := store.Cfg
+
+	err := store.Load()
+	if err == nil || !strings.Contains(err.Error(), "port must be between") {
+		t.Fatalf("Load() err = %v, want port validation error", err)
+	}
+	if !reflect.DeepEqual(store.Cfg, before) {
+		t.Fatalf("Load() mutated cfg on validation error: got %#v want %#v", store.Cfg, before)
+	}
+}
+
+func TestStoreLoadRejectsInvalidRuntimeBounds(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.local.json"), []byte(`{"log_tail_lines":-1,"buffer_lines":-1}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	store := &Store{Root: root, Cfg: Default()}
+
+	err := store.Load()
+	if err == nil || !strings.Contains(err.Error(), "log_tail_lines must be positive") {
+		t.Fatalf("Load() err = %v, want log tail validation error", err)
+	}
+	if store.Cfg.LogTailLines != Default().LogTailLines || store.Cfg.BufferLines != Default().BufferLines {
+		t.Fatalf("Load() applied invalid runtime bounds: %#v", store.Cfg)
 	}
 }

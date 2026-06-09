@@ -17,6 +17,9 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "PUT" {
+		if !requireDangerousHeader(w, r) {
+			return
+		}
 		var p struct {
 			Profiles []modelconfig.Profile `json:"profiles"`
 		}
@@ -36,6 +39,13 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) modelsRaw(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !requireDangerousHeader(w, r) {
+		return
+	}
 	d, err := s.Models.Load(true)
 	if err != nil {
 		bad(w, 500, err.Error())
@@ -45,6 +55,10 @@ func (s *Server) modelsRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	var p struct {
 		Profiles []modelconfig.Profile `json:"profiles"`
 	}
@@ -74,6 +88,9 @@ func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
+	}
+	if (p.Reveal || p.Save) && !requireDangerousHeader(w, r) {
+		return
 	}
 	d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, p.Reveal)
 	if err != nil {
@@ -108,12 +125,17 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, p.Profiles, p.OverwriteActive)
+	profiles, err := s.Models.MergePreservedSecrets(p.Profiles)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	if _, err := s.Models.Save(p.Profiles); err != nil {
+	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, profiles, p.OverwriteActive)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	if _, err := s.Models.Save(profiles); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}

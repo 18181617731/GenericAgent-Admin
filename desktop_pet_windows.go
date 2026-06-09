@@ -520,7 +520,7 @@ func (p *desktopPet) stop() {
 func (p *desktopPet) createWindow() (syscall.Handle, error) {
 	instance, _, _ := procGetModuleHandle.Call(0)
 	className, _ := syscall.UTF16PtrFromString(petClassName)
-	cursor, _, _ := procLoadCursor.Call(0, uintptr(unsafe.Pointer(uintptr(32512))))
+	cursor, _, _ := procLoadCursor.Call(0, 32512) // IDC_ARROW
 	wc := wndClassEx{
 		Size:      uint32(unsafe.Sizeof(wndClassEx{})),
 		WndProc:   syscall.NewCallback(p.wndProc),
@@ -1129,13 +1129,13 @@ func (p *desktopPet) updateFrameBytes(frame []byte) {
 	bi.Header.Planes = 1
 	bi.Header.BitCount = 32
 	bi.Header.Compression = biRGB
-	var bits uintptr
+	var bits unsafe.Pointer
 	hbmp, _, _ := procCreateDIBSection.Call(memDC, uintptr(unsafe.Pointer(&bi)), dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
-	if hbmp == 0 || bits == 0 {
+	if hbmp == 0 || bits == nil {
 		return
 	}
 	defer procDeleteObject.Call(hbmp)
-	copy(unsafe.Slice((*byte)(unsafe.Pointer(bits)), len(frame)), frame)
+	copy(unsafe.Slice((*byte)(bits), len(frame)), frame)
 	old, _, _ := procSelectObject.Call(memDC, hbmp)
 	defer procSelectObject.Call(memDC, old)
 

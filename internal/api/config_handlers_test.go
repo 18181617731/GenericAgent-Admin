@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -58,6 +59,7 @@ func TestConfigSaveRejectsInvalidPathsAndProxy(t *testing.T) {
 		wantErr string
 	}{
 		{"missing root", config.AppConfig{GARoot: filepath.Join(t.TempDir(), "missing")}, "ga_root does not exist"},
+		{"bad port", config.AppConfig{GARoot: t.TempDir(), Port: 70000}, "port must be between 0 and 65535"},
 		{"bad python", config.AppConfig{GARoot: t.TempDir(), PythonPath: filepath.Join(t.TempDir(), "python.exe")}, "python_path does not exist"},
 		{"bad proxy mode", config.AppConfig{GARoot: t.TempDir(), ProxyMode: "pac"}, "proxy_mode"},
 		{"bad proxy url", config.AppConfig{GARoot: t.TempDir(), ProxyMode: "custom", HTTPProxy: "127.0.0.1:7890"}, "http_proxy"},
@@ -85,6 +87,7 @@ func TestSetupValidateDryRunDoesNotPersistInvalidRoot(t *testing.T) {
 	before := s.CfgStore.Cfg.GARoot
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/validate", strings.NewReader(`{"path":"`+filepath.ToSlash(t.TempDir())+`"}`))
+	markDangerous(req)
 	s.Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
@@ -122,6 +125,85 @@ func TestSetupBrowseRejectsMalformedJSON(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUnsafeSetupPath(t *testing.T) {
+	for _, p := range []string{"", " ", ".", string(filepath.Separator)} {
+		if !unsafeSetupPath(p) {
+			t.Fatalf("unsafeSetupPath(%q)=false, want true", p)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, p := range []string{"C:", `C:\`, "C:/"} {
+			if !unsafeSetupPath(p) {
+				t.Fatalf("unsafeSetupPath(%q)=false, want true", p)
+			}
+		}
+	}
+	if unsafeSetupPath(filepath.Join(t.TempDir(), "GenericAgent")) {
+		t.Fatalf("expected nested install path to be safe")
+	}
+}
+
+func TestSetupInstallRejectsFilesystemRoot(t *testing.T) {
+	s := newConfigTestServer(t)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/install", strings.NewReader(`{"path":"`+filepath.ToSlash(string(filepath.Separator))+`"}`))
+	markDangerous(req)
+
+	s.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "refusing to install GenericAgent into filesystem root") {
+		t.Fatalf("unexpected body: %s", rr.Body.String())
+	}
+}
+
+func TestSetupInstallUsesCancelableCloneContext(t *testing.T) {
+	s := newConfigTestServer(t)
+	oldRunClone := runSetupCloneFunc
+	t.Cleanup(func() { runSetupCloneFunc = oldRunClone })
+	called := false
+	runSetupCloneFunc = func(ctx context.Context, dest string) (string, error) {
+		called = true
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatalf("clone context has no timeout deadline")
+		}
+		<-ctx.Done()
+		return "clone stopped", ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	dest := filepath.Join(t.TempDir(), "GenericAgent")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/install", strings.NewReader(`{"path":"`+filepath.ToSlash(dest)+`"}`)).WithContext(ctx)
+	markDangerous(req)
+
+	s.Routes().ServeHTTP(rr, req)
+
+	if !called {
+		t.Fatalf("clone hook was not called")
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d want=500 body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "clone stopped") || !strings.Contains(body, "context canceled") {
+		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+func TestGaGitStatusRejectsNonGET(t *testing.T) {
+	s := newConfigTestServer(t)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/ga/git-status", nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d want=405 body=%s", rr.Code, rr.Body.String())
 	}
 }
 

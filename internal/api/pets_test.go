@@ -75,6 +75,7 @@ func TestPetsActivePostPersistsAndSwitches(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/pets/active", strings.NewReader(`{"pet_id":"beta"}`))
+	req.Header.Set("X-GA-Confirm", "dangerous")
 	s.Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200 body=%s", rr.Code, rr.Body.String())
@@ -103,11 +104,106 @@ func TestPetsActivePostRejectsUnknownPet(t *testing.T) {
 	s := newPetsTestServer(t)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/pets/active", strings.NewReader(`{"pet_id":"missing"}`))
+	req.Header.Set("X-GA-Confirm", "dangerous")
 	s.Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status=%d want 404 body=%s", rr.Code, rr.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(s.CfgStore.Root, "pets.local.json")); !os.IsNotExist(err) {
 		t.Fatalf("pets.local.json err=%v want not exist", err)
+	}
+}
+
+func TestPetsActivePostRejectsTrailingJSONAndOversizedBody(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantDetail string
+	}{
+		{
+			name:       "trailing json",
+			body:       `{"pet_id":"beta"} {"pet_id":"alpha"}`,
+			wantStatus: http.StatusBadRequest,
+			wantDetail: "single JSON value",
+		},
+		{
+			name:       "oversized body",
+			body:       `{"pet_id":"` + strings.Repeat("x", maxJSONBodyBytes) + `"}`,
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantDetail: "request body too large",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newPetsTestServer(t)
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/pets/active", strings.NewReader(tc.body))
+			req.Header.Set("X-GA-Confirm", "dangerous")
+			s.Routes().ServeHTTP(rr, req)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), tc.wantDetail) {
+				t.Fatalf("body missing %q: %s", tc.wantDetail, rr.Body.String())
+			}
+			if _, err := os.Stat(filepath.Join(s.CfgStore.Root, "pets.local.json")); !os.IsNotExist(err) {
+				t.Fatalf("pets.local.json err=%v want not exist", err)
+			}
+		})
+	}
+}
+
+func TestPetsMethodContracts(t *testing.T) {
+	tests := []struct {
+		method     string
+		path       string
+		body       string
+		confirm    bool
+		wantStatus int
+	}{
+		{http.MethodPost, "/api/pets", `{"pet_id":"alpha"}`, true, http.StatusMethodNotAllowed},
+		{http.MethodPut, "/api/pets/active", `{"pet_id":"alpha"}`, true, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/pets/active", `{"pet_id":"alpha"}`, false, http.StatusPreconditionRequired},
+	}
+	for _, tc := range tests {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			s := newPetsTestServer(t)
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.confirm {
+				req.Header.Set("X-GA-Confirm", "dangerous")
+			}
+			s.Routes().ServeHTTP(rr, req)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestReadStaticOrPublicRejectsTraversal(t *testing.T) {
+	s := &Server{Static: fstest.MapFS{
+		"ga-admin-pets/pets.json": &fstest.MapFile{Data: []byte("pets")},
+		"secret.json":             &fstest.MapFile{Data: []byte("secret")},
+	}}
+	if data, err := s.readStaticOrPublic("ga-admin-pets/pets.json"); err != nil || string(data) != "pets" {
+		t.Fatalf("read catalog data=%q err=%v", string(data), err)
+	}
+	for _, name := range []string{
+		"../secret.json",
+		"ga-admin-pets/../secret.json",
+		`ga-admin-pets\..\secret.json`,
+		`ga-admin-pets\pets.json`,
+		`C:/Windows/win.ini`,
+		`C:\Windows\win.ini`,
+		"/../secret.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := s.readStaticOrPublic(name)
+			if err == nil {
+				t.Fatalf("readStaticOrPublic(%q)=%q, want error", name, string(data))
+			}
+		})
 	}
 }

@@ -3,6 +3,7 @@ package hatchpet
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -50,5 +51,39 @@ func TestExportEmbeddedSkill(t *testing.T) {
 	}
 	if !st2.Exported || len(st2.Missing) != 0 {
 		t.Fatalf("status did not detect exported skill: %+v", st2)
+	}
+}
+
+func TestUnsafeFilesystemRoot(t *testing.T) {
+	for _, p := range []string{"", " ", ".", string(filepath.Separator)} {
+		if !unsafeFilesystemRoot(p) {
+			t.Fatalf("unsafeFilesystemRoot(%q)=false, want true", p)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, p := range []string{`C:`, `C:\`, `C:/`} {
+			if !unsafeFilesystemRoot(p) {
+				t.Fatalf("unsafeFilesystemRoot(%q)=false, want true", p)
+			}
+		}
+	}
+	if unsafeFilesystemRoot(filepath.Join(t.TempDir(), SkillName)) {
+		t.Fatal("temp export dir detected as unsafe root")
+	}
+}
+
+func TestExportRejectsUnsafeRoot(t *testing.T) {
+	for _, p := range []string{" ", ".", string(filepath.Separator)} {
+		if _, err := Export(p, false); err == nil {
+			t.Fatalf("Export(%q) succeeded, want unsafe path error", p)
+		}
+	}
+}
+
+func TestInstallMemorySOPsRejectsUnsafeRoot(t *testing.T) {
+	for _, p := range []string{"", " ", ".", string(filepath.Separator)} {
+		if _, err := InstallMemorySOPs(p, false); err == nil {
+			t.Fatalf("InstallMemorySOPs(%q) succeeded, want unsafe ga_root error", p)
+		}
 	}
 }

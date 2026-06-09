@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) services(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
+	if r.Method != http.MethodGet {
 		bad(w, 405, "method not allowed")
 		return
 	}
@@ -27,7 +27,13 @@ func (s *Server) servicesWithAutostart() []service.ServiceInfo {
 	return items
 }
 
-func (s *Server) summary(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Svc.Summary()) }
+func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, s.Svc.Summary())
+}
 
 type nameReq struct {
 	Name string `json:"name"`
@@ -124,7 +130,23 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/api/logs/")
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.Svc == nil {
+		bad(w, http.StatusInternalServerError, "service manager unavailable")
+		return
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/logs/"))
+	if name == "" {
+		bad(w, http.StatusBadRequest, "service name required")
+		return
+	}
+	if _, ok := s.Svc.Find(name); !ok {
+		bad(w, http.StatusNotFound, "service not found")
+		return
+	}
 	lines := s.CfgStore.Cfg.LogTailLines
 	writeJSON(w, map[string]interface{}{"name": name, "lines": s.Svc.Logs(name, lines)})
 }

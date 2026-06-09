@@ -19,15 +19,18 @@ type ServiceInfo struct {
 	Name       string   `json:"name"`
 	Kind       string   `json:"kind"`
 	Command    []string `json:"command"`
+	WorkDir    string   `json:"workdir"`
 	Running    bool     `json:"running"`
 	PID        *int     `json:"pid"`
 	ReturnCode *int     `json:"returncode"`
+	StartedAt  string   `json:"started_at,omitempty"`
 	Autostart  bool     `json:"autostart,omitempty"`
 }
 
 type runningProc struct {
-	cmd *exec.Cmd
-	ret *int
+	cmd       *exec.Cmd
+	ret       *int
+	startedAt time.Time
 }
 
 type Manager struct {
@@ -87,7 +90,7 @@ func (m *Manager) addIfExists(out *[]ServiceInfo, name, kind string, command []s
 		return
 	}
 	if existsFile(filepath.Join(m.GARoot, name)) {
-		*out = append(*out, ServiceInfo{Name: filepath.ToSlash(name), Kind: kind, Command: command})
+		*out = append(*out, ServiceInfo{Name: filepath.ToSlash(name), Kind: kind, Command: command, WorkDir: m.GARoot})
 	}
 }
 
@@ -119,7 +122,7 @@ func (m *Manager) Discover() []ServiceInfo {
 			if seen[rel] {
 				continue
 			}
-			out = append(out, ServiceInfo{Name: rel, Kind: "reflect", Command: []string{py, "agentmain.py", "--reflect", rel}})
+			out = append(out, ServiceInfo{Name: rel, Kind: "reflect", Command: []string{py, "agentmain.py", "--reflect", rel}, WorkDir: m.GARoot})
 		}
 	}
 	frontDir := filepath.Join(m.GARoot, "frontends")
@@ -137,7 +140,7 @@ func (m *Manager) Discover() []ServiceInfo {
 			if strings.Contains(strings.ToLower(name), "stapp") {
 				cmd = []string{py, "-m", "streamlit", "run", rel, "--server.headless=true"}
 			}
-			out = append(out, ServiceInfo{Name: rel, Kind: "frontend", Command: cmd})
+			out = append(out, ServiceInfo{Name: rel, Kind: "frontend", Command: cmd, WorkDir: m.GARoot})
 		}
 	}
 	for i := range out {
@@ -155,6 +158,9 @@ func (m *Manager) withState(s ServiceInfo) ServiceInfo {
 			if processAlive(pid) {
 				s.PID = &pid
 				s.Running = true
+				if !p.startedAt.IsZero() {
+					s.StartedAt = p.startedAt.Format(time.RFC3339)
+				}
 			} else {
 				code := -1
 				p.ret = &code
@@ -222,7 +228,7 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 		return s, err
 	}
 	m.mu.Lock()
-	m.procs[name] = &runningProc{cmd: cmd}
+	m.procs[name] = &runningProc{cmd: cmd, startedAt: time.Now()}
 	m.mu.Unlock()
 	go m.readPipe(name, stdout)
 	go m.readPipe(name, stderr)
@@ -252,15 +258,51 @@ func (m *Manager) serviceEnv() []string {
 	return env
 }
 
+const maxLogLineBytes = 1024 * 1024
+
 func (m *Manager) readPipe(name string, r io.Reader) {
-	s := bufio.NewScanner(r)
-	buf := make([]byte, 0, 64*1024)
-	s.Buffer(buf, 1024*1024)
-	for s.Scan() {
-		m.mu.Lock()
-		m.appendLocked(name, s.Text())
-		m.mu.Unlock()
+	reader := bufio.NewReaderSize(r, 64*1024)
+	line := make([]byte, 0, 64*1024)
+	truncated := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(chunk) > 0 {
+			if len(line) < maxLogLineBytes {
+				remaining := maxLogLineBytes - len(line)
+				if len(chunk) > remaining {
+					line = append(line, chunk[:remaining]...)
+					truncated = true
+				} else {
+					line = append(line, chunk...)
+				}
+			} else {
+				truncated = true
+			}
+		}
+		if err == nil {
+			m.appendLogLine(name, line, truncated)
+			line = line[:0]
+			truncated = false
+			continue
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if len(line) > 0 || truncated {
+			m.appendLogLine(name, line, truncated)
+		}
+		return
 	}
+}
+
+func (m *Manager) appendLogLine(name string, line []byte, truncated bool) {
+	text := strings.TrimRight(string(line), "\r\n")
+	if truncated {
+		text += " [truncated]"
+	}
+	m.mu.Lock()
+	m.appendLocked(name, text)
+	m.mu.Unlock()
 }
 
 func (m *Manager) appendLocked(name, line string) {
@@ -272,6 +314,9 @@ func (m *Manager) appendLocked(name, line string) {
 }
 
 func (m *Manager) Stop(name string) error {
+	if _, ok := m.Find(name); !ok {
+		return errors.New("service not found")
+	}
 	m.mu.Lock()
 	p := m.procs[name]
 	if p == nil || p.cmd.Process == nil || p.ret != nil {

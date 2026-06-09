@@ -54,6 +54,22 @@ func TestSelectAssets(t *testing.T) {
 	}
 }
 
+func TestSelectAssetsRequiresExactPlatformSuffix(t *testing.T) {
+	wantSuffix := fmt.Sprintf("%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	rel := Release{Assets: []Asset{
+		{Name: "ga-admin-linux-amd64.zip"},
+		{Name: "ga-admin-linux-amd64.zip.sha256"},
+		{Name: "ga-admin-" + wantSuffix + ".sha256"},
+	}}
+	asset, sum := selectAssets(rel)
+	if asset != nil {
+		t.Fatalf("asset=%#v want nil when platform zip is absent", asset)
+	}
+	if sum == nil || sum.Name != "ga-admin-"+wantSuffix+".sha256" {
+		t.Fatalf("sum=%#v want platform checksum without accepting a checksum as zip", sum)
+	}
+}
+
 func TestEffectiveVersionFallsBackToGit(t *testing.T) {
 	oldVersion := Version
 	defer func() { Version = oldVersion }()
@@ -463,8 +479,89 @@ func TestFetchLatestReportsInvalidRequestURL(t *testing.T) {
 	}
 }
 
+func TestFetchLatestRejectsDeclaredOversizedMetadata(t *testing.T) {
+	oldURL := repoLatestURL
+	defer func() { repoLatestURL = oldURL }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(maxUpdateMetadataBytes+1))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	repoLatestURL = srv.URL
+
+	_, err := fetchLatest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "github release metadata too large") {
+		t.Fatalf("fetchLatest error = %v, want metadata size limit", err)
+	}
+}
+
+func TestFetchLatestRejectsStreamingOversizedMetadata(t *testing.T) {
+	oldURL := repoLatestURL
+	defer func() { repoLatestURL = oldURL }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{\"tag_name\":\"v0.0.29\",\"assets\":\""))
+		for i := int64(0); i < maxUpdateMetadataBytes; i += 1024 {
+			_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+		}
+		_, _ = w.Write([]byte("\"}"))
+	}))
+	defer srv.Close()
+	repoLatestURL = srv.URL
+
+	_, err := fetchLatest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "github release metadata too large") {
+		t.Fatalf("fetchLatest error = %v, want streaming metadata size limit", err)
+	}
+}
+
+func TestFetchLatestTimesOutWaitingForResponseHeaders(t *testing.T) {
+	oldURL := repoLatestURL
+	oldClient := updateHTTPClient
+	defer func() { repoLatestURL = oldURL; updateHTTPClient = oldClient }()
+
+	updateHTTPClient = &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 25 * time.Millisecond}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"tag_name":"v0.0.29"}`))
+	}))
+	defer srv.Close()
+	repoLatestURL = srv.URL
+
+	_, err := fetchLatest(context.Background())
+	var netErr interface{ Timeout() bool }
+	if err == nil || !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("fetchLatest error = %v, want response header timeout", err)
+	}
+}
+
+func TestDownloadTimesOutWaitingForResponseHeadersAndLeavesNoFile(t *testing.T) {
+	oldClient := updateHTTPClient
+	defer func() { updateHTTPClient = oldClient }()
+
+	updateHTTPClient = &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 25 * time.Millisecond}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+
+	err := download(context.Background(), srv.URL, dest, maxUpdatePackageBytes)
+	var netErr interface{ Timeout() bool }
+	if err == nil || !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("download error = %v, want response header timeout", err)
+	}
+	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("timed-out download should not create dest, stat err=%v", statErr)
+	}
+}
+
 func TestDownloadReportsInvalidRequestURL(t *testing.T) {
-	err := download(context.Background(), "http://[::1", filepath.Join(t.TempDir(), "asset.zip"))
+	err := download(context.Background(), "http://[::1", filepath.Join(t.TempDir(), "asset.zip"), maxUpdatePackageBytes)
 	if err == nil || !strings.Contains(err.Error(), "create download request") {
 		t.Fatalf("download error = %v, want request creation context", err)
 	}
@@ -488,7 +585,7 @@ func TestDownloadRemovesPartialFileOnBodyReadError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := download(context.Background(), srv.URL, dest)
+	err := download(context.Background(), srv.URL, dest, maxUpdatePackageBytes)
 	if err == nil {
 		t.Fatal("download error = nil, want truncated body error")
 	}
@@ -568,6 +665,57 @@ func TestWriteStatusCreatesParentAndCleansTempFiles(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("leftover temp files: %v", matches)
+	}
+}
+
+func TestDownloadRejectsContentLengthAboveLimit(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "asset.zip")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "12")
+		_, _ = w.Write([]byte("too large"))
+	}))
+	defer srv.Close()
+
+	err := download(context.Background(), srv.URL, dest, 4)
+	if err == nil || !strings.Contains(err.Error(), "download too large") {
+		t.Fatalf("download error = %v, want download too large", err)
+	}
+	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("oversized download should not create dest, stat err=%v", statErr)
+	}
+}
+
+func TestDownloadRejectsStreamingBodyAboveLimitAndRemovesPartial(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "asset.zip")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Del("Content-Length")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		_, _ = w.Write([]byte("123456789"))
+	}))
+	defer srv.Close()
+
+	err := download(context.Background(), srv.URL, dest, 4)
+	if err == nil || !strings.Contains(err.Error(), "http: request body too large") {
+		t.Fatalf("download error = %v, want request body too large", err)
+	}
+	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("partial oversized download should be removed, stat err=%v", statErr)
+	}
+}
+
+func TestCurrentUpdateLimitsPinPackageAndChecksumCeilings(t *testing.T) {
+	if maxUpdateMetadataBytes != 2<<20 {
+		t.Fatalf("maxUpdateMetadataBytes=%d want %d", maxUpdateMetadataBytes, 2<<20)
+	}
+	if maxUpdatePackageBytes != 256<<20 {
+		t.Fatalf("maxUpdatePackageBytes=%d want %d", maxUpdatePackageBytes, 256<<20)
+	}
+	if maxUpdateChecksumBytes != 1<<20 {
+		t.Fatalf("maxUpdateChecksumBytes=%d want %d", maxUpdateChecksumBytes, 1<<20)
 	}
 }
 

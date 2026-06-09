@@ -46,6 +46,17 @@ type setupPathReq struct {
 	Path string `json:"path"`
 }
 
+func unsafeSetupPath(p string) bool {
+	clean := filepath.Clean(strings.TrimSpace(p))
+	if clean == "" || clean == "." {
+		return true
+	}
+	vol := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, vol)
+	rest = filepath.Clean(rest)
+	return rest == "" || rest == "." || rest == string(filepath.Separator)
+}
+
 type setupToolStatus struct {
 	Name    string `json:"name"`
 	OK      bool   `json:"ok"`
@@ -139,6 +150,19 @@ func runGitCommand(ctx context.Context, root string, args ...string) (string, er
 	return runGitCommandFunc(ctx, root, args...)
 }
 
+const setupInstallCloneTimeout = 5 * time.Minute
+
+func runSetupClone(ctx context.Context, dest string) (string, error) {
+	return runSetupCloneFunc(ctx, dest)
+}
+
+var runSetupCloneFunc = func(ctx context.Context, dest string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "clone", "https://github.com/lsdefine/GenericAgent", dest)
+	hideChildWindow(cmd)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
 var runGitCommandFunc = func(ctx context.Context, root string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
@@ -193,6 +217,10 @@ func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}
 }
 
 func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
 	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
 	if root == "" {
 		bad(w, 400, "ga_root is not configured")
@@ -326,6 +354,10 @@ func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
+	if unsafeSetupPath(abs) {
+		bad(w, 400, "refusing to install GenericAgent into filesystem root")
+		return
+	}
 	if _, err := os.Stat(filepath.Join(abs, "agentmain.py")); err == nil {
 		bad(w, 409, "target already looks like a GenericAgent directory")
 		return
@@ -334,11 +366,11 @@ func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, err.Error())
 		return
 	}
-	cmd := exec.Command("git", "clone", "https://github.com/lsdefine/GenericAgent", abs)
-	hideChildWindow(cmd)
-	out, err := cmd.CombinedOutput()
+	ctx, cancel := context.WithTimeout(r.Context(), setupInstallCloneTimeout)
+	defer cancel()
+	out, err := runSetupClone(ctx, abs)
 	if err != nil {
-		bad(w, 500, strings.TrimSpace(string(out))+": "+err.Error())
+		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
 		return
 	}
 	h := ga.BuildHealth(abs)

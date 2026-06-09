@@ -65,6 +65,8 @@ var channelTestEndpoints = channelTestEndpointSet{
 
 var channelTestHTTPClient = &http.Client{Timeout: 12 * time.Second}
 
+const maxChannelTestResponseBytes = 1 << 20
+
 var channelDefinitions = []channelProfile{
 	{ID: "feishu", Name: "飞书 / Lark", Description: "机器人应用凭据、用户白名单与公开访问开关。", Fields: []channelField{
 		{Name: "fs_app_id", Label: "App ID", Placeholder: "cli_xxx"},
@@ -96,7 +98,7 @@ func (s *Server) channels(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Profiles []channelProfile `json:"profiles"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decode(r, &req); err != nil {
 			bad(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -116,7 +118,7 @@ func (s *Server) channelTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req channelTestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decode(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -179,7 +181,11 @@ func (s *Server) channelTestValues(profileID string, fields []channelField) (map
 		if def.Secret && strings.TrimSpace(f.Value) == "" {
 			values[name] = existing[name]
 		} else {
-			values[name] = encodeChannelValue(f.Value, def.Type)
+			value, err := encodeChannelValue(f.Value, def.Type)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			values[name] = value
 		}
 	}
 	return values, nil
@@ -206,7 +212,7 @@ func testFeishuCredentials(appID, appSecret string) (bool, string) {
 	body, _ := json.Marshal(map[string]string{"app_id": appID, "app_secret": appSecret})
 	status, payload, err := channelTestRequestJSON(http.MethodPost, channelTestEndpoints.Feishu, body)
 	if err != nil {
-		return false, err.Error()
+		return false, redactChannelTestMessage(err.Error(), appSecret)
 	}
 	if status < 200 || status >= 300 {
 		return false, fmt.Sprintf("飞书接口返回 HTTP %d", status)
@@ -215,7 +221,7 @@ func testFeishuCredentials(appID, appSecret string) (bool, string) {
 	if code == 0 {
 		return true, "飞书凭据验证通过"
 	}
-	return false, firstStringFromJSON(payload, "msg", "message", "StatusMessage", "errmsg")
+	return false, redactChannelTestMessage(firstStringFromJSON(payload, "msg", "message", "StatusMessage", "errmsg"), appSecret)
 }
 
 func testWeComCredentials(botID, secret string) (bool, string) {
@@ -230,7 +236,7 @@ func testWeComCredentials(botID, secret string) (bool, string) {
 	url := fmt.Sprintf("%s%scorpid=%s&corpsecret=%s", channelTestEndpoints.WeCom, sep, urlQueryEscape(botID), urlQueryEscape(secret))
 	status, payload, err := channelTestRequestJSON(http.MethodGet, url, nil)
 	if err != nil {
-		return false, err.Error()
+		return false, redactChannelTestMessage(err.Error(), secret)
 	}
 	if status < 200 || status >= 300 {
 		return false, fmt.Sprintf("企业微信接口返回 HTTP %d", status)
@@ -238,7 +244,7 @@ func testWeComCredentials(botID, secret string) (bool, string) {
 	if intFromJSON(payload, "errcode", "code") == 0 {
 		return true, "企业微信凭据验证通过"
 	}
-	return false, firstStringFromJSON(payload, "errmsg", "msg", "message")
+	return false, redactChannelTestMessage(firstStringFromJSON(payload, "errmsg", "msg", "message"), secret)
 }
 
 func testDingTalkCredentials(clientID, clientSecret string) (bool, string) {
@@ -249,7 +255,7 @@ func testDingTalkCredentials(clientID, clientSecret string) (bool, string) {
 	body, _ := json.Marshal(map[string]string{"appKey": clientID, "appSecret": clientSecret})
 	status, payload, err := channelTestRequestJSON(http.MethodPost, channelTestEndpoints.DingTalk, body)
 	if err != nil {
-		return false, err.Error()
+		return false, redactChannelTestMessage(err.Error(), clientSecret)
 	}
 	if status < 200 || status >= 300 {
 		return false, fmt.Sprintf("钉钉接口返回 HTTP %d", status)
@@ -257,7 +263,20 @@ func testDingTalkCredentials(clientID, clientSecret string) (bool, string) {
 	if intFromJSON(payload, "errcode", "code") == 0 {
 		return true, "钉钉凭据验证通过"
 	}
-	return false, firstStringFromJSON(payload, "errmsg", "msg", "message")
+	return false, redactChannelTestMessage(firstStringFromJSON(payload, "errmsg", "msg", "message"), clientSecret)
+}
+
+func redactChannelTestMessage(message string, secrets ...string) string {
+	redacted := message
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			continue
+		}
+		redacted = strings.ReplaceAll(redacted, secret, "[REDACTED]")
+		redacted = strings.ReplaceAll(redacted, urlQueryEscape(secret), "[REDACTED]")
+	}
+	return redacted
 }
 
 func channelTestRequestJSON(method, endpoint string, body []byte) (int, map[string]interface{}, error) {
@@ -273,13 +292,26 @@ func channelTestRequestJSON(method, endpoint string, body []byte) (int, map[stri
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxChannelTestResponseBytes+1))
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
+	if len(raw) > maxChannelTestResponseBytes {
+		return resp.StatusCode, nil, fmt.Errorf("channel test response body too large")
+	}
 	payload := map[string]interface{}{}
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &payload)
+	if len(bytes.TrimSpace(raw)) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		if err := dec.Decode(&payload); err != nil {
+			return resp.StatusCode, nil, fmt.Errorf("invalid channel test JSON response: %w", err)
+		}
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return resp.StatusCode, nil, fmt.Errorf("channel test response must contain a single JSON value")
+			}
+			return resp.StatusCode, nil, fmt.Errorf("invalid channel test JSON response: %w", err)
+		}
 	}
 	return resp.StatusCode, payload, nil
 }
@@ -322,11 +354,24 @@ func (s *Server) channelConfigPath() string {
 	return filepath.Join(s.CfgStore.Cfg.GARoot, "mykey.py")
 }
 
+func unsafeChannelGARoot(p string) bool {
+	clean := filepath.Clean(strings.TrimSpace(p))
+	if clean == "" || clean == "." {
+		return true
+	}
+	vol := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, vol)
+	rest = filepath.Clean(rest)
+	return rest == "" || rest == "." || rest == string(filepath.Separator)
+}
+
 func (s *Server) loadChannelsResponse() channelsResponse {
 	values := map[string]string{}
 	exists := false
-	if strings.TrimSpace(s.CfgStore.Cfg.GARoot) != "" {
-		if content, err := os.ReadFile(s.channelConfigPath()); err == nil {
+	configPath := ""
+	if !unsafeChannelGARoot(s.CfgStore.Cfg.GARoot) {
+		configPath = s.channelConfigPath()
+		if content, err := os.ReadFile(configPath); err == nil {
 			exists = true
 			values = parseChannelAssignments(string(content))
 		}
@@ -343,12 +388,13 @@ func (s *Server) loadChannelsResponse() channelsResponse {
 			}
 		}
 	}
-	return channelsResponse{Path: s.channelConfigPath(), Exists: exists, Profiles: profiles}
+	return channelsResponse{Path: configPath, Exists: exists, Profiles: profiles}
 }
 
 func (s *Server) saveChannels(profiles []channelProfile) error {
-	if strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
-		return fmt.Errorf("GA root is not configured")
+	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	if unsafeChannelGARoot(gaRoot) {
+		return fmt.Errorf("GA root is not configured or is a filesystem root")
 	}
 	path := s.channelConfigPath()
 	content := ""
@@ -375,7 +421,11 @@ func (s *Server) saveChannels(profiles []channelProfile) error {
 			if def.Secret && f.Value == "" {
 				values[def.Name] = existing[def.Name]
 			} else {
-				values[def.Name] = encodeChannelValue(f.Value, def.Type)
+				value, err := encodeChannelValue(f.Value, def.Type)
+				if err != nil {
+					return fmt.Errorf("%s: %w", def.Name, err)
+				}
+				values[def.Name] = value
 			}
 		}
 	}
@@ -593,15 +643,19 @@ func normalizeChannelDisplayValue(raw, typ string) string {
 	}
 }
 
-func encodeChannelValue(v, typ string) string {
+func encodeChannelValue(v, typ string) (string, error) {
 	v = strings.TrimSpace(v)
 	if typ == "bool" {
-		if strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on") {
-			return "true"
+		switch {
+		case strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on"):
+			return "true", nil
+		case strings.EqualFold(v, "false") || v == "0" || strings.EqualFold(v, "no") || strings.EqualFold(v, "off") || v == "":
+			return "false", nil
+		default:
+			return "", fmt.Errorf("invalid boolean value %q", v)
 		}
-		return "false"
 	}
-	return v
+	return v, nil
 }
 
 func formatPythonLiteral(v, typ string) string {

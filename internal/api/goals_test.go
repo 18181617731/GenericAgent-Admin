@@ -315,7 +315,7 @@ func TestGoalsListAndOutputRoutes(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/goals/output?id=../route_1&max_bytes=5", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/goals/output?id=route_1&max_bytes=5", nil)
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("output status = %d body=%s", rr.Code, rr.Body.String())
@@ -448,8 +448,10 @@ func TestGoalsRouteMethodsAndBadInput(t *testing.T) {
 		{http.MethodPost, "/api/goals/start", `{"objective":"ok","budget_minutes":0}`, http.StatusBadRequest},
 		{http.MethodPost, "/api/goals/start", `{"objective":"ok","budget_minutes":-5}`, http.StatusBadRequest},
 		{http.MethodPost, "/api/goals/stop", `{"id":"missing","pid":0}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/goals/stop", `{"id":"../missing","pid":12345}`, http.StatusBadRequest},
 		{http.MethodPost, "/api/goals/stop", `{"id":"missing","pid":12345} {"id":"other","pid":12345}`, http.StatusBadRequest},
 		{http.MethodPost, "/api/goals/stop", `{"id":"missing","pid":12345}`, http.StatusBadRequest},
+		{http.MethodGet, "/api/goals/output?id=../missing&max_bytes=100", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/goals/output?id=missing&max_bytes=abc", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/goals/output?id=missing&max_bytes=-1", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/goals/output?id=missing", "", http.StatusBadRequest},

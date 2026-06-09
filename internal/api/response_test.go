@@ -21,6 +21,10 @@ func TestJSONErrorResponsesUseDetailField(t *testing.T) {
 		wantDetail string
 	}{
 		{name: "method not allowed", method: http.MethodPost, path: "/api/version/info", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
+		{name: "health rejects non-get", method: http.MethodPost, path: "/api/health", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
+		{name: "ga inventory rejects non-get", method: http.MethodPost, path: "/api/ga/inventory", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
+		{name: "ga health rejects non-get", method: http.MethodPost, path: "/api/ga/health", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
+		{name: "ga control rejects non-get", method: http.MethodPost, path: "/api/ga/control", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
 		{name: "bad json", method: http.MethodPost, path: "/api/files/write", body: `not-json`, wantStatus: http.StatusPreconditionRequired, wantDetail: "dangerous operation requires X-GA-Confirm"},
 		{name: "bad query", method: http.MethodGet, path: "/api/files/tail?path=sample.log&lines=0", wantStatus: http.StatusBadRequest, wantDetail: "lines must be a positive integer"},
 	} {
@@ -44,6 +48,34 @@ func TestJSONErrorResponsesUseDetailField(t *testing.T) {
 				t.Fatalf("detail=%q want contains %q", got.Detail, tc.wantDetail)
 			}
 		})
+	}
+}
+
+func TestRecoverPanicsReturnsJSONInternalServerError(t *testing.T) {
+	h := recoverPanics(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("secret panic detail")
+	}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/panic", nil))
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusInternalServerError, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("Content-Type=%q want application/json", ct)
+	}
+	var got struct {
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("panic recovery body is not JSON: %v body=%s", err, rr.Body.String())
+	}
+	if got.OK || got.Detail != "internal server error" {
+		t.Fatalf("unexpected recovery payload: %#v", got)
+	}
+	if strings.Contains(rr.Body.String(), "secret panic detail") {
+		t.Fatalf("panic detail leaked in response: %s", rr.Body.String())
 	}
 }
 
@@ -124,5 +156,44 @@ func TestOversizedJSONRouteReturns413(t *testing.T) {
 	}
 	if !strings.Contains(got.Detail, errRequestBodyTooLarge.Error()) {
 		t.Fatalf("detail=%q want contains %q", got.Detail, errRequestBodyTooLarge.Error())
+	}
+}
+
+func TestJSONRoutesRejectTrailingJSONValues(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		mark   bool
+	}{
+		{name: "channels put", method: http.MethodPut, path: "/api/channels", body: `{"profiles":[]} {"extra":true}`, mark: true},
+		{name: "channels test", method: http.MethodPost, path: "/api/channels/test", body: `{"profile_id":"feishu"} {"extra":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.mark {
+				markDangerous(req)
+			}
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "single JSON value") {
+				t.Fatalf("body missing single JSON value guidance: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestChannelsRejectOversizedJSONBody(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channels/test", strings.NewReader(`{"profile_id":"`+strings.Repeat("x", maxJSONBodyBytes)+`"}`))
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusRequestEntityTooLarge, rr.Body.String())
 	}
 }
