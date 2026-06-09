@@ -131,20 +131,89 @@ def _admin_history_to_backend(history):
 
 def _restore_admin_history(agent, history):
     try:
-        agent.llmclient.backend.history = _admin_history_to_backend(history)
+        restored = _admin_history_to_backend(history)
+        sticky_tools_history = getattr(agent, '_admin_sticky_tools_history', []) or []
+        if sticky_tools_history:
+            restored.extend(sticky_tools_history)
+        agent.llmclient.backend.history = restored
     except Exception:
         pass
+
+
+def _select_llm_if_needed(agent, llm_no):
+    """Keep GA official lazy tool injection cache unless the user switches models."""
+    try:
+        current = getattr(agent, 'llm_no', None)
+        if current == llm_no:
+            return
+    except Exception:
+        pass
+    try:
+        agent.next_llm(llm_no)
+    except Exception:
+        pass
+
+
+def _load_tools_history(agent):
+    hist_path = Path(getattr(agent, 'script_dir', os.getcwd())) / 'assets' / 'tool_usable_history.json'
+    with hist_path.open('r', encoding='utf-8') as f:
+        items = json.load(f)
+    return items if isinstance(items, list) else []
+
+
+def _inject_tools_history(agent, sticky=True):
+    items = _load_tools_history(agent)
+    if sticky:
+        agent._admin_sticky_tools_history = items
+    if items:
+        agent.llmclient.backend.history.extend(items)
+    return len(items)
+
+
+def _reset_tools_schema(agent):
+    try:
+        agent.llmclient.last_tools = ''
+    except Exception:
+        pass
+
+
+def _reinject_tools(agent):
+    """Mirror GA Streamlit's manual Tools reinjection button.
+
+    Official GA does two things: clear llmclient.last_tools so the next model
+    request resends the tool schemas, then append assets/tool_usable_history.json
+    into backend history as a reminder of available tool usage.
+    """
+    _reset_tools_schema(agent)
+    added = 0
+    try:
+        added = _inject_tools_history(agent, sticky=True)
+    except Exception as e:
+        return {'ok': False, 'message': '工具历史注入失败：%s' % e, 'added': added}
+    return {'ok': True, 'message': '已重新注入 Tools，下一次请求会重新发送工具定义', 'added': added}
+
+
+def _apply_tools_mode(agent, mode):
+    if mode != 'fixed':
+        return None
+    _reset_tools_schema(agent)
+    try:
+        added = _inject_tools_history(agent, sticky=False)
+        return {'ok': True, 'message': '固定模式：本次请求已注入 Tools', 'added': added}
+    except Exception as e:
+        return {'ok': False, 'message': '固定模式 Tools 注入失败：%s' % e, 'added': 0}
 
 
 def handle_request(agent, worker, req):
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     llm_no = int(req.get('llm_no') or 0)
-    try:
-        agent.next_llm(llm_no)
-    except Exception:
-        pass
+    tools_mode = str(req.get('tools_mode') or 'official')
+    _select_llm_if_needed(agent, llm_no)
     _restore_admin_history(agent, history)
+    mode_status = _apply_tools_mode(agent, tools_mode)
+    if mode_status and not mode_status.get('ok'):
+        emit({'type': 'notice', 'message': mode_status})
     chunks = []
     try:
         display_queue = agent.put_task(prompt, source='admin_chat')
@@ -176,6 +245,7 @@ def main():
     first = True
     agent = None
     worker = None
+    agent_lock = threading.RLock()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -194,7 +264,12 @@ def main():
                 agent.inc_out = True
                 worker = threading.Thread(target=agent.run, name='ga-admin-chat-worker', daemon=True)
                 worker.start()
-            handle_request(agent, worker, req)
+            if req.get('op') == 'reinject_tools':
+                with agent_lock:
+                    emit({'type': 'reinject_tools', **_reinject_tools(agent)})
+                continue
+            with agent_lock:
+                handle_request(agent, worker, req)
         except Exception as e:
             msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}
             emit({'type': 'error', 'message': msg})

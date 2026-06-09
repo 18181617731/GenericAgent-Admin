@@ -31,9 +31,26 @@ type chatMessage struct {
 	Error     bool                     `json:"error,omitempty"`
 }
 
+const (
+	chatToolsModeOfficial = "official"
+	chatToolsModeFixed    = "fixed"
+)
+
 type chatSettings struct {
-	LLMNo int `json:"llm_no"`
+	LLMNo     int    `json:"llm_no"`
+	ToolsMode string `json:"tools_mode,omitempty"`
 }
+
+func normalizeChatSettings(st chatSettings) chatSettings {
+	switch st.ToolsMode {
+	case chatToolsModeFixed:
+		// keep
+	default:
+		st.ToolsMode = chatToolsModeOfficial
+	}
+	return st
+}
+
 type chatSession struct {
 	ID        string        `json:"id"`
 	Title     string        `json:"title"`
@@ -75,6 +92,7 @@ type chatWorker struct {
 	Stdout io.ReadCloser
 	Stderr io.ReadCloser
 	Dead   bool
+	Mu     sync.Mutex
 }
 
 func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
@@ -89,6 +107,8 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		return
 	}
 	s.setChatRunCmd(sid, worker.Cmd)
+	worker.Mu.Lock()
+	defer worker.Mu.Unlock()
 	if err := json.NewEncoder(worker.Stdin).Encode(cmdReq); err != nil {
 		s.dropChatWorker(sid, worker)
 		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
@@ -175,6 +195,44 @@ func (s *Server) chatRunActive(sid string) bool {
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
 	return r != nil && !r.Done
+}
+
+func (s *Server) reinjectChatWorkerTools(sid string) (map[string]interface{}, error) {
+	sid = safeChatID(sid)
+	worker, err := s.getChatWorker(sid)
+	if err != nil {
+		return nil, err
+	}
+	worker.Mu.Lock()
+	defer worker.Mu.Unlock()
+	if err := json.NewEncoder(worker.Stdin).Encode(map[string]interface{}{"op": "reinject_tools", "ga_root": s.CfgStore.Cfg.GARoot}); err != nil {
+		s.dropChatWorker(sid, worker)
+		return nil, err
+	}
+	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
+	for {
+		line, err := readChatWorkerLine(reader)
+		if len(bytes.TrimSpace(line)) == 0 {
+			if err != nil {
+				s.dropChatWorker(sid, worker)
+				return nil, err
+			}
+			continue
+		}
+		var ev map[string]interface{}
+		if json.Unmarshal(bytes.TrimSpace(line), &ev) == nil {
+			if ev["type"] == "reinject_tools" {
+				return ev, nil
+			}
+			if ev["type"] == "error" {
+				return ev, nil
+			}
+		}
+		if err != nil {
+			s.dropChatWorker(sid, worker)
+			return nil, err
+		}
+	}
 }
 
 func (s *Server) beginChatRun(sid string) bool {
@@ -334,8 +392,15 @@ func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flush
 	}
 }
 
-func (s *Server) listGARuntimeLLMs(root string) ([]map[string]interface{}, error) {
-	py := pythonForRoot(root)
+func chatPythonForConfig(cfg config.AppConfig) string {
+	// Chat must honor the Python selected during setup. Falling back to a bare
+	// launcher can miss GA dependencies (for example requests) and hide models.
+	return resolvePythonForRoot(cfg.GARoot, cfg.PythonPath)
+}
+
+func (s *Server) listGARuntimeLLMs(cfg config.AppConfig) ([]map[string]interface{}, error) {
+	root := cfg.GARoot
+	py := chatPythonForConfig(cfg)
 	code := `import json, os, sys
 root = sys.argv[1]
 if root not in sys.path:
@@ -353,7 +418,7 @@ print(json.dumps(items, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", code, root)
 	cmd.Dir = root
 	hideChildWindow(cmd)
-	cmd.Env = pythonEnvWithAdminProxy(s.CfgStore.Cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	cmd.Env = pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return []map[string]interface{}{}, fmt.Errorf("list GA LLMs failed: %v: %s", err, strings.TrimSpace(string(out)))
@@ -482,7 +547,7 @@ func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
 
 func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {
 	root := cfg.GARoot
-	py := pythonForRoot(root)
+	py := chatPythonForConfig(cfg)
 	script, err := resolveChatWorkerScript()
 	if err != nil {
 		return nil, err
@@ -682,7 +747,7 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 		return chatSession{}, err
 	}
 	sid = safeChatID(sid)
-	cs := chatSession{ID: sid, Title: "新会话", Messages: []chatMessage{}, Settings: chatSettings{}}
+	cs := chatSession{ID: sid, Title: "新会话", Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{})}
 	b, err := os.ReadFile(chatSessionPath(cfg, sid))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -699,6 +764,7 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	if cs.Messages == nil {
 		cs.Messages = []chatMessage{}
 	}
+	cs.Settings = normalizeChatSettings(cs.Settings)
 	return cs, nil
 }
 func saveChatSession(cfg config.AppConfig, cs chatSession) error {
@@ -708,6 +774,7 @@ func saveChatSession(cfg config.AppConfig, cs chatSession) error {
 	if err := os.MkdirAll(chatSessionDir(cfg), 0755); err != nil {
 		return err
 	}
+	cs.Settings = normalizeChatSettings(cs.Settings)
 	cs.UpdatedAt = time.Now().Unix()
 	b, _ := json.MarshalIndent(cs, "", "  ")
 	return writeChatFileAtomic(chatSessionPath(cfg, cs.ID), b, 0644)

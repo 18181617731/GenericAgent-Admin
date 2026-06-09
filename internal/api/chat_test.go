@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,29 @@ func TestMarkChatLLMActiveUsesSessionLLMNo(t *testing.T) {
 	}
 	if llms[1]["active"] != true {
 		t.Fatalf("llms[1].active=%v want true", llms[1]["active"])
+	}
+}
+
+func TestChatPythonForConfigPrefersConfiguredPythonPath(t *testing.T) {
+	root := t.TempDir()
+	venvDir := filepath.Join(root, ".venv", "bin")
+	venvPython := filepath.Join(venvDir, "python")
+	if runtime.GOOS == "windows" {
+		venvDir = filepath.Join(root, ".venv", "Scripts")
+		venvPython = filepath.Join(venvDir, "python.exe")
+	}
+	if err := os.MkdirAll(venvDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(venvPython, []byte("fake"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	configured := filepath.Join(t.TempDir(), "configured-python")
+
+	got := chatPythonForConfig(config.AppConfig{GARoot: root, PythonPath: configured})
+
+	if got != configured {
+		t.Fatalf("chatPythonForConfig()=%q want configured python %q", got, configured)
 	}
 }
 

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, RefreshCw, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, Pin, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 
@@ -567,6 +567,7 @@ export default function ChatApp() {
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
+  const [toolsMode, setToolsMode] = useState('official')
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
   const [editing, setEditing] = useState('')
@@ -578,6 +579,8 @@ export default function ChatApp() {
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
+  const toolsMenuRef = useRef(null)
   const threadRef = useRef(null)
   const endRef = useRef(null)
   const fileRef = useRef(null)
@@ -707,8 +710,10 @@ export default function ChatApp() {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
+    const nextToolsMode = st.settings?.tools_mode === 'fixed' ? 'fixed' : 'official'
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
+    setToolsMode(nextToolsMode)
     if (id && st.running) {
       attachRunningStream(id)
     } else if (id && streamingSid && streamingSid !== id) {
@@ -724,6 +729,7 @@ export default function ChatApp() {
     setSid(d.id)
     setMessages(d.messages || [])
     setLlmNo(d.settings?.llm_no || 0)
+    setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     setErr('')
     setNotice('')
     setMenuOpen('')
@@ -750,7 +756,7 @@ export default function ChatApp() {
   const newSession = async () => {
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
     setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
-    setSid(d.id); setMessages([]); setPrompt(''); setErr(''); setNotice('已创建新对话'); setLlmNo(d.settings?.llm_no || 0)
+    setSid(d.id); setMessages([]); setPrompt(''); setErr(''); setNotice('已创建新对话'); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id)
   }
 
@@ -776,8 +782,34 @@ export default function ChatApp() {
   const saveModel = async (next) => {
     setLlmNo(next)
     if (!sid) return
-    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next }) })
+    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode }) })
     setNotice('模型已切换')
+  }
+
+  const setToolsModeTo = async (next) => {
+    if (next === toolsMode) { setToolsMenuOpen(false); return }
+    const prev = toolsMode
+    setToolsMode(next)
+    setToolsMenuOpen(false)
+    if (!sid) return
+    try {
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: next }) })
+      setNotice(next === 'fixed' ? '已设为自动注入：每次发消息都带上工具' : '已设为首次注入：仅会话开始注入一次，需要时可点“立即注入一次”')
+    } catch (e) {
+      setToolsMode(prev)
+      setErr(e.message || String(e))
+    }
+  }
+
+  const reinjectTools = async () => {
+    if (!sid) return
+    if (isCurrentRunning) { setNotice('当前正在执行，完成后再重注入 Tools'); return }
+    try {
+      const d = await api(`/api/chat/reinject-tools/${sid}`, { method:'POST' })
+      setNotice(d?.message || 'Tools 已重注入')
+    } catch (e) {
+      setErr(e.message || String(e))
+    }
   }
 
   const addImageFiles = async (fileList) => {
@@ -894,7 +926,7 @@ export default function ChatApp() {
       const optimistic = { id:clientUserID, role:'user', content:(text || '请分析这张图片') + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }
       setMessages(xs => [...xs, optimistic, pending])
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo }, client_user_id:clientUserID }) })
+      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode }, client_user_id:clientUserID }) })
       if (!res.ok) throw new Error(await res.text())
       await readStream(res, pending.id, clientUserID)
     } catch (e) {
@@ -926,7 +958,7 @@ export default function ChatApp() {
       return
     }
     if (!text && !files.length) return
-    const item = { text, files, llmNo }
+    const item = { text, files, llmNo, toolsMode }
     setPrompt(''); setAttachments([])
     if (busy) {
       enqueueMessage(item)
@@ -958,6 +990,15 @@ export default function ChatApp() {
   }
 
   useEffect(() => { loadSessions('', { open:true }).catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
+
+  useEffect(() => {
+    if (!toolsMenuOpen) return
+    const onDown = (e) => { if (!toolsMenuRef.current?.contains(e.target)) setToolsMenuOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setToolsMenuOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [toolsMenuOpen])
 
   const scrollToThreadEnd = (behavior = 'smooth') => endRef.current?.scrollIntoView({ behavior, block:'end' })
   const resumeFollow = () => {
@@ -1001,6 +1042,7 @@ export default function ChatApp() {
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
   const isCurrentRunning = busy && streamingSid === sid
+  const isFixedToolsMode = toolsMode === 'fixed'
 
   return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -1098,6 +1140,34 @@ export default function ChatApp() {
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
+            <div className="oa-tools-menu" ref={toolsMenuRef}>
+              <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
+                <Wrench size={16}/><span>工具</span><span className="oa-tools-state">{isFixedToolsMode ? '自动' : '首次'}</span><ChevronDown size={14}/>
+              </button>
+              {toolsMenuOpen && (
+                <div className="oa-tools-pop" role="menu">
+                  <div className="oa-tools-pop-head">工具注入方式</div>
+                  <button className={`oa-tools-opt ${!isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={!isFixedToolsMode} onClick={()=>setToolsModeTo('official')}>
+                    <Wrench size={16}/>
+                    <span className="oa-tools-opt-text"><b>首次注入<span className="oa-tools-tag">官方</span></b><small>仅会话开始注入一次，需要时再点“立即注入一次”</small></span>
+                    {!isFixedToolsMode && <Check size={16}/>}
+                  </button>
+                  <button className={`oa-tools-opt ${isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={isFixedToolsMode} onClick={()=>setToolsModeTo('fixed')}>
+                    <Pin size={16}/>
+                    <span className="oa-tools-opt-text"><b>自动注入</b><small>每次发消息都自动带上工具</small></span>
+                    {isFixedToolsMode && <Check size={16}/>}
+                  </button>
+                  {!isFixedToolsMode && (
+                    <>
+                      <div className="oa-tools-pop-sep"/>
+                      <button className="oa-tools-act" type="button" disabled={!sid || isCurrentRunning} onClick={()=>{ setToolsMenuOpen(false); reinjectTools() }}>
+                        <RefreshCw size={15}/><span>立即注入一次</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
             <label className="oa-model-select oa-composer-model"><span>{activeModel ? '模型' : '模型不可用'}</span><select value={selectedModelNo} disabled={!llms.length} onChange={e=>saveModel(Number(e.target.value))}>
               {llms.length ? llms.map(m => <option key={m.index} value={m.index}>{modelLabel(m)}</option>) : <option value={0}>未发现模型</option>}
             </select><ChevronDown size={14}/></label>
@@ -1105,7 +1175,7 @@ export default function ChatApp() {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队，引导可立即插队</p>
+        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队 · 工具：{isFixedToolsMode ? '每次自动注入' : '首次注入'}</p>
       </footer>
     </main>
   </div>

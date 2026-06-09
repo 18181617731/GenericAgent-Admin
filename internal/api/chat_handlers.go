@@ -96,6 +96,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatCancel(w, r, parts[1])
 			return
 		}
+	case "reinject-tools":
+		if len(parts) == 2 && r.Method == http.MethodPost {
+			s.chatReinjectTools(w, r, parts[1])
+			return
+		}
 	case "file":
 		if len(parts) >= 2 && r.Method == http.MethodGet {
 			s.chatFile(w, r, strings.Join(parts[1:], "/"))
@@ -111,7 +116,7 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: chatSettings{}}
+	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{})}
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
@@ -174,12 +179,12 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		bad(w, 500, err.Error())
 		return
 	}
-	cs.Settings = st
+	cs.Settings = normalizeChatSettings(st)
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "settings": st})
+	writeJSON(w, map[string]interface{}{"ok": true, "settings": cs.Settings})
 }
 
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
@@ -188,7 +193,8 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg.GARoot)
+	cs.Settings = normalizeChatSettings(cs.Settings)
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
 	markChatLLMActive(llms, cs.Settings.LLMNo)
 	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
@@ -224,8 +230,9 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		cs.ID = sid
 		cs.Title = "新会话"
 	}
+	cs.Settings = normalizeChatSettings(cs.Settings)
 	if req.Settings != nil {
-		cs.Settings = *req.Settings
+		cs.Settings = normalizeChatSettings(*req.Settings)
 	}
 	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
 	if err != nil {
@@ -252,10 +259,11 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
 	cmdReq := map[string]interface{}{
-		"prompt":  display,
-		"history": workerHistory,
-		"llm_no":  cs.Settings.LLMNo,
-		"ga_root": s.CfgStore.Cfg.GARoot,
+		"prompt":     display,
+		"history":    workerHistory,
+		"llm_no":     cs.Settings.LLMNo,
+		"tools_mode": cs.Settings.ToolsMode,
+		"ga_root":    s.CfgStore.Cfg.GARoot,
 	}
 	s.NotifyPetEvent("chat:start")
 	go s.runChatWorker(sid, cs, cmdReq)
@@ -268,6 +276,32 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) 
 		_, _ = fmt.Sscanf(v, "%d", &from)
 	}
 	s.streamChatRun(w, r, safeChatID(sid), from)
+}
+
+func (s *Server) chatReinjectTools(w http.ResponseWriter, r *http.Request, sid string) {
+	sid = safeChatID(sid)
+	if s.chatRunActive(sid) {
+		bad(w, http.StatusConflict, "chat is already running")
+		return
+	}
+	ev, err := s.reinjectChatWorkerTools(sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ev == nil {
+		bad(w, http.StatusInternalServerError, "worker returned empty response")
+		return
+	}
+	if ok, _ := ev["ok"].(bool); !ok {
+		msg, _ := ev["message"].(string)
+		if msg == "" {
+			msg = "tools reinjection failed"
+		}
+		bad(w, http.StatusInternalServerError, msg)
+		return
+	}
+	writeJSON(w, ev)
 }
 
 func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
