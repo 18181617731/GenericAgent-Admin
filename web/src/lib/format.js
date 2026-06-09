@@ -1,4 +1,4 @@
-export const emptyProfile = (idx = 0) => ({ var_name: `MODEL_${idx + 1}`, type: 'openai', name: '', model: '', apibase: '', apikey: '', stream: true, max_retries: 3, read_timeout: 300, reasoning_effort: '', enabled: true })
+export const emptyProfile = (idx = 0) => ({ var_name: `MODEL_${idx + 1}`, type: 'openai', name: '', model: '', apibase: '', apikey: '', stream: true, max_retries: 3, read_timeout: 300, reasoning_effort: '' })
 export const safeJson = (v) => JSON.stringify(v ?? {}, null, 2)
 export const group = (items, pred) => (items || []).filter(pred)
 
