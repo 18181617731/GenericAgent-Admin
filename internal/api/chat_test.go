@@ -126,7 +126,7 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 	}
 }
 
-func TestChatPostSendsPriorMessagesAsStructuredWorkerHistory(t *testing.T) {
+func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
 	var captured map[string]interface{}
 	old := startChatWorkerFunc
 	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
@@ -137,7 +137,12 @@ func TestChatPostSendsPriorMessagesAsStructuredWorkerHistory(t *testing.T) {
 			defer stdoutW.Close()
 			_ = json.NewDecoder(stdinR).Decode(&captured)
 			done := chatMessage{ID: "a2", Role: "assistant", Content: "ok", CreatedAt: time.Now().Unix()}
-			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "done", "message": done})
+			rawHistory := []map[string]interface{}{
+				{"role": "user", "content": []map[string]interface{}{{"type": "text", "text": "first question"}}},
+				{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "calc", "content": "42"}}},
+				{"role": "assistant", "content": []map[string]interface{}{{"type": "text", "text": "ok"}}},
+			}
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "done", "message": done, "raw_history": rawHistory})
 		}()
 		return &chatWorker{SID: "session-hist", Stdin: stdinW, Stdout: stdoutR}, nil
 	}
@@ -145,8 +150,12 @@ func TestChatPostSendsPriorMessagesAsStructuredWorkerHistory(t *testing.T) {
 
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	seedRawHistory := []map[string]interface{}{
+		{"role": "user", "content": []map[string]interface{}{{"type": "text", "text": "first question"}}},
+		{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "search", "content": "tool data"}}},
+	}
 	seed := chatSession{
-		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2},
+		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2}, RawHistory: seedRawHistory,
 		Messages: []chatMessage{
 			{ID: "u0", Role: "user", Content: "first question", CreatedAt: 1},
 			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
@@ -181,8 +190,99 @@ func TestChatPostSendsPriorMessagesAsStructuredWorkerHistory(t *testing.T) {
 	if first["role"] != "user" || first["content"] != "first question" || second["role"] != "assistant" || second["content"] != "first answer" {
 		t.Fatalf("unexpected structured history: %#v", history)
 	}
-	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") {
-		t.Fatalf("stream unexpectedly replayed prior history: %s", rr.Body.String())
+	rawHistory, ok := captured["raw_history"].([]interface{})
+	if !ok || len(rawHistory) != len(seedRawHistory) {
+		t.Fatalf("raw_history=%#v want prior backend history", captured["raw_history"])
+	}
+	rawSecond := rawHistory[1].(map[string]interface{})
+	rawSecondContent := rawSecond["content"].([]interface{})[0].(map[string]interface{})
+	if rawSecondContent["type"] != "tool_result" || rawSecondContent["content"] != "tool data" {
+		t.Fatalf("raw_history missing tool result: %#v", rawHistory)
+	}
+	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") || strings.Contains(rr.Body.String(), "raw_history") || strings.Contains(rr.Body.String(), "tool_result") {
+		t.Fatalf("stream unexpectedly leaked prior/raw history: %s", rr.Body.String())
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, "session-hist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.RawHistory) != 3 {
+		t.Fatalf("stored raw_history len=%d want 3: %#v", len(stored.RawHistory), stored.RawHistory)
+	}
+	storedContent := stored.RawHistory[1]["content"].([]interface{})[0].(map[string]interface{})
+	if storedContent["type"] != "tool_result" || storedContent["content"] != "42" {
+		t.Fatalf("stored raw_history not updated from worker: %#v", stored.RawHistory)
+	}
+}
+
+func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
+	var captured map[string]interface{}
+	old := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			_ = json.NewDecoder(stdinR).Decode(&captured)
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "delta", "delta": "partial answer"})
+		}()
+		return &chatWorker{SID: "session-eof", Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() { startChatWorkerFunc = old }()
+
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	seedRawHistory := []map[string]interface{}{
+		{"role": "user", "content": []map[string]interface{}{{"type": "text", "text": "first question"}}},
+		{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "search", "content": "tool data"}}},
+	}
+	seed := chatSession{
+		ID: "session-eof", Title: "History", UpdatedAt: time.Now().Unix(), RawHistory: seedRawHistory,
+		Messages: []chatMessage{
+			{ID: "u0", Role: "user", Content: "first question", CreatedAt: 1},
+			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
+		},
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-eof", strings.NewReader(`{"prompt":"second question","client_user_id":"u1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if captured == nil {
+		t.Fatalf("worker request was not captured")
+	}
+	if rawHistory, ok := captured["raw_history"].([]interface{}); !ok || len(rawHistory) != len(seedRawHistory) {
+		t.Fatalf("worker raw_history=%#v want prior backend history", captured["raw_history"])
+	}
+	if strings.Contains(rr.Body.String(), "raw_history") || strings.Contains(rr.Body.String(), "tool_result") {
+		t.Fatalf("stream unexpectedly leaked raw history: %s", rr.Body.String())
+	}
+
+	stored, err := loadChatSession(s.CfgStore.Cfg, "session-eof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.RawHistory) != len(seedRawHistory)+2 {
+		t.Fatalf("raw_history len=%d want %d: %#v", len(stored.RawHistory), len(seedRawHistory)+2, stored.RawHistory)
+	}
+	keptTool := stored.RawHistory[1]["content"].([]interface{})[0].(map[string]interface{})
+	if keptTool["type"] != "tool_result" || keptTool["content"] != "tool data" {
+		t.Fatalf("prior tool_result not preserved: %#v", stored.RawHistory)
+	}
+	userContent := stored.RawHistory[len(stored.RawHistory)-2]["content"].([]interface{})[0].(map[string]interface{})
+	assistantContent := stored.RawHistory[len(stored.RawHistory)-1]["content"].([]interface{})[0].(map[string]interface{})
+	if stored.RawHistory[len(stored.RawHistory)-2]["role"] != "user" || userContent["text"] != "second question" {
+		t.Fatalf("current user not appended to raw_history: %#v", stored.RawHistory)
+	}
+	if stored.RawHistory[len(stored.RawHistory)-1]["role"] != "assistant" || !strings.Contains(fmt.Sprint(assistantContent["text"]), "partial answer") {
+		t.Fatalf("partial assistant not appended to raw_history: %#v", stored.RawHistory)
 	}
 }
 

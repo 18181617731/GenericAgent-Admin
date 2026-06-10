@@ -129,12 +129,23 @@ def _admin_history_to_backend(history):
     return out
 
 
-def _restore_admin_history(agent, history):
+def _snapshot_backend_history(agent):
     try:
-        restored = _admin_history_to_backend(history)
+        history = getattr(agent.llmclient.backend, 'history', [])
+        if not isinstance(history, list):
+            return []
+        return json.loads(json.dumps(history, ensure_ascii=False, default=str))
+    except Exception:
+        return []
+
+
+def _restore_admin_history(agent, history, raw_history=None):
+    try:
+        restored = raw_history if isinstance(raw_history, list) and raw_history else _admin_history_to_backend(history)
+        restored = json.loads(json.dumps(restored, ensure_ascii=False, default=str)) if isinstance(restored, list) else []
         sticky_tools_history = getattr(agent, '_admin_sticky_tools_history', []) or []
         if sticky_tools_history:
-            restored.extend(sticky_tools_history)
+            restored.extend(json.loads(json.dumps(sticky_tools_history, ensure_ascii=False, default=str)))
         agent.llmclient.backend.history = restored
     except Exception:
         pass
@@ -207,10 +218,11 @@ def _apply_tools_mode(agent, mode):
 def handle_request(agent, worker, req):
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
+    raw_history = req.get('raw_history') or []
     llm_no = int(req.get('llm_no') or 0)
     tools_mode = str(req.get('tools_mode') or 'official')
     _select_llm_if_needed(agent, llm_no)
-    _restore_admin_history(agent, history)
+    _restore_admin_history(agent, history, raw_history)
     mode_status = _apply_tools_mode(agent, tools_mode)
     if mode_status and not mode_status.get('ok'):
         emit({'type': 'notice', 'message': mode_status})
@@ -232,11 +244,11 @@ def handle_request(agent, worker, req):
             if 'done' in item:
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time())}
-                emit({'type': 'done', 'message': msg})
+                emit({'type': 'done', 'message': msg, 'raw_history': _snapshot_backend_history(agent)})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}
-        emit({'type': 'error', 'message': msg})
+        emit({'type': 'error', 'message': msg, 'raw_history': _snapshot_backend_history(agent)})
 
 
 def main():

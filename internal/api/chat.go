@@ -52,11 +52,12 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 }
 
 type chatSession struct {
-	ID        string        `json:"id"`
-	Title     string        `json:"title"`
-	UpdatedAt int64         `json:"updated_at"`
-	Messages  []chatMessage `json:"messages"`
-	Settings  chatSettings  `json:"settings"`
+	ID         string                   `json:"id"`
+	Title      string                   `json:"title"`
+	UpdatedAt  int64                    `json:"updated_at"`
+	Messages   []chatMessage            `json:"messages"`
+	Settings   chatSettings             `json:"settings"`
+	RawHistory []map[string]interface{} `json:"raw_history,omitempty"`
 }
 
 const (
@@ -121,6 +122,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
 	var final chatMessage
+	var finalRawHistory []map[string]interface{}
 	var readErr error
 	for {
 		line, err := readChatWorkerLine(reader)
@@ -143,7 +145,13 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
-			s.publishChatLine(sid, line)
+			finalRawHistory = chatRawHistoryFromEvent(ev)
+			delete(ev, "raw_history")
+			if cleanLine, err := json.Marshal(ev); err == nil {
+				s.publishChatLine(sid, cleanLine)
+			} else {
+				s.publishChatLine(sid, line)
+			}
 			break
 		}
 		s.publishChatLine(sid, line)
@@ -179,7 +187,17 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}
+	var fallbackMessages []chatMessage
+	if len(cs.Messages) > 0 {
+		fallbackMessages = append(fallbackMessages, cs.Messages[len(cs.Messages)-1])
+	}
+	fallbackMessages = append(fallbackMessages, final)
 	cs.Messages = append(cs.Messages, final)
+	if len(finalRawHistory) > 0 {
+		cs.RawHistory = finalRawHistory
+	} else {
+		cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallbackMessages...)
+	}
 	cs.UpdatedAt = time.Now().Unix()
 	_ = saveChatSession(s.CfgStore.Cfg, cs)
 	if final.Error {
@@ -188,6 +206,50 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		s.NotifyPetEvent("chat:done")
 	}
 	s.endChatRun(sid)
+}
+
+func chatRawHistoryFromEvent(ev map[string]interface{}) []map[string]interface{} {
+	items, ok := ev["raw_history"].([]interface{})
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]interface{}); ok {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func appendChatRawHistoryFallback(raw []map[string]interface{}, messages ...chatMessage) []map[string]interface{} {
+	out := append([]map[string]interface{}(nil), raw...)
+	for _, msg := range messages {
+		text := strings.TrimSpace(msg.Content)
+		if text == "" {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(msg.Role))
+		if role != "assistant" && role != "system" {
+			role = "user"
+		}
+		out = append(out, map[string]interface{}{
+			"role": role,
+			"content": []map[string]interface{}{{
+				"type": "text",
+				"text": text,
+			}},
+		})
+	}
+	return out
+}
+
+func chatSessionForClient(cs chatSession) chatSession {
+	cs.RawHistory = nil
+	return cs
 }
 
 func (s *Server) chatRunActive(sid string) bool {
@@ -763,6 +825,9 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	}
 	if cs.Messages == nil {
 		cs.Messages = []chatMessage{}
+	}
+	if cs.RawHistory == nil {
+		cs.RawHistory = []map[string]interface{}{}
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
 	return cs, nil

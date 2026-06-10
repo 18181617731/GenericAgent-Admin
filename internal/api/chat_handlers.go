@@ -116,12 +116,12 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{})}
+	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{}), RawHistory: []map[string]interface{}{}}
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, cs)
+	writeJSON(w, chatSessionForClient(cs))
 }
 
 func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid string) {
@@ -130,7 +130,7 @@ func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid stri
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, cs)
+	writeJSON(w, chatSessionForClient(cs))
 }
 
 func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid string) {
@@ -160,7 +160,7 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, cs)
+	writeJSON(w, chatSessionForClient(cs))
 }
 
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {
@@ -259,11 +259,12 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
 	cmdReq := map[string]interface{}{
-		"prompt":     display,
-		"history":    workerHistory,
-		"llm_no":     cs.Settings.LLMNo,
-		"tools_mode": cs.Settings.ToolsMode,
-		"ga_root":    s.CfgStore.Cfg.GARoot,
+		"prompt":      display,
+		"history":     workerHistory,
+		"raw_history": cs.RawHistory,
+		"llm_no":      cs.Settings.LLMNo,
+		"tools_mode":  cs.Settings.ToolsMode,
+		"ga_root":     s.CfgStore.Cfg.GARoot,
 	}
 	s.NotifyPetEvent("chat:start")
 	go s.runChatWorker(sid, cs, cmdReq)

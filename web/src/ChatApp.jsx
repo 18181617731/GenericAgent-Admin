@@ -587,6 +587,9 @@ export default function ChatApp() {
   const promptRef = useRef(null)
   const streamAbortRef = useRef(null)
   const runSeqRef = useRef(0)
+  const openSeqRef = useRef(0)
+  const activeSidRef = useRef('')
+  const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
   const chatScope = useRef(null)
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
@@ -600,27 +603,35 @@ export default function ChatApp() {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  useEffect(() => { activeSidRef.current = sid }, [sid])
 
-  const applyStreamEvent = (ev, pendingId, clientUserID = '') => {
+  const isActiveSession = (sessionId) => !sessionId || activeSidRef.current === sessionId
+
+  const applyStreamEvent = (ev, pendingId, clientUserID = '', sessionId = '') => {
+    if (!isActiveSession(sessionId)) return
     if (ev.type === 'user' && ev.message) {
-      setMessages(xs => clientUserID
-        ? xs.map(m => m.id === clientUserID ? ev.message : m)
-        : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message]))
+      setMessages(xs => {
+        if (!isActiveSession(sessionId)) return xs
+        return clientUserID
+          ? xs.map(m => m.id === clientUserID ? ev.message : m)
+          : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message])
+      })
     }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
-      setMessages(xs => xs.map(m => m.id === pendingId ? ev.message : m))
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? ev.message : m) : xs)
     }
   }
 
-  const createStreamBatcher = (pendingId) => {
+  const createStreamBatcher = (pendingId, sessionId = '') => {
     let pendingDelta = ''
     let raf = 0
     const flush = () => {
       raf = 0
       if (!pendingDelta) return
+      if (!isActiveSession(sessionId)) { pendingDelta = ''; return }
       const chunk = pendingDelta
       pendingDelta = ''
-      setMessages(xs => xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m))
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m) : xs)
     }
     const schedule = () => {
       if (raf) return
@@ -643,9 +654,9 @@ export default function ChatApp() {
     }
   }
 
-  const readStream = async (res, pendingId, clientUserID = '') => {
+  const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
-    const batcher = createStreamBatcher(pendingId)
+    const batcher = createStreamBatcher(pendingId, sessionId)
     try {
       while (true) {
         const { value, done } = await reader.read()
@@ -654,19 +665,20 @@ export default function ChatApp() {
         const lines = buf.split('\n'); buf = lines.pop() || ''
         for (const line of lines) {
           if (!line.trim()) continue
+          if (!isActiveSession(sessionId)) return
           const ev = JSON.parse(line)
           if (ev.type === 'delta' && typeof ev.delta === 'string') {
             batcher.push(ev.delta)
           } else {
             batcher.flushNow()
-            applyStreamEvent(ev, pendingId, clientUserID)
+            applyStreamEvent(ev, pendingId, clientUserID, sessionId)
           }
         }
       }
-      if (buf.trim()) {
+      if (buf.trim() && isActiveSession(sessionId)) {
         const ev = JSON.parse(buf)
         if (ev.type === 'delta' && typeof ev.delta === 'string') batcher.push(ev.delta)
-        else { batcher.flushNow(); applyStreamEvent(ev, pendingId, clientUserID) }
+        else { batcher.flushNow(); applyStreamEvent(ev, pendingId, clientUserID, sessionId) }
       }
     } finally {
       batcher.flushNow()
@@ -697,17 +709,21 @@ export default function ChatApp() {
       const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
-      await readStream(res, pendingId)
-      await loadSessions(id)
+      await readStream(res, pendingId, '', id)
+      if (isActiveSession(id)) await loadSessions(id)
     } catch (e) {
-      if (e.name !== 'AbortError') setErr(e.message || String(e))
+      if (e.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
     } finally {
-      if (streamAbortRef.current === ctrl) { streamAbortRef.current = null; setBusy(false); setStreamingSid('') }
+      if (streamAbortRef.current === ctrl) {
+        streamAbortRef.current = null
+        if (isActiveSession(id)) { setBusy(false); setStreamingSid('') }
+      }
     }
   }
 
-  const loadChatState = async (id = '') => {
+  const loadChatState = async (id = '', openToken = openSeqRef.current) => {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
+    if (openToken !== openSeqRef.current || !isActiveSession(id)) return
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
     const nextToolsMode = st.settings?.tools_mode === 'fixed' ? 'fixed' : 'official'
@@ -725,8 +741,21 @@ export default function ChatApp() {
   }
 
   const openSession = async (id, refreshList = true) => {
+    const openToken = ++openSeqRef.current
+    activeSidRef.current = id
+    streamAbortRef.current?.abort?.()
+    streamAbortRef.current = null
+    scrollModeRef.current = 'auto'
+    setSid(id)
+    setBusy(false)
+    setStreamingSid('')
+    setAutoFollow(true)
+    setShowFollow(false)
     const d = await api(`/api/chat/session/${id}`)
+    if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
+    activeSidRef.current = d.id
     setSid(d.id)
+    scrollModeRef.current = 'auto'
     setMessages(d.messages || [])
     setLlmNo(d.settings?.llm_no || 0)
     setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
@@ -735,7 +764,7 @@ export default function ChatApp() {
     setMenuOpen('')
     setMenuPos(null)
     if (refreshList) setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
-    await loadChatState(d.id)
+    await loadChatState(d.id, openToken)
   }
 
   const loadSessions = async (prefer = sid, options = {}) => {
@@ -746,18 +775,24 @@ export default function ChatApp() {
     if (open) {
       const next = prefer || list[0]?.id || ''
       if (next) await openSession(next, false)
-      else await loadChatState('')
+      else await loadChatState('', openSeqRef.current)
     } else if (!prefer && !sid) {
-      await loadChatState('')
+      await loadChatState('', openSeqRef.current)
     }
     return list
   }
 
   const newSession = async () => {
+    const openToken = ++openSeqRef.current
+    streamAbortRef.current?.abort?.()
+    streamAbortRef.current = null
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
+    if (openToken !== openSeqRef.current) return
+    activeSidRef.current = d.id
+    scrollModeRef.current = 'auto'
     setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
-    setSid(d.id); setMessages([]); setPrompt(''); setErr(''); setNotice('已创建新对话'); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
-    await loadChatState(d.id)
+    setSid(d.id); setMessages([]); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
+    await loadChatState(d.id, openToken)
   }
 
   const deleteSession = async (id) => {
@@ -766,7 +801,14 @@ export default function ChatApp() {
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')
     setMenuPos(null)
-    if (id === sid) { setSid(''); setMessages([]); setNotice('会话已删除') }
+    if (id === sid) {
+      ++openSeqRef.current
+      activeSidRef.current = ''
+      streamAbortRef.current?.abort?.()
+      streamAbortRef.current = null
+      scrollModeRef.current = 'auto'
+      setSid(''); setMessages([]); setBusy(false); setStreamingSid(''); setAutoFollow(true); setShowFollow(false); setNotice('会话已删除')
+    }
     setTimeout(() => loadSessions('', { open:true }).catch(()=>{}), 0)
   }
 
@@ -908,6 +950,7 @@ export default function ChatApp() {
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
     const runToken = ++runSeqRef.current
+    const openToken = openSeqRef.current
     const ctrl = new AbortController()
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
@@ -916,7 +959,13 @@ export default function ChatApp() {
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
-        id = d.id; setSid(id); setStreamingSid(id); setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
+        if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
+        id = d.id
+        activeSidRef.current = id
+        scrollModeRef.current = 'auto'
+        setSid(id); setStreamingSid(id); setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
+      } else if (!isActiveSession(id)) {
+        return
       }
       const clientUserID = `u-${Date.now()}`
       setStreamingSid(id)
@@ -925,14 +974,16 @@ export default function ChatApp() {
       const fileNote = files.length ? `\n\n[图片附件]\n${files.map(f => `- ${f.name}`).join('\n')}` : ''
       const optimistic = { id:clientUserID, role:'user', content:(text || '请分析这张图片') + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }
-      setMessages(xs => [...xs, optimistic, pending])
+      if (!isActiveSession(id)) return
+      activeSidRef.current = id
+      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode }, client_user_id:clientUserID }) })
       if (!res.ok) throw new Error(await res.text())
-      await readStream(res, pending.id, clientUserID)
+      await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
-      if (runToken === runSeqRef.current && e?.name !== 'AbortError') setErr(e.message || String(e))
+      if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
     } finally {
-      if (runToken !== runSeqRef.current) return
+      if (runToken !== runSeqRef.current || openToken !== openSeqRef.current || !isActiveSession(id)) return
       if (id) await loadSessions(id).catch(()=>{})
       const next = popQueued()
       if (next) {
@@ -1000,11 +1051,11 @@ export default function ChatApp() {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [toolsMenuOpen])
 
-  const scrollToThreadEnd = (behavior = 'smooth') => endRef.current?.scrollIntoView({ behavior, block:'end' })
+  const scrollToThreadEnd = (behavior = 'auto') => endRef.current?.scrollIntoView({ behavior, block:'end' })
   const resumeFollow = () => {
     setAutoFollow(true)
     setShowFollow(false)
-    scrollToThreadEnd('smooth')
+    scrollToThreadEnd('auto')
   }
   const updateFollowFromScroll = () => {
     const near = isNearBottom(threadRef.current)
@@ -1020,7 +1071,9 @@ export default function ChatApp() {
 
   useEffect(() => {
     if (autoFollow) {
-      scrollToThreadEnd('smooth')
+      const behavior = scrollModeRef.current || 'auto'
+      scrollModeRef.current = 'auto'
+      scrollToThreadEnd(behavior)
     } else if (!isNearBottom(threadRef.current)) {
       setShowFollow(true)
     }
@@ -1093,7 +1146,9 @@ export default function ChatApp() {
         <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span></div>
       </header>
 
-      {(err || notice) && <div className={`oa-banner ${err ? 'error' : ''}`}>{err || notice}</div>}
+      <div className="oa-banner-slot" aria-live="polite">
+        {(err || notice) && <div className={`oa-banner ${err ? 'error' : ''}`}>{err || notice}</div>}
+      </div>
 
       <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
         {messages.length === 0 && <div className="oa-empty">
