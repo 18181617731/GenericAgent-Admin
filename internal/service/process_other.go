@@ -14,10 +14,12 @@ import (
 func hideChildWindow(cmd *exec.Cmd) {}
 
 type processRow struct {
-	pid         int
-	ppid        int
-	name        string
-	commandLine string
+	pid            int
+	ppid           int
+	name           string
+	commandLine    string
+	executablePath string
+	creationDate   string
 }
 
 func (m *Manager) stopConflictingService(s ServiceInfo) ([]int, error) {
