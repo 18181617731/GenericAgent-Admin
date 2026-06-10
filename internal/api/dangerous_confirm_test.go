@@ -918,6 +918,8 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/services/start", `{}`},
 		{http.MethodPost, "/api/services/stop", `{}`},
 		{http.MethodPost, "/api/services/stop-all", `{}`},
+		{http.MethodPost, "/api/ga/processes/kill", `{}`},
+		{http.MethodPost, "/api/ga/processes/adopt", `{}`},
 		{http.MethodPost, "/api/services/autostart", `{}`},
 		{http.MethodPost, "/api/models/export", `{}`},
 		{http.MethodPut, "/api/channels", `{}`},

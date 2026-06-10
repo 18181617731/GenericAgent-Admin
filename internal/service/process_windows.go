@@ -4,7 +4,6 @@ package service
 
 import (
 	"encoding/csv"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,8 +18,12 @@ func hideChildWindow(cmd *exec.Cmd) {
 }
 
 type processRow struct {
-	pid         int
-	commandLine string
+	pid            int
+	ppid           int
+	name           string
+	commandLine    string
+	executablePath string
+	creationDate   string
 }
 
 func (m *Manager) stopConflictingService(s ServiceInfo) ([]int, error) {
@@ -56,31 +59,38 @@ func (m *Manager) stopConflictingService(s ServiceInfo) ([]int, error) {
 }
 
 func listPythonProcesses() ([]processRow, error) {
-	ps := `$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -match '^(python|pythonw)\.exe$' -or $_.CommandLine -match '(?i)python') } | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation`
+	ps := `$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -match '^(python|pythonw)\.exe$' -or $_.CommandLine -match '(?i)python|agentmain\.py|chat_worker') } | Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,CreationDate | ConvertTo-Csv -NoTypeInformation`
 	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
-	hideChildWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 	r := csv.NewReader(strings.NewReader(string(out)))
+	recs, err := r.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) <= 1 {
+		return nil, nil
+	}
 	var rows []processRow
-	for i := 0; ; i++ {
-		rec, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if i == 0 || len(rec) < 2 {
+	for _, rec := range recs[1:] {
+		if len(rec) < 6 {
 			continue
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(rec[0]))
-		if err != nil {
+		pid, _ := strconv.Atoi(strings.TrimSpace(rec[0]))
+		ppid, _ := strconv.Atoi(strings.TrimSpace(rec[1]))
+		if pid <= 0 {
 			continue
 		}
-		rows = append(rows, processRow{pid: pid, commandLine: rec[1]})
+		rows = append(rows, processRow{
+			pid:            pid,
+			ppid:           ppid,
+			name:           strings.TrimSpace(rec[2]),
+			commandLine:    rec[3],
+			executablePath: strings.TrimSpace(rec[4]),
+			creationDate:   strings.TrimSpace(rec[5]),
+		})
 	}
 	return rows, nil
 }

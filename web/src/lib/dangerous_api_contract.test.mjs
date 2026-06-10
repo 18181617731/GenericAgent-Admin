@@ -66,7 +66,7 @@ test('frontend dangerous-route list is derived from backend confirm and header g
 
 test('frontend sends dangerous header for every protected mutating API route it calls', () => {
   const srcDir = new URL('../', import.meta.url)
-  const files = ['App.jsx', 'ChatApp.jsx', 'pages/FilesPage.jsx', 'pages/GoalsPage.jsx']
+  const files = ['App.jsx', 'ChatApp.jsx', 'pages/FilesPage.jsx', 'pages/GoalsPage.jsx', 'components/ProcessGuard.jsx']
   const misses = []
   const seen = new Map(protectedFrontendRoutes.map(route => [route, 0]))
 
@@ -94,5 +94,7 @@ test('frontend sends dangerous header for every protected mutating API route it 
   assert.ok(seen.get('/api/models/export') > 0, 'models export call should be covered')
   assert.ok(seen.get('/api/pets/active') > 0, 'pets active call should be covered')
   assert.ok(seen.get('/api/hatch-pet/open') > 0, 'hatch-pet open call should be covered')
+  assert.ok(seen.get('/api/ga/processes/kill') > 0, 'process kill call should be covered')
+  assert.ok(seen.get('/api/ga/processes/adopt') > 0, 'process adopt call should be covered')
 })
 

@@ -15,6 +15,8 @@ func hideChildWindow(cmd *exec.Cmd) {}
 
 type processRow struct {
 	pid         int
+	ppid        int
+	name        string
 	commandLine string
 }
 
@@ -51,7 +53,7 @@ func (m *Manager) stopConflictingService(s ServiceInfo) ([]int, error) {
 }
 
 func listPythonProcesses() ([]processRow, error) {
-	out, err := exec.Command("ps", "-eo", "pid=,args=").Output()
+	out, err := exec.Command("ps", "-eo", "pid=,ppid=,comm=,args=").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -62,19 +64,20 @@ func listPythonProcesses() ([]processRow, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 4 {
 			continue
 		}
 		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
+		if err != nil || pid <= 0 {
 			continue
 		}
-		cmdline := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
-		lower := strings.ToLower(cmdline)
-		if !strings.Contains(lower, "python") {
+		ppid, _ := strconv.Atoi(fields[1])
+		cmd := strings.Join(fields[3:], " ")
+		lower := strings.ToLower(cmd + " " + fields[2])
+		if !strings.Contains(lower, "python") && !strings.Contains(lower, "agentmain.py") && !strings.Contains(lower, "chat_worker") {
 			continue
 		}
-		rows = append(rows, processRow{pid: pid, commandLine: cmdline})
+		rows = append(rows, processRow{pid: pid, ppid: ppid, name: fields[2], commandLine: cmd})
 	}
 	return rows, nil
 }

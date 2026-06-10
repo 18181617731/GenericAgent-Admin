@@ -10,6 +10,7 @@ import { ChannelServiceTable, EntryList, Panel, SecretInput, ServiceRow, Stat } 
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
 import { ErrorBoundary, RouteFallback } from './components/feedback'
+import { ProcessGuard } from './components/ProcessGuard'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const BBSPage = lazy(() => import('./pages/BBSPage').then(m => ({ default: m.BBSPage })))
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
@@ -433,6 +434,7 @@ export default function App() {
             {gitResult && <pre className="tmwd-paths">{JSON.stringify(gitResult, null, 2)}</pre>}
           </Panel>
           <Panel title="TMWebDriver 监控" className="tmwd-panel"><div className="tmwd-head"><div><b className={tmwdStatus?.ok ? 'ok' : 'err-text'}>{tmwdStatus?.ok ? '基础状态正常' : '需要检查'}</b><p className="muted">{tmwdStatus?.recommendation || tmwdStatus?.error || '检测浏览器进程、18766 master 端口、Python 依赖和 tmwd_cdp_bridge 扩展。'}</p></div><div className="actions"><button onClick={refreshTMWebDriverStatus} disabled={busy}><RefreshCw size={14}/>{t.refresh}</button><button onClick={installTMWebDriverDeps} disabled={busy || !(tmwdStatus?.python_missing?.length > 0)}>安装依赖</button><button onClick={repairTMWebDriver} disabled={busy || tmwdStatus?.port_listening}><Play size={14}/>修复/启动</button></div></div><div className="tmwd-checks">{(tmwdStatus?.checks || []).map(c => <div key={c.name} className={c.ok ? 'status-pill ok' : 'status-pill bad'}><span>{c.ok ? '✓' : '!'}</span><b>{c.name}</b><small>{c.detail}</small></div>)}</div>{tmwdStatus?.python_path && <p className="muted">Python: {tmwdStatus.python_path}</p>}{tmwdStatus?.python_missing?.length > 0 && <div className="tmwd-deps-warning"><b>缺少 TMWebDriver Python 依赖：{tmwdStatus.python_missing.join(', ')}</b>{tmwdStatus?.install_command && <code>{tmwdStatus.install_command}</code>}</div>}{tmwdStatus?.port && <p className="muted">Master port: {tmwdStatus.port}</p>}{tmwdStatus?.extension_paths?.length > 0 && <pre className="tmwd-paths">{tmwdStatus.extension_paths.join(String.fromCharCode(10))}</pre>}</Panel>
+          <ProcessGuard/>
           <Panel title="Recent Logs"><EntryList items={control?.logs?.items || []} empty={t.empty}/></Panel>
           <Panel title={t.lists.recentReports}><EntryList items={control?.reports || []} empty={t.empty}/></Panel>
           <Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="OK"/></Panel>

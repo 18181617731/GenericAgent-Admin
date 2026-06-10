@@ -120,6 +120,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/services/stop-all", s.requireDangerousConfirm(s.stopAll))
 	mux.HandleFunc("/api/services/autostart", s.requireDangerousConfirm(s.serviceAutostart))
 	mux.HandleFunc("/api/logs/", s.logs)
+	mux.HandleFunc("/api/ga/processes", s.gaProcesses)
+	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.killGAProcess))
+	mux.HandleFunc("/api/ga/processes/adopt", s.requireDangerousConfirm(s.adoptGAProcess))
 	mux.HandleFunc("/api/models", s.models)
 	mux.HandleFunc("/api/models/raw", s.modelsRaw)
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
@@ -196,6 +199,8 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/models/raw", Level: "dangerous", Action: "reveal_model_secrets", Reason: "returns unmasked model provider credentials after explicit dangerous authorization"},
 	{Path: "/api/models/import-mykey", Level: "dangerous", Action: "import_mykey_models", Reason: "can execute mykey import and reveal or persist provider credentials when explicitly authorized"},
 	{Path: "/api/models/export", Level: "dangerous", Action: "export_models", Reason: "writes active GA model configuration"},
+	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
+	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
 	{Path: "/api/hatch-pet/export", Level: "dangerous", Action: "export_hatch_pet", Reason: "writes embedded hatch-pet toolchain files to the configured GA tools directory"},
 	{Path: "/api/hatch-pet/install-memory", Level: "dangerous", Action: "install_pet_memory_sops", Reason: "writes pet SOPs and updates global_mem_insight.txt under the configured GA memory directory"},
