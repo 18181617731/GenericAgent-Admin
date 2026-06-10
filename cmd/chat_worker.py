@@ -139,6 +139,51 @@ def _snapshot_backend_history(agent):
         return []
 
 
+def _json_clone(value, fallback):
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    except Exception:
+        return fallback
+
+
+def _snapshot_ga_state(agent):
+    """Persist the GA official lightweight context state in addition to raw LLM history."""
+    state = {'history_info': [], 'working': {}}
+    try:
+        h = getattr(agent, 'history', [])
+        if isinstance(h, list):
+            state['history_info'] = _json_clone(h, [])
+    except Exception:
+        pass
+    try:
+        handler = getattr(agent, 'handler', None)
+        working = getattr(handler, 'working', None) if handler is not None else None
+        if isinstance(working, dict):
+            state['working'] = _json_clone(working, {})
+    except Exception:
+        pass
+    return state
+
+
+def _restore_ga_state(agent, history_info=None, working=None):
+    """Restore GA's own WORKING MEMORY inputs so Admin matches official long-running GA."""
+    try:
+        if isinstance(history_info, list):
+            agent.history = _json_clone(history_info, [])
+    except Exception:
+        pass
+    try:
+        if isinstance(working, dict):
+            restored_working = _json_clone(working, {})
+            agent._admin_restore_working = restored_working
+            # GenericAgent.run copies working memory only from self.handler into the
+            # freshly-created handler; provide an Admin-side previous handler without
+            # modifying GA core code.
+            agent.handler = type('AdminRestoredHandler', (), {'working': restored_working})()
+    except Exception:
+        pass
+
+
 def _restore_admin_history(agent, history, raw_history=None):
     try:
         restored = raw_history if isinstance(raw_history, list) and raw_history else _admin_history_to_backend(history)
@@ -219,9 +264,12 @@ def handle_request(agent, worker, req):
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     raw_history = req.get('raw_history') or []
+    history_info = req.get('history_info') or []
+    working = req.get('working') or {}
     llm_no = int(req.get('llm_no') or 0)
     tools_mode = str(req.get('tools_mode') or 'official')
     _select_llm_if_needed(agent, llm_no)
+    _restore_ga_state(agent, history_info, working)
     _restore_admin_history(agent, history, raw_history)
     mode_status = _apply_tools_mode(agent, tools_mode)
     if mode_status and not mode_status.get('ok'):
@@ -244,7 +292,8 @@ def handle_request(agent, worker, req):
             if 'done' in item:
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time())}
-                emit({'type': 'done', 'message': msg, 'raw_history': _snapshot_backend_history(agent)})
+                state = _snapshot_ga_state(agent)
+                emit({'type': 'done', 'message': msg, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}

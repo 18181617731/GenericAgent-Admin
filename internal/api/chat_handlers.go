@@ -259,12 +259,14 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
 	cmdReq := map[string]interface{}{
-		"prompt":      display,
-		"history":     workerHistory,
-		"raw_history": cs.RawHistory,
-		"llm_no":      cs.Settings.LLMNo,
-		"tools_mode":  cs.Settings.ToolsMode,
-		"ga_root":     s.CfgStore.Cfg.GARoot,
+		"prompt":       display,
+		"history":      workerHistory,
+		"raw_history":  cs.RawHistory,
+		"history_info": cs.HistoryInfo,
+		"working":      cs.Working,
+		"llm_no":       cs.Settings.LLMNo,
+		"tools_mode":   cs.Settings.ToolsMode,
+		"ga_root":      s.CfgStore.Cfg.GARoot,
 	}
 	s.NotifyPetEvent("chat:start")
 	go s.runChatWorker(sid, cs, cmdReq)

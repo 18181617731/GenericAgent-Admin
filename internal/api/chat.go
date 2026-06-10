@@ -52,12 +52,14 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 }
 
 type chatSession struct {
-	ID         string                   `json:"id"`
-	Title      string                   `json:"title"`
-	UpdatedAt  int64                    `json:"updated_at"`
-	Messages   []chatMessage            `json:"messages"`
-	Settings   chatSettings             `json:"settings"`
-	RawHistory []map[string]interface{} `json:"raw_history,omitempty"`
+	ID          string                   `json:"id"`
+	Title       string                   `json:"title"`
+	UpdatedAt   int64                    `json:"updated_at"`
+	Messages    []chatMessage            `json:"messages"`
+	Settings    chatSettings             `json:"settings"`
+	RawHistory  []map[string]interface{} `json:"raw_history,omitempty"`
+	HistoryInfo []interface{}            `json:"history_info,omitempty"`
+	Working     map[string]interface{}   `json:"working,omitempty"`
 }
 
 const (
@@ -123,6 +125,8 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
 	var final chatMessage
 	var finalRawHistory []map[string]interface{}
+	var finalHistoryInfo []interface{}
+	var finalWorking map[string]interface{}
 	var readErr error
 	for {
 		line, err := readChatWorkerLine(reader)
@@ -146,7 +150,11 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
 			finalRawHistory = chatRawHistoryFromEvent(ev)
+			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
+			finalWorking = chatWorkingFromEvent(ev)
 			delete(ev, "raw_history")
+			delete(ev, "history_info")
+			delete(ev, "working")
 			if cleanLine, err := json.Marshal(ev); err == nil {
 				s.publishChatLine(sid, cleanLine)
 			} else {
@@ -198,6 +206,12 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	} else {
 		cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallbackMessages...)
 	}
+	if finalHistoryInfo != nil {
+		cs.HistoryInfo = finalHistoryInfo
+	}
+	if finalWorking != nil {
+		cs.Working = finalWorking
+	}
 	cs.UpdatedAt = time.Now().Unix()
 	_ = saveChatSession(s.CfgStore.Cfg, cs)
 	if final.Error {
@@ -221,6 +235,26 @@ func chatRawHistoryFromEvent(ev map[string]interface{}) []map[string]interface{}
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func chatHistoryInfoFromEvent(ev map[string]interface{}) []interface{} {
+	items, ok := ev["history_info"].([]interface{})
+	if !ok {
+		return nil
+	}
+	return append([]interface{}(nil), items...)
+}
+
+func chatWorkingFromEvent(ev map[string]interface{}) map[string]interface{} {
+	m, ok := ev["working"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		out[k] = v
 	}
 	return out
 }

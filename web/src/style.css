@@ -3231,7 +3231,7 @@ html[data-theme="dark"] .goal-tabs button.active { color: var(--ink-link) !impor
   background: #0e906f !important;
 }
 
-/* /chat composer tools dropdown — single entry, brand-green family. */
+/* /chat composer tools dropdown — match composer model selector chrome. */
 .oa-tools-menu { position: relative; flex: 0 0 auto; }
 .oa-tools-trigger {
   display: inline-flex;
@@ -3240,9 +3240,9 @@ html[data-theme="dark"] .goal-tabs button.active { color: var(--ink-link) !impor
   height: 34px;
   padding: 0 10px 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 163, 127, .22);
-  background: rgba(16, 163, 127, .07);
-  color: #0e8e6e;
+  border: 1px solid rgba(0,0,0,.10);
+  background: var(--surface-strong);
+  color: var(--text);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -.01em;
@@ -3263,8 +3263,8 @@ html[data-theme="dark"] .goal-tabs button.active { color: var(--ink-link) !impor
 }
 .oa-tools-trigger:hover:not(:disabled),
 .oa-tools-trigger.is-open {
-  border-color: rgba(16, 163, 127, .36);
-  background: rgba(16, 163, 127, .13);
+  border-color: rgba(0,0,0,.14);
+  background: var(--surface-muted);
 }
 .oa-tools-trigger:active:not(:disabled) { transform: translateY(.5px); }
 .oa-tools-trigger:disabled { opacity: .42; cursor: not-allowed; }
@@ -3343,14 +3343,14 @@ html[data-theme="dark"] .goal-tabs button.active { color: var(--ink-link) !impor
 .oa-tools-act:disabled { opacity: .42; cursor: not-allowed; }
 
 html[data-theme="dark"] .oa-tools-trigger {
-  color: #34d8b0;
-  border-color: rgba(52, 216, 176, .26);
-  background: rgba(52, 216, 176, .10);
+  color: var(--text);
+  border-color: rgba(148, 163, 184, .18);
+  background: var(--surface-strong);
 }
 html[data-theme="dark"] .oa-tools-trigger:hover:not(:disabled),
 html[data-theme="dark"] .oa-tools-trigger.is-open {
-  border-color: rgba(52, 216, 176, .40);
-  background: rgba(52, 216, 176, .16);
+  border-color: rgba(148, 163, 184, .28);
+  background: var(--surface-muted);
 }
 html[data-theme="dark"] .oa-tools-trigger .oa-tools-state { background: #16b790; color: #04150f; }
 html[data-theme="dark"] .oa-tools-pop {

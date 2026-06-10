@@ -836,7 +836,7 @@ export default function ChatApp() {
     if (!sid) return
     try {
       await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: next }) })
-      setNotice(next === 'fixed' ? '已设为自动注入：每次发消息都带上工具' : '已设为首次注入：仅会话开始注入一次，需要时可点“立即注入一次”')
+      setNotice(next === 'fixed' ? '已设为自动注入：每次发消息都带上工具' : '已设为官方行为：会话开始按 GA 默认方式注入工具，需要时可点“立即注入一次”')
     } catch (e) {
       setToolsMode(prev)
       setErr(e.message || String(e))
@@ -1197,14 +1197,14 @@ export default function ChatApp() {
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
             <div className="oa-tools-menu" ref={toolsMenuRef}>
               <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
-                <Wrench size={16}/><span>工具</span><span className="oa-tools-state">{isFixedToolsMode ? '自动' : '首次'}</span><ChevronDown size={14}/>
+                <Wrench size={16}/><span>工具</span>{isFixedToolsMode && <span className="oa-tools-state">自动</span>}<ChevronDown size={14}/>
               </button>
               {toolsMenuOpen && (
                 <div className="oa-tools-pop" role="menu">
                   <div className="oa-tools-pop-head">工具注入方式</div>
                   <button className={`oa-tools-opt ${!isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={!isFixedToolsMode} onClick={()=>setToolsModeTo('official')}>
                     <Wrench size={16}/>
-                    <span className="oa-tools-opt-text"><b>首次注入<span className="oa-tools-tag">官方</span></b><small>仅会话开始注入一次，需要时再点“立即注入一次”</small></span>
+                    <span className="oa-tools-opt-text"><b>官方行为<span className="oa-tools-tag">默认</span></b><small>会话开始按 GA 默认方式注入工具，需要时再点“立即注入一次”</small></span>
                     {!isFixedToolsMode && <Check size={16}/>}
                   </button>
                   <button className={`oa-tools-opt ${isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={isFixedToolsMode} onClick={()=>setToolsModeTo('fixed')}>
@@ -1230,7 +1230,7 @@ export default function ChatApp() {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队 · 工具：{isFixedToolsMode ? '每次自动注入' : '首次注入'}</p>
+        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队 · 工具：{isFixedToolsMode ? '每次自动注入' : '官方默认'}</p>
       </footer>
     </main>
   </div>
