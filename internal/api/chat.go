@@ -282,7 +282,6 @@ func appendChatRawHistoryFallback(raw []map[string]interface{}, messages ...chat
 }
 
 func chatSessionForClient(cs chatSession) chatSession {
-	cs.RawHistory = nil
 	return cs
 }
 

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, Pin, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 
@@ -36,6 +36,39 @@ const timelineKey = (v) => {
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
+
+const MARKDOWN_CHAR_LIMIT = 70000
+const MARKDOWN_LINE_LIMIT = 1200
+const MARKDOWN_BLOCK_LIMIT = 360
+const LIST_ITEM_LIMIT = 240
+const LONG_TEXT_PREVIEW_CHARS = 18000
+const JSON_TREE_CHILD_LIMIT = 160
+const JSON_TREE_STRING_LIMIT = 1400
+
+const textRenderStats = (text = '') => {
+  const src = String(text || '')
+  let lines = src.length ? 1 : 0
+  let exactLines = true
+  for (let i = 0; i < src.length; i++) {
+    if (src.charCodeAt(i) === 10) {
+      lines += 1
+      if (lines > MARKDOWN_LINE_LIMIT) { exactLines = false; break }
+    }
+  }
+  return {
+    chars: src.length,
+    lines,
+    linesLabel: exactLines ? String(lines) : `${MARKDOWN_LINE_LIMIT}+`,
+    tooLarge: src.length > MARKDOWN_CHAR_LIMIT || !exactLines,
+  }
+}
+
+const previewLongText = (text = '', limit = LONG_TEXT_PREVIEW_CHARS) => {
+  const src = String(text || '')
+  let head = src.slice(0, limit).replace(/\r\n/g, '\n').replace(/\n{8,}/g, '\n\n… 连续空行已折叠 …\n\n')
+  if (src.length > limit) head += `\n\n… 已截断预览，完整内容 ${src.length.toLocaleString()} 字符，可复制全文。`
+  return head
+}
 
 const tokenizeInlineMarkdown = (text = '') => {
   const src = String(text || '')
@@ -79,6 +112,45 @@ function CopyButton({ text, compact = false }) {
   return <button className={compact ? 'oa-mini-copy' : 'oa-copy'} onClick={copy} title="复制">
     {ok ? <Check size={14}/> : <Copy size={14}/>}<span>{ok ? '已复制' : '复制'}</span>
   </button>
+}
+
+function LongTextPreview({ text = '', stats }) {
+  const s = stats || textRenderStats(text)
+  const preview = useMemo(() => previewLongText(text), [text])
+  return <div className="oa-long-text-preview">
+    <div className="oa-long-text-head">
+      <b>内容过大，已切换安全预览</b>
+      <span>{s.chars.toLocaleString()} 字符 · {s.linesLabel} 行</span>
+      <CopyButton text={text} compact />
+    </div>
+    <pre>{preview}</pre>
+  </div>
+}
+
+function JsonTree({ data, name = 'root', depth = 0 }) {
+  const [open, setOpen] = useState(depth < 2)
+  const isArray = Array.isArray(data)
+  const isObject = data && typeof data === 'object' && !isArray
+  if (!isArray && !isObject) {
+    const cls = data === null ? 'is-null' : typeof data === 'string' ? 'is-string' : typeof data === 'number' ? 'is-number' : typeof data === 'boolean' ? 'is-bool' : ''
+    const raw = typeof data === 'string' ? data : JSON.stringify(data)
+    const long = typeof raw === 'string' && raw.length > JSON_TREE_STRING_LIMIT
+    const shown = long ? `${raw.slice(0, JSON_TREE_STRING_LIMIT)}… (${raw.length.toLocaleString()} chars)` : raw
+    return <div className="oa-json-line" style={{ '--depth': depth }}><span className="oa-json-key">{name}:</span> <span className={`oa-json-value ${cls}`}>{typeof data === 'string' ? JSON.stringify(shown) : shown}</span></div>
+  }
+  const entries = isArray ? data.map((v, i) => [i, v]) : Object.entries(data)
+  const shownEntries = entries.slice(0, JSON_TREE_CHILD_LIMIT)
+  const hidden = entries.length - shownEntries.length
+  const label = isArray ? `Array(${data.length})` : `Object(${entries.length})`
+  return <div className="oa-json-node">
+    <button type="button" className="oa-json-toggle" style={{ '--depth': depth }} onClick={()=>setOpen(v=>!v)}>
+      <span className="oa-json-caret">{open ? '▾' : '▸'}</span><span className="oa-json-key">{name}</span><span className="oa-json-type">{label}</span>
+    </button>
+    {open && <div>
+      {shownEntries.map(([k, v]) => <JsonTree key={String(k)} name={String(k)} data={v} depth={depth + 1} />)}
+      {hidden > 0 && <div className="oa-json-line oa-json-more" style={{ '--depth': depth + 1 }}>… 已隐藏 {hidden.toLocaleString()} 项，复制原始 JSON 查看全部</div>}
+    </div>}
+  </div>
 }
 
 function isImageFile(f) {
@@ -208,7 +280,9 @@ const normalizeToolParts = (parts = []) => {
 }
 
 const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
-  const parts = useMemo(() => normalizeToolParts(splitMarkdownParts(text)), [text])
+  const stats = useMemo(() => textRenderStats(text), [text])
+  const parts = useMemo(() => stats.tooLarge ? [] : normalizeToolParts(splitMarkdownParts(text)).slice(0, MARKDOWN_BLOCK_LIMIT), [text, stats.tooLarge])
+  if (stats.tooLarge) return <div className="oa-md"><LongTextPreview text={text} stats={stats} /></div>
   return <div className="oa-md">
     {parts.map((p, idx) => p.type === 'code'
       ? <div className="oa-code-card" key={idx}>
@@ -218,6 +292,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
       : p.type === 'tool'
         ? <ToolCallBlock key={idx} call={p.call} onAskReply={onAskReply} />
         : <TextMarkdown key={idx} text={p.text} onAskReply={onAskReply}/>) }
+    {parts.length >= MARKDOWN_BLOCK_LIMIT && <div className="oa-md-truncated">内容块过多，仅渲染前 {MARKDOWN_BLOCK_LIMIT} 块，可复制消息查看完整内容。</div>}
   </div>
 })
 
@@ -356,14 +431,17 @@ function renderMarkdownTable(table, key) {
 function renderListBlock(lines, i, ordered) {
   const itemRe = ordered ? /^\s*(\d+)[.)]\s+/ : /^\s*[-*+]\s+/
   const Tag = ordered ? 'ol' : 'ul'
+  const shownLines = lines.slice(0, LIST_ITEM_LIMIT)
+  const hidden = Math.max(0, lines.length - shownLines.length)
   const firstNumber = ordered ? Number(String(lines[0] || '').match(itemRe)?.[1] || 1) : undefined
   const props = ordered ? { start: firstNumber } : {}
   return <Tag key={i} className={`oa-list ${ordered ? 'oa-list-ordered' : 'oa-list-unordered'}`} {...props}>
-    {lines.map((x,j)=>{
+    {shownLines.map((x,j)=>{
       const itemNumber = ordered ? Number(String(x || '').match(itemRe)?.[1] || firstNumber + j) : undefined
       const liProps = ordered ? { value: itemNumber } : {}
       return <li key={j} {...liProps}><InlineRichText text={x.replace(itemRe, '')} /></li>
     })}
+    {hidden > 0 && <li className="oa-md-truncated">… 已隐藏 {hidden.toLocaleString()} 个列表项</li>}
   </Tag>
 }
 
@@ -429,7 +507,9 @@ function renderTextBlock(b, i) {
 }
 
 function TextMarkdown({ text = '', onAskReply }) {
-  const blocks = String(text || '').replace(/\r\n/g, '\n').split(/\n{2,}/)
+  const allBlocks = String(text || '').replace(/\r\n/g, '\n').split(/\n{2,}/)
+  const blocks = allBlocks.slice(0, MARKDOWN_BLOCK_LIMIT)
+  const hiddenBlocks = Math.max(0, allBlocks.length - blocks.length)
   const nodes = []
   for (let i = 0; i < blocks.length; i++) {
     const toolCall = parseToolCallBlock(blocks[i])
@@ -452,6 +532,7 @@ function TextMarkdown({ text = '', onAskReply }) {
     }
     nodes.push(renderTextBlock(blocks[i], i))
   }
+  if (hiddenBlocks > 0) nodes.push(<div key="__hidden_blocks" className="oa-md-truncated">… 已隐藏 {hiddenBlocks.toLocaleString()} 个内容块，可复制消息查看完整内容。</div>)
   return <>{nodes}</>
 }
 
@@ -488,8 +569,10 @@ const parseAssistantContent = (raw = '') => {
 
 const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply }) {
   const [openTurns, setOpenTurns] = useState({})
-  const parsed = useMemo(() => parseAssistantContent(content), [content])
+  const stats = useMemo(() => textRenderStats(content), [content])
+  const parsed = useMemo(() => stats.tooLarge ? { runs: [], body: '' } : parseAssistantContent(content), [content, stats.tooLarge])
   if (!content && pending) return <div className="oa-content oa-thinking">正在思考…</div>
+  if (content && stats.tooLarge) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
@@ -528,8 +611,16 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
 
 // 用户消息正文里会被自动追加附件清单（前端乐观态的“[图片附件]”或后端保存后的“[附件已保存]\n[FILE:...]”）。
 // 这些附件已经由 oa-message-images 单独渲染，若再经 InlineRichText 渲染 [FILE:] 会导致图片重复显示，故在展示前剥离该尾块。
-const stripUserAttachmentBlock = (content = '') =>
-  String(content || '').replace(/\n*\[(?:图片附件|附件已保存)\][\s\S]*$/, '').trimEnd()
+const stripUserAttachmentBlock = (content = '') => {
+  const src = String(content || '')
+  const markers = ['\n[图片附件]', '\n[附件已保存]', '[图片附件]', '[附件已保存]']
+  let cut = -1
+  for (const marker of markers) {
+    const i = src.lastIndexOf(marker)
+    if (i >= 0 && (cut < 0 || i < cut)) cut = i
+  }
+  return cut >= 0 ? src.slice(0, cut).trimEnd() : src
+}
 
 const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
@@ -559,6 +650,10 @@ export default function ChatApp() {
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
+  const [rawHistory, setRawHistory] = useState([])
+  const [historyInfo, setHistoryInfo] = useState([])
+  const [workingState, setWorkingState] = useState(null)
+  const [contextOpen, setContextOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
@@ -757,6 +852,9 @@ export default function ChatApp() {
     setSid(d.id)
     scrollModeRef.current = 'auto'
     setMessages(d.messages || [])
+    setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
+    setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
+    setWorkingState(d.working || null)
     setLlmNo(d.settings?.llm_no || 0)
     setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     setErr('')
@@ -791,7 +889,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
-    setSid(d.id); setMessages([]); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id, openToken)
   }
 
@@ -974,6 +1072,7 @@ export default function ChatApp() {
       const fileNote = files.length ? `\n\n[图片附件]\n${files.map(f => `- ${f.name}`).join('\n')}` : ''
       const optimistic = { id:clientUserID, role:'user', content:(text || '请分析这张图片') + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }
+      setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
       setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
@@ -984,7 +1083,10 @@ export default function ChatApp() {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
     } finally {
       if (runToken !== runSeqRef.current || openToken !== openSeqRef.current || !isActiveSession(id)) return
-      if (id) await loadSessions(id).catch(()=>{})
+      if (id) {
+        await loadSessions(id).catch(()=>{})
+        await openSession(id, false).catch(()=>{})
+      }
       const next = popQueued()
       if (next) {
         setNotice(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`)
@@ -1096,6 +1198,15 @@ export default function ChatApp() {
   const selectedModelNo = activeModel?.index ?? llmNo
   const isCurrentRunning = busy && streamingSid === sid
   const isFixedToolsMode = toolsMode === 'fixed'
+  const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
+  const copyContext = async () => {
+    try {
+      await navigator.clipboard.writeText(contextJson)
+      setNotice('模型上下文 JSON 已复制')
+    } catch {
+      setErr('复制失败，请手动选择 JSON')
+    }
+  }
 
   return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -1144,7 +1255,19 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title="新对话" aria-label="新对话"><MessageSquarePlus size={18}/></button>
         </div>}
         <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span></div>
+        <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
+          <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
+        </button>
       </header>
+
+      {contextOpen && <aside className="oa-context-drawer" aria-label="模型上下文">
+        <div className="oa-context-head">
+          <div><b>模型上下文</b><span>agent.llmclient.backend.history 完成后的快照</span></div>
+          <div className="oa-context-actions"><button type="button" onClick={copyContext}>复制 JSON</button><button type="button" onClick={()=>setContextOpen(false)} aria-label="关闭上下文"><X size={15}/></button></div>
+        </div>
+        <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
+        <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
+      </aside>}
 
       <div className="oa-banner-slot" aria-live="polite">
         {(err || notice) && <div className={`oa-banner ${err ? 'error' : ''}`}>{err || notice}</div>}
