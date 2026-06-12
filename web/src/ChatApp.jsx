@@ -4,6 +4,7 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, parseAssistantContent, previewLongText, textRenderStats } from './lib/chatTextSafety'
 
 gsap.registerPlugin(useGSAP)
 
@@ -36,39 +37,6 @@ const timelineKey = (v) => {
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
-
-const MARKDOWN_CHAR_LIMIT = 70000
-const MARKDOWN_LINE_LIMIT = 1200
-const MARKDOWN_BLOCK_LIMIT = 360
-const LIST_ITEM_LIMIT = 240
-const LONG_TEXT_PREVIEW_CHARS = 18000
-const JSON_TREE_CHILD_LIMIT = 160
-const JSON_TREE_STRING_LIMIT = 1400
-
-const textRenderStats = (text = '') => {
-  const src = String(text || '')
-  let lines = src.length ? 1 : 0
-  let exactLines = true
-  for (let i = 0; i < src.length; i++) {
-    if (src.charCodeAt(i) === 10) {
-      lines += 1
-      if (lines > MARKDOWN_LINE_LIMIT) { exactLines = false; break }
-    }
-  }
-  return {
-    chars: src.length,
-    lines,
-    linesLabel: exactLines ? String(lines) : `${MARKDOWN_LINE_LIMIT}+`,
-    tooLarge: src.length > MARKDOWN_CHAR_LIMIT || !exactLines,
-  }
-}
-
-const previewLongText = (text = '', limit = LONG_TEXT_PREVIEW_CHARS) => {
-  const src = String(text || '')
-  let head = src.slice(0, limit).replace(/\r\n/g, '\n').replace(/\n{8,}/g, '\n\n… 连续空行已折叠 …\n\n')
-  if (src.length > limit) head += `\n\n… 已截断预览，完整内容 ${src.length.toLocaleString()} 字符，可复制全文。`
-  return head
-}
 
 const tokenizeInlineMarkdown = (text = '') => {
   const src = String(text || '')
@@ -536,43 +504,13 @@ function TextMarkdown({ text = '', onAskReply }) {
   return <>{nodes}</>
 }
 
-const FINAL_MARKER_RE = /```+\s*\n?\[Info\]\s*Final response to user\.\s*\n?```+/i
-const TURN_HEADER_RE = /(?:^|\n)\s*(?:\*\*)?\s*LLM Running\s*\(Turn\s+(\d+)(?:\))?\s*(?:\.\.\.)?\s*(?:\*\*)?/gi
-
-const cleanRunBody = (s = '') => String(s || '')
-  .replace(/<summary>[\s\S]*?<\/summary>/gi, '')
-  .replace(/\n{3,}/g, '\n\n')
-  .trim()
-
-const parseAssistantContent = (raw = '') => {
-  const full = String(raw || '').replace(/\r\n/g, '\n')
-  const finalMatch = full.match(FINAL_MARKER_RE)
-  const processText = finalMatch ? full.slice(0, finalMatch.index) : full
-  const finalText = finalMatch ? full.slice(finalMatch.index + finalMatch[0].length) : ''
-  const runs = []
-  const matches = [...processText.matchAll(TURN_HEADER_RE)]
-
-  if (matches.length) {
-    matches.forEach((m, i) => {
-      const start = m.index + m[0].length
-      const end = i + 1 < matches.length ? matches[i + 1].index : processText.length
-      const chunk = processText.slice(start, end).trim()
-      const summary = chunk.match(/<summary>([\s\S]*?)<\/summary>/i)
-      const title = summary?.[1]?.trim() || `Turn ${m[1]}`
-      runs.push({ turn: Number(m[1]) || i + 1, title, body: cleanRunBody(chunk) })
-    })
-    return { runs, body: (finalText || '').replace(/\n{3,}/g, '\n\n').trim() }
-  }
-
-  return { runs: [], body: full.replace(FINAL_MARKER_RE, '').replace(/\n{3,}/g, '\n\n').trim() }
-}
-
 const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply }) {
   const [openTurns, setOpenTurns] = useState({})
   const stats = useMemo(() => textRenderStats(content), [content])
-  const parsed = useMemo(() => stats.tooLarge ? { runs: [], body: '' } : parseAssistantContent(content), [content, stats.tooLarge])
+  const parsed = useMemo(() => parseAssistantContent(content), [content])
+  const hasTurnSplit = parsed.runs.length > 0
   if (!content && pending) return <div className="oa-content oa-thinking">正在思考…</div>
-  if (content && stats.tooLarge) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
+  if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true

@@ -4,7 +4,9 @@ import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 import { Panel } from './common'
 
-const riskLabel = (risk) => ({ managed: 'managed', unmanaged: 'unmanaged', suspicious: 'risk' }[risk] || risk || 'unknown')
+const riskLabel = (risk) => ({ managed: '托管', unmanaged: '未托管', suspicious: '风险' }[risk] || risk || '未知')
+const processCommand = (p) => p.command_line || p.cmdline || p.command || p.executable_path || '-'
+const processPath = (p) => p.executable_path || p.exe || p.path || '-'
 
 export function ProcessGuard() {
   const [snapshot, setSnapshot] = useState(null)
@@ -66,34 +68,35 @@ export function ProcessGuard() {
     }
   }
 
-  return <Panel title="GA Process Guard" className="process-guard-panel">
+  return <Panel title="GA 进程守卫" className="process-guard-panel">
     <div className="process-guard-head">
       <div>
         <p className="muted">巡检 GARoot 下 agentmain / reflect / chat worker，识别游离进程并提供危险确认后终止或接管。</p>
-        {snapshot?.scanned_at && <small>Last scan: {snapshot.scanned_at}</small>}
+        {snapshot?.scanned_at && <small>最近扫描：{snapshot.scanned_at} · 总计 {counts.total}</small>}
       </div>
-      <button type="button" onClick={load} disabled={loading}><RefreshCw size={14}/>{loading ? 'Scanning' : 'Refresh'}</button>
+      <button type="button" onClick={load} disabled={loading}><RefreshCw size={14}/>{loading ? '扫描中' : '刷新'}</button>
     </div>
     <div className="process-guard-stats">
-      <span><CheckCircle2 size={14}/>managed <b>{counts.managed}</b></span>
-      <span><ShieldAlert size={14}/>unmanaged <b>{counts.unmanaged}</b></span>
-      <span><AlertTriangle size={14}/>risk <b>{counts.risk}</b></span>
+      <span><CheckCircle2 size={14}/>托管 <b>{counts.managed}</b></span>
+      <span><ShieldAlert size={14}/>未托管 <b>{counts.unmanaged}</b></span>
+      <span><AlertTriangle size={14}/>风险 <b>{counts.risk}</b></span>
     </div>
     {error && <div className="error process-guard-error">{error}</div>}
-    {lastAction && <div className="process-guard-action">{lastAction.action || 'action'} PID {lastAction.pid}: {lastAction.message || 'ok'}</div>}
+    {lastAction && <div className="process-guard-action">{lastAction.action || '操作'} PID {lastAction.pid}: {lastAction.message || '完成'}</div>}
     <div className="process-table-wrap">
       <table className="process-table">
-        <thead><tr><th>PID</th><th>Kind</th><th>Risk</th><th>Command</th><th>Action</th></tr></thead>
+        <thead><tr><th>PID</th><th>类型</th><th>风险</th><th>可执行文件</th><th>命令</th><th>操作</th></tr></thead>
         <tbody>
-          {processes.length === 0 && <tr><td colSpan="5" className="muted">No GA process found.</td></tr>}
+          {processes.length === 0 && <tr><td colSpan="6" className="muted">未发现 GA 进程。</td></tr>}
           {processes.map(p => <tr key={p.pid} className={p.managed ? 'managed' : 'unmanaged'}>
-            <td><b>{p.pid}</b><small>{p.ppid ? `PPID ${p.ppid}` : ''}</small></td>
-            <td>{p.kind || p.name || 'ga'}<small>{p.managed ? 'registered' : 'outside registry'}</small></td>
+            <td><b>{p.pid}</b><small>{p.ppid ? `父进程 ${p.ppid}` : ''}</small></td>
+            <td>{p.kind || p.name || 'ga'}<small>{p.managed ? '已登记' : '未登记'}</small></td>
             <td><span className={`process-risk risk-${riskLabel(p.risk)}`}>{riskLabel(p.risk)}</span></td>
-            <td><code title={p.command_line}>{p.command_line || p.executable_path || '-'}</code></td>
+            <td><code title={processPath(p)}>{processPath(p)}</code><small>{p.cwd ? `工作目录 ${p.cwd}` : ''}</small></td>
+            <td><code title={processCommand(p)}>{processCommand(p)}</code></td>
             <td><div className="process-actions">
-              {!p.managed && <button type="button" disabled={actingPid === p.pid} onClick={() => adoptProcess(p.pid)}><Link2 size={13}/>Adopt</button>}
-              <button type="button" className="danger" disabled={actingPid === p.pid} onClick={() => killProcess(p.pid)}><Skull size={13}/>Kill</button>
+              {!p.managed && <button type="button" disabled={actingPid === p.pid} onClick={() => adoptProcess(p.pid)}><Link2 size={13}/>接管</button>}
+              <button type="button" className="danger" disabled={actingPid === p.pid} onClick={() => killProcess(p.pid)}><Skull size={13}/>终止</button>
             </div></td>
           </tr>)}
         </tbody>

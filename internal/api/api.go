@@ -90,6 +90,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/list", s.filesList)
 	mux.HandleFunc("/api/files/read", s.filesRead)
 	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.filesWrite))
+	mux.HandleFunc("/api/files/delete", s.requireDangerousConfirm(s.filesDelete))
+	mux.HandleFunc("/api/files/download", s.filesDownload)
 	mux.HandleFunc("/api/files/tail", s.filesTail)
 	mux.HandleFunc("/api/files/search", s.filesSearch)
 	mux.HandleFunc("/api/files/open", s.requireDangerousConfirm(s.filesOpen))
@@ -170,6 +172,7 @@ type riskCatalogItem struct {
 
 var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/write", Level: "dangerous", Action: "write_file", Reason: "writes into GA workspace; handler creates backup before overwrite"},
+	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
 	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},

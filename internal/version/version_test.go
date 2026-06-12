@@ -89,6 +89,9 @@ func TestCurrentUsesInjectedVersion(t *testing.T) {
 	if cur.Version != "1.2.3" || cur.Commit != "abc1234" {
 		t.Fatalf("Current()=%#v, want injected version/commit", cur)
 	}
+	if cur.Runtime == "" || cur.GOOS == "" || cur.GOARCH == "" {
+		t.Fatalf("Current()=%#v, want runtime/platform diagnostics", cur)
+	}
 }
 
 func TestVerifySHA256(t *testing.T) {
@@ -187,6 +190,19 @@ func TestCurrentIncludesBuildDate(t *testing.T) {
 	cur := Current()
 	if cur.Version != Version || cur.Commit != Commit || cur.Date != Date {
 		t.Fatalf("Current()=%#v, want injected version/commit/date", cur)
+	}
+}
+
+func TestCurrentReportsUpdateSupportStatus(t *testing.T) {
+	cur := Current()
+	if runtime.GOOS == "windows" {
+		if !cur.UpdateSupported || cur.UpdateUnsupportedReason != "" {
+			t.Fatalf("Current()=%#v, want Windows update support", cur)
+		}
+		return
+	}
+	if cur.UpdateSupported || cur.UpdateUnsupportedReason == "" {
+		t.Fatalf("Current()=%#v, want explicit non-Windows unsupported reason", cur)
 	}
 }
 

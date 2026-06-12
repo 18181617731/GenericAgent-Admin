@@ -52,12 +52,15 @@ const (
 )
 
 type BuildInfo struct {
-	Version string `json:"version"`
-	Commit  string `json:"commit"`
-	Date    string `json:"date"`
-	GOOS    string `json:"goos"`
-	GOARCH  string `json:"goarch"`
-	Exe     string `json:"exe"`
+	Version                 string `json:"version"`
+	Commit                  string `json:"commit"`
+	Date                    string `json:"date"`
+	GOOS                    string `json:"goos"`
+	GOARCH                  string `json:"goarch"`
+	Runtime                 string `json:"runtime"`
+	Exe                     string `json:"exe"`
+	UpdateSupported         bool   `json:"update_supported"`
+	UpdateUnsupportedReason string `json:"update_unsupported_reason,omitempty"`
 }
 
 type Asset struct {
@@ -277,7 +280,25 @@ func StartApplyLatest() (UpdateStatus, error) {
 
 func Current() BuildInfo {
 	exe, _ := os.Executable()
-	return BuildInfo{Version: effectiveVersion(), Commit: effectiveCommit(), Date: Date, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Exe: exe}
+	supported, reason := updateSupportStatus()
+	return BuildInfo{
+		Version:                 effectiveVersion(),
+		Commit:                  effectiveCommit(),
+		Date:                    Date,
+		GOOS:                    runtime.GOOS,
+		GOARCH:                  runtime.GOARCH,
+		Runtime:                 runtime.Version(),
+		Exe:                     exe,
+		UpdateSupported:         supported,
+		UpdateUnsupportedReason: reason,
+	}
+}
+
+func updateSupportStatus() (bool, string) {
+	if runtime.GOOS != "windows" {
+		return false, "one-click self update is currently implemented for Windows packages"
+	}
+	return true, ""
 }
 
 func effectiveVersion() string {

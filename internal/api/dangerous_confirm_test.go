@@ -127,6 +127,64 @@ func TestDangerousConfirmCasesCoverRegisteredRoutes(t *testing.T) {
 	}
 }
 
+func TestRiskCatalogDangerousEntriesStayProtected(t *testing.T) {
+	registered, err := registeredRoutesFromSource("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routesByPath := map[string]registeredRoute{}
+	for _, route := range registered {
+		routesByPath[route.Path] = route
+	}
+
+	var unprotected []string
+	for _, item := range riskCatalogItems {
+		if item.Level != "dangerous" {
+			continue
+		}
+		route, ok := routesByPath[item.Path]
+		if !ok {
+			unprotected = append(unprotected, item.Path+" is documented in riskCatalogItems but not registered")
+			continue
+		}
+		if !route.DangerousConfirm && !route.DangerousHeader {
+			unprotected = append(unprotected, item.Path+" is dangerous in riskCatalogItems but is not confirm/header protected")
+		}
+	}
+	sort.Strings(unprotected)
+	if len(unprotected) > 0 {
+		t.Fatalf("dangerous risk catalog entries must stay behind an explicit safety gate: %v", unprotected)
+	}
+}
+
+func TestProtectedRiskyRoutesHaveRiskCatalogEntries(t *testing.T) {
+	registered, err := registeredRoutesFromSource("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cataloged := map[string]bool{}
+	for _, item := range riskCatalogItems {
+		cataloged[item.Path] = true
+	}
+
+	var missing []string
+	for _, route := range registered {
+		if !route.DangerousConfirm && !route.DangerousHeader {
+			continue
+		}
+		if strings.HasPrefix(route.Path, "/api/tmwebdriver/") {
+			continue
+		}
+		if !cataloged[route.Path] {
+			missing = append(missing, route.Path+" -> "+route.Handler)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("protected risky routes need lightweight risk catalog metadata: %v", missing)
+	}
+}
+
 func TestMutatingRoutesEitherRequireDangerousConfirmOrAreDocumentedSafe(t *testing.T) {
 	registered, err := registeredRoutesFromSource("api.go")
 	if err != nil {
@@ -179,6 +237,76 @@ func TestDocumentedSafeMutatingRoutesStayCurrent(t *testing.T) {
 	for _, path := range []string{"/api/version/check", "/api/setup/browse", "/api/models/preview", "/api/channels/test", "/api/chat/", "/posts", "/reply"} {
 		if !mutating[path] {
 			t.Fatalf("documented safe mutating route %s is stale or now protected; update route safety contract", path)
+		}
+	}
+}
+
+func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
+	registered, err := registeredRoutesFromSource("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	methodsByHandler, err := routeMethodsByHandlerFromSource(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sideEffectsByHandler, err := routeSideEffectsByHandlerFromSource(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reviewedSafe := map[string]string{
+		"/api/chat/": "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/posts":     "worker BBS compatibility endpoint is protected by board-key instead of UI dangerous-confirm",
+		"/reply":     "worker BBS compatibility endpoint is protected by board-key instead of UI dangerous-confirm",
+	}
+
+	var unreviewed []string
+	for _, route := range registered {
+		if !hasMutatingMethod(methodsByHandler[route.Handler]) {
+			continue
+		}
+		stateMutations := localStateMutationSideEffects(sideEffectsByHandler[route.Handler])
+		if len(stateMutations) == 0 {
+			continue
+		}
+		if route.DangerousConfirm || route.DangerousHeader {
+			continue
+		}
+		if reviewedSafe[route.Path] != "" {
+			continue
+		}
+		unreviewed = append(unreviewed, route.Path+" -> "+route.Handler+" reaches "+strings.Join(sortedMapKeys(stateMutations), ", "))
+	}
+	sort.Strings(unreviewed)
+	if len(unreviewed) > 0 {
+		t.Fatalf("local-state mutating routes must use dangerous confirm, dangerous header, board-key guard, or reviewed safe exception: %v", unreviewed)
+	}
+}
+
+func TestReviewedSafeLocalStateMutatingRoutesStayCurrent(t *testing.T) {
+	registered, err := registeredRoutesFromSource("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	methodsByHandler, err := routeMethodsByHandlerFromSource(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sideEffectsByHandler, err := routeSideEffectsByHandlerFromSource(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	localStateMutating := map[string]bool{}
+	for _, route := range registered {
+		if hasMutatingMethod(methodsByHandler[route.Handler]) && len(localStateMutationSideEffects(sideEffectsByHandler[route.Handler])) > 0 && !route.DangerousConfirm && !route.DangerousHeader {
+			localStateMutating[route.Path] = true
+		}
+	}
+	for _, path := range []string{"/api/chat/", "/posts", "/reply"} {
+		if !localStateMutating[path] {
+			t.Fatalf("reviewed safe local-state mutating route %s is stale or now protected/no longer locally mutating; update route safety contract", path)
 		}
 	}
 }
@@ -737,6 +865,17 @@ func localSideEffectCall(n ast.Node) (string, bool) {
 	return "", false
 }
 
+func localStateMutationSideEffects(sideEffects map[string]bool) map[string]bool {
+	mutations := map[string]bool{}
+	for name := range sideEffects {
+		if strings.HasPrefix(name, "exec.") {
+			continue
+		}
+		mutations[name] = true
+	}
+	return mutations
+}
+
 func localSideEffectFuncName(name string) bool {
 	if name == "writeJSON" || name == "writeErrorJSON" {
 		return false
@@ -901,6 +1040,7 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/tmwebdriver/install-deps", `{}`},
 		{http.MethodPost, "/api/bbs/reply", `{}`},
 		{http.MethodPost, "/api/files/write", `{}`},
+		{http.MethodPost, "/api/files/delete", `{}`},
 		{http.MethodPost, "/api/files/open", `{}`},
 		{http.MethodPost, "/api/schedule/task", `{}`},
 		{http.MethodPut, "/api/schedule/task", `{"id":"task","task":{}}`},

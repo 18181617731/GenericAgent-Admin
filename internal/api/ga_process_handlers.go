@@ -1,9 +1,6 @@
 package api
 
-import (
-	"encoding/json"
-	"net/http"
-)
+import "net/http"
 
 type gaProcessReq struct {
 	PID int `json:"pid"`
@@ -31,7 +28,7 @@ func (s *Server) killGAProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req gaProcessReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decode(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -52,7 +49,7 @@ func (s *Server) adoptGAProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req gaProcessReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decode(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}

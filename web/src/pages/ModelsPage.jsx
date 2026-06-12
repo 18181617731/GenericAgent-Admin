@@ -1,23 +1,26 @@
 import { AlertTriangle, CheckCircle2, Eye, RefreshCw, UploadCloud } from 'lucide-react'
 import { emptyProfile } from '../lib/format'
-import { modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
+import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
 import { Panel, SecretInput } from '../components/common'
 
 const VALIDATION_COPY = {
-  valid: 'Validation passed',
-  blocked: 'Fix blocking issues before writing',
-  warnings: 'Warnings',
-  errors: 'Blocking issues',
-  saveDisabled: 'Fix red validation items before writing mykey.py.',
+  valid: '校验通过',
+  blocked: '写入前请先修复阻断项',
+  warnings: '警告',
+  errors: '阻断项',
+  saveDisabled: '写入 mykey.py 前请先修复红色校验项。',
   keys: {
-    varNameRequired: 'Variable name is required',
-    varNameInvalid: 'Variable name must be a Python identifier',
-    varNameDuplicate: 'Variable name is duplicated',
-    modelRequired: 'Model is required',
-    apiBaseProtocol: 'API Base should start with http:// or https://',
-    maxRetriesInvalid: 'Retries must be zero or greater',
-    readTimeoutInvalid: 'Timeout must be greater than zero',
-    apiKeyEmpty: 'API Key is empty; use only for local or unauthenticated endpoints'
+    varNameRequired: '必须填写变量名',
+    varNameInvalid: '变量名必须是 Python 标识符',
+    varNameDiscoveryToken: '变量名必须包含 api、config 或 cookie，便于 GA 发现',
+    varNameDuplicate: '变量名重复',
+    nameRequired: '必须填写名称',
+    modelRequired: '必须填写模型',
+    apiBaseRequired: '必须填写 API Base',
+    apiBaseProtocol: 'API Base 应以 http:// 或 https:// 开头',
+    maxRetriesInvalid: '重试次数必须大于或等于 0',
+    readTimeoutInvalid: '超时必须大于 0',
+    apiKeyEmpty: 'API Key 为空；仅用于本地或无认证端点'
   }
 }
 
@@ -26,11 +29,12 @@ function ValidationList({ title, items, copy, tone }) {
   return <div className={`validation-list ${tone}`}><span>{title}</span><ul>{items.map((key) => <li key={key}>{copy.keys[key] || key}</li>)}</ul></div>
 }
 
-export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, modelPreview }) {
+export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, modelPreview, riskCatalog, riskCatalogError }) {
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const copy = VALIDATION_COPY
   const hasErrors = summary.errors > 0
+  const hasProfiles = profiles.length > 0
 
   return <section>
     <div className="model-top">
@@ -48,8 +52,9 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
       <span>{copy.errors}: {summary.errors}</span>
       <span>{copy.warnings}: {summary.warnings}</span>
     </div>
+    <p className="operation-note" role="note">导入和预览仅执行只读检查。写回 mykey.py 会修改本地配置，并可能替换生成的模型条目；请先审核预览并修复红色校验项。</p>
     <div className="models-layout">
-      <div className="profiles">{profiles.map((p, idx) => {
+      <div className="profiles">{!hasProfiles && <div className="empty-card" role="status"><b>尚未加载模型 Profile</b><span>如果 mykey.py 已存在，可先导入；或新增 Profile，在预览前填写名称、模型、API Base 和 Key。</span></div>}{profiles.map((p, idx) => {
         const item = validation[idx] || { errors: [], warnings: [], ok: true }
         return <div className={`profile ${item.errors.length ? 'has-errors' : item.warnings.length ? 'has-warnings' : ''}`} key={idx}>
           <div className="profile-head">
@@ -72,7 +77,20 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
           </div>
         </div>
       })}</div>
-      <Panel title={t.lists.generatedPreview} className="preview"><pre>{modelPreview || t.empty}</pre></Panel>
+      <Panel title="模型路由安全" className="model-risk-panel">
+        <div className={`model-risk-summary ${risk.status}`}>
+          <AlertTriangle size={16}/>
+          <div><b>{risk.status === 'ready' ? '风险目录已加载' : risk.status === 'error' ? '风险目录不可用' : '风险目录没有 /api/models 条目'}</b><p>{risk.status === 'error' ? risk.error : '保存/导出会写入 GA 模型配置，并继续受 confirmDanger 门禁保护；不显示密钥的预览/导入保持只读。'}</p></div>
+        </div>
+        <div className="model-risk-grid">
+          {risk.items.map(item => <div className="model-risk-item" key={`${item.method}-${item.route}-${item.action}`}>
+            <span className={`badge ${item.level}`}>{item.level || '待审核'}</span><b>{item.method} {item.route}</b><small>{item.action || item.reason || '目录条目'}</small>
+          </div>)}
+          {risk.items.length === 0 && <p className="muted">当前没有实时模型路由条目；不要因为目录为空就推断为安全。</p>}
+        </div>
+        {risk.missingConfirmedWriteRoutes.length > 0 && <p className="err-text">目录中缺少已确认写入门禁：{risk.missingConfirmedWriteRoutes.join(', ')}</p>}
+      </Panel>
+      <Panel title={t.lists.generatedPreview} className="preview"><pre>{modelPreview || (hasProfiles ? t.empty : '添加至少一个模型配置后将显示预览。')}</pre></Panel>
     </div>
   </section>
 }

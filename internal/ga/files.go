@@ -314,6 +314,20 @@ func WriteSafe(root, rel, content string) (SafeFileDetail, error) {
 	return ReadSafe(root, clean)
 }
 
+func DeleteSafe(root, rel string) error {
+	abs, clean, err := SafeResolveAny(root, rel)
+	if err != nil {
+		return err
+	}
+	if clean == "" {
+		return errors.New("cannot delete GA root")
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return err
+	}
+	return os.RemoveAll(abs)
+}
+
 func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {

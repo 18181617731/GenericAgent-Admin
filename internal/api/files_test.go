@@ -171,3 +171,56 @@ func TestFilesEndpointsRejectPathTraversal(t *testing.T) {
 		t.Fatalf("outside file was modified: %q", got)
 	}
 }
+
+func TestFilesDownloadServesFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "download.txt"), []byte("payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/files/download?path=download.txt", nil)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != "payload" {
+		t.Fatalf("body=%q want payload", rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Disposition"); !strings.Contains(got, "download.txt") {
+		t.Fatalf("Content-Disposition=%q", got)
+	}
+}
+
+func TestFilesDeleteRequiresDangerousConfirmAndDeletes(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "delete-me.txt")
+	if err := os.WriteFile(target, []byte("gone"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/files/delete", strings.NewReader(`{"path":"delete-me.txt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("status=%d want=428 body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("file removed without dangerous confirm: %v", err)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/files/delete", strings.NewReader(`{"path":"delete-me.txt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("file still exists or stat failed unexpectedly: %v", err)
+	}
+}

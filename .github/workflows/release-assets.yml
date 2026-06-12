@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload assets for
+        description: Release tag to build and upload assets for; v0.1.0-alpha/v0.1.0 require explicit release-owner approval
         required: true
-        default: v0.0.5
+        default: v0.1.0-alpha
+      confirm_overwrite_assets:
+        description: Type true only after approving that existing assets for this tag may be overwritten
+        required: true
+        default: 'false'
   push:
     tags:
       - 'v*'
@@ -48,6 +52,20 @@ jobs:
             cgo: '0'
 
     steps:
+      - name: Release boundary preflight
+        shell: bash
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          if [ "$tag" != "v0.1.0-alpha" ] && [ "$tag" != "v0.1.0" ]; then
+            echo "::error::This release workflow must run with tag v0.1.0-alpha or v0.1.0; got '$tag'."
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm_overwrite_assets }}" != "true" ]; then
+            echo "::error::Manual dispatch requires confirm_overwrite_assets=true because upload uses overwrite_files=true."
+            exit 1
+          fi
+          echo "::notice::Release boundary accepted for ${tag}; upload step uses overwrite_files=true."
+
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
@@ -120,6 +138,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
           files: |
             package/*.zip
             package/*.sha256
