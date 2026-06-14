@@ -67,17 +67,15 @@
 
 相关代码路径：`web/src/components/schedule.jsx`、`web/src/lib/schedule.js`。
 
-## 7. BBS 协作状态与 worker 协议
+## 7. Hive 模式与外置协作
 
-“BBS 协作”页用于连接内置或外部任务看板：
+GA Admin 不内置 BBS，也不再提供 `/api/bbs/*` 页面协议。需要多 worker 协作时，请使用 GA 官方 Hive 流程：
 
-- 可查看连接模式、当前 base、board key、帖子列表和回复。
-- “/api/bbs/readme / worker protocol”会列出 worker 必需接口；如果 readme 校验缺项，页面会用警告提示。
-- worker 服务可在配置完成后启动、停止、查看日志或设置 autostart。
-
-安全提醒：board key 是轻量鉴权，不应公开到无关环境；写帖、回帖和配置保存仍应按危险写入处理。
-
-相关代码路径：`web/src/pages/BBSPage.jsx`、`web/src/lib/bbsContract.js`。
+- 在 Goal 页面勾选 “Hive 模式” 后启动目标，Admin 会按 GA 官方逻辑创建 Hive 工作目录、启动外置 BBS、Master 和首个 worker。
+- 也可在 GA 根目录外置启动 `assets/agent_bbs.py --cwd temp/hive_<目标短名> --port <PORT> --key <BOARD_KEY>`。
+- 访问 `http://127.0.0.1:<PORT>/readme?key=<BOARD_KEY>` 查看官方 BBS 协议。
+- worker 通过 `agentmain.py --reflect reflect/agent_team_worker.py --base_url http://127.0.0.1:<PORT> --board_key <BOARD_KEY>` 接入。
+- Admin 的 Hive/Goal 页面只负责复用 GA 官方逻辑，不保存 board key、不托管帖子/回复。
 
 ## 8. Inventory / Risk / Health
 
@@ -111,13 +109,13 @@ Use this matrix to review the non-chat experience without publishing a remote re
 | Files | Before a GA root is configured, the page shows guidance. After a GA root is configured, file browsing is limited to that root. | Empty directories, no search results, read failures, save-target mismatch, and delete confirmations are explicit. Save/delete require the user to re-check the path. | `git grep -n "FilesPage" web/src internal/api`; `git grep -n "X-GA-Confirm" internal web/src` |
 | Models | The app starts without bundled private keys. The Models page can create a draft and preview the generated local `mykey.py`. | Invalid variable names, missing model fields, or malformed API Base values block writeback. Real API keys remain local only. | `git grep -n "modelsValidation" web/src`; `git grep -n "mykey.py" README.md docs RELEASE_NOTES_v0.1.0.md` |
 | Schedule | Missing or unreadable task data shows an empty/error state and does not auto-create tasks. | Create/update/delete/disable flows ask the user to review command, working directory, interval, and artifact paths before mutation. | `git grep -n "schedule" web/src internal` |
-| BBS | Missing config, bad board key, or unreachable board shows connection/auth failure instead of a retry loop that spams posts. | Readme/protocol validation explains the worker API. Posting and config save follow dangerous-write boundaries. | `git grep -n "bbsContract" web/src internal`; `git grep -n "board key" README.md docs` |
+| Hive | Missing GA root or unavailable Goal/Hive scripts should surface as normal GA capability/setup issues. | Collaboration BBS is external GA official `assets/agent_bbs.py`; Admin must not store board keys or host posts/replies. | `git grep -n "agent_bbs.py" README.md docs`; `git grep -n "/api/bbs" web/src internal` |
 | Process / Observability | Overview shows health, risk, inventory, and service state before action; displayed PIDs may become stale. | Stop/start controls show name, PID/log context, and risk text. If unsure, the user can observe read-only state without stopping services. | `git grep -n "ProcessGuard" web/src`; `git grep -n "observability" web/src internal` |
 | Release / Version | The UI reads version data from backend version APIs; alpha assets must still pass checksum/update verification. | Missing assets, network failures, or sha256 mismatch show recoverable errors and do not replace the running binary. | `git grep -n "internal/version" .`; `git grep -n "sha256" README.md docs RELEASE_NOTES_v0.1.0.md .github/workflows` |
 
 Suggested documentation-level review:
 
-1. Read sections 1-9 above and confirm a regular user can complete first root selection, file viewing, and model-preview setup without understanding Goal/BBS release internals.
+1. Read sections 1-9 above and confirm a regular user can complete first root selection, file viewing, and model-preview setup without understanding Goal/Hive internals.
 2. Run the evidence commands in the matrix to confirm each documented capability has a traceable source or documentation entry.
 3. Run `git diff --check -- README.md CHANGELOG.md RELEASE_NOTES_v0.1.0.md docs/USER_QUICKSTART.md docs/RELEASE_MANIFEST_v0.1.0.md` to check whitespace.
 4. Run `git status --short -- README.md CHANGELOG.md RELEASE_NOTES_v0.1.0.md docs` to confirm documentation changes are intentional.

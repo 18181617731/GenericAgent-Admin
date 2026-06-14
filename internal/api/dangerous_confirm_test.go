@@ -201,8 +201,6 @@ func TestMutatingRoutesEitherRequireDangerousConfirmOrAreDocumentedSafe(t *testi
 		"/api/models/preview": true, // renders preview text only; no writes.
 		"/api/channels/test":  true, // calls provider validation endpoints only; no local config writes.
 		"/api/chat/":          true, // first-party chat CRUD/run endpoint; intentionally outside dangerous-confirm UX.
-		"/posts":              true, // worker BBS compatibility endpoint; board-key protected instead of UI dangerous-confirm.
-		"/reply":              true, // worker BBS compatibility endpoint; board-key protected instead of UI dangerous-confirm.
 	}
 
 	var unreviewed []string
@@ -220,6 +218,14 @@ func TestMutatingRoutesEitherRequireDangerousConfirmOrAreDocumentedSafe(t *testi
 }
 
 func TestDocumentedSafeMutatingRoutesStayCurrent(t *testing.T) {
+	documentedSafe := map[string]bool{
+		"/api/version/check":  true,
+		"/api/setup/browse":   true,
+		"/api/models/preview": true,
+		"/api/channels/test":  true,
+		"/api/chat/":          true,
+	}
+
 	registered, err := registeredRoutesFromSource("api.go")
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +240,7 @@ func TestDocumentedSafeMutatingRoutesStayCurrent(t *testing.T) {
 			mutating[route.Path] = true
 		}
 	}
-	for _, path := range []string{"/api/version/check", "/api/setup/browse", "/api/models/preview", "/api/channels/test", "/api/chat/", "/posts", "/reply"} {
+	for path := range documentedSafe {
 		if !mutating[path] {
 			t.Fatalf("documented safe mutating route %s is stale or now protected; update route safety contract", path)
 		}
@@ -257,8 +263,6 @@ func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
 
 	reviewedSafe := map[string]string{
 		"/api/chat/": "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
-		"/posts":     "worker BBS compatibility endpoint is protected by board-key instead of UI dangerous-confirm",
-		"/reply":     "worker BBS compatibility endpoint is protected by board-key instead of UI dangerous-confirm",
 	}
 
 	var unreviewed []string
@@ -280,11 +284,15 @@ func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
 	}
 	sort.Strings(unreviewed)
 	if len(unreviewed) > 0 {
-		t.Fatalf("local-state mutating routes must use dangerous confirm, dangerous header, board-key guard, or reviewed safe exception: %v", unreviewed)
+		t.Fatalf("local-state mutating routes must use dangerous confirm, dangerous header, or reviewed safe exception: %v", unreviewed)
 	}
 }
 
 func TestReviewedSafeLocalStateMutatingRoutesStayCurrent(t *testing.T) {
+	reviewedSafe := map[string]string{
+		"/api/chat/": "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+	}
+
 	registered, err := registeredRoutesFromSource("api.go")
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +312,7 @@ func TestReviewedSafeLocalStateMutatingRoutesStayCurrent(t *testing.T) {
 			localStateMutating[route.Path] = true
 		}
 	}
-	for _, path := range []string{"/api/chat/", "/posts", "/reply"} {
+	for path := range reviewedSafe {
 		if !localStateMutating[path] {
 			t.Fatalf("reviewed safe local-state mutating route %s is stale or now protected/no longer locally mutating; update route safety contract", path)
 		}
@@ -1038,7 +1046,6 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/ga/git-mirror", `{}`},
 		{http.MethodPost, "/api/tmwebdriver/repair", `{}`},
 		{http.MethodPost, "/api/tmwebdriver/install-deps", `{}`},
-		{http.MethodPost, "/api/bbs/reply", `{}`},
 		{http.MethodPost, "/api/files/write", `{}`},
 		{http.MethodPost, "/api/files/delete", `{}`},
 		{http.MethodPost, "/api/files/open", `{}`},
@@ -1072,8 +1079,6 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 
 func dangerousHeaderRouteCases() []dangerousConfirmRouteCase {
 	return []dangerousConfirmRouteCase{
-		{http.MethodPost, "/api/bbs/config", `not-json`},
-		{http.MethodPost, "/api/bbs/posts", `{}`},
 		{http.MethodPost, "/api/models/import-mykey", `{"reveal":false,"save":true}`},
 	}
 }

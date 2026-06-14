@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload assets for; v0.1.0-alpha/v0.1.0 require explicit release-owner approval
+        description: Release tag to build and upload assets for; v0.1.0-alpha/v0.1.0-alpha2/v0.1.0 require explicit release-owner approval
         required: true
-        default: v0.1.0-alpha
+        default: v0.1.0-alpha2
       confirm_overwrite_assets:
         description: Type true only after approving that existing assets for this tag may be overwritten
         required: true
@@ -56,8 +56,8 @@ jobs:
         shell: bash
         run: |
           tag='${{ inputs.tag || github.ref_name }}'
-          if [ "$tag" != "v0.1.0-alpha" ] && [ "$tag" != "v0.1.0" ]; then
-            echo "::error::This release workflow must run with tag v0.1.0-alpha or v0.1.0; got '$tag'."
+          if [ "$tag" != "v0.1.0-alpha" ] && [ "$tag" != "v0.1.0-alpha2" ] && [ "$tag" != "v0.1.0" ]; then
+            echo "::error::This release workflow must run with tag v0.1.0-alpha, v0.1.0-alpha2, or v0.1.0; got '$tag'."
             exit 1
           fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm_overwrite_assets }}" != "true" ]; then

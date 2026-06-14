@@ -76,17 +76,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/hatch-pet/open", s.requireDangerousConfirm(s.hatchPetOpen))
 	mux.HandleFunc("/api/pets", s.petsHandler)
 	mux.HandleFunc("/api/pets/active", s.requireDangerousConfirm(s.petsActiveHandler))
-	// Built-in BBS service compatible with GA reflect/agent_team_worker.py
-	mux.HandleFunc("/api/bbs/status", s.bbsStatus)
-	mux.HandleFunc("/api/bbs/config", s.bbsConfigHandler)
-	mux.HandleFunc("/api/bbs/posts", s.bbsPosts)
-	mux.HandleFunc("/api/bbs/post", s.bbsPost)
-	mux.HandleFunc("/api/bbs/reply", s.requireDangerousConfirm(s.bbsReply))
-	mux.HandleFunc("/api/bbs/readme", s.bbsReadme)
-	mux.HandleFunc("/posts", s.bbsPostsCompat)
-	mux.HandleFunc("/post", s.bbsPostCompat)
-	mux.HandleFunc("/reply", s.bbsReplyCompat)
-	mux.HandleFunc("/readme", s.bbsReadmeCompat)
 	mux.HandleFunc("/api/files/list", s.filesList)
 	mux.HandleFunc("/api/files/read", s.filesRead)
 	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.filesWrite))
@@ -178,9 +167,6 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone and changes configured GA root"},
 	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_pull", Reason: "executes git pull --ff-only in GA root"},
-	{Path: "/api/bbs/config", Level: "dangerous", Action: "save_bbs_config", Reason: "changes built-in/external BBS integration settings"},
-	{Path: "/api/bbs/posts", Level: "dangerous", Action: "create_bbs_post", Reason: "writes a built-in BBS task post"},
-	{Path: "/api/bbs/reply", Level: "dangerous", Action: "create_bbs_reply", Reason: "writes a built-in BBS task reply"},
 	{Path: "/api/version/update", Level: "dangerous", Action: "self_update", Reason: "downloads and applies Admin-Go release"},
 	{Path: "/api/services/start", Level: "dangerous", Action: "start_process", Reason: "starts GA Python service process"},
 	{Path: "/api/services/stop", Level: "dangerous", Action: "stop_process", Reason: "stops a managed GA service process"},

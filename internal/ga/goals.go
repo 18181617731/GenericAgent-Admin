@@ -2,10 +2,15 @@ package ga
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,24 +38,35 @@ const (
 
 // GoalState mirrors memory/goal_mode_sop.md and reflect/goal_mode.py state.
 type GoalState struct {
-	SchemaVersion int      `json:"schema_version,omitempty"`
-	Domain        string   `json:"domain,omitempty"`
-	Objective     string   `json:"objective"`
-	BudgetSeconds int      `json:"budget_seconds"`
-	StartTime     float64  `json:"start_time"`
-	EndTime       *float64 `json:"end_time,omitempty"`
-	TurnsUsed     int      `json:"turns_used"`
-	MaxTurns      int      `json:"max_turns"`
-	Status        string   `json:"status"`
-	DonePrompt    string   `json:"done_prompt"`
-	PID           int      `json:"pid,omitempty"`
-	ID            string   `json:"id,omitempty"`
-	StateFile     string   `json:"state_file,omitempty"`
-	LogFile       string   `json:"log_file,omitempty"`
-	ManagedBy     string   `json:"managed_by,omitempty"`
-	OutputSource  string   `json:"output_source,omitempty"`
-	LLMNo         *int     `json:"llm_no,omitempty"`
-	PythonPath    string   `json:"python_path,omitempty"`
+	SchemaVersion int        `json:"schema_version,omitempty"`
+	Domain        string     `json:"domain,omitempty"`
+	Objective     string     `json:"objective"`
+	BudgetSeconds int        `json:"budget_seconds"`
+	StartTime     float64    `json:"start_time"`
+	EndTime       *float64   `json:"end_time,omitempty"`
+	TurnsUsed     int        `json:"turns_used"`
+	MaxTurns      int        `json:"max_turns"`
+	Status        string     `json:"status"`
+	DonePrompt    string     `json:"done_prompt"`
+	PID           int        `json:"pid,omitempty"`
+	ID            string     `json:"id,omitempty"`
+	StateFile     string     `json:"state_file,omitempty"`
+	LogFile       string     `json:"log_file,omitempty"`
+	ManagedBy     string     `json:"managed_by,omitempty"`
+	OutputSource  string     `json:"output_source,omitempty"`
+	LLMNo         *int       `json:"llm_no,omitempty"`
+	PythonPath    string     `json:"python_path,omitempty"`
+	Mode          string     `json:"mode,omitempty"`
+	Hive          *HiveState `json:"hive,omitempty"`
+}
+
+type HiveState struct {
+	BaseURL   string `json:"base_url"`
+	ReadmeURL string `json:"readme_url"`
+	BoardKey  string `json:"board_key,omitempty"`
+	CWD       string `json:"cwd"`
+	BBSPID    int    `json:"bbs_pid,omitempty"`
+	WorkerPID int    `json:"worker_pid,omitempty"`
 }
 
 // GoalMeta is the Admin-Go console view of one Goal Mode run.
@@ -85,6 +101,8 @@ type GoalMeta struct {
 	StateReadable    bool         `json:"state_readable"`
 	LLMNo            *int         `json:"llm_no,omitempty"`
 	PythonPath       string       `json:"python_path,omitempty"`
+	Mode             string       `json:"mode,omitempty"`
+	Hive             *HiveState   `json:"hive,omitempty"`
 	ModTime          time.Time    `json:"mod_time"`
 	EndTime          *float64     `json:"end_time,omitempty"`
 }
@@ -95,6 +113,7 @@ type GoalStartOptions struct {
 	MaxTurns      int
 	LLMNo         *int
 	PythonPath    string
+	Hive          bool
 }
 
 func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
@@ -133,6 +152,9 @@ func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
 	if !existsFile(filepath.Join(root, "reflect", "goal_mode.py")) {
 		return GoalMeta{}, errors.New("reflect/goal_mode.py not found under GA root")
 	}
+	if opt.Hive {
+		return StartHiveGoal(root, opt, objective)
+	}
 	id := newGoalID()
 	goalDir := standardGoalDir(root, id)
 	if err := os.MkdirAll(goalDir, 0755); err != nil {
@@ -159,7 +181,7 @@ func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
 	if opt.LLMNo != nil && *opt.LLMNo >= 0 {
 		args = append(args, "--llm_no", strconv.Itoa(*opt.LLMNo))
 	}
-	cmd := exec.Command(pythonPath, args...)
+	cmd := exec.Command(windowlessPythonPath(pythonPath), args...)
 	hideChildWindow(cmd)
 	cmd.Dir = root
 	cmd.Env = goalCommandEnv(os.Environ(), statePath)
@@ -471,7 +493,7 @@ func StopGoal(root, id string, pid int) (GoalMeta, error) {
 		if state.PID != pid {
 			return GoalMeta{}, errors.New("exact PID mismatch; refusing to stop")
 		}
-		if err := killGoalPID(pid); err != nil {
+		if err := stopGoalProcesses(&state, pid); err != nil {
 			return GoalMeta{}, err
 		}
 		state.PID = 0
@@ -494,6 +516,24 @@ func StopGoal(root, id string, pid int) (GoalMeta, error) {
 		return goalMeta, err
 	}
 	return goalMeta, nil
+}
+
+func stopGoalProcesses(state *GoalState, pid int) error {
+	if err := killGoalPID(pid); err != nil {
+		return err
+	}
+	if state == nil || state.Hive == nil {
+		return nil
+	}
+	if state.Hive.WorkerPID > 0 && state.Hive.WorkerPID != pid {
+		_ = killGoalPID(state.Hive.WorkerPID)
+		state.Hive.WorkerPID = 0
+	}
+	if state.Hive.BBSPID > 0 && state.Hive.BBSPID != pid {
+		_ = killGoalPID(state.Hive.BBSPID)
+		state.Hive.BBSPID = 0
+	}
+	return nil
 }
 
 type GoalOutputResult struct {
@@ -671,7 +711,7 @@ func metaFromState(root, id, statePath, logPath string, state GoalState, mod tim
 		lastEvent = "stale_running"
 	}
 	logExists := existsFile(logPath)
-	goalMeta := GoalMeta{SchemaVersion: 1, ID: id, Objective: state.Objective, BudgetSeconds: state.BudgetSeconds, StartTime: state.StartTime, ElapsedSeconds: elapsed, RemainingSeconds: remaining, BudgetPercent: budgetPercent, TurnsUsed: turnsUsed, MaxTurns: state.MaxTurns, TurnPercent: turnPercent, Status: normalizedStatus, RawStatus: rawStatus, ErrorClass: errorClass, LastEvent: lastEvent, PID: state.PID, Running: running, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LogExists: logExists, MissingLog: !logExists, StateReadable: true, LLMNo: state.LLMNo, ModTime: mod, EndTime: state.EndTime}
+	goalMeta := GoalMeta{SchemaVersion: 1, ID: id, Objective: state.Objective, BudgetSeconds: state.BudgetSeconds, StartTime: state.StartTime, ElapsedSeconds: elapsed, RemainingSeconds: remaining, BudgetPercent: budgetPercent, TurnsUsed: turnsUsed, MaxTurns: state.MaxTurns, TurnPercent: turnPercent, Status: normalizedStatus, RawStatus: rawStatus, ErrorClass: errorClass, LastEvent: lastEvent, PID: state.PID, Running: running, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LogExists: logExists, MissingLog: !logExists, StateReadable: true, LLMNo: state.LLMNo, PythonPath: state.PythonPath, Mode: state.Mode, Hive: state.Hive, ModTime: mod, EndTime: state.EndTime}
 	goalMeta.Managed = managed
 	if managed {
 		goalMeta.Origin = "admin"
@@ -1059,4 +1099,265 @@ func relGoalPath(root, p string) string {
 		return filepath.ToSlash(rel)
 	}
 	return filepath.ToSlash(p)
+}
+
+func StartHiveGoal(root string, opt GoalStartOptions, userObjective string) (GoalMeta, error) {
+	bbsScript := filepath.Join(root, "assets", "agent_bbs.py")
+	if !existsFile(bbsScript) {
+		return GoalMeta{}, errors.New("assets/agent_bbs.py not found under GA root")
+	}
+	if !existsFile(filepath.Join(root, "reflect", "agent_team_worker.py")) {
+		return GoalMeta{}, errors.New("reflect/agent_team_worker.py not found under GA root")
+	}
+	pythonPath, err := goalPython(root, opt.PythonPath)
+	if err != nil {
+		return GoalMeta{}, err
+	}
+	id := newGoalID()
+	slug := goalHiveSlug(userObjective)
+	bbsCWD := filepath.Join(root, "temp", "hive_"+slug+"_"+id)
+	if err := os.MkdirAll(bbsCWD, 0755); err != nil {
+		return GoalMeta{}, err
+	}
+	port, err := freeLocalPort()
+	if err != nil {
+		return GoalMeta{}, err
+	}
+	boardKey, err := randomHex(12)
+	if err != nil {
+		return GoalMeta{}, err
+	}
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	readmeURL := baseURL + "/readme?key=" + boardKey
+
+	bbsLogPath := filepath.Join(bbsCWD, "bbs.log")
+	bbsLog, err := os.OpenFile(bbsLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return GoalMeta{}, err
+	}
+	defer bbsLog.Close()
+	bbsCmd := exec.Command(windowlessPythonPath(pythonPath), bbsScript, "--cwd", bbsCWD, "--port", strconv.Itoa(port), "--key", boardKey)
+	hideChildWindow(bbsCmd)
+	bbsCmd.Dir = root
+	bbsCmd.Stdout = bbsLog
+	bbsCmd.Stderr = bbsLog
+	if err := bbsCmd.Start(); err != nil {
+		return GoalMeta{}, fmt.Errorf("start hive BBS: %w", err)
+	}
+	bbsPID := bbsCmd.Process.Pid
+	_ = bbsCmd.Process.Release()
+	cleanupBBS := true
+	defer func() {
+		if cleanupBBS {
+			_ = killExactPID(bbsPID)
+		}
+	}()
+
+	if err := waitHiveBBS(readmeURL); err != nil {
+		return GoalMeta{}, err
+	}
+	masterToken, err := hiveRegister(baseURL, boardKey, "hive-master")
+	if err != nil {
+		return GoalMeta{}, err
+	}
+	firstPost := hiveFirstPost(userObjective, bbsCWD)
+	if err := hivePost(baseURL, boardKey, masterToken, firstPost); err != nil {
+		return GoalMeta{}, err
+	}
+
+	goalDir := standardGoalDir(root, id)
+	if err := os.MkdirAll(goalDir, 0755); err != nil {
+		return GoalMeta{}, err
+	}
+	statePath := standardGoalStatePath(root, id)
+	logPath := standardGoalOutputPath(root, id)
+	objective := hiveMasterObjective(userObjective, readmeURL, bbsCWD)
+	state := GoalState{SchemaVersion: 1, Objective: objective, BudgetSeconds: opt.BudgetSeconds, StartTime: float64(time.Now().UnixNano()) / 1e9, TurnsUsed: 0, MaxTurns: opt.MaxTurns, Status: "running", DonePrompt: hiveDonePrompt(), ID: id, StateFile: relGoalPath(root, statePath), LogFile: relGoalPath(root, logPath), LLMNo: opt.LLMNo, PythonPath: pythonPath, Mode: "hive", Hive: &HiveState{BaseURL: baseURL, ReadmeURL: readmeURL, BoardKey: boardKey, CWD: bbsCWD, BBSPID: bbsPID}}
+	if err := writeGoalState(statePath, state); err != nil {
+		return GoalMeta{}, err
+	}
+	readBack, _, err := readGoalState(statePath)
+	if err != nil {
+		return GoalMeta{}, fmt.Errorf("read back hive goal state: %w", err)
+	}
+	if strings.TrimSpace(readBack.Objective) == "" || readBack.Hive == nil {
+		return GoalMeta{}, errors.New("invalid hive goal state after write")
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		_ = os.Remove(statePath)
+		return GoalMeta{}, err
+	}
+	defer logFile.Close()
+	masterArgs := []string{"agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "goal_mode.py"))}
+	if opt.LLMNo != nil && *opt.LLMNo >= 0 {
+		masterArgs = append(masterArgs, "--llm_no", strconv.Itoa(*opt.LLMNo))
+	}
+	masterCmd := exec.Command(windowlessPythonPath(pythonPath), masterArgs...)
+	hideChildWindow(masterCmd)
+	masterCmd.Dir = root
+	masterCmd.Env = goalCommandEnv(os.Environ(), statePath)
+	masterCmd.Stdout = logFile
+	masterCmd.Stderr = logFile
+	if err := masterCmd.Start(); err != nil {
+		state.Status = "start_failed"
+		now := float64(time.Now().UnixNano()) / 1e9
+		state.EndTime = &now
+		_ = writeGoalState(statePath, state)
+		_, _ = fmt.Fprintf(logFile, "[hive master start failed] %v\n", err)
+		return GoalMeta{}, err
+	}
+	state.PID = masterCmd.Process.Pid
+	_ = masterCmd.Process.Release()
+
+	workerLogPath := filepath.Join(goalDir, "worker-1.log")
+	workerLog, err := os.OpenFile(workerLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		_ = killExactPID(state.PID)
+		return GoalMeta{}, err
+	}
+	defer workerLog.Close()
+	workerArgs := []string{"agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "agent_team_worker.py")), "--base_url", baseURL, "--board_key", boardKey, "--name", "hive-worker-1"}
+	workerCmd := exec.Command(windowlessPythonPath(pythonPath), workerArgs...)
+	hideChildWindow(workerCmd)
+	workerCmd.Dir = root
+	workerCmd.Stdout = workerLog
+	workerCmd.Stderr = workerLog
+	if err := workerCmd.Start(); err != nil {
+		_ = killExactPID(state.PID)
+		return GoalMeta{}, fmt.Errorf("start hive worker: %w", err)
+	}
+	state.Hive.WorkerPID = workerCmd.Process.Pid
+	_ = workerCmd.Process.Release()
+	if err := writeGoalState(statePath, state); err != nil {
+		_ = killExactPID(state.PID)
+		_ = killExactPID(state.Hive.WorkerPID)
+		return GoalMeta{}, err
+	}
+	cleanupBBS = false
+	return metaFromState(root, id, statePath, logPath, state, time.Now()), nil
+}
+
+func goalHiveSlug(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			continue
+		}
+		if b.Len() > 0 && b.String()[b.Len()-1] != '_' {
+			b.WriteByte('_')
+		}
+		if b.Len() >= 24 {
+			break
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "goal"
+	}
+	return out
+}
+
+func freeLocalPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func randomHex(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func waitHiveBBS(readmeURL string) error {
+	client := &http.Client{Timeout: 1200 * time.Millisecond}
+	deadline := time.Now().Add(10 * time.Second)
+	var last error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(readmeURL)
+		if err == nil && resp.Body != nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && strings.Contains(string(body), "Agent BBS API") {
+				return nil
+			}
+		} else if err != nil {
+			last = err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if last != nil {
+		return fmt.Errorf("hive BBS readme not ready: %w", last)
+	}
+	return errors.New("hive BBS readme not ready")
+}
+
+func hiveRegister(baseURL, key, name string) (string, error) {
+	payload, _ := json.Marshal(map[string]string{"name": name})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/register", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", key)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("hive register failed: %s", strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	if out.Token == "" {
+		return "", errors.New("hive register returned empty token")
+	}
+	return out.Token, nil
+}
+
+func hivePost(baseURL, key, token, content string) error {
+	payload, _ := json.Marshal(map[string]string{"token": token, "content": content})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/post", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", key)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("hive post failed: %s", strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func hiveFirstPost(goal, cwd string) string {
+	return fmt.Sprintf("任务目标：%s\n\nHive Master职责：\n1. 拆解任务并发布子任务给 worker。\n2. 监听 BBS worker 回帖，整合结果并纠偏。\n3. 必要时增加 worker，但总数不得超过 5 个。\n4. 最终执行项目门禁并输出收尾报告。\n\n本次 Hive 工作目录：%s\n\nworker 启动后先读取本帖和 /readme，等待 master 分配任务。", strings.TrimSpace(goal), cwd)
+}
+
+func hiveMasterObjective(goal, readmeURL, cwd string) string {
+	return fmt.Sprintf("用户目标：%s\n\n你是本次 Goal Hive Master。BBS readme: %s\n本次 Hive 工作目录：%s\n\n职责：\n1. 拆解任务并发布子任务给 worker。\n2. 监听 BBS worker 回帖，整合结果并纠偏。\n3. 必要时增加 worker，但总数不得超过 5 个。\n4. 最终执行项目门禁并输出收尾报告。\n\n启动后先读取 memory/goal_hive_sop.md，并按 GA 官方 Goal Hive 协议工作。", strings.TrimSpace(goal), readmeURL, cwd)
+}
+
+func hiveDonePrompt() string {
+	return "请完成 Hive 收尾：核验 goal_state.json 的状态和 PID，导出 BBS 最终帖子到 Hive 工作目录，运行项目实际门禁，并给出最终报告。"
 }

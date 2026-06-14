@@ -4,7 +4,7 @@ import { copyText, formatBytes, formatDuration, formatGoalTime, goalBudgetPercen
 import { Panel } from '../components/common'
 import { TurnList } from '../components/turns'
 
-export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
+export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, hive, setHive, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
   const goalList = goals || []
   const running = goalList.filter(g => g.running).length
   const selectedGoal = goalList.find(g => g.id === selected) || outputMeta?.goal || null
@@ -55,6 +55,8 @@ export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget
         <label>{t.fields.maxTurns}<input type="number" min="0" max="10000" value={maxTurns} onChange={e=>setMaxTurns(e.target.value)}/></label>
         <label>{t.fields.llmNo}<input type="number" min="0" value={llmNo} onChange={e=>setLLMNo(e.target.value)} placeholder="0"/></label>
       </div>
+      <label className="inline-field goal-hive-toggle"><input type="checkbox" checked={!!hive} onChange={e=>setHive?.(e.target.checked)}/><span>{t.fields.goalHive}</span></label>
+      <p className="muted">{t.hints.goalHiveHelp}</p>
       <div className="actions goal-start-actions">
         <button className="primary" disabled={busy || !objective.trim()} onClick={onStart}><Play size={14}/>{t.start}</button>
         <button disabled={busy} onClick={onRefresh}><RefreshCw size={14}/>{t.refresh}</button>
@@ -197,6 +199,10 @@ function GoalRunCard({ g, t, selected, onOutput, onState, onStop, onDelete }) {
         <span>{t.fields.turn} {g.turns_used || 0}/{g.max_turns || '-'}</span>
         <span>{t.fields.elapsed} {formatDuration(g.elapsed_seconds)}</span>
         <span>{t.fields.remaining} {formatDuration(g.remaining_seconds)}</span>
+        {g.mode ? <span>{g.mode}</span> : null}
+        {g.hive?.readme_url ? <span>{t.fields.hiveBoard} {g.hive.readme_url}</span> : null}
+        {g.hive?.worker_pid ? <span>{t.fields.hiveWorker} PID {g.hive.worker_pid}</span> : null}
+        {g.hive?.cwd ? <span>{t.fields.hiveCwd} {g.hive.cwd}</span> : null}
         {g.python_path ? <span>Python {g.python_path}</span> : null}
       </div>
       <div className="goal-progress"><span title={`${t.fields.turn} ${Math.round(turnPct)}%`}><i style={{width: `${turnPct}%`}} /></span><span title={`${t.fields.elapsed} ${Math.round(budgetPct)}%`}><i style={{width: `${budgetPct}%`}} /></span></div>

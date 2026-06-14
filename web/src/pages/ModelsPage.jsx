@@ -35,6 +35,7 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
   const copy = VALIDATION_COPY
   const hasErrors = summary.errors > 0
   const hasProfiles = profiles.length > 0
+  const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
 
   return <section>
     <div className="model-top">
