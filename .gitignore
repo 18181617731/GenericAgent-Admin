@@ -6,3 +6,5 @@ model_profiles.json
 web/node_modules/
 .gitnexus
 ga-admin
+.air.toml
+ga-admin-dev
