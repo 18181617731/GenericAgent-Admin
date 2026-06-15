@@ -60,3 +60,6 @@ export const goalBudgetPercent = (g) => {
   if (!total) return 0
   return clampPercent((elapsed / total) * 100)
 }
+
+
+export const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')

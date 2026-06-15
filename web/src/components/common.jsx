@@ -38,8 +38,9 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, t }) {
     </div>
   </article>
 }
-export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, t }) {
+export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, onReflectStart, t }) {
   if (!services.length) return <div className="channel-service-empty">{t.hints.noFrontend}</div>
+  const reflectServices = ['ga-reflect-fast', 'ga-reflect-deep']
   return <div className="channel-service-list">{services.map(svc => <article className={`channel-service-card ${svc.running ? 'is-running' : 'is-stopped'}`} key={svc.name}>
     <div className="channel-service-main">
       <div><b>{svc.name}</b><small>{svc.kind}</small></div>
@@ -48,7 +49,7 @@ export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, on
     <ServiceMeta svc={svc} compact/>
     <div className="channel-service-actions">
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label>
-      <div className="svc-actions"><button disabled={svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button><button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
+      <div className="svc-actions"><button disabled={svc.running} onClick={() => reflectServices.includes(svc.name) && onReflectStart ? onReflectStart(svc.name) : onStart(svc.name)}><Play size={14}/>{t.start}</button><button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
     </div>
   </article>)}</div>
 }

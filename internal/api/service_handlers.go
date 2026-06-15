@@ -36,7 +36,8 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 type nameReq struct {
-	Name string `json:"name"`
+	Name   string            `json:"name"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +50,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	svc, err := s.Svc.Start(q.Name)
+	svc, err := s.Svc.StartWithParams(q.Name, q.Params)
 	if err != nil {
 		s.NotifyPetEvent("service:error")
 		bad(w, 404, err.Error())

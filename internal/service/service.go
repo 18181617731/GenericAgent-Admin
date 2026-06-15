@@ -184,6 +184,10 @@ func (m *Manager) Find(name string) (ServiceInfo, bool) {
 }
 
 func (m *Manager) Start(name string) (ServiceInfo, error) {
+	return m.StartWithParams(name, nil)
+}
+
+func (m *Manager) StartWithParams(name string, params map[string]string) (ServiceInfo, error) {
 	s, ok := m.Find(name)
 	if !ok {
 		return s, errors.New("service not found")
@@ -199,7 +203,19 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 		p.ret = &code
 		m.appendLocked(name, fmt.Sprintf("[process exited: pid %d is no longer alive]", pid))
 	}
-	m.buffers[name] = []string{fmt.Sprintf("$ %s", strings.Join(s.Command, " "))}
+	
+	// 构建命令，支持动态参数
+	cmdArgs := append([]string{}, s.Command[1:]...)
+	if params != nil {
+		// 反思服务支持 --llm_no 参数
+		if strings.HasPrefix(name, "reflect/") {
+			if llmNo, ok := params["llm_no"]; ok && llmNo != "" {
+				cmdArgs = append(cmdArgs, "--llm_no", llmNo)
+			}
+		}
+	}
+	
+	m.buffers[name] = []string{fmt.Sprintf("$ %s %s", s.Command[0], strings.Join(cmdArgs, " "))}
 	m.mu.Unlock()
 	if killed, err := m.stopConflictingService(s); err != nil {
 		return s, err
@@ -212,7 +228,7 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 		// Give singleton locks/ports a short moment to be released before starting the managed instance.
 		time.Sleep(500 * time.Millisecond)
 	}
-	cmd := exec.Command(s.Command[0], s.Command[1:]...)
+	cmd := exec.Command(s.Command[0], cmdArgs...)
 	cmd.Dir = m.GARoot
 	hideChildWindow(cmd)
 	cmd.Env = m.serviceEnv()
