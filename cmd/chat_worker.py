@@ -90,6 +90,109 @@ def _isolate_protocol_stdout():
 _PROTOCOL_STDOUT = _isolate_protocol_stdout()
 
 
+# Intercept stderr to capture GA core's token usage prints.
+# GA core's _record_usage prints lines like "[Cache] input=N cached=M" and "[Output] tokens=N".
+# We parse these to accumulate usage stats for the current turn.
+_USAGE_LOCK = threading.Lock()
+_CURRENT_USAGE = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
+# Per-internal-turn usage snapshots for the current request. GA core prints a
+# "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
+# "[Output]" line marks the end of one turn, so we snapshot and reset there.
+_TURN_USAGES = []
+
+
+class _UsageCapturingStderr:
+    """Tee stderr writes, parse token usage lines, and accumulate stats."""
+    def __init__(self, original):
+        self._original = original
+        self._encoding = getattr(original, 'encoding', 'utf-8')
+    
+    def write(self, text):
+        # Forward to original stderr first
+        try:
+            self._original.write(text)
+        except Exception:
+            pass
+        # Parse token usage lines
+        if not text:
+            return
+        import re
+        with _USAGE_LOCK:
+            # [Cache] input=123 cached=45  or  [Cache] input=123 creation=10 read=20
+            m = re.search(r'\[Cache\]\s+input=(\d+)', text)
+            if m:
+                _CURRENT_USAGE['input_tokens'] = int(m.group(1))
+            m = re.search(r'cached=(\d+)', text)
+            if m:
+                _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
+            m = re.search(r'read=(\d+)', text)
+            if m:
+                _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
+            # [Output] tokens=456  -- marks the end of one internal LLM turn.
+            m = re.search(r'\[Output\]\s+tokens=(\d+)', text)
+            if m:
+                _CURRENT_USAGE['output_tokens'] = int(m.group(1))
+                # Snapshot this completed turn and reset the buffer for the next.
+                turn_snapshot = dict(_CURRENT_USAGE)
+                _TURN_USAGES.append(turn_snapshot)
+                turn_index = len(_TURN_USAGES) - 1
+                _CURRENT_USAGE['input_tokens'] = 0
+                _CURRENT_USAGE['output_tokens'] = 0
+                _CURRENT_USAGE['cached_tokens'] = 0
+                # Push this turn's usage live so the UI can render it the moment
+                # the internal turn finishes, instead of waiting for `done`.
+                try:
+                    emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
+                except Exception:
+                    pass
+    
+    def flush(self):
+        try:
+            self._original.flush()
+        except Exception:
+            pass
+    
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+
+sys.stderr = _UsageCapturingStderr(sys.stderr)
+# _isolate_protocol_stdout() above pointed sys.stdout at the ORIGINAL stderr
+# object (captured before this wrapper was installed).  Re-point sys.stdout at
+# the wrapper so GA core's `print()` usage lines flow through the parser too.
+sys.stdout = sys.stderr
+
+
+def _reset_usage():
+    """Clear usage accumulator for a new request."""
+    with _USAGE_LOCK:
+        _CURRENT_USAGE['input_tokens'] = 0
+        _CURRENT_USAGE['output_tokens'] = 0
+        _CURRENT_USAGE['cached_tokens'] = 0
+        _TURN_USAGES.clear()
+
+
+def _snapshot_usage():
+    """Snapshot current usage stats (last turn's running total)."""
+    with _USAGE_LOCK:
+        return dict(_CURRENT_USAGE)
+
+
+def _snapshot_turn_usages():
+    """Snapshot the list of per-internal-turn usage stats for this request.
+
+    Each completed turn is captured when GA core prints its "[Output]" line.
+    If a trailing turn produced cache/input counts without an "[Output]" line
+    yet, include it so no usage is dropped.
+    """
+    with _USAGE_LOCK:
+        usages = [dict(u) for u in _TURN_USAGES]
+        if (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
+                or _CURRENT_USAGE['cached_tokens']):
+            usages.append(dict(_CURRENT_USAGE))
+        return usages
+
+
 def emit(ev):
     line = json.dumps(ev, ensure_ascii=False)
     with _PROTOCOL_STDOUT_LOCK:
@@ -261,6 +364,7 @@ def _apply_tools_mode(agent, mode):
 
 
 def handle_request(agent, worker, req):
+    _reset_usage()  # Clear usage accumulator for this turn
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     raw_history = req.get('raw_history') or []
@@ -293,11 +397,15 @@ def handle_request(agent, worker, req):
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time())}
                 state = _snapshot_ga_state(agent)
-                emit({'type': 'done', 'message': msg, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}})
+                usage = _snapshot_usage()
+                usages = _snapshot_turn_usages()
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}
-        emit({'type': 'error', 'message': msg, 'raw_history': _snapshot_backend_history(agent)})
+        usage = _snapshot_usage()
+        usages = _snapshot_turn_usages()
+        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent)})
 
 
 def main():
