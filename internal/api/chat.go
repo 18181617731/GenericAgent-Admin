@@ -29,6 +29,8 @@ type chatMessage struct {
 	Files     []map[string]interface{} `json:"files,omitempty"`
 	CreatedAt int64                    `json:"created_at"`
 	Error     bool                     `json:"error,omitempty"`
+	Usage     map[string]int           `json:"usage,omitempty"`
+	Usages    []map[string]int         `json:"usages,omitempty"`
 }
 
 const (
@@ -149,6 +151,32 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
+			// Extract usage from event if present
+			if usage, ok := ev["usage"].(map[string]interface{}); ok && len(usage) > 0 {
+				final.Usage = make(map[string]int)
+				for k, v := range usage {
+					if val, ok := v.(float64); ok {
+						final.Usage[k] = int(val)
+					}
+				}
+			}
+			// Extract per-internal-turn usages array if present
+			if usages, ok := ev["usages"].([]interface{}); ok && len(usages) > 0 {
+				final.Usages = make([]map[string]int, 0, len(usages))
+				for _, u := range usages {
+					um, ok := u.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					turn := make(map[string]int)
+					for k, v := range um {
+						if val, ok := v.(float64); ok {
+							turn[k] = int(val)
+						}
+					}
+					final.Usages = append(final.Usages, turn)
+				}
+			}
 			finalRawHistory = chatRawHistoryFromEvent(ev)
 			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
 			finalWorking = chatWorkingFromEvent(ev)

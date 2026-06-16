@@ -56,15 +56,6 @@ export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, on
 
 const count = (items) => Array.isArray(items) ? items.length : 0
 
-const firstText = (...values) => values.find(value => typeof value === 'string' && value.trim())?.trim() || ''
-
-const recoveryHintFromRisk = (item = {}) => ({
-  changes: firstText(item.changes, item.write, item.effect, item.description),
-  recoverable: firstText(item.recoverable, item.rollback, item.safe_after_confirm),
-  backup: firstText(item.backup, item.backup_path, item.backupHint, item.backup_hint),
-  recovery: firstText(item.recovery, item.recovery_hint, item.restore, item.restore_hint),
-})
-
 export function DangerRecoveryNotice({
   operation = 'Dangerous operation',
   changes = '',
@@ -94,7 +85,6 @@ export function ObservabilityCard({ snapshot, error = '', onRefresh }) {
     ['Risk rules', count(snapshot?.riskItems)],
   ]
   const missing = snapshot?.missingCore || []
-  const writeRisks = snapshot?.writeRiskItems || []
   return <section className="observability-card" aria-label="只读观测">
     <div className="observability-head">
       <div><b>只读观测</b><span>{snapshot?.root || 'GET /api/health + /api/ga/inventory + /api/risk/catalog'}</span></div>
@@ -106,20 +96,6 @@ export function ObservabilityCard({ snapshot, error = '', onRefresh }) {
         <p className={snapshot?.ok ? 'ok' : 'warn'}>{snapshot ? (snapshot.ok ? '健康端点报告正常' : '健康端点需要关注') : '等待只读快照'}</p>
         {snapshot?.generatedAt && <p className="muted">生成时间：{snapshot.generatedAt}</p>}
         {missing.length > 0 && <p className="warn">核心文件缺失：{missing.map(x => x.path || x.name).join(', ')}</p>}
-        {writeRisks.length > 0 && <>
-          <p className="muted">已登记危险写入门禁端点：{writeRisks.length}</p>
-          <div className="danger-recovery-grid">{writeRisks.slice(0, 3).map((item, index) => {
-            const hint = recoveryHintFromRisk(item)
-            return <DangerRecoveryNotice
-              key={`${item?.method || 'write'}-${item?.path || item?.name || index}`}
-              operation={item?.path || item?.name || `受保护写入 ${index + 1}`}
-              changes={hint.changes}
-              recoverable={hint.recoverable}
-              backup={hint.backup}
-              recovery={hint.recovery}
-            />
-          })}</div>
-        </>}
       </div>
     </>}
   </section>
