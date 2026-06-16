@@ -570,9 +570,9 @@ const UsageRow = ({ u, label, className }) => {
   if (!u || (!(u.input_tokens > 0) && !(u.output_tokens > 0) && !(u.cached_tokens > 0))) return null
   return <div className={`oa-usage ${className || ''}`}>
     {label && <span className="oa-usage-label">{label}</span>}
-    {u.input_tokens > 0 && <span className="oa-usage-in"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>输入 <b>{u.input_tokens.toLocaleString()}</b></span>}
-    {u.cached_tokens > 0 && <span className="oa-usage-cache"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>缓存 <b>{u.cached_tokens.toLocaleString()}</b></span>}
-    {u.output_tokens > 0 && <span className="oa-usage-out"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>输出 <b>{u.output_tokens.toLocaleString()}</b></span>}
+    {u.input_tokens > 0 && <span className="oa-usage-in" title="输入 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>输入 <b>{u.input_tokens.toLocaleString()}</b></span>}
+    {u.cached_tokens > 0 && <span className="oa-usage-cache" title="缓存 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>缓存 <b>{u.cached_tokens.toLocaleString()}</b></span>}
+    {u.output_tokens > 0 && <span className="oa-usage-out" title="输出 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>输出 <b>{u.output_tokens.toLocaleString()}</b></span>}
   </div>
 }
 
