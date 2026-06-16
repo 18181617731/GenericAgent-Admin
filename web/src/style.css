@@ -4042,31 +4042,7 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   .oa-stop { width:32px; height:32px; min-width:32px; }
 }
 
-/* /chat turn density pass: smaller per-turn input/output display */
-.oa-turn-stack { gap:6px; margin-bottom:14px; padding-left:18px; }
-.oa-turn-stack::before { left:7px; top:24px; width:1px; }
-.oa-turn-stack-head { gap:6px; font-size:11.5px; padding:0 2px 3px; margin-left:-18px; width:calc(100% + 18px); }
-.oa-turn-stack-head em { font-size:10.5px; padding:1px 6px; }
-.oa-turn-card { border-radius:10px; }
-.oa-turn-card::before,
-.oa-turn-current::before { left:-15px; top:14px; width:7px; height:7px; border-width:1.5px; box-shadow:0 0 0 2px #fff; }
-.oa-turn-toggle { gap:7px; padding:7px 9px; }
-.oa-turn-toggle b { font-size:11.8px; }
-.oa-turn-toggle em { font-size:10.5px; }
-.oa-turn-toggle svg { width:13px; height:13px; }
-.oa-turn-pill { font-size:10.5px; padding:1px 6px; }
-.oa-turn-card .oa-md { padding:9px 11px; font-size:12.6px; line-height:1.58; }
-.oa-turn-card .oa-md p { margin:.34em 0; }
-.oa-turn-card .oa-code-card { margin:7px 0; }
-.oa-turn-empty { padding:9px 11px; font-size:11.5px; }
-.oa-turn-current { padding-top:1px; }
-.oa-turn-current::before { top:7px; box-shadow:0 0 0 2px #e8f7f2; }
-.oa-turn-current-head { gap:6px; margin-bottom:5px; font-size:11.5px; }
-.oa-turn-current-head span { font-size:10.5px; padding:1px 6px; }
-.oa-turn-current-head b { font-size:11.8px; }
-.oa-turn-current-head em { font-size:10.5px; }
-.oa-turn-current .oa-md { font-size:12.9px; line-height:1.6; }
-.oa-turn-current .oa-code-card { margin:7px 0; }
+/* /chat usage chips: keep content typography unchanged; only refine 输入/缓存/输出 chips */
 .oa-turn-toggle .oa-usage-inline + em,
 .oa-turn-current-head .oa-usage-inline + em { margin-left:6px; }
 .oa-usage.oa-usage-inline { gap:3px; }
