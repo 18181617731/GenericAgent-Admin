@@ -2,6 +2,23 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v0.1.0-alpha2 - 2026-06-14
+
+### Scope
+- Follow-up alpha for `v0.1.0-alpha` focused on the Goal/Hive boundary and Windows background-process UX.
+- Target branch: `main`; target tag: `v0.1.0-alpha2`.
+
+### User-facing changes
+- Removed the GA Admin built-in BBS collaboration page/API surface; Hive collaboration now follows the official GenericAgent external BBS/worker flow.
+- Added Hive mode to Goal start so GA Admin can manage Goal/Hive lifecycle while delegating collaboration protocol details to GA official scripts.
+- Goal state now reports Hive metadata such as readme URL, worker PID, BBS PID, and Hive working directory for operator visibility.
+- Windows Goal/Hive background launches prefer `pythonw.exe` and keep no-window process flags to avoid popping terminal windows for users.
+
+### Safety and validation
+- Stop Goal now also cleans recorded Hive worker/BBS PIDs without broad process-tree termination.
+- Release workflow explicitly accepts `v0.1.0-alpha2` in addition to prior approved release tags.
+- Validation gates before publication: `go test ./...`, `go build ./...`, `npm.cmd test -- --run`, and `npm.cmd run build`.
+
 ## v0.1.0-alpha - 2026-06-12
 
 ### Scope

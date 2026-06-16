@@ -13,6 +13,10 @@ import (
 	"testing"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestChannelsGetReadsMyKeyAndMasksSecrets(t *testing.T) {
 	root := t.TempDir()
 	writeTestChannelsMyKey(t, root, "old-secret")
