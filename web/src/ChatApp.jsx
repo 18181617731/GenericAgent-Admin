@@ -504,8 +504,11 @@ function TextMarkdown({ text = '', onAskReply }) {
   return <>{nodes}</>
 }
 
-const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply }) {
+const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages }) {
   const [openTurns, setOpenTurns] = useState({})
+  const [stackOpen, setStackOpen] = useState(pending)
+  // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
+  useEffect(() => { setStackOpen(pending) }, [pending])
   const stats = useMemo(() => textRenderStats(content), [content])
   const parsed = useMemo(() => parseAssistantContent(content), [content])
   const hasTurnSplit = parsed.runs.length > 0
@@ -516,27 +519,29 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
   const toggleTurn = (r, i) => setOpenTurns(xs => ({ ...xs, [`${r.turn}-${i}`]: !isTurnOpen(r, i) }))
   return <div className={`oa-content ${parsed.runs.length ? 'oa-agent-output' : ''}`}>
-    {parsed.runs.length > 0 && <div className="oa-turn-stack">
-      <div className="oa-turn-stack-head">
+    {parsed.runs.length > 0 && <div className={`oa-turn-stack ${stackOpen ? 'open' : 'collapsed'}`}>
+      <button className="oa-turn-stack-head" type="button" onClick={() => setStackOpen(v => !v)} aria-expanded={stackOpen} title={stackOpen ? '折叠执行过程' : '展开执行过程'}>
         <span className="oa-run-dot"/>
         <span>执行过程</span>
         <b>{parsed.runs.length}</b>
         <em>{pending ? '正在生成' : '已完成'}</em>
-      </div>
-      {boxedRuns.map((r, i) => {
+        <ChevronDown className="oa-stack-chevron" size={15}/>
+      </button>
+      {stackOpen && boxedRuns.map((r, i) => {
         const open = isTurnOpen(r, i)
+        const tu = turnUsages && turnUsages[i]
         return <section className={`oa-turn-card ${open ? 'open' : 'collapsed'}`} key={`${r.turn}-${i}`}>
-          <button className="oa-turn-toggle" type="button" onClick={() => toggleTurn(r, i)} aria-expanded={open} title={open ? '收起该轮详情' : '展开该轮详情'}>
+          <button className="oa-turn-toggle" type="button" onClick={() => toggleTurn(r, i)} aria-expanded={open} title={r.title || '执行步骤'}>
             <span className="oa-turn-pill">Turn {r.turn}</span>
             <b>{r.title || '执行步骤'}</b>
-            <em>{open ? '收起详情' : '展开详情'}</em>
-            <ChevronDown size={15}/>
+            <UsageRow u={tu} className="oa-usage-inline" />
+            <ChevronDown size={15} className="oa-turn-chevron"/>
           </button>
           {open && (r.body ? <MarkdownBlock text={r.body} onAskReply={onAskReply} /> : <p className="oa-turn-empty">该轮暂无详细输出</p>)}
         </section>
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
-        <div className="oa-turn-current-head"><span>Turn {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
+        <div className="oa-turn-current-head"><span>Turn {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
         {lastRun.body ? <MarkdownBlock text={lastRun.body} onAskReply={onAskReply} /> : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
@@ -560,14 +565,38 @@ const stripUserAttachmentBlock = (content = '') => {
   return cut >= 0 ? src.slice(0, cut).trimEnd() : src
 }
 
+const UsageRow = ({ u, label, className }) => {
+  if (!u || (!(u.input_tokens > 0) && !(u.output_tokens > 0) && !(u.cached_tokens > 0))) return null
+  return <div className={`oa-usage ${className || ''}`}>
+    {label && <span className="oa-usage-label">{label}</span>}
+    {u.input_tokens > 0 && <span className="oa-usage-in"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>输入 <b>{u.input_tokens.toLocaleString()}</b></span>}
+    {u.cached_tokens > 0 && <span className="oa-usage-cache"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>缓存 <b>{u.cached_tokens.toLocaleString()}</b></span>}
+    {u.output_tokens > 0 && <span className="oa-usage-out"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>输出 <b>{u.output_tokens.toLocaleString()}</b></span>}
+  </div>
+}
+
+// 各内部 turn 用量累加得到整条回复总计
+const sumUsages = (usages) => {
+  if (!Array.isArray(usages) || !usages.length) return null
+  return usages.reduce((acc, u) => ({
+    input_tokens: acc.input_tokens + (u?.input_tokens || 0),
+    cached_tokens: acc.cached_tokens + (u?.cached_tokens || 0),
+    output_tokens: acc.output_tokens + (u?.output_tokens || 0),
+  }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
+}
+
 const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
-  return <article className={`oa-message ${m.role} ${m.error?'error':''}`}>
+  const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
+  const hasUsage = !turnUsages && m.role === 'assistant' && m.usage && (m.usage.input_tokens > 0 || m.usage.output_tokens > 0)
+  return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
       <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
       {Array.isArray(m.files) && m.files.some(isImageFile) && <div className="oa-message-images">{m.files.filter(isImageFile).map((f, i) => <img key={f.name || i} src={f.dataURL || f.url} alt={f.name || 'image'} />)}</div>}
-      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending && !m.content} onAskReply={onAskReply} /> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} /> : (userText && <MarkdownBlock text={userText} />)}
+      {turnUsages && <UsageRow u={sumUsages(turnUsages)} label={turnUsages.length > 1 ? '总计' : null} className="oa-usage-total" />}
+      {hasUsage && <UsageRow u={m.usage} className="oa-usage-total" />}
     </div>
   </article>
 })
@@ -584,6 +613,7 @@ const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAs
     })}
   </>
 })
+
 export default function ChatApp() {
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState('')
@@ -649,6 +679,14 @@ export default function ChatApp() {
           ? xs.map(m => m.id === clientUserID ? ev.message : m)
           : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message])
       })
+    }
+    if (ev.type === 'turn_usage' && ev.usage && typeof ev.index === 'number') {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
+        const usages = Array.isArray(m.usages) ? m.usages.slice() : []
+        usages[ev.index] = ev.usage
+        return { ...m, usages }
+      }) : xs)
     }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? ev.message : m) : xs)
