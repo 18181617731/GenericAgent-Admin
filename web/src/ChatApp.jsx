@@ -9,6 +9,7 @@ import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TE
 gsap.registerPlugin(useGSAP)
 
 const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches
 
 const fmtTime = (v) => {
   if (!v) return ''
@@ -626,7 +627,7 @@ export default function ChatApp() {
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
   const [err, setErr] = useState('')
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
@@ -657,6 +658,20 @@ export default function ChatApp() {
   const chatScope = useRef(null)
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
   const COMPOSER_MAX_H = 160
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined
+    const mq = window.matchMedia('(max-width: 900px)')
+    const syncCollapsed = () => setCollapsed(mq.matches)
+    syncCollapsed()
+    mq.addEventListener?.('change', syncCollapsed)
+    mq.addListener?.(syncCollapsed)
+    return () => {
+      mq.removeEventListener?.('change', syncCollapsed)
+      mq.removeListener?.(syncCollapsed)
+    }
+  }, [])
+
   useLayoutEffect(() => {
     const el = promptRef.current
     if (!el) return
