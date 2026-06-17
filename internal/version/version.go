@@ -26,7 +26,7 @@ var (
 	Date    = "unknown"
 )
 
-var repoLatestURL = "https://api.github.com/repos/guicaiyue/GenericAgent-Admin/releases/latest"
+var repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
 
 // SetRepoURL overrides the default update repo URL (e.g. from config.local.json).
 func SetRepoURL(url string) {
