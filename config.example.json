@@ -2,6 +2,9 @@
   "ga_root": "E:/Work/GenericAgent",
   "host": "127.0.0.1",
   "port": 8787,
+  "vite_host": "127.0.0.1",
+  "vite_port": 5173,
+  "backend_proxy_host": "127.0.0.1",
   "log_tail_lines": 200,
   "buffer_lines": 1000,
   "service_autostart": []

@@ -34,3 +34,12 @@ test('service actions remain dangerous-confirm guarded', () => {
   assert.match(processGuard, /confirmDanger\('ga-process-kill'/)
   assert.match(processGuard, /api\('\/api\/ga\/processes\/kill', \{ dangerous:true, method:'POST'/)
 })
+
+test('reflect services can start with a safe model fallback', () => {
+  assert.match(common, /svc\?\.kind === 'reflect'/)
+  assert.match(common, /startsWith\('reflect\/'\)/)
+  assert.match(app, /setReflectLLMNo\(current => current !== '' \? current : \(fallbackModel\?\.index\?\.toString\(\) \|\| '0'\)\)/)
+  assert.match(app, /if \(!\/\^\\d\+\$\/\.test\(selectedLLMNo\)\)/)
+  assert.match(app, /llms\.length \? llms\.map/)
+  assert.match(app, /<option value="0">.*0<\/option>/)
+})

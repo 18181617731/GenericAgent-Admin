@@ -145,3 +145,33 @@ func TestReadPipeContinuesAfterOversizedLine(t *testing.T) {
 		t.Fatalf("second line lost after oversized line: %#v", logs)
 	}
 }
+
+func TestBuildServiceArgsReflectLLMNo(t *testing.T) {
+	svc := ServiceInfo{Name: "reflect/custom.py", Kind: "reflect", Command: []string{"python", "reflect/custom.py"}}
+	args, err := buildServiceArgs(svc, map[string]string{"llm_no": " 12 "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if joined != "reflect/custom.py --llm_no 12" {
+		t.Fatalf("args=%q", joined)
+	}
+}
+
+func TestBuildServiceArgsRejectsInvalidReflectLLMNo(t *testing.T) {
+	svc := ServiceInfo{Name: "reflect/custom.py", Kind: "reflect", Command: []string{"python", "reflect/custom.py"}}
+	if _, err := buildServiceArgs(svc, map[string]string{"llm_no": "1 --bad"}); err == nil {
+		t.Fatal("expected invalid llm_no to be rejected")
+	}
+}
+
+func TestBuildServiceArgsIgnoresParamsForNonReflectService(t *testing.T) {
+	svc := ServiceInfo{Name: "launch.py", Kind: "core", Command: []string{"python", "launch.py"}}
+	args, err := buildServiceArgs(svc, map[string]string{"llm_no": "9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(args, " "); joined != "launch.py" {
+		t.Fatalf("args=%q", joined)
+	}
+}

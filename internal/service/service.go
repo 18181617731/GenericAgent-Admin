@@ -184,6 +184,30 @@ func (m *Manager) Find(name string) (ServiceInfo, bool) {
 }
 
 func (m *Manager) Start(name string) (ServiceInfo, error) {
+	return m.StartWithParams(name, nil)
+}
+
+func buildServiceArgs(s ServiceInfo, params map[string]string) ([]string, error) {
+	cmdArgs := append([]string{}, s.Command[1:]...)
+	if len(params) == 0 {
+		return cmdArgs, nil
+	}
+	if s.Kind != "reflect" {
+		return cmdArgs, nil
+	}
+	llmNo := strings.TrimSpace(params["llm_no"])
+	if llmNo == "" {
+		return cmdArgs, nil
+	}
+	for _, ch := range llmNo {
+		if ch < '0' || ch > '9' {
+			return nil, fmt.Errorf("invalid llm_no %q: must be a non-negative integer", llmNo)
+		}
+	}
+	return append(cmdArgs, "--llm_no", llmNo), nil
+}
+
+func (m *Manager) StartWithParams(name string, params map[string]string) (ServiceInfo, error) {
 	s, ok := m.Find(name)
 	if !ok {
 		return s, errors.New("service not found")
@@ -199,7 +223,14 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 		p.ret = &code
 		m.appendLocked(name, fmt.Sprintf("[process exited: pid %d is no longer alive]", pid))
 	}
-	m.buffers[name] = []string{fmt.Sprintf("$ %s", strings.Join(s.Command, " "))}
+
+	cmdArgs, err := buildServiceArgs(s, params)
+	if err != nil {
+		m.mu.Unlock()
+		return s, err
+	}
+
+	m.buffers[name] = []string{fmt.Sprintf("$ %s %s", s.Command[0], strings.Join(cmdArgs, " "))}
 	m.mu.Unlock()
 	if killed, err := m.stopConflictingService(s); err != nil {
 		return s, err
@@ -212,7 +243,7 @@ func (m *Manager) Start(name string) (ServiceInfo, error) {
 		// Give singleton locks/ports a short moment to be released before starting the managed instance.
 		time.Sleep(500 * time.Millisecond)
 	}
-	cmd := exec.Command(s.Command[0], s.Command[1:]...)
+	cmd := exec.Command(s.Command[0], cmdArgs...)
 	cmd.Dir = m.GARoot
 	hideChildWindow(cmd)
 	cmd.Env = m.serviceEnv()
