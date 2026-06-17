@@ -24,6 +24,7 @@ type AppConfig struct {
 	NoProxy            string   `json:"no_proxy"`
 	ServiceAutostart   []string `json:"service_autostart"`
 	DesktopPetDisabled bool     `json:"desktop_pet_disabled"`
+	UpdateRepoURL      string   `json:"update_repo_url"`
 }
 
 func Validate(cfg AppConfig) error {
