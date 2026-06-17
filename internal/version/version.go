@@ -28,6 +28,13 @@ var (
 
 var repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
 
+// SetRepoURL overrides the default update repo URL (e.g. from config.local.json).
+func SetRepoURL(url string) {
+	if url != "" {
+		repoLatestURL = url
+	}
+}
+
 const updateResponseHeaderTimeout = 15 * time.Second
 
 var updateHTTPClient = &http.Client{Transport: updateHTTPTransport()}
@@ -295,8 +302,8 @@ func Current() BuildInfo {
 }
 
 func updateSupportStatus() (bool, string) {
-	if runtime.GOOS != "windows" {
-		return false, "one-click self update is currently implemented for Windows packages"
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		return false, "one-click self update is only implemented for Windows and Linux packages"
 	}
 	return true, ""
 }
@@ -388,8 +395,8 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if check.Asset == nil || check.Checksum == nil {
 		return ApplyResult{}, errors.New("missing release asset or checksum for current platform")
 	}
-	if runtime.GOOS != "windows" {
-		return ApplyResult{}, errors.New("one-click self update is currently implemented for Windows packages")
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		return ApplyResult{}, errors.New("one-click self update is only implemented for Windows and Linux packages")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -419,7 +426,11 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, err
 	}
 	emit("preparing", "正在准备替换脚本", 85, &check)
-	newExe, err := findFile(dir, "ga-admin.exe")
+	binName := "ga-admin"
+	if runtime.GOOS == "windows" {
+		binName = "ga-admin.exe"
+	}
+	newExe, err := findFile(dir, binName)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -428,15 +439,25 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, fmt.Errorf("chat_worker.py missing from package: %w", workerErr)
 	}
 	worker := filepath.Join(filepath.Dir(exe), "cmd", "chat_worker.py")
-	script := filepath.Join(work, "apply-update.cmd")
 	backup := exe + ".bak"
 	workerBackup := worker + ".bak"
-	content := windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
+
+	var content string
+	var script string
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		script = filepath.Join(work, "apply-update.cmd")
+		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
+		cmd = exec.Command("cmd", "/C", "start", "", script)
+	} else {
+		script = filepath.Join(work, "apply-update.sh")
+		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
+		cmd = exec.Command("bash", script)
+	}
 	if err := writeFileAtomic(script, []byte(content), 0600); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("restarting", "升级包已就绪，正在重启服务", 95, &check)
-	cmd := exec.Command("cmd", "/C", "start", "", script)
 	cmd.Dir = work
 	hideChildWindow(cmd)
 	if err := cmd.Start(); err != nil {
@@ -476,6 +497,42 @@ if not "%%NEW_WORKER%%"=="" (
   )
 )
 start "" "%%OLD%%"
+`, oldExe, newExe, backup, worker, newWorker, workerBackup)
+}
+
+func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string) string {
+	return fmt.Sprintf(`#!/bin/bash
+OLD="%s"
+NEW="%s"
+BAK="%s"
+WORKER="%s"
+NEW_WORKER="%s"
+WORKER_BAK="%s"
+for i in $(seq 1 30); do
+  mv "$OLD" "$BAK" 2>/dev/null && break
+  sleep 1
+done
+if [ ! -f "$BAK" ]; then
+  echo "failed to replace $OLD"
+  exit 1
+fi
+cp "$NEW" "$OLD"
+if [ $? -ne 0 ]; then
+  mv "$BAK" "$OLD"
+  exit 1
+fi
+chmod +x "$OLD"
+if [ -n "$NEW_WORKER" ]; then
+  mkdir -p "$(dirname "$WORKER")" 2>/dev/null
+  [ -f "$WORKER" ] && cp "$WORKER" "$WORKER_BAK"
+  cp "$NEW_WORKER" "$WORKER"
+  if [ $? -ne 0 ]; then
+    [ -f "$WORKER_BAK" ] && cp "$WORKER_BAK" "$WORKER"
+    cp "$BAK" "$OLD"
+    exit 1
+  fi
+fi
+exec "$OLD"
 `, oldExe, newExe, backup, worker, newWorker, workerBackup)
 }
 

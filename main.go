@@ -22,6 +22,7 @@ import (
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
+	"genericagent-admin-go/internal/version"
 )
 
 //go:embed web/dist
@@ -40,6 +41,7 @@ func main() {
 	if err := cfgStore.Load(); err != nil {
 		log.Printf("load config: %v", err)
 	}
+	version.SetRepoURL(cfgStore.Cfg.UpdateRepoURL)
 	svc := service.NewManager(cfgStore.Cfg.GARoot, cfgStore.Cfg.BufferLines)
 	models := modelconfig.NewStore(cwd)
 	static, err := fs.Sub(webFS, "web/dist")
