@@ -205,19 +205,20 @@ export default function App() {
   const browseSetupDir = async (target = 'root') => { setBusy(true); try { const base = target === 'install' ? installRoot : root; const d = await api('/api/setup/browse', { method:'POST', body: JSON.stringify({ path: base }) }); if (d.path) { target === 'install' ? setInstallRoot(d.path) : setRoot(d.path) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const validateSetupRoot = async () => { if (!confirmDanger('setup-validate-root', '验证并保存当前 GA 根目录？')) return; setBusy(true); try { const d = await api('/api/setup/validate', { dangerous:true, method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const installGA = async () => { if (!confirmDanger('setup-install-ga', '安装/克隆 GenericAgent 到目标目录？会写入本地文件。')) return; setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const startReflectService = async (name) => {
-    if (!llms.length) {
-      setMsg('模型列表未加载，请稍后再试')
-      return
-    }
-    setReflectLLMNo(llms[0]?.index?.toString() || '0')
+  const startReflectService = (name) => {
+    const fallbackModel = llms.find(m => m?.index !== undefined && m?.index !== null)
+    setReflectLLMNo(current => current !== '' ? current : (fallbackModel?.index?.toString() || '0'))
     setPendingServiceName(name)
     setShowLLMPicker(true)
   }
   const confirmReflectStart = async () => {
+    const selectedLLMNo = String(reflectLLMNo || '').trim()
+    if (!/^\d+$/.test(selectedLLMNo)) {
+      setMsg('请选择有效的模型编号')
+      return
+    }
     setShowLLMPicker(false)
-    const params = reflectLLMNo ? { llm_no: reflectLLMNo } : null
-    await serviceAction(pendingServiceName, 'start', params)
+    await serviceAction(pendingServiceName, 'start', { llm_no: selectedLLMNo })
     setPendingServiceName('')
   }
 
@@ -432,7 +433,7 @@ export default function App() {
         <div className="modal-head"><h3>选择反思模型</h3><button className="modal-close" onClick={() => setShowLLMPicker(false)}>✕</button></div>
         <p className="muted">即将启动反思服务：{pendingServiceName}</p>
         <select value={reflectLLMNo} onChange={e => setReflectLLMNo(e.target.value)}>
-          {llms.map(m => <option key={m.index} value={m.index}>{modelLabel(m)}</option>)}
+          {llms.length ? llms.map(m => <option key={m.index} value={m.index}>{modelLabel(m)}</option>) : <option value="0">未发现模型，使用默认 0</option>}
         </select>
         <div className="modal-actions">
           <button onClick={confirmReflectStart}><Play size={14}/>启动</button>
