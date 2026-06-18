@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { Eye, Play, Square } from 'lucide-react'
+import { modelLabel } from '../lib/format'
 
 const serviceCommand = (svc) => Array.isArray(svc?.command) ? svc.command.join(' ') : (svc?.command || '-')
 const servicePid = (svc) => svc?.pid ?? '-'
@@ -7,10 +8,21 @@ const serviceReturnCode = (svc) => svc?.returncode ?? svc?.return_code ?? '-'
 const serviceStartedAt = (svc) => svc?.started_at || '-'
 const serviceLogPath = (svc) => svc?.log_path || svc?.log || ''
 
-function ServiceMeta({ svc, compact = false }) {
+function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   const cmd = serviceCommand(svc)
   const logPath = serviceLogPath(svc)
+  const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
+  const modelMatch = (svc?.model_no === null || svc?.model_no === undefined) ? null : llms.find(m => m.index === svc.model_no)
+  const defaultLabel = (t && t.runModelDefault) || '默认（启动时选择）'
+  const modelText = modelMatch ? modelLabel(modelMatch) : (isReflect ? defaultLabel : null)
+  const editable = isReflect && !svc?.running && typeof onModel === 'function'
   return <div className={compact ? 'service-meta service-meta-compact' : 'service-meta'}>
+    {editable
+      ? <span className="model-edit"><em>模型</em><select value={svc.model_no ?? ''} onChange={e => onModel(svc.name, e.target.value === '' ? null : Number(e.target.value))}>
+          <option value="">{defaultLabel}</option>
+          {llms.map(m => <option key={m.index} value={m.index}>{modelLabel(m)}</option>)}
+        </select></span>
+      : (modelText !== null && <span><em>模型</em><code title={modelText}>{modelText}</code></span>)}
     <span><em>PID</em><b>{servicePid(svc)}</b></span>
     <span><em>返回码</em><b>{serviceReturnCode(svc)}</b></span>
     <span><em>启动时间</em><code title={serviceStartedAt(svc)}>{serviceStartedAt(svc)}</code></span>
@@ -23,13 +35,17 @@ function ServiceMeta({ svc, compact = false }) {
 export function Stat({ label, value, icon }) { return <div className="stat"><div>{icon}</div><span>{label}</span><b>{value}</b></div> }
 export function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
 export function EntryList({ items = [], empty }) { return <div className="entry-list">{items.length ? items.map((e, i) => <div className="entry" key={`${e.path || e.name}-${i}`}><b>{e.name || e.path}</b><span>{e.path}{e.kind ? ` - ${e.kind}` : ''}{e.size ? ` - ${e.size} B` : ''}</span></div>) : <p className="muted">{empty}</p>}</div> }
-export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, t }) {
+export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel, llms = [], t }) {
+  const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
+  const descKey = String(svc?.name || '').includes('scheduler') ? 'scheduler' : (String(svc?.name || '').includes('autonomous') ? 'autonomous' : null)
+  const desc = isReflect && descKey ? t?.serviceDesc?.[descKey] : null
   return <article className={`service-card ${svc.running ? 'is-running' : 'is-stopped'}`}>
     <div className="service-card-head">
       <div className="service-title"><b>{svc.name}</b><span>{svc.kind}</span></div>
       <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
     </div>
-    <ServiceMeta svc={svc}/>
+    {desc && <p className="service-desc">{desc}</p>}
+    <ServiceMeta svc={svc} llms={llms} onModel={onModel} t={t}/>
     <div className="svc-actions service-actions-row">
       <button disabled={svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button>
       <button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>

@@ -25,6 +25,7 @@ type ServiceInfo struct {
 	ReturnCode *int     `json:"returncode"`
 	StartedAt  string   `json:"started_at,omitempty"`
 	Autostart  bool     `json:"autostart,omitempty"`
+	ModelNo    *int     `json:"model_no,omitempty"`
 }
 
 type runningProc struct {

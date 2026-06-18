@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"genericagent-admin-go/internal/service"
@@ -21,8 +22,15 @@ func (s *Server) servicesWithAutostart() []service.ServiceInfo {
 	for _, name := range s.CfgStore.Cfg.ServiceAutostart {
 		auto[name] = true
 	}
+	models := s.CfgStore.Cfg.ServiceModels
 	for i := range items {
 		items[i].Autostart = auto[items[i].Name]
+		if models != nil {
+			if no, ok := models[items[i].Name]; ok {
+				n := no
+				items[i].ModelNo = &n
+			}
+		}
 	}
 	return items
 }
@@ -49,6 +57,16 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if err := decode(r, &q); err != nil {
 		bad(w, 400, err.Error())
 		return
+	}
+	if q.Params == nil || strings.TrimSpace(q.Params["llm_no"]) == "" {
+		if models := s.CfgStore.Cfg.ServiceModels; models != nil {
+			if no, ok := models[q.Name]; ok {
+				if q.Params == nil {
+					q.Params = map[string]string{}
+				}
+				q.Params["llm_no"] = strconv.Itoa(no)
+			}
+		}
 	}
 	svc, err := s.Svc.StartWithParams(q.Name, q.Params)
 	if err != nil {
@@ -127,6 +145,43 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.NotifyPetEvent("service:autostart")
+	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart()})
+}
+
+func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var q struct {
+		Name  string `json:"name"`
+		LLMNo *int   `json:"llm_no"`
+	}
+	if err := decode(r, &q); err != nil || strings.TrimSpace(q.Name) == "" {
+		bad(w, 400, "bad request")
+		return
+	}
+	if _, ok := s.Svc.Find(q.Name); !ok {
+		bad(w, 404, "service not found")
+		return
+	}
+	cfg := s.CfgStore.Cfg
+	models := map[string]int{}
+	for k, v := range cfg.ServiceModels {
+		models[k] = v
+	}
+	if q.LLMNo == nil {
+		delete(models, q.Name)
+	} else {
+		models[q.Name] = *q.LLMNo
+	}
+	cfg.ServiceModels = models
+	if err := s.CfgStore.Save(cfg); err != nil {
+		s.NotifyPetEvent("service:error")
+		bad(w, 500, err.Error())
+		return
+	}
+	s.NotifyPetEvent("service:model")
 	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart()})
 }
 

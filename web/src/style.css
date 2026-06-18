@@ -360,6 +360,7 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .service-card { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; margin: 10px 0; }
 
 .service-card-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; min-width:0; }
+.service-desc { grid-column:1 / -1; margin:0; color:var(--muted); font-size:11.5px; line-height:1.5; }
 .service-title { min-width:0; }
 .service-title span { display:block; color:var(--muted); font-size:12px; margin-top:5px; }
 .service-meta { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; min-width:0; }
@@ -368,6 +369,8 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .service-meta b, .service-meta code { font-size:12px; color:var(--text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .service-meta code { display:block; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .service-meta-compact { grid-template-columns:repeat(auto-fit, minmax(125px, 1fr)); }
+.service-meta .model-edit select { width:100%; margin-top:1px; padding:2px 4px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.7); color:var(--text); font-size:12px; font-family:inherit; cursor:pointer; }
+.service-meta .model-edit select:hover { border-color:var(--accent, #6366f1); }
 .service-actions-row { grid-column:1 / -1; justify-content:flex-end; }
 .service-card.is-running { border-color:rgba(16,163,127,.26); }
 .service-card.is-stopped { border-color:rgba(148,163,184,.26); }
@@ -765,6 +768,7 @@ header p, .model-top p { color: var(--muted); font-size:14px; }
   box-shadow:none !important;
   backdrop-filter:none !important;
 }
+.log-panel pre, .preview pre, .artifact-view, .json-editor, .file-editor { color:var(--text) !important; }
 .stat:hover, .panel:hover, .profile:hover, .entry:hover, .service-card:hover, .task-row:hover { background:var(--surface-muted) !important; border-color:#dcdcdc !important; }
 .stat svg { background:var(--surface-muted); color: var(--text); box-shadow:none; }
 .panel-title { font-size:15px; font-weight:600; letter-spacing:0; }
@@ -1780,7 +1784,7 @@ pre, code { background:var(--surface-muted); color: var(--text); }
 .log-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0 12px; border-bottom: 1px solid #eeeeee; }
 .log-command { max-width: 100%; margin: 0 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-count { display: inline-flex; align-items: center; width: fit-content; padding: 3px 8px; border: 1px solid #e8e8e8; border-radius: 999px; background: var(--surface-muted); color: var(--muted); font-size: 12px; }
-.log-panel pre.log-view { flex: 1; min-height: 0; max-height: none; height: auto; margin: 0; overflow: auto; background: #0f1115 !important; color: #d7e1ea; border-color: #20242c !important; border-radius: 14px !important; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei UI", monospace; font-size: 12.5px; line-height: 1.65; tab-size: 2; }
+.log-panel pre.log-view { flex: 1; min-height: 0; max-height: none; height: auto; margin: 0; overflow: auto; background: #0f1115 !important; color: #d7e1ea !important; border-color: #20242c !important; border-radius: 14px !important; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei UI", monospace; font-size: 12.5px; line-height: 1.65; tab-size: 2; }
 .log-panel pre.log-view::selection { background: rgba(16,163,127,.35); }
 @media (max-width: 980px) { .logs-page { height: auto; overflow: visible; } .logs-layout { grid-template-columns: 1fr; height: auto; } .logs-service-list { max-height: 240px; } .log-panel pre.log-view { height: 60vh; } }
 

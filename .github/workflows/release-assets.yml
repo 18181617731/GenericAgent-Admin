@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload assets for; v0.1.0-alpha/v0.1.0-alpha2/v0.1.0 require explicit release-owner approval
+        description: Release tag to build and upload assets for; use semantic version tags such as v0.1.1 or explicit prerelease/fix tags
         required: true
-        default: v0.1.0-alpha2
+        default: v0.1.1
       confirm_overwrite_assets:
         description: Type true only after approving that existing assets for this tag may be overwritten
         required: true
@@ -56,8 +56,8 @@ jobs:
         shell: bash
         run: |
           tag='${{ inputs.tag || github.ref_name }}'
-          if [ "$tag" != "v0.1.0-alpha" ] && [ "$tag" != "v0.1.0-alpha2" ] && [ "$tag" != "v0.1.0" ] && [[ ! "$tag" =~ ^v0\.1\.0-fix[0-9]+$ ]]; then
-            echo "::error::This release workflow must run with tag v0.1.0-alpha, v0.1.0-alpha2, v0.1.0, or v0.1.0-fixN; got '$tag'."
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::This release workflow must run with a semantic version tag such as v0.1.1, v0.1.1-fix1, or v0.1.1-rc1; got '$tag'."
             exit 1
           fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm_overwrite_assets }}" != "true" ]; then
@@ -84,12 +84,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Build web
+      - name: Verify and build web
         shell: bash
         run: |
           cd web
           npm ci || npm install
-          npm run build
+          npm run verify
 
       - name: Build binary
         shell: bash

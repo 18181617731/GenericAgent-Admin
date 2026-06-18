@@ -110,6 +110,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/services/stop", s.requireDangerousConfirm(s.stop))
 	mux.HandleFunc("/api/services/stop-all", s.requireDangerousConfirm(s.stopAll))
 	mux.HandleFunc("/api/services/autostart", s.requireDangerousConfirm(s.serviceAutostart))
+	mux.HandleFunc("/api/services/model", s.requireDangerousConfirm(s.serviceModel))
 	mux.HandleFunc("/api/logs/", s.logs)
 	mux.HandleFunc("/api/ga/processes", s.gaProcesses)
 	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.killGAProcess))
@@ -172,6 +173,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/services/stop", Level: "dangerous", Action: "stop_process", Reason: "stops a managed GA service process"},
 	{Path: "/api/services/stop-all", Level: "dangerous", Action: "stop_all_processes", Reason: "stops all managed GA services"},
 	{Path: "/api/services/autostart", Level: "reversible", Action: "toggle_service_autostart", Reason: "changes Admin-Go service autostart list"},
+	{Path: "/api/services/model", Level: "reversible", Action: "set_service_model", Reason: "changes the persisted model used to launch a reflect/autonomous service"},
 	{Path: "/api/tmwebdriver/repair", Level: "reversible", Action: "start_tmwebdriver_master", Reason: "starts a persistent TMWebDriver master process on localhost:18766"},
 	{Path: "/api/tmwebdriver/install-deps", Level: "dangerous", Action: "install_tmwebdriver_deps", Reason: "runs pip install with Tsinghua PyPI mirror for TMWebDriver dependencies"},
 	{Path: "/api/ga/git-mirror", Level: "reversible", Action: "configure_git_mirror", Reason: "updates global git insteadOf mirror for github.com URLs"},

@@ -3,7 +3,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/lib/*.test.mjs"
+    "test": "npm run test:lib && npm run test:ui",
+    "lint": "eslint .",
+    "test:lib": "node scripts/run-lib-tests.mjs",
+    "test:ui": "vitest run src/App.smoke.test.jsx --environment jsdom",
+    "verify": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",
@@ -14,5 +18,14 @@
     "react-dom": "latest",
     "vite": "latest"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "globals": "^16.5.0",
+    "jsdom": "^27.2.0",
+    "vitest": "^3.2.4"
+  }
 }

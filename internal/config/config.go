@@ -23,6 +23,7 @@ type AppConfig struct {
 	AllProxy           string   `json:"all_proxy"`
 	NoProxy            string   `json:"no_proxy"`
 	ServiceAutostart   []string `json:"service_autostart"`
+	ServiceModels      map[string]int `json:"service_models,omitempty"`
 	DesktopPetDisabled bool     `json:"desktop_pet_disabled"`
 	UpdateRepoURL      string   `json:"update_repo_url"`
 }
