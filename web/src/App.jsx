@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Heart, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, XCircle, Download, Moon, Sun } from 'lucide-react'
@@ -586,7 +586,7 @@ export default function App() {
 
 
 
-function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
+export function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)

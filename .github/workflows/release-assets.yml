@@ -84,12 +84,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Build web
+      - name: Verify and build web
         shell: bash
         run: |
           cd web
           npm ci || npm install
-          npm run build
+          npm run verify
 
       - name: Build binary
         shell: bash

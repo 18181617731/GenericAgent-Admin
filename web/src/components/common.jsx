@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { Eye, Play, Square } from 'lucide-react'
 import { modelLabel } from '../lib/format'
 

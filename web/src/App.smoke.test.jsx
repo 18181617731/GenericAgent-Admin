@@ -1,0 +1,91 @@
+import React from 'react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { ChannelServiceTable } from './components/common.jsx'
+import { ChannelsPage } from './App.jsx'
+
+const t = {
+  refresh: 'Refresh',
+  save: 'Save',
+  busy: 'Busy',
+  empty: 'Empty',
+  start: 'Start',
+  stop: 'Stop',
+  logs: 'Logs',
+  running: 'Running',
+  stopped: 'Stopped',
+  autostart: 'Autostart',
+  desc: { channels: 'Channel services' },
+  lists: { frontendServices: 'Frontend services' },
+  hints: { savedSecret: 'saved secret' },
+  hide: 'Hide',
+  show: 'Show',
+}
+
+const reflectService = {
+  name: 'agentmain --reflect',
+  kind: 'reflect',
+  running: false,
+  autostart: false,
+  command: ['agentmain', '--reflect'],
+}
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
+
+describe('channel frontend gates', () => {
+  test('ChannelServiceTable routes reflect service start through onReflectStart', () => {
+    const onStart = vi.fn()
+    const onReflectStart = vi.fn()
+
+    render(
+      <ChannelServiceTable
+        services={[reflectService]}
+        t={t}
+        onStart={onStart}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={onReflectStart}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Start/i }))
+    expect(onReflectStart).toHaveBeenCalledWith(reflectService.name)
+    expect(onStart).not.toHaveBeenCalled()
+  })
+
+  test('ChannelsPage renders service actions without missing callback references', async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).includes('/api/channels')) {
+        const body = JSON.stringify({ path: 'mykey.py', profiles: [] })
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => body,
+        }
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    const onReflectStart = vi.fn()
+    render(
+      <ChannelsPage
+        frontendSvcs={[reflectService]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={onReflectStart}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText(/mykey\.py/i)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /Start/i }))
+    expect(onReflectStart).toHaveBeenCalledWith(reflectService.name)
+  })
+})
