@@ -5,7 +5,7 @@
     "preview": "vite preview",
     "test": "npm run test:lib && npm run test:ui",
     "lint": "eslint .",
-    "test:lib": "node --test src/lib/*.test.mjs",
+    "test:lib": "node scripts/run-lib-tests.mjs",
     "test:ui": "vitest run src/App.smoke.test.jsx --environment jsdom",
     "verify": "npm run lint && npm test && npm run build"
   },
