@@ -14,6 +14,7 @@ function loadBackendConfig() {
         backendProxyHost: config.backend_proxy_host || '127.0.0.1',
         viteHost: config.vite_host || '127.0.0.1',
         vitePort: config.vite_port || 5173
+        viteAllowedHosts: config.vite_allowed_hosts || []
       }
     }
   } catch (error) {
@@ -40,6 +41,7 @@ export default defineConfig({
   server: {
     host: config.viteHost,
     port: config.vitePort,
+    allowedHosts: config.viteAllowedHosts,
     proxy: {
       '/api': proxyTarget
     }
