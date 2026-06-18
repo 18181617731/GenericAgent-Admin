@@ -360,6 +360,7 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .service-card { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; margin: 10px 0; }
 
 .service-card-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; min-width:0; }
+.service-desc { grid-column:1 / -1; margin:0; color:var(--muted); font-size:11.5px; line-height:1.5; }
 .service-title { min-width:0; }
 .service-title span { display:block; color:var(--muted); font-size:12px; margin-top:5px; }
 .service-meta { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; min-width:0; }
@@ -368,6 +369,8 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .service-meta b, .service-meta code { font-size:12px; color:var(--text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .service-meta code { display:block; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .service-meta-compact { grid-template-columns:repeat(auto-fit, minmax(125px, 1fr)); }
+.service-meta .model-edit select { width:100%; margin-top:1px; padding:2px 4px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.7); color:var(--text); font-size:12px; font-family:inherit; cursor:pointer; }
+.service-meta .model-edit select:hover { border-color:var(--accent, #6366f1); }
 .service-actions-row { grid-column:1 / -1; justify-content:flex-end; }
 .service-card.is-running { border-color:rgba(16,163,127,.26); }
 .service-card.is-stopped { border-color:rgba(148,163,184,.26); }
@@ -765,6 +768,7 @@ header p, .model-top p { color: var(--muted); font-size:14px; }
   box-shadow:none !important;
   backdrop-filter:none !important;
 }
+.log-panel pre, .preview pre, .artifact-view, .json-editor, .file-editor { color:var(--text) !important; }
 .stat:hover, .panel:hover, .profile:hover, .entry:hover, .service-card:hover, .task-row:hover { background:var(--surface-muted) !important; border-color:#dcdcdc !important; }
 .stat svg { background:var(--surface-muted); color: var(--text); box-shadow:none; }
 .panel-title { font-size:15px; font-weight:600; letter-spacing:0; }

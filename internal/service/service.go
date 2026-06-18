@@ -25,6 +25,7 @@ type ServiceInfo struct {
 	ReturnCode *int     `json:"returncode"`
 	StartedAt  string   `json:"started_at,omitempty"`
 	Autostart  bool     `json:"autostart,omitempty"`
+	ModelNo    *int     `json:"model_no,omitempty"`
 }
 
 type runningProc struct {
@@ -102,7 +103,7 @@ func (m *Manager) Discover() []ServiceInfo {
 	m.addIfExists(&out, "hub.pyw", "core", []string{py, "hub.pyw"})
 	m.addIfExists(&out, "launch.py", "core", []string{py, "launch.py"})
 	m.addIfExists(&out, "agent_loop.py", "core", []string{py, "agent_loop.py"})
-	m.addIfExists(&out, filepath.Join("reflect", "scheduler.py"), "task", []string{py, filepath.ToSlash(filepath.Join("reflect", "scheduler.py"))})
+	m.addIfExists(&out, filepath.Join("reflect", "scheduler.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "scheduler.py"))})
 	m.addIfExists(&out, filepath.Join("reflect", "autonomous.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "autonomous.py"))})
 	m.addIfExists(&out, filepath.Join("reflect", "goal_mode.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "goal_mode.py"))})
 
