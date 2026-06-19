@@ -13,7 +13,7 @@ function loadBackendConfig() {
         backendPort: config.port || 8787,
         backendProxyHost: config.backend_proxy_host || '127.0.0.1',
         viteHost: config.vite_host || '127.0.0.1',
-        vitePort: config.vite_port || 5173
+        vitePort: config.vite_port || 5173,
         viteAllowedHosts: config.vite_allowed_hosts || []
       }
     }
