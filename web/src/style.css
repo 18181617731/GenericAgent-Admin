@@ -502,6 +502,13 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .chat-compose { display:grid; grid-template-columns: 1fr 110px; gap:12px; padding:14px; border-top:1px solid var(--border); background: rgba(247,245,241,.82); }
 .chat-compose textarea { min-height:90px; resize:vertical; }
 
+.chat-cmd-drawer { max-height:220px; overflow-y:auto; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.96); box-shadow:0 4px 20px rgba(0,0,0,.10); margin:0 14px; }
+.chat-cmd-item { display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer; transition:background .1s; }
+.chat-cmd-item:hover, .chat-cmd-item.selected { background:rgba(16,163,127,.10); }
+.chat-cmd-name { font-family:monospace; font-size:14px; font-weight:600; color:var(--primary); white-space:nowrap; }
+.chat-cmd-desc { font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chat-cmd-empty { padding:14px; text-align:center; color:var(--muted); font-size:13px; }
+
 /* OpenAI-inspired dedicated chat workspace */
 .oa-chat {
   --oa-bg:#fbfaf7;
