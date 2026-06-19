@@ -4,25 +4,9 @@ import { api, apiStream } from '../lib/api'
 import { TurnList } from '../components/turns'
 
 const SLASH_COMMANDS = [
-  { cmd: '/continue', desc: '列出/恢复历史会话' },
-  { cmd: '/new', desc: '新建会话' },
-  { cmd: '/rename', desc: '重命名当前会话' },
-  { cmd: '/btw', desc: '旁路提问（执行中也可用）' },
-  { cmd: '/review', desc: '线程内代码审查' },
-  { cmd: '/autorun', desc: '自主探索模式' },
-  { cmd: '/goal', desc: 'Goal 模式' },
-  { cmd: '/hive', desc: '多 Worker 协作' },
-  { cmd: '/morphling', desc: '吞噬/蒸馏外部项目' },
-  { cmd: '/conductor', desc: '多 SubAgent 编排' },
-  { cmd: '/rewind', desc: '回退对话轮次' },
-  { cmd: '/export', desc: '导出回复 [clip|file|all]' },
-  { cmd: '/llm', desc: '切换/查看 LLM 模型' },
-  { cmd: '/model', desc: '运行时切换模型' },
-  { cmd: '/workspace', desc: '设定工作目录 [path|off]' },
-  { cmd: '/status', desc: '查看会话状态' },
-  { cmd: '/cost', desc: '查看 Token 费用' },
-  { cmd: '/clear', desc: '清屏' },
-  { cmd: '/help', desc: '帮助' },
+  { cmd: '/continue', desc: 'Chat 历史会话搜索' },
+  { cmd: '/btw', desc: '旁路快速提问（执行中也可用）' },
+  { cmd: '/review', desc: 'Chat 内代码审查' },
 ]
 
 const fuzzyMatch = (text, filter) => {
