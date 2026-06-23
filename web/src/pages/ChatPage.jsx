@@ -1,19 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Paperclip, Play, RefreshCw, Square, X } from 'lucide-react'
 import { api, apiStream } from '../lib/api'
+import { fuzzyMatch } from '../lib/format'
 import { TurnList } from '../components/turns'
-
-const SLASH_COMMANDS = [
-  { cmd: '/continue', desc: 'Chat 历史会话搜索' },
-  { cmd: '/btw', desc: '旁路快速提问（执行中也可用）' },
-  { cmd: '/review', desc: 'Chat 内代码审查' },
-]
-
-const fuzzyMatch = (text, filter) => {
-  if (!filter) return true
-  const lower = text.toLowerCase(), fl = filter.toLowerCase()
-  return lower.includes(fl)
-}
 
 const readFileDataURL = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader()
@@ -28,7 +17,8 @@ const compactFileSize = (size = 0) => {
   return `${size} B`
 }
 
-export function ChatPage({ t }) {
+export function ChatPage({ t, slashCommands }) {
+  const allCommands = slashCommands || []
   const [sessions, setSessions] = useState([]), [sid, setSid] = useState(''), [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const [files, setFiles] = useState([])
@@ -38,7 +28,7 @@ export function ChatPage({ t }) {
   const cmdDrawerRef = useRef(null)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const filteredCmds = cmdDrawer.open
-    ? SLASH_COMMANDS.filter(c => fuzzyMatch(c.cmd.slice(1), cmdDrawer.filter))
+    ? allCommands.filter(c => fuzzyMatch(c.cmd.slice(1), cmdDrawer.filter))
     : []
   const closeCmdDrawer = () => setCmdDrawer({ open: false, filter: '', selectedIdx: 0 })
   const selectCmd = (cmd) => { setPrompt(cmd + ' '); closeCmdDrawer(); }

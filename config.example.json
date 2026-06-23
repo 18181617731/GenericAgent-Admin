@@ -7,5 +7,10 @@
   "backend_proxy_host": "127.0.0.1",
   "log_tail_lines": 200,
   "buffer_lines": 1000,
-  "service_autostart": []
+  "service_autostart": [],
+  "slash_commands": [
+    { "cmd": "/continue", "desc": "Chat 历史会话搜索" },
+    { "cmd": "/btw", "desc": "旁路快速提问（执行中也可用）" },
+    { "cmd": "/review", "desc": "Chat 内代码审查" }
+  ]
 }

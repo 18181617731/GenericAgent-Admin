@@ -4,6 +4,7 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
+import { fuzzyMatch } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, parseAssistantContent, previewLongText, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 
@@ -587,6 +588,11 @@ const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAs
 })
 
 export default function ChatApp() {
+  useEffect(() => {
+    api('/api/config').then(cfg => {
+      setCfg(cfg)
+    }).catch(() => {})
+  }, [])
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
@@ -615,6 +621,11 @@ export default function ChatApp() {
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
+  const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
+  const [cfg, setCfg] = useState(null)
+  const [cmdEditIdx, setCmdEditIdx] = useState(-1)
+  const [cmdEditCmd, setCmdEditCmd] = useState('')
+  const [cmdEditDesc, setCmdEditDesc] = useState('')
   const toolsMenuRef = useRef(null)
   const threadRef = useRef(null)
   const endRef = useRef(null)
@@ -652,6 +663,38 @@ export default function ChatApp() {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  const filteredCmds = useMemo(() => {
+    if (!cmdDrawer.open) return []
+    return (cfg?.slash_commands || []).filter(c => fuzzyMatch(c.cmd, cmdDrawer.filter))
+  }, [cmdDrawer.open, cmdDrawer.filter, cfg?.slash_commands])
+  const saveSlashCmds = async (newCmds) => {
+    try {
+      const c = await api('/api/config', { method:'PUT', dangerous: true, body: JSON.stringify({...cfg, slash_commands: newCmds}) })
+      if (c?.slash_commands) { setCfg(c) }
+      setCmdEditIdx(-1)
+    } catch(e) { setNotice('保存命令失败: ' + e.message); setCmdEditIdx(-1) }
+  }
+  const startEdit = (idx, cmd, desc) => { setCmdEditIdx(idx); setCmdEditCmd(cmd); setCmdEditDesc(desc) }
+  const saveEdit = () => {
+    if (!cmdEditCmd.trim()) return
+    const cmds = cfg?.slash_commands || []
+    if (cmdEditIdx === -2) {
+      saveSlashCmds([...cmds, { cmd: cmdEditCmd.trim(), desc: cmdEditDesc.trim() || '' }])
+    } else if (cmdEditIdx >= 0) {
+      const newCmds = [...cmds]
+      newCmds[cmdEditIdx] = { cmd: cmdEditCmd.trim(), desc: cmdEditDesc.trim() || '' }
+      saveSlashCmds(newCmds)
+    }
+  }
+  const deleteCmd = (idx) => { const cmds = cfg?.slash_commands || []; saveSlashCmds(cmds.filter((_, i) => i !== idx)) }
+  const moveUpCmd = (cmd) => {
+    const cmds = cfg?.slash_commands || []
+    const idx = cmds.findIndex(c => c.cmd === cmd.cmd && c.desc === cmd.desc)
+    if (idx <= 0) return
+    const newCmds = [...cmds]
+    ;[newCmds[idx-1], newCmds[idx]] = [newCmds[idx], newCmds[idx-1]]
+    saveSlashCmds(newCmds)
+  }
   useEffect(() => { activeSidRef.current = sid }, [sid])
 
   const isActiveSession = (sessionId) => !sessionId || activeSidRef.current === sessionId
@@ -1270,6 +1313,41 @@ export default function ChatApp() {
             </div>
           })}
         </div>}
+        {cmdDrawer.open && <div className="oa-cmd-drawer">
+          {cmdEditIdx === -2 ? (
+            <div className="oa-cmd-item oa-cmd-edit-row">
+              <input className="oa-cmd-edit-input oa-cmd-edit-cmd" placeholder="/命令" value={cmdEditCmd} onChange={e=>setCmdEditCmd(e.target.value)} autoFocus onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
+              <input className="oa-cmd-edit-input oa-cmd-edit-desc" placeholder="描述" value={cmdEditDesc} onChange={e=>setCmdEditDesc(e.target.value)} onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
+              <button className="oa-cmd-act-btn" onClick={saveEdit} title="保存">💾</button>
+              <button className="oa-cmd-act-btn" onClick={()=>setCmdEditIdx(-1)} title="取消">✕</button>
+            </div>
+          ) : (<>
+            {filteredCmds.length > 0 && <div className="oa-cmd-item oa-cmd-add-row" onClick={()=>{setCmdEditIdx(-2);setCmdEditCmd('');setCmdEditDesc('')}}>
+              <span className="oa-cmd-add-icon">+</span>
+              <span className="oa-cmd-add-label">新增命令</span>
+            </div>}
+            {filteredCmds.length === 0 && <div className="oa-cmd-item" style={{color:'var(--text-secondary)',justifyContent:'center',cursor:'default',padding:'12px 14px'}}>无匹配命令</div>}
+          </>)}
+          {filteredCmds.map((c,i)=>{
+            const cmds = cfg?.slash_commands || []; const oi = cmds.findIndex(x => x.cmd===c.cmd && x.desc===c.desc)
+            return cmdEditIdx === oi ? (
+              <div key={c.cmd+oi} className="oa-cmd-item oa-cmd-edit-row">
+                <input className="oa-cmd-edit-input oa-cmd-edit-cmd" value={cmdEditCmd} onChange={e=>setCmdEditCmd(e.target.value)} autoFocus onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
+                <input className="oa-cmd-edit-input oa-cmd-edit-desc" value={cmdEditDesc} onChange={e=>setCmdEditDesc(e.target.value)} onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
+                <button className="oa-cmd-act-btn" onClick={saveEdit} title="保存">💾</button>
+                <button className="oa-cmd-act-btn" onClick={()=>setCmdEditIdx(-1)} title="取消">✕</button>
+              </div>
+            ) : (
+              <div key={c.cmd+oi} className={`oa-cmd-item${i===cmdDrawer.selectedIdx?' selected':''}`} onMouseDown={e=>{if(oi===-1)return;e.preventDefault();setPrompt(c.cmd+' ');setCmdDrawer({open:false,filter:'',selectedIdx:0})}}>
+                <span className="oa-cmd-name">{c.cmd}</span>
+                <span className="oa-cmd-desc">{c.desc}</span>
+                {cmds.indexOf(c) > 0 && <button className="oa-cmd-act-btn" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();moveUpCmd(c)}} title="上移">↑</button>}
+                <button className="oa-cmd-act-btn" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();startEdit(oi,c.cmd,c.desc)}} title="编辑">✏️</button>
+                <button className="oa-cmd-act-btn" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();if(confirm('删除命令 '+c.cmd+'？'))deleteCmd(oi)}} title="删除">🗑️</button>
+              </div>
+            )
+          })}
+        </div>}
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropImages}>
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{ addImageFiles(e.target.files); e.target.value='' }} />
           {attachments.length > 0 && <div className="oa-attach-preview">
@@ -1277,7 +1355,7 @@ export default function ChatApp() {
               <img src={a.dataURL} alt={a.name}/><span><FileImage size={12}/>{a.name}</span><button type="button" onClick={()=>removeAttachment(a.id)}><X size={12}/></button>
             </div>)}
           </div>}
-          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
+          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={e=>{ const v=e.target.value; setPrompt(v); if(v==='/') {setCmdDrawer({open:true,filter:'',selectedIdx:0}); setCmdEditIdx(-1);} else if(v.startsWith('/') && cmdDrawer.open) setCmdDrawer(prev=>({...prev,filter:v.slice(1)})); else if(!v.startsWith('/') && cmdDrawer.open) { setCmdDrawer(prev=>({...prev,open:false})); setCmdEditIdx(-1); } }} onKeyDown={e=>{ if(cmdDrawer.open && cmdEditIdx===-1){ if(e.key==='ArrowDown'){e.preventDefault();setCmdDrawer(prev=>({...prev,selectedIdx:Math.min(prev.selectedIdx+1,filteredCmds.length-1)}));return} if(e.key==='ArrowUp'){e.preventDefault();setCmdDrawer(prev=>({...prev,selectedIdx:Math.max(prev.selectedIdx-1,0)}));return} if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();const cmd=filteredCmds[cmdDrawer.selectedIdx];if(cmd){setPrompt(cmd.cmd+' ');setCmdDrawer({open:false,filter:'',selectedIdx:0})}return} if(e.key==='Escape'){setCmdDrawer(prev=>({...prev,open:false}));setCmdEditIdx(-1);return} } if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()} }} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
             <div className="oa-tools-menu" ref={toolsMenuRef}>
