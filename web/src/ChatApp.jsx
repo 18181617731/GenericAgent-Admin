@@ -12,6 +12,7 @@ gsap.registerPlugin(useGSAP)
 
 const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches
+const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 560px)').matches
 
 const fmtTime = (v) => {
   if (!v) return ''
@@ -621,11 +622,12 @@ export default function ChatApp() {
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
-  const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
+const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cfg, setCfg] = useState(null)
   const [cmdEditIdx, setCmdEditIdx] = useState(-1)
   const [cmdEditCmd, setCmdEditCmd] = useState('')
   const [cmdEditDesc, setCmdEditDesc] = useState('')
+  const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const toolsMenuRef = useRef(null)
   const threadRef = useRef(null)
   const endRef = useRef(null)
@@ -651,6 +653,19 @@ export default function ChatApp() {
     return () => {
       mq.removeEventListener?.('change', syncCollapsed)
       mq.removeListener?.(syncCollapsed)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined
+    const mq = window.matchMedia('(max-width: 560px)')
+    const sync = () => setIsMobile(mq.matches)
+    sync()
+    mq.addEventListener?.('change', sync)
+    mq.addListener?.(sync)
+    return () => {
+      mq.removeEventListener?.('change', sync)
+      mq.removeListener?.(sync)
     }
   }, [])
 
@@ -1362,8 +1377,10 @@ export default function ChatApp() {
               <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
                 <Wrench size={16}/><span>工具</span>{isFixedToolsMode && <span className="oa-tools-state">自动</span>}<ChevronDown size={14}/>
               </button>
+              {toolsMenuOpen && isMobile && <div className="oa-tools-backdrop" onClick={()=>setToolsMenuOpen(false)}/>}
               {toolsMenuOpen && (
-                <div className="oa-tools-pop" role="menu">
+                <div className={`oa-tools-pop ${isMobile ? 'oa-tools-modal' : ''}`} role={isMobile ? 'dialog' : 'menu'} aria-modal={isMobile || undefined}>
+                  {isMobile && <div className="oa-tools-modal-bar"/>}
                   <div className="oa-tools-pop-head">工具注入方式</div>
                   <button className={`oa-tools-opt ${!isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={!isFixedToolsMode} onClick={()=>setToolsModeTo('official')}>
                     <Wrench size={16}/>

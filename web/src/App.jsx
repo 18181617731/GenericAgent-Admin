@@ -106,7 +106,7 @@ export default function App() {
   const inv = health?.inventory || {}
   const schedule = scheduleData || inv.schedule || {}
   const tasks = normalizeScheduleTasksPayload(schedule).tasks
-  const taskSvcs = useMemo(() => group(services, s => s.kind === 'task' || s.name?.includes('task')), [services])
+  const taskSvcs = useMemo(() => group(services, s => s.kind === 'task' || s.name?.includes('task') || s.name?.includes('scheduler')), [services])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => group(services, s => s.name?.includes('scheduler') || s.name?.includes('autonomous')), [services])
 
