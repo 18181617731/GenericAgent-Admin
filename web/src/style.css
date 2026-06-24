@@ -499,8 +499,15 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .bubble.error { border-color: rgba(180,35,58,.38); }
 .bubble .role { font-size:12px; text-transform:uppercase; color: var(--muted); margin-bottom:6px; }
 .bubble.user .role { color: rgba(255,255,255,.72); }
-.chat-compose { display:grid; grid-template-columns: 1fr 110px; gap:12px; padding:14px; border-top:1px solid var(--border); background: rgba(247,245,241,.82); }
+.chat-compose { flex: 0 0 auto; padding:14px; border-top:1px solid var(--border); background: rgba(247,245,241,.82); display:flex; gap:12px; align-items:flex-start; }
 .chat-compose textarea { min-height:90px; resize:vertical; }
+
+.chat-cmd-drawer { max-height:220px; overflow-y:auto; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.96); box-shadow:0 4px 20px rgba(0,0,0,.10); margin:0 14px; }
+.chat-cmd-item { display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer; transition:background .1s; }
+.chat-cmd-item:hover, .chat-cmd-item.selected { background:rgba(16,163,127,.10); }
+.chat-cmd-name { font-family:monospace; font-size:14px; font-weight:600; color:var(--primary); white-space:nowrap; }
+.chat-cmd-desc { font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chat-cmd-empty { padding:14px; text-align:center; color:var(--muted); font-size:13px; }
 
 /* OpenAI-inspired dedicated chat workspace */
 .oa-chat {
@@ -4134,4 +4141,97 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 .oa-usage.oa-usage-inline b { font-size:10px; }
 .oa-usage .oa-usage-label { font-size:10px; padding-right:2px; }
 .oa-usage.oa-usage-total { margin-top:8px; padding-top:8px; }
+/* 命令抽屉 - / 前缀触发（正常文档流，在 composer 上方） */
+.oa-cmd-drawer {
+  max-height: 244px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color, rgba(0,0,0,.10));
+  border-radius: 12px;
+  background: var(--surface-strong, rgba(255,255,255,.98));
+  box-shadow: 0 4px 20px rgba(0,0,0,.08);
+  padding: 4px 0;
+}
+.oa-cmd-drawer::-webkit-scrollbar { width: 8px; }
+.oa-cmd-drawer::-webkit-scrollbar-thumb { background: rgba(23,23,23,.14); border-radius: 99px; }
+.oa-cmd-drawer::-webkit-scrollbar-track { background: transparent; }
+.oa-cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background .1s;
+}
+.oa-cmd-item:hover { background: var(--accent-subtle, rgba(79,124,255,.07)); }
+.oa-cmd-item.selected {
+  background: var(--accent-subtle, rgba(79,124,255,.12));
+}
+.oa-cmd-item.selected .oa-cmd-name {
+  color: var(--accent, #4f7cff);
+}
+.oa-cmd-name {
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #333);
+  min-width: 72px;
+}
+.oa-cmd-desc {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  flex: 1;
+  min-width: 0;
+}
 
+/* 设置页 - 自定义斜杠命令管理 */
+.settings-block { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border, #eee); }
+.settings-block > label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 10px; }
+.cfg-slash-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.cfg-slash-row code { font-family: var(--font-mono, monospace); font-size: 13px; font-weight: 600; min-width: 80px; }
+.cfg-slash-row .muted { font-size: 12px; color: var(--muted, #888); flex: 1; }
+
+/* 命令抽屉 - 编辑/删除按钮 & 编辑行 */
+.oa-cmd-act-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  opacity: .6;
+  transition: opacity .15s;
+  flex-shrink: 0;
+  min-height: 26px;
+  border-radius: 4px;
+}
+.oa-cmd-act-btn:hover { opacity: 1; }
+.oa-cmd-edit-btn:hover { color: var(--accent, #4f7cff); }
+.oa-cmd-del-btn:hover { color: #d32f2f; }
+.oa-cmd-save-btn:hover { color: #2e7d32; }
+.oa-cmd-cancel-btn:hover { color: #d32f2f; }
+.oa-cmd-add-row { color: var(--accent, #4f7cff); gap: 6px; justify-content: flex-end; min-height: 36px; }
+.oa-cmd-add-icon { font-size: 18px; font-weight: 700; line-height: 1; }
+.oa-cmd-add-label { font-size: 13px; }
+.oa-cmd-edit-row { padding: 5px 12px; gap: 6px; }
+.oa-cmd-edit-input {
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s;
+}
+.oa-cmd-edit-input:focus { border-color: var(--accent, #4f7cff); box-shadow: 0 0 0 2px rgba(79,124,255,.15); }
+.oa-cmd-edit-cmd { flex: 2; font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace); font-weight: 600; min-width: 100px; }
+.oa-cmd-edit-desc { flex: 1; min-width: 60px; }
+@media (max-width: 680px) {
+  .oa-cmd-edit-desc { display: none; }
+  .oa-cmd-desc { display: none; }
+  .oa-cmd-item .oa-cmd-act-btn:first-of-type { margin-left: auto; }
+}

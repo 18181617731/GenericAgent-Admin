@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Paperclip, Play, RefreshCw, Square, X } from 'lucide-react'
 import { api, apiStream } from '../lib/api'
+import { fuzzyMatch } from '../lib/format'
 import { TurnList } from '../components/turns'
 
 const readFileDataURL = (file) => new Promise((resolve, reject) => {
@@ -16,13 +17,21 @@ const compactFileSize = (size = 0) => {
   return `${size} B`
 }
 
-export function ChatPage({ t }) {
+export function ChatPage({ t, slashCommands }) {
+  const allCommands = slashCommands || []
   const [sessions, setSessions] = useState([]), [sid, setSid] = useState(''), [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const [files, setFiles] = useState([])
   const [settings, setSettings] = useState({ llm_no: 0, tools_mode: 'official' })
   const activeSidRef = useRef('')
   const fileInputRef = useRef(null)
+  const cmdDrawerRef = useRef(null)
+  const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
+  const filteredCmds = cmdDrawer.open
+    ? allCommands.filter(c => fuzzyMatch(c.cmd.slice(1), cmdDrawer.filter))
+    : []
+  const closeCmdDrawer = () => setCmdDrawer({ open: false, filter: '', selectedIdx: 0 })
+  const selectCmd = (cmd) => { setPrompt(cmd + ' '); closeCmdDrawer(); }
 
   const loadSessions = async () => {
     const d = await api('/api/chat/sessions')
@@ -47,6 +56,12 @@ export function ChatPage({ t }) {
     await loadSessions()
   }
   useEffect(()=>{ loadSessions().catch(e=>setErr(e.message)) }, [])
+  useEffect(() => {
+    if (!cmdDrawer.open) return
+    const handler = (e) => { if (cmdDrawerRef.current && !cmdDrawerRef.current.contains(e.target)) closeCmdDrawer() }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [cmdDrawer.open])
 
   const encodedFiles = useMemo(() => files.map(f => ({ name: f.name, type: f.type, dataURL: f.dataURL })), [files])
   const addFiles = async (list) => {
@@ -135,7 +150,8 @@ export function ChatPage({ t }) {
       <main className="chat-main"><TurnList messages={messages} empty="选择或创建会话后开始对话"/>
         <div className="chat-settings"><label>LLM <input type="number" min="0" value={settings.llm_no} onChange={e=>setSettings(v => ({...v, llm_no:Number(e.target.value)||0}))}/></label><label>Tools <select value={settings.tools_mode} onChange={e=>setSettings(v => ({...v, tools_mode:e.target.value}))}><option value="official">官方模式</option><option value="fixed">固定注入</option></select></label><button type="button" onClick={reinjectTools} disabled={!sid || busy}>重注入 Tools</button></div>
         {files.length > 0 && <div className="chat-attachments">{files.map((f, i) => <span key={`${f.name}-${i}`}><Paperclip size={13}/>{f.name}<small>{compactFileSize(f.size)}</small><button type="button" onClick={()=>removeFile(i)}><X size={12}/></button></span>)}</div>}
-        <div className="chat-compose"><input ref={fileInputRef} type="file" multiple hidden onChange={e=>addFiles(e.target.files)}/><button className="icon" type="button" onClick={()=>fileInputRef.current?.click()} disabled={busy}><Paperclip size={16}/></button><textarea value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && e.ctrlKey) send() }} placeholder="输入给 GenericAgent 的任务，Ctrl+Enter 发送；可附加图片/文件"/><button disabled={busy || (!prompt.trim() && files.length===0)} onClick={send}>{busy?'执行中...':'发送'}</button>{busy && <button className="danger" type="button" onClick={stop}><Square size={14}/>停止</button>}</div>
+        {cmdDrawer.open && <div className="chat-cmd-drawer" ref={cmdDrawerRef}>{filteredCmds.length === 0 ? <div className="chat-cmd-empty">无匹配命令</div> : filteredCmds.map((c, i) => <div key={c.cmd} className={`chat-cmd-item${i === cmdDrawer.selectedIdx ? ' selected' : ''}`} onMouseDown={() => selectCmd(c.cmd)} onMouseEnter={() => setCmdDrawer(d => ({...d, selectedIdx: i}))}><span className="chat-cmd-name">{c.cmd}</span><span className="chat-cmd-desc">{c.desc}</span></div>)}</div>}
+        <div className="chat-compose"><input ref={fileInputRef} type="file" multiple hidden onChange={e=>addFiles(e.target.files)}/><button className="icon" type="button" onClick={()=>fileInputRef.current?.click()} disabled={busy}><Paperclip size={16}/></button><textarea value={prompt} onChange={e => { const v = e.target.value; setPrompt(v); if (v.startsWith('/')) { const after = v.slice(1).split(' ')[0]; setCmdDrawer(d => ({ open: true, filter: after, selectedIdx: 0 })); } else if (cmdDrawer.open) closeCmdDrawer() }} onKeyDown={e => { if (cmdDrawer.open) { if (e.key === 'ArrowDown') { e.preventDefault(); setCmdDrawer(d => ({...d, selectedIdx: Math.min(d.selectedIdx + 1, filteredCmds.length - 1)})) } else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdDrawer(d => ({...d, selectedIdx: Math.max(d.selectedIdx - 1, 0)})) } else if (e.key === 'Enter' && filteredCmds[cmdDrawer.selectedIdx]) { e.preventDefault(); selectCmd(filteredCmds[cmdDrawer.selectedIdx].cmd) } else if (e.key === 'Escape') { e.preventDefault(); closeCmdDrawer() } else if (e.key === 'Enter' && e.ctrlKey) { closeCmdDrawer(); send() } } else if (e.key === 'Enter' && e.ctrlKey) send() }} placeholder="输入给 GenericAgent 的任务，Ctrl+Enter 发送；可附加图片/文件"/><button disabled={busy || (!prompt.trim() && files.length===0)} onClick={send}>{busy?'执行中...':'发送'}</button>{busy && <button className="danger" type="button" onClick={stop}><Square size={14}/>停止</button>}</div>
       </main></div>
   </section>
 }

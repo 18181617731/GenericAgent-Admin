@@ -63,3 +63,9 @@ export const goalBudgetPercent = (g) => {
 
 
 export const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
+
+export const fuzzyMatch = (text, filter) => {
+  if (!filter) return true
+  const lower = text.toLowerCase(), fl = filter.toLowerCase()
+  return lower.includes(fl)
+}

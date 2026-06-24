@@ -9,23 +9,29 @@ import (
 	"strings"
 )
 
+type SlashCommandItem struct {
+	Cmd  string `json:"cmd"`
+	Desc string `json:"desc"`
+}
+
 type AppConfig struct {
-	GARoot             string   `json:"ga_root"`
-	ChatDataDir        string   `json:"chat_data_dir"`
-	Host               string   `json:"host"`
-	Port               int      `json:"port"`
-	LogTailLines       int      `json:"log_tail_lines"`
-	BufferLines        int      `json:"buffer_lines"`
-	PythonPath         string   `json:"python_path"`
-	ProxyMode          string   `json:"proxy_mode"` // off | system | custom
-	HTTPProxy          string   `json:"http_proxy"`
-	HTTPSProxy         string   `json:"https_proxy"`
-	AllProxy           string   `json:"all_proxy"`
-	NoProxy            string   `json:"no_proxy"`
-	ServiceAutostart   []string `json:"service_autostart"`
-	ServiceModels      map[string]int `json:"service_models,omitempty"`
-	DesktopPetDisabled bool     `json:"desktop_pet_disabled"`
-	UpdateRepoURL      string   `json:"update_repo_url"`
+	GARoot             string            `json:"ga_root"`
+	ChatDataDir        string            `json:"chat_data_dir"`
+	Host               string            `json:"host"`
+	Port               int               `json:"port"`
+	LogTailLines       int               `json:"log_tail_lines"`
+	BufferLines        int               `json:"buffer_lines"`
+	PythonPath         string            `json:"python_path"`
+	ProxyMode          string            `json:"proxy_mode"` // off | system | custom
+	HTTPProxy          string            `json:"http_proxy"`
+	HTTPSProxy         string            `json:"https_proxy"`
+	AllProxy           string            `json:"all_proxy"`
+	NoProxy            string            `json:"no_proxy"`
+	ServiceAutostart   []string          `json:"service_autostart"`
+	ServiceModels      map[string]int    `json:"service_models,omitempty"`
+	DesktopPetDisabled bool              `json:"desktop_pet_disabled"`
+	UpdateRepoURL      string            `json:"update_repo_url"`
+	SlashCommands      []SlashCommandItem `json:"slash_commands,omitempty"`
 }
 
 func Validate(cfg AppConfig) error {
