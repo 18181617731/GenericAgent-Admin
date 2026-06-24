@@ -683,6 +683,7 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
     return (cfg?.slash_commands || []).filter(c => fuzzyMatch(c.cmd, cmdDrawer.filter))
   }, [cmdDrawer.open, cmdDrawer.filter, cfg?.slash_commands])
   const saveSlashCmds = async (newCmds) => {
+    if (!confirmDanger('chat-slash-commands-save', '保存斜杠命令配置？会写入 GA Admin 配置文件。')) return
     try {
       const c = await api('/api/config', { method:'PUT', dangerous: true, body: JSON.stringify({...cfg, slash_commands: newCmds}) })
       if (c?.slash_commands) { setCfg(c) }
