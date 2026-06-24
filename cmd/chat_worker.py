@@ -363,6 +363,92 @@ def _apply_tools_mode(agent, mode):
         return {'ok': False, 'message': '固定模式 Tools 注入失败：%s' % e, 'added': 0}
 
 
+def _render_review_prompt(root, body):
+    """Render GA official /review inline prompt for Admin Chat.
+
+    Keep this logic in the worker so Admin reuses the current in-session agent
+    instead of treating /review as an autocomplete-only text snippet.
+    """
+    lang = os.environ.get('GA_LANG', '').strip().lower()
+    en = lang == 'en'
+    fname = 'review_inline_prompt.en.txt' if en else 'review_inline_prompt.txt'
+    fpath = Path(root) / 'memory' / 'review_sop' / fname
+    default_request = (
+        '(no specific request — default to uncommitted diff: run `git diff --stat HEAD` and `git diff HEAD`)'
+        if en else
+        '(无具体请求 — 默认审本次 uncommitted 改动:用 code_run 跑 `git diff --stat HEAD` 与 `git diff HEAD`)'
+    )
+    user_request = body or default_request
+    header = (
+        '> 🔍 /review (in-session) → main agent reviews here, echoes the report inline\n\n'
+        if en else
+        '> 🔍 /review (in-session) → 主 agent 当场审,直接 echo 报告\n\n'
+    )
+    fallback = (
+        '[/review in-session] (⚠️ prompt 文件缺失: {fpath} → {err})\n\n'
+        '# 本轮用户请求\n{user_request}\n\n'
+        '请按 memory/code_review_principles.md 评审,直接 echo 报告到对话。\n'
+        '不要写 review.md,不要打 [ROUND END]。'
+    )
+    try:
+        template = fpath.read_text(encoding='utf-8')
+        rendered = template.format(user_request=user_request, ga_root=str(Path(root)).replace('\\', '/'))
+    except Exception as e:
+        rendered = fallback.format(fpath=str(fpath), err=e, user_request=user_request)
+    return header + rendered
+
+
+def _review_help_text():
+    return '## /review\n\n**用途**：在当前会话内执行对抗式代码审阅。\n\n**用法**\n\n```text\n/review\n/review <自然语言请求>\n/review help\n```\n\n- `/review`：默认审阅本次 uncommitted 改动，由主 agent 在会话内读取 `git diff`。\n- `/review <自然语言请求>`：按你描述的范围或关注点审阅。\n- `/review help`：显示这份帮助，不启动审阅。\n\n**示例**\n\n```text\n/review\n/review 我刚改了 review_cmd.py 和 tuiapp_v2.py，关注 prompt 注入\n/review 审 frontends 目录下所有改过的文件\n```\n\n**产出**：直接在对话中返回 Markdown；不写文件、不开 subagent。\n\n**协议**：`memory/review_sop/review_inline_prompt.txt` + `memory/code_review_principles.md`'
+
+
+def _improve_help_text():
+    return '## /improve\n\n**用途**：将 `/improve` 转换为内置记忆提炼请求。\n\n**等价消息**\n\n```text\n依据 memory_management_sop.md，提取成功经验总结为 skill 写入 L3，并更新 L1 索引\n```'
+
+
+def _maybe_handle_review_command(root, prompt):
+    s = (prompt or '').strip()
+    if s == '/review':
+        return _render_review_prompt(root, ''), None
+    if s.startswith('/review ') or s.startswith('/review\t'):
+        body = s[len('/review'):].strip()
+        if body in ('help', '?', '-h', '--help'):
+            return None, _review_help_text()
+        return _render_review_prompt(root, body), None
+    return prompt, None
+
+
+def _maybe_handle_improve_command(prompt):
+    s = (prompt or '').strip()
+    if s == '/improve':
+        return '依据 memory_management_sop.md，提取成功经验总结为 skill 写入 L3，并更新 L1 索引', None
+    if s.startswith('/improve ') or s.startswith('/improve\t'):
+        body = s[len('/improve'):].strip()
+        if body in ('help', '?', '-h', '--help'):
+            return None, _improve_help_text()
+    return prompt, None
+
+
+def _maybe_handle_continue_command(root, agent, prompt):
+    s = (prompt or '').strip()
+    if s != '/continue' and not s.startswith('/continue ') and not s.startswith('/continue\t'):
+        return None
+    try:
+        root = Path(root or Path.cwd()).resolve()
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from frontends import continue_cmd
+        return continue_cmd.handle_frontend_command(agent, s, exclude_pid=os.getpid())
+    except Exception as e:
+        return '❌ /continue 执行失败：%s\n%s' % (e, traceback.format_exc())
+
+
+def _emit_immediate_done(agent, content, history_info=None, working=None):
+    msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time())}
+    state = _snapshot_ga_state(agent)
+    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}})
+
+
 def handle_request(agent, worker, req):
     _reset_usage()  # Clear usage accumulator for this turn
     prompt = req.get('prompt') or ''
@@ -375,6 +461,18 @@ def handle_request(agent, worker, req):
     _select_llm_if_needed(agent, llm_no)
     _restore_ga_state(agent, history_info, working)
     _restore_admin_history(agent, history, raw_history)
+    immediate_done = _maybe_handle_continue_command(req.get('ga_root') or Path.cwd(), agent, prompt)
+    if immediate_done is not None:
+        _emit_immediate_done(agent, immediate_done, history_info, working)
+        return
+    prompt, immediate_done = _maybe_handle_review_command(req.get('ga_root') or Path.cwd(), prompt)
+    if immediate_done is not None:
+        _emit_immediate_done(agent, immediate_done, history_info, working)
+        return
+    prompt, immediate_done = _maybe_handle_improve_command(prompt)
+    if immediate_done is not None:
+        _emit_immediate_done(agent, immediate_done, history_info, working)
+        return
     mode_status = _apply_tools_mode(agent, tools_mode)
     if mode_status and not mode_status.get('ok'):
         emit({'type': 'notice', 'message': mode_status})

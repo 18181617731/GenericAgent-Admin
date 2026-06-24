@@ -42,6 +42,45 @@ const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - 
 const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
 
+const BUILTIN_SLASH_COMMANDS = [
+  { cmd: '/continue', key: '/continue', insert: '/continue', desc: '内置：列出可恢复的官方 GA 会话', builtIn: true },
+  { cmd: '/continue <编号>', key: '/continue', insert: '/continue ', desc: '内置：恢复第 N 个官方 GA 会话，可继续对话', builtIn: true },
+  { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '内置：审阅当前改动；可继续输入范围或关注点', builtIn: true },
+  { cmd: '/review help', key: '/review help', insert: '/review help', desc: '内置：显示 /review 帮助，不启动审阅', builtIn: true },
+  { cmd: '/improve', key: '/improve', insert: '/improve', desc: '内置：发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
+  { cmd: '/improve help', key: '/improve help', insert: '/improve help', desc: '内置：显示 /improve 帮助（记忆提炼）', builtIn: true },
+]
+const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
+const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
+const isProtectedSlashCommand = (cmd = '') => BUILTIN_SLASH_COMMANDS.some(c => builtinSlashCommandKey(c) === builtinSlashKey(cmd))
+const slashCommandInsertText = (c, current = '') => {
+  if (!c) return current || ''
+  if (c.cmd === '/review <自然语言请求>') {
+    const text = String(current || '')
+    return /^\s*\/review\s+/.test(text) ? text : (c.insert ?? '/review ')
+  }
+  if (c.cmd === '/continue <编号>') {
+    const text = String(current || '')
+    return /^\s*\/continue\s+/.test(text) ? text : (c.insert ?? '/continue ')
+  }
+  return c?.insert ?? `${c?.cmd || ''} `
+}
+const slashCommandProgressiveFilter = (c, nextText = '') => {
+  if (c?.cmd === '/review <自然语言请求>') return 'review '
+  if (c?.cmd === '/continue') return 'continue '
+  if (c?.cmd === '/improve') return 'improve '
+  const text = String(nextText || '').trimStart()
+  if (text === '/review') return 'review '
+  if (text === '/continue') return 'continue '
+  if (text === '/improve') return 'improve '
+  return ''
+}
+const slashCommandNextDrawer = (c, nextText = '') => {
+  const filter = slashCommandProgressiveFilter(c, nextText)
+  return filter ? { open:true, filter, selectedIdx:0 } : { open:false, filter:'', selectedIdx:0 }
+}
+
+
 const tokenizeInlineMarkdown = (text = '') => {
   const src = String(text || '')
   const tokens = []
@@ -622,7 +661,7 @@ export default function ChatApp() {
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
-const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
+  const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cfg, setCfg] = useState(null)
   const [cmdEditIdx, setCmdEditIdx] = useState(-1)
   const [cmdEditCmd, setCmdEditCmd] = useState('')
@@ -678,10 +717,49 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  const allSlashCommands = useMemo(() => {
+    const builtInKeys = new Set(BUILTIN_SLASH_COMMANDS.map(c => builtinSlashCommandKey(c)))
+    const custom = (cfg?.slash_commands || []).filter(c => !builtInKeys.has(builtinSlashKey(c.cmd)))
+    return [...BUILTIN_SLASH_COMMANDS, ...custom]
+  }, [cfg?.slash_commands])
   const filteredCmds = useMemo(() => {
     if (!cmdDrawer.open) return []
-    return (cfg?.slash_commands || []).filter(c => fuzzyMatch(c.cmd, cmdDrawer.filter))
-  }, [cmdDrawer.open, cmdDrawer.filter, cfg?.slash_commands])
+    const rawFilter = String(cmdDrawer.filter || '').trimStart()
+    const slashFilter = rawFilter.startsWith('/') ? rawFilter : `/${rawFilter}`
+    const childAllowed = (base) => {
+      const childRoot = `${base} `
+      if (slashFilter === childRoot) return true
+      if (!slashFilter.startsWith(childRoot)) return false
+      const rest = slashFilter.slice(childRoot.length).trimStart()
+      return rest.length > 0 && 'help'.startsWith(rest)
+    }
+    const inContinueScope = slashFilter === '/continue' || slashFilter.startsWith('/continue ')
+    const inReviewScope = slashFilter === '/review' || slashFilter.startsWith('/review ')
+    const inImproveScope = slashFilter === '/improve' || slashFilter.startsWith('/improve ')
+    const isReviewNaturalLanguage = /^\/review\s+\S/.test(slashFilter) && !childAllowed('/review')
+    const isContinueNumber = /^\/continue\s+\d+$/.test(slashFilter)
+    return allSlashCommands.filter(c => {
+      const cmd = String(c.cmd || '')
+      if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
+      if (cmd === '/improve help') return childAllowed('/improve') && fuzzyMatch(cmd, slashFilter)
+      if (cmd === '/review <自然语言请求>') {
+        if (slashFilter.startsWith('/review ') && !isReviewNaturalLanguage) return false
+        if (isReviewNaturalLanguage) return true
+      }
+      if (cmd === '/continue <编号>') {
+        if (slashFilter === '/continue ') return true
+        if (isContinueNumber) return true
+        if (slashFilter.startsWith('/continue ')) return false
+      }
+      if (inContinueScope && cmd !== '/continue <编号>') return false
+      if (inReviewScope && cmd !== '/review <自然语言请求>') return false
+      if (inImproveScope && cmd !== '/improve') return false
+      return fuzzyMatch(cmd, rawFilter) || fuzzyMatch(cmd, slashFilter) || fuzzyMatch(c.desc || '', rawFilter)
+    })
+  }, [cmdDrawer.open, cmdDrawer.filter, allSlashCommands])
+  useEffect(() => {
+    if (cmdDrawer.open) setCmdEditIdx(-1)
+  }, [cmdDrawer.open, cmdDrawer.filter])
   const saveSlashCmds = async (newCmds) => {
     if (!confirmDanger('chat-slash-commands-save', '保存斜杠命令配置？会写入 GA Admin 配置文件。')) return
     try {
@@ -690,20 +768,33 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
       setCmdEditIdx(-1)
     } catch(e) { setNotice('保存命令失败: ' + e.message); setCmdEditIdx(-1) }
   }
-  const startEdit = (idx, cmd, desc) => { setCmdEditIdx(idx); setCmdEditCmd(cmd); setCmdEditDesc(desc) }
+  const startEdit = (idx, cmd, desc) => {
+    if (idx < 0 && idx !== -2) return
+    setCmdEditIdx(idx); setCmdEditCmd(cmd); setCmdEditDesc(desc)
+  }
   const saveEdit = () => {
-    if (!cmdEditCmd.trim()) return
+    const normalized = cmdEditCmd.trim()
+    if (!normalized) return
+    if (isProtectedSlashCommand(normalized)) {
+      setNotice('这是 GA Admin 内置命令，不能覆盖或修改')
+      setCmdEditIdx(-1)
+      return
+    }
     const cmds = cfg?.slash_commands || []
     if (cmdEditIdx === -2) {
-      saveSlashCmds([...cmds, { cmd: cmdEditCmd.trim(), desc: cmdEditDesc.trim() || '' }])
+      saveSlashCmds([...cmds, { cmd: normalized, desc: cmdEditDesc.trim() || '' }])
     } else if (cmdEditIdx >= 0) {
       const newCmds = [...cmds]
-      newCmds[cmdEditIdx] = { cmd: cmdEditCmd.trim(), desc: cmdEditDesc.trim() || '' }
+      newCmds[cmdEditIdx] = { cmd: normalized, desc: cmdEditDesc.trim() || '' }
       saveSlashCmds(newCmds)
     }
   }
-  const deleteCmd = (idx) => { const cmds = cfg?.slash_commands || []; saveSlashCmds(cmds.filter((_, i) => i !== idx)) }
+  const deleteCmd = (idx) => {
+    if (idx < 0) { setNotice('这是 GA Admin 内置命令，不能删除'); return }
+    const cmds = cfg?.slash_commands || []; saveSlashCmds(cmds.filter((_, i) => i !== idx))
+  }
   const moveUpCmd = (cmd) => {
+    if (cmd?.builtIn) return
     const cmds = cfg?.slash_commands || []
     const idx = cmds.findIndex(c => c.cmd === cmd.cmd && c.desc === cmd.desc)
     if (idx <= 0) return
@@ -1119,8 +1210,9 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
     }
   }
 
-  const send = async () => {
-    const text = prompt.trim()
+  const send = async (textOverride = null) => {
+    const sourceText = textOverride == null ? prompt : textOverride
+    const text = String(sourceText || '').trim()
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
       setPrompt('')
@@ -1134,12 +1226,84 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
     if (!text && !files.length) return
     const item = { text, files, llmNo, toolsMode }
     setPrompt(''); setAttachments([])
+    setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
+    setCmdEditIdx(-1)
     if (busy) {
       enqueueMessage(item)
       return
     }
     await runSend(item)
   }
+
+  const applySlashCommand = (cmd, currentValue = prompt) => {
+    if (!cmd) return
+    const next = slashCommandInsertText(cmd, currentValue)
+    setPrompt(next)
+    setCmdDrawer(slashCommandNextDrawer(cmd, next))
+    setCmdEditIdx(-1)
+    setTimeout(() => promptRef.current?.focus(), 0)
+  }
+
+  const handlePromptChange = (e) => {
+    const v = e.target.value
+    setPrompt(v)
+    if (v.startsWith('/')) {
+      setCmdDrawer({ open:true, filter:v.slice(1), selectedIdx:0 })
+      setCmdEditIdx(-1)
+    } else if (cmdDrawer.open) {
+      setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
+      setCmdEditIdx(-1)
+    }
+  }
+
+  const handlePromptKeyDown = (e) => {
+    const currentValue = e.currentTarget.value
+    if (cmdDrawer.open && cmdEditIdx === -1) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCmdDrawer(prev => ({ ...prev, selectedIdx: Math.min(prev.selectedIdx + 1, Math.max(filteredCmds.length - 1, 0)) }))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCmdDrawer(prev => ({ ...prev, selectedIdx: Math.max(prev.selectedIdx - 1, 0) }))
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        const cmd = filteredCmds[cmdDrawer.selectedIdx]
+        const selectingNaturalReview = cmd?.cmd === '/review <自然语言请求>' && /^\s*\/review\s+\S/.test(currentValue)
+        const selectingBareContinue = e.key === 'Enter' && /^\s*\/continue\s*$/.test(currentValue)
+        const selectingContinueNumber = cmd?.cmd === '/continue <编号>' && /^\s*\/continue\s+\d+\s*$/.test(currentValue)
+        if (selectingNaturalReview || selectingBareContinue || selectingContinueNumber) {
+          e.preventDefault()
+          setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
+          setCmdEditIdx(-1)
+          if (e.key === 'Enter') send(currentValue)
+          return
+        }
+        if (cmd) {
+          e.preventDefault()
+          applySlashCommand(cmd, currentValue)
+          return
+        }
+        e.preventDefault()
+        setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
+        setCmdEditIdx(-1)
+        if (e.key === 'Enter') send(currentValue)
+        return
+      }
+      if (e.key === 'Escape') {
+        setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
+        setCmdEditIdx(-1)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send(currentValue)
+    }
+  }
+
 
   const guideQueued = async (item = null) => {
     const next = item || popQueued()
@@ -1330,36 +1494,13 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
           })}
         </div>}
         {cmdDrawer.open && <div className="oa-cmd-drawer">
-          {cmdEditIdx === -2 ? (
-            <div className="oa-cmd-item oa-cmd-edit-row">
-              <input className="oa-cmd-edit-input oa-cmd-edit-cmd" placeholder="/命令" value={cmdEditCmd} onChange={e=>setCmdEditCmd(e.target.value)} autoFocus onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
-              <input className="oa-cmd-edit-input oa-cmd-edit-desc" placeholder="描述" value={cmdEditDesc} onChange={e=>setCmdEditDesc(e.target.value)} onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
-              <button className="oa-cmd-act-btn" onClick={saveEdit} title="保存">💾</button>
-              <button className="oa-cmd-act-btn" onClick={()=>setCmdEditIdx(-1)} title="取消">✕</button>
-            </div>
-          ) : (<>
-            {filteredCmds.length > 0 && <div className="oa-cmd-item oa-cmd-add-row" onClick={()=>{setCmdEditIdx(-2);setCmdEditCmd('');setCmdEditDesc('')}}>
-              <span className="oa-cmd-add-icon">+</span>
-              <span className="oa-cmd-add-label">新增命令</span>
-            </div>}
-            {filteredCmds.length === 0 && <div className="oa-cmd-item" style={{color:'var(--text-secondary)',justifyContent:'center',cursor:'default',padding:'12px 14px'}}>无匹配命令</div>}
-          </>)}
+          {filteredCmds.length === 0 && <div className="oa-cmd-item" style={{color:'var(--text-secondary)',justifyContent:'center',cursor:'default',padding:'12px 14px'}}>无匹配命令</div>}
           {filteredCmds.map((c,i)=>{
-            const cmds = cfg?.slash_commands || []; const oi = cmds.findIndex(x => x.cmd===c.cmd && x.desc===c.desc)
-            return cmdEditIdx === oi ? (
-              <div key={c.cmd+oi} className="oa-cmd-item oa-cmd-edit-row">
-                <input className="oa-cmd-edit-input oa-cmd-edit-cmd" value={cmdEditCmd} onChange={e=>setCmdEditCmd(e.target.value)} autoFocus onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
-                <input className="oa-cmd-edit-input oa-cmd-edit-desc" value={cmdEditDesc} onChange={e=>setCmdEditDesc(e.target.value)} onKeyDown={e=>{e.stopPropagation(); if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setCmdEditIdx(-1)}}/>
-                <button className="oa-cmd-act-btn" onClick={saveEdit} title="保存">💾</button>
-                <button className="oa-cmd-act-btn" onClick={()=>setCmdEditIdx(-1)} title="取消">✕</button>
-              </div>
-            ) : (
-              <div key={c.cmd+oi} className={`oa-cmd-item${i===cmdDrawer.selectedIdx?' selected':''}`} onMouseDown={e=>{if(oi===-1)return;e.preventDefault();setPrompt(c.cmd+' ');setCmdDrawer({open:false,filter:'',selectedIdx:0})}}>
+            return (
+              <div key={c.cmd+i} className={`oa-cmd-item${i===cmdDrawer.selectedIdx?' selected':''}`} onMouseDown={e=>{e.preventDefault();applySlashCommand(c,promptRef.current?.value ?? prompt)}}>
                 <span className="oa-cmd-name">{c.cmd}</span>
                 <span className="oa-cmd-desc">{c.desc}</span>
-                {cmds.indexOf(c) > 0 && <button className="oa-cmd-act-btn" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();moveUpCmd(c)}} title="上移">↑</button>}
-                <button className="oa-cmd-act-btn" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();startEdit(oi,c.cmd,c.desc)}} title="编辑">✏️</button>
-                <button className="oa-cmd-act-btn" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();if(confirm('删除命令 '+c.cmd+'？'))deleteCmd(oi)}} title="删除">🗑️</button>
+                {c.builtIn && <span className="oa-cmd-builtin" title="GA Admin 内置命令，不能修改或删除">内置</span>}
               </div>
             )
           })}
@@ -1371,7 +1512,7 @@ const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedId
               <img src={a.dataURL} alt={a.name}/><span><FileImage size={12}/>{a.name}</span><button type="button" onClick={()=>removeAttachment(a.id)}><X size={12}/></button>
             </div>)}
           </div>}
-          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={e=>{ const v=e.target.value; setPrompt(v); if(v==='/') {setCmdDrawer({open:true,filter:'',selectedIdx:0}); setCmdEditIdx(-1);} else if(v.startsWith('/') && cmdDrawer.open) setCmdDrawer(prev=>({...prev,filter:v.slice(1)})); else if(!v.startsWith('/') && cmdDrawer.open) { setCmdDrawer(prev=>({...prev,open:false})); setCmdEditIdx(-1); } }} onKeyDown={e=>{ if(cmdDrawer.open && cmdEditIdx===-1){ if(e.key==='ArrowDown'){e.preventDefault();setCmdDrawer(prev=>({...prev,selectedIdx:Math.min(prev.selectedIdx+1,filteredCmds.length-1)}));return} if(e.key==='ArrowUp'){e.preventDefault();setCmdDrawer(prev=>({...prev,selectedIdx:Math.max(prev.selectedIdx-1,0)}));return} if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();const cmd=filteredCmds[cmdDrawer.selectedIdx];if(cmd){setPrompt(cmd.cmd+' ');setCmdDrawer({open:false,filter:'',selectedIdx:0})}return} if(e.key==='Escape'){setCmdDrawer(prev=>({...prev,open:false}));setCmdEditIdx(-1);return} } if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()} }} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
+          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
             <div className="oa-tools-menu" ref={toolsMenuRef}>

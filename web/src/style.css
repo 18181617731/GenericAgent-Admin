@@ -4145,40 +4145,41 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 .oa-cmd-drawer {
   max-height: 244px;
   overflow-y: auto;
-  border: 1px solid var(--border-color, rgba(0,0,0,.10));
-  border-radius: 12px;
-  background: var(--surface-strong, rgba(255,255,255,.98));
-  box-shadow: 0 4px 20px rgba(0,0,0,.08);
+  border: 1px solid var(--oa-line, rgba(22,22,22,.10));
+  border-radius: var(--radius-lg, 14px);
+  background: rgba(255,255,255,.97);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 32px rgba(0,0,0,.10), 0 1.5px 6px rgba(0,0,0,.06);
   padding: 4px 0;
 }
-.oa-cmd-drawer::-webkit-scrollbar { width: 8px; }
-.oa-cmd-drawer::-webkit-scrollbar-thumb { background: rgba(23,23,23,.14); border-radius: 99px; }
+.oa-cmd-drawer::-webkit-scrollbar { width: 6px; }
+.oa-cmd-drawer::-webkit-scrollbar-thumb { background: rgba(23,23,23,.12); border-radius: 99px; }
 .oa-cmd-drawer::-webkit-scrollbar-track { background: transparent; }
 .oa-cmd-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 6px 12px;
   cursor: pointer;
-  transition: background .1s;
+  transition: background .12s;
 }
-.oa-cmd-item:hover { background: var(--accent-subtle, rgba(79,124,255,.07)); }
+.oa-cmd-item:hover { background: var(--oa-hover, rgba(23,23,23,.055)); }
 .oa-cmd-item.selected {
-  background: var(--accent-subtle, rgba(79,124,255,.12));
+  background: rgba(16,163,127,.09);
 }
 .oa-cmd-item.selected .oa-cmd-name {
-  color: var(--accent, #4f7cff);
+  color: var(--oa-green, #10a37f);
 }
 .oa-cmd-name {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
+  font-family: var(--mono);
   font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #333);
+  font-weight: 620;
+  color: var(--oa-text, #171717);
   min-width: 72px;
 }
 .oa-cmd-desc {
   font-size: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--oa-muted, #7a756d);
   flex: 1;
   min-width: 0;
 }
@@ -4210,25 +4211,38 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   border-radius: 4px;
 }
 .oa-cmd-act-btn:hover { opacity: 1; }
-.oa-cmd-edit-btn:hover { color: var(--accent, #4f7cff); }
-.oa-cmd-del-btn:hover { color: #d32f2f; }
-.oa-cmd-save-btn:hover { color: #2e7d32; }
-.oa-cmd-cancel-btn:hover { color: #d32f2f; }
-.oa-cmd-add-row { color: var(--accent, #4f7cff); gap: 6px; justify-content: flex-end; min-height: 36px; }
+
+.oa-cmd-builtin {
+  flex-shrink: 0;
+  border: 1px solid var(--oa-line, rgba(22,22,22,.10));
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--oa-muted, #7a756d);
+  background: var(--oa-sidebar, #f4f2ee);
+  letter-spacing: .01em;
+}
+.oa-cmd-edit-btn:hover { color: var(--oa-green, #10a37f); }
+.oa-cmd-del-btn:hover { color: var(--red, #b4233a); }
+.oa-cmd-save-btn:hover { color: var(--oa-green, #10a37f); }
+.oa-cmd-cancel-btn:hover { color: var(--red, #b4233a); }
+.oa-cmd-add-row { color: var(--oa-green, #10a37f); gap: 6px; justify-content: flex-end; min-height: 36px; }
 .oa-cmd-add-icon { font-size: 18px; font-weight: 700; line-height: 1; }
 .oa-cmd-add-label { font-size: 13px; }
 .oa-cmd-edit-row { padding: 5px 12px; gap: 6px; }
 .oa-cmd-edit-input {
-  border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
+  border: 1px solid var(--oa-line-strong, rgba(22,22,22,.16));
+  border-radius: 8px;
   padding: 6px 8px;
   font-size: 13px;
   font-family: inherit;
   outline: none;
   transition: border-color .15s;
 }
-.oa-cmd-edit-input:focus { border-color: var(--accent, #4f7cff); box-shadow: 0 0 0 2px rgba(79,124,255,.15); }
-.oa-cmd-edit-cmd { flex: 2; font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace); font-weight: 600; min-width: 100px; }
+.oa-cmd-edit-input:focus { border-color: var(--oa-green, #10a37f); box-shadow: 0 0 0 2px rgba(16,163,127,.15); }
+.oa-cmd-edit-cmd { flex: 2; font-family: var(--mono); font-weight: 600; min-width: 100px; }
 .oa-cmd-edit-desc { flex: 1; min-width: 60px; }
 @media (max-width: 680px) {
   .oa-cmd-edit-desc { display: none; }

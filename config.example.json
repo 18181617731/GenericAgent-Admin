@@ -10,7 +10,6 @@
   "buffer_lines": 1000,
   "service_autostart": [],
   "slash_commands": [
-    { "cmd": "依据 memory_management_sop.md，提取成功经验更新进去记忆和SOP", "desc": "自我进化" },
     { "cmd": "/continue", "desc": "Chat 历史会话搜索" },
     { "cmd": "/review", "desc": "Chat 内代码审查" }
   ]
