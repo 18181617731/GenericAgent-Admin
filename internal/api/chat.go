@@ -36,11 +36,19 @@ type chatMessage struct {
 const (
 	chatToolsModeOfficial = "official"
 	chatToolsModeFixed    = "fixed"
+
+	chatReasoningEffortOff     = "off"
+	chatReasoningEffortMinimal = "minimal"
+	chatReasoningEffortLow     = "low"
+	chatReasoningEffortMedium  = "medium"
+	chatReasoningEffortHigh    = "high"
+	chatReasoningEffortXHigh   = "xhigh"
 )
 
 type chatSettings struct {
-	LLMNo     int    `json:"llm_no"`
-	ToolsMode string `json:"tools_mode,omitempty"`
+	LLMNo           int    `json:"llm_no"`
+	ToolsMode       string `json:"tools_mode,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 func normalizeChatSettings(st chatSettings) chatSettings {
@@ -49,6 +57,24 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 		// keep
 	default:
 		st.ToolsMode = chatToolsModeOfficial
+	}
+	switch strings.ToLower(strings.TrimSpace(st.ReasoningEffort)) {
+	case "", "default", "model":
+		st.ReasoningEffort = ""
+	case chatReasoningEffortOff, "none", "clear", "unset":
+		st.ReasoningEffort = chatReasoningEffortOff
+	case chatReasoningEffortMinimal:
+		st.ReasoningEffort = chatReasoningEffortMinimal
+	case chatReasoningEffortLow:
+		st.ReasoningEffort = chatReasoningEffortLow
+	case chatReasoningEffortMedium:
+		st.ReasoningEffort = chatReasoningEffortMedium
+	case chatReasoningEffortHigh:
+		st.ReasoningEffort = chatReasoningEffortHigh
+	case chatReasoningEffortXHigh, "max":
+		st.ReasoningEffort = chatReasoningEffortXHigh
+	default:
+		st.ReasoningEffort = chatReasoningEffortOff
 	}
 	return st
 }
@@ -62,6 +88,7 @@ type chatSession struct {
 	RawHistory  []map[string]interface{} `json:"raw_history,omitempty"`
 	HistoryInfo []interface{}            `json:"history_info,omitempty"`
 	Working     map[string]interface{}   `json:"working,omitempty"`
+	Workspace   string                   `json:"workspace,omitempty"`
 }
 
 const (
@@ -89,6 +116,8 @@ type chatRun struct {
 	Cmd         *exec.Cmd
 	Subscribers map[chan []byte]bool
 }
+
+const chatRunSubscriberBuffer = 4096
 
 type chatWorker struct {
 	SID    string
@@ -129,6 +158,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	var finalRawHistory []map[string]interface{}
 	var finalHistoryInfo []interface{}
 	var finalWorking map[string]interface{}
+	var finalReasoningEffort string
 	var readErr error
 	for {
 		line, err := readChatWorkerLine(reader)
@@ -180,6 +210,9 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			finalRawHistory = chatRawHistoryFromEvent(ev)
 			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
 			finalWorking = chatWorkingFromEvent(ev)
+			if v, ok := ev["reasoning_effort"].(string); ok {
+				finalReasoningEffort = v
+			}
 			delete(ev, "raw_history")
 			delete(ev, "history_info")
 			delete(ev, "working")
@@ -239,6 +272,9 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	}
 	if finalWorking != nil {
 		cs.Working = finalWorking
+	}
+	if strings.TrimSpace(finalReasoningEffort) != "" {
+		cs.Settings.ReasoningEffort = normalizeChatSettings(chatSettings{ReasoningEffort: finalReasoningEffort}).ReasoningEffort
 	}
 	cs.UpdatedAt = time.Now().Unix()
 	_ = saveChatSession(s.CfgStore.Cfg, cs)
@@ -322,13 +358,17 @@ func (s *Server) chatRunActive(sid string) bool {
 
 func (s *Server) reinjectChatWorkerTools(sid string) (map[string]interface{}, error) {
 	sid = safeChatID(sid)
+	workspace := ""
+	if cs, err := loadChatSession(s.CfgStore.Cfg, sid); err == nil {
+		workspace = strings.TrimSpace(cs.Workspace)
+	}
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
 		return nil, err
 	}
 	worker.Mu.Lock()
 	defer worker.Mu.Unlock()
-	if err := json.NewEncoder(worker.Stdin).Encode(map[string]interface{}{"op": "reinject_tools", "ga_root": s.CfgStore.Cfg.GARoot}); err != nil {
+	if err := json.NewEncoder(worker.Stdin).Encode(map[string]interface{}{"op": "reinject_tools", "ga_root": s.CfgStore.Cfg.GARoot, "workspace": workspace}); err != nil {
 		s.dropChatWorker(sid, worker)
 		return nil, err
 	}
@@ -425,6 +465,14 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 		select {
 		case ch <- b:
 		default:
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- b:
+			default:
+			}
 		}
 	}
 }
@@ -467,7 +515,7 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 		from = len(run.Events)
 	}
 	initial := append([][]byte(nil), run.Events[from:]...)
-	ch := make(chan []byte, 128)
+	ch := make(chan []byte, chatRunSubscriberBuffer)
 	if !run.Done {
 		run.Subscribers[ch] = true
 	}

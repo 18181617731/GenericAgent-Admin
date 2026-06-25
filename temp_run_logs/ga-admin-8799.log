@@ -1,0 +1,65 @@
+2026/06/25 08:16:12 GenericAgent Admin Go listening on http://127.0.0.1:8799
+2026/06/25 08:16:24 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:16:39 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:16:54 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:17:09 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:17:17 desktop pet action=running ticks=0 loop=true
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Info] Load mykeys from E:\Work\GenericAgent\mykey.py
+2026/06/25 08:17:18 desktop pet action=idle ticks=0 loop=true
+2026/06/25 08:17:18 desktop pet action=review ticks=30 loop=true
+2026/06/25 08:17:27 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:17:42 desktop pet action=running ticks=0 loop=true
+2026/06/25 08:17:43 desktop pet action=idle ticks=0 loop=true
+2026/06/25 08:17:43 desktop pet action=review ticks=30 loop=true
+2026/06/25 08:17:52 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:17:55 desktop pet action=running ticks=0 loop=true
+2026/06/25 08:17:56 desktop pet action=idle ticks=0 loop=true
+2026/06/25 08:17:56 desktop pet action=review ticks=30 loop=true
+2026/06/25 08:18:04 desktop pet action=running ticks=0 loop=true
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Debug] Updated system prompt, length 4030 chars.
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Debug] Current context: 9452 chars, 17 messages.
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Cache] input=7152 cached=0
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Output] tokens=110
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Debug] Current context: 9924 chars, 19 messages.
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Cache] input=7365 cached=0
+[chat_worker:a6c3a95a-a46e-0f8f-6315-0c66332213d5] [Output] tokens=157
+2026/06/25 08:18:14 desktop pet action=idle ticks=0 loop=true
+2026/06/25 08:18:14 desktop pet action=review ticks=30 loop=true
+2026/06/25 08:18:32 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:18:49 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:19:06 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:19:23 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:19:38 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:19:52 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:20:07 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:20:22 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:20:38 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:20:54 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:21:10 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:21:26 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:21:43 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:22:00 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:22:18 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:22:32 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:22:47 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:23:02 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:23:18 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:23:34 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:23:49 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:24:05 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:24:22 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:24:39 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:24:56 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:25:10 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:25:25 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:25:40 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:25:56 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:26:12 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:26:27 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:26:43 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:27:00 desktop pet action=running ticks=18 loop=true
+2026/06/25 08:27:18 desktop pet action=review ticks=18 loop=true
+2026/06/25 08:27:36 desktop pet action=waving ticks=14 loop=false
+2026/06/25 08:27:53 desktop pet action=jumping ticks=16 loop=false
+2026/06/25 08:28:07 desktop pet action=waiting ticks=18 loop=true
+2026/06/25 08:28:22 desktop pet action=running ticks=18 loop=true

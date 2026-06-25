@@ -363,6 +363,88 @@ def _apply_tools_mode(agent, mode):
         return {'ok': False, 'message': '固定模式 Tools 注入失败：%s' % e, 'added': 0}
 
 
+EFFORT_LEVELS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
+
+
+def _snapshot_reasoning_effort(agent):
+    try:
+        backend = getattr(getattr(agent, 'llmclient', None), 'backend', None)
+        value = getattr(backend, 'reasoning_effort', None) if backend is not None else None
+    except Exception:
+        value = None
+    value = str(value or '').strip().lower()
+    if value == 'max':
+        return 'xhigh'
+    if value in EFFORT_LEVELS and value != 'none':
+        return value
+    return 'off'
+
+
+def _agent_protocols(agent):
+    try:
+        b = getattr(getattr(agent, 'llmclient', None), 'backend', None)
+        backs = getattr(b, 'backends', None)
+        if isinstance(backs, (list, tuple)):
+            return {str(getattr(x, 'protocol', '') or '').lower() for x in backs}
+        return {str(getattr(b, 'protocol', '') or '').lower()} if b is not None else set()
+    except Exception:
+        return set()
+
+
+def _effort_note(level, protocols):
+    if level and 'claude' in protocols:
+        if level in ('none', 'minimal'):
+            return 'Claude 渠道忽略'
+        if level == 'xhigh':
+            return 'Claude 对应 max'
+    return ''
+
+
+def _maybe_handle_effort_command(agent, prompt):
+    s = (prompt or '').strip()
+    if s != '/effort' and not s.startswith('/effort ') and not s.startswith('/effort\t'):
+        return None
+    try:
+        backend = getattr(getattr(agent, 'llmclient', None), 'backend', None)
+        if backend is None:
+            return '无法读取当前 LLM backend，不能设置 reasoning_effort。'
+        if s == '/effort':
+            cur = getattr(backend, 'reasoning_effort', None) or '(未设置)'
+            return '当前 reasoning_effort: %s\n\n可选: %s；`off` 清除。' % (cur, '/'.join(EFFORT_LEVELS))
+        value = s[len('/effort'):].strip().lower()
+        old = getattr(backend, 'reasoning_effort', None)
+        if value in ('', 'off', 'clear', 'unset'):
+            effort = None
+        elif value in EFFORT_LEVELS:
+            effort = value
+        else:
+            return "无效 effort: %r (可选 %s, 留空或 off 清除)" % (value, '/'.join(EFFORT_LEVELS))
+        setattr(backend, 'reasoning_effort', effort)
+        note = _effort_note(effort, _agent_protocols(agent))
+        tail = ' (%s)' % note if note else ''
+        return 'reasoning_effort: %s → %s%s' % (old or '(未设置)', effort or '(清除)', tail)
+    except Exception as e:
+        return '设置 reasoning_effort 失败：%s' % e
+
+
+def _apply_reasoning_effort_setting(agent, value):
+    raw = str(value or '').strip().lower()
+    if raw in ('', 'off', 'none', 'clear', 'unset'):
+        effort = None
+    elif raw in EFFORT_LEVELS:
+        effort = raw
+    elif raw == 'max':
+        effort = 'xhigh'
+    else:
+        return
+    try:
+        backend = getattr(getattr(agent, 'llmclient', None), 'backend', None)
+        if backend is not None:
+            setattr(backend, 'reasoning_effort', effort)
+    except Exception:
+        pass
+
+
 def _render_review_prompt(root, body):
     """Render GA official /review inline prompt for Admin Chat.
 
@@ -446,8 +528,51 @@ def _maybe_handle_continue_command(root, agent, prompt):
 def _emit_immediate_done(agent, content, history_info=None, working=None):
     msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time())}
     state = _snapshot_ga_state(agent)
-    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}})
+    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
 
+
+
+def _safe_workspace(root, value):
+    raw = (value or '').strip() if isinstance(value, str) else ''
+    if not raw:
+        return None
+    try:
+        p = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    if not p.exists() or not p.is_dir():
+        return None
+    return p
+
+
+def _apply_workspace(agent, root, workspace):
+    ws = _safe_workspace(root, workspace)
+    if not ws:
+        try:
+            os.chdir(root)
+        except Exception:
+            pass
+        os.environ.pop('GA_WORKSPACE', None)
+        return ''
+    os.environ['GA_WORKSPACE'] = str(ws)
+    os.environ['GA_PROJECT_ROOT'] = str(ws)
+    try:
+        os.chdir(ws)
+    except Exception:
+        pass
+    for name in ('workspace', 'workspace_root', 'project_root', 'cwd'):
+        try:
+            setattr(agent, name, str(ws))
+        except Exception:
+            pass
+    try:
+        w = getattr(agent, 'working', None)
+        if isinstance(w, dict):
+            w['workspace'] = str(ws)
+            w['project_root'] = str(ws)
+    except Exception:
+        pass
+    return str(ws)
 
 def handle_request(agent, worker, req):
     _reset_usage()  # Clear usage accumulator for this turn
@@ -458,10 +583,18 @@ def handle_request(agent, worker, req):
     working = req.get('working') or {}
     llm_no = int(req.get('llm_no') or 0)
     tools_mode = str(req.get('tools_mode') or 'official')
+    reasoning_effort = req.get('reasoning_effort') if 'reasoning_effort' in req else None
+    root_for_req = Path(req.get('ga_root') or Path.cwd()).resolve()
     _select_llm_if_needed(agent, llm_no)
+    if str(reasoning_effort or '').strip():
+        _apply_reasoning_effort_setting(agent, reasoning_effort)
     _restore_ga_state(agent, history_info, working)
+    applied_workspace = _apply_workspace(agent, root_for_req, req.get('workspace'))
+    if applied_workspace and isinstance(working, dict):
+        working['workspace'] = applied_workspace
+        working['project_root'] = applied_workspace
     _restore_admin_history(agent, history, raw_history)
-    immediate_done = _maybe_handle_continue_command(req.get('ga_root') or Path.cwd(), agent, prompt)
+    immediate_done = _maybe_handle_continue_command(root_for_req, agent, prompt)
     if immediate_done is not None:
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
@@ -470,6 +603,10 @@ def handle_request(agent, worker, req):
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
     prompt, immediate_done = _maybe_handle_improve_command(prompt)
+    if immediate_done is not None:
+        _emit_immediate_done(agent, immediate_done, history_info, working)
+        return
+    immediate_done = _maybe_handle_effort_command(agent, prompt)
     if immediate_done is not None:
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
@@ -497,13 +634,13 @@ def handle_request(agent, worker, req):
                 state = _snapshot_ga_state(agent)
                 usage = _snapshot_usage()
                 usages = _snapshot_turn_usages()
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}})
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
-        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent)})
+        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
 
 
 def main():
@@ -533,6 +670,8 @@ def main():
                 worker.start()
             if req.get('op') == 'reinject_tools':
                 with agent_lock:
+                    root_for_req = Path(req.get('ga_root') or root).resolve()
+                    _apply_workspace(agent, root_for_req, req.get('workspace'))
                     emit({'type': 'reinject_tools', **_reinject_tools(agent)})
                 continue
             with agent_lock:

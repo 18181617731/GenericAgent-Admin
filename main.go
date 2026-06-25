@@ -41,6 +41,9 @@ func main() {
 	if err := cfgStore.Load(); err != nil {
 		log.Printf("load config: %v", err)
 	}
+	if launch.PortSet {
+		cfgStore.Cfg.Port = launch.Port
+	}
 	version.SetRepoURL(cfgStore.Cfg.UpdateRepoURL)
 	svc := service.NewManager(cfgStore.Cfg.GARoot, cfgStore.Cfg.BufferLines)
 	models := modelconfig.NewStore(cwd)
@@ -104,6 +107,8 @@ func main() {
 type launchOptions struct {
 	Headless  bool
 	NoBrowser bool
+	Port      int
+	PortSet   bool
 }
 
 const (
@@ -124,7 +129,18 @@ func parseLaunchOptions() launchOptions {
 	headlessFlag := flag.Bool("headless", false, "run without browser, tray, or desktop pet; intended for Linux servers")
 	serverOnlyFlag := flag.Bool("server-only", false, "alias for --headless")
 	noBrowserFlag := flag.Bool("no-browser", false, "do not open the web UI automatically")
+	portFlag := flag.Int("port", 0, "override HTTP listen port for this launch (1-65535)")
 	flag.Parse()
+
+	portSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portSet = true
+		}
+	})
+	if portSet && (*portFlag < 1 || *portFlag > 65535) {
+		log.Fatalf("invalid --port %d: port must be between 1 and 65535", *portFlag)
+	}
 
 	headless := *headlessFlag || *serverOnlyFlag || envBool("GA_ADMIN_HEADLESS") || envBool("GA_ADMIN_SERVER_ONLY")
 	if !headless && runtime.GOOS == "linux" && !hasGraphicalSession() {
@@ -134,6 +150,8 @@ func parseLaunchOptions() launchOptions {
 	return launchOptions{
 		Headless:  headless,
 		NoBrowser: *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
+		Port:      *portFlag,
+		PortSet:   portSet,
 	}
 }
 

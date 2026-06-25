@@ -1627,7 +1627,7 @@ export default function ChatApp() {
             </div>
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
-                options={[{value:'',label:'自动'},{value:'off',label:'默认'},{value:'minimal',label:'Minimal'},{value:'low',label:'Low'},{value:'medium',label:'Medium'},{value:'high',label:'High'},{value:'xhigh',label:'XHigh'}]} />
+                options={[{value:'off',label:'默认'},{value:'minimal',label:'Minimal'},{value:'low',label:'Low'},{value:'medium',label:'Medium'},{value:'high',label:'High'},{value:'xhigh',label:'XHigh'}]} />
             </div>
             <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={send} title={isCurrentRunning ? '加入发送队列' : '发送'} aria-label={isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}

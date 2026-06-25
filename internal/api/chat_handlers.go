@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID)})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	if len(items) > 80 {
@@ -201,7 +201,56 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["warning"] = err.Error()
 	}
 	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace})
+}
+
+func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
+	cmd := strings.TrimSpace(prompt)
+	if cmd != "/workspace" && !strings.HasPrefix(cmd, "/workspace ") && !strings.HasPrefix(cmd, "/workspace\t") {
+		return false
+	}
+	reply := ""
+	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "/workspace"))
+	switch {
+	case arg == "":
+		if strings.TrimSpace(cs.Workspace) == "" {
+			reply = "Workspace 模式未启用。用法：`/workspace <绝对路径>`，关闭：`/workspace off`。"
+		} else {
+			reply = fmt.Sprintf("当前 workspace：`%s`\n\n关闭：`/workspace off`。", cs.Workspace)
+		}
+	case strings.EqualFold(arg, "off") || strings.EqualFold(arg, "disable") || strings.EqualFold(arg, "none"):
+		cs.Workspace = ""
+		reply = "已关闭当前会话的 workspace 模式。"
+	default:
+		abs, err := filepath.Abs(arg)
+		if err != nil {
+			reply = fmt.Sprintf("设置 workspace 失败：%v", err)
+			break
+		}
+		st, err := os.Stat(abs)
+		if err != nil {
+			reply = fmt.Sprintf("设置 workspace 失败：目录不存在或不可访问：`%s`", abs)
+			break
+		}
+		if !st.IsDir() {
+			reply = fmt.Sprintf("设置 workspace 失败：不是目录：`%s`", abs)
+			break
+		}
+		cs.Workspace = abs
+		reply = fmt.Sprintf("已启用当前会话 workspace：`%s`\n\n之后本会话任务会优先在该目录执行。", abs)
+	}
+	msg := chatMessage{ID: newChatID(), Role: "assistant", Content: reply, CreatedAt: time.Now().Unix()}
+	cs.Messages = append(cs.Messages, msg)
+	cs.UpdatedAt = time.Now().Unix()
+	if err := saveChatSession(s.CfgStore.Cfg, *cs); err != nil {
+		s.endChatRun(sid)
+		bad(w, http.StatusInternalServerError, err.Error())
+		return true
+	}
+	s.publishChatRun(sid, map[string]interface{}{"type": "message", "message": msg, "workspace": cs.Workspace})
+	s.endChatRun(sid)
+	s.streamChatRun(w, r, sid, 0)
+	return true
 }
 
 func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
@@ -234,6 +283,9 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	if req.Settings != nil {
 		cs.Settings = normalizeChatSettings(*req.Settings)
 	}
+	if s.maybeHandleWorkspaceCommand(w, r, sid, &cs, req.Prompt) {
+		return
+	}
 	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
 	if err != nil {
 		s.endChatRun(sid)
@@ -259,14 +311,16 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
 	cmdReq := map[string]interface{}{
-		"prompt":       display,
-		"history":      workerHistory,
-		"raw_history":  cs.RawHistory,
-		"history_info": cs.HistoryInfo,
-		"working":      cs.Working,
-		"llm_no":       cs.Settings.LLMNo,
-		"tools_mode":   cs.Settings.ToolsMode,
-		"ga_root":      s.CfgStore.Cfg.GARoot,
+		"prompt":           display,
+		"history":          workerHistory,
+		"raw_history":      cs.RawHistory,
+		"history_info":     cs.HistoryInfo,
+		"working":          cs.Working,
+		"workspace":        cs.Workspace,
+		"llm_no":           cs.Settings.LLMNo,
+		"tools_mode":       cs.Settings.ToolsMode,
+		"reasoning_effort": cs.Settings.ReasoningEffort,
+		"ga_root":          s.CfgStore.Cfg.GARoot,
 	}
 	s.NotifyPetEvent("chat:start")
 	go s.runChatWorker(sid, cs, cmdReq)
