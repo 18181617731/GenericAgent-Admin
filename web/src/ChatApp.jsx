@@ -49,6 +49,14 @@ const BUILTIN_SLASH_COMMANDS = [
   { cmd: '/review help', key: '/review help', insert: '/review help', desc: '内置：显示 /review 帮助，不启动审阅', builtIn: true },
   { cmd: '/improve', key: '/improve', insert: '/improve', desc: '内置：发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
   { cmd: '/improve help', key: '/improve help', insert: '/improve help', desc: '内置：显示 /improve 帮助（记忆提炼）', builtIn: true },
+  { cmd: '/effort', key: '/effort', insert: '/effort', desc: '内置：查看当前 reasoning effort', builtIn: true },
+  { cmd: '/effort low', key: '/effort low', insert: '/effort low', desc: '内置：设置 reasoning effort 为 low', builtIn: true },
+  { cmd: '/effort medium', key: '/effort medium', insert: '/effort medium', desc: '内置：设置 reasoning effort 为 medium', builtIn: true },
+  { cmd: '/effort high', key: '/effort high', insert: '/effort high', desc: '内置：设置 reasoning effort 为 high', builtIn: true },
+  { cmd: '/effort xhigh', key: '/effort xhigh', insert: '/effort xhigh', desc: '内置：设置 reasoning effort 为 xhigh（Claude 对应 max）', builtIn: true },
+  { cmd: '/effort off', key: '/effort off', insert: '/effort off', desc: '内置：清除 reasoning effort', builtIn: true },
+  { cmd: '/workspace <路径>', key: '/workspace', insert: '/workspace ', desc: '内置：为当前会话绑定项目目录', builtIn: true },
+  { cmd: '/workspace off', key: '/workspace off', insert: '/workspace off', desc: '内置：关闭当前会话 workspace', builtIn: true },
 ]
 const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
@@ -63,16 +71,24 @@ const slashCommandInsertText = (c, current = '') => {
     const text = String(current || '')
     return /^\s*\/continue\s+/.test(text) ? text : (c.insert ?? '/continue ')
   }
+  if (c.cmd === '/workspace <路径>') {
+    const text = String(current || '')
+    return /^\s*\/workspace\s+/.test(text) ? text : (c.insert ?? '/workspace ')
+  }
   return c?.insert ?? `${c?.cmd || ''} `
 }
 const slashCommandProgressiveFilter = (c, nextText = '') => {
   if (c?.cmd === '/review <自然语言请求>') return 'review '
   if (c?.cmd === '/continue') return 'continue '
   if (c?.cmd === '/improve') return 'improve '
+  if (c?.cmd === '/effort') return 'effort '
+  if (c?.cmd === '/workspace <路径>') return 'workspace '
   const text = String(nextText || '').trimStart()
   if (text === '/review') return 'review '
   if (text === '/continue') return 'continue '
   if (text === '/improve') return 'improve '
+  if (text === '/effort') return 'effort '
+  if (text === '/workspace') return 'workspace '
   return ''
 }
 const slashCommandNextDrawer = (c, nextText = '') => {
@@ -559,7 +575,7 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
       </section>}
     </div>}
     {(parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
-      {parsed.runs.length && <div className="oa-final-label">返回给用户</div>}
+      {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
       <MarkdownBlock text={parsed.body || content || ''} onAskReply={onAskReply} />
     </div>}
   </div>
@@ -627,6 +643,38 @@ const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAs
   </>
 })
 
+function CustomSelect({ value, onChange, options, disabled }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef()
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const h = e => { if (!ref.current?.contains(e.target)) close() }
+    const onScroll = e => { if (!ref.current?.contains(e.target)) close() }
+    document.addEventListener('mousedown', h)
+    window.addEventListener('scroll', onScroll, true)
+    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true) }
+  }, [open])
+  const label = options.find(o => String(o.value) === String(value))?.label ?? String(value)
+  const displayLabel = label.includes('/') ? label.split('/').pop() : label
+  return (
+    <div className="oa-cselect" ref={ref}>
+      <button type="button" disabled={disabled} title={label} onClick={() => setOpen(o => !o)}>
+        <span>{displayLabel}</span><ChevronDown size={13}/>
+      </button>
+      {open && <ul role="listbox">
+        {options.map(o => (
+          <li key={o.value} role="option" aria-selected={String(o.value)===String(value)}
+            className={String(o.value)===String(value)?'active':''}
+            onMouseDown={() => { onChange(o.value); setOpen(false) }}>
+            {String(o.value)===String(value) && <Check size={11}/>}{o.label}
+          </li>
+        ))}
+      </ul>}
+    </div>
+  )
+}
+
 export default function ChatApp() {
   useEffect(() => {
     api('/api/config').then(cfg => {
@@ -649,6 +697,7 @@ export default function ChatApp() {
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
   const [toolsMode, setToolsMode] = useState('official')
+  const [reasoningEffort, setReasoningEffort] = useState('')
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
   const [editing, setEditing] = useState('')
@@ -716,6 +765,15 @@ export default function ChatApp() {
     el.style.height = next + 'px'
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
+  const normalizeReasoningEffort = (value) => {
+    const v = String(value || '').trim().toLowerCase()
+    if (v === '' || v === 'default' || v === 'model') return ''
+    if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(v)) return v
+    if (v === 'max') return 'xhigh'
+    if (['off', 'none', 'clear', 'unset'].includes(v)) return 'off'
+    return ''
+  }
+
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
   const allSlashCommands = useMemo(() => {
     const builtInKeys = new Set(BUILTIN_SLASH_COMMANDS.map(c => builtinSlashCommandKey(c)))
@@ -825,6 +883,7 @@ export default function ChatApp() {
       }) : xs)
     }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
+      if (typeof ev.reasoning_effort === 'string') setReasoningEffort(normalizeReasoningEffort(ev.reasoning_effort))
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? ev.message : m) : xs)
     }
   }
@@ -934,9 +993,11 @@ export default function ChatApp() {
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
     const nextToolsMode = st.settings?.tools_mode === 'fixed' ? 'fixed' : 'official'
+    const nextReasoningEffort = normalizeReasoningEffort(st.settings?.reasoning_effort)
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
     setToolsMode(nextToolsMode)
+    setReasoningEffort(nextReasoningEffort)
     if (id && st.running) {
       attachRunningStream(id)
     } else if (id && streamingSid && streamingSid !== id) {
@@ -973,7 +1034,7 @@ export default function ChatApp() {
     setNotice('')
     setMenuOpen('')
     setMenuPos(null)
-    if (refreshList) setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
+    setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
   }
 
@@ -1000,7 +1061,7 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
+    setSessions(xs => [{ id:d.id, title:d.title, workspace:d.workspace || '', updated_at:d.updated_at, count:0 }, ...xs])
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id, openToken)
   }
@@ -1034,7 +1095,7 @@ export default function ChatApp() {
   const saveModel = async (next) => {
     setLlmNo(next)
     if (!sid) return
-    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode }) })
+    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode, reasoning_effort: reasoningEffort }) })
     setNotice('模型已切换')
   }
 
@@ -1045,10 +1106,24 @@ export default function ChatApp() {
     setToolsMenuOpen(false)
     if (!sid) return
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: next }) })
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: next, reasoning_effort: reasoningEffort }) })
       setNotice(next === 'fixed' ? '已设为自动注入：每次发消息都带上工具' : '已设为官方行为：会话开始按 GA 默认方式注入工具，需要时可点“立即注入一次”')
     } catch (e) {
       setToolsMode(prev)
+      setErr(e.message || String(e))
+    }
+  }
+
+  const saveReasoningEffort = async (value) => {
+    const next = normalizeReasoningEffort(value)
+    const prev = reasoningEffort
+    setReasoningEffort(next)
+    if (!sid) return
+    try {
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: toolsMode, reasoning_effort: next }) })
+      setNotice(next === '' ? '推理强度已设为默认（跟随模型）' : (next === 'off' ? '推理强度已关闭' : `推理强度已设为 ${next}`))
+    } catch (e) {
+      setReasoningEffort(prev)
       setErr(e.message || String(e))
     }
   }
@@ -1173,7 +1248,7 @@ export default function ChatApp() {
         id = d.id
         activeSidRef.current = id
         scrollModeRef.current = 'auto'
-        setSid(id); setStreamingSid(id); setSessions(xs => [{ id:d.id, title:d.title, updated_at:d.updated_at, count:0 }, ...xs])
+        setSid(id); setStreamingSid(id); setSessions(xs => [{ id:d.id, title:d.title, workspace:d.workspace || '', updated_at:d.updated_at, count:0 }, ...xs])
       } else if (!isActiveSession(id)) {
         return
       }
@@ -1188,7 +1263,7 @@ export default function ChatApp() {
       if (!isActiveSession(id)) return
       activeSidRef.current = id
       setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode }, client_user_id:clientUserID }) })
+      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }) })
       if (!res.ok) throw new Error(await res.text())
       await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
@@ -1224,7 +1299,7 @@ export default function ChatApp() {
       return
     }
     if (!text && !files.length) return
-    const item = { text, files, llmNo, toolsMode }
+    const item = { text, files, llmNo, toolsMode, reasoningEffort }
     setPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
@@ -1273,8 +1348,9 @@ export default function ChatApp() {
         const cmd = filteredCmds[cmdDrawer.selectedIdx]
         const selectingNaturalReview = cmd?.cmd === '/review <自然语言请求>' && /^\s*\/review\s+\S/.test(currentValue)
         const selectingBareContinue = e.key === 'Enter' && /^\s*\/continue\s*$/.test(currentValue)
+        const selectingBareEffort = e.key === 'Enter' && /^\s*\/effort\s*$/.test(currentValue)
         const selectingContinueNumber = cmd?.cmd === '/continue <编号>' && /^\s*\/continue\s+\d+\s*$/.test(currentValue)
-        if (selectingNaturalReview || selectingBareContinue || selectingContinueNumber) {
+        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingContinueNumber) {
           e.preventDefault()
           setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
           setCmdEditIdx(-1)
@@ -1439,7 +1515,7 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title="展开侧栏" aria-label="展开侧栏"><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title="新对话" aria-label="新对话"><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span></div>
+        <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
         </button>
@@ -1545,9 +1621,14 @@ export default function ChatApp() {
                 </div>
               )}
             </div>
-            <label className="oa-model-select oa-composer-model"><span>{activeModel ? '模型' : '模型不可用'}</span><select value={selectedModelNo} disabled={!llms.length} onChange={e=>saveModel(Number(e.target.value))}>
-              {llms.length ? llms.map(m => <option key={m.index} value={m.index}>{modelLabel(m)}</option>) : <option value={0}>未发现模型</option>}
-            </select><ChevronDown size={14}/></label>
+            <div className="oa-model-select oa-composer-model"><span>{activeModel ? '模型' : '模型不可用'}</span>
+              <CustomSelect value={selectedModelNo} disabled={!llms.length} onChange={v=>saveModel(Number(v))}
+                options={llms.length ? llms.map(m=>({value:m.index,label:modelLabel(m)})) : [{value:0,label:'未发现模型'}]} />
+            </div>
+            <div className="oa-model-select oa-effort-select"><span>推理</span>
+              <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
+                options={[{value:'',label:'自动'},{value:'off',label:'默认'},{value:'minimal',label:'Minimal'},{value:'low',label:'Low'},{value:'medium',label:'Medium'},{value:'high',label:'High'},{value:'xhigh',label:'XHigh'}]} />
+            </div>
             <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={send} title={isCurrentRunning ? '加入发送队列' : '发送'} aria-label={isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
