@@ -9,3 +9,8 @@ ga-admin
 .air.toml
 ga-admin-dev
 tmp/
+temp_run_logs/
+*.log
+__pycache__/
+*.pyc
+*~
