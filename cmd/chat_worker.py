@@ -525,6 +525,25 @@ def _maybe_handle_continue_command(root, agent, prompt):
         return '❌ /continue 执行失败：%s\n%s' % (e, traceback.format_exc())
 
 
+def _maybe_expand_official_slash_command(root, prompt):
+    s = str(prompt or '').strip()
+    if not s.startswith('/'):
+        return prompt
+    parts = s.split(maxsplit=1)
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ''
+    if cmd not in ('/update', '/autorun', '/morphling', '/goal', '/hive', '/conductor'):
+        return prompt
+    try:
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from frontends import slash_cmds
+        rendered = slash_cmds.prompt_for(cmd, args)
+        return rendered or prompt
+    except Exception:
+        return prompt
+
+
 def _emit_immediate_done(agent, content, history_info=None, working=None):
     msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time())}
     state = _snapshot_ga_state(agent)
@@ -610,6 +629,7 @@ def handle_request(agent, worker, req):
     if immediate_done is not None:
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
+    prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
     mode_status = _apply_tools_mode(agent, tools_mode)
     if mode_status and not mode_status.get('ok'):
         emit({'type': 'notice', 'message': mode_status})

@@ -15,22 +15,22 @@ type SlashCommandItem struct {
 }
 
 type AppConfig struct {
-	GARoot             string            `json:"ga_root"`
-	ChatDataDir        string            `json:"chat_data_dir"`
-	Host               string            `json:"host"`
-	Port               int               `json:"port"`
-	LogTailLines       int               `json:"log_tail_lines"`
-	BufferLines        int               `json:"buffer_lines"`
-	PythonPath         string            `json:"python_path"`
-	ProxyMode          string            `json:"proxy_mode"` // off | system | custom
-	HTTPProxy          string            `json:"http_proxy"`
-	HTTPSProxy         string            `json:"https_proxy"`
-	AllProxy           string            `json:"all_proxy"`
-	NoProxy            string            `json:"no_proxy"`
-	ServiceAutostart   []string          `json:"service_autostart"`
-	ServiceModels      map[string]int    `json:"service_models,omitempty"`
-	DesktopPetDisabled bool              `json:"desktop_pet_disabled"`
-	UpdateRepoURL      string            `json:"update_repo_url"`
+	GARoot             string             `json:"ga_root"`
+	ChatDataDir        string             `json:"chat_data_dir"`
+	Host               string             `json:"host"`
+	Port               int                `json:"port"`
+	LogTailLines       int                `json:"log_tail_lines"`
+	BufferLines        int                `json:"buffer_lines"`
+	PythonPath         string             `json:"python_path"`
+	ProxyMode          string             `json:"proxy_mode"` // off | system | custom
+	HTTPProxy          string             `json:"http_proxy"`
+	HTTPSProxy         string             `json:"https_proxy"`
+	AllProxy           string             `json:"all_proxy"`
+	NoProxy            string             `json:"no_proxy"`
+	ServiceAutostart   []string           `json:"service_autostart"`
+	ServiceModels      map[string]int     `json:"service_models,omitempty"`
+	DesktopPetDisabled bool               `json:"desktop_pet_disabled"`
+	UpdateRepoURL      string             `json:"update_repo_url"`
 	SlashCommands      []SlashCommandItem `json:"slash_commands,omitempty"`
 }
 
@@ -109,7 +109,25 @@ func DefaultChatDataDir() string {
 }
 
 func Default() AppConfig {
-	return AppConfig{GARoot: "E:/Work/GenericAgent", ChatDataDir: DefaultChatDataDir(), Host: "127.0.0.1", Port: 8787, LogTailLines: 200, BufferLines: 1000, ProxyMode: "off"}
+	return AppConfig{
+		GARoot:       "E:/Work/GenericAgent",
+		ChatDataDir:  DefaultChatDataDir(),
+		Host:         "127.0.0.1",
+		Port:         8787,
+		LogTailLines: 200,
+		BufferLines:  1000,
+		ProxyMode:    "off",
+		SlashCommands: []SlashCommandItem{
+			{Cmd: "/update", Desc: "git pull 更新 GA 仓库并报告影响面"},
+			{Cmd: "/autorun", Desc: "进入 autonomous_operation 自主模式"},
+			{Cmd: "/morphling", Desc: "启用 Morphling 蒸馏 / 吞噬外部技能"},
+			{Cmd: "/goal", Desc: "进入 Goal 模式（需 condition 约束）"},
+			{Cmd: "/hive", Desc: "进入 Hive 多 worker 协作模式"},
+			{Cmd: "/conductor", Desc: "调用 frontends/conductor.py 多 subagent 编排"},
+			{Cmd: "/continue", Desc: "Chat 历史会话搜索"},
+			{Cmd: "/review", Desc: "Chat 内代码审查"},
+		},
+	}
 }
 
 type Store struct {

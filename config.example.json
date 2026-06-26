@@ -10,6 +10,12 @@
   "buffer_lines": 1000,
   "service_autostart": [],
   "slash_commands": [
+    { "cmd": "/update", "desc": "git pull 更新 GA 仓库并报告影响面" },
+    { "cmd": "/autorun", "desc": "进入 autonomous_operation 自主模式" },
+    { "cmd": "/morphling", "desc": "启用 Morphling 蒸馏 / 吞噬外部技能" },
+    { "cmd": "/goal", "desc": "进入 Goal 模式（需 condition 约束）" },
+    { "cmd": "/hive", "desc": "进入 Hive 多 worker 协作模式" },
+    { "cmd": "/conductor", "desc": "调用 frontends/conductor.py 多 subagent 编排" },
     { "cmd": "/continue", "desc": "Chat 历史会话搜索" },
     { "cmd": "/review", "desc": "Chat 内代码审查" }
   ]
