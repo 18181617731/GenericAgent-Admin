@@ -43,20 +43,20 @@ const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
 
 const BUILTIN_SLASH_COMMANDS = [
-  { cmd: '/continue', key: '/continue', insert: '/continue', desc: '内置：列出可恢复的官方 GA 会话', builtIn: true },
-  { cmd: '/continue <编号>', key: '/continue', insert: '/continue ', desc: '内置：恢复第 N 个官方 GA 会话，可继续对话', builtIn: true },
-  { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '内置：审阅当前改动；可继续输入范围或关注点', builtIn: true },
-  { cmd: '/review help', key: '/review help', insert: '/review help', desc: '内置：显示 /review 帮助，不启动审阅', builtIn: true },
-  { cmd: '/improve', key: '/improve', insert: '/improve', desc: '内置：发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
-  { cmd: '/improve help', key: '/improve help', insert: '/improve help', desc: '内置：显示 /improve 帮助（记忆提炼）', builtIn: true },
-  { cmd: '/effort', key: '/effort', insert: '/effort', desc: '内置：查看当前 reasoning effort', builtIn: true },
-  { cmd: '/effort low', key: '/effort low', insert: '/effort low', desc: '内置：设置 reasoning effort 为 low', builtIn: true },
-  { cmd: '/effort medium', key: '/effort medium', insert: '/effort medium', desc: '内置：设置 reasoning effort 为 medium', builtIn: true },
-  { cmd: '/effort high', key: '/effort high', insert: '/effort high', desc: '内置：设置 reasoning effort 为 high', builtIn: true },
-  { cmd: '/effort xhigh', key: '/effort xhigh', insert: '/effort xhigh', desc: '内置：设置 reasoning effort 为 xhigh（Claude 对应 max）', builtIn: true },
-  { cmd: '/effort off', key: '/effort off', insert: '/effort off', desc: '内置：清除 reasoning effort', builtIn: true },
-  { cmd: '/workspace <路径>', key: '/workspace', insert: '/workspace ', desc: '内置：为当前会话绑定项目目录', builtIn: true },
-  { cmd: '/workspace off', key: '/workspace off', insert: '/workspace off', desc: '内置：关闭当前会话 workspace', builtIn: true },
+  { cmd: '/continue', key: '/continue', insert: '/continue', desc: '列出可恢复的官方 GA 会话', builtIn: true },
+  { cmd: '/continue <编号>', key: '/continue', insert: '/continue ', desc: '恢复第 N 个官方 GA 会话，可继续对话', builtIn: true },
+  { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '审阅当前改动；可继续输入范围或关注点', builtIn: true },
+  { cmd: '/review help', key: '/review help', insert: '/review help', desc: '显示 /review 帮助，不启动审阅', builtIn: true },
+  { cmd: '/improve', key: '/improve', insert: '/improve', desc: '发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
+  { cmd: '/improve help', key: '/improve help', insert: '/improve help', desc: '显示 /improve 帮助（记忆提炼）', builtIn: true },
+  { cmd: '/effort', key: '/effort', insert: '/effort', desc: '查看当前 reasoning effort', builtIn: true },
+  { cmd: '/effort low', key: '/effort low', insert: '/effort low', desc: '设置 reasoning effort 为 low', builtIn: true },
+  { cmd: '/effort medium', key: '/effort medium', insert: '/effort medium', desc: '设置 reasoning effort 为 medium', builtIn: true },
+  { cmd: '/effort high', key: '/effort high', insert: '/effort high', desc: '设置 reasoning effort 为 high', builtIn: true },
+  { cmd: '/effort xhigh', key: '/effort xhigh', insert: '/effort xhigh', desc: '设置 reasoning effort 为 xhigh（Claude 对应 max）', builtIn: true },
+  { cmd: '/effort off', key: '/effort off', insert: '/effort off', desc: '清除 reasoning effort', builtIn: true },
+  { cmd: '/workspace <路径>', key: '/workspace', insert: '/workspace ', desc: '为当前会话绑定项目目录', builtIn: true },
+  { cmd: '/workspace off', key: '/workspace off', insert: '/workspace off', desc: '关闭当前会话 workspace', builtIn: true },
 ]
 const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
@@ -721,6 +721,8 @@ export default function ChatApp() {
   const endRef = useRef(null)
   const fileRef = useRef(null)
   const promptRef = useRef(null)
+  const cmdDrawerRef = useRef(null)
+  const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
   const runSeqRef = useRef(0)
   const openSeqRef = useRef(0)
@@ -801,8 +803,9 @@ export default function ChatApp() {
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/improve help') return childAllowed('/improve') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/review <自然语言请求>') {
-        if (slashFilter.startsWith('/review ') && !isReviewNaturalLanguage) return false
         if (isReviewNaturalLanguage) return true
+        if (slashFilter === '/review' || fuzzyMatch('/review', rawFilter) || fuzzyMatch('/review', slashFilter)) return true
+        if (slashFilter.startsWith('/review ')) return false
       }
       if (cmd === '/continue <编号>') {
         if (slashFilter === '/continue ') return true
@@ -812,9 +815,14 @@ export default function ChatApp() {
       if (inContinueScope && cmd !== '/continue <编号>') return false
       if (inReviewScope && cmd !== '/review <自然语言请求>') return false
       if (inImproveScope && cmd !== '/improve') return false
+      if (cmd.trim().includes(' ')) return false
       return fuzzyMatch(cmd, rawFilter) || fuzzyMatch(cmd, slashFilter) || fuzzyMatch(c.desc || '', rawFilter)
     })
   }, [cmdDrawer.open, cmdDrawer.filter, allSlashCommands])
+  useLayoutEffect(() => {
+    if (!cmdDrawer.open) return
+    selectedCmdRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [cmdDrawer.open, cmdDrawer.selectedIdx, filteredCmds.length])
   useEffect(() => {
     if (cmdDrawer.open) setCmdEditIdx(-1)
   }, [cmdDrawer.open, cmdDrawer.filter])
@@ -1349,8 +1357,9 @@ export default function ChatApp() {
         const selectingNaturalReview = cmd?.cmd === '/review <自然语言请求>' && /^\s*\/review\s+\S/.test(currentValue)
         const selectingBareContinue = e.key === 'Enter' && /^\s*\/continue\s*$/.test(currentValue)
         const selectingBareEffort = e.key === 'Enter' && /^\s*\/effort\s*$/.test(currentValue)
+        const selectingBareImprove = e.key === 'Enter' && /^\s*\/improve\s*$/.test(currentValue)
         const selectingContinueNumber = cmd?.cmd === '/continue <编号>' && /^\s*\/continue\s+\d+\s*$/.test(currentValue)
-        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingContinueNumber) {
+        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber) {
           e.preventDefault()
           setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
           setCmdEditIdx(-1)
@@ -1569,14 +1578,13 @@ export default function ChatApp() {
             </div>
           })}
         </div>}
-        {cmdDrawer.open && <div className="oa-cmd-drawer">
+        {cmdDrawer.open && <div className="oa-cmd-drawer" ref={cmdDrawerRef}>
           {filteredCmds.length === 0 && <div className="oa-cmd-item" style={{color:'var(--text-secondary)',justifyContent:'center',cursor:'default',padding:'12px 14px'}}>无匹配命令</div>}
           {filteredCmds.map((c,i)=>{
             return (
-              <div key={c.cmd+i} className={`oa-cmd-item${i===cmdDrawer.selectedIdx?' selected':''}`} onMouseDown={e=>{e.preventDefault();applySlashCommand(c,promptRef.current?.value ?? prompt)}}>
+              <div key={c.cmd+i} ref={i===cmdDrawer.selectedIdx ? selectedCmdRef : null} className={`oa-cmd-item${i===cmdDrawer.selectedIdx?' selected':''}`} onMouseEnter={() => setCmdDrawer(d => ({ ...d, selectedIdx: i }))} onMouseDown={e=>{e.preventDefault();applySlashCommand(c,promptRef.current?.value ?? prompt)}}>
                 <span className="oa-cmd-name">{c.cmd}</span>
                 <span className="oa-cmd-desc">{c.desc}</span>
-                {c.builtIn && <span className="oa-cmd-builtin" title="GA Admin 内置命令，不能修改或删除">内置</span>}
               </div>
             )
           })}
