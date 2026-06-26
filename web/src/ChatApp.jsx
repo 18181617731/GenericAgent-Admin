@@ -1294,7 +1294,8 @@ export default function ChatApp() {
   }
 
   const send = async (textOverride = null) => {
-    const sourceText = textOverride == null ? prompt : textOverride
+    const hasStringOverride = typeof textOverride === 'string'
+    const sourceText = hasStringOverride ? textOverride : prompt
     const text = String(sourceText || '').trim()
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
@@ -1637,7 +1638,7 @@ export default function ChatApp() {
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
                 options={[{value:'off',label:'默认'},{value:'minimal',label:'Minimal'},{value:'low',label:'Low'},{value:'medium',label:'Medium'},{value:'high',label:'High'},{value:'xhigh',label:'XHigh'}]} />
             </div>
-            <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={send} title={isCurrentRunning ? '加入发送队列' : '发送'} aria-label={isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
+            <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? '加入发送队列' : '发送'} aria-label={isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
