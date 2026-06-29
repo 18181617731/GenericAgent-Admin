@@ -325,6 +325,64 @@ func TestModelsExportRequiresDangerousConfirm(t *testing.T) {
 	}
 }
 
+func TestModelsSaveAndExportUseMyKeySecretForOfficialGeneratedVarName(t *testing.T) {
+	root := t.TempDir()
+	const varName = "native_oai_config_gpt55_medium_responses"
+	const secret = "sk-gpt55-real-secret-value"
+	writeTestMyKeyVar(t, root, varName, secret)
+	s := newModelTestServer(t, root)
+	profile := modelconfig.Profile{
+		VarName: varName,
+		Type:    "native_oai",
+		Name:    "gpt55 medium responses",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-5.5-medium",
+		APIKey:  "sk-****alue",
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"profiles": []modelconfig.Profile{profile}})
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/models", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	raw, err := s.Models.Load(true)
+	if err != nil {
+		t.Fatalf("Load(true) error = %v", err)
+	}
+	if len(raw.Profiles) != 1 || raw.Profiles[0].VarName != varName || raw.Profiles[0].APIKey != secret {
+		t.Fatalf("saved profiles = %#v, want %s with recovered secret", raw.Profiles, varName)
+	}
+
+	payload := map[string]interface{}{
+		"overwrite_active": true,
+		"profiles":         []modelconfig.Profile{profile},
+	}
+	body, _ = json.Marshal(payload)
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/models/export", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("export status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	active, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read mykey.py: %v", err)
+	}
+	activeText := string(active)
+	if !strings.Contains(activeText, varName) || !strings.Contains(activeText, secret) {
+		t.Fatalf("active mykey.py did not write recovered secret:\n%s", activeText)
+	}
+	if strings.Contains(activeText, "****") {
+		t.Fatalf("active mykey.py still contains masked key:\n%s", activeText)
+	}
+}
+
 func TestModelsExportPreservesExistingSecretWhenSubmittedBlank(t *testing.T) {
 	root := t.TempDir()
 	s := newModelTestServer(t, root)
@@ -498,7 +556,12 @@ func TestModelsDiscoverClaudeUsesAnthropicModelsFallback(t *testing.T) {
 
 func writeTestMyKey(t *testing.T, root, key string) {
 	t.Helper()
-	text := "api_config_main = {\n" +
+	writeTestMyKeyVar(t, root, "api_config_main", key)
+}
+
+func writeTestMyKeyVar(t *testing.T, root, varName, key string) {
+	t.Helper()
+	text := varName + " = {\n" +
 		"    'name': 'main',\n" +
 		"    'apibase': 'https://api.example/v1',\n" +
 		"    'model': 'gpt-test',\n" +
@@ -506,5 +569,34 @@ func writeTestMyKey(t *testing.T, root, key string) {
 		"}\n"
 	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(text), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestModelsPreviewAllowsMaskedSecretWithoutLeakingStoredSecret(t *testing.T) {
+	s := newModelTestServer(t, t.TempDir())
+	if _, err := s.Models.Save([]modelconfig.Profile{{
+		VarName: "api_config_main",
+		Type:    "openai",
+		Name:    "main",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-real-secret",
+	}}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	body := []byte(`{"profiles":[{"var_name":"api_config_main","type":"openai","name":"main","apibase":"https://api.example/v1","model":"gpt-test","apikey":"sk-****cret"}]}`)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/models/preview", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	bodyText := rr.Body.String()
+	if !strings.Contains(bodyText, `\"apikey\": \"sk-****cret\"`) {
+		t.Fatalf("preview did not keep masked placeholder: %s", bodyText)
+	}
+	if strings.Contains(bodyText, "sk-real-secret") {
+		t.Fatalf("preview leaked stored secret: %s", bodyText)
 	}
 }

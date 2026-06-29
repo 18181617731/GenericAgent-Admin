@@ -33,9 +33,18 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		d, err := s.Models.Save(p.Profiles)
+		profiles, err := s.mergeModelSecretsForWrite(p.Profiles)
 		if err != nil {
 			bad(w, 400, err.Error())
+			return
+		}
+		if _, err := s.Models.Save(profiles); err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+		d, err := s.Models.Load(false)
+		if err != nil {
+			bad(w, 500, err.Error())
 			return
 		}
 		writeJSON(w, d)
@@ -106,6 +115,42 @@ func (s *Server) overlayRawModelSecretsFromMyKey(d *modelconfig.Draft) {
 	}
 }
 
+func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]modelconfig.Profile, error) {
+	merged, err := s.Models.MergePreservedSecrets(profiles)
+	if err != nil {
+		return nil, err
+	}
+	if s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
+		return merged, nil
+	}
+	imported, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
+	if err != nil {
+		return merged, nil
+	}
+	byVar := map[string]string{}
+	for _, p := range imported.Profiles {
+		name := strings.TrimSpace(p.VarName)
+		key := strings.TrimSpace(p.APIKey)
+		if name == "" || key == "" || modelconfig.IsMaskedSecret(key) {
+			continue
+		}
+		byVar[name] = key
+	}
+	if len(byVar) == 0 {
+		return merged, nil
+	}
+	for i := range merged {
+		key := strings.TrimSpace(merged[i].APIKey)
+		if key != "" && !modelconfig.IsMaskedSecret(key) {
+			continue
+		}
+		if oldKey := byVar[strings.TrimSpace(merged[i].VarName)]; oldKey != "" {
+			merged[i].APIKey = oldKey
+		}
+	}
+	return merged, nil
+}
+
 func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -118,7 +163,7 @@ func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	txt, err := modelconfig.Render(p.Profiles)
+	txt, err := modelconfig.RenderPreview(p.Profiles)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -393,7 +438,7 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	profiles, err := s.Models.MergePreservedSecrets(p.Profiles)
+	profiles, err := s.mergeModelSecretsForWrite(p.Profiles)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

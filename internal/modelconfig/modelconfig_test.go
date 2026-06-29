@@ -271,3 +271,58 @@ func TestPythonExeFallbackPrefersPython3OffWindows(t *testing.T) {
 		t.Fatalf("pythonExe fallback = %q, want %q", got, want)
 	}
 }
+
+func TestStoreSavePreservesExistingSecretWhenSubmittedMasked(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	profiles := []Profile{{
+		VarName: "api_config_main",
+		Type:    "openai",
+		Name:    "main",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-real-secret",
+	}}
+	if _, err := store.Save(profiles); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	profiles[0].APIKey = "sk-****cret"
+	profiles[0].Model = "gpt-updated"
+	if _, err := store.Save(profiles); err != nil {
+		t.Fatalf("Save(masked secret) error = %v", err)
+	}
+	raw, err := store.Load(true)
+	if err != nil {
+		t.Fatalf("Load(true) error = %v", err)
+	}
+	if got := raw.Profiles[0].APIKey; got != "sk-real-secret" {
+		t.Fatalf("preserved APIKey = %q, want old secret", got)
+	}
+	if got := raw.Profiles[0].Model; got != "gpt-updated" {
+		t.Fatalf("updated model = %q", got)
+	}
+}
+
+func TestRenderPreviewAllowsMaskedSecretWithoutUnmasking(t *testing.T) {
+	profiles := []Profile{{
+		VarName: "api_config_main",
+		Type:    "openai",
+		Name:    "main",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-****cret",
+	}}
+	rendered, err := RenderPreview(profiles)
+	if err != nil {
+		t.Fatalf("RenderPreview() error = %v", err)
+	}
+	if !strings.Contains(rendered, `"apikey": "sk-****cret"`) {
+		t.Fatalf("preview did not keep masked placeholder:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "sk-real-secret") {
+		t.Fatalf("preview leaked real secret: %s", rendered)
+	}
+	if _, err := Render(profiles); err == nil || !strings.Contains(err.Error(), "masked apikey") {
+		t.Fatalf("Render() error = %v, want masked apikey rejection", err)
+	}
+}

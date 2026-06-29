@@ -160,7 +160,7 @@ func (s *Store) MergePreservedSecrets(profiles []Profile) ([]Profile, error) {
 	merged := make([]Profile, len(profiles))
 	copy(merged, profiles)
 	for i := range merged {
-		if merged[i].APIKey == "" {
+		if merged[i].APIKey == "" || IsMaskedSecret(merged[i].APIKey) {
 			if oldKey := byVar[merged[i].VarName]; oldKey != "" {
 				merged[i].APIKey = oldKey
 			}
@@ -205,6 +205,10 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	return nil
 }
 func Validate(profiles []Profile) error {
+	return validateProfiles(profiles, false)
+}
+
+func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 	seen := map[string]bool{}
 	for _, p := range profiles {
 		if p.VarName == "" || !nameRe.MatchString(p.VarName) {
@@ -220,7 +224,7 @@ func Validate(profiles []Profile) error {
 		if p.Name == "" || p.APIBase == "" || p.Model == "" {
 			return errors.New("name, apibase and model are required")
 		}
-		if IsMaskedSecret(p.APIKey) {
+		if !allowMaskedSecrets && IsMaskedSecret(p.APIKey) {
 			return fmt.Errorf("masked apikey cannot be saved or exported for %s; reveal/import with authorization or enter the full key", p.VarName)
 		}
 	}
@@ -353,7 +357,15 @@ func boolArg(v bool) string {
 }
 
 func Render(profiles []Profile) (string, error) {
-	if err := Validate(profiles); err != nil {
+	return render(profiles, false)
+}
+
+func RenderPreview(profiles []Profile) (string, error) {
+	return render(profiles, true)
+}
+
+func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
+	if err := validateProfiles(profiles, allowMaskedSecrets); err != nil {
 		return "", err
 	}
 	var b strings.Builder
