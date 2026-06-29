@@ -697,7 +697,7 @@ export default function ChatApp() {
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
   const [toolsMode, setToolsMode] = useState('official')
-  const [reasoningEffort, setReasoningEffort] = useState('')
+  const [reasoningEffort, setReasoningEffort] = useState('off')
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
   const [editing, setEditing] = useState('')
@@ -769,11 +769,9 @@ export default function ChatApp() {
   }, [prompt])
   const normalizeReasoningEffort = (value) => {
     const v = String(value || '').trim().toLowerCase()
-    if (v === '' || v === 'default' || v === 'model') return ''
     if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(v)) return v
     if (v === 'max') return 'xhigh'
-    if (['off', 'none', 'clear', 'unset'].includes(v)) return 'off'
-    return ''
+    return 'off'
   }
 
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
@@ -1129,7 +1127,7 @@ export default function ChatApp() {
     if (!sid) return
     try {
       await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: toolsMode, reasoning_effort: next }) })
-      setNotice(next === '' ? '推理强度已设为默认（跟随模型）' : (next === 'off' ? '推理强度已关闭' : `推理强度已设为 ${next}`))
+      setNotice(next === 'off' ? '推理强度已设为默认' : `推理强度已设为 ${next}`)
     } catch (e) {
       setReasoningEffort(prev)
       setErr(e.message || String(e))

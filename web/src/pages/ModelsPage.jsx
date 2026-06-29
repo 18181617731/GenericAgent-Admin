@@ -297,11 +297,6 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
   return (
     <section className="models-page">
       <div className="model-toolbar">
-        <div>
-          <p className="eyebrow">mykey.py / 官方 Session 配置</p>
-          <h2>模型配置</h2>
-          <p className="muted">按 <code>mykey_template.py</code> 的官方命名生成：native_oai / native_claude / oai / claude。</p>
-        </div>
         <Space wrap>
           <Tag color={hasErrors ? 'error' : 'success'}>{summary.total} 项 · {summary.errors} 错 · {summary.warnings} 警</Tag>
           <Button icon={<UploadCloud size={14} />} onClick={() => importModels(false)}>读取</Button>
