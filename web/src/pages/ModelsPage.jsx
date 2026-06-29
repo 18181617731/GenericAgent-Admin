@@ -1,97 +1,335 @@
-import { AlertTriangle, CheckCircle2, Eye, RefreshCw, UploadCloud } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, Plus, RefreshCw, UploadCloud } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Alert, AutoComplete, Button, Card, Collapse, Input, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
-import { Panel, SecretInput } from '../components/common'
 
-const VALIDATION_COPY = {
-  valid: '校验通过',
-  blocked: '写入前请先修复阻断项',
-  warnings: '警告',
-  errors: '阻断项',
-  saveDisabled: '写入 mykey.py 前请先修复红色校验项。',
-  keys: {
-    varNameRequired: '必须填写变量名',
-    varNameInvalid: '变量名必须是 Python 标识符',
-    varNameDiscoveryToken: '变量名必须包含 api、config 或 cookie，便于 GA 发现',
-    varNameDuplicate: '变量名重复',
-    nameRequired: '必须填写名称',
-    modelRequired: '必须填写模型',
-    apiBaseRequired: '必须填写 API Base',
-    apiBaseProtocol: 'API Base 应以 http:// 或 https:// 开头',
-    maxRetriesInvalid: '重试次数必须大于或等于 0',
-    readTimeoutInvalid: '超时必须大于 0',
-    apiKeyEmpty: 'API Key 为空；仅用于本地或无认证端点'
+const DEFAULT_PROTOCOL = 'native_oai'
+const OFFICIAL_PROTOCOLS = [
+  { value: 'native_oai', label: 'Native OAI（推荐 / OpenAI 兼容）', prefix: 'native_oai_config', discover: true, color: 'blue', help: '官方 NativeOAISession：变量名同时包含 native 与 oai，支持 OpenAI-compatible /models 获取模型。' },
+  { value: 'native_claude', label: 'Native Claude（Anthropic 兼容）', prefix: 'native_claude_config', discover: true, color: 'purple', help: '官方 NativeClaudeSession：变量名同时包含 native 与 claude，支持 Anthropic-compatible /models 或 /v1/models 获取模型。' },
+  { value: 'oai', label: 'OAI / LLMSession（旧协议）', prefix: 'oai_config', discover: true, color: 'cyan', help: '官方非 Native OpenAI 文本协议：变量名包含 oai。新配置建议优先使用 Native OAI。' },
+  { value: 'claude', label: 'ClaudeSession（旧协议）', prefix: 'claude_config', discover: true, color: 'magenta', help: '官方非 Native Claude 文本协议：变量名包含 claude，支持 Anthropic-compatible /models 或 /v1/models 获取模型。新配置建议优先使用 Native Claude。' },
+]
+const LEGACY_PROTOCOLS = [
+  ...OFFICIAL_PROTOCOLS,
+  { value: 'openai', label: '兼容旧值：openai', prefix: 'native_oai_config', discover: true, color: 'blue' },
+  { value: 'openai-compatible', label: '兼容旧值：openai-compatible', prefix: 'native_oai_config', discover: true, color: 'blue' },
+  { value: 'chatgpt', label: '兼容旧值：chatgpt', prefix: 'oai_config', discover: true, color: 'cyan' },
+]
+
+const protocolMeta = value => LEGACY_PROTOCOLS.find(x => x.value === value) || OFFICIAL_PROTOCOLS[0]
+const protocolLabel = value => protocolMeta(value)?.label || value || 'Native OAI'
+const supportsModelDiscovery = value => !!protocolMeta(value)?.discover
+const nextVarName = (protocol, profiles = []) => {
+  const prefix = protocolMeta(protocol)?.prefix || 'native_oai_config'
+  const used = new Set((profiles || []).map(p => p?.var_name).filter(Boolean))
+  let i = Math.max(1, (profiles || []).length + 1)
+  while (used.has(`${prefix}${i}`)) i += 1
+  return `${prefix}${i}`
+}
+
+const ERR_KEYS = {
+  varNameRequired: '必须填写变量名', varNameInvalid: '变量名须为 Python 标识符',
+  varNameDiscoveryToken: '变量名须含 api / config / cookie，或使用官方 native_oai_config / native_claude_config / oai_config / claude_config 命名',
+  varNameDuplicate: '变量名重复', nameRequired: '必须填写名称',
+  modelRequired: '必须填写模型', apiBaseRequired: '必须填写 API Base',
+  apiBaseProtocol: 'API Base 须以 http:// 或 https:// 开头',
+  maxRetriesInvalid: '重试次数须 ≥ 0', readTimeoutInvalid: '超时须 > 0',
+  apiKeyEmpty: 'API Key 为空（仅用于本地或无认证端点）',
+}
+
+function StatusTag({ result }) {
+  if (!result) return null
+  const e = result.errors?.length, w = result.warnings?.length
+  return e ? <Tag color="error">{e} 错</Tag> : w ? <Tag color="warning">{w} 警</Tag> : <Tag color="success">✓</Tag>
+}
+
+function DiscoverRow({ value, onChange, opts, onDiscover, busy, disabled }) {
+  const options = useMemo(() => {
+    const seen = new Set()
+    return opts.filter(Boolean).filter(v => {
+      if (seen.has(v)) return false
+      seen.add(v)
+      return true
+    }).map(v => ({ value: v, label: v }))
+  }, [opts])
+  const [open, setOpen] = useState(false)
+  const handleFocus = () => { if (options.length) setOpen(true) }
+  const handleDiscover = async () => {
+    await onDiscover()
+    setOpen(true)
   }
+  return (
+    <div className="discover-row">
+      <label>
+        模型
+        <AutoComplete
+          value={value}
+          options={options}
+          open={open && options.length > 0}
+          onOpenChange={setOpen}
+          onFocus={handleFocus}
+          onChange={onChange}
+          onSelect={v => onChange(v)}
+          filterOption={false}
+          placeholder="输入 model，或从自动获取结果中选择"
+          notFoundContent="先点击获取模型"
+          className="model-autocomplete"
+        />
+        {options.length > 0 && <span className="model-discover-count">已获取 {options.length} 个模型，点击输入框可展开全部。</span>}
+      </label>
+      <Button onClick={handleDiscover} loading={busy} disabled={disabled} icon={<RefreshCw size={13} />}>
+        {busy ? '获取中…' : '获取模型'}
+      </Button>
+    </div>
+  )
 }
 
-function ValidationList({ title, items, copy, tone }) {
-  if (!items?.length) return null
-  return <div className={`validation-list ${tone}`}><span>{title}</span><ul>{items.map((key) => <li key={key}>{copy.keys[key] || key}</li>)}</ul></div>
+function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey }) {
+  const [busy, setBusy] = useState(false)
+  const [discErr, setDiscErr] = useState('')
+  const [discovered, setDiscovered] = useState([])
+  const patch = obj => patchProfile(idx, obj)
+  const shownApiKey = revealedKey ?? p.apikey ?? ''
+  const revealed = revealedKey != null
+  const meta = protocolMeta(p.type || DEFAULT_PROTOCOL)
+  const canDiscover = supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)
+
+  const modelOpts = useMemo(() => {
+    const seen = new Set()
+    return [p.model, ...discovered.map(m => m.id || m.name || m)]
+      .filter(Boolean).filter(v => { if (seen.has(v)) return false; seen.add(v); return true })
+  }, [discovered, p.model])
+
+  const discover = async () => {
+    if (!canDiscover) return
+    setBusy(true); setDiscErr('')
+    try {
+      const d = await discoverModels({ protocol: p.type || DEFAULT_PROTOCOL, baseUrl: p.apibase, apiKey: shownApiKey, varName: p.var_name })
+      const models = d?.models || []
+      setDiscovered(models)
+      if (models.length && !p.model) patch({ model: models[0].id || models[0].name || models[0] })
+    } catch (e) { setDiscErr(String(e?.message || e)) }
+    finally { setBusy(false) }
+  }
+
+  const advItems = [{
+    key: 'adv', label: '高级配置', children: (
+      <div className="form-grid">
+        <label>变量名<Input value={p.var_name || ''} onChange={e => patch({ var_name: e.target.value })} /></label>
+        <label>官方协议<Select value={p.type || DEFAULT_PROTOCOL} onChange={v => patch({ type: v, var_name: nextVarName(v, profiles) })} options={OFFICIAL_PROTOCOLS} /></label>
+        <label>流式<Select value={String(!!p.stream)} onChange={v => patch({ stream: v === 'true' })}
+          options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} /></label>
+        <label>重试<Input type="number" value={p.max_retries ?? 3} onChange={e => patch({ max_retries: Number(e.target.value) })} /></label>
+        <label>超时(s)<Input type="number" value={p.read_timeout ?? 300} onChange={e => patch({ read_timeout: Number(e.target.value) })} /></label>
+        <label>reasoning_effort<Input value={p.reasoning_effort || ''} onChange={e => patch({ reasoning_effort: e.target.value })} /></label>
+      </div>
+    )
+  }]
+
+  const header = (
+    <Space size={6} wrap>
+      <b>{p.name || p.var_name || `模型 ${idx + 1}`}</b>
+      <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
+      {p.model && <Tag>{p.model}</Tag>}
+      {p.apibase && <span className="sub">{p.apibase}</span>}
+    </Space>
+  )
+  const extra = (
+    <Space size={6} onClick={e => e.stopPropagation()}>
+      <StatusTag result={result} />
+      <Button size="small" danger onClick={() => removeProfile(idx)}>删除</Button>
+    </Space>
+  )
+  const profileItems = [{
+    key: 'profile',
+    label: header,
+    extra,
+    children: (
+      <>
+        <div className="model-protocol-note">
+          <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
+          <span>{meta.help}</span>
+        </div>
+        <div className="form-grid">
+          <label>显示名<Input value={p.name || ''} onChange={e => patch({ name: e.target.value })} placeholder="例如 glm-5.1" /></label>
+          <label>BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
+          <label className="span2">API Key
+            {revealed ? (
+              <Input
+                value={shownApiKey}
+                onChange={e => { onClearRevealedKey?.(idx, p); patch({ apikey: e.target.value }) }}
+                placeholder="保留 ****** 表示不覆盖已保存密钥"
+                addonAfter={(
+                  <Space size={4}>
+                    <Button size="small" type="text" icon={<EyeOff size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false)}>隐藏</Button>
+                    <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true)}>刷新</Button>
+                  </Space>
+                )}
+              />
+            ) : (
+              <Input
+                type="password"
+                value={shownApiKey}
+                onChange={e => { onClearRevealedKey?.(idx, p); patch({ apikey: e.target.value }) }}
+                placeholder="保留 ****** 表示不覆盖已保存密钥"
+                addonAfter={(
+                  <Space size={4}>
+                    <Button size="small" type="text" icon={<Eye size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false)}>显示</Button>
+                  </Space>
+                )}
+              />
+            )}
+          </label>
+        </div>
+        <DiscoverRow value={p.model || ''} onChange={model => patch({ model })} opts={modelOpts}
+          onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
+        {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
+        {discErr && <Alert type="error" showIcon message={discErr} className="model-inline-alert" />}
+        {result?.errors?.length > 0 && <Alert type="error" showIcon message="阻断项"
+          description={<ul>{result.errors.map(k => <li key={k}>{ERR_KEYS[k] || k}</li>)}</ul>} className="model-inline-alert" />}
+        {result?.warnings?.length > 0 && <Alert type="warning" showIcon message="警告"
+          description={<ul>{result.warnings.map(k => <li key={k}>{ERR_KEYS[k] || k}</li>)}</ul>} className="model-inline-alert" />}
+        <Collapse ghost items={advItems} />
+      </>
+    )
+  }]
+
+  return <Collapse className="model-profile-card" size="small" items={profileItems} />
 }
 
-export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, modelPreview, riskCatalog, riskCatalogError }) {
+function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
+  const [f, setF] = useState({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', model: '', name: '' })
+  const [busy, setBusy] = useState(false)
+  const [discovered, setDiscovered] = useState([])
+  const [err, setErr] = useState('')
+  const pf = obj => setF(prev => ({ ...prev, ...obj }))
+  const meta = protocolMeta(f.protocol)
+  const canDiscover = supportsModelDiscovery(f.protocol)
+
+  const discover = async () => {
+    if (!canDiscover) return
+    setBusy(true); setErr('')
+    try {
+      const d = await discoverModels({ protocol: f.protocol || DEFAULT_PROTOCOL, baseUrl: f.baseUrl, apiKey: f.apiKey })
+      const models = d?.models || []
+      setDiscovered(models)
+      if (models.length && !f.model) pf({ model: models[0].id || models[0].name || models[0] })
+    } catch (e) { setErr(String(e?.message || e)) }
+    finally { setBusy(false) }
+  }
+
+  const add = () => {
+    const idx = profiles.length
+    setProfiles([...profiles, { ...emptyProfile(idx, f.protocol), var_name: nextVarName(f.protocol, profiles), type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey, model: f.model, name: f.name || f.model || `model-${idx + 1}` }])
+    setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', model: '', name: '' })
+    setDiscovered([])
+    setErr('')
+  }
+
+  return (
+    <Card size="small" title="新增模型配置" className="model-add-card">
+      <div className="model-protocol-note">
+        <Tag color={meta.color}>{protocolLabel(f.protocol)}</Tag>
+        <span>{meta.help}</span>
+      </div>
+      <div className="form-grid">
+        <label>官方协议<Select value={f.protocol} onChange={v => pf({ protocol: v, model: supportsModelDiscovery(v) ? f.model : '' })} options={OFFICIAL_PROTOCOLS} /></label>
+        <label>BaseURL<Input value={f.baseUrl} onChange={e => pf({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
+        <label className="span2">API Key（可选）
+          <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
+        </label>
+      </div>
+      <DiscoverRow value={f.model} onChange={model => pf({ model })}
+        opts={[f.model, ...discovered.map(m => m.id || m.name || m)].filter(Boolean)}
+        onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !f.baseUrl} />
+      {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
+      {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
+      <label className="span2 model-display-name">显示名称
+        <Input value={f.name} onChange={e => pf({ name: e.target.value })} placeholder={f.model || '可选，留空自动填入'} />
+      </label>
+      <Button type="primary" icon={<Plus size={13} />} disabled={!f.model || !f.baseUrl} onClick={add} className="model-add-button">
+        添加配置
+      </Button>
+    </Card>
+  )
+}
+
+export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, discoverModels, modelPreview, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, onRevealKey, onClearRevealedKey }) {
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
-  const copy = VALIDATION_COPY
-  const hasErrors = summary.errors > 0
-  const hasProfiles = profiles.length > 0
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
+  const hasErrors = summary.errors > 0
+  const profileKeyId = (idx, profile) => `${idx}:${profile?.var_name || ''}`
+  const removeProfile = idx => {
+    onClearRevealedKey?.(idx, profiles[idx])
+    setProfiles(profiles.filter((_, i) => i !== idx))
+  }
 
-  return <section>
-    <div className="model-top">
-      <div><h3>{t.nav.models}</h3><p>{t.hints.previewHelp}</p></div>
-      <div className="actions">
-        <button onClick={importModels}><RefreshCw size={14}/>{t.hints.modelSource}</button>
-        <button onClick={() => setProfiles([...profiles, emptyProfile(profiles.length)])}>{t.hints.addProfile}</button>
-        <button onClick={previewModels}><Eye size={14}/>{t.hints.preview}</button>
-        <button onClick={saveModels} disabled={hasErrors} title={hasErrors ? copy.saveDisabled : t.hints.writeMykey}><UploadCloud size={14}/>{t.hints.writeMykey}</button>
+  const riskItems = [{
+    key: 'risk',
+    label: <Space size={6}><AlertTriangle size={14} />模型路由安全</Space>,
+    children: (
+      <>
+        <Alert
+          type={risk.status === 'error' ? 'error' : 'info'}
+          message={risk.status === 'ready' ? '风险目录已加载' : risk.status === 'error' ? '风险目录不可用' : '暂无条目'}
+          description={risk.status === 'error' ? risk.error : '自动获取模型为只读；写回操作受 confirmDanger 门禁保护。'}
+        />
+        {risk.items.length > 0 && (
+          <div className="model-risk-grid">
+            {risk.items.map(item => (
+              <div key={`${item.method}-${item.route}`}>
+                <b>{item.method} {item.route}</b>
+                <small>{item.action || item.reason}</small>
+              </div>
+            ))}
+          </div>
+        )}
+        {risk.missingConfirmedWriteRoutes.length > 0 && (
+          <Alert type="warning" message={`目录缺少已确认写入门禁：${risk.missingConfirmedWriteRoutes.join(', ')}`} className="model-inline-alert" />
+        )}
+      </>
+    )
+  }]
+
+  return (
+    <section className="models-page">
+      <div className="model-toolbar">
+        <div>
+          <p className="eyebrow">mykey.py / 官方 Session 配置</p>
+          <h2>模型配置</h2>
+          <p className="muted">按 <code>mykey_template.py</code> 的官方命名生成：native_oai / native_claude / oai / claude。</p>
+        </div>
+        <Space wrap>
+          <Tag color={hasErrors ? 'error' : 'success'}>{summary.total} 项 · {summary.errors} 错 · {summary.warnings} 警</Tag>
+          <Button icon={<UploadCloud size={14} />} onClick={() => importModels(false)}>读取</Button>
+          <Button icon={<Eye size={14} />} onClick={previewModels}>预览</Button>
+          <Button type="primary" icon={<CheckCircle2 size={14} />} disabled={hasErrors} onClick={saveModels}>写回</Button>
+        </Space>
       </div>
-    </div>
-    <div className={`model-validation-summary ${hasErrors ? 'has-errors' : 'ok'}`} role={hasErrors ? 'alert' : 'status'}>
-      {hasErrors ? <AlertTriangle size={16}/> : <CheckCircle2 size={16}/>}
-      <b>{hasErrors ? copy.blocked : copy.valid}</b>
-      <span>{copy.errors}: {summary.errors}</span>
-      <span>{copy.warnings}: {summary.warnings}</span>
-    </div>
-    <p className="operation-note" role="note">导入和预览仅执行只读检查。写回 mykey.py 会修改本地配置，并可能替换生成的模型条目；请先审核预览并修复红色校验项。</p>
-    <div className="models-layout">
-      <div className="profiles">{!hasProfiles && <div className="empty-card" role="status"><b>尚未加载模型 Profile</b><span>如果 mykey.py 已存在，可先导入；或新增 Profile，在预览前填写名称、模型、API Base 和 Key。</span></div>}{profiles.map((p, idx) => {
-        const item = validation[idx] || { errors: [], warnings: [], ok: true }
-        return <div className={`profile ${item.errors.length ? 'has-errors' : item.warnings.length ? 'has-warnings' : ''}`} key={idx}>
-          <div className="profile-head">
-            <b>#{idx + 1} {p.name || p.var_name || t.nav.models}</b>
-            <span className={`profile-status ${item.errors.length ? 'bad' : item.warnings.length ? 'warn' : 'ok'}`}>{item.errors.length ? `${copy.errors}: ${item.errors.length}` : item.warnings.length ? `${copy.warnings}: ${item.warnings.length}` : copy.valid}</span>
-          </div>
-          <ValidationList title={copy.errors} items={item.errors} copy={copy} tone="error"/>
-          <ValidationList title={copy.warnings} items={item.warnings} copy={copy} tone="warning"/>
-          <div className="form-grid">
-            <label>{t.fields.varName}<input value={p.var_name || ''} onChange={(e) => patchProfile(idx, { var_name: e.target.value })}/></label>
-            <label>{t.fields.type}<input value={p.type || ''} onChange={(e) => patchProfile(idx, { type: e.target.value })}/></label>
-            <label>{t.fields.name}<input value={p.name || ''} onChange={(e) => patchProfile(idx, { name: e.target.value })}/></label>
-            <label>{t.fields.model}<input value={p.model || ''} onChange={(e) => patchProfile(idx, { model: e.target.value })}/></label>
-            <label className="span2">{t.fields.apiBase}<input value={p.apibase || ''} onChange={(e) => patchProfile(idx, { apibase: e.target.value })}/></label>
-            <label className="span2">{t.fields.apiKey}<SecretInput value={p.apikey} onChange={(v) => patchProfile(idx, { apikey: v })} t={t}/></label>
-            <label>{t.fields.stream}<select value={String(!!p.stream)} onChange={(e) => patchProfile(idx, { stream: e.target.value === 'true' })}><option value="true">true</option><option value="false">false</option></select></label>
-            <label>{t.fields.maxRetries}<input type="number" value={p.max_retries ?? 3} onChange={(e) => patchProfile(idx, { max_retries: Number(e.target.value) })}/></label>
-            <label>{t.fields.readTimeout}<input type="number" value={p.read_timeout ?? 300} onChange={(e) => patchProfile(idx, { read_timeout: Number(e.target.value) })}/></label>
-            <label>{t.fields.reasoningEffort}<input value={p.reasoning_effort || ''} onChange={(e) => patchProfile(idx, { reasoning_effort: e.target.value })}/></label>
+      {hasErrors && <Alert type="error" showIcon message="写回前请先修复红色阻断项" className="model-inline-alert" />}
+
+      <div className="model-layout">
+        <div className="model-left">
+          <AddProfileForm profiles={profiles} setProfiles={setProfiles} discoverModels={discoverModels} t={t} />
+          <div className="model-list">
+            {profiles.map((p, idx) => <ProfileCard key={`${p.var_name}-${idx}`} p={p} idx={idx} profiles={profiles}
+              result={validation[idx]} patchProfile={patchProfile} removeProfile={removeProfile} discoverModels={discoverModels}
+              revealedKey={revealedKeys[profileKeyId(idx, p)]} revealBusy={!!revealBusy[profileKeyId(idx, p)]}
+              onRevealKey={onRevealKey} onClearRevealedKey={onClearRevealedKey} />)}
+            {!profiles.length && <Card className="empty-card">尚未读取到模型配置。点击“读取”导入 mykey.py，或直接新增。</Card>}
           </div>
         </div>
-      })}</div>
-      <Panel title="模型路由安全" className="model-risk-panel">
-        <div className={`model-risk-summary ${risk.status}`}>
-          <AlertTriangle size={16}/>
-          <div><b>{risk.status === 'ready' ? '风险目录已加载' : risk.status === 'error' ? '风险目录不可用' : '风险目录没有 /api/models 条目'}</b><p>{risk.status === 'error' ? risk.error : '保存/导出会写入 GA 模型配置，并继续受 confirmDanger 门禁保护；不显示密钥的预览/导入保持只读。'}</p></div>
+
+        <div className="model-right">
+          <Card title="生成预览" size="small">
+            <pre className="model-preview-pre">{modelPreview || (profiles.length ? '点击“预览”按钮生成预览。' : '添加至少一个模型配置后显示预览。')}</pre>
+          </Card>
+          <Collapse ghost items={riskItems} className="model-inline-alert" />
         </div>
-        <div className="model-risk-grid">
-          {risk.items.map(item => <div className="model-risk-item" key={`${item.method}-${item.route}-${item.action}`}>
-            <span className={`badge ${item.level}`}>{item.level || '待审核'}</span><b>{item.method} {item.route}</b><small>{item.action || item.reason || '目录条目'}</small>
-          </div>)}
-          {risk.items.length === 0 && <p className="muted">当前没有实时模型路由条目；不要因为目录为空就推断为安全。</p>}
-        </div>
-        {risk.missingConfirmedWriteRoutes.length > 0 && <p className="err-text">目录中缺少已确认写入门禁：{risk.missingConfirmedWriteRoutes.join(', ')}</p>}
-      </Panel>
-      <Panel title={t.lists.generatedPreview} className="preview"><pre>{modelPreview || (hasProfiles ? t.empty : '添加至少一个模型配置后将显示预览。')}</pre></Panel>
-    </div>
-  </section>
+      </div>
+    </section>
+  )
 }

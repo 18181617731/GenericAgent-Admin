@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,6 +141,86 @@ func TestModelsRawWithDangerousConfirmReturnsUnmaskedSecret(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "sk-raw-secret") {
 		t.Fatalf("raw response did not include unmasked secret: %s", rr.Body.String())
+	}
+}
+
+func TestModelsRawWithDangerousConfirmOverlaysMaskedCacheFromMyKey(t *testing.T) {
+	gaRoot := t.TempDir()
+	writeTestMyKey(t, gaRoot, "sk-test-secret-value")
+	s := newModelTestServer(t, gaRoot)
+	masked := modelconfig.Draft{Profiles: []modelconfig.Profile{{
+		VarName: "api_config_main",
+		Type:    "openai",
+		Name:    "main",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-****alue",
+	}}}
+	data, err := json.Marshal(masked)
+	if err != nil {
+		t.Fatalf("marshal masked cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Models.Root, "model_profiles.json"), data, 0600); err != nil {
+		t.Fatalf("write masked cache: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/models/raw", nil)
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sk-test-secret-value") {
+		t.Fatalf("raw response did not overlay secret from mykey.py: %s", body)
+	}
+	if strings.Contains(body, "sk-****alue") {
+		t.Fatalf("raw response still contained masked cache value: %s", body)
+	}
+}
+
+func TestModelsRawWithDangerousConfirmIncludesMyKeyProfilesWhenCacheDiffers(t *testing.T) {
+	gaRoot := t.TempDir()
+	text := "native_oai_primary = {\n" +
+		"    'name': 'from-mykey',\n" +
+		"    'apibase': 'https://api.example/v1',\n" +
+		"    'model': 'gpt-live',\n" +
+		"    'apikey': 'sk-live-secret-value',\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(gaRoot, "mykey.py"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := newModelTestServer(t, gaRoot)
+	cache := modelconfig.Draft{Profiles: []modelconfig.Profile{{
+		VarName: "native_oai_config1",
+		Type:    "openai",
+		Name:    "stale-cache",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-stale",
+		APIKey:  "",
+	}}}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatalf("marshal cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Models.Root, "model_profiles.json"), data, 0600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/models/raw", nil)
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "native_oai_primary") || !strings.Contains(body, "sk-live-secret-value") {
+		t.Fatalf("raw response did not include revealed mykey profile: %s", body)
+	}
+	if !strings.Contains(body, "native_oai_config1") {
+		t.Fatalf("raw response should keep existing cached profile too: %s", body)
 	}
 }
 
@@ -289,6 +370,129 @@ func TestModelsExportPreservesExistingSecretWhenSubmittedBlank(t *testing.T) {
 	}
 	if got := raw.Profiles[0].APIKey; got != "sk-real-secret" {
 		t.Fatalf("saved APIKey = %q, want preserved secret", got)
+	}
+}
+
+func TestModelsDiscoverUsesSecretFromMyKeyWhenQueryKeyIsMasked(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if gotAuth == "Bearer ********" || strings.Contains(gotAuth, "****") {
+			t.Errorf("masked API key was forwarded upstream: %q", gotAuth)
+		}
+		if gotAuth != "Bearer sk-test-secret-value" {
+			http.Error(w, `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-secret-model","owned_by":"test"}]}`))
+	}))
+	defer upstream.Close()
+
+	gaRoot := t.TempDir()
+	writeTestMyKey(t, gaRoot, "sk-test-secret-value")
+	s := newModelTestServer(t, gaRoot)
+	q := url.Values{}
+	q.Set("protocol", "native_oai")
+	q.Set("base_url", upstream.URL)
+	q.Set("api_key", "********")
+	q.Set("var_name", "api_config_main")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/models/discover?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s auth=%q", rr.Code, rr.Body.String(), gotAuth)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "gpt-secret-model") {
+		t.Fatalf("missing discovered model: %s", body)
+	}
+	if strings.Contains(body, "sk-test-secret-value") {
+		t.Fatalf("response leaked secret: %s", body)
+	}
+}
+
+func TestModelsDiscoverOpenAIUsesV1FallbackWhenRootModelsReturnsHTML(t *testing.T) {
+	var paths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/models":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><html><body>not api</body></html>`))
+		case "/v1/models":
+			if r.Header.Get("Authorization") != "Bearer sk-oai-test" {
+				t.Errorf("Authorization header = %q", r.Header.Get("Authorization"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-relay-model","owned_by":"relay"},{"id":"gpt-relay-model"}]}`))
+		default:
+			t.Errorf("unexpected upstream path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	s := newModelTestServer(t, t.TempDir())
+	q := url.Values{}
+	q.Set("protocol", "native_oai")
+	q.Set("base_url", upstream.URL)
+	q.Set("api_key", "sk-oai-test")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/models/discover?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s paths=%v", rr.Code, rr.Body.String(), paths)
+	}
+	if got := strings.Join(paths, ","); got != "/models,/v1/models" {
+		t.Fatalf("paths=%q", got)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "gpt-relay-model") || !strings.Contains(body, "/v1/models") {
+		t.Fatalf("missing fallback model or endpoint: %s", body)
+	}
+}
+
+func TestModelsDiscoverClaudeUsesAnthropicModelsFallback(t *testing.T) {
+	var paths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.Header.Get("anthropic-version") != "2023-06-01" {
+			t.Errorf("anthropic-version header = %q", r.Header.Get("anthropic-version"))
+		}
+		if r.Header.Get("x-api-key") != "sk-ant-test" {
+			t.Errorf("x-api-key header = %q", r.Header.Get("x-api-key"))
+		}
+		switch r.URL.Path {
+		case "/anthropic/models":
+			http.Error(w, "not found", http.StatusNotFound)
+		case "/anthropic/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"claude-relay-model","owned_by":"anthropic"},{"id":"claude-relay-model"}]}`))
+		default:
+			t.Errorf("unexpected upstream path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	s := newModelTestServer(t, t.TempDir())
+	q := url.Values{}
+	q.Set("protocol", "native_claude")
+	q.Set("base_url", upstream.URL+"/anthropic")
+	q.Set("api_key", "sk-ant-test")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/models/discover?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s paths=%v", rr.Code, rr.Body.String(), paths)
+	}
+	if got := strings.Join(paths, ","); got != "/anthropic/models,/anthropic/v1/models" {
+		t.Fatalf("paths=%q", got)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "claude-relay-model") || !strings.Contains(body, "/anthropic/v1/models") {
+		t.Fatalf("missing fallback model or endpoint: %s", body)
 	}
 }
 

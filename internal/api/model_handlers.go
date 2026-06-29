@@ -1,7 +1,13 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
 	"genericagent-admin-go/internal/modelconfig"
 )
@@ -51,7 +57,53 @@ func (s *Server) modelsRaw(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, err.Error())
 		return
 	}
+	s.overlayRawModelSecretsFromMyKey(&d)
 	writeJSON(w, d)
+}
+
+func (s *Server) overlayRawModelSecretsFromMyKey(d *modelconfig.Draft) {
+	if d == nil || s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
+		return
+	}
+	imported, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
+	if err != nil {
+		return
+	}
+	importedByVar := map[string]modelconfig.Profile{}
+	for _, p := range imported.Profiles {
+		p.VarName = strings.TrimSpace(p.VarName)
+		p.APIKey = strings.TrimSpace(p.APIKey)
+		if p.VarName == "" || p.APIKey == "" || modelconfig.IsMaskedSecret(p.APIKey) {
+			continue
+		}
+		importedByVar[p.VarName] = p
+	}
+	if len(importedByVar) == 0 {
+		return
+	}
+	seen := map[string]bool{}
+	for i := range d.Profiles {
+		name := strings.TrimSpace(d.Profiles[i].VarName)
+		if name == "" {
+			continue
+		}
+		seen[name] = true
+		if p, ok := importedByVar[name]; ok {
+			d.Profiles[i].APIKey = p.APIKey
+		}
+	}
+	for _, p := range imported.Profiles {
+		name := strings.TrimSpace(p.VarName)
+		if name == "" || seen[name] {
+			continue
+		}
+		p.APIKey = strings.TrimSpace(p.APIKey)
+		if p.APIKey == "" || modelconfig.IsMaskedSecret(p.APIKey) {
+			continue
+		}
+		d.Profiles = append(d.Profiles, p)
+		seen[name] = true
+	}
 }
 
 func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +124,222 @@ func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"python": txt})
+}
+
+type discoveredModel struct {
+	ID      string `json:"id"`
+	OwnedBy string `json:"owned_by,omitempty"`
+}
+
+var errInvalidModelBaseURL = errors.New("invalid base_url: must be an http(s) URL")
+
+func (s *Server) modelsDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	protocol := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("protocol")))
+	if protocol == "" {
+		protocol = "native_oai"
+	}
+	isClaude := false
+	switch protocol {
+	case "native_oai", "oai", "openai", "openai-compatible", "chatgpt":
+		// These protocols use OpenAI-compatible /models discovery.
+	case "native_claude", "claude":
+		isClaude = true
+	default:
+		bad(w, http.StatusBadRequest, "model discovery supports official OAI and Claude protocols only")
+		return
+	}
+	baseURL := strings.TrimSpace(r.URL.Query().Get("base_url"))
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(r.URL.Query().Get("apibase"))
+	}
+	if baseURL == "" {
+		bad(w, http.StatusBadRequest, "base_url is required")
+		return
+	}
+	endpoints, err := modelDiscoveryEndpoints(baseURL, isClaude)
+	if err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	apiKey, err := s.resolveModelDiscoveryAPIKey(r)
+	if err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	client := &http.Client{Timeout: 12 * time.Second}
+	authHeaders := modelDiscoveryAuthHeaders(apiKey, isClaude)
+	var lastErr error
+	var lastMsg string
+	for _, endpoint := range endpoints {
+		for i, auth := range authHeaders {
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
+			if err != nil {
+				bad(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			req.Header.Set("Accept", "application/json")
+			for k, v := range auth {
+				req.Header.Set(k, v)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			resp.Body.Close()
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				msg := strings.TrimSpace(string(body))
+				if msg == "" {
+					msg = resp.Status
+				}
+				lastMsg = msg
+				if isClaude && resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+					break
+				}
+				if i == len(authHeaders)-1 {
+					break
+				}
+				continue
+			}
+			var payload struct {
+				Data []struct {
+					ID      string `json:"id"`
+					OwnedBy string `json:"owned_by"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				lastErr = err
+				lastMsg = "invalid models response from " + endpoint + ": " + err.Error()
+				break
+			}
+			models := make([]discoveredModel, 0, len(payload.Data))
+			seen := map[string]bool{}
+			for _, item := range payload.Data {
+				id := strings.TrimSpace(item.ID)
+				if id == "" || seen[id] {
+					continue
+				}
+				seen[id] = true
+				models = append(models, discoveredModel{ID: id, OwnedBy: item.OwnedBy})
+			}
+			writeJSON(w, map[string]interface{}{"endpoint": endpoint, "models": models, "count": len(models)})
+			return
+		}
+	}
+	if lastMsg != "" {
+		bad(w, http.StatusBadGateway, lastMsg)
+		return
+	}
+	if lastErr != nil {
+		bad(w, http.StatusBadGateway, lastErr.Error())
+		return
+	}
+	bad(w, http.StatusBadGateway, "model discovery failed")
+}
+
+func (s *Server) resolveModelDiscoveryAPIKey(r *http.Request) (string, error) {
+	apiKey := strings.TrimSpace(r.URL.Query().Get("api_key"))
+	if apiKey != "" && !modelconfig.IsMaskedSecret(apiKey) {
+		return apiKey, nil
+	}
+	varName := strings.TrimSpace(r.URL.Query().Get("var_name"))
+	if varName == "" {
+		return apiKey, nil
+	}
+	if d, err := s.Models.Load(true); err == nil {
+		for _, p := range d.Profiles {
+			if p.VarName == varName && strings.TrimSpace(p.APIKey) != "" && !modelconfig.IsMaskedSecret(p.APIKey) {
+				return strings.TrimSpace(p.APIKey), nil
+			}
+		}
+	} else {
+		return "", err
+	}
+	if strings.TrimSpace(s.CfgStore.Cfg.GARoot) != "" {
+		d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
+		if err != nil {
+			return "", err
+		}
+		for _, p := range d.Profiles {
+			if p.VarName == varName && strings.TrimSpace(p.APIKey) != "" && !modelconfig.IsMaskedSecret(p.APIKey) {
+				return strings.TrimSpace(p.APIKey), nil
+			}
+		}
+	}
+	if apiKey == "" {
+		return "", nil
+	}
+	return "", errors.New("masked api_key cannot be used for discovery without a saved or mykey.py secret for var_name")
+}
+
+func modelDiscoveryAuthHeaders(apiKey string, isClaude bool) []map[string]string {
+	if isClaude {
+		base := map[string]string{"anthropic-version": "2023-06-01"}
+		if apiKey == "" {
+			return []map[string]string{base}
+		}
+		return []map[string]string{
+			{"anthropic-version": "2023-06-01", "x-api-key": apiKey},
+			{"anthropic-version": "2023-06-01", "Authorization": "Bearer " + apiKey},
+		}
+	}
+	if apiKey == "" {
+		return []map[string]string{{}}
+	}
+	return []map[string]string{{"Authorization": "Bearer " + apiKey}}
+}
+
+func modelDiscoveryEndpoint(baseURL string) (string, error) {
+	endpoints, err := modelDiscoveryEndpoints(baseURL, false)
+	if err != nil {
+		return "", err
+	}
+	return endpoints[0], nil
+}
+
+func modelDiscoveryEndpoints(baseURL string, isClaude bool) ([]string, error) {
+	u, err := parseModelDiscoveryBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	mainURL := *u
+	path := strings.TrimRight(mainURL.Path, "/")
+	if strings.HasSuffix(path, "/models") {
+		mainURL.Path = path
+	} else {
+		mainURL.Path = path + "/models"
+	}
+	endpoints := []string{mainURL.String()}
+	v1URL := *u
+	v1Path := strings.TrimRight(v1URL.Path, "/")
+	if strings.HasSuffix(v1Path, "/models") {
+		v1Path = strings.TrimRight(strings.TrimSuffix(v1Path, "/models"), "/")
+	}
+	if !strings.HasSuffix(v1Path, "/v1") {
+		v1URL.Path = v1Path + "/v1/models"
+		if candidate := v1URL.String(); candidate != endpoints[0] {
+			endpoints = append(endpoints, candidate)
+		}
+	}
+	return endpoints, nil
+}
+
+func parseModelDiscoveryBaseURL(baseURL string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil, errInvalidModelBaseURL
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, errInvalidModelBaseURL
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u, nil
 }
 
 func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {

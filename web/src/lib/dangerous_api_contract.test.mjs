@@ -3,12 +3,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 
-test('App gates every dangerous API call behind confirmDanger', () => {
+test('App gates dangerous API calls behind confirmDanger except read-only key reveal', () => {
   const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
   const lines = app.split(/\r?\n/)
   const misses = []
+  const noConfirmReadOnlyRevealRoutes = new Set(["'/api/models/raw'"])
   lines.forEach((line, idx) => {
     if (!line.includes('dangerous:true') && !line.includes('dangerous: true')) return
+    if ([...noConfirmReadOnlyRevealRoutes].some(route => line.includes(route))) return
     const window = lines.slice(Math.max(0, idx - 6), idx + 1).join('\n')
     if (!window.includes('confirmDanger(')) misses.push(`${idx + 1}: ${line.trim()}`)
   })
@@ -51,6 +53,7 @@ const dangerousHeaderRoutes = Array.from(
 
 const protectedFrontendRoutes = Array.from(new Set([...protectedMutatingRoutes, ...dangerousHeaderRoutes]))
 const alwaysHeaderRoutes = new Set(['/api/models/raw'])
+const noConfirmReadOnlyRevealRoutes = new Set(['/api/models/raw'])
 
 const exactRouteString = (route) => new RegExp(`['"]${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`)
 const mutatingMethod = /method:\s*['"](?:POST|PUT|DELETE)['"]/
@@ -85,7 +88,8 @@ test('frontend sends dangerous header for every protected mutating API route it 
         const guardWindow = lines.slice(Math.max(0, idx - 8), Math.min(lines.length, idx + 4)).join('\n')
         const hasDangerousHeader = call.includes('dangerous:true') || call.includes('dangerous: true')
         const hasConfirm = guardWindow.includes('confirmDanger(')
-        if (!hasDangerousHeader || !hasConfirm) misses.push(`${file}:${idx + 1} ${route} dangerous=${hasDangerousHeader} confirm=${hasConfirm}`)
+        const requiresConfirm = !noConfirmReadOnlyRevealRoutes.has(route)
+        if (!hasDangerousHeader || (requiresConfirm && !hasConfirm)) misses.push(`${file}:${idx + 1} ${route} dangerous=${hasDangerousHeader} confirm=${hasConfirm}`)
       }
     })
   }

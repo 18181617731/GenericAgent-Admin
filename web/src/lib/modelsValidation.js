@@ -41,7 +41,7 @@ export function validateModelProfiles(profiles = []) {
 export function modelValidationSummary(results = []) {
   const errors = results.reduce((sum, item) => sum + (item.errors?.length || 0), 0)
   const warnings = results.reduce((sum, item) => sum + (item.warnings?.length || 0), 0)
-  return { errors, warnings, ready: results.length > 0 && errors === 0 }
+  return { total: results.length, errors, warnings, ready: results.length > 0 && errors === 0 }
 }
 
 

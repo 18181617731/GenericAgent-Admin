@@ -36,7 +36,7 @@ test('modelValidationSummary marks valid profile sets ready', () => {
     { var_name: 'api_config_a', name: 'main', model: 'gpt-4o-mini', apibase: 'http://127.0.0.1:8000', apikey: 'set', max_retries: 0, read_timeout: 1 }
   ]))
 
-  assert.deepEqual(summary, { errors: 0, warnings: 0, ready: true })
+  assert.deepEqual(summary, { total: 1, errors: 0, warnings: 0, ready: true })
 })
 
 
@@ -73,7 +73,7 @@ test('modelRiskCatalog preserves catalog load errors for the UI', () => {
 
 test('validateModelProfiles treats null or empty profile arrays as not ready instead of stale success', () => {
   assert.deepEqual(validateModelProfiles(null), [])
-  assert.deepEqual(modelValidationSummary(validateModelProfiles([])), { errors: 0, warnings: 0, ready: false })
+  assert.deepEqual(modelValidationSummary(validateModelProfiles([])), { total: 0, errors: 0, warnings: 0, ready: false })
 })
 
 test('modelRiskCatalog ignores malformed stale entries and normalizes route aliases', () => {
