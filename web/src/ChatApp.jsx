@@ -594,13 +594,36 @@ const stripUserAttachmentBlock = (content = '') => {
   return cut >= 0 ? src.slice(0, cut).trimEnd() : src
 }
 
-const UsageRow = ({ u, label, className }) => {
-  if (!u || (!(u.input_tokens > 0) && !(u.output_tokens > 0) && !(u.cached_tokens > 0))) return null
+const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.output_tokens || 0) > 0 || (u.cached_tokens || 0) > 0)
+const formatElapsedMs = (ms = 0) => {
+  const safe = Math.max(0, Number(ms) || 0)
+  if (safe < 1000) return `${Math.max(0.1, safe / 1000).toFixed(1)}s`
+  const totalSeconds = Math.floor(safe / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes <= 0) return `${seconds}s`
+  const hours = Math.floor(minutes / 60)
+  const mm = minutes % 60
+  if (hours > 0) return `${hours}h ${mm}m ${seconds}s`
+  return `${minutes}m ${seconds}s`
+}
+const getElapsedMs = (m, now = Date.now()) => {
+  if (!m || m.role !== 'assistant') return 0
+  if (m.elapsed_ms > 0) return m.elapsed_ms
+  if (m.run_started_at_ms > 0) return Math.max(0, now - m.run_started_at_ms)
+  return 0
+}
+
+const UsageRow = ({ u, label, className, elapsedMs = 0, live = false }) => {
+  const hasTokens = usageHasTokens(u)
+  const hasElapsed = elapsedMs > 0
+  if (!hasTokens && !hasElapsed) return null
   return <div className={`oa-usage ${className || ''}`}>
     {label && <span className="oa-usage-label">{label}</span>}
-    {u.input_tokens > 0 && <span className="oa-usage-in" title="输入 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>输入 <b>{u.input_tokens.toLocaleString()}</b></span>}
-    {u.cached_tokens > 0 && <span className="oa-usage-cache" title="缓存 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>缓存 <b>{u.cached_tokens.toLocaleString()}</b></span>}
-    {u.output_tokens > 0 && <span className="oa-usage-out" title="输出 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>输出 <b>{u.output_tokens.toLocaleString()}</b></span>}
+    {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? '实时耗时' : '耗时'}><Clock3 size={10} aria-hidden="true"/>耗时 <b>{formatElapsedMs(elapsedMs)}</b></span>}
+    {u?.input_tokens > 0 && <span className="oa-usage-in" title="输入 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>输入 <b>{u.input_tokens.toLocaleString()}</b></span>}
+    {u?.cached_tokens > 0 && <span className="oa-usage-cache" title="缓存 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>缓存 <b>{u.cached_tokens.toLocaleString()}</b></span>}
+    {u?.output_tokens > 0 && <span className="oa-usage-out" title="输出 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>输出 <b>{u.output_tokens.toLocaleString()}</b></span>}
   </div>
 }
 
@@ -614,30 +637,33 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
-const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply }) {
+const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply, clockNow = 0 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
   const hasUsage = !turnUsages && m.role === 'assistant' && m.usage && (m.usage.input_tokens > 0 || m.usage.output_tokens > 0)
+  const usageTotal = turnUsages ? sumUsages(turnUsages) : (hasUsage ? m.usage : null)
+  const elapsedMs = getElapsedMs(m, clockNow || Date.now())
+  const showUsageRow = m.role === 'assistant' && (usageHasTokens(usageTotal) || elapsedMs > 0)
+  const usageLabel = m.role === 'assistant' ? '总计' : null
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
       <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
       {Array.isArray(m.files) && m.files.some(isImageFile) && <div className="oa-message-images">{m.files.filter(isImageFile).map((f, i) => <img key={f.name || i} src={f.dataURL || f.url} alt={f.name || 'image'} />)}</div>}
       {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} /> : (userText && <MarkdownBlock text={userText} />)}
-      {turnUsages && <UsageRow u={sumUsages(turnUsages)} label={turnUsages.length > 1 ? '总计' : null} className="oa-usage-total" />}
-      {hasUsage && <UsageRow u={m.usage} className="oa-usage-total" />}
+      {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
     </div>
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAskReply }) {
+const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAskReply, clockNow }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
       const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-      nodes.push(<ChatMessage key={m.id} message={m} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} />)
+      nodes.push(<ChatMessage key={m.id} message={m} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} clockNow={clockNow} />)
       return nodes
     })}
   </>
@@ -716,6 +742,7 @@ export default function ChatApp() {
   const [cmdEditCmd, setCmdEditCmd] = useState('')
   const [cmdEditDesc, setCmdEditDesc] = useState('')
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
+  const [streamClock, setStreamClock] = useState(() => Date.now())
   const toolsMenuRef = useRef(null)
   const threadRef = useRef(null)
   const endRef = useRef(null)
@@ -732,6 +759,14 @@ export default function ChatApp() {
   const chatScope = useRef(null)
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
   const COMPOSER_MAX_H = 160
+
+  useEffect(() => {
+    if (!busy && !streamingSid) return undefined
+    const tick = () => setStreamClock(Date.now())
+    tick()
+    const timer = window.setInterval(tick, 500)
+    return () => window.clearInterval(timer)
+  }, [busy, streamingSid])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined
@@ -890,7 +925,13 @@ export default function ChatApp() {
     }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
       if (typeof ev.reasoning_effort === 'string') setReasoningEffort(normalizeReasoningEffort(ev.reasoning_effort))
-      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? ev.message : m) : xs)
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
+        const elapsedMs = getElapsedMs(m)
+        const finalMsg = { ...ev.message }
+        if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
+        return finalMsg
+      }) : xs)
     }
   }
 
@@ -976,7 +1017,7 @@ export default function ChatApp() {
     streamAbortRef.current = ctrl
     const pendingId = `resume-${Date.now()}`
     setBusy(true); setStreamingSid(id); setAutoFollow(true); setShowFollow(false)
-    setMessages(xs => xs.some(m => m.role === 'assistant' && !m.content) ? xs : [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }])
+    setMessages(xs => xs.some(m => m.role === 'assistant' && !m.content) ? xs : [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }])
     try {
       const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
       if (res.status === 204) return
@@ -1264,7 +1305,7 @@ export default function ChatApp() {
       setAutoFollow(true); setShowFollow(false)
       const fileNote = files.length ? `\n\n[图片附件]\n${files.map(f => `- ${f.name}`).join('\n')}` : ''
       const optimistic = { id:clientUserID, role:'user', content:(text || '请分析这张图片') + fileNote, files, created_at:Math.floor(Date.now()/1000) }
-      const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000) }
+      const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
@@ -1547,7 +1588,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} />
+        <MessageList messages={messages} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} clockNow={streamClock} />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>

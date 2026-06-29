@@ -31,6 +31,7 @@ type chatMessage struct {
 	Error     bool                     `json:"error,omitempty"`
 	Usage     map[string]int           `json:"usage,omitempty"`
 	Usages    []map[string]int         `json:"usages,omitempty"`
+	ElapsedMS int64                    `json:"elapsed_ms,omitempty"`
 }
 
 const (
@@ -130,9 +131,17 @@ type chatWorker struct {
 }
 
 func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
+	startedAt := time.Now()
+	elapsedMillis := func() int64 {
+		ms := time.Since(startedAt).Milliseconds()
+		if ms < 1 {
+			return 1
+		}
+		return ms
+	}
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
-		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
+		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 		cs.Messages = append(cs.Messages, msg)
 		_ = saveChatSession(s.CfgStore.Cfg, cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
@@ -145,7 +154,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	defer worker.Mu.Unlock()
 	if err := json.NewEncoder(worker.Stdin).Encode(cmdReq); err != nil {
 		s.dropChatWorker(sid, worker)
-		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
+		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 		cs.Messages = append(cs.Messages, msg)
 		_ = saveChatSession(s.CfgStore.Cfg, cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
@@ -181,6 +190,11 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
+			if final.ElapsedMS <= 0 {
+				final.ElapsedMS = elapsedMillis()
+			}
+			msg["elapsed_ms"] = final.ElapsedMS
+			ev["message"] = msg
 			// Extract usage from event if present
 			if usage, ok := ev["usage"].(map[string]interface{}); ok && len(usage) > 0 {
 				final.Usage = make(map[string]int)
@@ -238,7 +252,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			} else {
 				content = "已停止生成"
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
 			err := readErr
@@ -252,7 +266,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			} else {
 				content = fmt.Sprintf("生成失败：%v", err)
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}
