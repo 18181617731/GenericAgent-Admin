@@ -16,7 +16,7 @@ var trayIconWindows []byte
 //go:embed assets/tray.png
 var trayIconPNG []byte
 
-func runTray(appURL string, onOpen func(), onOpenChat func(), onShowPet func(), onHidePet func(), onStopServices func(), onExit func()) {
+func runTray(appURL string, onOpen func(), onOpenChat func(), onStopServices func(), onExit func()) {
 	var exitOnce sync.Once
 
 	systray.Run(func() {
@@ -30,8 +30,6 @@ func runTray(appURL string, onOpen func(), onOpenChat func(), onShowPet func(), 
 
 		openItem := systray.AddMenuItem("打开 Admin", "Open GenericAgent Admin")
 		chatItem := systray.AddMenuItem("打开 Chat", "Open GenericAgent Chat")
-		showPetItem := systray.AddMenuItem("显示桌宠", "Show GA Admin desktop pet")
-		hidePetItem := systray.AddMenuItem("隐藏桌宠", "Hide GA Admin desktop pet")
 		stopItem := systray.AddMenuItem("停止所有服务", "Stop all managed services")
 		systray.AddSeparator()
 		exitItem := systray.AddMenuItem("退出 Admin", "Quit GenericAgent Admin")
@@ -46,14 +44,6 @@ func runTray(appURL string, onOpen func(), onOpenChat func(), onShowPet func(), 
 				case <-chatItem.ClickedCh:
 					if onOpenChat != nil {
 						go onOpenChat()
-					}
-				case <-showPetItem.ClickedCh:
-					if onShowPet != nil {
-						go onShowPet()
-					}
-				case <-hidePetItem.ClickedCh:
-					if onHidePet != nil {
-						go onHidePet()
 					}
 				case <-stopItem.ClickedCh:
 					if onStopServices != nil {

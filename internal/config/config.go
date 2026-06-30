@@ -15,23 +15,24 @@ type SlashCommandItem struct {
 }
 
 type AppConfig struct {
-	GARoot             string             `json:"ga_root"`
-	ChatDataDir        string             `json:"chat_data_dir"`
-	Host               string             `json:"host"`
-	Port               int                `json:"port"`
-	LogTailLines       int                `json:"log_tail_lines"`
-	BufferLines        int                `json:"buffer_lines"`
-	PythonPath         string             `json:"python_path"`
-	ProxyMode          string             `json:"proxy_mode"` // off | system | custom
-	HTTPProxy          string             `json:"http_proxy"`
-	HTTPSProxy         string             `json:"https_proxy"`
-	AllProxy           string             `json:"all_proxy"`
-	NoProxy            string             `json:"no_proxy"`
-	ServiceAutostart   []string           `json:"service_autostart"`
-	ServiceModels      map[string]int     `json:"service_models,omitempty"`
-	DesktopPetDisabled bool               `json:"desktop_pet_disabled"`
-	UpdateRepoURL      string             `json:"update_repo_url"`
-	SlashCommands      []SlashCommandItem `json:"slash_commands,omitempty"`
+	GARoot           string             `json:"ga_root"`
+	ChatDataDir      string             `json:"chat_data_dir"`
+	Host             string             `json:"host"`
+	Port             int                `json:"port"`
+	LogTailLines     int                `json:"log_tail_lines"`
+	BufferLines      int                `json:"buffer_lines"`
+	PythonPath       string             `json:"python_path"`
+	EffectivePython  string             `json:"effective_python,omitempty"`
+	BootstrapDone    bool               `json:"bootstrap_done"`
+	ProxyMode        string             `json:"proxy_mode"` // off | system | custom
+	HTTPProxy        string             `json:"http_proxy"`
+	HTTPSProxy       string             `json:"https_proxy"`
+	AllProxy         string             `json:"all_proxy"`
+	NoProxy          string             `json:"no_proxy"`
+	ServiceAutostart []string           `json:"service_autostart"`
+	ServiceModels    map[string]int     `json:"service_models,omitempty"`
+	UpdateRepoURL    string             `json:"update_repo_url"`
+	SlashCommands    []SlashCommandItem `json:"slash_commands,omitempty"`
 }
 
 func Validate(cfg AppConfig) error {
@@ -65,6 +66,15 @@ func Validate(cfg AppConfig) error {
 		}
 		if st.IsDir() {
 			return fmt.Errorf("python_path is a directory")
+		}
+	}
+	if py := strings.TrimSpace(cfg.EffectivePython); py != "" {
+		st, err := os.Stat(py)
+		if err != nil {
+			return fmt.Errorf("effective_python does not exist: %w", err)
+		}
+		if st.IsDir() {
+			return fmt.Errorf("effective_python is a directory")
 		}
 	}
 	switch strings.TrimSpace(cfg.ProxyMode) {
@@ -110,7 +120,7 @@ func DefaultChatDataDir() string {
 
 func Default() AppConfig {
 	return AppConfig{
-		GARoot:       "E:/Work/GenericAgent",
+		GARoot:       "",
 		ChatDataDir:  DefaultChatDataDir(),
 		Host:         "127.0.0.1",
 		Port:         8787,
@@ -143,6 +153,13 @@ func NewStore(root string) *Store {
 
 func (s *Store) path() string { return filepath.Join(s.Root, "config.local.json") }
 
+func effectivePython(cfg AppConfig) string {
+	if py := strings.TrimSpace(cfg.PythonPath); py != "" {
+		return py
+	}
+	return strings.TrimSpace(cfg.EffectivePython)
+}
+
 func (s *Store) Load() error {
 	data, err := os.ReadFile(s.path())
 	if err != nil {
@@ -170,6 +187,7 @@ func (s *Store) Load() error {
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
 	}
+	cfg.EffectivePython = effectivePython(cfg)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
@@ -196,6 +214,7 @@ func (s *Store) Save(cfg AppConfig) error {
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
 	}
+	cfg.EffectivePython = effectivePython(cfg)
 	if err := Validate(cfg); err != nil {
 		return err
 	}

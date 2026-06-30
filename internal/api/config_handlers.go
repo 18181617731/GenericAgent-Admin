@@ -1,9 +1,13 @@
 package api
 
 import (
+	"archive/zip"
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -35,7 +39,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c = s.CfgStore.Cfg
-		s.Svc.SetRoot(c.GARoot, c.BufferLines)
+		s.Svc.SetRoot(c.GARoot, c.EffectivePython, c.BufferLines)
 		writeJSON(w, c)
 		return
 	}
@@ -44,6 +48,18 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 
 type setupPathReq struct {
 	Path string `json:"path"`
+}
+
+type setupRootReq struct {
+	Root string `json:"root"`
+}
+
+type setupStreamEvent struct {
+	Type  string `json:"type"`
+	Line  string `json:"line,omitempty"`
+	OK    bool   `json:"ok,omitempty"`
+	Code  int    `json:"code,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 func unsafeSetupPath(p string) bool {
@@ -70,11 +86,32 @@ func (s *Server) setupEnv(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	gitStatus := checkTool("git", "--version")
+	pythonStatus := checkPythonForSetup(s.CfgStore.Cfg)
 	writeJSON(w, map[string]interface{}{
-		"ok":      toolOK("git") && toolOK("python"),
-		"tools":   []setupToolStatus{checkTool("git", "--version"), checkTool("python", "--version"), checkTool("uv", "--version"), checkTool("npm", "--version")},
-		"checked": time.Now().Format(time.RFC3339),
+		"ok":                pythonStatus.OK,
+		"tools":             []setupToolStatus{gitStatus, pythonStatus, checkTool("uv", "--version"), checkTool("npm", "--version")},
+		"git_required":      false,
+		"archive_fallback":  true,
+		"python_installer":  runtime.GOOS == "windows",
+		"configured_python": strings.TrimSpace(s.CfgStore.Cfg.PythonPath),
+		"effective_python":  strings.TrimSpace(s.CfgStore.Cfg.EffectivePython),
+		"checked":           time.Now().Format(time.RFC3339),
 	})
+}
+
+func checkPythonForSetup(cfg config.AppConfig) setupToolStatus {
+	for _, candidate := range []string{strings.TrimSpace(cfg.EffectivePython), strings.TrimSpace(cfg.PythonPath), "python"} {
+		if candidate == "" {
+			continue
+		}
+		st := checkTool(candidate, "--version")
+		st.Name = "python"
+		if st.OK {
+			return st
+		}
+	}
+	return setupToolStatus{Name: "python", Error: "python executable not found"}
 }
 
 func (s *Server) setupBrowse(w http.ResponseWriter, r *http.Request) {
@@ -106,13 +143,27 @@ func (s *Server) setupBrowse(w http.ResponseWriter, r *http.Request) {
 }
 
 func toolOK(name string) bool {
-	_, err := exec.LookPath(name)
+	_, err := executablePath(name)
 	return err == nil
+}
+
+func executablePath(name string) (string, error) {
+	if strings.ContainsAny(name, `\/`) || filepath.IsAbs(name) {
+		st, err := os.Stat(name)
+		if err != nil {
+			return "", err
+		}
+		if st.IsDir() {
+			return "", fmt.Errorf("%s is a directory", name)
+		}
+		return name, nil
+	}
+	return exec.LookPath(name)
 }
 
 func checkTool(name string, args ...string) setupToolStatus {
 	st := setupToolStatus{Name: name}
-	path, err := exec.LookPath(name)
+	path, err := executablePath(name)
 	if err != nil {
 		st.Error = err.Error()
 		return st
@@ -121,7 +172,7 @@ func checkTool(name string, args ...string) setupToolStatus {
 	st.Path = path
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, path, args...)
 	hideChildWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil && strings.TrimSpace(string(out)) == "" {
@@ -146,22 +197,200 @@ func chooseDirectory(start string) (string, error) {
 	return "", fmt.Errorf("directory picker is only supported on Windows in this build; please paste the path manually")
 }
 
+func runSetupCommandOutput(ctx context.Context, root string, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = root
+	hideChildWindow(cmd)
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		if text == "" {
+			text = err.Error()
+		}
+		return text, err
+	}
+	return text, nil
+}
+
+func runSetupCommandStream(ctx context.Context, root string, emit func(setupStreamEvent), name string, args ...string) (int, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = root
+	hideChildWindow(cmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return -1, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return -1, err
+	}
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	done := make(chan struct{}, 2)
+	scan := func(prefix string, r io.Reader) {
+		defer func() { done <- struct{}{} }()
+		s := bufio.NewScanner(r)
+		buf := make([]byte, 0, 64*1024)
+		s.Buffer(buf, 1024*1024)
+		for s.Scan() {
+			emit(setupStreamEvent{Type: prefix, Line: s.Text()})
+		}
+		if err := s.Err(); err != nil {
+			emit(setupStreamEvent{Type: "error", Error: err.Error()})
+		}
+	}
+	go scan("stdout", stdout)
+	go scan("stderr", stderr)
+	err = cmd.Wait()
+	<-done
+	<-done
+	code := 0
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	}
+	if err != nil {
+		return code, err
+	}
+	return code, nil
+}
+
 func runGitCommand(ctx context.Context, root string, args ...string) (string, error) {
 	return runGitCommandFunc(ctx, root, args...)
 }
 
 const setupInstallCloneTimeout = 5 * time.Minute
+const setupCommandTimeout = 20 * time.Minute
+const setupPythonInstallTimeout = 15 * time.Minute
+
+const genericAgentRepoURL = "https://github.com/lsdefine/GenericAgent"
+const genericAgentArchiveURL = genericAgentRepoURL + "/archive/refs/heads/main.zip"
+const defaultWindowsPythonURL = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
 
 func runSetupClone(ctx context.Context, dest string) (string, error) {
 	return runSetupCloneFunc(ctx, dest)
 }
 
 var runSetupCloneFunc = func(ctx context.Context, dest string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "clone", "https://github.com/lsdefine/GenericAgent", dest)
+	cmd := exec.CommandContext(ctx, "git", "clone", genericAgentRepoURL, dest)
 	hideChildWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
+
+func installGenericAgentSource(ctx context.Context, dest string) (string, string, error) {
+	out, err := runSetupClone(ctx, dest)
+	if err == nil {
+		return "git", strings.TrimSpace(out), nil
+	}
+	cloneText := strings.TrimSpace(out + "\n" + err.Error())
+	zipOut, zipErr := downloadAndExtractGenericAgentArchive(ctx, dest)
+	if zipErr != nil {
+		return "", strings.TrimSpace(cloneText + "\nzip fallback failed: " + zipErr.Error()), err
+	}
+	return "zip", strings.TrimSpace(cloneText + "\n" + zipOut), nil
+}
+
+var downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
+	return downloadAndExtractZipRoot(ctx, genericAgentArchiveURL, dest)
+}
+
+func downloadAndExtractZipRoot(ctx context.Context, archiveURL, dest string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("download %s failed: %s", archiveURL, resp.Status)
+	}
+	tmp, err := os.CreateTemp("", "genericagent-*.zip")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	n, copyErr := io.Copy(tmp, resp.Body)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if err := extractSingleRootZip(tmpPath, dest); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("downloaded GenericAgent archive (%d bytes) and extracted to %s", n, dest), nil
+}
+
+func extractSingleRootZip(zipPath, dest string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destAbs, 0755); err != nil {
+		return err
+	}
+	for _, f := range r.File {
+		parts := strings.Split(strings.ReplaceAll(f.Name, "\\", "/"), "/")
+		if len(parts) <= 1 || parts[0] == "" {
+			continue
+		}
+		rel := filepath.Join(parts[1:]...)
+		if rel == "" || rel == "." {
+			continue
+		}
+		target := filepath.Join(destAbs, rel)
+		if !strings.HasPrefix(target, destAbs+string(filepath.Separator)) && target != destAbs {
+			return fmt.Errorf("zip entry escapes target directory: %s", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, copyErr := io.Copy(out, rc)
+		closeOutErr := out.Close()
+		closeInErr := rc.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeOutErr != nil {
+			return closeOutErr
+		}
+		if closeInErr != nil {
+			return closeInErr
+		}
+	}
+	return nil
+}
+
+var runSetupCommandStreamFunc = runSetupCommandStream
+var runSetupCommandOutputFunc = runSetupCommandOutput
+var runPythonInstallerFunc = runWindowsPythonInstaller
 
 var runGitCommandFunc = func(ctx context.Context, root string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -302,6 +531,204 @@ func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	cfg := s.CfgStore.Cfg
+	root := strings.TrimSpace(cfg.GARoot)
+	state := map[string]interface{}{
+		"ok":             true,
+		"bootstrap_done": cfg.BootstrapDone,
+		"ga_root":        root,
+		"python":         cfg.EffectivePython,
+		"checked":        time.Now().Format(time.RFC3339),
+	}
+	if root != "" {
+		state["health"] = ga.BuildHealth(root)
+		state["venv"] = setupVenvStatus(root)
+	}
+	writeJSON(w, state)
+}
+
+func setupRequestRoot(r *http.Request, fallback string) (string, error) {
+	var req setupRootReq
+	if r.Body != nil {
+		if err := decode(r, &req); err != nil {
+			return "", err
+		}
+	}
+	root := strings.TrimSpace(req.Root)
+	if root == "" {
+		root = strings.TrimSpace(fallback)
+	}
+	if root == "" {
+		return "", errors.New("GA root is required")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func setupVenvDir(root string) string {
+	return filepath.Join(root, ".venv")
+}
+
+func setupVenvPython(root string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(setupVenvDir(root), "Scripts", "python.exe")
+	}
+	return filepath.Join(setupVenvDir(root), "bin", "python")
+}
+
+func setupVenvStatus(root string) map[string]interface{} {
+	py := setupVenvPython(root)
+	_, err := os.Stat(py)
+	return map[string]interface{}{"path": setupVenvDir(root), "python": py, "ok": err == nil}
+}
+
+func pythonForSetup(root string, cfg config.AppConfig) string {
+	venvPy := setupVenvPython(root)
+	if _, err := os.Stat(venvPy); err == nil {
+		return venvPy
+	}
+	if strings.TrimSpace(cfg.EffectivePython) != "" {
+		return strings.TrimSpace(cfg.EffectivePython)
+	}
+	if strings.TrimSpace(cfg.PythonPath) != "" {
+		return strings.TrimSpace(cfg.PythonPath)
+	}
+	return "python"
+}
+
+func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	if h := ga.BuildHealth(root); !h.OK {
+		bad(w, 400, "GA root health check failed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), setupCommandTimeout)
+	defer cancel()
+	out, err := runSetupCommandOutputFunc(ctx, root, pythonForSetup(root, s.CfgStore.Cfg), "-m", "venv", setupVenvDir(root))
+	if err != nil {
+		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
+		return
+	}
+	cfg := s.CfgStore.Cfg
+	cfg.GARoot = root
+	cfg.PythonPath = setupVenvPython(root)
+	if err := s.CfgStore.Save(cfg); err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	s.Svc.SetRoot(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython, s.CfgStore.Cfg.BufferLines)
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "venv": setupVenvStatus(root), "output": strings.TrimSpace(out), "config": s.CfgStore.Cfg})
+}
+
+func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	if h := ga.BuildHealth(root); !h.OK {
+		bad(w, 400, "GA root health check failed")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+	emit := func(ev setupStreamEvent) {
+		b, _ := json.Marshal(ev)
+		_, _ = w.Write(append(b, '\n'))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), setupCommandTimeout)
+	defer cancel()
+	python := pythonForSetup(root, s.CfgStore.Cfg)
+	emit(setupStreamEvent{Type: "start", Line: fmt.Sprintf("%s -m pip install -e .", python)})
+	code, err := runSetupCommandStreamFunc(ctx, root, emit, python, "-m", "pip", "install", "-e", ".")
+	if err != nil {
+		emit(setupStreamEvent{Type: "done", OK: false, Code: code, Error: err.Error()})
+		return
+	}
+	emit(setupStreamEvent{Type: "done", OK: true, Code: code})
+}
+
+func (s *Server) setupSmoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	h := ga.BuildHealth(root)
+	if !h.OK {
+		bad(w, 400, "GA root health check failed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	python := pythonForSetup(root, s.CfgStore.Cfg)
+	out, err := runSetupCommandOutputFunc(ctx, root, python, "-c", "import sys; print(sys.executable)")
+	if err != nil {
+		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "python": strings.TrimSpace(out), "health": h, "venv": setupVenvStatus(root)})
+}
+
+func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	h := ga.BuildHealth(root)
+	if !h.OK {
+		bad(w, 400, "GA root health check failed")
+		return
+	}
+	cfg := s.CfgStore.Cfg
+	cfg.GARoot = root
+	if py := setupVenvPython(root); strings.TrimSpace(cfg.PythonPath) == "" {
+		if _, err := os.Stat(py); err == nil {
+			cfg.PythonPath = py
+		}
+	}
+	cfg.BootstrapDone = true
+	if err := s.CfgStore.Save(cfg); err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	s.Svc.SetRoot(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython, s.CfgStore.Cfg.BufferLines)
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "health": h, "config": s.CfgStore.Cfg})
+}
+
 func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, 405, "method not allowed")
@@ -334,6 +761,103 @@ func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": h.OK, "root": abs, "health": h})
 }
 
+func (s *Server) setupPythonInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	if runtime.GOOS != "windows" {
+		bad(w, 400, "automatic Python installer is only supported on Windows")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), setupPythonInstallTimeout)
+	defer cancel()
+	pythonPath, out, err := runPythonInstallerFunc(ctx)
+	if err != nil {
+		bad(w, 500, strings.TrimSpace(out+": "+err.Error()))
+		return
+	}
+	if strings.TrimSpace(pythonPath) == "" {
+		bad(w, 500, "Python installer completed but python.exe was not found")
+		return
+	}
+	cfg := s.CfgStore.Cfg
+	cfg.PythonPath = strings.TrimSpace(pythonPath)
+	if err := s.CfgStore.Save(cfg); err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	s.Svc.SetRoot(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython, s.CfgStore.Cfg.BufferLines)
+	writeJSON(w, map[string]interface{}{"ok": true, "python": s.CfgStore.Cfg.EffectivePython, "output": strings.TrimSpace(out), "config": s.CfgStore.Cfg})
+}
+
+func runWindowsPythonInstaller(ctx context.Context) (string, string, error) {
+	installer, err := downloadPythonInstaller(ctx, defaultWindowsPythonURL)
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(installer)
+	targetDir := defaultWindowsPythonDir()
+	args := []string{"/quiet", "InstallAllUsers=0", "PrependPath=0", "Include_launcher=1", "Include_pip=1", "TargetDir=" + targetDir}
+	cmd := exec.CommandContext(ctx, installer, args...)
+	hideChildWindow(cmd)
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		return "", text, err
+	}
+	pythonPath := filepath.Join(targetDir, "python.exe")
+	if _, err := os.Stat(pythonPath); err != nil {
+		return "", text, err
+	}
+	return pythonPath, text, nil
+}
+
+func defaultWindowsPythonDir() string {
+	base := os.Getenv("LOCALAPPDATA")
+	if strings.TrimSpace(base) == "" {
+		if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+			base = dir
+		} else if home, err := os.UserHomeDir(); err == nil && home != "" {
+			base = filepath.Join(home, "AppData", "Local")
+		} else {
+			base = os.TempDir()
+		}
+	}
+	return filepath.Join(base, "Programs", "Python", "Python312")
+}
+
+func downloadPythonInstaller(ctx context.Context, installerURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, installerURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("download Python installer failed: %s", resp.Status)
+	}
+	f, err := os.CreateTemp("", "python-installer-*.exe")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	_, copyErr := io.Copy(f, resp.Body)
+	closeErr := f.Close()
+	if copyErr != nil {
+		os.Remove(path)
+		return "", copyErr
+	}
+	if closeErr != nil {
+		os.Remove(path)
+		return "", closeErr
+	}
+	return path, nil
+}
+
 func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, 405, "method not allowed")
@@ -344,47 +868,48 @@ func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	root := strings.TrimSpace(req.Path)
-	if root == "" {
-		bad(w, 400, "install path is required")
+	installDir := strings.TrimSpace(req.Path)
+	if installDir == "" {
+		bad(w, 400, "install directory is required")
 		return
 	}
-	abs, err := filepath.Abs(root)
+	parentAbs, err := filepath.Abs(installDir)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	if unsafeSetupPath(abs) {
-		bad(w, 400, "refusing to install GenericAgent into filesystem root")
+	if unsafeSetupPath(parentAbs) {
+		bad(w, 400, "refusing to install GenericAgent under filesystem root")
 		return
 	}
-	if _, err := os.Stat(filepath.Join(abs, "agentmain.py")); err == nil {
+	targetAbs := filepath.Join(parentAbs, "GenericAgent")
+	if _, err := os.Stat(filepath.Join(targetAbs, "agentmain.py")); err == nil {
 		bad(w, 409, "target already looks like a GenericAgent directory")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+	if err := os.MkdirAll(parentAbs, 0755); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), setupInstallCloneTimeout)
 	defer cancel()
-	out, err := runSetupClone(ctx, abs)
+	method, out, err := installGenericAgentSource(ctx, targetAbs)
 	if err != nil {
-		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
+		bad(w, 500, strings.TrimSpace(out))
 		return
 	}
-	h := ga.BuildHealth(abs)
+	h := ga.BuildHealth(targetAbs)
 	if !h.OK {
 		bad(w, 500, "clone completed but GenericAgent health check failed")
 		return
 	}
 	cfg := s.CfgStore.Cfg
-	cfg.GARoot = abs
+	cfg.GARoot = targetAbs
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "root": abs, "health": h})
+	writeJSON(w, map[string]interface{}{"ok": true, "root": targetAbs, "install_dir": parentAbs, "health": h, "method": method, "output": strings.TrimSpace(out)})
 }
 
 func (s *Server) autostartStatus(w http.ResponseWriter, r *http.Request) {

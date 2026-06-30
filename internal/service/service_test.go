@@ -175,3 +175,20 @@ func TestBuildServiceArgsIgnoresParamsForNonReflectService(t *testing.T) {
 		t.Fatalf("args=%q", joined)
 	}
 }
+
+func TestManagerPythonPrefersEffectivePythonOverVenv(t *testing.T) {
+	root := t.TempDir()
+	venvPython := filepath.Join(root, ".venv", "Scripts", "python.exe")
+	if err := os.MkdirAll(filepath.Dir(venvPython), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(venvPython, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	effective := filepath.Join(root, "managed-python.exe")
+	m := NewManager(root, 100)
+	m.SetRoot(root, effective, 100)
+	if got := m.python(); got != effective {
+		t.Fatalf("python()=%q, want effective python %q", got, effective)
+	}
+}

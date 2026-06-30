@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -45,16 +44,13 @@ func main() {
 		cfgStore.Cfg.Port = launch.Port
 	}
 	version.SetRepoURL(cfgStore.Cfg.UpdateRepoURL)
-	svc := service.NewManager(cfgStore.Cfg.GARoot, cfgStore.Cfg.BufferLines)
+	svc := service.NewManagerWithPython(cfgStore.Cfg.GARoot, cfgStore.Cfg.EffectivePython, cfgStore.Cfg.BufferLines)
 	models := modelconfig.NewStore(cwd)
 	static, err := fs.Sub(webFS, "web/dist")
 	if err != nil {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
-	petState := newPetActivityState()
-	srv.PetEvent = petState.handle
-	srv.PetSwitch = switchDesktopPet
 	addr := fmt.Sprintf("%s:%d", cfgStore.Cfg.Host, cfgStore.Cfg.Port)
 	url := "http://" + addr
 	server := newHTTPServer(addr, srv.Routes())
@@ -77,25 +73,11 @@ func main() {
 	if !launch.NoBrowser {
 		go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
 	}
-	stopPet := func() {}
-	if cfgStore.Cfg.DesktopPetDisabled {
-		log.Printf("desktop pet disabled by config")
-	} else {
-		if activePet := srv.ActivePetID(); activePet != "" {
-			if err := switchDesktopPet(activePet); err != nil {
-				log.Printf("load active desktop pet %q failed: %v", activePet, err)
-			}
-		}
-		stopPet = startDesktopPet(func() { openBrowser(url + "/chat") })
-	}
 	runTray(url,
 		func() { openBrowser(url) },
 		func() { openBrowser(url + "/chat") },
-		func() { showDesktopPet() },
-		func() { hideDesktopPet() },
 		func() { srv.StopManagedServices() },
 		func() {
-			stopPet()
 			srv.ShutdownCleanup()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
@@ -126,7 +108,7 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 func parseLaunchOptions() launchOptions {
-	headlessFlag := flag.Bool("headless", false, "run without browser, tray, or desktop pet; intended for Linux servers")
+	headlessFlag := flag.Bool("headless", false, "run without browser or tray; intended for Linux servers")
 	serverOnlyFlag := flag.Bool("server-only", false, "alias for --headless")
 	noBrowserFlag := flag.Bool("no-browser", false, "do not open the web UI automatically")
 	portFlag := flag.Int("port", 0, "override HTTP listen port for this launch (1-65535)")
@@ -187,83 +169,6 @@ func waitForShutdownSignal(server *http.Server, cleanup func()) {
 	_ = server.Shutdown(ctx)
 }
 
-var (
-	desktopPetAction         = setDesktopPetAction
-	desktopPetActionForTicks = setDesktopPetActionForTicks
-)
-
-type petActivityState struct {
-	mu      sync.Mutex
-	running map[string]bool
-}
-
-func newPetActivityState() *petActivityState {
-	return &petActivityState{running: map[string]bool{}}
-}
-
-func (p *petActivityState) handle(event string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	switch event {
-	case "chat:start":
-		p.markRunning("chat", true)
-		desktopPetAction(petActionRunning)
-	case "goal:start", "goal:active":
-		p.markRunning("goal", true)
-		desktopPetAction(petActionRunning)
-	case "react:start":
-		p.markRunning("react", true)
-		desktopPetAction(petActionRunning)
-	case "chat:done", "goal:review", "react:review":
-		p.markDomainDone(event)
-		p.restoreBaseLocked()
-		desktopPetActionForTicks(petActionReview, 30)
-	case "chat:cancel", "goal:stop", "react:stop":
-		p.markDomainDone(event)
-		p.restoreBaseLocked()
-		desktopPetActionForTicks(petActionWaiting, 20)
-	case "goal:idle":
-		p.markRunning("goal", false)
-		p.restoreBaseLocked()
-	case "service:start", "tmwebdriver:start":
-		desktopPetActionForTicks(petActionRunningRight, 18)
-	case "service:stop", "service:stop_all":
-		desktopPetActionForTicks(petActionRunningLeft, 18)
-	case "service:autostart", "tmwebdriver:ready":
-		desktopPetActionForTicks(petActionWaving, 20)
-	case "service:error", "react:error", "goal:error", "chat:error", "tmwebdriver:error":
-		p.markDomainDone(event)
-		p.restoreBaseLocked()
-		desktopPetActionForTicks(petActionFailed, 24)
-	}
-}
-
-func (p *petActivityState) markRunning(domain string, running bool) {
-	if running {
-		p.running[domain] = true
-	} else {
-		delete(p.running, domain)
-	}
-}
-
-func (p *petActivityState) markDomainDone(event string) {
-	for _, domain := range []string{"chat", "goal", "react"} {
-		if len(event) >= len(domain) && event[:len(domain)] == domain {
-			p.markRunning(domain, false)
-			return
-		}
-	}
-}
-
-func (p *petActivityState) restoreBaseLocked() {
-	if len(p.running) > 0 {
-		desktopPetAction(petActionRunning)
-		return
-	}
-	desktopPetAction(petActionIdle)
-}
-
 func appRoot() (string, error) {
 	wd, wdErr := os.Getwd()
 	exe, err := os.Executable()
@@ -276,8 +181,8 @@ func appRoot() (string, error) {
 	if exe != "" {
 		exeDir := filepath.Dir(exe)
 		// `go run` executes from a temporary go-build directory. Keep runtime
-		// state such as config.local.json and pets.local.json anchored to the
-		// caller's working tree instead of the ephemeral compiled exe path.
+		// state such as config.local.json anchored to the caller's working tree
+		// instead of the ephemeral compiled exe path.
 		if wdErr == nil && wd != "" && strings.Contains(strings.ToLower(exeDir), string(filepath.Separator)+"go-build") {
 			return wd, nil
 		}

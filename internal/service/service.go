@@ -35,30 +35,39 @@ type runningProc struct {
 }
 
 type Manager struct {
-	GARoot      string
-	BufferLines int
-	mu          sync.Mutex
-	procs       map[string]*runningProc
-	buffers     map[string][]string
+	GARoot          string
+	EffectivePython string
+	BufferLines     int
+	mu              sync.Mutex
+	procs           map[string]*runningProc
+	buffers         map[string][]string
 }
 
 func NewManager(gaRoot string, bufferLines int) *Manager {
+	return NewManagerWithPython(gaRoot, "", bufferLines)
+}
+
+func NewManagerWithPython(gaRoot string, effectivePython string, bufferLines int) *Manager {
 	if bufferLines <= 0 {
 		bufferLines = 1000
 	}
-	return &Manager{GARoot: gaRoot, BufferLines: bufferLines, procs: map[string]*runningProc{}, buffers: map[string][]string{}}
+	return &Manager{GARoot: gaRoot, EffectivePython: strings.TrimSpace(effectivePython), BufferLines: bufferLines, procs: map[string]*runningProc{}, buffers: map[string][]string{}}
 }
 
-func (m *Manager) SetRoot(root string, bufferLines int) {
+func (m *Manager) SetRoot(root string, effectivePython string, bufferLines int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.GARoot = root
+	m.EffectivePython = strings.TrimSpace(effectivePython)
 	if bufferLines > 0 {
 		m.BufferLines = bufferLines
 	}
 }
 
 func (m *Manager) python() string {
+	if py := strings.TrimSpace(m.EffectivePython); py != "" {
+		return py
+	}
 	cands := []string{}
 	if runtime.GOOS == "windows" {
 		cands = append(cands, filepath.Join(m.GARoot, ".venv", "Scripts", "python.exe"), filepath.Join(m.GARoot, "venv", "Scripts", "python.exe"))

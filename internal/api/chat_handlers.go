@@ -322,7 +322,6 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"reasoning_effort": cs.Settings.ReasoningEffort,
 		"ga_root":          s.CfgStore.Cfg.GARoot,
 	}
-	s.NotifyPetEvent("chat:start")
 	go s.runChatWorker(sid, cs, cmdReq)
 	s.streamChatRun(w, r, sid, 0)
 }
@@ -381,7 +380,6 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	} else if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
-	s.NotifyPetEvent("chat:cancel")
 	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
 }
 

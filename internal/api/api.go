@@ -34,8 +34,6 @@ type Server struct {
 	Models      *modelconfig.Store
 	Static      fs.FS
 	ReactApp    *reactAppBridge
-	PetEvent    func(string)
-	PetSwitch   func(string) error
 	ChatMu      sync.Mutex
 	ChatRuns    map[string]*chatRun
 	ChatWorkers map[string]*chatWorker
@@ -43,13 +41,6 @@ type Server struct {
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
 	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}}
-}
-
-func (s *Server) NotifyPetEvent(event string) {
-	if s == nil || s.PetEvent == nil || strings.TrimSpace(event) == "" {
-		return
-	}
-	s.PetEvent(event)
 }
 
 func (s *Server) Routes() http.Handler {
@@ -70,12 +61,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/tmwebdriver/status", s.tmwebdriverStatus)
 	mux.HandleFunc("/api/tmwebdriver/repair", s.requireDangerousConfirm(s.tmwebdriverRepair))
 	mux.HandleFunc("/api/tmwebdriver/install-deps", s.requireDangerousConfirm(s.tmwebdriverInstallDeps))
-	mux.HandleFunc("/api/hatch-pet/status", s.hatchPetStatus)
-	mux.HandleFunc("/api/hatch-pet/export", s.requireDangerousConfirm(s.hatchPetExport))
-	mux.HandleFunc("/api/hatch-pet/install-memory", s.requireDangerousConfirm(s.hatchPetInstallMemory))
-	mux.HandleFunc("/api/hatch-pet/open", s.requireDangerousConfirm(s.hatchPetOpen))
-	mux.HandleFunc("/api/pets", s.petsHandler)
-	mux.HandleFunc("/api/pets/active", s.requireDangerousConfirm(s.petsActiveHandler))
 	mux.HandleFunc("/api/files/list", s.filesList)
 	mux.HandleFunc("/api/files/read", s.filesRead)
 	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.filesWrite))
@@ -97,10 +82,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.goalsDelete))
 	mux.HandleFunc("/api/goals/output", s.goalsOutput)
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
+	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
 	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
+	mux.HandleFunc("/api/setup/python/install", s.requireDangerousConfirm(s.setupPythonInstall))
+	mux.HandleFunc("/api/setup/venv/create", s.requireDangerousConfirm(s.setupVenvCreate))
+	mux.HandleFunc("/api/setup/deps/install", s.requireDangerousConfirm(s.setupDepsInstall))
+	mux.HandleFunc("/api/setup/smoke", s.requireDangerousConfirm(s.setupSmoke))
+	mux.HandleFunc("/api/setup/complete", s.requireDangerousConfirm(s.setupComplete))
 	mux.HandleFunc("/api/autostart/status", s.autostartStatus)
 	mux.HandleFunc("/api/autostart/enable", s.requireDangerousConfirm(s.autostartEnable))
 	mux.HandleFunc("/api/autostart/disable", s.requireDangerousConfirm(s.autostartDisable))
@@ -167,7 +158,12 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
 	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},
-	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone and changes configured GA root"},
+	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone or downloads the GenericAgent source archive and changes configured GA root"},
+	{Path: "/api/setup/python/install", Level: "dangerous", Action: "install_python", Reason: "downloads and runs the official Windows Python installer and persists the Python path"},
+	{Path: "/api/setup/venv/create", Level: "dangerous", Action: "create_venv", Reason: "creates or updates a Python virtual environment under the configured GA root"},
+	{Path: "/api/setup/deps/install", Level: "dangerous", Action: "install_dependencies", Reason: "executes pip install in the configured GA root and streams process output"},
+	{Path: "/api/setup/smoke", Level: "dangerous", Action: "run_setup_smoke", Reason: "executes Python in the configured GA root to verify bootstrap readiness"},
+	{Path: "/api/setup/complete", Level: "reversible", Action: "complete_bootstrap", Reason: "marks first-run bootstrap complete and persists GA root/Python settings"},
 	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_pull", Reason: "executes git pull --ff-only in GA root"},
 	{Path: "/api/version/update", Level: "dangerous", Action: "self_update", Reason: "downloads and applies Admin-Go release"},
 	{Path: "/api/services/start", Level: "dangerous", Action: "start_process", Reason: "starts GA Python service process"},
@@ -195,10 +191,6 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
-	{Path: "/api/hatch-pet/export", Level: "dangerous", Action: "export_hatch_pet", Reason: "writes embedded hatch-pet toolchain files to the configured GA tools directory"},
-	{Path: "/api/hatch-pet/install-memory", Level: "dangerous", Action: "install_pet_memory_sops", Reason: "writes pet SOPs and updates global_mem_insight.txt under the configured GA memory directory"},
-	{Path: "/api/hatch-pet/open", Level: "reversible", Action: "open_hatch_pet_directory", Reason: "opens the configured hatch-pet tool directory in the desktop shell"},
-	{Path: "/api/pets/active", Level: "reversible", Action: "set_active_pet", Reason: "changes the active desktop pet persisted in GA Admin config"},
 }
 
 func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
@@ -429,18 +421,15 @@ func (s *Server) tmwebdriverRepair(w http.ResponseWriter, r *http.Request) {
 	}
 	before := s.buildTMWebDriverStatus()
 	if before.PortListening {
-		s.NotifyPetEvent("tmwebdriver:ready")
 		writeJSON(w, tmwebdriverRepairResponse{Started: false, Status: before, Message: "18766 master 已在监听，无需重复启动。"})
 		return
 	}
 	if !before.PythonOK {
-		s.NotifyPetEvent("tmwebdriver:error")
 		writeJSON(w, tmwebdriverRepairResponse{Started: false, Status: before, Message: "TMWebDriver Python 依赖缺失，请先执行：" + before.InstallCommand})
 		return
 	}
 	pid, cmdline, err := s.startTMWebDriverMaster()
 	if err != nil {
-		s.NotifyPetEvent("tmwebdriver:error")
 		bad(w, 500, err.Error())
 		return
 	}
@@ -453,9 +442,7 @@ func (s *Server) tmwebdriverRepair(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if after.PortListening {
-		s.NotifyPetEvent("tmwebdriver:start")
 	} else {
-		s.NotifyPetEvent("tmwebdriver:error")
 	}
 	writeJSON(w, tmwebdriverRepairResponse{Started: true, PID: pid, Command: cmdline, Status: after, Message: "已启动 TMWebDriver master；若仍未 OK，请确认浏览器已打开且扩展已安装。"})
 }
@@ -955,11 +942,9 @@ func (s *Server) reactAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.ReactApp.start(s.CfgStore.Cfg.GARoot); err != nil {
-		s.NotifyPetEvent("react:error")
 		bad(w, 500, err.Error())
 		return
 	}
-	s.NotifyPetEvent("react:start")
 	writeJSON(w, s.ReactApp.snapshot())
 }
 func (s *Server) reactAppStop(w http.ResponseWriter, r *http.Request) {
@@ -968,11 +953,9 @@ func (s *Server) reactAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.ReactApp.stop(); err != nil {
-		s.NotifyPetEvent("react:error")
 		bad(w, 500, err.Error())
 		return
 	}
-	s.NotifyPetEvent("react:stop")
 	writeJSON(w, s.ReactApp.snapshot())
 }
 func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
@@ -996,7 +979,6 @@ func (s *Server) StopManagedServices() {
 		return
 	}
 	s.Svc.StopAll()
-	s.NotifyPetEvent("service:stop_all")
 }
 
 // ShutdownCleanup stops child processes before the Admin process exits.

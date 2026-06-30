@@ -70,11 +70,9 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	svc, err := s.Svc.StartWithParams(q.Name, q.Params)
 	if err != nil {
-		s.NotifyPetEvent("service:error")
 		bad(w, 404, err.Error())
 		return
 	}
-	s.NotifyPetEvent("service:start")
 	writeJSON(w, svc)
 }
 
@@ -89,11 +87,9 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Svc.Stop(q.Name); err != nil {
-		s.NotifyPetEvent("service:error")
 		bad(w, 400, err.Error())
 		return
 	}
-	s.NotifyPetEvent("service:stop")
 	svc, _ := s.Svc.Find(q.Name)
 	writeJSON(w, svc)
 }
@@ -104,7 +100,6 @@ func (s *Server) stopAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Svc.StopAll()
-	s.NotifyPetEvent("service:stop_all")
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -140,11 +135,9 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.ServiceAutostart = next
 	if err := s.CfgStore.Save(cfg); err != nil {
-		s.NotifyPetEvent("service:error")
 		bad(w, 500, err.Error())
 		return
 	}
-	s.NotifyPetEvent("service:autostart")
 	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart()})
 }
 
@@ -177,11 +170,9 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.ServiceModels = models
 	if err := s.CfgStore.Save(cfg); err != nil {
-		s.NotifyPetEvent("service:error")
 		bad(w, 500, err.Error())
 		return
 	}
-	s.NotifyPetEvent("service:model")
 	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart()})
 }
 

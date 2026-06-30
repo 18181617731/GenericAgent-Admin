@@ -61,8 +61,6 @@ const mutatingMethod = /method:\s*['"](?:POST|PUT|DELETE)['"]/
 test('frontend dangerous-route list is derived from backend confirm and header gates', () => {
   assert.ok(protectedMutatingRoutes.length > 20, 'expected many backend dangerous routes')
   assert.ok(protectedMutatingRoutes.includes('/api/models/export'), 'models export backend route should be discovered')
-  assert.ok(protectedMutatingRoutes.includes('/api/pets/active'), 'pets active backend route should be discovered')
-  assert.ok(protectedMutatingRoutes.includes('/api/hatch-pet/open'), 'hatch-pet open backend route should be discovered')
   assert.ok(dangerousHeaderRoutes.includes('/api/models/raw'), 'models raw header-gated route should be discovered')
   assert.ok(dangerousHeaderRoutes.includes('/api/models/import-mykey'), 'mykey import reveal/save header-gated route should be discovered')
 })
@@ -96,8 +94,6 @@ test('frontend sends dangerous header for every protected mutating API route it 
 
   assert.deepEqual(misses, [])
   assert.ok(seen.get('/api/models/export') > 0, 'models export call should be covered')
-  assert.ok(seen.get('/api/pets/active') > 0, 'pets active call should be covered')
-  assert.ok(seen.get('/api/hatch-pet/open') > 0, 'hatch-pet open call should be covered')
   assert.ok(seen.get('/api/ga/processes/kill') > 0, 'process kill call should be covered')
   assert.ok(seen.get('/api/ga/processes/adopt') > 0, 'process adopt call should be covered')
 })

@@ -46,11 +46,9 @@ func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, err := ga.StartGoal(s.CfgStore.Cfg.GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: s.CfgStore.Cfg.PythonPath, Hive: req.Hive})
 	if err != nil {
-		s.NotifyPetEvent("goal:error")
 		bad(w, 400, err.Error())
 		return
 	}
-	s.NotifyPetEvent("goal:start")
 	writeJSON(w, map[string]interface{}{"ok": true, "goal": meta})
 }
 
@@ -76,11 +74,8 @@ func (s *Server) goalsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if running {
-		s.NotifyPetEvent("goal:active")
 	} else if reviewable {
-		s.NotifyPetEvent("goal:review")
 	} else {
-		s.NotifyPetEvent("goal:idle")
 	}
 	writeJSON(w, map[string]interface{}{"goals": items})
 }
@@ -100,11 +95,9 @@ func (s *Server) goalsStop(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, err := ga.StopGoal(s.CfgStore.Cfg.GARoot, req.ID, req.PID)
 	if err != nil {
-		s.NotifyPetEvent("goal:error")
 		bad(w, 400, err.Error())
 		return
 	}
-	s.NotifyPetEvent("goal:stop")
 	writeJSON(w, map[string]interface{}{"ok": true, "goal": meta})
 }
 

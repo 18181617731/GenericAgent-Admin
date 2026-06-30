@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Heart, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, XCircle, Download, Moon, Sun } from 'lucide-react'
+import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, XCircle, Download, Moon, Sun } from 'lucide-react'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
@@ -14,6 +14,7 @@ import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
 import { ErrorBoundary, RouteFallback } from './components/feedback'
 import { ProcessGuard } from './components/ProcessGuard'
+import SetupWizard from './components/SetupWizard.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
@@ -28,8 +29,8 @@ const I18N = {
   zh: {
     appName: 'GA Admin', tagline: 'GenericAgent 生命周期控制面', root: 'GenericAgent 根目录', setupTitle: '首次配置 GenericAgent', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', validateRoot: '验证并使用', installGA: '安装 GA', installPath: '安装目录', setupOk: 'GA 路径已配置', installDone: 'GA 已安装并配置', browse: '选择目录', checkEnv: '检查 Python / Git', envReady: '环境已就绪', envMissing: '环境缺失', save: '保存', refresh: '刷新', busy: '执行中', ready: '就绪', error: '错误', empty: '暂无', enabled: '启用', disabled: '停用', start: '启动', stop: '停止', running: '运行中', stopped: '已停止', language: '语言', copy: '复制', clear: '清空', delete: '删除', show: '显示', hide: '隐藏', search: '搜索', read: '读取', create: '创建', remove: '删除', backup: '写操作会自动备份', autostart: '开机自启', enableAutostart: '开启自启', disableAutostart: '关闭自启', unsupported: '不支持',
     serviceDesc: { scheduler: '定时任务调度器：每 120 秒扫描 sche_tasks/ 中的任务，按 once/daily/weekly/every_Nh 等周期到期触发，并归档 L4 会话记录。', autonomous: '自主待机驱动：每 30 分钟检测一次，当用户离开超过 30 分钟，便提示智能体按自动化 SOP 自行推进任务。' },
-    nav: { overview: '总览', chat: '对话', control: '控制面', files: '文件', tasks: '任务', pets: '桌宠', memory: '记忆', channels: '通道', autonomous: '自主进化', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
-    desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', control: '运行前检查、能力地图、风险摘要与最近报告。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', pets: 'GA Admin 内置桌宠工具链：安装 SOP、导出到 GA tools/hatch-pet，不依赖 Codex 目录。', tasks: '普通会话、任务文件、批处理入口、任务型服务与 sche_tasks 定时任务。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '反思、自主运行、Goal Mode 与团队 Worker。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '读取/预览/写回 GA mykey.py 模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
+    nav: { overview: '总览', chat: '对话', control: '控制面', files: '文件', tasks: '任务', memory: '记忆', channels: '通道', autonomous: '自主进化', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
+    desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', control: '运行前检查、能力地图、风险摘要与最近报告。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '普通会话、任务文件、批处理入口、任务型服务与 sche_tasks 定时任务。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '反思、自主运行、Goal Mode 与团队 Worker。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '读取/预览/写回 GA mykey.py 模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
     cards: { processes: '进程', running: '运行中', stopped: '已停止', memoryLayers: '记忆层', sopTools: 'SOP/工具', schedule: '定时任务', enabledTasks: '已启用', reports: '报告', coreFiles: '核心文件', reflect: '反思脚本', health: 'GA 健康', capabilities: '能力', risks: '风险', version: '版本管理' },
     lists: { serviceGroups: '服务域', coreFiles: '核心文件', reflect: 'Reflect / Autonomous', frontends: '前端 / 通道', memory: '记忆层级', sop: 'SOP 与工具', taskServices: '任务服务', frontendServices: '前端服务', reflectServices: '反思服务', reflectScripts: '反思脚本', scheduledTasks: '定时任务', recentReports: '最近报告', processes: '进程', generatedPreview: '生成预览', riskHints: '接管提示', autostart: '开机自启', capabilities: '能力地图', readiness: '运行前检查', fileList: '文件列表', filePreview: '文件预览', searchResults: '搜索结果', editor: '编辑器' },
     hints: { rootSaved: 'GA 根目录已保存', fileSaved: '文件已保存并备份旧文件', taskSaved: '任务已保存并备份旧文件', taskDeleted: '任务已删除并备份', taskToggled: '任务状态已更新', modelsSaved: 'mykey.py 已备份并写回', savedSecret: '已保存；输入新值可替换', secret: 'API Key / Token', noFrontend: '未发现前端服务', noReflect: '未发现 reflect 服务', noTasks: '暂无 sche_tasks/*.json', noLogs: '暂无日志', previewHelp: '点击“预览”查看配置；点击“写回 mykey.py”会先备份再覆盖 GA 的 mykey.py。', modelSource: '来源', secretHidden: '已隐藏真实密钥', addProfile: '新增 Profile', preview: '预览', writeMykey: '写回 mykey.py', filePath: '相对路径', searchText: '搜索文本', tailLines: '尾部行数', newTaskId: 'new_task', jsonHelp: 'JSON 需为对象；保存/删除会生成 .bak 时间戳。', autostartEnabled: '已开启：用户登录后自动启动 GA Admin。', autostartDisabled: '未开启：需要手动启动 GA Admin。', autostartUnsupported: '当前平台暂不支持自动注册。', autostartChanged: '开机自启状态已更新', goalObjectiveRequired: '目标不能为空', goalObjectiveTooLarge: '目标超过 16384 字节', goalBudgetInteger: '预算分钟必须是整数', goalBudgetPositive: '预算分钟必须大于 0', goalBudgetTooLarge: '预算分钟不能超过 43200', goalTurnsInteger: '最大轮次必须是整数', goalTurnsNonNegative: '最大轮次不能为负数', goalTurnsTooLarge: '最大轮次不能超过 10000', goalLLMInteger: 'LLM # 必须是整数', goalLLMNonNegative: 'LLM # 不能为负数', goalPythonHelp: 'Python 留空时自动选择：GA 根目录 .venv、venv、uv 缓存解释器、PATH python/python3；填写后按该路径启动并记录到 Goal 状态。', goalHiveHelp: 'Hive 模式会按 GA 官方逻辑启动 Goal Master、临时 BBS 与一个 worker；GA Admin 只做上层管理。', goalStarted: 'Goal 已启动', goalStopped: 'Goal 已停止', goalDeleted: 'Goal 已删除', goalDeleteConfirm: '确定删除 Goal {id}？会删除状态和日志文件；运行中的目标请先停止。', goalDeleteRunning: '运行中的 Goal 不能删除，请先停止。', goalStopConfirm: '确认停止 Goal {id}？将按可用控制级别停止。', goalStopExactConfirm: '确认停止 Admin Goal {id}？将仅终止该 Goal 记录的精确 PID {pid}。', goalStopSoftConfirm: '确认软停止外部 Goal {id}？不会杀进程，只写入状态文件 stopped_by_admin，让 Goal 循环自行退出。', goalOutputTruncated: '仅显示输出尾部，前面内容已截断', goalOutputCapped: '请求字节数超过后端上限，已按上限读取', goalOutputDefault: '未指定读取字节数，已使用默认值', goalOutputBytesInteger: '输出字节数必须是整数', goalOutputBytesNonNegative: '输出字节数不能为负数', goalOutputBytesTooLarge: '输出字节数不能超过 1048576', goalOutputCopied: '输出已复制', goalOutputCleared: '输出已清空', goalOutputLogMissing: '日志文件尚未创建，当前无可读取输出' },
@@ -42,7 +43,7 @@ const I18N = {
   en: {
     appName: 'GA Admin', tagline: 'GenericAgent lifecycle control plane', root: 'GenericAgent root', setupTitle: 'First-time GenericAgent setup', setupDesc: 'Select an existing GA root, or install GA into a new directory.', validateRoot: 'Validate & use', installGA: 'Install GA', installPath: 'Install path', setupOk: 'GA root configured', installDone: 'GA installed and configured', browse: 'Choose directory', checkEnv: 'Check Python / Git', envReady: 'Environment ready', envMissing: 'Environment missing', save: 'Save', refresh: 'Refresh', busy: 'Busy', ready: 'Ready', error: 'Error', empty: 'Empty', enabled: 'Enabled', disabled: 'Disabled', start: 'Start', stop: 'Stop', running: 'Running', stopped: 'Stopped', language: 'Language', copy: 'Copy', clear: 'Clear', delete: 'Delete', show: 'Show', hide: 'Hide', search: 'Search', read: 'Read', create: 'Create', remove: 'Delete', backup: 'writes create backups', autostart: 'Autostart', enableAutostart: 'Enable autostart', disableAutostart: 'Disable autostart', unsupported: 'Unsupported',
     serviceDesc: { scheduler: 'Scheduled-task runner: scans sche_tasks/ every 120s and fires tasks when their once/daily/weekly/every_Nh cadence is due, also archiving L4 session logs.', autonomous: 'Idle autonomy driver: checks every 30 min and, once the user has been away for over 30 min, prompts the agent to advance tasks on its own per the automation SOP.' },
-    nav: { overview: 'Overview', chat: 'Chat', control: 'Control', files: 'Files', tasks: 'Tasks', pets: 'Pets', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', schedule: 'Schedule', goals: 'Hive Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
+    nav: { overview: 'Overview', chat: 'Chat', control: 'Control', files: 'Files', tasks: 'Tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', schedule: 'Schedule', goals: 'Hive Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
     desc: { overview: 'Understand and take over GA lifecycle by native domains.', chat: 'GA native conversation, uploads and streaming UI migrated from reactapp.', control: 'Readiness, capability map, risks and recent reports.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Conversations, task files, batch entrypoints and task services.', memory: 'Layered memory, SOPs and utility indexes.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Reflection, autonomous runs, Goal Mode and team workers.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Configure GA root, Python, chat data directory, and Chat Python proxy.', logs: 'Process state and output logs.' },
     cards: { processes: 'Processes', running: 'Running', stopped: 'Stopped', memoryLayers: 'Memory layers', sopTools: 'SOP/tools', schedule: 'Scheduled jobs', enabledTasks: 'Enabled', reports: 'Reports', coreFiles: 'Core files', reflect: 'Reflect scripts', health: 'GA health', capabilities: 'Capabilities', risks: 'Risks' },
     lists: { serviceGroups: 'Service domains', coreFiles: 'Core files', reflect: 'Reflect / Autonomous', frontends: 'Frontends / Channels', memory: 'Memory layers', sop: 'SOPs and tools', taskServices: 'Task services', frontendServices: 'Frontend services', reflectServices: 'Reflect services', reflectScripts: 'Reflect scripts', scheduledTasks: 'Scheduled jobs', recentReports: 'Recent reports', processes: 'Processes', generatedPreview: 'Generated preview', riskHints: 'Takeover hints', autostart: 'Autostart', capabilities: 'Capability map', readiness: 'Readiness', fileList: 'Files', filePreview: 'Preview', searchResults: 'Search results', editor: 'Editor' },
@@ -142,11 +143,11 @@ export default function App() {
       const play = () => {
         tl = gsap.timeline({ defaults: { ease: 'power2.out', duration: 0.28 } })
         tl.from(q('.main > header'), { y: 8, autoAlpha: 0, clearProps: 'transform,opacity,visibility' })
-          .from(q('.stats .stat, .panel, .workspace, .logs-layout, .goals-page, .pets-page, .settings-page'), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
+          .from(q('.stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page'), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
       }
       const raf = window.requestAnimationFrame(play)
       const guard = window.setTimeout(() => {
-        gsap.set(q('.main > header, .stats .stat, .panel, .workspace, .logs-layout, .goals-page, .pets-page, .settings-page'), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
+        gsap.set(q('.main > header, .stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page'), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
       }, 900)
       return () => { window.cancelAnimationFrame(raf); window.clearTimeout(guard); tl?.kill() }
     }, appScope)
@@ -532,9 +533,10 @@ export default function App() {
 
   const needsSetup = !!health && !health?.ok
   if (needsSetup) {
-    const healthErrors = Array.isArray(health?.errors) ? health.errors : []
-    const healthWarnings = Array.isArray(health?.warnings) ? health.warnings : []
-    return <div className="setup-shell"><div className="setup-card"><div className="brand setup-brand"><Bot/><div><h1>{t.setupTitle}</h1><p>{t.setupDesc}</p></div></div>{(healthErrors.length > 0 || healthWarnings.length > 0) && <div className="health-summary" aria-live="polite">{healthErrors.length > 0 && <div><strong>{t.error}</strong><ul>{healthErrors.map(item => <li key={`err-${item}`}>{item}</li>)}</ul></div>}{healthWarnings.length > 0 && <div><strong>{t.cards.health}</strong><ul>{healthWarnings.map(item => <li key={`warn-${item}`}>{item}</li>)}</ul></div>}</div>}<div className="setup-env"><button className="secondary" onClick={checkSetupEnv} disabled={busy}>{t.checkEnv}</button>{setupEnv?.tools?.map(tool => <span key={tool.name} className={tool.ok ? 'ok' : 'err'} title={[tool.path, tool.version, tool.error].filter(Boolean).join('\n')}>{tool.ok ? '✓' : '×'} {tool.name}</span>)}</div><label>{t.root}<div className="setup-path-row"><input value={root} onChange={e=>setRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('root')} disabled={busy}>{t.browse}</button></div></label><button onClick={validateSetupRoot} disabled={busy || !root}>{busy ? t.busy : t.validateRoot}</button><div className="setup-divider"><span>或</span></div><label>{t.installPath}<div className="setup-path-row"><input value={installRoot} onChange={e=>setInstallRoot(e.target.value)} placeholder="C:\\Users\\...\\GenericAgent"/><button className="secondary" onClick={()=>browseSetupDir('install')} disabled={busy}>{t.browse}</button></div></label><button className="secondary" onClick={installGA} disabled={busy || !(installRoot || root)}>{t.installGA}</button>{msg && <div className="message">{msg}</div>}<p className="setup-note">git clone https://github.com/lsdefine/GenericAgent</p></div></div>
+    return <SetupWizard initialRoot={root} onComplete={(nextCfg) => {
+      if (nextCfg?.ga_root) setRoot(nextCfg.ga_root)
+      load()
+    }} />
   }
 
   return <>
@@ -688,12 +690,11 @@ export default function App() {
           </Panel>
         </div>}
       </section>}
-      {tab==='pets' && <PetsPage />}
       {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
       {tab==='autonomous' && <section><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
-      {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><div className="settings-block"><label>斜杠命令列表</label><p className="muted">在独立的 Chat 页面可管理命令。此处仅展示已配置的命令列表。</p>{(cfg?.slash_commands||[]).length > 0 ? (cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span className="muted">{item.desc}</span></div>)) : <p className="muted">暂无配置命令</p>}</div></Panel><HatchPetSettings /></section>}
+      {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><div className="settings-block"><label>斜杠命令列表</label><p className="muted">在独立的 Chat 页面可管理命令。此处仅展示已配置的命令列表。</p>{(cfg?.slash_commands||[]).length > 0 ? (cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span className="muted">{item.desc}</span></div>)) : <p className="muted">暂无配置命令</p>}</div></Panel></section>}
       {tab==='models' && <Models t={t} profiles={profiles} setProfiles={setProfiles} patchProfile={patchProfile} importModels={importModels} previewModels={previewModels} saveModels={saveModels} discoverModels={discoverModels} modelPreview={modelPreview} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page"><div className="logs-layout"><Panel title={t.lists.processes} className="logs-side"><div className="logs-toolbar"><label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label><button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button></div><div className="logs-service-list">{services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}><span className={s.running?'dot running':'dot'}></span><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></button>)}</div></Panel><Panel title={`Logs · ${selected || '-'}`} className="log-panel"><div className="log-head"><div>{selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}<span className="log-count">{logs.length} lines · UTF-8</span></div><div className="actions"><button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button><button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button></div></div><pre className="log-view">{logs.join('\n') || t.hints.noLogs}</pre></Panel></div></section>}        </Suspense>
       </ErrorBoundary>
@@ -794,86 +795,4 @@ export function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutos
   </section>
 }
 
-function PetsPage() {
-  const [catalog, setCatalog] = useState(null)
-  const [cfg, setCfg] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState('')
-  const loadPets = async () => {
-    try { const d = await api('/api/pets'); setCatalog(d); return d }
-    catch (e) { setMsg(`读取形象列表失败：${e.message}`); return null }
-  }
-  const loadConfig = async () => {
-    try { const d = await api('/api/config'); setCfg(d); return d }
-    catch (e) { setMsg(`读取桌宠启动设置失败：${e.message}`); return null }
-  }
-  useEffect(() => { loadPets(); loadConfig() }, [])
-  const switchPet = async (petId) => {
-    if (!confirmDanger('pets-active', '立即切换 Windows 桌面宠物，并写入 pets.local.json？')) return
-    setBusy(true); setMsg('正在切换桌宠形象…')
-    try {
-      const d = await api('/api/pets/active', { dangerous:true, method:'POST', body: JSON.stringify({ pet_id: petId }) })
-      setCatalog(prev => ({ ...(prev || {}), active_pet_id: d.active_pet_id }))
-      setMsg('已切换当前桌面形象')
-    } catch(e) { setMsg(`切换失败：${e.message}`) } finally { setBusy(false) }
-  }
-  const savePetDisabled = async (disabled) => {
-    if (!cfg) return
-    if (!confirmDanger('pet-startup-config', disabled ? '关闭桌宠启动并保存配置？' : '开启桌宠启动并保存配置？')) return
-    setBusy(true); setMsg(disabled ? '正在关闭桌宠启动…' : '正在开启桌宠启动…')
-    try {
-      const next = { ...cfg, desktop_pet_disabled: disabled }
-      const saved = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify(next) })
-      setCfg(saved)
-      setMsg(disabled ? '已设置：下次启动不启动桌宠、不创建窗口。当前已运行的桌宠需重启 GA Admin 后生效。' : '已设置：下次启动会创建并显示桌宠。')
-    } catch(e) { setMsg(`保存桌宠启动设置失败：${e.message}`) } finally { setBusy(false) }
-  }
-  const pets = catalog?.pets || []
-  const active = catalog?.active_pet_id
-  return <section className="pets-page">
-    <Panel title="桌宠形象库" className="pet-manager-card"><div className="pet-manager-head"><div><p className="muted">管理 GA Admin 内置人物/宠物形象。点击“设为当前”会立即切换 Windows 桌面宠物，并把 active pet 写入 pets.local.json。</p>{catalog?.description && <small>{catalog.description}</small>}</div><button onClick={() => { loadPets(); loadConfig() }} disabled={busy}><RefreshCw size={15}/>刷新</button></div><div className="pet-startup-setting"><label><input type="checkbox" checked={!!cfg?.desktop_pet_disabled} disabled={busy || !cfg} onChange={e => savePetDisabled(e.target.checked)}/> 关闭桌宠启动</label><small>开启后下次启动 GA Admin 不创建桌宠窗口；关了就是关了。</small></div>{msg && <p className="muted">{msg}</p>}<div className="pet-grid">{pets.length ? pets.map(p => <article key={p.id} className={`pet-card ${active === p.id ? 'active' : ''}`}><div className="pet-preview"><img src={p.spritesheet || p.manifest} alt={p.name || p.id}/></div><div className="pet-card-body"><div className="pet-title"><b>{p.name || p.id}</b>{active === p.id && <span className="badge ok">当前</span>}</div><p>{p.description || 'GA Admin desktop pet asset'}</p><small>{p.id} · {p.frame_width || 192}×{p.frame_height || 208} · {p.columns || 8}×{p.rows || 9}</small><button disabled={busy || active === p.id} onClick={() => switchPet(p.id)}>{active === p.id ? '已启用' : '设为当前'}</button></div></article>) : <p className="muted">暂无宠物资产。请先生成并写入 web/public/ga-admin-pets/pets.json。</p>}</div></Panel>
-    <HatchPetSettings />
-  </section>
-}
-
-function HatchPetSettings() {
-  const [status, setStatus] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState('')
-  const refresh = async () => {
-    try { const d = await api('/api/hatch-pet/status'); setStatus(d); return d }
-    catch (e) { setStatus({ error: e.message }); return null }
-  }
-  useEffect(() => { refresh() }, [])
-  const installToolchain = async () => {
-    if (!confirmDanger('hatch-pet-export', '导出/覆盖 GA Admin 内置 hatch-pet 工具链到 GA 根目录？')) return
-    setBusy(true); setMsg('正在安装 GA Admin 内置 hatch-pet 工具链…')
-    try {
-      const d = await api('/api/hatch-pet/export', { dangerous:true, method:'POST', body: '{}' })
-      setStatus(d); setMsg(`已安装到 ${d.export_path || d.default_export_dir || d.path || 'GA tools/hatch-pet'}`)
-    } catch(e) { setMsg(`安装失败：${e.message}`) } finally { setBusy(false) }
-  }
-  const openExportDir = async () => {
-    if (!confirmDanger('hatch-pet-open', '请求系统打开 hatch-pet 工具目录？')) return
-    setBusy(true); setMsg('正在打开导出目录…')
-    try { await api('/api/hatch-pet/open', { dangerous:true, method:'POST', body: '{}' }); setMsg('已请求系统打开导出目录') }
-    catch(e) { setMsg(`打开失败：${e.message}`) } finally { setBusy(false) }
-  }
-  const installMemory = async () => {
-    if (!confirmDanger('hatch-pet-install-memory', '写入 GA memory 中的桌宠 SOP，并同步 global_mem_insight.txt？')) return
-    setBusy(true); setMsg('正在安装 GA 桌宠记忆 SOP…')
-    try {
-      const mem = await api('/api/hatch-pet/install-memory', { dangerous:true, method:'POST', body: '{}' })
-      setStatus(prev => ({ ...(prev || {}), memory: mem }))
-      setMsg(`已写入 ${mem.memory_dir}，并同步 global_mem_insight.txt`)
-    } catch(e) { setMsg(`安装失败：${e.message}`) } finally { setBusy(false) }
-  }
-  const fileCount = status?.file_count ?? status?.files ?? 0
-  const totalBytes = status?.total_bytes ?? status?.bytes ?? 0
-  const exportPath = status?.export_path || status?.default_export_dir || status?.path || 'GA tools/hatch-pet'
-  const exported = !!status?.exported
-  const mem = status?.memory
-  return <Panel title="GA Admin 桌宠工具链" className="hatch-pet-card"><div className="hatch-pet-settings"><div><p className="muted">把 ga_admin_pets_sop.md / hatch_pet_sop.md 安装进当前 GA 根目录 memory，并把内置 hatch-pet 工具链导出到 GA 根目录 tools/hatch-pet。运行时不依赖 ~/.codex/skills。</p><div className="hatch-pet-meta"><span className={mem?.installed ? 'badge ok' : 'badge'}>{mem?.installed ? 'GA 记忆已安装' : 'GA 记忆未安装'}</span><span>{fileCount} 个工具文件</span><span>{totalBytes ? `${Math.round(totalBytes / 1024)} KB 工具` : '—'}</span><span className={exported ? 'badge ok' : 'badge'}>{exported ? 'GA 工具链已安装' : 'GA 工具链未安装'}</span></div><code className="hatch-pet-path">{mem?.memory_dir || '请先配置 GA 根目录'}</code><p className="muted">SOP 要点：ga-admin-pets atlas 192×208、8列9行；行序 idle / running-right / running-left / waving / jumping / failed / waiting / running / review。</p><p className="muted">GA 工具链目录：{exportPath}</p>{status?.error && <p className="err-text">{status.error}</p>}{msg && <p className="muted">{msg}</p>}</div><div className="hatch-pet-actions"><button disabled={busy} onClick={installMemory}><Heart size={14}/>安装到 GA 记忆</button><button disabled={busy} onClick={installToolchain}><Download size={14}/>安装工具链</button><button disabled={busy} onClick={openExportDir}><FolderCog size={14}/>打开工具目录</button><button disabled={busy} onClick={refresh}><RefreshCw size={14}/>刷新</button></div></div></Panel>
-}
-
-function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, control:<ShieldAlert size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, pets:<Heart size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }
+function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, control:<ShieldAlert size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }

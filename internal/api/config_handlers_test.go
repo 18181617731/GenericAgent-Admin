@@ -31,7 +31,7 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	if err := os.WriteFile(py, []byte("stub"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "custom", HTTPProxy: "http://127.0.0.1:7890", DesktopPetDisabled: true}
+	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "custom", HTTPProxy: "http://127.0.0.1:7890"}
 	body, _ := json.Marshal(payload)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
@@ -46,9 +46,6 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	}
 	if got.ChatDataDir == "" || !strings.Contains(got.ChatDataDir, "GenericAgent-Admin") {
 		t.Fatalf("chat_data_dir default not applied: %q", got.ChatDataDir)
-	}
-	if !got.DesktopPetDisabled {
-		t.Fatalf("desktop_pet_disabled was not preserved")
 	}
 }
 
@@ -157,7 +154,7 @@ func TestSetupInstallRejectsFilesystemRoot(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "refusing to install GenericAgent into filesystem root") {
+	if !strings.Contains(rr.Body.String(), "refusing to install GenericAgent under filesystem root") {
 		t.Fatalf("unexpected body: %s", rr.Body.String())
 	}
 }
@@ -178,9 +175,9 @@ func TestSetupInstallUsesCancelableCloneContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	dest := filepath.Join(t.TempDir(), "GenericAgent")
+	installDir := t.TempDir()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/setup/install", strings.NewReader(`{"path":"`+filepath.ToSlash(dest)+`"}`)).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/install", strings.NewReader(`{"path":"`+filepath.ToSlash(installDir)+`"}`)).WithContext(ctx)
 	markDangerous(req)
 
 	s.Routes().ServeHTTP(rr, req)
@@ -194,6 +191,60 @@ func TestSetupInstallUsesCancelableCloneContext(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "clone stopped") || !strings.Contains(body, "context canceled") {
 		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+func TestSetupInstallClonesGenericAgentUnderInstallDirectory(t *testing.T) {
+	s := newConfigTestServer(t)
+	oldRunClone := runSetupCloneFunc
+	oldZip := downloadAndExtractGenericAgentArchive
+	t.Cleanup(func() {
+		runSetupCloneFunc = oldRunClone
+		downloadAndExtractGenericAgentArchive = oldZip
+	})
+
+	installDir := t.TempDir()
+	wantRoot := filepath.Join(installDir, "GenericAgent")
+	downloadAndExtractGenericAgentArchive = func(ctx context.Context, gotDest string) (string, error) {
+		t.Fatalf("zip fallback should not be called for successful clone")
+		return "", nil
+	}
+	runSetupCloneFunc = func(ctx context.Context, gotDest string) (string, error) {
+		if gotDest != wantRoot {
+			t.Fatalf("clone dest=%q want %q", gotDest, wantRoot)
+		}
+		if err := os.MkdirAll(filepath.Join(gotDest, "assets"), 0755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(gotDest, "agentmain.py"), []byte("print('ok')\n"), 0644); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(gotDest, "llmcore.py"), []byte("# ok\n"), 0644); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(gotDest, "assets", "tools_schema.json"), []byte("[]\n"), 0644); err != nil {
+			return "", err
+		}
+		return "clone completed", nil
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/install", strings.NewReader(`{"path":"`+filepath.ToSlash(installDir)+`"}`))
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if s.CfgStore.Cfg.GARoot != wantRoot {
+		t.Fatalf("ga_root=%q want %q", s.CfgStore.Cfg.GARoot, wantRoot)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["root"] != wantRoot || got["install_dir"] != installDir {
+		t.Fatalf("unexpected response: %#v", got)
 	}
 }
 
@@ -236,5 +287,137 @@ func TestGaGitStatusRejectsMalformedAheadBehind(t *testing.T) {
 	_, err := gaGitStatusForRoot(context.Background(), root)
 	if err == nil || !strings.Contains(err.Error(), "invalid git ahead count") {
 		t.Fatalf("expected invalid ahead count error, got %v", err)
+	}
+}
+
+func TestInstallGenericAgentSourceFallsBackToZipWhenGitCloneFails(t *testing.T) {
+	oldClone := runSetupCloneFunc
+	oldZip := downloadAndExtractGenericAgentArchive
+	t.Cleanup(func() {
+		runSetupCloneFunc = oldClone
+		downloadAndExtractGenericAgentArchive = oldZip
+	})
+
+	dest := filepath.Join(t.TempDir(), "GenericAgent")
+	zipCalled := false
+	runSetupCloneFunc = func(ctx context.Context, gotDest string) (string, error) {
+		if gotDest != dest {
+			t.Fatalf("clone dest=%q want=%q", gotDest, dest)
+		}
+		return "git is not installed", os.ErrNotExist
+	}
+	downloadAndExtractGenericAgentArchive = func(ctx context.Context, gotDest string) (string, error) {
+		zipCalled = true
+		if gotDest != dest {
+			t.Fatalf("zip dest=%q want=%q", gotDest, dest)
+		}
+		if err := os.MkdirAll(gotDest, 0755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(gotDest, "agentmain.py"), []byte("print('ok')\n"), 0644); err != nil {
+			return "", err
+		}
+		return "zip archive extracted", nil
+	}
+
+	method, out, err := installGenericAgentSource(context.Background(), dest)
+	if err != nil {
+		t.Fatalf("installGenericAgentSource error: %v", err)
+	}
+	if !zipCalled {
+		t.Fatal("expected archive fallback to be called")
+	}
+	if method != "zip" {
+		t.Fatalf("method=%q want zip", method)
+	}
+	if !strings.Contains(out, "git is not installed") || !strings.Contains(out, "zip archive extracted") {
+		t.Fatalf("expected combined fallback output, got %q", out)
+	}
+}
+
+func TestSetupPythonInstallPersistsDiscoveredPython(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("python installer endpoint is Windows-only")
+	}
+	s := newConfigTestServer(t)
+	installerPython := filepath.Join(t.TempDir(), "Python312", "python.exe")
+	if err := os.MkdirAll(filepath.Dir(installerPython), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installerPython, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunInstaller := runPythonInstallerFunc
+	t.Cleanup(func() {
+		runPythonInstallerFunc = oldRunInstaller
+	})
+	runPythonInstallerFunc = func(ctx context.Context) (string, string, error) {
+		return installerPython, "installer completed", nil
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/python/install", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if s.CfgStore.Cfg.PythonPath != installerPython {
+		t.Fatalf("python_path=%q want %q", s.CfgStore.Cfg.PythonPath, installerPython)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["python"] != installerPython || got["output"] != "installer completed" {
+		t.Fatalf("unexpected response: %#v", got)
+	}
+}
+
+func TestSetupStateIsReadOnlyAndDoesNotRequireDangerousConfirm(t *testing.T) {
+	s := newConfigTestServer(t)
+	s.CfgStore.Cfg.GARoot = t.TempDir()
+	s.CfgStore.Cfg.EffectivePython = filepath.Join(s.CfgStore.Cfg.GARoot, ".venv", "Scripts", "python.exe")
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/setup/state", nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["ok"] != true || got["ga_root"] != s.CfgStore.Cfg.GARoot || got["python"] != s.CfgStore.Cfg.EffectivePython {
+		t.Fatalf("unexpected setup state: %#v", got)
+	}
+}
+
+func TestSetupMutationsRequireDangerousConfirm(t *testing.T) {
+	s := newConfigTestServer(t)
+	for _, tc := range []struct {
+		path string
+		body string
+	}{
+		{"/api/setup/validate", `{"path":"` + strings.ReplaceAll(t.TempDir(), `\\`, `\\\\`) + `"}`},
+		{"/api/setup/install", `{}`},
+		{"/api/setup/python/install", `{}`},
+		{"/api/setup/complete", `{}`},
+		{"/api/setup/venv/create", `{}`},
+		{"/api/setup/deps/install", `{}`},
+		{"/api/setup/smoke", `{}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			s.Routes().ServeHTTP(rr, req)
+			if rr.Code != http.StatusPreconditionRequired {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusPreconditionRequired, rr.Body.String())
+			}
+		})
 	}
 }

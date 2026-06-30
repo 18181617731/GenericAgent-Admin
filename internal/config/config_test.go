@@ -100,3 +100,38 @@ func TestStoreLoadRejectsInvalidRuntimeBounds(t *testing.T) {
 		t.Fatalf("Load() applied invalid runtime bounds: %#v", store.Cfg)
 	}
 }
+
+func TestBootstrapConfigDefaultsAndEffectivePythonPersistence(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if store.Cfg.GARoot != "" {
+		t.Fatalf("default ga_root=%q, want empty for first-run bootstrap", store.Cfg.GARoot)
+	}
+	if store.Cfg.BootstrapDone {
+		t.Fatalf("bootstrap_done default should be false")
+	}
+	if store.Cfg.EffectivePython != "" {
+		t.Fatalf("default effective_python=%q, want empty", store.Cfg.EffectivePython)
+	}
+
+	py := filepath.Join(root, "python.exe")
+	if err := os.WriteFile(py, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.GARoot = root
+	cfg.PythonPath = py
+	cfg.EffectivePython = filepath.Join(root, "ignored-python.exe")
+	cfg.BootstrapDone = true
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := NewStore(root)
+	if !reloaded.Cfg.BootstrapDone {
+		t.Fatalf("bootstrap_done was not persisted: %#v", reloaded.Cfg)
+	}
+	if reloaded.Cfg.EffectivePython != py {
+		t.Fatalf("effective_python=%q, want python_path %q", reloaded.Cfg.EffectivePython, py)
+	}
+}

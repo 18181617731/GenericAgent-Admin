@@ -2,7 +2,7 @@ import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
-import { ChannelsPage } from './App.jsx'
+import App, { ChannelsPage } from './App.jsx'
 
 const t = {
   refresh: 'Refresh',
@@ -21,6 +21,43 @@ const t = {
   hide: 'Hide',
   show: 'Show',
 }
+
+
+const jsonResponse = (body) => ({
+  ok: true,
+  status: 200,
+  statusText: 'OK',
+  text: async () => JSON.stringify(body),
+  json: async () => body,
+})
+
+const installBrowserPolyfills = () => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation(query => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
+}
+
+const setupFetch = vi.fn(async (url) => {
+  const path = String(url)
+  if (path.includes('/api/config')) return jsonResponse({ ga_root: '' })
+  if (path.includes('/api/ga/health')) return jsonResponse({ ok: false, error: 'GA root not configured' })
+  if (path.includes('/api/autostart/status')) return jsonResponse({ supported: false, enabled: false })
+  if (path.includes('/api/version/info')) return jsonResponse({ version: 'test' })
+  if (path.includes('/api/version/status')) return jsonResponse({})
+  if (path.includes('/api/observability/status')) return jsonResponse({ ok: false })
+  if (path.includes('/api/setup/state')) return jsonResponse({ status: 'needs_setup', env: {}, ga_root: '' })
+  throw new Error(`unexpected url ${url}`)
+})
 
 const reflectService = {
   name: 'agentmain --reflect',
@@ -87,5 +124,16 @@ describe('channel frontend gates', () => {
     await waitFor(() => expect(screen.getByText(/mykey\.py/i)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /Start/i }))
     expect(onReflectStart).toHaveBeenCalledWith(reflectService.name)
+  })
+})
+
+
+describe('first-run setup shell', () => {
+  test('App renders SetupWizard when GA root is not configured', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = setupFetch
+    render(<App />)
+    await waitFor(() => expect(screen.getByText(/首次启动配置|First/i)).toBeTruthy())
+    expect(screen.getByText(/GA Admin Bootstrap/i)).toBeTruthy()
   })
 })

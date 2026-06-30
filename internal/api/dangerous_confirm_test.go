@@ -482,7 +482,7 @@ func TestRiskCatalogEndpointReturnsAuditableItems(t *testing.T) {
 	for _, item := range resp.Items {
 		paths[item.Path] = true
 	}
-	for _, path := range []string{"/api/files/write", "/api/models", "/api/models/raw", "/api/models/import-mykey", "/api/hatch-pet/open", "/api/pets/active"} {
+	for _, path := range []string{"/api/files/write", "/api/models", "/api/models/raw", "/api/models/import-mykey"} {
 		if !paths[path] {
 			t.Fatalf("risk catalog response missing %s", path)
 		}
@@ -1059,7 +1059,12 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/goals/delete", `{}`},
 		{http.MethodPut, "/api/config", `not-json`},
 		{http.MethodPost, "/api/setup/validate", `{}`},
+		{http.MethodPost, "/api/setup/complete", `{}`},
 		{http.MethodPost, "/api/setup/install", `{}`},
+		{http.MethodPost, "/api/setup/python/install", `{}`},
+		{http.MethodPost, "/api/setup/venv/create", `{}`},
+		{http.MethodPost, "/api/setup/deps/install", `{}`},
+		{http.MethodPost, "/api/setup/smoke", `{}`},
 		{http.MethodPost, "/api/autostart/enable", `{}`},
 		{http.MethodPost, "/api/autostart/disable", `{}`},
 		{http.MethodPost, "/api/services/start", `{}`},
@@ -1071,10 +1076,6 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/services/model", `{}`},
 		{http.MethodPost, "/api/models/export", `{}`},
 		{http.MethodPut, "/api/channels", `{}`},
-		{http.MethodPost, "/api/hatch-pet/export", `{}`},
-		{http.MethodPost, "/api/hatch-pet/install-memory", `{}`},
-		{http.MethodPost, "/api/hatch-pet/open", `{}`},
-		{http.MethodPost, "/api/pets/active", `{}`},
 	}
 }
 
@@ -1094,5 +1095,8 @@ func safeValidationDangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/goals/delete", `{}`},
 		{http.MethodPut, "/api/config", `not-json`},
 		{http.MethodPost, "/api/setup/validate", `{}`},
+		// Keep this list limited to handlers that reject the test payload before
+		// performing side effects. Installation/setup action endpoints are covered
+		// by dangerousConfirmRouteCases above but are intentionally excluded here.
 	}
 }

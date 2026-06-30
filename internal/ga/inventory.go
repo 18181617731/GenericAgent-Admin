@@ -568,7 +568,7 @@ func classifyFrontend(name string, isDir bool) string {
 	switch {
 	case strings.Contains(n, "telegram") || strings.Contains(n, "wechat") || strings.Contains(n, "qq") || strings.Contains(n, "feishu") || strings.Contains(n, "dingtalk") || strings.Contains(n, "wecom"):
 		return "im-bot"
-	case strings.Contains(n, "desktop") || strings.Contains(n, "pet"):
+	case strings.Contains(n, "desktop"):
 		return "desktop"
 	case strings.Contains(n, "streamlit") || strings.Contains(n, "conductor"):
 		return "web"

@@ -10,7 +10,6 @@ func TestStatusEndpointsRejectNonGET(t *testing.T) {
 	h := newConfigTestServer(t).Routes()
 	for _, path := range []string{
 		"/api/version/status",
-		"/api/hatch-pet/status",
 		"/api/autostart/status",
 	} {
 		t.Run(path, func(t *testing.T) {

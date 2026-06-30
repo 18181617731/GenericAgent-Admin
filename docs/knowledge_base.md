@@ -15,7 +15,7 @@
 | 唯一外部依赖 | `github.com/getlantern/systray v1.2.2` |
 | 目录结构 | `main.go` + `internal/` (7子包) + `web/` (Vite前端) + `cmd/` (Python辅助) |
 
-**一句话**: 一个用 Go 标准库构建的桌面 + Web 管理面板，通过 HTTP API 管理 GenericAgent (Python) 进程、文件、BBS、桌宠、定时任务、自行更新。
+**一句话**: 一个用 Go 标准库构建的Web 管理面板，通过 HTTP API 管理 GenericAgent (Python) 进程、文件、BBS、定时任务、自行更新。
 
 ---
 
@@ -25,7 +25,6 @@
 GenericAgent-Admin/
 ├── main.go                     # 入口: 解析参数 → 初始化和启动 → 信号处理
 ├── tray.go / tray_linux.go     # 系统托盘 (systray)
-├── desktop_pet_*.go            # 桌宠窗口 (Windows)
 ├── config.dev.json             # 开发配置 (ga_root, host, port, ...)
 ├── config.example.json         # 配置模板
 ├── build.bat                   # Windows 构建脚本
@@ -57,11 +56,8 @@ GenericAgent-Admin/
 │   ├── version/          # 自更新
 │   │   └── version.go           # GitHub Releases 检查/下载/校验/应用/状态
 │   │
-│   ├── hatchpet/         # 桌宠资产管理
 │   │   ├── status.go            # 宠物安装状态检查
 │   │   ├── export.go            # 宠物导出
-│   │   ├── tools/               # hatch-pet 工具链
-│   │   └── skill/               # hatch-pet 技能脚本
 │   │
 │   ├── modelconfig/      # 模型配置
 │   └── autostart/        # 开机自启 (Windows/Linux)
@@ -96,7 +92,6 @@ GenericAgent-Admin/
 │   └── chat_worker.py          # Python 聊天 worker (独立进程)
 │
 ├── assets/
-│   └── ga-admin-pets/          # 桌宠素材 (ga-navigator, hatch-pet spritesheets)
 │
 ├── release/                    # 构建产物
 └── temp/ / tmp/                # 临时文件
@@ -136,7 +131,6 @@ main()
 | 模型配置 | `/api/models/*` | 5 | CRUD + preview + import/export |
 | 聊天 | `/api/chat/*` | 2 | sessions + SSE handler |
 | BBS | `/api/bbs/*` | 6+3 | status, config, posts, reply, readme (含兼容路由) |
-| 桌宠 | `/api/pets/*`, `/api/hatch-pet/*` | 5 | 宠物状态/切换/导出/安装 |
 | 环境安装 | `/api/setup/*` | 4 | env, browse, validate, install |
 | 开机自启 | `/api/autostart/*` | 2 | enable, disable |
 | 浏览器驱动 | `/api/tmwebdriver/*` | 3 | status, repair, install-deps |
@@ -293,7 +287,6 @@ type Server struct {
     Svc         *service.Manager    // ...
     Models      *modelconfig.Store
     Static      fs.FS               // 嵌入文件系统
-    PetEvent    func(string)        // 回调
     ChatMu      sync.Mutex          // 并发保护
     ChatRuns    map[string]*chatRun
 }
