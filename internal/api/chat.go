@@ -163,6 +163,13 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		return
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
+	// Publish start event so frontend can base its live timer on backend clock
+	if startLine, err := json.Marshal(map[string]interface{}{
+		"type":              "start",
+		"run_started_at_ms": startedAt.UnixMilli(),
+	}); err == nil {
+		s.publishChatLine(sid, startLine)
+	}
 	var final chatMessage
 	var finalRawHistory []map[string]interface{}
 	var finalHistoryInfo []interface{}

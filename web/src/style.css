@@ -732,7 +732,7 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .oa-usage span.oa-usage-cache { color:#d6890c; border-color:rgba(214,137,12,.24); background:rgba(214,137,12,.08); }
 .oa-usage span.oa-usage-out { color:#0f9d6e; border-color:rgba(16,163,127,.24); background:rgba(16,163,127,.08); }
 .oa-usage span.oa-usage-total-token { color:#7c3aed; border-color:rgba(124,58,237,.24); background:rgba(124,58,237,.08); }
-.oa-usage span.oa-usage-time { color:#475569; border-color:rgba(71,85,105,.22); background:rgba(71,85,105,.07); }
+.oa-usage span.oa-usage-time { color:#7c3aed; border-color:rgba(124,58,237,.22); background:rgba(124,58,237,.07); }
 .oa-usage span:hover { border-color:currentColor; }
 .oa-usage-list { display:flex; flex-direction:column; gap:4px; margin-top:10px; }
 .oa-usage-list .oa-usage { margin-top:0; }

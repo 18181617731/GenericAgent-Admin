@@ -620,7 +620,7 @@ const UsageRow = ({ u, label, className, elapsedMs = 0, live = false }) => {
   if (!hasTokens && !hasElapsed) return null
   return <div className={`oa-usage ${className || ''}`}>
     {label && <span className="oa-usage-label">{label}</span>}
-    {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? '实时耗时' : '耗时'}><Clock3 size={10} aria-hidden="true"/>耗时 <b>{formatElapsedMs(elapsedMs)}</b></span>}
+    {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? '实时耗时' : '耗时'}><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1.5A4.5 4.5 0 1 1 8 11a4.5 4.5 0 0 1 0-7.5z"/><path d="M7.5 4.5h1v3.65l2.2 1.3-.5.9L7.5 9V4.5z"/></svg>耗时 <b>{formatElapsedMs(elapsedMs)}</b></span>}
     {u?.input_tokens > 0 && <span className="oa-usage-in" title="输入 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>输入 <b>{u.input_tokens.toLocaleString()}</b></span>}
     {u?.cached_tokens > 0 && <span className="oa-usage-cache" title="缓存 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>缓存 <b>{u.cached_tokens.toLocaleString()}</b></span>}
     {u?.output_tokens > 0 && <span className="oa-usage-out" title="输出 tokens"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>输出 <b>{u.output_tokens.toLocaleString()}</b></span>}
@@ -914,6 +914,11 @@ export default function ChatApp() {
           ? xs.map(m => m.id === clientUserID ? ev.message : m)
           : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message])
       })
+    }
+    if (ev.type === 'start' && ev.run_started_at_ms > 0) {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
+        m.id === pendingId ? { ...m, run_started_at_ms: ev.run_started_at_ms } : m
+      ) : xs)
     }
     if (ev.type === 'turn_usage' && ev.usage && typeof ev.index === 'number') {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
