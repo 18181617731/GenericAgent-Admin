@@ -10,8 +10,9 @@ import (
 )
 
 type SlashCommandItem struct {
-	Cmd  string `json:"cmd"`
-	Desc string `json:"desc"`
+	Cmd     string `json:"cmd"`
+	Desc    string `json:"desc"`
+	Content string `json:"content,omitempty"`
 }
 
 type AppConfig struct {

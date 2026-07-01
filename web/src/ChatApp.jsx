@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -48,7 +48,6 @@ const BUILTIN_SLASH_COMMANDS = [
   { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '审阅当前改动；可继续输入范围或关注点', builtIn: true },
   { cmd: '/review help', key: '/review help', insert: '/review help', desc: '显示 /review 帮助，不启动审阅', builtIn: true },
   { cmd: '/improve', key: '/improve', insert: '/improve', desc: '发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
-  { cmd: '/improve help', key: '/improve help', insert: '/improve help', desc: '显示 /improve 帮助（记忆提炼）', builtIn: true },
   { cmd: '/effort', key: '/effort', insert: '/effort', desc: '查看当前 reasoning effort', builtIn: true },
   { cmd: '/effort low', key: '/effort low', insert: '/effort low', desc: '设置 reasoning effort 为 low', builtIn: true },
   { cmd: '/effort medium', key: '/effort medium', insert: '/effort medium', desc: '设置 reasoning effort 为 medium', builtIn: true },
@@ -60,7 +59,6 @@ const BUILTIN_SLASH_COMMANDS = [
 ]
 const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
-const isProtectedSlashCommand = (cmd = '') => BUILTIN_SLASH_COMMANDS.some(c => builtinSlashCommandKey(c) === builtinSlashKey(cmd))
 const slashCommandInsertText = (c, current = '') => {
   if (!c) return current || ''
   if (c.cmd === '/review <自然语言请求>') {
@@ -706,6 +704,19 @@ export default function ChatApp() {
     api('/api/config').then(cfg => {
       setCfg(cfg)
     }).catch(() => {})
+    api('/api/slash-commands').then(res => {
+      const items = Array.isArray(res?.commands) ? res.commands : []
+      const normalized = items
+        .filter(c => c && typeof c.cmd === 'string' && c.cmd.trim().startsWith('/'))
+        .map(c => ({
+          ...c,
+          cmd: c.cmd.trim(),
+          key: c.key || c.cmd.trim(),
+          insert: c.insert || c.cmd.trim(),
+          builtIn: c.builtIn !== false,
+        }))
+      if (normalized.length) setSlashCommands(normalized)
+    }).catch(() => {})
   }, [])
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState('')
@@ -737,10 +748,13 @@ export default function ChatApp() {
   const [showFollow, setShowFollow] = useState(false)
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
+  const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
+  const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
   const [cfg, setCfg] = useState(null)
   const [cmdEditIdx, setCmdEditIdx] = useState(-1)
   const [cmdEditCmd, setCmdEditCmd] = useState('')
   const [cmdEditDesc, setCmdEditDesc] = useState('')
+  const [cmdEditContent, setCmdEditContent] = useState('')
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const [streamClock, setStreamClock] = useState(() => Date.now())
   const toolsMenuRef = useRef(null)
@@ -810,11 +824,13 @@ export default function ChatApp() {
   }
 
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
+  const officialSlashKeys = useMemo(() => new Set(effectiveSlashCommands.map(c => builtinSlashCommandKey(c))), [effectiveSlashCommands])
+  const isProtectedSlashCommand = useCallback((cmd = '') => officialSlashKeys.has(builtinSlashKey(cmd)), [officialSlashKeys])
   const allSlashCommands = useMemo(() => {
-    const builtInKeys = new Set(BUILTIN_SLASH_COMMANDS.map(c => builtinSlashCommandKey(c)))
-    const custom = (cfg?.slash_commands || []).filter(c => !builtInKeys.has(builtinSlashKey(c.cmd)))
-    return [...BUILTIN_SLASH_COMMANDS, ...custom]
-  }, [cfg?.slash_commands])
+    const custom = (cfg?.slash_commands || []).filter(c => !officialSlashKeys.has(builtinSlashKey(c.cmd)))
+    return [...effectiveSlashCommands, ...custom]
+  }, [cfg?.slash_commands, effectiveSlashCommands, officialSlashKeys])
   const filteredCmds = useMemo(() => {
     if (!cmdDrawer.open) return []
     const rawFilter = String(cmdDrawer.filter || '').trimStart()
@@ -834,7 +850,6 @@ export default function ChatApp() {
     return allSlashCommands.filter(c => {
       const cmd = String(c.cmd || '')
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
-      if (cmd === '/improve help') return childAllowed('/improve') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/review <自然语言请求>') {
         if (isReviewNaturalLanguage) return true
         if (slashFilter === '/review' || fuzzyMatch('/review', rawFilter) || fuzzyMatch('/review', slashFilter)) return true
@@ -848,7 +863,6 @@ export default function ChatApp() {
       if (inContinueScope && cmd !== '/continue <编号>') return false
       if (inReviewScope && cmd !== '/review <自然语言请求>') return false
       if (inImproveScope && cmd !== '/improve') return false
-      if (cmd.trim().includes(' ')) return false
       return fuzzyMatch(cmd, rawFilter) || fuzzyMatch(cmd, slashFilter) || fuzzyMatch(c.desc || '', rawFilter)
     })
   }, [cmdDrawer.open, cmdDrawer.filter, allSlashCommands])
@@ -859,17 +873,24 @@ export default function ChatApp() {
   useEffect(() => {
     if (cmdDrawer.open) setCmdEditIdx(-1)
   }, [cmdDrawer.open, cmdDrawer.filter])
+  useEffect(() => {
+    if (!cmdManagerOpen) setCmdEditIdx(-1)
+  }, [cmdManagerOpen])
   const saveSlashCmds = async (newCmds) => {
     if (!confirmDanger('chat-slash-commands-save', '保存斜杠命令配置？会写入 GA Admin 配置文件。')) return
     try {
-      const c = await api('/api/config', { method:'PUT', dangerous: true, body: JSON.stringify({...cfg, slash_commands: newCmds}) })
+      const safeCmds = (newCmds || [])
+        .filter(c => !isProtectedSlashCommand(c?.cmd))
+        .map(c => ({ cmd: String(c?.cmd || '').trim(), desc: String(c?.desc || '').trim(), content: String(c?.content || c?.prompt || '').trim() }))
+        .filter(c => c.cmd)
+      const c = await api('/api/config', { method:'PUT', dangerous: true, body: JSON.stringify({...cfg, slash_commands: safeCmds}) })
       if (c?.slash_commands) { setCfg(c) }
       setCmdEditIdx(-1)
     } catch(e) { setNotice('保存命令失败: ' + e.message); setCmdEditIdx(-1) }
   }
-  const startEdit = (idx, cmd, desc) => {
+  const startEdit = (idx, cmd, desc, content = '') => {
     if (idx < 0 && idx !== -2) return
-    setCmdEditIdx(idx); setCmdEditCmd(cmd); setCmdEditDesc(desc)
+    setCmdEditIdx(idx); setCmdEditCmd(cmd); setCmdEditDesc(desc); setCmdEditContent(content)
   }
   const saveEdit = () => {
     const normalized = cmdEditCmd.trim()
@@ -880,11 +901,16 @@ export default function ChatApp() {
       return
     }
     const cmds = cfg?.slash_commands || []
+    const nextItem = { cmd: normalized, desc: cmdEditDesc.trim() || '', content: cmdEditContent.trim() || cmdEditDesc.trim() || '' }
+    if (!nextItem.content) {
+      setNotice('请填写这个命令要展开成的指令内容')
+      return
+    }
     if (cmdEditIdx === -2) {
-      saveSlashCmds([...cmds, { cmd: normalized, desc: cmdEditDesc.trim() || '' }])
+      saveSlashCmds([...cmds, nextItem])
     } else if (cmdEditIdx >= 0) {
       const newCmds = [...cmds]
-      newCmds[cmdEditIdx] = { cmd: normalized, desc: cmdEditDesc.trim() || '' }
+      newCmds[cmdEditIdx] = nextItem
       saveSlashCmds(newCmds)
     }
   }
@@ -1337,10 +1363,30 @@ export default function ChatApp() {
     }
   }
 
+  const expandCustomSlashCommand = useCallback((value) => {
+    const raw = String(value || '').trim()
+    if (!raw.startsWith('/')) return raw
+    const custom = (cfg?.slash_commands || [])
+      .filter(c => c?.cmd && !isProtectedSlashCommand(c.cmd))
+      .map(c => ({ ...c, cmd: String(c.cmd || '').trim() }))
+      .sort((a, b) => b.cmd.length - a.cmd.length)
+    const hit = custom.find(c => raw === c.cmd || raw.startsWith(`${c.cmd} `) || raw.startsWith(`${c.cmd}\n`))
+    if (!hit) return raw
+    const args = raw.slice(hit.cmd.length).trim()
+    let body = String(hit.content || hit.prompt || hit.desc || '').trim()
+    if (!body) return raw
+    if (body.includes('{{args}}') || body.includes('{args}')) {
+      body = body.replaceAll('{{args}}', args).replaceAll('{args}', args)
+    } else if (args) {
+      body = `${body}\n\n${args}`
+    }
+    return body
+  }, [cfg?.slash_commands, isProtectedSlashCommand])
+
   const send = async (textOverride = null) => {
     const hasStringOverride = typeof textOverride === 'string'
     const sourceText = hasStringOverride ? textOverride : prompt
-    const text = String(sourceText || '').trim()
+    const text = expandCustomSlashCommand(String(sourceText || '').trim())
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
       setPrompt('')
@@ -1634,6 +1680,42 @@ export default function ChatApp() {
             )
           })}
         </div>}
+        {cmdManagerOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setCmdManagerOpen(false)}>
+          <div className="oa-cmd-manager" role="dialog" aria-modal="true" aria-label="自定义斜杠命令" onMouseDown={e=>e.stopPropagation()}>
+            <div className="oa-cmd-manager-head">
+              <div><h3>自定义斜杠命令</h3><p>官方命令只读锁定；用户命令可新增、编辑、删除。</p></div>
+              <button className="oa-icon-btn" type="button" onClick={()=>setCmdManagerOpen(false)} title="关闭"><X size={16}/></button>
+            </div>
+            <div className="oa-cmd-manager-actions">
+              <button className="oa-guide-btn" type="button" onClick={()=>startEdit(-2, '/', '', '')}><Plus size={14}/>新增自定义命令</button>
+              <span>{(cfg?.slash_commands || []).filter(c => !isProtectedSlashCommand(c?.cmd)).length} 个自定义 · {effectiveSlashCommands.length} 个官方</span>
+            </div>
+            {cmdEditIdx !== -1 && <div className="oa-cmd-edit-card">
+              <input value={cmdEditCmd} onChange={e=>setCmdEditCmd(e.target.value)} placeholder="命令，例如 /hello" autoFocus />
+              <input value={cmdEditDesc} onChange={e=>setCmdEditDesc(e.target.value)} placeholder="描述，例如 代码审查模板" />
+              <textarea value={cmdEditContent} onChange={e=>setCmdEditContent(e.target.value)} placeholder="发送时展开成的指令内容。可用 {args} 插入 /命令 后面的参数。" rows={4}/>
+              <button type="button" onClick={saveEdit}>保存</button>
+              <button type="button" onClick={()=>setCmdEditIdx(-1)}>取消</button>
+            </div>}
+            <div className="oa-cmd-manager-list">
+              <div className="oa-cmd-section-title">用户自定义</div>
+              {(cfg?.slash_commands || []).filter(c => !isProtectedSlashCommand(c?.cmd)).length === 0 && <div className="oa-cmd-empty">暂无自定义命令，点击上方新增。</div>}
+              {(cfg?.slash_commands || []).map((c, i) => {
+                if (isProtectedSlashCommand(c?.cmd)) return null
+                return <div className="oa-cmd-manage-row" key={`${c.cmd}-${i}`}>
+                  <div><b>{c.cmd}</b><small>{c.desc || '无描述'}</small>{(c.content || c.prompt) && <em>{c.content || c.prompt}</em>}</div>
+                  <button type="button" onClick={()=>startEdit(i, c.cmd || '/', c.desc || '', c.content || c.prompt || '')}><Edit3 size={14}/>编辑</button>
+                  <button type="button" onClick={()=>deleteCmd(i)}><Trash2 size={14}/>删除</button>
+                </div>
+              })}
+              <div className="oa-cmd-section-title">官方命令</div>
+              {effectiveSlashCommands.map((c, i) => <div className="oa-cmd-manage-row is-locked" key={`${c.cmd}-${i}`}>
+                <div><b>{c.cmd}</b><small>{c.desc || '官方命令'}</small></div>
+                <span><Lock size={13}/>只读</span>
+              </div>)}
+            </div>
+          </div>
+        </div>}
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropImages}>
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{ addImageFiles(e.target.files); e.target.value='' }} />
           {attachments.length > 0 && <div className="oa-attach-preview">
@@ -1644,6 +1726,7 @@ export default function ChatApp() {
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
+            <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
             <div className="oa-tools-menu" ref={toolsMenuRef}>
               <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
                 <Wrench size={16}/><span>工具</span>{isFixedToolsMode && <span className="oa-tools-state">自动</span>}<ChevronDown size={14}/>

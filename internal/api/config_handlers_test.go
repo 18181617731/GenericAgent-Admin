@@ -421,3 +421,53 @@ func TestSetupMutationsRequireDangerousConfirm(t *testing.T) {
 		})
 	}
 }
+
+func TestSlashCommandsIncludesGAPaletteEntries(t *testing.T) {
+	s := newConfigTestServer(t)
+	root := t.TempDir()
+	frontends := filepath.Join(root, "frontends")
+	if err := os.MkdirAll(frontends, 0755); err != nil {
+		t.Fatal(err)
+	}
+	slashFile := filepath.Join(frontends, "slash_cmds.py")
+	content := `PALETTE_ENTRIES = [
+    ("/scheduler", "", "多选启动/停止 reflect 任务"),
+    ("/resume", "", "列出最近会话并恢复其中一个"),
+    ("/goal", "[goal]", "进入 Goal 模式"),
+]
+`
+	if err := os.WriteFile(slashFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.CfgStore.Cfg
+	cfg.GARoot = root
+	cfg.EffectivePython = ""
+	if err := s.CfgStore.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/slash-commands", nil)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Commands []slashCommandItem `json:"commands"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]slashCommandItem{}
+	for _, c := range got.Commands {
+		seen[c.Cmd] = c
+	}
+	if seen["/scheduler"].Source != "ga" || seen["/resume"].Source != "ga" {
+		t.Fatalf("GA palette commands missing: %#v", seen)
+	}
+	if seen["/goal [goal]"].Insert != "/goal " || seen["/goal [goal]"].Key != "/goal" {
+		t.Fatalf("goal metadata not normalized: %#v", seen["/goal [goal]"])
+	}
+	if _, ok := seen["/review <自然语言请求>"]; !ok {
+		t.Fatalf("admin built-in review command missing")
+	}
+}

@@ -82,6 +82,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.goalsDelete))
 	mux.HandleFunc("/api/goals/output", s.goalsOutput)
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
+	mux.HandleFunc("/api/slash-commands", s.slashCommands)
 	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)

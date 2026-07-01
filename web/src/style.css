@@ -4672,3 +4672,136 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 .setup-log-card > .ant-card-body { padding: 0; }
 .setup-log { margin:0; height: clamp(72px, 10vh, 104px); overflow:auto; background:#171717; color:#e8e4dc; padding:10px 12px; font-size:11px; line-height:1.38; white-space:pre-wrap; }
 @media (max-width: 920px) { .setup-wizard-shell { padding: 10px; align-items: start; } .setup-wizard-hero { flex-direction:column; gap: 8px; } .setup-wizard-copy > .ant-typography:not(.eyebrow) { display: none; } .setup-ant-steps .ant-steps-item-description { max-width: none; } .setup-wizard-card > .ant-card-body { padding: 12px; } }
+
+
+/* Chat slash command manager */
+.oa-cmd-manager-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .26);
+  backdrop-filter: blur(8px);
+}
+.oa-cmd-manager {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(23,23,23,.12);
+  border-radius: 20px;
+  background: rgba(255,255,255,.98);
+  box-shadow: 0 24px 72px rgba(15,23,42,.22);
+}
+.oa-cmd-manager-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.oa-cmd-manager-head h3 { margin: 0; font-size: 17px; }
+.oa-cmd-manager-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.oa-cmd-manager-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.oa-cmd-edit-card {
+  display: grid;
+  grid-template-columns: minmax(140px, .8fr) minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(16,163,127,.20);
+  border-radius: 14px;
+  background: rgba(16,163,127,.07);
+}
+.oa-cmd-edit-card input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(23,23,23,.12);
+  border-radius: 10px;
+  background: rgba(255,255,255,.9);
+  color: var(--text);
+}
+.oa-cmd-edit-card button,
+.oa-cmd-manage-row button {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid rgba(23,23,23,.10);
+  border-radius: 10px;
+  background: rgba(255,255,255,.82);
+  color: var(--text);
+  cursor: pointer;
+}
+.oa-cmd-edit-card button:hover,
+.oa-cmd-manage-row button:hover { background: rgba(247,245,241,.95); }
+.oa-cmd-manager-list {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+.oa-cmd-section-title {
+  margin-top: 4px;
+  padding: 4px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.oa-cmd-empty {
+  padding: 12px;
+  border: 1px dashed rgba(23,23,23,.16);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+.oa-cmd-manage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(23,23,23,.10);
+  border-radius: 14px;
+  background: rgba(247,245,241,.72);
+}
+.oa-cmd-manage-row div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.oa-cmd-manage-row b { font-family: var(--font-mono, monospace); font-size: 13px; overflow-wrap: anywhere; }
+.oa-cmd-manage-row small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.oa-cmd-manage-row.is-locked {
+  grid-template-columns: minmax(0, 1fr) auto;
+  background: rgba(255,255,255,.62);
+}
+.oa-cmd-manage-row.is-locked span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.oa-attach-btn.is-open { border-color: rgba(16,163,127,.28); background: rgba(16,163,127,.10); color: #08745c; }
+@media (max-width: 720px) {
+  .oa-cmd-manager-backdrop { align-items: flex-end; padding: 10px; }
+  .oa-cmd-manager { width: 100%; max-height: calc(100svh - 24px); border-radius: 18px; }
+  .oa-cmd-manager-actions { align-items: flex-start; flex-direction: column; }
+  .oa-cmd-edit-card { grid-template-columns: 1fr; }
+  .oa-cmd-manage-row { grid-template-columns: 1fr; }
+  .oa-cmd-manage-row.is-locked { grid-template-columns: 1fr; }
+}
