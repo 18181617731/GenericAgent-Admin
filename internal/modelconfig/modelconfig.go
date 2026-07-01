@@ -58,6 +58,7 @@ type Profile struct {
 	Name               string                 `json:"name"`
 	APIBase            string                 `json:"apibase"`
 	Model              string                 `json:"model"`
+	Models             []string               `json:"models,omitempty"`
 	APIKey             string                 `json:"apikey"`
 	Stream             *bool                  `json:"stream,omitempty"`
 	MaxRetries         *int                   `json:"max_retries,omitempty"`
@@ -104,7 +105,7 @@ func Defaults() []Profile {
 	b := true
 	mr := 3
 	rt := 300
-	return []Profile{{VarName: "native_oai_config1", Type: "native_oai", Name: "main", APIBase: "https://api.openai.com/v1", Model: "gpt-4.1", Stream: &b, MaxRetries: &mr, ReadTimeout: &rt, Extra: map[string]interface{}{}}}
+	return []Profile{{VarName: "native_oai_config1", Type: "native_oai", Name: "main", APIBase: "https://api.openai.com/v1", Model: "gpt-4.1", Models: []string{"gpt-4.1"}, Stream: &b, MaxRetries: &mr, ReadTimeout: &rt, Extra: map[string]interface{}{}}}
 }
 
 func (s *Store) Load(raw bool) (Draft, error) {
@@ -120,6 +121,7 @@ func (s *Store) Load(raw bool) (Draft, error) {
 	if len(d.Profiles) == 0 {
 		d.Profiles = Defaults()
 	}
+	d.Profiles = normalizeProfiles(d.Profiles)
 	if !raw {
 		for i := range d.Profiles {
 			if d.Profiles[i].APIKey != "" {
@@ -135,6 +137,7 @@ func (s *Store) Save(profiles []Profile) (Draft, error) {
 	if err != nil {
 		return Draft{}, err
 	}
+	merged = normalizeProfiles(merged)
 	if err := Validate(merged); err != nil {
 		return Draft{}, err
 	}
@@ -167,6 +170,51 @@ func (s *Store) MergePreservedSecrets(profiles []Profile) ([]Profile, error) {
 		}
 	}
 	return merged, nil
+}
+
+
+func normalizeProfiles(profiles []Profile) []Profile {
+	out := make([]Profile, len(profiles))
+	for i, p := range profiles {
+		out[i] = normalizeProfile(p)
+	}
+	return out
+}
+
+func normalizeProfile(p Profile) Profile {
+	models := profileModels(p)
+	p.Models = models
+	if len(models) > 0 {
+		p.Model = models[0]
+	} else {
+		p.Model = strings.TrimSpace(p.Model)
+	}
+	return p
+}
+
+func profileModels(p Profile) []string {
+	seen := map[string]bool{}
+	models := []string{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		models = append(models, v)
+	}
+	add(p.Model)
+	for _, m := range p.Models {
+		add(m)
+	}
+	return models
+}
+
+func expandedVarName(base string, index int) string {
+	if index == 0 {
+		return base
+	}
+	return fmt.Sprintf("%s_%d", base, index+1)
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
@@ -210,18 +258,26 @@ func Validate(profiles []Profile) error {
 
 func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 	seen := map[string]bool{}
-	for _, p := range profiles {
+	for _, raw := range profiles {
+		p := normalizeProfile(raw)
 		if p.VarName == "" || !nameRe.MatchString(p.VarName) {
 			return fmt.Errorf("invalid var_name: %s", p.VarName)
 		}
 		if !strings.Contains(strings.ToLower(p.VarName), "api") && !strings.Contains(strings.ToLower(p.VarName), "config") && !strings.Contains(strings.ToLower(p.VarName), "cookie") {
 			return fmt.Errorf("var_name must contain api/config/cookie: %s", p.VarName)
 		}
-		if seen[p.VarName] {
-			return fmt.Errorf("duplicate var_name: %s", p.VarName)
+		models := profileModels(p)
+		if len(models) == 0 {
+			return errors.New("name, apibase and model are required")
 		}
-		seen[p.VarName] = true
-		if p.Name == "" || p.APIBase == "" || p.Model == "" {
+		for i := range models {
+			varName := expandedVarName(p.VarName, i)
+			if seen[varName] {
+				return fmt.Errorf("duplicate var_name: %s", varName)
+			}
+			seen[varName] = true
+		}
+		if p.Name == "" || p.APIBase == "" {
 			return errors.New("name, apibase and model are required")
 		}
 		if !allowMaskedSecrets && IsMaskedSecret(p.APIKey) {
@@ -310,7 +366,26 @@ for node in tree.body:
         if src in d: p[dst]=d.pop(src)
     p['extra']=d
     profiles.append(p)
-print(json.dumps({'updated_at':'','profiles':profiles}, ensure_ascii=False))`
+# Aggregate same source (protocol + API URL + API key) into one admin card while
+# preserving ordinary mykey.py output on export.
+groups=[]
+index={}
+for p in profiles:
+    key=(p.get('type',''), p.get('apibase',''), p.get('apikey',''))
+    model=p.get('model','')
+    if key not in index:
+        p['models']=[]
+        index[key]=len(groups)
+        groups.append(p)
+    g=groups[index[key]]
+    if model and model not in g['models']:
+        g['models'].append(model)
+    if not g.get('model') and model:
+        g['model']=model
+for g in groups:
+    if not g.get('model') and g.get('models'):
+        g['model']=g['models'][0]
+print(json.dumps({'updated_at':'','profiles':groups}, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", script, mykey, boolArg(reveal))
 	hideChildWindow(cmd)
 	var stderr bytes.Buffer
@@ -368,51 +443,58 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 	if err := validateProfiles(profiles, allowMaskedSecrets); err != nil {
 		return "", err
 	}
+	profiles = normalizeProfiles(profiles)
 	var b strings.Builder
 	b.WriteString("# Auto-generated by GenericAgent-Admin-Go.\n# Review before copying to mykey.py. Keep this file private.\n# GenericAgent discovers official config dicts by variable name: native_claude/native_oai/claude/oai or api/config/cookie.\n\n")
 	for _, p := range profiles {
-		m := map[string]interface{}{}
-		m["name"] = p.Name
-		m["apikey"] = p.APIKey
-		m["apibase"] = p.APIBase
-		m["model"] = p.Model
-		if p.Stream != nil {
-			m["stream"] = *p.Stream
-		}
-		if p.MaxRetries != nil {
-			m["max_retries"] = *p.MaxRetries
-		}
-		if p.ReadTimeout != nil {
-			m["read_timeout"] = *p.ReadTimeout
-		}
-		if p.ConnectTimeout != nil {
-			m["connect_timeout"] = *p.ConnectTimeout
-		}
-		if p.UserAgent != "" {
-			m["user_agent"] = p.UserAgent
-		}
-		if p.APIMode != "" {
-			m["api_mode"] = p.APIMode
-		}
-		if p.ThinkingType != "" {
-			m["thinking_type"] = p.ThinkingType
-		}
-		if p.ReasoningEffort != "" {
-			m["reasoning_effort"] = p.ReasoningEffort
-		}
-		if p.FakeCCSystemPrompt != nil {
-			m["fake_cc_system_prompt"] = bool(*p.FakeCCSystemPrompt)
-		}
-		for k, v := range p.Extra {
-			if _, ok := m[k]; !ok {
-				m[k] = v
+		models := profileModels(p)
+		for i, model := range models {
+			m := map[string]interface{}{}
+			m["name"] = p.Name
+			if len(models) > 1 {
+				m["name"] = fmt.Sprintf("%s · %s", p.Name, model)
 			}
+			m["apikey"] = p.APIKey
+			m["apibase"] = p.APIBase
+			m["model"] = model
+			if p.Stream != nil {
+				m["stream"] = *p.Stream
+			}
+			if p.MaxRetries != nil {
+				m["max_retries"] = *p.MaxRetries
+			}
+			if p.ReadTimeout != nil {
+				m["read_timeout"] = *p.ReadTimeout
+			}
+			if p.ConnectTimeout != nil {
+				m["connect_timeout"] = *p.ConnectTimeout
+			}
+			if p.UserAgent != "" {
+				m["user_agent"] = p.UserAgent
+			}
+			if p.APIMode != "" {
+				m["api_mode"] = p.APIMode
+			}
+			if p.ThinkingType != "" {
+				m["thinking_type"] = p.ThinkingType
+			}
+			if p.ReasoningEffort != "" {
+				m["reasoning_effort"] = p.ReasoningEffort
+			}
+			if p.FakeCCSystemPrompt != nil {
+				m["fake_cc_system_prompt"] = bool(*p.FakeCCSystemPrompt)
+			}
+			for k, v := range p.Extra {
+				if _, ok := m[k]; !ok {
+					m[k] = v
+				}
+			}
+			dict, err := pyDict(m)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(fmt.Sprintf("%s = %s\n\n", expandedVarName(p.VarName, i), dict))
 		}
-		dict, err := pyDict(m)
-		if err != nil {
-			return "", err
-		}
-		b.WriteString(fmt.Sprintf("%s = %s\n\n", p.VarName, dict))
 	}
 	return b.String(), nil
 }

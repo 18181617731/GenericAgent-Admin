@@ -2,6 +2,15 @@ const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 const text = (value) => String(value ?? '').trim()
 const numberValue = (value) => Number(value)
+const profileModels = (profile = {}) => {
+  const values = Array.isArray(profile.models) ? profile.models : []
+  const seen = new Set()
+  return [...values, profile.model].map(text).filter(value => {
+    if (!value || seen.has(value)) return false
+    seen.add(value)
+    return true
+  })
+}
 
 export function validateModelProfiles(profiles = []) {
   const counts = new Map()
@@ -15,7 +24,7 @@ export function validateModelProfiles(profiles = []) {
     const warnings = []
     const varName = text(profile.var_name)
     const name = text(profile.name)
-    const model = text(profile.model)
+    const models = profileModels(profile)
     const apiBase = text(profile.apibase)
     const maxRetries = numberValue(profile.max_retries ?? 3)
     const readTimeout = numberValue(profile.read_timeout ?? 300)
@@ -27,7 +36,7 @@ export function validateModelProfiles(profiles = []) {
     else if ((counts.get(varName) || 0) > 1) errors.push('varNameDuplicate')
 
     if (!name) errors.push('nameRequired')
-    if (!model) errors.push('modelRequired')
+    if (!models.length) errors.push('modelRequired')
     if (!apiBase) errors.push('apiBaseRequired')
     else if (!/^https?:\/\//i.test(apiBase)) warnings.push('apiBaseProtocol')
     if (!Number.isFinite(maxRetries) || maxRetries < 0) errors.push('maxRetriesInvalid')

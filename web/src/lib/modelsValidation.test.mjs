@@ -92,3 +92,13 @@ test('modelRiskCatalog ignores malformed stale entries and normalizes route alia
   assert.deepEqual(catalog.confirmedWriteRoutes, ['/api/models/import-mykey'])
   assert.deepEqual(catalog.missingConfirmedWriteRoutes, ['/api/models/export'])
 })
+
+
+test('validateModelProfiles accepts aggregated models array without legacy model', () => {
+  const results = validateModelProfiles([
+    { var_name: 'native_oai_config_group', name: 'grouped source', models: ['gpt-4o', 'gpt-4o-mini'], model: '', apibase: 'https://api.example.test/v1', apikey: 'set' }
+  ])
+
+  assert.equal(results[0].ok, true)
+  assert.deepEqual(results[0].errors, [])
+})

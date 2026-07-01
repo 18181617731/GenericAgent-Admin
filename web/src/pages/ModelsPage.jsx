@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Eye, EyeOff, Layers, Plus, RefreshCw, Trash2, UploadCloud } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Alert, AutoComplete, Button, Card, Collapse, Input, Select, Space, Tag } from 'antd'
+import { Alert, Button, Card, Collapse, Input, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
 
@@ -45,15 +45,25 @@ function StatusTag({ result }) {
   return e ? <Tag color="error">{e} 错</Tag> : w ? <Tag color="warning">{w} 警</Tag> : <Tag color="success">✓</Tag>
 }
 
-function DiscoverRow({ value, onChange, opts, onDiscover, busy, disabled }) {
-  const options = useMemo(() => {
-    const seen = new Set()
-    return opts.filter(Boolean).filter(v => {
-      if (seen.has(v)) return false
-      seen.add(v)
-      return true
-    }).map(v => ({ value: v, label: v }))
-  }, [opts])
+const modelIdOf = value => String(value?.id || value?.name || value || '').trim()
+const uniqueModels = values => {
+  const seen = new Set()
+  return (values || []).map(modelIdOf).filter(v => {
+    if (!v || seen.has(v)) return false
+    seen.add(v)
+    return true
+  })
+}
+const profileModels = profile => uniqueModels([...(Array.isArray(profile?.models) ? profile.models : []), profile?.model])
+const modelPatch = models => ({ models: uniqueModels(models), model: uniqueModels(models)[0] || '' })
+const modelCountLabel = profile => {
+  const count = profileModels(profile).length
+  return count > 1 ? `${count} 个模型` : (profile?.model || '未选择模型')
+}
+
+function DiscoverRow({ value = [], onChange, opts, onDiscover, busy, disabled }) {
+  const selected = useMemo(() => uniqueModels(value), [value])
+  const options = useMemo(() => uniqueModels([...(opts || []), ...selected]).map(v => ({ value: v, label: v })), [opts, selected])
   const [open, setOpen] = useState(false)
   const handleFocus = () => { if (options.length) setOpen(true) }
   const handleDiscover = async () => {
@@ -61,23 +71,27 @@ function DiscoverRow({ value, onChange, opts, onDiscover, busy, disabled }) {
     setOpen(true)
   }
   return (
-    <div className="discover-row">
+    <div className="discover-row discover-row--multi">
       <label>
-        模型
-        <AutoComplete
-          value={value}
+        模型 IDs
+        <Select
+          mode="tags"
+          value={selected}
           options={options}
           open={open && options.length > 0}
-          onOpenChange={setOpen}
+          onDropdownVisibleChange={setOpen}
           onFocus={handleFocus}
-          onChange={onChange}
-          onSelect={v => onChange(v)}
-          filterOption={false}
-          placeholder="输入 model，或从自动获取结果中选择"
-          notFoundContent="先点击获取模型"
-          className="model-autocomplete"
+          onChange={models => onChange(uniqueModels(models))}
+          tokenSeparators={[',', '\n']}
+          placeholder="输入一个或多个 model，或从获取结果中选择"
+          notFoundContent="先点击获取模型，或直接输入模型 ID"
+          className="model-autocomplete model-multi-select"
+          maxTagCount="responsive"
         />
-        {options.length > 0 && <span className="model-discover-count">已获取 {options.length} 个模型，点击输入框可展开全部。</span>}
+        <span className="model-discover-count">
+          {selected.length ? `已选择 ${selected.length} 个模型` : '可把同协议、同 BaseURL 的多个模型聚合在一张卡片里。'}
+          {options.length > 0 ? ` · 已获取 ${options.length} 个可选项` : ''}
+        </span>
       </label>
       <Button onClick={handleDiscover} loading={busy} disabled={disabled} icon={<RefreshCw size={13} />}>
         {busy ? '获取中…' : '获取模型'}
@@ -86,7 +100,7 @@ function DiscoverRow({ value, onChange, opts, onDiscover, busy, disabled }) {
   )
 }
 
-function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey, onSave, saveState }) {
+function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey, onSave, saveState }) {
   const [busy, setBusy] = useState(false)
   const [discErr, setDiscErr] = useState('')
   const [discovered, setDiscovered] = useState([])
@@ -96,11 +110,8 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
   const meta = protocolMeta(p.type || DEFAULT_PROTOCOL)
   const canDiscover = supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)
 
-  const modelOpts = useMemo(() => {
-    const seen = new Set()
-    return [p.model, ...discovered.map(m => m.id || m.name || m)]
-      .filter(Boolean).filter(v => { if (seen.has(v)) return false; seen.add(v); return true })
-  }, [discovered, p.model])
+  const selectedModels = profileModels(p)
+  const modelOpts = useMemo(() => uniqueModels([...selectedModels, ...discovered.map(modelIdOf)]), [discovered, selectedModels])
 
   const discover = async () => {
     if (!canDiscover) return
@@ -109,7 +120,7 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
       const d = await discoverModels({ protocol: p.type || DEFAULT_PROTOCOL, baseUrl: p.apibase, apiKey: shownApiKey, varName: p.var_name })
       const models = d?.models || []
       setDiscovered(models)
-      if (models.length && !p.model) patch({ model: models[0].id || models[0].name || models[0] })
+      if (models.length && selectedModels.length === 0) patch(modelPatch([modelIdOf(models[0])]))
     } catch (e) { setDiscErr(String(e?.message || e)) }
     finally { setBusy(false) }
   }
@@ -133,7 +144,7 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
       <div className="model-card-name">{p.name || p.var_name || `模型 ${idx + 1}`}</div>
       <div className="model-card-sub">
         <Tag color={meta.color} className="model-proto-tag">{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
-        {p.model && <span className="model-card-model">{p.model}</span>}
+        {selectedModels.length > 0 && <span className="model-card-model">{modelCountLabel(p)}</span>}
         {p.apibase && <span className="model-card-base">{p.apibase}</span>}
       </div>
     </div>
@@ -146,7 +157,7 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
       <StatusTag result={result} />
       {saveOk && <span className="model-save-chip model-save-chip--ok">✓ 已保存</span>}
       {saveErr && <span className="model-save-chip model-save-chip--err">✗ 失败</span>}
-      <Button size="small" type="primary" icon={<CheckCircle2 size={13} />} loading={saveBusy} disabled={saveBusy || result?.errors?.length > 0} onClick={() => onSave?.(idx)}>保存</Button>
+      <Button size="small" type="primary" icon={<CheckCircle2 size={13} />} loading={saveBusy} disabled={saveBusy || result?.errors?.length > 0} onClick={() => onSave?.(idx, profileKey)}>保存</Button>
       <Button size="small" danger icon={<Trash2 size={12} />} onClick={() => removeProfile(idx)} title="删除此配置" />
     </Space>
   )
@@ -163,12 +174,12 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
             {revealed ? (
               <Input
                 value={shownApiKey}
-                onChange={e => { onClearRevealedKey?.(idx, p); patch({ apikey: e.target.value }) }}
+                onChange={e => { onClearRevealedKey?.(idx, p, profileKey); patch({ apikey: e.target.value }) }}
                 placeholder="保留 ****** 表示不覆盖已保存密钥"
                 addonAfter={(
                   <Space size={4}>
-                    <Button size="small" type="text" icon={<EyeOff size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false)}>隐藏</Button>
-                    <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true)}>刷新</Button>
+                    <Button size="small" type="text" icon={<EyeOff size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>隐藏</Button>
+                    <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)}>刷新</Button>
                   </Space>
                 )}
               />
@@ -176,18 +187,18 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
               <Input
                 type="password"
                 value={shownApiKey}
-                onChange={e => { onClearRevealedKey?.(idx, p); patch({ apikey: e.target.value }) }}
+                onChange={e => { onClearRevealedKey?.(idx, p, profileKey); patch({ apikey: e.target.value }) }}
                 placeholder="保留 ****** 表示不覆盖已保存密钥"
                 addonAfter={(
                   <Space size={4}>
-                    <Button size="small" type="text" icon={<Eye size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false)}>显示</Button>
+                    <Button size="small" type="text" icon={<Eye size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>显示</Button>
                   </Space>
                 )}
               />
             )}
           </label>
         </div>
-        <DiscoverRow value={p.model || ''} onChange={model => patch({ model })} opts={modelOpts}
+        <DiscoverRow value={selectedModels} onChange={models => patch(modelPatch(models))} opts={modelOpts}
           onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
         {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
         {discErr && <Alert type="error" showIcon message={discErr} className="model-inline-alert" />}
@@ -205,13 +216,15 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
 }
 
 function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
-  const [f, setF] = useState({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', model: '', name: '' })
+  const [f, setF] = useState({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
   const [busy, setBusy] = useState(false)
   const [discovered, setDiscovered] = useState([])
   const [err, setErr] = useState('')
   const pf = obj => setF(prev => ({ ...prev, ...obj }))
   const meta = protocolMeta(f.protocol)
   const canDiscover = supportsModelDiscovery(f.protocol)
+  const selectedModels = uniqueModels(f.models)
+  const modelOpts = useMemo(() => uniqueModels([...selectedModels, ...discovered.map(modelIdOf)]), [discovered, selectedModels])
 
   const discover = async () => {
     if (!canDiscover) return
@@ -220,15 +233,16 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
       const d = await discoverModels({ protocol: f.protocol || DEFAULT_PROTOCOL, baseUrl: f.baseUrl, apiKey: f.apiKey })
       const models = d?.models || []
       setDiscovered(models)
-      if (models.length && !f.model) pf({ model: models[0].id || models[0].name || models[0] })
+      if (models.length && selectedModels.length === 0) pf({ models: [modelIdOf(models[0])] })
     } catch (e) { setErr(String(e?.message || e)) }
     finally { setBusy(false) }
   }
 
   const add = () => {
     const idx = profiles.length
-    setProfiles([...profiles, { ...emptyProfile(idx, f.protocol), var_name: nextVarName(f.protocol, profiles), type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey, model: f.model, name: f.name || f.model || `model-${idx + 1}` }])
-    setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', model: '', name: '' })
+    const models = uniqueModels(f.models)
+    setProfiles([...profiles, { ...emptyProfile(idx, f.protocol), var_name: nextVarName(f.protocol, profiles), type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey, models, model: models[0] || '', name: f.name || models[0] || `model-${idx + 1}` }])
+    setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
     setDiscovered([])
     setErr('')
   }
@@ -250,15 +264,15 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
           <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
         </label>
         {meta.help && <p className="model-add-hint"><Tag color={meta.color} style={{marginRight:4}}>{protocolLabel(f.protocol)}</Tag>{meta.help}</p>}
-        <DiscoverRow value={f.model} onChange={model => pf({ model })}
-          opts={[f.model, ...discovered.map(m => m.id || m.name || m)].filter(Boolean)}
+        <DiscoverRow value={selectedModels} onChange={models => pf({ models })}
+          opts={modelOpts}
           onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !f.baseUrl} />
         {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
         {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
         <label className="model-add-label">显示名称
-          <Input value={f.name} onChange={e => pf({ name: e.target.value })} placeholder={f.model || '可选，留空自动填入'} />
+          <Input value={f.name} onChange={e => pf({ name: e.target.value })} placeholder={selectedModels[0] || '可选，留空自动填入'} />
         </label>
-        <Button type="primary" icon={<Plus size={13} />} disabled={!f.model || !f.baseUrl} onClick={add} block className="model-add-button">
+        <Button type="primary" icon={<Plus size={13} />} disabled={!selectedModels.length || !f.baseUrl} onClick={add} block className="model-add-button">
           添加配置
         </Button>
       </div>
@@ -266,14 +280,14 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
   )
 }
 
-export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, onRevealKey, onClearRevealedKey }) {
+export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, getProfileKey, onRevealKey, onClearRevealedKey }) {
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
   const hasErrors = summary.errors > 0
-  const profileKeyId = (idx, profile) => `${idx}:${profile?.var_name || ''}`
+  const profileKeyId = (idx, profile) => getProfileKey?.(idx, profile) || profile?.client_id || `${profile?.var_name || nextVarName(profile?.type || DEFAULT_PROTOCOL, profiles)}:${profile?.type || DEFAULT_PROTOCOL}:${profile?.apibase || ''}:${idx}`
   const removeProfile = idx => {
-    onClearRevealedKey?.(idx, profiles[idx])
+    onClearRevealedKey?.(idx, profiles[idx], profileKeyId(idx, profiles[idx]))
     setProfiles(profiles.filter((_, i) => i !== idx))
   }
 
@@ -325,10 +339,13 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
         <div className="model-left">
           <AddProfileForm profiles={profiles} setProfiles={setProfiles} discoverModels={discoverModels} t={t} />
           <div className="model-list">
-            {profiles.map((p, idx) => <ProfileCard key={`${p.var_name}-${idx}`} p={p} idx={idx} profiles={profiles}
-              result={validation[idx]} patchProfile={patchProfile} removeProfile={removeProfile} discoverModels={discoverModels}
-              revealedKey={revealedKeys[profileKeyId(idx, p)]} revealBusy={!!revealBusy[profileKeyId(idx, p)]}
-              onRevealKey={onRevealKey} onClearRevealedKey={onClearRevealedKey} onSave={saveModelProfile} saveState={modelSaveStatus[idx]} />)}
+            {profiles.map((p, idx) => {
+              const keyId = profileKeyId(idx, p)
+              return <ProfileCard key={keyId} p={p} idx={idx} profileKey={keyId} profiles={profiles}
+                result={validation[idx]} patchProfile={patchProfile} removeProfile={removeProfile} discoverModels={discoverModels}
+                revealedKey={revealedKeys[keyId]} revealBusy={!!revealBusy[keyId]}
+                onRevealKey={onRevealKey} onClearRevealedKey={onClearRevealedKey} onSave={saveModelProfile} saveState={modelSaveStatus[keyId] || modelSaveStatus[idx]} />
+            })}
             {!profiles.length && (
               <div className="model-empty-state">
                 <Layers size={36} strokeWidth={1.2} className="model-empty-icon" />
