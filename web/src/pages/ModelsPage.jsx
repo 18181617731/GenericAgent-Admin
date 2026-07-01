@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Eye, EyeOff, Plus, RefreshCw, UploadCloud } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, Layers, Plus, RefreshCw, Trash2, UploadCloud } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Alert, AutoComplete, Button, Card, Collapse, Input, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
@@ -86,7 +86,7 @@ function DiscoverRow({ value, onChange, opts, onDiscover, busy, disabled }) {
   )
 }
 
-function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey }) {
+function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey, onSave, saveState }) {
   const [busy, setBusy] = useState(false)
   const [discErr, setDiscErr] = useState('')
   const [discovered, setDiscovered] = useState([])
@@ -129,17 +129,25 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
   }]
 
   const header = (
-    <Space size={6} wrap>
-      <b>{p.name || p.var_name || `模型 ${idx + 1}`}</b>
-      <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
-      {p.model && <Tag>{p.model}</Tag>}
-      {p.apibase && <span className="sub">{p.apibase}</span>}
-    </Space>
+    <div className="model-card-header">
+      <div className="model-card-name">{p.name || p.var_name || `模型 ${idx + 1}`}</div>
+      <div className="model-card-sub">
+        <Tag color={meta.color} className="model-proto-tag">{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
+        {p.model && <span className="model-card-model">{p.model}</span>}
+        {p.apibase && <span className="model-card-base">{p.apibase}</span>}
+      </div>
+    </div>
   )
+  const saveBusy = saveState?.status === 'saving'
+  const saveOk = saveState?.status === 'saved'
+  const saveErr = saveState?.status === 'error'
   const extra = (
     <Space size={6} onClick={e => e.stopPropagation()}>
       <StatusTag result={result} />
-      <Button size="small" danger onClick={() => removeProfile(idx)}>删除</Button>
+      {saveOk && <span className="model-save-chip model-save-chip--ok">✓ 已保存</span>}
+      {saveErr && <span className="model-save-chip model-save-chip--err">✗ 失败</span>}
+      <Button size="small" type="primary" icon={<CheckCircle2 size={13} />} loading={saveBusy} disabled={saveBusy || result?.errors?.length > 0} onClick={() => onSave?.(idx)}>保存</Button>
+      <Button size="small" danger icon={<Trash2 size={12} />} onClick={() => removeProfile(idx)} title="删除此配置" />
     </Space>
   )
   const profileItems = [{
@@ -148,10 +156,6 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
     extra,
     children: (
       <>
-        <div className="model-protocol-note">
-          <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
-          <span>{meta.help}</span>
-        </div>
         <div className="form-grid">
           <label>显示名<Input value={p.name || ''} onChange={e => patch({ name: e.target.value })} placeholder="例如 glm-5.1" /></label>
           <label>BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
@@ -187,6 +191,7 @@ function ProfileCard({ p, idx, result, patchProfile, removeProfile, discoverMode
           onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
         {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
         {discErr && <Alert type="error" showIcon message={discErr} className="model-inline-alert" />}
+        {saveErr && <Alert type="error" showIcon message={`保存失败：${saveState?.error || '未知错误'}`} className="model-inline-alert" />}
         {result?.errors?.length > 0 && <Alert type="error" showIcon message="阻断项"
           description={<ul>{result.errors.map(k => <li key={k}>{ERR_KEYS[k] || k}</li>)}</ul>} className="model-inline-alert" />}
         {result?.warnings?.length > 0 && <Alert type="warning" showIcon message="警告"
@@ -229,34 +234,39 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
   }
 
   return (
-    <Card size="small" title="新增模型配置" className="model-add-card">
-      <div className="model-protocol-note">
-        <Tag color={meta.color}>{protocolLabel(f.protocol)}</Tag>
-        <span>{meta.help}</span>
-      </div>
-      <div className="form-grid">
-        <label>官方协议<Select value={f.protocol} onChange={v => pf({ protocol: v, model: supportsModelDiscovery(v) ? f.model : '' })} options={OFFICIAL_PROTOCOLS} /></label>
-        <label>BaseURL<Input value={f.baseUrl} onChange={e => pf({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
-        <label className="span2">API Key（可选）
+    <Card size="small"
+      title={<span className="model-add-card-title"><Plus size={13} strokeWidth={2.5} />新增模型配置</span>}
+      className="model-add-card">
+      <div className="model-add-body">
+        <div className="model-add-row2">
+          <label className="model-add-label">官方协议
+            <Select value={f.protocol} onChange={v => pf({ protocol: v, model: supportsModelDiscovery(v) ? f.model : '' })} options={OFFICIAL_PROTOCOLS} style={{width:'100%'}} />
+          </label>
+          <label className="model-add-label">BaseURL
+            <Input value={f.baseUrl} onChange={e => pf({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />
+          </label>
+        </div>
+        <label className="model-add-label">API Key（可选）
           <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
         </label>
+        {meta.help && <p className="model-add-hint"><Tag color={meta.color} style={{marginRight:4}}>{protocolLabel(f.protocol)}</Tag>{meta.help}</p>}
+        <DiscoverRow value={f.model} onChange={model => pf({ model })}
+          opts={[f.model, ...discovered.map(m => m.id || m.name || m)].filter(Boolean)}
+          onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !f.baseUrl} />
+        {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
+        {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
+        <label className="model-add-label">显示名称
+          <Input value={f.name} onChange={e => pf({ name: e.target.value })} placeholder={f.model || '可选，留空自动填入'} />
+        </label>
+        <Button type="primary" icon={<Plus size={13} />} disabled={!f.model || !f.baseUrl} onClick={add} block className="model-add-button">
+          添加配置
+        </Button>
       </div>
-      <DiscoverRow value={f.model} onChange={model => pf({ model })}
-        opts={[f.model, ...discovered.map(m => m.id || m.name || m)].filter(Boolean)}
-        onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !f.baseUrl} />
-      {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
-      {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
-      <label className="span2 model-display-name">显示名称
-        <Input value={f.name} onChange={e => pf({ name: e.target.value })} placeholder={f.model || '可选，留空自动填入'} />
-      </label>
-      <Button type="primary" icon={<Plus size={13} />} disabled={!f.model || !f.baseUrl} onClick={add} className="model-add-button">
-        添加配置
-      </Button>
     </Card>
   )
 }
 
-export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModels, discoverModels, modelPreview, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, onRevealKey, onClearRevealedKey }) {
+export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, onRevealKey, onClearRevealedKey }) {
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
@@ -275,7 +285,7 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
         <Alert
           type={risk.status === 'error' ? 'error' : 'info'}
           message={risk.status === 'ready' ? '风险目录已加载' : risk.status === 'error' ? '风险目录不可用' : '暂无条目'}
-          description={risk.status === 'error' ? risk.error : '自动获取模型为只读；写回操作受 confirmDanger 门禁保护。'}
+          description={risk.status === 'error' ? risk.error : '获取模型为只读；每个模型卡片点击“保存”后才会保存，保存仍受 confirmDanger 门禁保护。'}
         />
         {risk.items.length > 0 && (
           <div className="model-risk-grid">
@@ -297,14 +307,19 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
   return (
     <section className="models-page">
       <div className="model-toolbar">
-        <Space wrap>
-          <Tag color={hasErrors ? 'error' : 'success'}>{summary.total} 项 · {summary.errors} 错 · {summary.warnings} 警</Tag>
-          <Button icon={<UploadCloud size={14} />} onClick={() => importModels(false)}>读取</Button>
+        <div className="model-toolbar-info">
+          <Tag color={hasErrors ? 'error' : 'success'} className="model-summary-tag">
+            <span className="mst-num">{summary.total}</span><span className="mst-label">项</span>
+            {summary.errors > 0 && <><span className="mst-dot" />  <span className="mst-num mst-err">{summary.errors}</span><span className="mst-label"> 错</span></>}
+            {summary.warnings > 0 && <><span className="mst-dot" /><span className="mst-num mst-warn">{summary.warnings}</span><span className="mst-label"> 警</span></>}
+          </Tag>
+        </div>
+        <div className="model-toolbar-actions">
+          <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}>读取</Button>
           <Button icon={<Eye size={14} />} onClick={previewModels}>预览</Button>
-          <Button type="primary" icon={<CheckCircle2 size={14} />} disabled={hasErrors} onClick={saveModels}>写回</Button>
-        </Space>
+        </div>
       </div>
-      {hasErrors && <Alert type="error" showIcon message="写回前请先修复红色阻断项" className="model-inline-alert" />}
+      {hasErrors && <Alert type="error" showIcon message="保存前请先修复红色阻断项" className="model-inline-alert" />}
 
       <div className="model-layout">
         <div className="model-left">
@@ -313,8 +328,14 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
             {profiles.map((p, idx) => <ProfileCard key={`${p.var_name}-${idx}`} p={p} idx={idx} profiles={profiles}
               result={validation[idx]} patchProfile={patchProfile} removeProfile={removeProfile} discoverModels={discoverModels}
               revealedKey={revealedKeys[profileKeyId(idx, p)]} revealBusy={!!revealBusy[profileKeyId(idx, p)]}
-              onRevealKey={onRevealKey} onClearRevealedKey={onClearRevealedKey} />)}
-            {!profiles.length && <Card className="empty-card">尚未读取到模型配置。点击“读取”导入 mykey.py，或直接新增。</Card>}
+              onRevealKey={onRevealKey} onClearRevealedKey={onClearRevealedKey} onSave={saveModelProfile} saveState={modelSaveStatus[idx]} />)}
+            {!profiles.length && (
+              <div className="model-empty-state">
+                <Layers size={36} strokeWidth={1.2} className="model-empty-icon" />
+                <p className="model-empty-title">{importLoading ? '正在读取模型配置…' : '暂无模型配置'}</p>
+                <span className="model-empty-sub">{importLoading ? '自动从 mykey.py 读取中，请稍候。' : '进入此页自动读取 mykey.py，也可点击工具栏“读取”手动导入，或直接新增。'}</span>
+              </div>
+            )}
           </div>
         </div>
 
