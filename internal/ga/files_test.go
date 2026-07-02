@@ -239,3 +239,51 @@ func TestWriteSafeRejectsSymlinkParentEscape(t *testing.T) {
 		t.Fatalf("outside file should not be created, stat err=%v", err)
 	}
 }
+
+func TestLegacyGeneratedModelConfigIsHiddenFromSafeFileAccess(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "mykey_admin.generated.py")
+	if err := os.WriteFile(legacy, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte("official"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := ListSafe(root, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Name == "mykey_admin.generated.py" {
+			t.Fatalf("legacy generated model config should be hidden from ListSafe: %#v", items)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "resolve any relative", call: func() error { _, _, err := SafeResolveAny(root, "mykey_admin.generated.py"); return err }},
+		{name: "resolve any absolute", call: func() error { _, _, err := SafeResolveAny(root, legacy); return err }},
+		{name: "read", call: func() error { _, err := ReadSafe(root, "mykey_admin.generated.py"); return err }},
+		{name: "tail", call: func() error { _, err := TailSafe(root, "mykey_admin.generated.py", 10); return err }},
+		{name: "write", call: func() error { _, err := WriteSafe(root, "mykey_admin.generated.py", "new secret"); return err }},
+		{name: "delete", call: func() error { return DeleteSafe(root, "mykey_admin.generated.py") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil || !strings.Contains(err.Error(), "legacy generated model config is hidden") {
+				t.Fatalf("err=%v, want hidden legacy generated model config", err)
+			}
+		})
+	}
+
+	got, err := os.ReadFile(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "secret" {
+		t.Fatalf("legacy file content changed to %q", got)
+	}
+}

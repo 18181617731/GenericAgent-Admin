@@ -23,7 +23,6 @@ export function validateModelProfiles(profiles = []) {
     const errors = []
     const warnings = []
     const varName = text(profile.var_name)
-    const name = text(profile.name)
     const models = profileModels(profile)
     const apiBase = text(profile.apibase)
     const maxRetries = numberValue(profile.max_retries ?? 3)
@@ -35,7 +34,6 @@ export function validateModelProfiles(profiles = []) {
     else if (!/(api|config|cookie)/i.test(varName)) errors.push('varNameDiscoveryToken')
     else if ((counts.get(varName) || 0) > 1) errors.push('varNameDuplicate')
 
-    if (!name) errors.push('nameRequired')
     if (!models.length) errors.push('modelRequired')
     if (!apiBase) errors.push('apiBaseRequired')
     else if (!/^https?:\/\//i.test(apiBase)) warnings.push('apiBaseProtocol')

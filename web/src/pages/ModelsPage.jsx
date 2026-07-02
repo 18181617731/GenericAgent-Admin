@@ -32,7 +32,7 @@ const nextVarName = (protocol, profiles = []) => {
 const ERR_KEYS = {
   varNameRequired: '必须填写变量名', varNameInvalid: '变量名须为 Python 标识符',
   varNameDiscoveryToken: '变量名须含 api / config / cookie，或使用官方 native_oai_config / native_claude_config / oai_config / claude_config 命名',
-  varNameDuplicate: '变量名重复', nameRequired: '必须填写名称',
+  varNameDuplicate: '变量名重复',
   modelRequired: '必须填写模型', apiBaseRequired: '必须填写 API Base',
   apiBaseProtocol: 'API Base 须以 http:// 或 https:// 开头',
   maxRetriesInvalid: '重试次数须 ≥ 0', readTimeoutInvalid: '超时须 > 0',
@@ -59,6 +59,19 @@ const modelPatch = models => ({ models: uniqueModels(models), model: uniqueModel
 const modelCountLabel = profile => {
   const count = profileModels(profile).length
   return count > 1 ? `${count} 个模型` : (profile?.model || '未选择模型')
+}
+// 按 (type + apibase + apikey) 前端视觉分组，不改变数据结构
+const buildGroups = profiles => {
+  const map = new Map()
+  profiles.forEach((p, idx) => {
+    const type = p.type || DEFAULT_PROTOCOL
+    const apibase = p.apibase || ''
+    const apikey = p.apikey || ''
+    const key = `${type}||${apibase}||${apikey}`
+    if (!map.has(key)) map.set(key, { type, apibase, apikey, indices: [] })
+    map.get(key).indices.push(idx)
+  })
+  return [...map.values()]
 }
 
 function DiscoverRow({ value = [], onChange, opts, onDiscover, busy, disabled }) {
@@ -100,7 +113,101 @@ function DiscoverRow({ value = [], onChange, opts, onDiscover, busy, disabled })
   )
 }
 
-function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey, onSave, saveState }) {
+function ProfileGroup({ group, profiles, patchProfile, removeProfile, addProfile, discoverModels, results, revealedKeys, revealBusy, onRevealKey, onClearRevealedKey, saveStates, onSave, profileKeyId }) {
+  const { type, apibase, indices } = group
+  const [open, setOpen] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [discErr, setDiscErr] = useState('')
+  const [discovered, setDiscovered] = useState([])
+
+  const meta = protocolMeta(type || DEFAULT_PROTOCOL)
+  const canDiscover = supportsModelDiscovery(type || DEFAULT_PROTOCOL)
+  const currentModelIds = indices.map(i => profiles[i]?.model).filter(Boolean)
+  const discOpts = useMemo(() => uniqueModels([...currentModelIds, ...discovered.map(modelIdOf)]), [discovered, currentModelIds])
+
+  const handleDiscover = async () => {
+    if (!canDiscover) return
+    setBusy(true); setDiscErr('')
+    try {
+      const firstP = profiles[indices[0]]
+      const d = await discoverModels({ protocol: type, baseUrl: apibase, apiKey: firstP?.apikey, varName: firstP?.var_name })
+      setDiscovered(d?.models || [])
+    } catch (e) { setDiscErr(String(e?.message || e)) }
+    finally { setBusy(false) }
+  }
+
+  const handleModelChange = newIds => {
+    const added = newIds.filter(id => !currentModelIds.includes(id))
+    const removed = currentModelIds.filter(id => !newIds.includes(id))
+    // Add new: clone first profile in group
+    added.forEach(id => {
+      const src = profiles[indices[0]] || {}
+      addProfile({ ...src, name: '', model: id, models: [id], var_name: nextVarName(type, profiles) })
+    })
+    // Remove: find matching index and remove
+    removed.forEach(id => {
+      const idx = indices.find(i => profiles[i]?.model === id)
+      if (idx != null) removeProfile(idx)
+    })
+  }
+
+  return (
+    <div className="model-group">
+      <div className="model-group-header" onClick={() => setOpen(o => !o)}>
+        <div style={{display:'flex',alignItems:'center',gap:6,flex:1,minWidth:0}}>
+          <span className={`model-group-chevron${open?' open':''}`}>›</span>
+          <Tag color={meta.color} className="model-proto-tag">{protocolLabel(type || DEFAULT_PROTOCOL)}</Tag>
+          {apibase && <span className="model-group-url">{apibase}</span>}
+        </div>
+        <div className="model-group-discover" onClick={e => e.stopPropagation()}>
+          <Select
+            mode="tags"
+            value={currentModelIds}
+            options={discOpts.map(v => ({ value: v, label: v }))}
+            onChange={handleModelChange}
+            tokenSeparators={[',', '\n']}
+            placeholder="添加模型 ID"
+            maxTagCount="responsive"
+            className="model-group-select"
+          />
+          {canDiscover && (
+            <Button size="small" loading={busy} onClick={handleDiscover} icon={<RefreshCw size={12} />}>
+              {busy ? '获取中…' : '获取'}
+            </Button>
+          )}
+          <span style={{fontSize:11,color:'var(--mp-muted)',flexShrink:0}}>{indices.length} 个</span>
+        </div>
+      </div>
+      {discErr && <div className="model-group-err">{discErr}</div>}
+      {open && (
+        <div className="model-group-body">
+          {indices.map(idx => (
+            <ProfileCard
+              key={profileKeyId(idx, profiles[idx])}
+              p={profiles[idx]}
+              idx={idx}
+              profileKey={profileKeyId(idx, profiles[idx])}
+              result={results?.[idx]}
+              patchProfile={patchProfile}
+              removeProfile={removeProfile}
+              discoverModels={discoverModels}
+              profiles={profiles}
+              revealedKey={revealedKeys?.[idx]}
+              revealBusy={!!revealBusy?.[idx]}
+              onRevealKey={() => onRevealKey(idx)}
+              onClearRevealedKey={() => onClearRevealedKey(idx)}
+              onSave={onSave}
+              saveState={saveStates?.[idx]}
+              inGroup
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, discoverModels, profiles, revealedKey, revealBusy, onRevealKey, onClearRevealedKey, onSave, saveState, inGroup }) {
   const [busy, setBusy] = useState(false)
   const [discErr, setDiscErr] = useState('')
   const [discovered, setDiscovered] = useState([])
@@ -139,14 +246,16 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
     )
   }]
 
+  const headerTitle = p.model || p.var_name || `模型 ${idx + 1}`
   const header = (
     <div className="model-card-header">
-      <div className="model-card-name">{p.name || p.var_name || `模型 ${idx + 1}`}</div>
-      <div className="model-card-sub">
-        <Tag color={meta.color} className="model-proto-tag">{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
-        {selectedModels.length > 0 && <span className="model-card-model">{modelCountLabel(p)}</span>}
-        {p.apibase && <span className="model-card-base">{p.apibase}</span>}
-      </div>
+      <div className="model-card-name">{headerTitle}</div>
+      {!inGroup && (
+        <div className="model-card-sub">
+          <Tag color={meta.color} className="model-proto-tag">{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
+          {p.apibase && <span className="model-card-base">{p.apibase}</span>}
+        </div>
+      )}
     </div>
   )
   const saveBusy = saveState?.status === 'saving'
@@ -168,8 +277,7 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
     children: (
       <>
         <div className="form-grid">
-          <label>显示名<Input value={p.name || ''} onChange={e => patch({ name: e.target.value })} placeholder="例如 glm-5.1" /></label>
-          <label>BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
+          <label className="span2">BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
           <label className="span2">API Key
             {revealed ? (
               <Input
@@ -198,9 +306,19 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
             )}
           </label>
         </div>
-        <DiscoverRow value={selectedModels} onChange={models => patch(modelPatch(models))} opts={modelOpts}
-          onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
-        {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
+        {inGroup ? (
+          <div className="form-grid">
+            <label className="span2">Model ID
+              <Input value={p.model || ''} onChange={e => patch({ model: e.target.value, models: [e.target.value] })} placeholder="model id" />
+            </label>
+          </div>
+        ) : (
+          <>
+            <DiscoverRow value={selectedModels} onChange={models => patch(modelPatch(models))} opts={modelOpts}
+              onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
+            {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
+          </>
+        )}
         {discErr && <Alert type="error" showIcon message={discErr} className="model-inline-alert" />}
         {saveErr && <Alert type="error" showIcon message={`保存失败：${saveState?.error || '未知错误'}`} className="model-inline-alert" />}
         {result?.errors?.length > 0 && <Alert type="error" showIcon message="阻断项"
@@ -239,10 +357,16 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
   }
 
   const add = () => {
-    const idx = profiles.length
     const models = uniqueModels(f.models)
-    setProfiles([...profiles, { ...emptyProfile(idx, f.protocol), var_name: nextVarName(f.protocol, profiles), type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey, models, model: models[0] || '', name: f.name || models[0] || `model-${idx + 1}` }])
-    setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
+    if (!models.length) return
+    const newProfiles = models.map((modelId, i) => ({
+      ...emptyProfile(profiles.length + i, f.protocol),
+      var_name: nextVarName(f.protocol, [...profiles, ...Array(i).fill({})]),
+      type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey,
+      models: [modelId], model: modelId
+    }))
+    setProfiles([...profiles, ...newProfiles])
+    setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [] })
     setDiscovered([])
     setErr('')
   }
@@ -269,9 +393,6 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
           onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !f.baseUrl} />
         {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
         {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
-        <label className="model-add-label">显示名称
-          <Input value={f.name} onChange={e => pf({ name: e.target.value })} placeholder={selectedModels[0] || '可选，留空自动填入'} />
-        </label>
         <Button type="primary" icon={<Plus size={13} />} disabled={!selectedModels.length || !f.baseUrl} onClick={add} block className="model-add-button">
           添加配置
         </Button>
@@ -339,13 +460,25 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
         <div className="model-left">
           <AddProfileForm profiles={profiles} setProfiles={setProfiles} discoverModels={discoverModels} t={t} />
           <div className="model-list">
-            {profiles.map((p, idx) => {
-              const keyId = profileKeyId(idx, p)
-              return <ProfileCard key={keyId} p={p} idx={idx} profileKey={keyId} profiles={profiles}
-                result={validation[idx]} patchProfile={patchProfile} removeProfile={removeProfile} discoverModels={discoverModels}
-                revealedKey={revealedKeys[keyId]} revealBusy={!!revealBusy[keyId]}
-                onRevealKey={onRevealKey} onClearRevealedKey={onClearRevealedKey} onSave={saveModelProfile} saveState={modelSaveStatus[keyId] || modelSaveStatus[idx]} />
-            })}
+            {buildGroups(profiles).map(group => (
+              <ProfileGroup
+                key={`${group.type}||${group.apibase}||${group.apikey}`}
+                group={group}
+                profiles={profiles}
+                patchProfile={patchProfile}
+                removeProfile={removeProfile}
+                addProfile={p => setProfiles(prev => [...prev, p])}
+                discoverModels={discoverModels}
+                results={validation}
+                revealedKeys={Object.fromEntries(group.indices.map(i => [i, revealedKeys[profileKeyId(i, profiles[i])]]))}
+                revealBusy={Object.fromEntries(group.indices.map(i => [i, !!revealBusy[profileKeyId(i, profiles[i])]]))}
+                onRevealKey={(idx) => onRevealKey(profileKeyId(idx, profiles[idx]))}
+                onClearRevealedKey={(idx) => onClearRevealedKey(profileKeyId(idx, profiles[idx]))}
+                saveStates={Object.fromEntries(group.indices.map(i => { const k = profileKeyId(i, profiles[i]); return [i, modelSaveStatus[k] || modelSaveStatus[i]] }))}
+                onSave={saveModelProfile}
+                profileKeyId={profileKeyId}
+              />
+            ))}
             {!profiles.length && (
               <div className="model-empty-state">
                 <Layers size={36} strokeWidth={1.2} className="model-empty-icon" />

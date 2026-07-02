@@ -132,7 +132,7 @@ func TestStoreSaveRejectsMaskedSecretWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestExportWritesGeneratedAndActivatesAtomically(t *testing.T) {
+func TestExportWritesOfficialMyKeyAtomically(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing", "ga")
 	profiles := []Profile{{
 		VarName: "api_config_main",
@@ -149,20 +149,21 @@ func TestExportWritesGeneratedAndActivatesAtomically(t *testing.T) {
 	if res["activated"] != true {
 		t.Fatalf("activated = %v, want true", res["activated"])
 	}
-	for _, name := range []string{"mykey_admin.generated.py", "mykey.py"} {
-		p := filepath.Join(root, name)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatalf("%s missing: %v", name, err)
-		}
-		if !strings.Contains(string(data), "sk-real-secret") || !strings.Contains(string(data), "api_config_main") {
-			t.Fatalf("%s content missing rendered profile: %q", name, string(data))
-		}
-		if st, err := os.Stat(p); err != nil {
-			t.Fatalf("stat %s: %v", name, err)
-		} else if runtime.GOOS != "windows" && st.Mode().Perm() != 0600 {
-			t.Fatalf("%s perm = %v, want 0600", name, st.Mode().Perm())
-		}
+	p := filepath.Join(root, "mykey.py")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("mykey.py missing: %v", err)
+	}
+	if !strings.Contains(string(data), "sk-real-secret") || !strings.Contains(string(data), "api_config_main") {
+		t.Fatalf("mykey.py content missing rendered profile: %q", string(data))
+	}
+	if st, err := os.Stat(p); err != nil {
+		t.Fatalf("stat mykey.py: %v", err)
+	} else if runtime.GOOS != "windows" && st.Mode().Perm() != 0600 {
+		t.Fatalf("mykey.py perm = %v, want 0600", st.Mode().Perm())
+	}
+	if _, err := os.Stat(filepath.Join(root, "mykey_admin.generated.py")); !os.IsNotExist(err) {
+		t.Fatalf("mykey_admin.generated.py should not be written; stat err=%v", err)
 	}
 }
 
@@ -219,6 +220,49 @@ func TestExportRejectsUnsafeGARoot(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "filesystem root") {
 			t.Fatalf("Export(%q) error = %v, want filesystem root rejection", root, err)
 		}
+	}
+}
+
+func TestImportMyKeyExecutesCurrentFileAndUsesFinalRuntimeValues(t *testing.T) {
+	root := t.TempDir()
+	mykey := filepath.Join(root, "mykey.py")
+	text := "native_oai_config1 = {\n" +
+		"    'name': 'old-literal',\n" +
+		"    'apibase': 'https://old.example/v1',\n" +
+		"    'model': 'old-model',\n" +
+		"    'apikey': 'sk-old-secret',\n" +
+		"}\n" +
+		"native_oai_config1.update({\n" +
+		"    'name': 'current-runtime',\n" +
+		"    'apibase': 'https://current.example/v1',\n" +
+		"    'model': 'current-model',\n" +
+		"    'apikey': 'sk-current-secret',\n" +
+		"})\n"
+	if err := os.WriteFile(mykey, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", false)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 {
+		t.Fatalf("profiles len = %d, want 1: %#v", len(draft.Profiles), draft.Profiles)
+	}
+	p := draft.Profiles[0]
+	if p.Name != "current-runtime" || p.APIBase != "https://current.example/v1" || p.Model != "current-model" {
+		t.Fatalf("profile = %#v, want current runtime values", p)
+	}
+	if p.APIKey != "sk-****cret" {
+		t.Fatalf("masked APIKey = %q", p.APIKey)
+	}
+
+	raw, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython(reveal) error = %v", err)
+	}
+	if raw.Profiles[0].APIKey != "sk-current-secret" {
+		t.Fatalf("raw APIKey = %q", raw.Profiles[0].APIKey)
 	}
 }
 

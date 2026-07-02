@@ -172,7 +172,6 @@ func (s *Store) MergePreservedSecrets(profiles []Profile) ([]Profile, error) {
 	return merged, nil
 }
 
-
 func normalizeProfiles(profiles []Profile) []Profile {
 	out := make([]Profile, len(profiles))
 	for i, p := range profiles {
@@ -268,7 +267,7 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 		}
 		models := profileModels(p)
 		if len(models) == 0 {
-			return errors.New("name, apibase and model are required")
+			return errors.New("apibase and model are required")
 		}
 		for i := range models {
 			varName := expandedVarName(p.VarName, i)
@@ -277,8 +276,8 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 			}
 			seen[varName] = true
 		}
-		if p.Name == "" || p.APIBase == "" {
-			return errors.New("name, apibase and model are required")
+		if p.APIBase == "" {
+			return errors.New("apibase and model are required")
 		}
 		if !allowMaskedSecrets && IsMaskedSecret(p.APIKey) {
 			return fmt.Errorf("masked apikey cannot be saved or exported for %s; reveal/import with authorization or enter the full key", p.VarName)
@@ -297,10 +296,11 @@ func IsMaskedSecret(s string) bool {
 func SourceStatus(gaRoot string) map[string]interface{} {
 	mykey := filepath.Join(gaRoot, "mykey.py")
 	jsonp := filepath.Join(gaRoot, "mykey.json")
-	gen := filepath.Join(gaRoot, "mykey_admin.generated.py")
 	return map[string]interface{}{
-		"mykey_py_exists": exists(mykey), "mykey_json_exists": exists(jsonp), "generated_exists": exists(gen), "generated_path": gen,
-		"safe_note": "mykey.py can be imported with explicit user authorization. Import uses Python AST parsing only and never executes mykey.py.",
+		"mykey_py_exists":   exists(mykey),
+		"mykey_json_exists": exists(jsonp),
+		"mykey_py_path":     mykey,
+		"safe_note":         "mykey.py is the official GenericAgent model configuration file. Import loads the current mykey.py in an isolated Python process so computed runtime values match GenericAgent.",
 	}
 }
 func exists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
@@ -315,37 +315,54 @@ func ImportMyKeyWithPython(gaRoot, configuredPython string, reveal bool) (Draft,
 		return Draft{UpdatedAt: time.Now().Format(time.RFC3339), Profiles: Defaults()}, nil
 	}
 	py := pythonExe(gaRoot, configuredPython)
-	script := `import ast, json, sys
+	script := `import importlib.util, json, os, sys
 path=sys.argv[1]
 reveal=sys.argv[2]=='1'
-text=open(path,'r',encoding='utf-8').read()
-tree=ast.parse(text, filename=path)
+ga_root=os.path.dirname(os.path.abspath(path))
+if ga_root not in sys.path:
+    sys.path.insert(0, ga_root)
 
-def val(n):
-    if isinstance(n, ast.Constant): return n.value
-    if isinstance(n, ast.Dict): return {val(k): val(v) for k,v in zip(n.keys,n.values) if k is not None}
-    if isinstance(n, (ast.List, ast.Tuple)): return [val(x) for x in n.elts]
-    if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub) and isinstance(n.operand, ast.Constant) and isinstance(n.operand.value,(int,float)): return -n.operand.value
-    return None
+spec=importlib.util.spec_from_file_location('mykey', path)
+if spec is None or spec.loader is None:
+    raise RuntimeError('cannot load mykey.py')
+mod=importlib.util.module_from_spec(spec)
+sys.modules['mykey']=mod
+spec.loader.exec_module(mod)
+
+
+def jsonable(v):
+    if isinstance(v, (str, int, float, bool)) or v is None:
+        return v
+    if isinstance(v, dict):
+        return {str(k): jsonable(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple, set)):
+        return [jsonable(x) for x in v]
+    return str(v)
+
 
 def mask(s):
     if not isinstance(s,str) or not s: return s
     if reveal: return s
     if len(s)<=8: return '******'
     return s[:3]+'****'+s[-4:]
+
 profiles=[]
-for node in tree.body:
-    if not isinstance(node, ast.Assign): continue
-    names=[t.id for t in node.targets if isinstance(t, ast.Name)]
-    if not names: continue
-    var=names[0]
+for var, value in vars(mod).items():
+    if var.startswith('_'):
+        continue
     low=var.lower()
-    if 'mixin' in low: continue
+    if 'mixin' in low:
+        continue
     official = any(x in low for x in ('native_claude','native_oai','claude','oai'))
     legacy = any(x in low for x in ('api','config','cookie'))
-    if not (official or legacy): continue
-    d=val(node.value)
-    if not isinstance(d, dict): continue
+    if not (official or legacy):
+        continue
+    if not isinstance(value, dict):
+        continue
+    d=jsonable(value)
+    if not isinstance(d, dict):
+        continue
+    d=dict(d)
     def pop_any(keys, default=''):
         for k in keys:
             if k in d: return d.pop(k)
@@ -361,31 +378,12 @@ for node in tree.body:
         typ='oai'
     else:
         typ='native_oai'
-    p={'var_name':var,'type':typ,'name':str(pop_any(['name'], var) or var),'apibase':str(pop_any(['apibase','api_base','base_url','baseURL'], '') or ''),'model':str(pop_any(['model','model_name'], '') or ''),'apikey':mask(str(apikey) if apikey is not None else '')}
-    for src,dst in [('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
+    p={'var_name':var,'type':typ,'name':str(pop_any(['name'], '') or ''),'apibase':str(pop_any(['apibase','api_base','base_url','baseURL'], '') or ''),'model':str(pop_any(['model','model_name'], '') or ''),'apikey':mask(str(apikey) if apikey is not None else '')}
+    for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
     p['extra']=d
     profiles.append(p)
-# Aggregate same source (protocol + API URL + API key) into one admin card while
-# preserving ordinary mykey.py output on export.
-groups=[]
-index={}
-for p in profiles:
-    key=(p.get('type',''), p.get('apibase',''), p.get('apikey',''))
-    model=p.get('model','')
-    if key not in index:
-        p['models']=[]
-        index[key]=len(groups)
-        groups.append(p)
-    g=groups[index[key]]
-    if model and model not in g['models']:
-        g['models'].append(model)
-    if not g.get('model') and model:
-        g['model']=model
-for g in groups:
-    if not g.get('model') and g.get('models'):
-        g['model']=g['models'][0]
-print(json.dumps({'updated_at':'','profiles':groups}, ensure_ascii=False))`
+print(json.dumps({'updated_at':'','profiles':profiles}, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", script, mykey, boolArg(reveal))
 	hideChildWindow(cmd)
 	var stderr bytes.Buffer
@@ -398,8 +396,8 @@ print(json.dumps({'updated_at':'','profiles':groups}, ensure_ascii=False))`
 	if err := json.Unmarshal(out, &d); err != nil {
 		return Draft{}, err
 	}
-	if len(d.Profiles) == 0 {
-		return Draft{}, errors.New("no supported official model config dict assignments found in mykey.py")
+	if d.UpdatedAt == "" {
+		d.UpdatedAt = time.Now().Format(time.RFC3339)
 	}
 	return d, nil
 }
@@ -450,9 +448,8 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 		models := profileModels(p)
 		for i, model := range models {
 			m := map[string]interface{}{}
-			m["name"] = p.Name
-			if len(models) > 1 {
-				m["name"] = fmt.Sprintf("%s · %s", p.Name, model)
+			if p.Name != "" {
+				m["name"] = p.Name
 			}
 			m["apikey"] = p.APIKey
 			m["apibase"] = p.APIBase
@@ -547,29 +544,21 @@ func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string
 	if err != nil {
 		return nil, err
 	}
-	gen := filepath.Join(gaRoot, "mykey_admin.generated.py")
-	if err := writeFileAtomic(gen, []byte(text), 0600); err != nil {
-		return nil, err
-	}
 	active := filepath.Join(gaRoot, "mykey.py")
-	res := map[string]interface{}{"generated_path": gen, "activated": false, "active_path": nil, "backup_path": nil}
-	if overwriteActive {
-		if exists(active) {
-			bak := filepath.Join(gaRoot, fmt.Sprintf("mykey.py.bak-%s", time.Now().Format("20060102-150405")))
-			data, err := os.ReadFile(active)
-			if err != nil {
-				return nil, err
-			}
-			if err := writeFileAtomic(bak, data, 0600); err != nil {
-				return nil, err
-			}
-			res["backup_path"] = bak
-		}
-		if err := writeFileAtomic(active, []byte(text), 0600); err != nil {
+	res := map[string]interface{}{"activated": true, "active_path": active, "saved_path": active, "backup_path": nil}
+	if exists(active) {
+		bak := filepath.Join(gaRoot, fmt.Sprintf("mykey.py.bak-%s", time.Now().Format("20060102-150405")))
+		data, err := os.ReadFile(active)
+		if err != nil {
 			return nil, err
 		}
-		res["activated"] = true
-		res["active_path"] = active
+		if err := writeFileAtomic(bak, data, 0600); err != nil {
+			return nil, err
+		}
+		res["backup_path"] = bak
+	}
+	if err := writeFileAtomic(active, []byte(text), 0600); err != nil {
+		return nil, err
 	}
 	return res, nil
 }

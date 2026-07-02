@@ -46,20 +46,6 @@ func main() {
 	version.SetRepoURL(cfgStore.Cfg.UpdateRepoURL)
 	svc := service.NewManagerWithPython(cfgStore.Cfg.GARoot, cfgStore.Cfg.EffectivePython, cfgStore.Cfg.BufferLines)
 	models := modelconfig.NewStore(cwd)
-	// Auto-import profiles from mykey.py on first run when no model_profiles.json exists
-	if gaRoot := cfgStore.Cfg.GARoot; gaRoot != "" {
-		if _, statErr := os.Stat(filepath.Join(cwd, "model_profiles.json")); os.IsNotExist(statErr) {
-			if imported, impErr := modelconfig.ImportMyKeyWithPython(gaRoot, cfgStore.Cfg.EffectivePython, true); impErr == nil && len(imported.Profiles) > 0 {
-				if _, saveErr := models.Save(imported.Profiles); saveErr == nil {
-					log.Printf("auto-imported %d profiles from mykey.py", len(imported.Profiles))
-				} else {
-					log.Printf("auto-import save failed: %v", saveErr)
-				}
-			} else if impErr != nil {
-				log.Printf("auto-import from mykey.py skipped: %v", impErr)
-			}
-		}
-	}
 	static, err := fs.Sub(webFS, "web/dist")
 	if err != nil {
 		log.Fatal(err)

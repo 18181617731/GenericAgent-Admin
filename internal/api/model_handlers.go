@@ -14,7 +14,7 @@ import (
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
-		d, err := s.Models.Load(false)
+		d, err := s.loadModelsFromOfficialMyKey(false)
 		if err != nil {
 			bad(w, 500, err.Error())
 			return
@@ -38,11 +38,11 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		if _, err := s.Models.Save(profiles); err != nil {
+		if _, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, profiles, true); err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
-		d, err := s.Models.Load(false)
+		d, err := s.loadModelsFromOfficialMyKey(false)
 		if err != nil {
 			bad(w, 500, err.Error())
 			return
@@ -61,65 +61,21 @@ func (s *Server) modelsRaw(w http.ResponseWriter, r *http.Request) {
 	if !requireDangerousHeader(w, r) {
 		return
 	}
-	d, err := s.Models.Load(true)
+	d, err := s.loadModelsFromOfficialMyKey(true)
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.overlayRawModelSecretsFromMyKey(&d)
 	writeJSON(w, d)
 }
 
-func (s *Server) overlayRawModelSecretsFromMyKey(d *modelconfig.Draft) {
-	if d == nil || s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
-		return
-	}
-	imported, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
-	if err != nil {
-		return
-	}
-	importedByVar := map[string]modelconfig.Profile{}
-	for _, p := range imported.Profiles {
-		p.VarName = strings.TrimSpace(p.VarName)
-		p.APIKey = strings.TrimSpace(p.APIKey)
-		if p.VarName == "" || p.APIKey == "" || modelconfig.IsMaskedSecret(p.APIKey) {
-			continue
-		}
-		importedByVar[p.VarName] = p
-	}
-	if len(importedByVar) == 0 {
-		return
-	}
-	seen := map[string]bool{}
-	for i := range d.Profiles {
-		name := strings.TrimSpace(d.Profiles[i].VarName)
-		if name == "" {
-			continue
-		}
-		seen[name] = true
-		if p, ok := importedByVar[name]; ok {
-			d.Profiles[i].APIKey = p.APIKey
-		}
-	}
-	for _, p := range imported.Profiles {
-		name := strings.TrimSpace(p.VarName)
-		if name == "" || seen[name] {
-			continue
-		}
-		p.APIKey = strings.TrimSpace(p.APIKey)
-		if p.APIKey == "" || modelconfig.IsMaskedSecret(p.APIKey) {
-			continue
-		}
-		d.Profiles = append(d.Profiles, p)
-		seen[name] = true
-	}
+func (s *Server) loadModelsFromOfficialMyKey(reveal bool) (modelconfig.Draft, error) {
+	return modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, reveal)
 }
 
 func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]modelconfig.Profile, error) {
-	merged, err := s.Models.MergePreservedSecrets(profiles)
-	if err != nil {
-		return nil, err
-	}
+	merged := make([]modelconfig.Profile, len(profiles))
+	copy(merged, profiles)
 	if s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
 		return merged, nil
 	}
@@ -296,16 +252,7 @@ func (s *Server) resolveModelDiscoveryAPIKey(r *http.Request) (string, error) {
 	if varName == "" {
 		return apiKey, nil
 	}
-	if d, err := s.Models.Load(true); err == nil {
-		for _, p := range d.Profiles {
-			if p.VarName == varName && strings.TrimSpace(p.APIKey) != "" && !modelconfig.IsMaskedSecret(p.APIKey) {
-				return strings.TrimSpace(p.APIKey), nil
-			}
-		}
-	} else {
-		return "", err
-	}
-	if strings.TrimSpace(s.CfgStore.Cfg.GARoot) != "" {
+	if s != nil && s.CfgStore != nil && strings.TrimSpace(s.CfgStore.Cfg.GARoot) != "" {
 		d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
 		if err != nil {
 			return "", err
@@ -319,7 +266,7 @@ func (s *Server) resolveModelDiscoveryAPIKey(r *http.Request) (string, error) {
 	if apiKey == "" {
 		return "", nil
 	}
-	return "", errors.New("masked api_key cannot be used for discovery without a saved or mykey.py secret for var_name")
+	return "", errors.New("masked api_key cannot be used for discovery without a mykey.py secret for var_name")
 }
 
 func modelDiscoveryAuthHeaders(apiKey string, isClaude bool) []map[string]string {
@@ -415,14 +362,10 @@ func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, "refusing to save masked mykey import; set reveal=true with explicit authorization")
 			return
 		}
-		if saved, err := s.Models.Save(d.Profiles); err == nil {
-			d = saved
-		} else {
-			bad(w, 400, err.Error())
-			return
-		}
+		// mykey.py is the source of truth; importing it must not persist a stale
+		// model_profiles.json shadow copy.
 	}
-	writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "updated_at": d.UpdatedAt, "saved": p.Save, "masked": !p.Reveal})
+	writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "updated_at": d.UpdatedAt, "saved": false, "masked": !p.Reveal})
 }
 
 func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
@@ -445,10 +388,6 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, profiles, p.OverwriteActive)
 	if err != nil {
-		bad(w, 400, err.Error())
-		return
-	}
-	if _, err := s.Models.Save(profiles); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}

@@ -224,3 +224,72 @@ func TestFilesDeleteRequiresDangerousConfirmAndDeletes(t *testing.T) {
 		t.Fatalf("file still exists or stat failed unexpectedly: %v", err)
 	}
 }
+
+func TestFilesEndpointsHideLegacyGeneratedModelConfig(t *testing.T) {
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, "mykey_admin.generated.py")
+	if err := os.WriteFile(legacyPath, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte("official"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/files/list?path=.", nil)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "mykey_admin.generated.py") {
+		t.Fatalf("legacy generated model config leaked in list response: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "mykey.py") {
+		t.Fatalf("official mykey.py missing from list response: %s", rr.Body.String())
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "read", method: http.MethodGet, path: "/api/files/read?path=mykey_admin.generated.py"},
+		{name: "tail", method: http.MethodGet, path: "/api/files/tail?path=mykey_admin.generated.py"},
+		{name: "image", method: http.MethodGet, path: "/api/files/image?path=mykey_admin.generated.py"},
+		{name: "download", method: http.MethodGet, path: "/api/files/download?path=mykey_admin.generated.py"},
+		{name: "search direct", method: http.MethodGet, path: "/api/files/search?path=mykey_admin.generated.py&q=secret"},
+		{name: "write", method: http.MethodPost, path: "/api/files/write", body: `{"path":"mykey_admin.generated.py","content":"changed"}`},
+		{name: "open", method: http.MethodPost, path: "/api/files/open", body: `{"path":"mykey_admin.generated.py","mode":"file"}`},
+		{name: "delete", method: http.MethodPost, path: "/api/files/delete", body: `{"path":"mykey_admin.generated.py"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := bytes.NewReader([]byte(tc.body))
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, body)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			if tc.method == http.MethodPost {
+				req.Header.Set("X-GA-Confirm", "dangerous")
+			}
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "legacy generated model config is hidden") {
+				t.Fatalf("unexpected body: %s", rr.Body.String())
+			}
+		})
+	}
+
+	got, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "secret" {
+		t.Fatalf("legacy file content changed to %q", got)
+	}
+}

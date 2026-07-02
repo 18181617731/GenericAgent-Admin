@@ -4602,6 +4602,38 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   flex: 1; min-width: 0;
 }
+/* Profile Group */
+.models-page .model-group {
+  border: 1px solid var(--mp-border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  background: var(--mp-surface);
+  overflow: hidden;
+}
+.models-page .model-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  background: var(--mp-bg);
+  border-bottom: 1px solid var(--mp-border);
+  cursor: pointer;
+  user-select: none;
+}
+.models-page .model-group-header:hover { background: rgba(99,102,241,.04); }
+.models-page .model-group-chevron {
+  color: var(--mp-muted); flex-shrink: 0;
+  transition: transform .18s;
+}
+.models-page .model-group-chevron.open { transform: rotate(90deg); }
+.models-page .model-group-url {
+  font-size: 12px; color: var(--mp-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1; min-width: 0;
+}
+.models-page .model-group-discover { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; max-width: 540px; }
+.models-page .model-group-select { flex: 1; min-width: 0; }
+.models-page .model-group-err { font-size: 11px; color: #ff4d4f; }
+.models-page .model-group-body { padding: 6px 8px; }
+.models-page .model-group-body .ant-collapse-item:last-child { border-bottom: none; }
 /* Save state chips */
 .models-page .model-save-chip {
   font-size: 11px; font-weight: 600; padding: 1px 7px;

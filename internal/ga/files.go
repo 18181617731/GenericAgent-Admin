@@ -39,6 +39,18 @@ type FileSearchHit struct {
 const maxReadBytes int64 = 512 * 1024
 const maxReadLines = 5000
 const maxSearchFileBytes int64 = 1024 * 1024
+const legacyGeneratedModelConfigName = "mykey_admin.generated.py"
+
+// IsHiddenSafeFilePath reports files intentionally hidden from the Admin file browser.
+// GA's official model config source is mykey.py; older Admin builds wrote this
+// generated shadow file and it should not appear as an editable source.
+func IsHiddenSafeFilePath(clean string) bool {
+	return filepath.Base(clean) == legacyGeneratedModelConfigName
+}
+
+func hiddenSafeFileError() error {
+	return errors.New("legacy generated model config is hidden; use mykey.py")
+}
 
 func SafeResolve(root, rel string) (string, string, error) {
 	if root == "" {
@@ -68,10 +80,19 @@ func SafeResolveAny(root, p string) (string, string, error) {
 		return "", "", err
 	}
 	p = strings.TrimSpace(p)
+	var full, clean string
 	if filepath.IsAbs(p) {
-		return ensureWithinRoot(rootAbs, p)
+		full, clean, err = ensureWithinRoot(rootAbs, p)
+	} else {
+		full, clean, err = SafeResolve(root, p)
 	}
-	return SafeResolve(root, p)
+	if err != nil {
+		return "", "", err
+	}
+	if IsHiddenSafeFilePath(clean) {
+		return "", "", hiddenSafeFileError()
+	}
+	return full, clean, nil
 }
 
 func ensureWithinRoot(rootAbs, full string) (string, string, error) {
@@ -144,7 +165,7 @@ func ListSafe(root, rel string) ([]SafeFileEntry, error) {
 	}
 	out := []SafeFileEntry{}
 	for _, de := range items {
-		if strings.HasPrefix(de.Name(), ".") || de.Name() == "__pycache__" {
+		if strings.HasPrefix(de.Name(), ".") || de.Name() == "__pycache__" || de.Name() == legacyGeneratedModelConfigName {
 			continue
 		}
 		if de.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
@@ -177,6 +198,9 @@ func ReadSafe(root, rel string) (SafeFileDetail, error) {
 	full, clean, err := SafeResolve(root, rel)
 	if err != nil {
 		return SafeFileDetail{}, err
+	}
+	if IsHiddenSafeFilePath(clean) {
+		return SafeFileDetail{}, hiddenSafeFileError()
 	}
 	info, err := os.Stat(full)
 	if err != nil {
@@ -240,6 +264,9 @@ func TailSafe(root, rel string, lines int) (SafeFileDetail, error) {
 	if err != nil {
 		return SafeFileDetail{}, err
 	}
+	if IsHiddenSafeFilePath(clean) {
+		return SafeFileDetail{}, hiddenSafeFileError()
+	}
 	info, err := os.Stat(full)
 	if err != nil {
 		return SafeFileDetail{}, err
@@ -296,6 +323,9 @@ func WriteSafe(root, rel, content string) (SafeFileDetail, error) {
 	if err != nil {
 		return SafeFileDetail{}, err
 	}
+	if IsHiddenSafeFilePath(clean) {
+		return SafeFileDetail{}, hiddenSafeFileError()
+	}
 	if clean == "" {
 		return SafeFileDetail{}, errors.New("path is empty")
 	}
@@ -336,9 +366,12 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 	if maxHits <= 0 || maxHits > 500 {
 		maxHits = 100
 	}
-	base, _, err := SafeResolve(root, rel)
+	base, clean, err := SafeResolve(root, rel)
 	if err != nil {
 		return nil, err
+	}
+	if IsHiddenSafeFilePath(clean) {
+		return nil, hiddenSafeFileError()
 	}
 	rootAbs, _ := filepath.Abs(root)
 	hits := []FileSearchHit{}
@@ -351,7 +384,7 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 			return filepath.SkipAll
 		}
 		name := de.Name()
-		if strings.HasPrefix(name, ".") || name == "__pycache__" {
+		if strings.HasPrefix(name, ".") || name == "__pycache__" || name == legacyGeneratedModelConfigName {
 			if de.IsDir() {
 				return filepath.SkipDir
 			}

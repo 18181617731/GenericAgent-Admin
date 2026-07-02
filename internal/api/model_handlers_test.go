@@ -51,7 +51,8 @@ func TestModelsRawAndPreviewMethodContracts(t *testing.T) {
 }
 
 func TestModelsSaveAcceptsBooleanFakeCCSystemPrompt(t *testing.T) {
-	s := newModelTestServer(t, t.TempDir())
+	root := t.TempDir()
+	s := newModelTestServer(t, root)
 	body := []byte(`{"profiles":[{"var_name":"api_config_main","type":"native_claude","name":"main","apibase":"https://api.example/v1","model":"claude-test","apikey":"sk-real-secret","fake_cc_system_prompt":true}]}`)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/models", bytes.NewReader(body))
@@ -61,9 +62,9 @@ func TestModelsSaveAcceptsBooleanFakeCCSystemPrompt(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
 	}
-	raw, err := s.Models.Load(true)
+	raw, err := modelconfig.ImportMyKeyWithPython(root, "", true)
 	if err != nil {
-		t.Fatalf("Load(true) error = %v", err)
+		t.Fatalf("ImportMyKeyWithPython(true) error = %v", err)
 	}
 	if len(raw.Profiles) != 1 || raw.Profiles[0].FakeCCSystemPrompt == nil || !bool(*raw.Profiles[0].FakeCCSystemPrompt) {
 		t.Fatalf("FakeCCSystemPrompt = %#v, want true", raw.Profiles)
@@ -120,17 +121,8 @@ func TestModelsSaveRequiresDangerousConfirm(t *testing.T) {
 
 func TestModelsRawWithDangerousConfirmReturnsUnmaskedSecret(t *testing.T) {
 	root := t.TempDir()
+	writeTestMyKey(t, root, "sk-raw-secret")
 	s := newModelTestServer(t, root)
-	if _, err := s.Models.Save([]modelconfig.Profile{{
-		VarName: "api_config_main",
-		Type:    "openai",
-		Name:    "main",
-		APIBase: "https://api.example/v1",
-		Model:   "gpt-test",
-		APIKey:  "sk-raw-secret",
-	}}); err != nil {
-		t.Fatalf("seed Save() error = %v", err)
-	}
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/models/raw", nil)
@@ -140,7 +132,7 @@ func TestModelsRawWithDangerousConfirmReturnsUnmaskedSecret(t *testing.T) {
 		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), "sk-raw-secret") {
-		t.Fatalf("raw response did not include unmasked secret: %s", rr.Body.String())
+		t.Fatalf("raw response did not include unmasked secret from mykey.py: %s", rr.Body.String())
 	}
 }
 
@@ -219,8 +211,8 @@ func TestModelsRawWithDangerousConfirmIncludesMyKeyProfilesWhenCacheDiffers(t *t
 	if !strings.Contains(body, "native_oai_primary") || !strings.Contains(body, "sk-live-secret-value") {
 		t.Fatalf("raw response did not include revealed mykey profile: %s", body)
 	}
-	if !strings.Contains(body, "native_oai_config1") {
-		t.Fatalf("raw response should keep existing cached profile too: %s", body)
+	if strings.Contains(body, "native_oai_config1") || strings.Contains(body, "gpt-stale") || strings.Contains(body, "stale-cache") {
+		t.Fatalf("raw response should ignore stale cache profiles and only reflect mykey.py: %s", body)
 	}
 }
 
@@ -349,12 +341,12 @@ func TestModelsSaveAndExportUseMyKeySecretForOfficialGeneratedVarName(t *testing
 	if rr.Code != http.StatusOK {
 		t.Fatalf("PUT status=%d want=200 body=%s", rr.Code, rr.Body.String())
 	}
-	raw, err := s.Models.Load(true)
+	loaded, err := modelconfig.ImportMyKeyWithPython(root, "", true)
 	if err != nil {
-		t.Fatalf("Load(true) error = %v", err)
+		t.Fatalf("ImportMyKeyWithPython error = %v", err)
 	}
-	if len(raw.Profiles) != 1 || raw.Profiles[0].VarName != varName || raw.Profiles[0].APIKey != secret {
-		t.Fatalf("saved profiles = %#v, want %s with recovered secret", raw.Profiles, varName)
+	if len(loaded.Profiles) != 1 || loaded.Profiles[0].VarName != varName || loaded.Profiles[0].APIKey != secret {
+		t.Fatalf("active mykey profiles = %#v, want %s with recovered secret", loaded.Profiles, varName)
 	}
 
 	payload := map[string]interface{}{
@@ -385,18 +377,8 @@ func TestModelsSaveAndExportUseMyKeySecretForOfficialGeneratedVarName(t *testing
 
 func TestModelsExportPreservesExistingSecretWhenSubmittedBlank(t *testing.T) {
 	root := t.TempDir()
+	writeTestMyKey(t, root, "sk-real-secret")
 	s := newModelTestServer(t, root)
-	seed := []modelconfig.Profile{{
-		VarName: "api_config_main",
-		Type:    "openai",
-		Name:    "main",
-		APIBase: "https://api.example/v1",
-		Model:   "gpt-test",
-		APIKey:  "sk-real-secret",
-	}}
-	if _, err := s.Models.Save(seed); err != nil {
-		t.Fatalf("seed Save() error = %v", err)
-	}
 	payload := map[string]interface{}{
 		"overwrite_active": true,
 		"profiles": []modelconfig.Profile{{
@@ -422,12 +404,12 @@ func TestModelsExportPreservesExistingSecretWhenSubmittedBlank(t *testing.T) {
 	if text := string(active); !strings.Contains(text, "sk-real-secret") || strings.Contains(text, "\"apikey\": \"\"") {
 		t.Fatalf("active mykey.py did not preserve secret:\n%s", text)
 	}
-	raw, err := s.Models.Load(true)
+	loaded, err := modelconfig.ImportMyKeyWithPython(root, "", true)
 	if err != nil {
-		t.Fatalf("Load(true) error = %v", err)
+		t.Fatalf("ImportMyKeyWithPython error = %v", err)
 	}
-	if got := raw.Profiles[0].APIKey; got != "sk-real-secret" {
-		t.Fatalf("saved APIKey = %q, want preserved secret", got)
+	if len(loaded.Profiles) != 1 || loaded.Profiles[0].APIKey != "sk-real-secret" || loaded.Profiles[0].Model != "gpt-updated" {
+		t.Fatalf("active mykey profile = %#v, want preserved secret and updated model", loaded.Profiles)
 	}
 }
 
