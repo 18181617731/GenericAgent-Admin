@@ -428,7 +428,7 @@ function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
   )
 }
 
-export function Models({ t, profiles, setProfiles, patchProfile, addModelProfiles, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, getProfileKey, onRevealKey, onClearRevealedKey }) {
+export function Models({ t, profiles, setProfiles, patchProfile, addModelProfiles, deleteModelProfile, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, getProfileKey, onRevealKey, onClearRevealedKey }) {
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
@@ -436,7 +436,12 @@ export function Models({ t, profiles, setProfiles, patchProfile, addModelProfile
   const profileKeyId = (idx, profile) => getProfileKey?.(idx, profile) || profile?.client_id || `${profile?.var_name || nextVarName(profile?.type || DEFAULT_PROTOCOL, profiles)}:${profile?.type || DEFAULT_PROTOCOL}:${profile?.apibase || ''}:${idx}`
   const removeProfile = idx => {
     onClearRevealedKey?.(idx, profiles[idx], profileKeyId(idx, profiles[idx]))
-    setProfiles(profiles.filter((_, i) => i !== idx))
+    const nextProfiles = profiles.filter((_, i) => i !== idx)
+    if (deleteModelProfile) {
+      deleteModelProfile(nextProfiles)
+    } else {
+      setProfiles(nextProfiles)
+    }
   }
 
   const riskItems = [{
