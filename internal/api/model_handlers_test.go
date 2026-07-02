@@ -288,7 +288,7 @@ func TestModelsImportMyKeyRefusesToSaveMaskedProfiles(t *testing.T) {
 	}
 }
 
-func TestModelsExportRejectsMaskedAPIKey(t *testing.T) {
+func TestModelsExportAllowsMaskedAPIKey(t *testing.T) {
 	s := newModelTestServer(t, t.TempDir())
 	payload := map[string]interface{}{
 		"overwrite_active": false,
@@ -299,11 +299,8 @@ func TestModelsExportRejectsMaskedAPIKey(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/models/export", bytes.NewReader(data))
 	markDangerous(req)
 	s.Routes().ServeHTTP(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "masked apikey") {
-		t.Fatalf("unexpected body: %s", rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -529,8 +529,7 @@ export default function App() {
       const rawProfiles = d?.profiles || []
       const varName = String(profile?.var_name || '').trim()
       const raw = (varName ? rawProfiles.find(p => String(p.var_name || '').trim() === varName) : null) || rawProfiles[idx]
-      const key = String(raw?.apikey || '').trim()
-      if (!key || isMaskedModelSecret(key)) throw new Error('raw API key is unavailable')
+      const key = String(raw?.apikey || profile?.apikey || '').trim()
       setModelRevealedKeys(prev => ({ ...prev, [profileKey]: key }))
     } catch (e) {
       setMsg(`Failed to reveal model key: ${e.message}`)
@@ -539,26 +538,48 @@ export default function App() {
     }
   }
 
-  const saveModelProfile = async (idx) => {
-    const profile = profiles[idx]
+  const persistModelProfiles = async (nextProfiles, { confirm = true, statusKeys = [] } = {}) => {
+    if (confirm && !confirmDanger('models-save', '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？')) return false
+    const saving = Object.fromEntries(statusKeys.map(k => [k, { status: 'saving', error: '', savedAt: null }]))
+    if (statusKeys.length) setModelSaveStatus(current => ({ ...current, ...saving }))
+    setBusy(true)
+    try {
+      const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles: nextProfiles, overwrite_active:true }) })
+      setPersistedModelProfiles(nextProfiles)
+      setModelPreview(safeJson(d))
+      if (statusKeys.length) {
+        const saved = Object.fromEntries(statusKeys.map(k => [k, { status: 'saved', error: '', savedAt: d.updated_at || new Date().toISOString() }]))
+        setModelSaveStatus(current => ({ ...current, ...saved }))
+      }
+      setMsg(t.hints.modelsSaved)
+      return true
+    } catch(e) {
+      setMsg(e.message)
+      if (statusKeys.length) {
+        const failed = Object.fromEntries(statusKeys.map(k => [k, { status: 'error', error: e.message, savedAt: null }]))
+        setModelSaveStatus(current => ({ ...current, ...failed }))
+      }
+      return false
+    } finally { setBusy(false) }
+  }
+
+  const saveModelProfile = async (idx, profileKeyOverride, profileOverride) => {
+    const profile = profileOverride || profiles[idx]
     if (!profile) return
-    const profileKey = getModelProfileKey(idx, profile)
+    const profileKey = profileKeyOverride || getModelProfileKey(idx, profile)
     const nextPersisted = (persistedModelProfiles.length ? persistedModelProfiles : profiles).map(p => ({ ...p }))
     while (nextPersisted.length < profiles.length) nextPersisted.push({ ...profiles[nextPersisted.length] })
     nextPersisted[idx] = { ...profile }
-    if (!confirmDanger('models-save', '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？')) return
-    setModelSaveStatus(current => ({ ...current, [profileKey]: { status: 'saving', error: '', savedAt: null } }))
-    setBusy(true)
-    try {
-      const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles: nextPersisted, overwrite_active:true }) })
-      setPersistedModelProfiles(nextPersisted)
-      setModelPreview(safeJson(d))
-      setModelSaveStatus(current => ({ ...current, [profileKey]: { status: 'saved', error: '', savedAt: d.updated_at || new Date().toISOString() } }))
-      setMsg(t.hints.modelsSaved)
-    } catch(e) {
-      setMsg(e.message)
-      setModelSaveStatus(current => ({ ...current, [profileKey]: { status: 'error', error: e.message, savedAt: null } }))
-    } finally { setBusy(false) }
+    return await persistModelProfiles(nextPersisted, { confirm: false, statusKeys: [profileKey] })
+  }
+
+  const addModelProfiles = async (newProfiles) => {
+    const nextProfiles = [...profiles, ...newProfiles]
+    const statusKeys = newProfiles.map((profile, i) => getModelProfileKey(profiles.length + i, profile))
+    setProfiles(nextProfiles)
+    const ok = await persistModelProfiles(nextProfiles, { confirm: false, statusKeys })
+    if (!ok) setProfiles(profiles)
+    return ok
   }
   const patchProfile = (idx, patch) => {
     const shouldClearSecret = Object.prototype.hasOwnProperty.call(patch, 'apikey') || Object.prototype.hasOwnProperty.call(patch, 'var_name')
@@ -732,7 +753,7 @@ export default function App() {
       {tab==='autonomous' && <section><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><div className="settings-block"><label>斜杠命令列表</label><p className="muted">在独立的 Chat 页面可管理命令。此处仅展示已配置的命令列表。</p>{(cfg?.slash_commands||[]).length > 0 ? (cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span className="muted">{item.desc}</span></div>)) : <p className="muted">暂无配置命令</p>}</div></Panel></section>}
-      {tab==='models' && <Models t={t} profiles={profiles} setProfiles={setProfiles} patchProfile={patchProfile} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
+      {tab==='models' && <Models t={t} profiles={profiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page"><div className="logs-layout"><Panel title={t.lists.processes} className="logs-side"><div className="logs-toolbar"><label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label><button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button></div><div className="logs-service-list">{services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}><span className={s.running?'dot running':'dot'}></span><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></button>)}</div></Panel><Panel title={`Logs · ${selected || '-'}`} className="log-panel"><div className="log-head"><div>{selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}<span className="log-count">{logs.length} lines · UTF-8</span></div><div className="actions"><button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button><button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button></div></div><pre className="log-view">{logs.join('\n') || t.hints.noLogs}</pre></Panel></div></section>}        </Suspense>
       </ErrorBoundary>
     </main>

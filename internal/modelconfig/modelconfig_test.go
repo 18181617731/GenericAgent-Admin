@@ -113,7 +113,7 @@ func TestStoreSavePreservesExistingSecretWhenSubmittedBlank(t *testing.T) {
 	}
 }
 
-func TestStoreSaveRejectsMaskedSecretWithoutWriting(t *testing.T) {
+func TestStoreSaveAllowsMaskedSecret(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)
 	profiles := []Profile{{
@@ -124,11 +124,15 @@ func TestStoreSaveRejectsMaskedSecretWithoutWriting(t *testing.T) {
 		Model:   "gpt-test",
 		APIKey:  "sk-****cret",
 	}}
-	if _, err := store.Save(profiles); err == nil || !strings.Contains(err.Error(), "masked apikey") {
-		t.Fatalf("Save() error = %v, want masked apikey", err)
+	if _, err := store.Save(profiles); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "model_profiles.json")); !os.IsNotExist(err) {
-		t.Fatalf("model_profiles.json exists or unexpected stat error: %v", err)
+	raw, err := store.Load(true)
+	if err != nil {
+		t.Fatalf("Load(true) error = %v", err)
+	}
+	if got := raw.Profiles[0].APIKey; got != "sk-****cret" {
+		t.Fatalf("saved APIKey = %q, want masked placeholder", got)
 	}
 }
 
@@ -366,7 +370,11 @@ func TestRenderPreviewAllowsMaskedSecretWithoutUnmasking(t *testing.T) {
 	if strings.Contains(rendered, "sk-real-secret") {
 		t.Fatalf("preview leaked real secret: %s", rendered)
 	}
-	if _, err := Render(profiles); err == nil || !strings.Contains(err.Error(), "masked apikey") {
-		t.Fatalf("Render() error = %v, want masked apikey rejection", err)
+	renderedFull, err := Render(profiles)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !strings.Contains(renderedFull, `"apikey": "sk-****cret"`) {
+		t.Fatalf("render did not keep masked placeholder:\n%s", renderedFull)
 	}
 }

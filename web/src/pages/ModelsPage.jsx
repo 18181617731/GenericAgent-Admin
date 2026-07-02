@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, Eye, EyeOff, Layers, Plus, RefreshCw, Trash2, UploadCloud } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Collapse, Input, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
@@ -211,7 +211,8 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
   const [busy, setBusy] = useState(false)
   const [discErr, setDiscErr] = useState('')
   const [discovered, setDiscovered] = useState([])
-  const patch = obj => patchProfile(idx, obj)
+  const [dirty, setDirty] = useState(false)
+  const patch = obj => { setDirty(true); patchProfile(idx, obj) }
   const shownApiKey = revealedKey ?? p.apikey ?? ''
   const revealed = revealedKey != null
   const meta = protocolMeta(p.type || DEFAULT_PROTOCOL)
@@ -220,6 +221,21 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
   const selectedModels = profileModels(p)
   const modelOpts = useMemo(() => uniqueModels([...selectedModels, ...discovered.map(modelIdOf)]), [discovered, selectedModels])
 
+  const savePatch = nextPatch => {
+    const nextProfile = { ...p, ...nextPatch }
+    patchProfile(idx, nextPatch)
+    onSave?.(idx, profileKey, nextProfile)
+  }
+
+  useEffect(() => {
+    if (saveState?.status === 'saved') setDirty(false)
+  }, [saveState?.status, saveState?.savedAt])
+
+  const saveManual = async () => {
+    const ok = await onSave?.(idx, profileKey)
+    if (ok !== false) setDirty(false)
+  }
+
   const discover = async () => {
     if (!canDiscover) return
     setBusy(true); setDiscErr('')
@@ -227,7 +243,7 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
       const d = await discoverModels({ protocol: p.type || DEFAULT_PROTOCOL, baseUrl: p.apibase, apiKey: shownApiKey, varName: p.var_name })
       const models = d?.models || []
       setDiscovered(models)
-      if (models.length && selectedModels.length === 0) patch(modelPatch([modelIdOf(models[0])]))
+      if (models.length && selectedModels.length === 0) savePatch(modelPatch([modelIdOf(models[0])]))
     } catch (e) { setDiscErr(String(e?.message || e)) }
     finally { setBusy(false) }
   }
@@ -264,9 +280,10 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
   const extra = (
     <Space size={6} onClick={e => e.stopPropagation()}>
       <StatusTag result={result} />
-      {saveOk && <span className="model-save-chip model-save-chip--ok">✓ 已保存</span>}
+      {dirty && <span className="model-save-chip model-save-chip--dirty">未保存</span>}
+      {!dirty && saveOk && <span className="model-save-chip model-save-chip--ok">✓ 已保存</span>}
       {saveErr && <span className="model-save-chip model-save-chip--err">✗ 失败</span>}
-      <Button size="small" type="primary" icon={<CheckCircle2 size={13} />} loading={saveBusy} disabled={saveBusy || result?.errors?.length > 0} onClick={() => onSave?.(idx, profileKey)}>保存</Button>
+      <Button size="small" type="primary" icon={<CheckCircle2 size={13} />} loading={saveBusy} disabled={saveBusy || result?.errors?.length > 0} onClick={saveManual}>保存</Button>
       <Button size="small" danger icon={<Trash2 size={12} />} onClick={() => removeProfile(idx)} title="删除此配置" />
     </Space>
   )
@@ -314,12 +331,13 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
           </div>
         ) : (
           <>
-            <DiscoverRow value={selectedModels} onChange={models => patch(modelPatch(models))} opts={modelOpts}
+            <DiscoverRow value={selectedModels} onChange={models => savePatch(modelPatch(models))} opts={modelOpts}
               onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
             {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
           </>
         )}
         {discErr && <Alert type="error" showIcon message={discErr} className="model-inline-alert" />}
+        {dirty && <Alert type="warning" showIcon message="有修改尚未保存" description="手动编辑的内容需要点击右上角“保存”后才会写入 mykey.py。" className="model-inline-alert" />}
         {saveErr && <Alert type="error" showIcon message={`保存失败：${saveState?.error || '未知错误'}`} className="model-inline-alert" />}
         {result?.errors?.length > 0 && <Alert type="error" showIcon message="阻断项"
           description={<ul>{result.errors.map(k => <li key={k}>{ERR_KEYS[k] || k}</li>)}</ul>} className="model-inline-alert" />}
@@ -333,9 +351,10 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
   return <Collapse className="model-profile-card" size="small" items={profileItems} />
 }
 
-function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
+function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
   const [f, setF] = useState({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
   const [busy, setBusy] = useState(false)
+  const [adding, setAdding] = useState(false)
   const [discovered, setDiscovered] = useState([])
   const [err, setErr] = useState('')
   const pf = obj => setF(prev => ({ ...prev, ...obj }))
@@ -351,24 +370,34 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
       const d = await discoverModels({ protocol: f.protocol || DEFAULT_PROTOCOL, baseUrl: f.baseUrl, apiKey: f.apiKey })
       const models = d?.models || []
       setDiscovered(models)
-      if (models.length && selectedModels.length === 0) pf({ models: [modelIdOf(models[0])] })
     } catch (e) { setErr(String(e?.message || e)) }
     finally { setBusy(false) }
   }
 
-  const add = () => {
-    const models = uniqueModels(f.models)
-    if (!models.length) return
-    const newProfiles = models.map((modelId, i) => ({
-      ...emptyProfile(profiles.length + i, f.protocol),
-      var_name: nextVarName(f.protocol, [...profiles, ...Array(i).fill({})]),
-      type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey,
-      models: [modelId], model: modelId
-    }))
-    setProfiles([...profiles, ...newProfiles])
-    setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [] })
-    setDiscovered([])
-    setErr('')
+  const add = async (modelsValue = f.models) => {
+    const models = uniqueModels(modelsValue)
+    if (!models.length || !f.baseUrl || adding) return false
+    setAdding(true)
+    try {
+      const newProfiles = models.map((modelId, i) => ({
+        ...emptyProfile(profiles.length + i, f.protocol),
+        var_name: nextVarName(f.protocol, [...profiles, ...Array(i).fill({})]),
+        type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey,
+        models: [modelId], model: modelId
+      }))
+      const ok = await addModelProfiles(newProfiles)
+      if (!ok) return false
+      setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [] })
+      setDiscovered([])
+      setErr('')
+      return true
+    } finally { setAdding(false) }
+  }
+
+  const handleModelsChange = models => {
+    const next = uniqueModels(models)
+    pf({ models: next })
+    if (next.length && f.baseUrl) add(next)
   }
 
   return (
@@ -388,20 +417,18 @@ function AddProfileForm({ profiles, setProfiles, discoverModels, t }) {
           <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
         </label>
         {meta.help && <p className="model-add-hint"><Tag color={meta.color} style={{marginRight:4}}>{protocolLabel(f.protocol)}</Tag>{meta.help}</p>}
-        <DiscoverRow value={selectedModels} onChange={models => pf({ models })}
+        <DiscoverRow value={selectedModels} onChange={handleModelsChange}
           opts={modelOpts}
-          onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !f.baseUrl} />
+          onDiscover={discover} busy={busy || adding} disabled={busy || adding || !canDiscover || !f.baseUrl} />
         {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
         {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
-        <Button type="primary" icon={<Plus size={13} />} disabled={!selectedModels.length || !f.baseUrl} onClick={add} block className="model-add-button">
-          添加配置
-        </Button>
+        <p className="model-add-hint">选中或输入模型 ID 后会自动添加并保存，无需再点添加。</p>
       </div>
     </Card>
   )
 }
 
-export function Models({ t, profiles, setProfiles, patchProfile, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, getProfileKey, onRevealKey, onClearRevealedKey }) {
+export function Models({ t, profiles, setProfiles, patchProfile, addModelProfiles, importModels, previewModels, saveModelProfile, discoverModels, modelPreview, modelSaveStatus = {}, importLoading = false, riskCatalog, riskCatalogError, revealedKeys = {}, revealBusy = {}, getProfileKey, onRevealKey, onClearRevealedKey }) {
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
@@ -458,7 +485,7 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
 
       <div className="model-layout">
         <div className="model-left">
-          <AddProfileForm profiles={profiles} setProfiles={setProfiles} discoverModels={discoverModels} t={t} />
+          <AddProfileForm profiles={profiles} addModelProfiles={addModelProfiles} discoverModels={discoverModels} t={t} />
           <div className="model-list">
             {buildGroups(profiles).map(group => (
               <ProfileGroup

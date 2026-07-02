@@ -279,9 +279,6 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 		if p.APIBase == "" {
 			return errors.New("apibase and model are required")
 		}
-		if !allowMaskedSecrets && IsMaskedSecret(p.APIKey) {
-			return fmt.Errorf("masked apikey cannot be saved or exported for %s; reveal/import with authorization or enter the full key", p.VarName)
-		}
 	}
 	return nil
 }
