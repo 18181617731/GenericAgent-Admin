@@ -504,8 +504,8 @@ export function Models({ t, profiles, setProfiles, patchProfile, addModelProfile
                 results={validation}
                 revealedKeys={Object.fromEntries(group.indices.map(i => [i, revealedKeys[profileKeyId(i, profiles[i])]]))}
                 revealBusy={Object.fromEntries(group.indices.map(i => [i, !!revealBusy[profileKeyId(i, profiles[i])]]))}
-                onRevealKey={(idx) => onRevealKey(profileKeyId(idx, profiles[idx]))}
-                onClearRevealedKey={(idx) => onClearRevealedKey(profileKeyId(idx, profiles[idx]))}
+                onRevealKey={(idx) => onRevealKey(idx, profiles[idx])}
+                onClearRevealedKey={(idx) => onClearRevealedKey(idx, profiles[idx])}
                 saveStates={Object.fromEntries(group.indices.map(i => { const k = profileKeyId(i, profiles[i]); return [i, modelSaveStatus[k] || modelSaveStatus[i]] }))}
                 onSave={saveModelProfile}
                 profileKeyId={profileKeyId}
