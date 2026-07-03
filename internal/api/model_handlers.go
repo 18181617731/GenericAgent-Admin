@@ -6,6 +6,26 @@ import (
 	"genericagent-admin-go/internal/modelconfig"
 )
 
+// mergeStoredKeys replaces any masked or empty APIKey in profiles with the
+// plaintext value from the persisted store, so Validate() never sees a mask.
+func (s *Server) mergeStoredKeys(profiles []modelconfig.Profile) {
+	stored, err := s.Models.Load(true)
+	if err != nil {
+		return
+	}
+	byVar := make(map[string]string, len(stored.Profiles))
+	for _, sp := range stored.Profiles {
+		byVar[sp.VarName] = sp.APIKey
+	}
+	for i := range profiles {
+		if modelconfig.IsMaskedSecret(profiles[i].APIKey) || profiles[i].APIKey == "" {
+			if key, ok := byVar[profiles[i].VarName]; ok && key != "" {
+				profiles[i].APIKey = key
+			}
+		}
+	}
+}
+
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		d, err := s.Models.Load(false)
@@ -24,6 +44,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
+		s.mergeStoredKeys(p.Profiles)
 		d, err := s.Models.Save(p.Profiles)
 		if err != nil {
 			bad(w, 400, err.Error())
@@ -108,6 +129,7 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
+	s.mergeStoredKeys(p.Profiles)
 	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, p.Profiles, p.OverwriteActive)
 	if err != nil {
 		bad(w, 400, err.Error())
