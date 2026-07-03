@@ -43,16 +43,7 @@ export function Models({ t, profiles, setProfiles, patchProfile, importModels, p
                 <label className="span2">{t.fields.apiBase}<input value={p.apibase || ''} onChange={(e) => patchProfile(idx, { apibase: e.target.value })}/></label>
                 <label className="span2">
                   {t.fields.apiKey}
-                  {revealedKeys[p.var_name]
-                    ? <input
-                        type="text"
-                        readOnly
-                        value={revealedKeys[p.var_name]}
-                        className="secret-revealed"
-                        style={{ fontFamily: 'monospace', background: 'var(--bg2,#f5f5f5)' }}
-                      />
-                    : <SecretInput value={p.apikey} onChange={(v) => patchProfile(idx, { apikey: v })} t={t}/>
-                  }
+                  <SecretInput value={p.apikey} onChange={(v) => patchProfile(idx, { apikey: v })} t={t}/>
                 </label>
                 <label>{t.fields.stream}
                   <select value={String(!!p.stream)} onChange={(e) => patchProfile(idx, { stream: e.target.value === 'true' })}>

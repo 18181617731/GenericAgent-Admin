@@ -138,6 +138,9 @@ func Validate(profiles []Profile) error {
 		if p.Name == "" || p.APIBase == "" || p.Model == "" {
 			return errors.New("name, apibase and model are required")
 		}
+		if p.APIKey == "" {
+			return fmt.Errorf("apikey is required for %s", p.VarName)
+		}
 		if IsMaskedSecret(p.APIKey) {
 			return fmt.Errorf("masked apikey cannot be saved or exported for %s; reveal/import with authorization or enter the full key", p.VarName)
 		}
