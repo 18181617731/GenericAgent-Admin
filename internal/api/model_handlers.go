@@ -84,23 +84,38 @@ func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]mo
 		return merged, nil
 	}
 	byVar := map[string]string{}
+	byProtoBase := map[string]string{} // fallback: "type|apibase" -> first real key found
 	for _, p := range imported.Profiles {
 		name := strings.TrimSpace(p.VarName)
 		key := strings.TrimSpace(p.APIKey)
-		if name == "" || key == "" || modelconfig.IsMaskedSecret(key) {
+		if key == "" || modelconfig.IsMaskedSecret(key) {
 			continue
 		}
-		byVar[name] = key
+		if name != "" {
+			byVar[name] = key
+		}
+		pbk := strings.ToLower(strings.TrimSpace(p.Type)) + "|" + strings.TrimRight(strings.TrimSpace(p.APIBase), "/")
+		if _, exists := byProtoBase[pbk]; !exists {
+			byProtoBase[pbk] = key
+		}
 	}
-	if len(byVar) == 0 {
+	if len(byVar) == 0 && len(byProtoBase) == 0 {
 		return merged, nil
 	}
 	for i := range merged {
 		key := strings.TrimSpace(merged[i].APIKey)
 		if key != "" && !modelconfig.IsMaskedSecret(key) {
+			continue // already has a real key, skip
+		}
+		// primary: match by VarName
+		if oldKey := byVar[strings.TrimSpace(merged[i].VarName)]; oldKey != "" {
+			merged[i].APIKey = oldKey
 			continue
 		}
-		if oldKey := byVar[strings.TrimSpace(merged[i].VarName)]; oldKey != "" {
+		// fallback: match by (protocol + apibase) — handles profiles added from
+		// the discovery list which inherit a masked key but get a new var_name
+		pbk := strings.ToLower(strings.TrimSpace(merged[i].Type)) + "|" + strings.TrimRight(strings.TrimSpace(merged[i].APIBase), "/")
+		if oldKey := byProtoBase[pbk]; oldKey != "" {
 			merged[i].APIKey = oldKey
 		}
 	}
