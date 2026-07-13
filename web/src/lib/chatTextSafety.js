@@ -9,7 +9,7 @@ export const JSON_TREE_STRING_LIMIT = 1400
 
 export const FINAL_MARKER_RE = /^```+\s*\n?\[Info\]\s*Final response to user\.\s*\n?```+\s*$/i
 export const TURN_HEADER_RE = /^\s*(?:\*\*)?\s*LLM Running\s*\(Turn\s+(\d+)\)\s*(?:\.\.\.)?\s*(?:\*\*)?\s*$/i
-const FENCE_LINE_RE = /^\s*(```+|~~~+)/
+const FENCE_LINE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
 const FINAL_INFO_LINE_RE = /^\s*\[Info\]\s*Final response to user\.\s*$/i
 const FINAL_OPEN_FENCE_RE = /^\s*```+\s*$/
 const FINAL_INLINE_RE = /^\s*```+\s*\[Info\]\s*Final response to user\.\s*```+\s*$/i
@@ -54,10 +54,11 @@ const findTopLevelAssistantMarkers = (full = '') => {
 
     const fenceMatch = line.match(FENCE_LINE_RE)
     if (fenceMatch) {
-      const ticks = fenceMatch[1]
+      const ticks = fenceMatch[2]
+      const rest = fenceMatch[3]
       if (!fence) {
-        fence = ticks[0]
-      } else if (ticks[0] === fence) {
+        fence = { char: ticks[0], length: ticks.length }
+      } else if (ticks[0] === fence.char && ticks.length >= fence.length && !rest.trim()) {
         fence = null
       }
     }
