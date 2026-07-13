@@ -41,11 +41,13 @@ const (
 	chatToolsModeFixed    = "fixed"
 
 	chatReasoningEffortOff     = "off"
+	chatReasoningEffortNone    = "none"
 	chatReasoningEffortMinimal = "minimal"
 	chatReasoningEffortLow     = "low"
 	chatReasoningEffortMedium  = "medium"
 	chatReasoningEffortHigh    = "high"
 	chatReasoningEffortXHigh   = "xhigh"
+	chatReasoningEffortMax     = "max"
 )
 
 type chatSettings struct {
@@ -64,8 +66,10 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 	switch strings.ToLower(strings.TrimSpace(st.ReasoningEffort)) {
 	case "", "default", "model":
 		st.ReasoningEffort = ""
-	case chatReasoningEffortOff, "none", "clear", "unset":
+	case chatReasoningEffortOff, "clear", "unset":
 		st.ReasoningEffort = chatReasoningEffortOff
+	case chatReasoningEffortNone:
+		st.ReasoningEffort = chatReasoningEffortNone
 	case chatReasoningEffortMinimal:
 		st.ReasoningEffort = chatReasoningEffortMinimal
 	case chatReasoningEffortLow:
@@ -74,8 +78,10 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 		st.ReasoningEffort = chatReasoningEffortMedium
 	case chatReasoningEffortHigh:
 		st.ReasoningEffort = chatReasoningEffortHigh
-	case chatReasoningEffortXHigh, "max":
+	case chatReasoningEffortXHigh:
 		st.ReasoningEffort = chatReasoningEffortXHigh
+	case chatReasoningEffortMax:
+		st.ReasoningEffort = chatReasoningEffortMax
 	default:
 		st.ReasoningEffort = chatReasoningEffortOff
 	}

@@ -9,6 +9,7 @@ import { fuzzyMatch } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, parseAssistantContent, previewLongText, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
+import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 
 gsap.registerPlugin(useGSAP)
 
@@ -52,11 +53,13 @@ const BUILTIN_SLASH_COMMANDS = [
   { cmd: '/ultraplan <目标>', key: '/ultraplan', insert: '/ultraplan ', desc: '显式进入 UltraPlan 规划模式，并生成本地 run 目录', builtIn: true },
   { cmd: '/improve', key: '/improve', insert: '/improve', desc: '发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
   { cmd: '/effort', key: '/effort', insert: '/effort', desc: '查看当前 reasoning effort', builtIn: true },
-  { cmd: '/effort low', key: '/effort low', insert: '/effort low', desc: '设置 reasoning effort 为 low', builtIn: true },
-  { cmd: '/effort medium', key: '/effort medium', insert: '/effort medium', desc: '设置 reasoning effort 为 medium', builtIn: true },
-  { cmd: '/effort high', key: '/effort high', insert: '/effort high', desc: '设置 reasoning effort 为 high', builtIn: true },
-  { cmd: '/effort xhigh', key: '/effort xhigh', insert: '/effort xhigh', desc: '设置 reasoning effort 为 xhigh（Claude 对应 max）', builtIn: true },
-  { cmd: '/effort off', key: '/effort off', insert: '/effort off', desc: '清除 reasoning effort', builtIn: true },
+  ...REASONING_EFFORT_LEVELS.map(level => ({
+    cmd: `/effort ${level}`,
+    key: `/effort ${level}`,
+    insert: `/effort ${level}`,
+    desc: level === 'off' ? '清除 reasoning effort' : `设置 reasoning effort 为 ${level}`,
+    builtIn: true,
+  })),
   { cmd: '/workspace <路径>', key: '/workspace', insert: '/workspace ', desc: '为当前会话绑定项目目录', builtIn: true },
   { cmd: '/workspace off', key: '/workspace off', insert: '/workspace off', desc: '关闭当前会话 workspace', builtIn: true },
 ]
@@ -1510,13 +1513,6 @@ export default function ChatApp() {
     el.style.height = next + 'px'
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
-  const normalizeReasoningEffort = (value) => {
-    const v = String(value || '').trim().toLowerCase()
-    if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(v)) return v
-    if (v === 'max') return 'xhigh'
-    return 'off'
-  }
-
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
@@ -2495,7 +2491,7 @@ export default function ChatApp() {
             </div>
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
-                options={[{value:'off',label:'默认'},{value:'minimal',label:'Minimal'},{value:'low',label:'Low'},{value:'medium',label:'Medium'},{value:'high',label:'High'},{value:'xhigh',label:'XHigh'}]} />
+                options={REASONING_EFFORT_OPTIONS} />
             </div>
             <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? '加入发送队列' : '发送'} aria-label={isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}

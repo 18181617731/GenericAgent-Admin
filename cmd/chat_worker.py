@@ -364,7 +364,7 @@ def _apply_tools_mode(agent, mode):
         return {'ok': False, 'message': '固定模式 Tools 注入失败：%s' % e, 'added': 0}
 
 
-EFFORT_LEVELS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
+EFFORT_LEVELS = ('off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 
 
 def _snapshot_reasoning_effort(agent):
@@ -374,9 +374,7 @@ def _snapshot_reasoning_effort(agent):
     except Exception:
         value = None
     value = str(value or '').strip().lower()
-    if value == 'max':
-        return 'xhigh'
-    if value in EFFORT_LEVELS and value != 'none':
+    if value in EFFORT_LEVELS:
         return value
     return 'off'
 
@@ -430,12 +428,10 @@ def _maybe_handle_effort_command(agent, prompt):
 
 def _apply_reasoning_effort_setting(agent, value):
     raw = str(value or '').strip().lower()
-    if raw in ('', 'off', 'none', 'clear', 'unset'):
+    if raw in ('', 'off', 'clear', 'unset'):
         effort = None
     elif raw in EFFORT_LEVELS:
         effort = raw
-    elif raw == 'max':
-        effort = 'xhigh'
     else:
         return
     try:
