@@ -30,7 +30,7 @@ func (s *Server) filesRead(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	d, err := ga.ReadSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"))
+	d, err := ga.ReadSafeAny(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"))
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

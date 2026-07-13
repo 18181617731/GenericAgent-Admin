@@ -202,6 +202,18 @@ func ReadSafe(root, rel string) (SafeFileDetail, error) {
 	if IsHiddenSafeFilePath(clean) {
 		return SafeFileDetail{}, hiddenSafeFileError()
 	}
+	return readSafeResolved(full, clean)
+}
+
+func ReadSafeAny(root, p string) (SafeFileDetail, error) {
+	full, clean, err := SafeResolveAny(root, p)
+	if err != nil {
+		return SafeFileDetail{}, err
+	}
+	return readSafeResolved(full, clean)
+}
+
+func readSafeResolved(full, clean string) (SafeFileDetail, error) {
 	info, err := os.Stat(full)
 	if err != nil {
 		return SafeFileDetail{}, err

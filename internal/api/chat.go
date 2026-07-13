@@ -23,15 +23,17 @@ import (
 )
 
 type chatMessage struct {
-	ID        string                   `json:"id"`
-	Role      string                   `json:"role"`
-	Content   string                   `json:"content"`
-	Files     []map[string]interface{} `json:"files,omitempty"`
-	CreatedAt int64                    `json:"created_at"`
-	Error     bool                     `json:"error,omitempty"`
-	Usage     map[string]int           `json:"usage,omitempty"`
-	Usages    []map[string]int         `json:"usages,omitempty"`
-	ElapsedMS int64                    `json:"elapsed_ms,omitempty"`
+	ID             string                   `json:"id"`
+	Role           string                   `json:"role"`
+	Content        string                   `json:"content"`
+	Files          []map[string]interface{} `json:"files,omitempty"`
+	CreatedAt      int64                    `json:"created_at"`
+	Error          bool                     `json:"error,omitempty"`
+	Usage          map[string]int           `json:"usage,omitempty"`
+	Usages         []map[string]int         `json:"usages,omitempty"`
+	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
+	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
+	TaskOutputs    map[string][]string      `json:"task_outputs,omitempty"`
 }
 
 const (
@@ -172,7 +174,9 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	var finalRawHistory []map[string]interface{}
 	var finalHistoryInfo []interface{}
 	var finalWorking map[string]interface{}
+	var finalUltraPlanState map[string]interface{}
 	var finalReasoningEffort string
+	var taskOutputsAccumulator = make(map[string][]string)
 	var readErr error
 	for {
 		line, err := readChatWorkerLine(reader)
@@ -191,6 +195,22 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 				break
 			}
 			continue
+		}
+		if ev["type"] == "ultraplan_event" {
+			if state := chatUltraPlanStateFromEvent(ev); state != nil {
+				finalUltraPlanState = mergeChatMaps(finalUltraPlanState, state)
+			}
+		}
+		if ev["type"] == "ultraplan_output" {
+			if taskID, ok := ev["task_id"].(string); ok {
+				if lines, ok := ev["lines"].([]interface{}); ok {
+					for _, line := range lines {
+						if lineStr, ok := line.(string); ok {
+							taskOutputsAccumulator[taskID] = append(taskOutputsAccumulator[taskID], lineStr)
+						}
+					}
+				}
+			}
 		}
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
@@ -226,6 +246,20 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 					final.Usages = append(final.Usages, turn)
 				}
 			}
+			if finalUltraPlanState != nil {
+				final.UltraPlanState = mergeChatMaps(mergeChatMaps(nil, finalUltraPlanState), final.UltraPlanState)
+			}
+			if len(taskOutputsAccumulator) > 0 {
+				if final.UltraPlanState == nil {
+					final.UltraPlanState = make(map[string]interface{})
+				}
+				final.UltraPlanState["task_outputs"] = taskOutputsAccumulator
+				final.TaskOutputs = taskOutputsAccumulator
+				msg["task_outputs"] = taskOutputsAccumulator
+			}
+			if final.UltraPlanState != nil {
+				msg["ultraplan_state"] = final.UltraPlanState
+			}
 			finalRawHistory = chatRawHistoryFromEvent(ev)
 			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
 			finalWorking = chatWorkingFromEvent(ev)
@@ -257,7 +291,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			} else {
 				content = "已停止生成"
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
 			err := readErr
@@ -271,7 +305,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			} else {
 				content = fmt.Sprintf("生成失败：%v", err)
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}
@@ -338,6 +372,33 @@ func chatWorkingFromEvent(ev map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func chatUltraPlanStateFromEvent(ev map[string]interface{}) map[string]interface{} {
+	m, ok := ev["state"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return mergeChatMaps(nil, m)
+}
+
+func mergeChatMaps(dst map[string]interface{}, src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string]interface{}, len(src))
+	}
+	for k, v := range src {
+		if existing, ok := dst[k].(map[string]interface{}); ok {
+			if incoming, ok := v.(map[string]interface{}); ok {
+				dst[k] = mergeChatMaps(existing, incoming)
+				continue
+			}
+		}
+		dst[k] = v
+	}
+	return dst
 }
 
 func appendChatRawHistoryFallback(raw []map[string]interface{}, messages ...chatMessage) []map[string]interface{} {
@@ -743,7 +804,7 @@ func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {
 	cmd := exec.Command(py, script)
 	cmd.Dir = root
 	hideChildWindow(cmd)
-	cmd.Env = pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root)
+	cmd.Env = pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root, "GA_ULTRAPLAN_BROWSER=0")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

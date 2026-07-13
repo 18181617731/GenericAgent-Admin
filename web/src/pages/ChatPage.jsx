@@ -147,9 +147,22 @@ export function ChatPage({ t, slashCommands }) {
           if (!line) continue
           const ev = JSON.parse(line)
           if (ev.type === 'delta') setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content:(m.content||'') + (ev.delta||'')} : m))
+          if (ev.type === 'ultraplan_event') setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, ultraplan: ev.state} : m))
+          if (ev.type === 'ultraplan_output') {
+            setMessages(ms => ms.map(m => {
+              if (m.id !== assistant.id) return m
+              const taskOutputs = m.task_outputs || {}
+              const existing = taskOutputs[ev.task_id] || []
+              return {...m, task_outputs: {...taskOutputs, [ev.task_id]: [...existing, ...(ev.lines || [])]}}
+            }))
+          }
           if (ev.type === 'notice') setErr(ev.message?.message || ev.message || 'notice')
           if (ev.type === 'done' || ev.type === 'error') {
-            setMessages(ms => ms.map(m => m.id === assistant.id ? ev.message : m))
+            setMessages(ms => ms.map(m => {
+              if (m.id !== assistant.id) return m
+              const nextUltraPlan = ev.message?.ultraplan || ev.message?.ultraplan_state || ev.message?.ultraPlanState || m.ultraplan
+              return {...m, ...ev.message, ultraplan: nextUltraPlan}
+            }))
             if (ev.type === 'error') setErr(ev.message?.content || 'error')
           }
         }

@@ -1,12 +1,14 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, Clock3, Copy, Edit3, FileImage, FileText, ImagePlus, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, FileImage, FileOutput, FileText, ImagePlus, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, parseAssistantContent, previewLongText, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
+import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 
 gsap.registerPlugin(useGSAP)
 
@@ -47,6 +49,7 @@ const BUILTIN_SLASH_COMMANDS = [
   { cmd: '/continue <编号>', key: '/continue', insert: '/continue ', desc: '恢复第 N 个官方 GA 会话，可继续对话', builtIn: true },
   { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '审阅当前改动；可继续输入范围或关注点', builtIn: true },
   { cmd: '/review help', key: '/review help', insert: '/review help', desc: '显示 /review 帮助，不启动审阅', builtIn: true },
+  { cmd: '/ultraplan <目标>', key: '/ultraplan', insert: '/ultraplan ', desc: '显式进入 UltraPlan 规划模式，并生成本地 run 目录', builtIn: true },
   { cmd: '/improve', key: '/improve', insert: '/improve', desc: '发送记忆提炼请求（L3 skill + L1 索引）', builtIn: true },
   { cmd: '/effort', key: '/effort', insert: '/effort', desc: '查看当前 reasoning effort', builtIn: true },
   { cmd: '/effort low', key: '/effort low', insert: '/effort low', desc: '设置 reasoning effort 为 low', builtIn: true },
@@ -73,6 +76,10 @@ const slashCommandInsertText = (c, current = '') => {
     const text = String(current || '')
     return /^\s*\/workspace\s+/.test(text) ? text : (c.insert ?? '/workspace ')
   }
+  if (c.cmd === '/ultraplan <目标>') {
+    const text = String(current || '')
+    return /^\s*\/ultraplan\s+/.test(text) ? text : (c.insert ?? '/ultraplan ')
+  }
   return c?.insert ?? `${c?.cmd || ''} `
 }
 const slashCommandProgressiveFilter = (c, nextText = '') => {
@@ -81,12 +88,14 @@ const slashCommandProgressiveFilter = (c, nextText = '') => {
   if (c?.cmd === '/improve') return 'improve '
   if (c?.cmd === '/effort') return 'effort '
   if (c?.cmd === '/workspace <路径>') return 'workspace '
+  if (c?.cmd === '/ultraplan <目标>') return 'ultraplan '
   const text = String(nextText || '').trimStart()
   if (text === '/review') return 'review '
   if (text === '/continue') return 'continue '
   if (text === '/improve') return 'improve '
   if (text === '/effort') return 'effort '
   if (text === '/workspace') return 'workspace '
+  if (text === '/ultraplan') return 'ultraplan '
   return ''
 }
 const slashCommandNextDrawer = (c, nextText = '') => {
@@ -321,6 +330,684 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
   </div>
 })
 
+const parseUltraPlanResult = (text = '') => {
+  const src = String(text || '').trim()
+  if (!src.includes('UltraPlan invoked by explicit `/ultraplan` opt-in.')) return null
+  const pick = (re) => {
+    const m = src.match(re)
+    return m ? String(m[1] || '').trim() : ''
+  }
+  const fence = (label) => {
+    const safeLabel = String(label || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(safeLabel + ':\\s*\\n```\\n([\\s\\S]*?)\\n```', 'i')
+    const m = src.match(re)
+    return m ? String(m[1] || '').trim() : ''
+  }
+  const exitCodeText = pick(/^Exit code:\s*([^\n]+)/m)
+  const exitCode = Number(exitCodeText)
+  return {
+    objective: pick(/^Objective:\s*([^\n]+)/m),
+    script: pick(/^Script:\s*`?([^`\n]+)`?/m),
+    runDir: pick(/^Run dir:\s*`?([^`\n]+)`?/m),
+    exitCodeText,
+    ok: Number.isFinite(exitCode) ? exitCode === 0 : true,
+    stdout: fence('stdout'),
+    stderr: fence('stderr'),
+  }
+}
+
+// Parse raw ultraplan log text (streamed as plain content) into ultraplan_state shape
+function parseUltraPlanText(text = '') {
+  if (!text.includes('[ultraplan]') && !text.includes('[phase]')) return null
+  const lines = text.split('\n')
+  let objective = ''
+  const phases = []
+  const events = []       // {tag, body} - all raw log entries preserved in order
+  const resultFiles = []  // {desc, file} - dedup by file path
+  let current = ''        // last activity label
+  let currentPhase = null
+
+  const pushEvent = (tag, body) => events.push({ tag, body })
+
+  for (const raw of lines) {
+    const t = raw.trim()
+    if (!t) continue
+    const tagM = t.match(/^\[([a-z][a-z_-]*)\]\s*(.*)$/i)
+    if (tagM) pushEvent(tagM[1].toLowerCase(), tagM[2])
+    // [ultraplan] objective: xxx
+    const objM = t.match(/^\[ultraplan\]\s+objective:\s*(.+)$/)
+    if (objM) { objective = objM[1].trim(); current = `objective: ${objective}`; continue }
+    // [phase] name - description
+    const phM = t.match(/^\[phase\]\s+(\S+)\s+-\s+(.+)$/)
+    if (phM) {
+      currentPhase = { name: phM[1], desc: phM[2].trim(), status: 'running', tasks: [] }
+      phases.push(currentPhase)
+      current = `phase: ${currentPhase.name}`
+      continue
+    }
+    // [subagent] desc -> filepath
+    const saM = t.match(/^\[subagent\]\s+(.+?)\s+->\s+(.+)$/)
+    if (saM && currentPhase) {
+      currentPhase.tasks.push({ desc: saM[1].trim(), file: saM[2].trim(), status: 'running' })
+      current = `task: ${saM[1].trim()}`
+      continue
+    }
+    // [result] desc -> filepath  (marks last running subagent task done)
+    const resM = t.match(/^\[result\]\s+(.+?)\s+->\s+(.+)$/)
+    if (resM && currentPhase) {
+      const desc = resM[1].trim(); const file = resM[2].trim()
+      const lastRunning = [...currentPhase.tasks].reverse().find(tk => tk.status === 'running')
+      if (lastRunning) { lastRunning.status = 'done'; lastRunning.file = file }
+      if (!resultFiles.some(r => r.file === file)) resultFiles.push({ desc, file })
+      continue
+    }
+    // [done] name (elapsed)
+    const doneM = t.match(/^\[done\]\s+(\S+)\s+\((.+?)\)$/)
+    if (doneM && currentPhase) {
+      currentPhase.status = 'done'
+      currentPhase.elapsed = doneM[2]
+      currentPhase.tasks.forEach(tk => { if (tk.status === 'running') tk.status = 'done' })
+      current = `done: ${doneM[1]}`
+      continue
+    }
+    // [summary] key: value
+    const sumM = t.match(/^\[summary\]\s+(.+)$/)
+    if (sumM && currentPhase) {
+      currentPhase.tasks.push({ desc: sumM[1].trim(), status: 'done' })
+      continue
+    }
+  }
+
+  if (!objective && phases.length === 0) return null
+  const complete = phases.length > 0 && phases.every(ph => ph.status === 'done')
+  return { objective, phases, complete, events, resultFiles, current }
+}
+
+const taskOutputToText = (value) => {
+  if (!value) return ''
+  if (Array.isArray(value)) return value.filter(v => v !== undefined && v !== null).join('\n')
+  return String(value)
+}
+
+const ultraPlanTaskKeys = (task = {}) => {
+  const keys = []
+  const add = (v) => {
+    const s = String(v || '').trim()
+    if (s && !keys.includes(s)) keys.push(s)
+  }
+  add(task.id)
+  add(task.task_id)
+  add(task.key)
+  add(task.file)
+  add(task.path)
+  add(task.outputFile)
+  add(task.output_file)
+  add(task.outFile)
+  add(task.out_file)
+  const file = task.outputFile || task.output_file || task.outFile || task.out_file || task.file || task.path || ''
+  if (file) {
+    const name = String(file).split(/[\\/]/).pop()
+    add(name)
+    if (name.endsWith('.out.txt')) add(name.slice(0, -8))
+    if (name.endsWith('.txt')) add(name.slice(0, -4))
+  }
+  return keys
+}
+
+const normalizeUltraPlanTask = (task = {}, taskOutputs = {}) => {
+  const statusRaw = String(task.status || task.state || '').toLowerCase()
+  const status = statusRaw === 'run' ? 'running' : (statusRaw || 'running')
+  const taskKeys = ultraPlanTaskKeys(task)
+  const liveOutput = taskKeys.map(k => taskOutputToText(taskOutputs[k])).find(Boolean) || ''
+  const output = liveOutput || task.output || task.out || task.result || task.summary || ''
+  const outputFile = preferredUltraPlanOutputFile(task)
+  return {
+    ...task,
+    status,
+    desc: task.desc || task.name || task.title || task.msg || '',
+    file: outputFile,
+    output,
+    outputFile,
+  }
+}
+
+const normalizeUltraPlanPhase = (phase = {}, taskOutputs = {}) => {
+  const statusRaw = String(phase.status || phase.state || '').toLowerCase()
+  const status = statusRaw === 'run' ? 'running' : (statusRaw || 'running')
+  const children = Array.isArray(phase.children) ? phase.children.map(ch => normalizeUltraPlanPhase(ch, taskOutputs)) : []
+  let rawTasks = Array.isArray(phase.tasks) ? phase.tasks : []
+  // If parent phase is done, any child task still marked "running" is a stale streaming artifact — fix to done
+  if (status === 'done') {
+    rawTasks = rawTasks.map(t => String(t.status || '').toLowerCase() === 'running' ? { ...t, status: 'done' } : t)
+  }
+  return {
+    ...phase,
+    status,
+    tasks: rawTasks.map(t => normalizeUltraPlanTask(t, taskOutputs)),
+    children,
+  }
+}
+
+const isUltraPlanPhaseDone = (phase = {}) => {
+  const children = Array.isArray(phase.children) ? phase.children : []
+  return phase.status && !['run', 'running'].includes(String(phase.status).toLowerCase()) && children.every(isUltraPlanPhaseDone)
+}
+
+const normalizeUltraPlanEvent = (event = {}) => {
+  if (typeof event === 'string') return { tag: 'event', body: event }
+  const tag = event.tag || event.type || 'event'
+  const body = event.body || event.msg || event.message || event.desc || ''
+  const elapsed = event.elapsed ?? event.time  // preserve as separate display field
+  // Remove time/elapsed from spread to prevent repeated normalization accumulating prefix
+  const { time, elapsed: _e, body: _b, msg: _m, message: _msg, desc: _d, tag: _t, type: _ty, ...rest } = event
+  return { ...rest, tag, body, ...(elapsed !== undefined ? { elapsed } : {}) }
+}
+
+const normalizeUltraPlanState = (raw) => {
+  if (!raw || typeof raw !== 'object') return null
+  const taskOutputs = raw.taskOutputs || raw.task_outputs || {}
+
+  // Pre-process: fix backend streaming bug that leaks ALL rich tasks (with id) into the last phase.
+  // A "simple" task has no id — it's the phase's declared intent (desc + status only).
+  // A "rich" task has id + output_file — it's the actual executed result injected by the backend.
+  //
+  // Two categories of rich tasks:
+  //   leaked  = rich task whose desc matches a simple task in ANY phase → belongs to that phase, not here
+  //   native  = rich task whose desc has NO matching simple task anywhere → truly belongs to this phase
+  //
+  // For each phase:
+  //   1. Keep native rich tasks (e.g. verify's "completeness check" which only appears as rich, never simple)
+  //   2. Enrich simple tasks with data from matching rich task (output_file, id, etc.)
+  //   3. Drop leaked rich tasks (they've been redistributed to their owner phases via step 2)
+  const allSimpleDescs = new Set()
+  const richByDesc = {}
+  if (Array.isArray(raw.phases)) {
+    for (const ph of raw.phases) {
+      for (const t of (ph.tasks || [])) {
+        if (!t.id && t.desc) allSimpleDescs.add(t.desc)
+        if (t.id && t.desc) richByDesc[t.desc] = t
+      }
+    }
+  }
+  const phasesRaw = Array.isArray(raw.phases) ? raw.phases.map(ph => {
+    const simpleTasks = (ph.tasks || []).filter(t => !t.id)
+    // Native rich tasks: have id but desc not declared as a simple task in any phase
+    const nativeRich = (ph.tasks || []).filter(t => t.id && t.desc && !allSimpleDescs.has(t.desc))
+    // Enrich simple tasks with matching rich task data (output_file, id)
+    const enrichedSimple = simpleTasks.map(t => {
+      const rich = richByDesc[t.desc]
+      if (!rich) return t
+      return { ...rich, desc: t.desc, status: t.status }
+    })
+    return { ...ph, tasks: [...enrichedSimple, ...nativeRich] }
+  }) : []
+
+  const normalizedPhases = phasesRaw.map(ph => normalizeUltraPlanPhase(ph, taskOutputs))
+  const recentTasksRaw = Array.isArray(raw.recentTasks) ? raw.recentTasks : (Array.isArray(raw.recent_tasks) ? raw.recent_tasks : (Array.isArray(raw.tasks) ? raw.tasks : []))
+  const normalizedRecentTasks = recentTasksRaw.map(t => normalizeUltraPlanTask(t, taskOutputs))
+  // A rich task may arrive both under a phase and in the live/recent stream.
+  // Merge its output/status into the phase row, then render only genuinely unmatched recent work.
+  const { phases, recentTasks } = reconcileUltraPlanTasks(normalizedPhases, normalizedRecentTasks)
+  const resultFiles = Array.isArray(raw.resultFiles) ? raw.resultFiles : (Array.isArray(raw.result_files) ? raw.result_files : [])
+  const complete = Boolean(raw.complete || raw.done || (phases.length > 0 && phases.every(isUltraPlanPhaseDone)))
+  return {
+    ...raw,
+    taskOutputs,
+    task_outputs: taskOutputs,
+    phases,
+    recentTasks,
+    resultFiles,
+    events: Array.isArray(raw.events) ? raw.events.map(normalizeUltraPlanEvent) : [],
+    complete,
+  }
+}
+
+const mergeUltraPlanStates = (...states) => {
+  const normalized = states.map(normalizeUltraPlanState).filter(Boolean)
+  if (!normalized.length) return null
+  const merged = {}
+  const eventSeen = new Set()
+  const fileSeen = new Set()
+  const mergedEvents = []
+  const mergedFiles = []
+  const mergedTaskOutputs = {}
+
+  for (const st of normalized) {
+    const {
+      phases,
+      recentTasks,
+      recent_tasks,
+      tasks,
+      events,
+      resultFiles,
+      result_files,
+      taskOutputs,
+      task_outputs,
+      ...rest
+    } = st
+    Object.assign(merged, rest)
+    if (taskOutputs && typeof taskOutputs === 'object') Object.assign(mergedTaskOutputs, taskOutputs)
+    if (task_outputs && typeof task_outputs === 'object') Object.assign(mergedTaskOutputs, task_outputs)
+    if (Array.isArray(phases) && phases.length > 0) merged.phases = phases
+    if (Array.isArray(recentTasks) && recentTasks.length > 0) merged.recentTasks = recentTasks
+    const eventList = Array.isArray(events) ? events : []
+    for (const ev of eventList) {
+      const key = `${ev.tag || ''}|${ev.body || ''}`
+      if (!eventSeen.has(key)) { eventSeen.add(key); mergedEvents.push(ev) }
+    }
+    const fileList = Array.isArray(resultFiles) ? resultFiles : []
+    for (const rf of fileList) {
+      const key = rf.file || `${rf.desc || ''}|${JSON.stringify(rf)}`
+      if (!fileSeen.has(key)) { fileSeen.add(key); mergedFiles.push(rf) }
+    }
+  }
+
+  merged.taskOutputs = mergedTaskOutputs
+  merged.task_outputs = mergedTaskOutputs
+  merged.events = mergedEvents
+  merged.resultFiles = mergedFiles
+  merged.complete = normalized.some(st => st.complete || st.done)
+    || (Array.isArray(merged.phases) && merged.phases.length > 0 && merged.phases.every(isUltraPlanPhaseDone))
+  return normalizeUltraPlanState(merged)
+}
+
+function UltraPlanResultCard({ text = '' }) {
+  const result = parseUltraPlanResult(text)
+  if (!result) return null
+  return <div className={`oa-ultraplan-result ${result.ok ? 'is-ok' : 'is-error'}`}>
+    <div className="oa-ultraplan-head">
+      <span className="oa-ultraplan-orb"><Sparkles size={16}/></span>
+      <div><b>UltraPlan</b><small>显式 /ultraplan 调用结果</small></div>
+      <em>{result.ok ? '完成' : '异常'} · Exit {result.exitCodeText || '0'}</em>
+    </div>
+    {result.objective && <div className="oa-ultraplan-objective">{result.objective}</div>}
+    <div className="oa-ultraplan-meta">
+      {result.runDir && <span><b>Run dir</b><code>{result.runDir}</code></span>}
+      {result.script && <span><b>Script</b><code>{result.script}</code></span>}
+    </div>
+    {(result.stdout || result.stderr) && <div className="oa-ultraplan-logs">
+      {result.stdout && <details open><summary>stdout</summary><pre>{result.stdout}</pre></details>}
+      {result.stderr && <details open={!result.ok}><summary>stderr</summary><pre>{result.stderr}</pre></details>}
+    </div>}
+  </div>
+}
+
+const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
+  const parsedState = parseUltraPlanText(text)
+  const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
+  if (upState && (upState.phases?.length > 0 || upState.recentTasks?.length > 0 || upState.objective)) {
+    return <UltraPlanDashboard state={upState} text={text} onAskReply={onAskReply} />
+  }
+  const result = parseUltraPlanResult(text)
+  if (result) return <UltraPlanResultCard text={text} />
+  return <MarkdownBlock text={text} onAskReply={onAskReply} />
+}
+
+const taskFileName = (fp = '') => String(fp || '').split(/[\\/]/).filter(Boolean).pop() || ''
+
+/*─── SubagentOutputBlock: structured rendering of subagent turn logs ───*/
+// Returns { prefix: seg[], turns: [{n, children: seg[]}] }
+// prefix = segs before first Turn; each turn groups its own segs
+function parseSubagentOutput(raw) {
+  const lines = (raw || '').split('\n')
+  const prefix = []
+  const turns = []
+  let cur = null   // current turn group (children array)
+  let buf = []
+  let i = 0
+
+  const flush = (target) => {
+    const t = buf.join('\n').trim()
+    if (t) target.push({ type: 'text', text: t })
+    buf = []
+  }
+  const target = () => cur ? cur.children : prefix
+
+  while (i < lines.length) {
+    const ln = lines[i], tr = ln.trim()
+    const mT = tr.match(/^LLM Running \(Turn (\d+)\)/)
+    if (mT) {
+      flush(target())
+      cur = { n: +mT[1], children: [] }
+      turns.push(cur)
+      i++; continue
+    }
+    const mS = tr.match(/^<summary>([\s\S]*?)<\/summary>$/)
+    if (mS) { flush(target()); target().push({ type: 'summary', text: mS[1] }); i++; continue }
+    if (/\uD83D\uDEE0/.test(tr)) {
+      flush(target())
+      const mTool = tr.match(/[\uD83D\uDEE0]\uFE0F?\s+(\w+)\(([\s\S]+)\)\s*$/)
+      if (mTool) {
+        let args = {}
+        try { args = JSON.parse(mTool[2]) } catch (_) {}
+        target().push({ type: 'tool', name: mTool[1], args, rawArgs: mTool[2] })
+      } else {
+        target().push({ type: 'tool', name: tr, args: {}, rawArgs: '' })
+      }
+      i++; continue
+    }
+    if (tr.startsWith('Executed subtask')) { flush(target()); target().push({ type: 'exec', text: tr }); i++; continue }
+    if (tr.startsWith('Result:')) { flush(target()); target().push({ type: 'result', text: tr.slice(7).trim() }); i++; continue }
+    if (tr === 'Artifact:') {
+      flush(target()); i++
+      while (i < lines.length && !lines[i].trim()) i++
+      if (i < lines.length) { target().push({ type: 'artifact', path: lines[i].trim() }); i++ }
+      continue
+    }
+    if (tr === '[ROUND END]') { flush(target()); target().push({ type: 'roundend' }); i++; continue }
+    buf.push(ln); i++
+  }
+  flush(target())
+  return { prefix, turns }
+}
+
+function ToolCallCollapse({ name, args }) {
+  const keys = Object.keys(args)
+  const preview = keys.slice(0, 3).join(' \u00b7 ') + (keys.length > 3 ? ` +${keys.length - 3}` : '')
+  const label = (
+    <span className="sa-tool-collapse-label">
+      <Tag color="blue" style={{ fontFamily: 'var(--mono,ui-monospace,monospace)', fontSize: 11, marginRight: 6 }}>{name}</Tag>
+      {keys.length > 0 && <span className="sa-tool-preview">{preview}</span>}
+    </span>
+  )
+  if (keys.length === 0) return (
+    <div className="sa-tool-empty">
+      <Tag color="blue" style={{ fontFamily: 'var(--mono,ui-monospace,monospace)', fontSize: 11 }}>{name}</Tag>
+    </div>
+  )
+  return (
+    <Collapse ghost size="small" className="sa-tool-collapse" items={[{
+      key: '1',
+      label,
+      children: <pre className="sa-tool-json">{JSON.stringify(args, null, 2)}</pre>
+    }]} />
+  )
+}
+
+function SubagentOutputBlock({ text, onAskReply }) {
+  const { prefix, turns } = useMemo(() => parseSubagentOutput(text), [text])
+
+  const renderSeg = (seg, i) => {
+    if (seg.type === 'summary') return (
+      <div key={i} className="sa-out-summary">{seg.text}</div>
+    )
+    if (seg.type === 'tool') return (
+      <ToolCallCollapse key={i} name={seg.name} args={seg.args} />
+    )
+    if (seg.type === 'exec') return (
+      <div key={i} className="sa-out-exec">{seg.text}</div>
+    )
+    if (seg.type === 'result') return (
+      <div key={i} className="sa-out-result-block">
+        <span className="sa-out-result-label">Result</span>
+        <span className="sa-out-result-text">{seg.text}</span>
+      </div>
+    )
+    if (seg.type === 'artifact') {
+      const fname = seg.path.replace(/\\/g, '/').split('/').pop()
+      return (
+        <div key={i} className="sa-out-artifact">
+          <span className="sa-out-artifact-label">Artifact</span>
+          <span className="sa-out-artifact-path" title={seg.path}>{fname}</span>
+        </div>
+      )
+    }
+    if (seg.type === 'roundend') return (
+      <div key={i} className="sa-out-roundend">&#x2014; Round End &#x2014;</div>
+    )
+    if (seg.type === 'text' && seg.text) return (
+      <MarkdownBlock key={i} text={seg.text} onAskReply={onAskReply} />
+    )
+    return null
+  }
+
+  // last turn open by default, others collapsed
+  const defaultOpen = turns.length > 0 ? [String(turns[turns.length - 1].n)] : []
+
+  const turnItems = turns.map(t => {
+    const summaryText = t.children.find(s => s.type === 'summary')?.text || ''
+    const toolCount = t.children.filter(s => s.type === 'tool').length
+    const preview = summaryText
+      ? summaryText.slice(0, 52) + (summaryText.length > 52 ? '\u2026' : '')
+      : toolCount > 0 ? `${toolCount} tool call${toolCount > 1 ? 's' : ''}` : ''
+    const label = (
+      <span className="sa-turn-label">
+        <Tag color="purple" style={{ fontSize: 10, padding: '0 5px', lineHeight: '18px', marginRight: 6 }}>
+          Turn {t.n}
+        </Tag>
+        {preview && <span className="sa-turn-preview">{preview}</span>}
+      </span>
+    )
+    return {
+      key: String(t.n),
+      label,
+      children: <div className="sa-turn-body">{t.children.map(renderSeg)}</div>
+    }
+  })
+
+  return (
+    <div className="sa-out">
+      {prefix.map(renderSeg)}
+      {turnItems.length > 0 && (
+        <Collapse
+          size="small"
+          className="sa-turn-collapse"
+          defaultActiveKey={defaultOpen}
+          items={turnItems}
+        />
+      )}
+    </div>
+  )
+}
+
+function UltraPlanTaskRow({ task, onAskReply }) {
+  const linesJoined = Array.isArray(task.output_lines) ? task.output_lines.join('\n') : ''
+  const initialContent = task.output || linesJoined || ''
+  const outputFile = preferredUltraPlanOutputFile(task)
+  const status = task.status || 'running'
+  const isRunning = status === 'running'
+  const [open, setOpen] = useState(() => isRunning)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [content, setContent] = useState(initialContent)
+  // running tasks are always expandable (live stream), done tasks are always expandable
+  const hasOutput = isRunning || status === 'done' || Boolean(task.output || linesJoined || outputFile)
+
+  // When a task enters running state, open it by default. After it becomes done,
+  // keep the current open state so the user can collapse it manually.
+  useEffect(() => {
+    if (isRunning) setOpen(true)
+  }, [isRunning])
+
+  // Sync content from SSE-pushed task.output / task.output_lines
+  useEffect(() => {
+    const next = task.output || (Array.isArray(task.output_lines) ? task.output_lines.join('\n') : '')
+    if (next && next !== content) setContent(next)
+  }, [task.output, task.output_lines])
+
+  // Poll output file while running; do a final fetch when done (covers running→done transition)
+  useEffect(() => {
+    if (!open || !outputFile) return
+    let cancelled = false
+    const fetchFile = async () => {
+      try {
+        const d = await api(`/api/files/read?path=${encodeURIComponent(outputFile)}`)
+        if (!cancelled && d?.content) setContent(d.content)
+      } catch (_) {}
+    }
+    if (isRunning) {
+      fetchFile() // immediate first fetch on open
+      const timer = setInterval(fetchFile, 500)
+      return () => { cancelled = true; clearInterval(timer) }
+    } else {
+      // Done: one-time fetch (handles: open after done, OR running→done while panel was open)
+      fetchFile()
+      return () => { cancelled = true }
+    }
+  }, [open, isRunning, outputFile])
+
+  const toggle = async () => {
+    if (!hasOutput) return
+    const nextOpen = !open
+    setOpen(nextOpen)
+    // running tasks are handled by the polling useEffect above
+    if (!nextOpen || isRunning || content || !outputFile) return
+    setLoading(true)
+    setError('')
+    try {
+      const d = await api(`/api/files/read?path=${encodeURIComponent(outputFile)}`)
+      setContent(d?.content || '')
+      if (!d?.content) setError('Output file is empty.')
+    } catch (err) {
+      setError(err?.message || String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className={`oa-up-task-wrap ${status}${open ? ' is-open' : ''}`}>
+      <div
+        className={`oa-up-task ${status}${hasOutput ? ' has-output' : ''}`}
+        onClick={hasOutput ? toggle : undefined}
+        role={hasOutput ? 'button' : undefined}
+        tabIndex={hasOutput ? 0 : undefined}
+        onKeyDown={hasOutput ? (e) => (e.key === 'Enter' || e.key === ' ') && toggle() : undefined}
+        title={outputFile || task.desc || ''}
+      >
+        <span className={`oa-up-task-dot oa-up-task-dot-${status}`} />
+        <span className="oa-up-task-desc">{task.desc}</span>
+        {outputFile && <span className="oa-up-task-file">{taskFileName(outputFile)}</span>}
+        {hasOutput && (
+          <span className="oa-up-task-chevron-wrap">
+            <ChevronRight size={13} className="oa-up-task-chevron" />
+          </span>
+        )}
+      </div>
+      {open && hasOutput && (
+        <div className="oa-up-task-output">
+          {loading && <div className="oa-up-task-output-meta">Loading output\u2026</div>}
+          {error && <div className="oa-up-task-output-error">{error}</div>}
+          {!loading && !error && content && <SubagentOutputBlock text={content} onAskReply={onAskReply} />}
+          {!loading && !error && !content && status === 'running' && (
+            <div className="oa-up-task-output-waiting">
+              <span className="oa-up-task-output-waiting-dot" /><span className="oa-up-task-output-waiting-dot" /><span className="oa-up-task-output-waiting-dot" />
+              <span>等待输出…</span>
+            </div>
+          )}
+          {!loading && !error && !content && status === 'done' && (
+            <div className="oa-up-task-output-meta" style={{color:'var(--muted-2)',fontStyle:'italic'}}>暂无输出内容</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UltraPlanDashboard({ state, text, onAskReply }) {
+  const { objective, phases = [], recentTasks = [], complete, events = [], resultFiles = [], current, taskOutputs = {}, task_outputs = {} } = state
+  const outputsMap = (taskOutputs && Object.keys(taskOutputs).length) ? taskOutputs : (task_outputs || {})
+  const openFile = (fp) => {
+    if (!fp) return
+    const u = `/api/files/read?path=${encodeURIComponent(fp)}`
+    window.open(u, '_blank', 'noopener')
+  }
+  return (
+    <div className="oa-up-dash">
+      <div className="oa-up-head">
+        <span className="oa-up-icon">{'\u26a1'}</span>
+        <span className="oa-up-title">UltraPlan</span>
+        {objective && <span className="oa-up-obj">{objective}</span>}
+        {complete
+          ? <span className="oa-up-badge oa-up-done">{'\u5b8c\u6210'}</span>
+          : (phases.length > 0 || recentTasks.length > 0) && <span className="oa-up-badge oa-up-run">{'\u6267\u884c\u4e2d\u2026'}</span>}
+      </div>
+      {!complete && current && (
+        <div className="oa-up-current"><span className="oa-up-current-dot"></span>{current}</div>
+      )}
+      {recentTasks.length > 0 && (
+        <div className="oa-up-recent">
+          <div className="oa-up-recent-head">Subagents / 最近任务</div>
+          <div className="oa-up-tasks">
+            {recentTasks.map((t, j) => {
+              const lines = (t && t.id && outputsMap?.[t.id]) ? outputsMap[t.id] : null
+              const injected = lines && lines.length ? { ...t, output_lines: lines } : t
+              return <UltraPlanTaskRow key={j} task={injected} onAskReply={onAskReply} />
+            })}
+          </div>
+        </div>
+      )}
+      {phases.length > 0 && (
+        <div className="oa-up-phases">
+          {phases.map((ph, i) => (
+            <div key={i} className={`oa-up-phase ${ph.status || 'running'}`}>
+              <span className="oa-up-phase-icon">
+                {ph.status === 'done' ? '\u2713' : ph.status === 'fail' ? '\u2717' : '\u25cc'}
+              </span>
+              <div className="oa-up-phase-body">
+                <div className="oa-up-phase-info">
+                  <span className="oa-up-phase-name">{ph.name}</span>
+                  {ph.desc && <span className="oa-up-phase-desc">{ph.desc}</span>}
+                  {ph.elapsed && <span className="oa-up-phase-time">{ph.elapsed}</span>}
+                </div>
+                {ph.tasks && ph.tasks.length > 0 && (
+                  <div className="oa-up-tasks">
+                    {ph.tasks.map((t, j) => {
+                      const lines = (t && t.id && outputsMap && outputsMap[t.id]) ? outputsMap[t.id] : null
+                      const injected = lines && lines.length ? { ...t, output_lines: lines } : t
+                      return <UltraPlanTaskRow key={j} task={injected} onAskReply={onAskReply} />
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {resultFiles.length > 0 && (
+        <div className="oa-up-files">
+          <div className="oa-up-files-head">{'\u4ea7\u51fa\u6587\u4ef6'} ({resultFiles.length})</div>
+          <div className="oa-up-files-list">
+            {resultFiles.map((r, i) => (
+              <div key={i} className="oa-up-file-item" onClick={() => openFile(r.file)} title={r.file}>
+                <span className="oa-up-file-icon">{'\ud83d\udcc4'}</span>
+                <div className="oa-up-file-body">
+                  <div className="oa-up-file-desc">{r.desc}</div>
+                  <div className="oa-up-file-path">{r.file}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {events.length > 0 && (
+        <details className="oa-up-events">
+          <summary>{'\u65e5\u5fd7'} ({events.length})</summary>
+          <div className="oa-up-events-body">
+            {events.map((e, i) => (
+              <div key={i} className={`oa-up-event oa-up-event-${e.tag}`}>
+                <span className="oa-up-event-tag">[{e.tag}]</span>
+                {e.elapsed !== undefined && <span className="oa-up-event-time">{e.elapsed}s</span>}
+                <span className="oa-up-event-body">{e.body}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      {complete && (() => {
+        // Only show text that is NOT ultraplan log lines (e.g. extra agent commentary after the block)
+        const resultText = (text || '').split('\n').filter(ln => {
+          const t = ln.trim()
+          return t && !t.match(/^\[(ultraplan|phase|subagent|result|done|next|summary)\]/)
+        }).join('\n').trim()
+        return resultText
+          ? <div className="oa-up-result"><MarkdownBlock text={resultText} onAskReply={onAskReply} /></div>
+          : null
+      })()}
+    </div>
+  )
+}
+
 const parseToolCallBlock = (block = '') => {
   const text = String(block || '').trim()
   const tool = text.match(/^🛠️\s*Tool:\s*([\s\S]*)$/i)
@@ -531,15 +1218,17 @@ function TextMarkdown({ text = '', onAskReply }) {
   return <>{nodes}</>
 }
 
-const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages }) {
+const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages, ultraplan_state }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
   useEffect(() => { setStackOpen(pending) }, [pending])
+  const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
   const parsed = useMemo(() => parseAssistantContent(content), [content])
   const hasTurnSplit = parsed.runs.length > 0
-  if (!content && pending) return <div className="oa-content oa-thinking">正在思考…</div>
+  const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
+  if (!content && pending && !hasLiveUltraPlan) return <div className="oa-content oa-thinking">正在思考…</div>
   if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
@@ -564,17 +1253,17 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
             <UsageRow u={tu} className="oa-usage-inline" />
             <ChevronDown size={15} className="oa-turn-chevron"/>
           </button>
-          {open && (r.body ? <MarkdownBlock text={r.body} onAskReply={onAskReply} /> : <p className="oa-turn-empty">该轮暂无详细输出</p>)}
+          {open && (r.body ? renderAssistantBody(r.body, onAskReply) : <p className="oa-turn-empty">该轮暂无详细输出</p>)}
         </section>
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
         <div className="oa-turn-current-head"><span>Turn {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
-        {lastRun.body ? <MarkdownBlock text={lastRun.body} onAskReply={onAskReply} /> : <p className="oa-turn-empty">正在等待该轮输出…</p>}
+        {lastRun.body ? renderAssistantBody(lastRun.body, onAskReply) : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
     {(parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
       {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
-      <MarkdownBlock text={parsed.body || content || ''} onAskReply={onAskReply} />
+      {renderAssistantBody(parsed.body || content || '', onAskReply, liveUltraPlanState || ultraplan_state)}
     </div>}
   </div>
 })
@@ -648,7 +1337,7 @@ const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply,
     <div className="oa-bubble">
       <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
       {Array.isArray(m.files) && m.files.some(isImageFile) && <div className="oa-message-images">{m.files.filter(isImageFile).map((f, i) => <img key={f.name || i} src={f.dataURL || f.url} alt={f.name || 'image'} />)}</div>}
-      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} /> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
     </div>
   </article>
@@ -715,7 +1404,11 @@ export default function ChatApp() {
           insert: c.insert || c.cmd.trim(),
           builtIn: c.builtIn !== false,
         }))
-      if (normalized.length) setSlashCommands(normalized)
+      if (normalized.length) {
+        const serverKeys = new Set(normalized.map(c => builtinSlashKey(c.cmd)))
+        const missing = BUILTIN_SLASH_COMMANDS.filter(c => !serverKeys.has(builtinSlashKey(c.cmd)))
+        setSlashCommands(missing.length ? [...normalized, ...missing] : normalized)
+      }
     }).catch(() => {})
   }, [])
   const [sessions, setSessions] = useState([])
@@ -768,6 +1461,7 @@ export default function ChatApp() {
   const runSeqRef = useRef(0)
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
+  const messagesRef = useRef([])
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
   const chatScope = useRef(null)
@@ -824,6 +1518,7 @@ export default function ChatApp() {
   }
 
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
   const officialSlashKeys = useMemo(() => new Set(effectiveSlashCommands.map(c => builtinSlashCommandKey(c))), [effectiveSlashCommands])
   const isProtectedSlashCommand = useCallback((cmd = '') => officialSlashKeys.has(builtinSlashKey(cmd)), [officialSlashKeys])
@@ -845,8 +1540,10 @@ export default function ChatApp() {
     const inContinueScope = slashFilter === '/continue' || slashFilter.startsWith('/continue ')
     const inReviewScope = slashFilter === '/review' || slashFilter.startsWith('/review ')
     const inImproveScope = slashFilter === '/improve' || slashFilter.startsWith('/improve ')
+    const inUltraPlanScope = slashFilter === '/ultraplan' || slashFilter.startsWith('/ultraplan ')
     const isReviewNaturalLanguage = /^\/review\s+\S/.test(slashFilter) && !childAllowed('/review')
     const isContinueNumber = /^\/continue\s+\d+$/.test(slashFilter)
+    const isUltraPlanObjective = /^\/ultraplan\s+\S/.test(slashFilter)
     return allSlashCommands.filter(c => {
       const cmd = String(c.cmd || '')
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
@@ -860,9 +1557,16 @@ export default function ChatApp() {
         if (isContinueNumber) return true
         if (slashFilter.startsWith('/continue ')) return false
       }
+      if (cmd === '/ultraplan <目标>') {
+        if (slashFilter === '/ultraplan ') return true
+        if (isUltraPlanObjective) return true
+        if (slashFilter === '/ultraplan' || fuzzyMatch('/ultraplan', rawFilter) || fuzzyMatch('/ultraplan', slashFilter)) return true
+        if (slashFilter.startsWith('/ultraplan ')) return false
+      }
       if (inContinueScope && cmd !== '/continue <编号>') return false
       if (inReviewScope && cmd !== '/review <自然语言请求>') return false
       if (inImproveScope && cmd !== '/improve') return false
+      if (inUltraPlanScope && cmd !== '/ultraplan <目标>') return false
       return fuzzyMatch(cmd, rawFilter) || fuzzyMatch(cmd, slashFilter) || fuzzyMatch(c.desc || '', rawFilter)
     })
   }, [cmdDrawer.open, cmdDrawer.filter, allSlashCommands])
@@ -961,7 +1665,26 @@ export default function ChatApp() {
         const elapsedMs = getElapsedMs(m)
         const finalMsg = { ...ev.message }
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
+        finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         return finalMsg
+      }) : xs)
+    }
+    if (ev.type === 'ultraplan_event' && ev.state) {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
+        const nextState = mergeUltraPlanStates(m.ultraplan_state, ev.state) || ev.state
+        return { ...m, ultraplan_state: nextState }
+      }) : xs)
+    }
+    if (ev.type === 'ultraplan_output' && ev.task_id && Array.isArray(ev.lines)) {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
+        const prevState = m.ultraplan_state || {}
+        const prevOutputs = prevState.taskOutputs || prevState.task_outputs || {}
+        const prevLines = Array.isArray(prevOutputs[ev.task_id]) ? prevOutputs[ev.task_id] : []
+        const taskOutputs = { ...prevOutputs, [ev.task_id]: [...prevLines, ...ev.lines] }
+        const nextState = mergeUltraPlanStates(prevState, { taskOutputs, task_outputs: taskOutputs }) || { ...prevState, taskOutputs, task_outputs: taskOutputs }
+        return { ...m, ultraplan_state: nextState }
       }) : xs)
     }
   }
@@ -1046,9 +1769,16 @@ export default function ChatApp() {
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
     streamAbortRef.current = ctrl
-    const pendingId = `resume-${Date.now()}`
+    let pendingId = `resume-${Date.now()}`
     setBusy(true); setStreamingSid(id); setAutoFollow(true); setShowFollow(false)
-    setMessages(xs => xs.some(m => m.role === 'assistant' && !m.content) ? xs : [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }])
+    setMessages(xs => {
+      const existing = xs.find(m => m.role === 'assistant' && !m.content)
+      if (existing?.id) {
+        pendingId = existing.id
+        return xs
+      }
+      return [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }]
+    })
     try {
       const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
       if (res.status === 204) return
@@ -1450,7 +2180,8 @@ export default function ChatApp() {
         const selectingBareEffort = e.key === 'Enter' && /^\s*\/effort\s*$/.test(currentValue)
         const selectingBareImprove = e.key === 'Enter' && /^\s*\/improve\s*$/.test(currentValue)
         const selectingContinueNumber = cmd?.cmd === '/continue <编号>' && /^\s*\/continue\s+\d+\s*$/.test(currentValue)
-        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber) {
+        const selectingUltraPlanObjective = cmd?.cmd === '/ultraplan <目标>' && /^\s*\/ultraplan\s+\S/.test(currentValue)
+        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber || selectingUltraPlanObjective) {
           e.preventDefault()
           setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
           setCmdEditIdx(-1)
@@ -1723,6 +2454,7 @@ export default function ChatApp() {
               <img src={a.dataURL} alt={a.name}/><span><FileImage size={12}/>{a.name}</span><button type="button" onClick={()=>removeAttachment(a.id)}><X size={12}/></button>
             </div>)}
           </div>}
+          {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>将以规划模式执行，并在完成后展示 run 目录与日志摘要</b></div>}
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
