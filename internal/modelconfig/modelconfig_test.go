@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestProfileAcceptsBooleanFakeCCSystemPrompt(t *testing.T) {
@@ -168,6 +169,43 @@ func TestExportWritesOfficialMyKeyAtomically(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "mykey_admin.generated.py")); !os.IsNotExist(err) {
 		t.Fatalf("mykey_admin.generated.py should not be written; stat err=%v", err)
+	}
+}
+
+func TestExportPreservesUTF8ProfileNameRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	wantName := "主模型-中文"
+	profiles := []Profile{{
+		VarName: "native_oai_config1",
+		Type:    "native_oai",
+		Name:    wantName,
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-real-secret",
+	}}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !utf8.Valid(data) {
+		t.Fatal("mykey.py is not valid UTF-8")
+	}
+	text := string(data)
+	if !strings.HasPrefix(text, "# -*- coding: utf-8 -*-\n") || !strings.Contains(text, wantName) {
+		t.Fatalf("mykey.py did not preserve UTF-8 name:\n%s", text)
+	}
+
+	// Import must force UTF-8 even if the parent process has a legacy locale.
+	t.Setenv("PYTHONIOENCODING", "cp936")
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || draft.Profiles[0].Name != wantName {
+		t.Fatalf("round-trip name = %#v, want %q", draft.Profiles, wantName)
 	}
 }
 

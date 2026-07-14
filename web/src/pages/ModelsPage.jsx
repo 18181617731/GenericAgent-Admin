@@ -212,6 +212,7 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
   const [discErr, setDiscErr] = useState('')
   const [discovered, setDiscovered] = useState([])
   const [dirty, setDirty] = useState(false)
+  const [nameDirty, setNameDirty] = useState(false)
   const patch = obj => { setDirty(true); patchProfile(idx, obj) }
   const shownApiKey = revealedKey ?? p.apikey ?? ''
   const revealed = revealedKey != null
@@ -262,7 +263,7 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
     )
   }]
 
-  const headerTitle = p.model || p.var_name || `模型 ${idx + 1}`
+  const headerTitle = p.name || p.model || p.var_name || `模型 ${idx + 1}`
   const header = (
     <div className="model-card-header">
       <div className="model-card-name">{headerTitle}</div>
@@ -294,7 +295,11 @@ function ProfileCard({ p, idx, profileKey, result, patchProfile, removeProfile, 
     children: (
       <>
         <div className="form-grid">
-          <label className="span2">BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
+          <label>名称<Input aria-label="模型名称" value={p.name || ''}
+            onChange={e => { setNameDirty(true); patch({ name: e.target.value }) }}
+            onBlur={e => { if (nameDirty) savePatch({ name: e.target.value }); setNameDirty(false) }}
+            onPressEnter={e => e.currentTarget.blur()} placeholder="例如：主模型" /></label>
+          <label>BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
           <label className="span2">API Key
             {revealed ? (
               <Input
@@ -382,12 +387,12 @@ function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
       const newProfiles = models.map((modelId, i) => ({
         ...emptyProfile(profiles.length + i, f.protocol),
         var_name: nextVarName(f.protocol, [...profiles, ...Array(i).fill({})]),
-        type: f.protocol, apibase: f.baseUrl, apikey: f.apiKey,
+        type: f.protocol, name: f.name, apibase: f.baseUrl, apikey: f.apiKey,
         models: [modelId], model: modelId
       }))
       const ok = await addModelProfiles(newProfiles)
       if (!ok) return false
-      setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [] })
+      setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
       setDiscovered([])
       setErr('')
       return true
@@ -413,9 +418,14 @@ function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
             <Input value={f.baseUrl} onChange={e => pf({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />
           </label>
         </div>
-        <label className="model-add-label">API Key（可选）
-          <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
-        </label>
+        <div className="model-add-row2">
+          <label className="model-add-label">名称
+            <Input aria-label="新增模型名称" value={f.name || ''} onChange={e => pf({ name: e.target.value })} placeholder="例如：主模型" />
+          </label>
+          <label className="model-add-label">API Key（可选）
+            <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
+          </label>
+        </div>
         {meta.help && <p className="model-add-hint"><Tag color={meta.color} style={{marginRight:4}}>{protocolLabel(f.protocol)}</Tag>{meta.help}</p>}
         <DiscoverRow value={selectedModels} onChange={handleModelsChange}
           opts={modelOpts}

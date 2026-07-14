@@ -3,6 +3,14 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
+import { Models } from './pages/ModelsPage.jsx'
+
+globalThis.React = React
+globalThis.ResizeObserver = class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
 
 const t = {
   refresh: 'Refresh',
@@ -135,5 +143,90 @@ describe('first-run setup shell', () => {
     render(<App />)
     await waitFor(() => expect(screen.getByText(/首次启动配置|First/i)).toBeTruthy())
     expect(screen.getByText(/GA Admin Bootstrap/i)).toBeTruthy()
+  })
+})
+
+const modelProfile = {
+  var_name: 'native_oai_config1',
+  type: 'native_oai',
+  name: '主模型',
+  apibase: 'https://api.example/v1',
+  model: 'gpt-test',
+  models: ['gpt-test'],
+  apikey: '******',
+  stream: true,
+  max_retries: 3,
+  read_timeout: 300,
+}
+
+const modelProps = overrides => ({
+  t,
+  profiles: [modelProfile],
+  setProfiles: vi.fn(),
+  patchProfile: vi.fn(),
+  addModelProfiles: vi.fn(async () => true),
+  deleteModelProfile: vi.fn(async () => true),
+  importModels: vi.fn(),
+  previewModels: vi.fn(),
+  saveModelProfile: vi.fn(async () => true),
+  discoverModels: vi.fn(async () => ({ models: [] })),
+  getProfileKey: () => 'profile-1',
+  onRevealKey: vi.fn(),
+  onClearRevealedKey: vi.fn(),
+  ...overrides,
+})
+
+describe('model profile names', () => {
+  test('should display and auto-save a Chinese name when the name is edited', async () => {
+    const props = modelProps()
+    const view = render(<Models {...props} />)
+
+    fireEvent.click(screen.getByText('主模型', { selector: '.model-card-name' }))
+    const nameInput = screen.getByLabelText('模型名称')
+    expect(nameInput.value).toBe('主模型')
+    fireEvent.change(nameInput, { target: { value: '主模型-修改' } })
+    view.rerender(<Models {...props} profiles={[{ ...modelProfile, name: '主模型-修改' }]} />)
+    fireEvent.blur(screen.getByLabelText('模型名称'))
+
+    await waitFor(() => expect(props.saveModelProfile).toHaveBeenCalledWith(
+      0,
+      'profile-1',
+      expect.objectContaining({ name: '主模型-修改' }),
+    ))
+  })
+
+  test('should remove the profile when the delete action is confirmed by the page flow', async () => {
+    const props = modelProps()
+    render(<Models {...props} />)
+
+    fireEvent.click(screen.getByTitle('删除此配置'))
+    await waitFor(() => expect(props.deleteModelProfile).toHaveBeenCalledWith([]))
+  })
+
+  test('should not add a named profile when BaseURL is missing', () => {
+    const props = modelProps({ profiles: [] })
+    render(<Models {...props} />)
+
+    fireEvent.change(screen.getByLabelText('新增模型名称'), { target: { value: '新增中文模型' } })
+    const modelInput = screen.getAllByRole('combobox').at(-1)
+    fireEvent.change(modelInput, { target: { value: 'gpt-new' } })
+    fireEvent.keyDown(modelInput, { key: 'Enter', code: 'Enter' })
+
+    expect(props.addModelProfiles).not.toHaveBeenCalled()
+  })
+
+  test('should add and auto-save a profile with a Chinese name when required fields are present', async () => {
+    const props = modelProps({ profiles: [] })
+    render(<Models {...props} />)
+
+    fireEvent.change(screen.getByLabelText('新增模型名称'), { target: { value: '新增中文模型' } })
+    fireEvent.change(screen.getByLabelText('BaseURL'), { target: { value: 'https://api.example/v1' } })
+    const modelInput = screen.getAllByRole('combobox').at(-1)
+    fireEvent.change(modelInput, { target: { value: 'gpt-new' } })
+    fireEvent.keyDown(modelInput, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(props.addModelProfiles).toHaveBeenCalledWith([
+      expect.objectContaining({ name: '新增中文模型', model: 'gpt-new' }),
+    ]))
   })
 })
