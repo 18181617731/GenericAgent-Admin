@@ -10,6 +10,8 @@ ga-admin
 ga-admin-dev
 tmp/
 temp_run_logs/
+/temp/e2e-model-name/
+/output/playwright/
 *.log
 __pycache__/
 *.pyc
