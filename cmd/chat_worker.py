@@ -243,6 +243,17 @@ def _snapshot_backend_history(agent):
         return []
 
 
+def _snapshot_model_id(agent):
+    """Return the active backend's concrete model ID for this reply."""
+    try:
+        value = getattr(agent.llmclient.backend, 'model', '')
+        if not isinstance(value, str):
+            return ''
+        return ' '.join(value.split())[:256]
+    except Exception:
+        return ''
+
+
 def _json_clone(value, fallback):
     try:
         return json.loads(json.dumps(value, ensure_ascii=False, default=str))
@@ -585,7 +596,7 @@ def _maybe_expand_official_slash_command(root, prompt):
 
 
 def _emit_immediate_done(agent, content, history_info=None, working=None):
-    msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time())}
+    msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
     state = _snapshot_ga_state(agent)
     emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
 
@@ -1170,11 +1181,11 @@ def _run_ultraplan_command(root, objective, llm_no, agent, history_info, working
     if rc != 0:
         state['error'] = True
         text = ''.join(chunks) or ('UltraPlan exited with code %s' % rc)
-        msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'error': True, 'ultraplan_state': dict(state)}
+        msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True, 'ultraplan_state': dict(state)}
         emit({'type': 'error', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': history_info or [], 'working': working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
         return
     emit({'type': 'ultraplan_event', 'state': dict(state)})
-    msg = {'id': new_id(), 'role': 'assistant', 'content': ''.join(chunks), 'created_at': int(time.time()), 'ultraplan_state': dict(state)}
+    msg = {'id': new_id(), 'role': 'assistant', 'content': ''.join(chunks), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'ultraplan_state': dict(state)}
     snap = _snapshot_ga_state(agent)
     emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': snap.get('history_info') or history_info or [], 'working': snap.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
 
@@ -1194,6 +1205,7 @@ def handle_request(agent, worker, req):
     project_mode = str(req.get('project_mode') or '').strip()
     setattr(agent, '_ga_project_mode_name', project_mode or None)
     _select_llm_if_needed(agent, llm_no)
+    emit({'type': 'model', 'model_id': _snapshot_model_id(agent)})
     if str(reasoning_effort or '').strip():
         _apply_reasoning_effort_setting(agent, reasoning_effort)
     _restore_ga_state(agent, history_info, working)
@@ -1265,7 +1277,7 @@ def handle_request(agent, worker, req):
                     else:
                         emit({'type': 'delta', 'delta': _up_buf[0]})
                 text = str(item.get('done') or ''.join(chunks))
-                msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time())}
+                msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
                 if _up_state.get('phases') or _up_state.get('objective'):
                     _up_state['complete'] = True
                     msg['ultraplan_state'] = dict(_up_state)
@@ -1276,7 +1288,7 @@ def handle_request(agent, worker, req):
                 emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
                 return
     except Exception as e:
-        msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}
+        msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
@@ -1316,7 +1328,7 @@ def main():
             with agent_lock:
                 handle_request(agent, worker, req)
         except Exception as e:
-            msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'error': True}
+            msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True}
             emit({'type': 'error', 'message': msg})
 
 

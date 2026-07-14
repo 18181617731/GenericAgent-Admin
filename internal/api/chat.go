@@ -28,6 +28,7 @@ type chatMessage struct {
 	ID             string                   `json:"id"`
 	Role           string                   `json:"role"`
 	Content        string                   `json:"content"`
+	ModelID        string                   `json:"model_id,omitempty"`
 	Files          []map[string]interface{} `json:"files,omitempty"`
 	CreatedAt      int64                    `json:"created_at"`
 	Error          bool                     `json:"error,omitempty"`
@@ -185,6 +186,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	var finalWorking map[string]interface{}
 	var finalUltraPlanState map[string]interface{}
 	var finalReasoningEffort string
+	var finalModelID string
 	var taskOutputsAccumulator = make(map[string][]string)
 	var readErr error
 	for {
@@ -205,6 +207,11 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			}
 			continue
 		}
+		if ev["type"] == "model" {
+			if modelID, ok := ev["model_id"].(string); ok {
+				finalModelID = strings.TrimSpace(modelID)
+			}
+		}
 		if ev["type"] == "ultraplan_event" {
 			if state := chatUltraPlanStateFromEvent(ev); state != nil {
 				finalUltraPlanState = mergeChatMaps(finalUltraPlanState, state)
@@ -224,6 +231,13 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
+			final.ModelID = strings.TrimSpace(final.ModelID)
+			if final.ModelID != "" {
+				finalModelID = final.ModelID
+			} else if finalModelID != "" {
+				final.ModelID = finalModelID
+				msg["model_id"] = finalModelID
+			}
 			if final.ElapsedMS <= 0 {
 				final.ElapsedMS = elapsedMillis()
 			}
@@ -300,7 +314,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			} else {
 				content = "已停止生成"
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
 			err := readErr
@@ -314,7 +328,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			} else {
 				content = fmt.Sprintf("生成失败：%v", err)
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
+			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}
