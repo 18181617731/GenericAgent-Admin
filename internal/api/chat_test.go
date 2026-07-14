@@ -298,20 +298,62 @@ func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
 	}
 }
 
-func TestChatNewSessionReportsUnwritableDataDir(t *testing.T) {
+func TestChatNewSessionDoesNotPersistDraftUntilFirstSend(t *testing.T) {
+	old := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		return nil, fmt.Errorf("expected worker start failure")
+	}
+	defer func() { startChatWorkerFunc = old }()
+
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	blocked := filepath.Join(t.TempDir(), "blocked")
-	if err := os.WriteFile(blocked, []byte("not a dir"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	s.CfgStore.Cfg.ChatDataDir = blocked
+	h := s.Routes()
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/session/new", nil)
-	s.Routes().ServeHTTP(rr, req)
-	if rr.Code != http.StatusInternalServerError {
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var created chatSession
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("new session response has empty id")
+	}
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); !os.IsNotExist(err) {
+		t.Fatalf("draft session was persisted before first message: %v", err)
+	}
+
+	listRR := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil)
+	h.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", listRR.Code, listRR.Body.String())
+	}
+	if strings.Contains(listRR.Body.String(), created.ID) {
+		t.Fatalf("draft session appeared in list before first message: %s", listRR.Body.String())
+	}
+
+	sendRR := httptest.NewRecorder()
+	sendReq := httptest.NewRequest(http.MethodPost, "/api/chat/"+created.ID, strings.NewReader(`{"prompt":"first message","client_user_id":"u1"}`))
+	sendReq.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(sendRR, sendReq)
+	if sendRR.Code != http.StatusOK {
+		t.Fatalf("send status=%d body=%s", sendRR.Code, sendRR.Body.String())
+	}
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); err != nil {
+		t.Fatalf("session was not persisted by first send: %v", err)
+	}
+
+	listAfterSendRR := httptest.NewRecorder()
+	h.ServeHTTP(listAfterSendRR, httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil))
+	if listAfterSendRR.Code != http.StatusOK {
+		t.Fatalf("list after send status=%d body=%s", listAfterSendRR.Code, listAfterSendRR.Body.String())
+	}
+	if !strings.Contains(listAfterSendRR.Body.String(), created.ID) {
+		t.Fatalf("session missing from list after first send: %s", listAfterSendRR.Body.String())
 	}
 }
 

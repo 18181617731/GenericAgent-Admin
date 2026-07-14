@@ -1865,7 +1865,6 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSessions(xs => [{ id:d.id, title:d.title, workspace:d.workspace || '', updated_at:d.updated_at, count:0 }, ...xs])
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id, openToken)
   }
@@ -2052,7 +2051,7 @@ export default function ChatApp() {
         id = d.id
         activeSidRef.current = id
         scrollModeRef.current = 'auto'
-        setSid(id); setStreamingSid(id); setSessions(xs => [{ id:d.id, title:d.title, workspace:d.workspace || '', updated_at:d.updated_at, count:0 }, ...xs])
+        setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
         return
       }

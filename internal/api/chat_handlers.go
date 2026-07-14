@@ -117,10 +117,6 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{}), RawHistory: []map[string]interface{}{}}
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
-		bad(w, 500, err.Error())
-		return
-	}
 	writeJSON(w, chatSessionForClient(cs))
 }
 
