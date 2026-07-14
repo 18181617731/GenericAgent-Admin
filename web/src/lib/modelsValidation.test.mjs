@@ -6,7 +6,12 @@ test('validateModelProfiles blocks invalid saves before API calls', () => {
   const results = validateModelProfiles([
     { var_name: 'MODEL_1', name: 'model one', model: 'gpt-4o', apibase: 'https://api.example.test', max_retries: 2, read_timeout: 300 },
     { var_name: 'api_config_dup', name: 'dup one', model: 'gpt-4o', apibase: 'https://api.example.test', apikey: 'set' },
-    { var_name: 'api_config_dup', name: 'dup two', model: '', apibase: 'localhost:8000', max_retries: -1, read_timeout: 0 }
+    {
+      var_name: 'api_config_dup',
+      name: 'dup two',
+      apibase: 'localhost:8000',
+      model_configs: [{ model: '', max_retries: -1, read_timeout: 0 }],
+    }
   ])
 
   assert.equal(results[0].ok, false)
@@ -94,6 +99,21 @@ test('modelRiskCatalog ignores malformed stale entries and normalizes route alia
 })
 
 
+test('validateModelProfiles allows a provider before models are added', () => {
+  const results = validateModelProfiles([{
+    var_name: 'native_oai_config_empty',
+    type: 'native_oai',
+    apibase: 'https://api.example.test/v1',
+    apikey: 'set',
+    model: '',
+    models: [],
+    model_configs: [],
+  }])
+
+  assert.equal(results[0].ok, true)
+  assert.deepEqual(results[0].errors, [])
+})
+
 test('validateModelProfiles accepts aggregated models array without legacy model', () => {
   const results = validateModelProfiles([
     { var_name: 'native_oai_config_group', name: 'grouped source', models: ['gpt-4o', 'gpt-4o-mini'], model: '', apibase: 'https://api.example.test/v1', apikey: 'set' }
@@ -101,4 +121,30 @@ test('validateModelProfiles accepts aggregated models array without legacy model
 
   assert.equal(results[0].ok, true)
   assert.deepEqual(results[0].errors, [])
+})
+
+test('validateModelProfiles validates independent model configs', () => {
+  const valid = validateModelProfiles([{
+    var_name: 'native_oai_config_group',
+    apibase: 'https://api.example.test/v1',
+    apikey: 'set',
+    model_configs: [
+      { model: 'gpt-4o', read_timeout: 120, reasoning_effort: 'low' },
+      { model: 'gpt-4o-mini', read_timeout: 600, reasoning_effort: 'high' },
+    ],
+  }])
+  assert.equal(valid[0].ok, true)
+  assert.deepEqual(valid[0].errors, [])
+
+  const invalid = validateModelProfiles([{
+    var_name: 'native_oai_config_group',
+    apibase: 'https://api.example.test/v1',
+    apikey: 'set',
+    model_configs: [
+      { model: 'gpt-4o', read_timeout: 120 },
+      { model: 'gpt-4o-mini', read_timeout: 0 },
+    ],
+  }])
+  assert.equal(invalid[0].ok, false)
+  assert.match(invalid[0].errors.join(','), /readTimeoutInvalid/)
 })

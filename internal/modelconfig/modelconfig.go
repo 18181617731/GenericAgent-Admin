@@ -52,6 +52,21 @@ func parseOptionalBoolString(v string) bool {
 	}
 }
 
+type ModelConfig struct {
+	Model              string                 `json:"model"`
+	SortOrder          *int                   `json:"sort_order,omitempty"`
+	Stream             *bool                  `json:"stream,omitempty"`
+	MaxRetries         *int                   `json:"max_retries,omitempty"`
+	ReadTimeout        *int                   `json:"read_timeout,omitempty"`
+	ConnectTimeout     *int                   `json:"connect_timeout,omitempty"`
+	UserAgent          string                 `json:"user_agent,omitempty"`
+	APIMode            string                 `json:"api_mode,omitempty"`
+	ThinkingType       string                 `json:"thinking_type,omitempty"`
+	ReasoningEffort    string                 `json:"reasoning_effort,omitempty"`
+	FakeCCSystemPrompt *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`
+	Extra              map[string]interface{} `json:"extra,omitempty"`
+}
+
 type Profile struct {
 	VarName            string                 `json:"var_name"`
 	Type               string                 `json:"type"`
@@ -59,6 +74,7 @@ type Profile struct {
 	APIBase            string                 `json:"apibase"`
 	Model              string                 `json:"model"`
 	Models             []string               `json:"models,omitempty"`
+	ModelConfigs       []ModelConfig          `json:"model_configs,omitempty"`
 	APIKey             string                 `json:"apikey"`
 	Stream             *bool                  `json:"stream,omitempty"`
 	MaxRetries         *int                   `json:"max_retries,omitempty"`
@@ -181,17 +197,21 @@ func normalizeProfiles(profiles []Profile) []Profile {
 }
 
 func normalizeProfile(p Profile) Profile {
-	models := profileModels(p)
-	p.Models = models
-	if len(models) > 0 {
-		p.Model = models[0]
+	configs := profileModelConfigs(p)
+	p.ModelConfigs = configs
+	p.Models = make([]string, 0, len(configs))
+	for _, config := range configs {
+		p.Models = append(p.Models, config.Model)
+	}
+	if len(configs) > 0 {
+		p.Model = configs[0].Model
 	} else {
 		p.Model = strings.TrimSpace(p.Model)
 	}
 	return p
 }
 
-func profileModels(p Profile) []string {
+func legacyProfileModels(p Profile) []string {
 	seen := map[string]bool{}
 	models := []string{}
 	add := func(v string) {
@@ -205,6 +225,44 @@ func profileModels(p Profile) []string {
 	add(p.Model)
 	for _, m := range p.Models {
 		add(m)
+	}
+	return models
+}
+
+func profileModelConfigs(p Profile) []ModelConfig {
+	if len(p.ModelConfigs) > 0 {
+		configs := make([]ModelConfig, len(p.ModelConfigs))
+		copy(configs, p.ModelConfigs)
+		for i := range configs {
+			configs[i].Model = strings.TrimSpace(configs[i].Model)
+		}
+		return configs
+	}
+	models := legacyProfileModels(p)
+	configs := make([]ModelConfig, 0, len(models))
+	for _, model := range models {
+		configs = append(configs, ModelConfig{
+			Model:              model,
+			Stream:             p.Stream,
+			MaxRetries:         p.MaxRetries,
+			ReadTimeout:        p.ReadTimeout,
+			ConnectTimeout:     p.ConnectTimeout,
+			UserAgent:          p.UserAgent,
+			APIMode:            p.APIMode,
+			ThinkingType:       p.ThinkingType,
+			ReasoningEffort:    p.ReasoningEffort,
+			FakeCCSystemPrompt: p.FakeCCSystemPrompt,
+			Extra:              p.Extra,
+		})
+	}
+	return configs
+}
+
+func profileModels(p Profile) []string {
+	configs := profileModelConfigs(p)
+	models := make([]string, 0, len(configs))
+	for _, config := range configs {
+		models = append(models, config.Model)
 	}
 	return models
 }
@@ -265,11 +323,25 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 		if !strings.Contains(strings.ToLower(p.VarName), "api") && !strings.Contains(strings.ToLower(p.VarName), "config") && !strings.Contains(strings.ToLower(p.VarName), "cookie") {
 			return fmt.Errorf("var_name must contain api/config/cookie: %s", p.VarName)
 		}
-		models := profileModels(p)
-		if len(models) == 0 {
-			return errors.New("apibase and model are required")
-		}
-		for i := range models {
+		configs := profileModelConfigs(p)
+		modelSeen := map[string]bool{}
+		for i, config := range configs {
+			if config.Model == "" {
+				return fmt.Errorf("model is required at index %d", i)
+			}
+			if modelSeen[config.Model] {
+				return fmt.Errorf("duplicate model: %s", config.Model)
+			}
+			modelSeen[config.Model] = true
+			if config.MaxRetries != nil && *config.MaxRetries < 0 {
+				return fmt.Errorf("max_retries must be zero or greater for model %s", config.Model)
+			}
+			if config.ReadTimeout != nil && *config.ReadTimeout <= 0 {
+				return fmt.Errorf("read_timeout must be greater than zero for model %s", config.Model)
+			}
+			if config.ConnectTimeout != nil && *config.ConnectTimeout <= 0 {
+				return fmt.Errorf("connect_timeout must be greater than zero for model %s", config.Model)
+			}
 			varName := expandedVarName(p.VarName, i)
 			if seen[varName] {
 				return fmt.Errorf("duplicate var_name: %s", varName)
@@ -343,7 +415,10 @@ def mask(s):
     if len(s)<=8: return '******'
     return s[:3]+'****'+s[-4:]
 
-profiles=[]
+profiles_by_var={}
+profile_order=[]
+declaration_order_by_var={}
+identity_by_var={}
 for var, value in vars(mod).items():
     if var.startswith('_'):
         continue
@@ -365,6 +440,10 @@ for var, value in vars(mod).items():
             if k in d: return d.pop(k)
         return default
     apikey=pop_any(['apikey','api_key','key','token','cookie'], '')
+    apikey_text=str(apikey) if apikey is not None else ''
+    name=str(pop_any(['name'], '') or '')
+    apibase=str(pop_any(['apibase','api_base','base_url','baseURL'], '') or '')
+    model=str(pop_any(['model','model_name'], '') or '')
     if 'native' in low and 'claude' in low:
         typ='native_claude'
     elif 'native' in low and 'oai' in low:
@@ -375,11 +454,133 @@ for var, value in vars(mod).items():
         typ='oai'
     else:
         typ='native_oai'
-    p={'var_name':var,'type':typ,'name':str(pop_any(['name'], '') or ''),'apibase':str(pop_any(['apibase','api_base','base_url','baseURL'], '') or ''),'model':str(pop_any(['model','model_name'], '') or ''),'apikey':mask(str(apikey) if apikey is not None else '')}
+    p={'var_name':var,'type':typ,'name':name,'apibase':apibase,'model':model,'apikey':mask(apikey_text)}
+    identity_by_var[var]=(typ, apibase.strip().rstrip('/'), apikey_text)
     for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
     p['extra']=d
-    profiles.append(p)
+    p['sort_order']=len(profile_order)
+    profiles_by_var[var]=p
+    declaration_order_by_var[var]=len(profile_order)
+    profile_order.append(var)
+
+def model_configs_of(profile):
+    existing=profile.get('model_configs')
+    if isinstance(existing, list):
+        configs=[]
+        for item in existing:
+            if isinstance(item, dict) and str(item.get('model', '')).strip():
+                configs.append(dict(item))
+        if configs:
+            return configs
+    model=str(profile.get('model', '') or '').strip()
+    if not model:
+        return []
+    config={'model':model}
+    for key in ('sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','thinking_type','reasoning_effort','fake_cc_system_prompt'):
+        if key in profile:
+            config[key]=profile[key]
+    extra=profile.get('extra')
+    if isinstance(extra, dict) and extra:
+        config['extra']=dict(extra)
+    return [config]
+
+groups=getattr(mod, '_ga_admin_provider_groups', {})
+grouped={}
+grouped_order=[]
+child_to_provider={}
+if isinstance(groups, dict):
+    for provider, group_meta in groups.items():
+        if not isinstance(provider, str) or not provider:
+            continue
+        meta=group_meta if isinstance(group_meta, dict) else {}
+        child_vars=meta.get('children', []) if meta else group_meta
+        if not isinstance(child_vars, (list, tuple)):
+            continue
+        children=[]
+        for child_var in child_vars:
+            if isinstance(child_var, str) and child_var in profiles_by_var and child_var not in child_to_provider:
+                children.append(profiles_by_var[child_var])
+        if children:
+            base=dict(children[0])
+        elif meta:
+            base={}
+        else:
+            continue
+        configs=[]
+        seen_models=set()
+        for child in children:
+            for config in model_configs_of(child):
+                model=str(config.get('model', '')).strip()
+                if model and model not in seen_models:
+                    seen_models.add(model)
+                    configs.append(config)
+        models=[config['model'] for config in configs]
+        base['var_name']=provider
+        if meta:
+            base['type']=str(meta.get('type', base.get('type', 'native_oai')) or 'native_oai')
+            base['name']=str(meta.get('name', base.get('name', '')) or '')
+            base['apibase']=str(meta.get('apibase', base.get('apibase', '')) or '')
+            meta_apikey=str(meta.get('apikey', '') or '')
+            base['apikey']=mask(meta_apikey)
+            identity_by_var[provider]=(base['type'], base['apibase'].strip().rstrip('/'), meta_apikey)
+        base['model']=models[0] if models else ''
+        base['models']=models
+        base['model_configs']=configs
+        grouped[provider]=base
+        grouped_order.append(provider)
+        if children and not meta:
+            first_child_var=next((child_var for child_var in child_vars if isinstance(child_var, str) and child_var in identity_by_var), None)
+            if first_child_var is not None:
+                identity_by_var[provider]=identity_by_var[first_child_var]
+        for child_var in child_vars:
+            if isinstance(child_var, str) and child_var in profiles_by_var:
+                child_to_provider[child_var]=provider
+
+profiles=[]
+emitted=set()
+for var in profile_order:
+    provider=child_to_provider.get(var)
+    if provider:
+        if provider not in emitted:
+            profiles.append(grouped[provider])
+            emitted.add(provider)
+        continue
+    profiles.append(profiles_by_var[var])
+for provider in grouped_order:
+    if provider not in emitted:
+        profiles.append(grouped[provider])
+        emitted.add(provider)
+
+provider_index={}
+merged_profiles=[]
+for profile in profiles:
+    identity=identity_by_var.get(profile.get('var_name'))
+    if identity is None or identity not in provider_index:
+        if identity is not None:
+            provider_index[identity]=len(merged_profiles)
+        merged_profiles.append(profile)
+        continue
+    base=merged_profiles[provider_index[identity]]
+    configs=[]
+    seen_models=set()
+    for source in (base, profile):
+        for config in model_configs_of(source):
+            model=str(config.get('model', '')).strip()
+            if model and model not in seen_models:
+                seen_models.add(model)
+                configs.append(config)
+    models=[config['model'] for config in configs]
+    base['model']=models[0] if models else ''
+    base['models']=models
+    base['model_configs']=configs
+profiles=merged_profiles
+for profile in profiles:
+    configs=model_configs_of(profile)
+    models=[config['model'] for config in configs]
+    profile['model']=models[0] if models else ''
+    profile['models']=models
+    profile['model_configs']=configs
 print(json.dumps({'updated_at':'','profiles':profiles}, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", script, mykey, boolArg(reveal))
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
@@ -443,54 +644,93 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 	var b strings.Builder
 	b.WriteString("# -*- coding: utf-8 -*-\n# Auto-generated by GenericAgent-Admin-Go.\n# Review before copying to mykey.py. Keep this file private.\n# GenericAgent discovers official config dicts by variable name: native_claude/native_oai/claude/oai or api/config/cookie.\n\n")
 	for _, p := range profiles {
-		models := profileModels(p)
-		for i, model := range models {
-			m := map[string]interface{}{}
-			if p.Name != "" {
-				m["name"] = p.Name
-			}
-			m["apikey"] = p.APIKey
-			m["apibase"] = p.APIBase
-			m["model"] = model
-			if p.Stream != nil {
-				m["stream"] = *p.Stream
-			}
-			if p.MaxRetries != nil {
-				m["max_retries"] = *p.MaxRetries
-			}
-			if p.ReadTimeout != nil {
-				m["read_timeout"] = *p.ReadTimeout
-			}
-			if p.ConnectTimeout != nil {
-				m["connect_timeout"] = *p.ConnectTimeout
-			}
-			if p.UserAgent != "" {
-				m["user_agent"] = p.UserAgent
-			}
-			if p.APIMode != "" {
-				m["api_mode"] = p.APIMode
-			}
-			if p.ThinkingType != "" {
-				m["thinking_type"] = p.ThinkingType
-			}
-			if p.ReasoningEffort != "" {
-				m["reasoning_effort"] = p.ReasoningEffort
-			}
-			if p.FakeCCSystemPrompt != nil {
-				m["fake_cc_system_prompt"] = bool(*p.FakeCCSystemPrompt)
-			}
-			for k, v := range p.Extra {
-				if _, ok := m[k]; !ok {
-					m[k] = v
-				}
-			}
-			dict, err := pyDict(m)
-			if err != nil {
-				return "", err
-			}
-			b.WriteString(fmt.Sprintf("%s = %s\n\n", expandedVarName(p.VarName, i), dict))
+		configs := profileModelConfigs(p)
+		childVars := make([]string, 0, len(configs))
+		for i, config := range configs {
+			childVars = append(childVars, expandedVarName(p.VarName, i))
+			entries = append(entries, renderEntry{
+				profile:      p,
+				config:       config,
+				localIndex:   i,
+				defaultOrder: defaultOrder,
+			})
+			defaultOrder++
+		}
+		providerGroups[p.VarName] = map[string]interface{}{
+			"children": childVars,
+			"type":     p.Type,
+			"name":     p.Name,
+			"apibase":  p.APIBase,
+			"apikey":   p.APIKey,
 		}
 	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := entries[i].defaultOrder
+		right := entries[j].defaultOrder
+		if entries[i].config.SortOrder != nil {
+			left = *entries[i].config.SortOrder
+		}
+		if entries[j].config.SortOrder != nil {
+			right = *entries[j].config.SortOrder
+		}
+		return left < right
+	})
+
+	var b strings.Builder
+	b.WriteString("# Auto-generated by GenericAgent-Admin-Go.\n# Review before copying to mykey.py. Keep this file private.\n# GenericAgent discovers official config dicts by variable name: native_claude/native_oai/claude/oai or api/config/cookie.\n\n")
+	for _, entry := range entries {
+		p := entry.profile
+		config := entry.config
+		m := map[string]interface{}{}
+		if config.Model != "" {
+			m["name"] = config.Model
+		}
+		m["apikey"] = p.APIKey
+		m["apibase"] = p.APIBase
+		m["model"] = config.Model
+		if config.Stream != nil {
+			m["stream"] = *config.Stream
+		}
+		if config.MaxRetries != nil {
+			m["max_retries"] = *config.MaxRetries
+		}
+		if config.ReadTimeout != nil {
+			m["read_timeout"] = *config.ReadTimeout
+		}
+		if config.ConnectTimeout != nil {
+			m["connect_timeout"] = *config.ConnectTimeout
+		}
+		if config.UserAgent != "" {
+			m["user_agent"] = config.UserAgent
+		}
+		if config.APIMode != "" {
+			m["api_mode"] = config.APIMode
+		}
+		if config.ThinkingType != "" {
+			m["thinking_type"] = config.ThinkingType
+		}
+		if config.ReasoningEffort != "" {
+			m["reasoning_effort"] = config.ReasoningEffort
+		}
+		if config.FakeCCSystemPrompt != nil {
+			m["fake_cc_system_prompt"] = bool(*config.FakeCCSystemPrompt)
+		}
+		for k, v := range config.Extra {
+			if _, ok := m[k]; !ok {
+				m[k] = v
+			}
+		}
+		dict, err := pyDict(m)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(fmt.Sprintf("%s = %s\n\n", expandedVarName(p.VarName, entry.localIndex), dict))
+	}
+	groups, err := pyDict(providerGroups)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(fmt.Sprintf("# Admin-only provider grouping metadata; GenericAgent ignores underscore-prefixed variables.\n_ga_admin_provider_groups = %s\n", groups))
 	return b.String(), nil
 }
 

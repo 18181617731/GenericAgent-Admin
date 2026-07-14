@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/modelconfig"
 )
 
 func TestNormalizeChatSettingsPreservesOfficialReasoningEffortLevels(t *testing.T) {
@@ -45,6 +46,101 @@ func TestParseLLMJSONArrayFromMixedOutputIgnoresGAStartupLogs(t *testing.T) {
 	}
 	if llms[0]["name"] != "gpt-5.5/cpa" || llms[1]["name"] != "deepseek-v4-pro/newapi" {
 		t.Fatalf("unexpected llms: %#v", llms)
+	}
+}
+
+func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *testing.T) {
+	order0, order1, order2, order3 := 0, 1, 2, 3
+	profiles := []modelconfig.Profile{
+		{
+			VarName: "native_claude_config_beta",
+			Name:    "hidden beta name",
+			APIBase: "https://beta.example/v1",
+			APIKey:  "sk-beta-secret",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "model-b", SortOrder: &order1},
+				{Model: "shared", SortOrder: &order3},
+			},
+		},
+		{
+			VarName: "native_oai_config_alpha",
+			Name:    "hidden alpha name",
+			APIBase: "https://alpha.example/v1",
+			APIKey:  "sk-alpha-secret",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "model-a", SortOrder: &order0},
+				{Model: "shared", SortOrder: &order2},
+			},
+		},
+	}
+	llms := []map[string]interface{}{
+		{"index": 0, "model": "model-b", "provider": "NativeOAISession"},
+		{"index": 1, "model": "model-a", "provider": "NativeOAISession"},
+		{"index": 2, "model": "shared", "provider": "NativeOAISession"},
+		{"index": 3, "model": "shared", "provider": "NativeOAISession"},
+	}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	want := []string{"beta", "alpha", "alpha", "beta"}
+	for i, provider := range want {
+		if llms[i]["provider"] != provider {
+			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, llms[i]["provider"], provider, llms)
+		}
+	}
+	encoded, err := json.Marshal(llms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"sk-alpha-secret", "sk-beta-secret", "alpha.example", "beta.example"} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("annotated LLM response leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestChatProviderDisplayNameMatchesModelsProviderProjection(t *testing.T) {
+	cases := []struct {
+		profile modelconfig.Profile
+		want    string
+	}{
+		{profile: modelconfig.Profile{VarName: "native_oai_config_gpt55_medium_responses", Name: "gpt-5.6-sol"}, want: "gpt55_medium_responses"},
+		{profile: modelconfig.Profile{VarName: "native_claude_config_fwind_opus48", Name: "claude-opus-4-8[1m]"}, want: "fwind_opus48"},
+		{profile: modelconfig.Profile{VarName: "acme_api", Name: "acme-chat"}, want: "acme_api"},
+		{profile: modelconfig.Profile{VarName: "native_oai_config", Name: "must-not-be-used", Type: "native_oai"}, want: "Unknown provider"},
+		{profile: modelconfig.Profile{Name: "must-not-be-used", Type: "oai"}, want: "Unknown provider"},
+	}
+	for _, tc := range cases {
+		if got := chatProviderDisplayName(tc.profile); got != tc.want {
+			t.Fatalf("chatProviderDisplayName(%#v)=%q want=%q", tc.profile, got, tc.want)
+		}
+	}
+}
+
+func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *testing.T) {
+	profiles := []modelconfig.Profile{
+		{
+			VarName: "native_oai_config_gpt55_medium_responses",
+			Name:    "gpt-5.6-sol",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "gpt-5.6-sol"},
+				{Model: "gpt-5.6-terra"},
+				{Model: "gpt-5.6-luna"},
+			},
+		},
+	}
+	llms := []map[string]interface{}{
+		{"index": 0, "model": "gpt-5.6-sol"},
+		{"index": 1, "model": "gpt-5.6-terra"},
+		{"index": 2, "model": "gpt-5.6-luna"},
+	}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	for i, llm := range llms {
+		if got := llm["provider"]; got != "gpt55_medium_responses" {
+			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, got, "gpt55_medium_responses", llms)
+		}
 	}
 }
 
@@ -298,20 +394,62 @@ func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
 	}
 }
 
-func TestChatNewSessionReportsUnwritableDataDir(t *testing.T) {
+func TestChatNewSessionDoesNotPersistDraftUntilFirstSend(t *testing.T) {
+	old := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		return nil, fmt.Errorf("expected worker start failure")
+	}
+	defer func() { startChatWorkerFunc = old }()
+
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	blocked := filepath.Join(t.TempDir(), "blocked")
-	if err := os.WriteFile(blocked, []byte("not a dir"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	s.CfgStore.Cfg.ChatDataDir = blocked
+	h := s.Routes()
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/session/new", nil)
-	s.Routes().ServeHTTP(rr, req)
-	if rr.Code != http.StatusInternalServerError {
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var created chatSession
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("new session response has empty id")
+	}
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); !os.IsNotExist(err) {
+		t.Fatalf("draft session was persisted before first message: %v", err)
+	}
+
+	listRR := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil)
+	h.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", listRR.Code, listRR.Body.String())
+	}
+	if strings.Contains(listRR.Body.String(), created.ID) {
+		t.Fatalf("draft session appeared in list before first message: %s", listRR.Body.String())
+	}
+
+	sendRR := httptest.NewRecorder()
+	sendReq := httptest.NewRequest(http.MethodPost, "/api/chat/"+created.ID, strings.NewReader(`{"prompt":"first message","client_user_id":"u1"}`))
+	sendReq.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(sendRR, sendReq)
+	if sendRR.Code != http.StatusOK {
+		t.Fatalf("send status=%d body=%s", sendRR.Code, sendRR.Body.String())
+	}
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); err != nil {
+		t.Fatalf("session was not persisted by first send: %v", err)
+	}
+
+	listAfterSendRR := httptest.NewRecorder()
+	h.ServeHTTP(listAfterSendRR, httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil))
+	if listAfterSendRR.Code != http.StatusOK {
+		t.Fatalf("list after send status=%d body=%s", listAfterSendRR.Code, listAfterSendRR.Body.String())
+	}
+	if !strings.Contains(listAfterSendRR.Body.String(), created.ID) {
+		t.Fatalf("session missing from list after first send: %s", listAfterSendRR.Body.String())
 	}
 }
 

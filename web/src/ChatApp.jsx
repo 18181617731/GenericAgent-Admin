@@ -44,6 +44,21 @@ const timelineKey = (v) => {
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
+const modelProvider = (m) => {
+  const provider = String(m?.provider || '').trim()
+  if (provider) return provider
+  const name = String(m?.name || '').trim()
+  const model = String(m?.model || '').trim()
+  if (name && model && name.endsWith(`/${model}`)) return name.slice(0, -(model.length + 1))
+  const split = name.lastIndexOf('/')
+  return (split > 0 ? name.slice(0, split) : name) || '未分组服务商'
+}
+const runtimeModelLabel = (m) => {
+  const model = String(m?.model || '').trim()
+  if (model) return model
+  const label = modelLabel(m)
+  return label.includes('/') ? label.split('/').pop() : label
+}
 
 const BUILTIN_SLASH_COMMANDS = [
   { cmd: '/continue', key: '/continue', insert: '/continue', desc: '列出可恢复的官方 GA 会话', builtIn: true },
@@ -1359,6 +1374,65 @@ const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAs
   </>
 })
 
+function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
+  const [open, setOpen] = useState(false)
+  const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
+  const ref = useRef()
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const h = e => { if (!ref.current?.contains(e.target)) close() }
+    const onScroll = e => { if (!ref.current?.contains(e.target)) close() }
+    document.addEventListener('mousedown', h)
+    window.addEventListener('scroll', onScroll, true)
+    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true) }
+  }, [open])
+  useEffect(() => {
+    if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
+    else if (groups[0]) setPreviewProvider(groups[0].value)
+    else setPreviewProvider('')
+  }, [selectedProvider, groups])
+
+  const activeGroup = groups.find(group => group.value === selectedProvider)
+  const previewGroup = groups.find(group => group.value === previewProvider) || activeGroup || groups[0]
+  const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
+  const displayModel = activeModel?.label || '\u672a\u53d1\u73b0\u6a21\u578b'
+
+  return (
+    <div className="oa-model-select oa-composer-cascade" ref={ref}>
+      <span>模型</span>
+      <button type="button" disabled={disabled} title={displayModel} aria-label={displayModel} onClick={() => setOpen(o => !o)}>
+        <span className="oa-cascade-current-model">{displayModel}</span>
+        <ChevronDown size={13} />
+      </button>
+      {open && <div className="oa-cascade-menu" role="dialog" aria-label="\u670d\u52a1\u5546\u548c\u6a21\u578b">
+        <div className="oa-cascade-providers">
+          {groups.map(group => (
+            <button key={group.value} type="button"
+              className={group.value === selectedProvider ? 'active' : ''}
+              onMouseEnter={() => setPreviewProvider(group.value)}
+              onFocus={() => setPreviewProvider(group.value)}
+              onClick={() => setPreviewProvider(group.value)}>
+              <span>{group.label}</span><ChevronRight size={13} />
+            </button>
+          ))}
+        </div>
+        <div className="oa-cascade-models">
+          <div className="oa-cascade-heading">{previewGroup?.label || '\u6a21\u578b'}</div>
+          {previewGroup?.models.length ? previewGroup.models.map(model => (
+            <button key={model.value} type="button"
+              className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
+              onClick={() => { onChange(model.value); setOpen(false) }}>
+              {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12} />}
+              <span>{model.label}</span>
+            </button>
+          )) : <div className="oa-cascade-empty">{ '\u672a\u53d1\u73b0\u6a21\u578b' }</div>}
+        </div>
+      </div>}
+    </div>
+  )
+}
+
 function CustomSelect({ value, onChange, options, disabled }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()
@@ -1865,7 +1939,6 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSessions(xs => [{ id:d.id, title:d.title, workspace:d.workspace || '', updated_at:d.updated_at, count:0 }, ...xs])
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id, openToken)
   }
@@ -2052,7 +2125,7 @@ export default function ChatApp() {
         id = d.id
         activeSidRef.current = id
         scrollModeRef.current = 'auto'
-        setSid(id); setStreamingSid(id); setSessions(xs => [{ id:d.id, title:d.title, workspace:d.workspace || '', updated_at:d.updated_at, count:0 }, ...xs])
+        setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
         return
       }
@@ -2233,6 +2306,31 @@ export default function ChatApp() {
   useEffect(() => { loadSessions('', { open:true }).catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
 
   useEffect(() => {
+    let stopped = false
+    let inFlight = false
+    const refreshList = async () => {
+      if (stopped || inFlight || document.hidden) return
+      inFlight = true
+      try {
+        const d = await api('/api/chat/sessions')
+        if (!stopped) setSessions(d.sessions || [])
+      } catch {
+        // Background refresh is best-effort; keep manual refresh errors visible only.
+      } finally {
+        inFlight = false
+      }
+    }
+    const timer = window.setInterval(refreshList, 3000)
+    const onVisible = () => { if (!document.hidden) refreshList() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!toolsMenuOpen) return
     const onDown = (e) => { if (!toolsMenuRef.current?.contains(e.target)) setToolsMenuOpen(false) }
     const onKey = (e) => { if (e.key === 'Escape') setToolsMenuOpen(false) }
@@ -2284,6 +2382,16 @@ export default function ChatApp() {
 
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
+  const providerGroups = useMemo(() => {
+    const groups = new Map()
+    llms.forEach(model => {
+      const provider = modelProvider(model)
+      if (!groups.has(provider)) groups.set(provider, [])
+      groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model) })
+    })
+    return Array.from(groups, ([provider, models]) => ({ value: provider, label: provider, models }))
+  }, [llms])
+  const selectedProvider = activeModel ? modelProvider(activeModel) : (providerGroups[0]?.value || '')
   const isCurrentRunning = busy && streamingSid === sid
   const isFixedToolsMode = toolsMode === 'fixed'
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
@@ -2485,10 +2593,9 @@ export default function ChatApp() {
                 </div>
               )}
             </div>
-            <div className="oa-model-select oa-composer-model"><span>{activeModel ? '模型' : '模型不可用'}</span>
-              <CustomSelect value={selectedModelNo} disabled={!llms.length} onChange={v=>saveModel(Number(v))}
-                options={llms.length ? llms.map(m=>({value:m.index,label:modelLabel(m)})) : [{value:0,label:'未发现模型'}]} />
-            </div>
+            <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
+              value={selectedModelNo} disabled={!providerGroups.length}
+              onChange={v=>saveModel(Number(v))} />
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
                 options={REASONING_EFFORT_OPTIONS} />

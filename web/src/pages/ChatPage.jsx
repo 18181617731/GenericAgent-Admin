@@ -67,7 +67,6 @@ export function ChatPage({ t, slashCommands }) {
     setMessages([])
     setFiles([])
     setSettings({ llm_no: d.settings?.llm_no || 0, tools_mode: d.settings?.tools_mode || 'official' })
-    await loadSessions()
   }
   useEffect(()=>{ loadSessions().catch(e=>setErr(e.message)) }, [])
   useEffect(() => {
