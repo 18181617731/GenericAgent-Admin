@@ -2,6 +2,7 @@ package version
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +30,7 @@ var (
 
 const (
 	defaultUpdateRepository = "18181617731/GenericAgent-Admin"
-	defaultRepoLatestURL    = "https://api.github.com/repos/" + defaultUpdateRepository + "/releases/latest"
+	defaultRepoLatestURL    = "https://api.github.com/repos/" + defaultUpdateRepository + "/releases?per_page=50"
 )
 
 var repoLatestURL = defaultRepoLatestURL
@@ -45,7 +47,7 @@ func SetRepoURL(url string) {
 		repository := strings.Trim(strings.TrimPrefix(url, githubPrefix), "/")
 		repository = strings.TrimSuffix(repository, ".git")
 		if strings.Count(repository, "/") == 1 {
-			repoLatestURL = "https://api.github.com/repos/" + repository + "/releases/latest"
+			repoLatestURL = "https://api.github.com/repos/" + repository + "/releases?per_page=50"
 			return
 		}
 	}
@@ -325,9 +327,13 @@ func Current() BuildInfo {
 
 func currentUpdateSource() (string, string) {
 	const apiPrefix = "https://api.github.com/repos/"
-	const latestSuffix = "/releases/latest"
-	if strings.HasPrefix(repoLatestURL, apiPrefix) && strings.HasSuffix(repoLatestURL, latestSuffix) {
-		repository := strings.TrimSuffix(strings.TrimPrefix(repoLatestURL, apiPrefix), latestSuffix)
+	if strings.HasPrefix(repoLatestURL, apiPrefix) {
+		path := strings.TrimPrefix(repoLatestURL, apiPrefix)
+		marker := strings.Index(path, "/releases")
+		if marker < 0 {
+			return repoLatestURL, repoLatestURL
+		}
+		repository := path[:marker]
 		if strings.Count(repository, "/") == 1 {
 			return repository, "https://github.com/" + repository + "/releases"
 		}
@@ -345,18 +351,32 @@ func updateSupportStatus() (bool, string) {
 func effectiveVersion() string {
 	v := strings.TrimSpace(Version)
 	if v != "" && v != "dev" && v != "unknown" {
-		return v
+		return formalVersion(v)
 	}
-	if out, ok := gitOutput("describe", "--tags", "--dirty", "--always"); ok {
+	if out, ok := gitOutput("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"); ok {
 		out = strings.TrimSpace(out)
 		if out != "" {
-			return out
+			return formalVersion(out)
 		}
 	}
 	if v != "" {
 		return v
 	}
 	return "dev"
+}
+
+func formalVersion(value string) string {
+	value = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(value), "-dirty"))
+	parts := strings.Split(value, "-")
+	if len(parts) >= 3 && strings.HasPrefix(parts[len(parts)-1], "g") {
+		if _, err := strconv.Atoi(parts[len(parts)-2]); err == nil {
+			value = strings.Join(parts[:len(parts)-2], "-")
+		}
+	}
+	if value == "" {
+		return "dev"
+	}
+	return value
 }
 
 func effectiveCommit() string {
@@ -605,10 +625,56 @@ func fetchLatest(ctx context.Context) (rel *Release, err error) {
 	if int64(len(b)) > maxUpdateMetadataBytes {
 		return nil, fmt.Errorf("github release metadata too large: exceeds limit %d", maxUpdateMetadataBytes)
 	}
-	if err := json.Unmarshal(b, &out); err != nil {
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var releases []Release
+		if err := json.Unmarshal(trimmed, &releases); err != nil {
+			return nil, err
+		}
+		selected, err := selectLatestRelease(releases)
+		if err != nil {
+			return nil, err
+		}
+		return selected, nil
+	}
+	if err := json.Unmarshal(trimmed, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+func selectLatestRelease(releases []Release) (*Release, error) {
+	selectHighest := func(includePrerelease bool) *Release {
+		var selected *Release
+		for i := range releases {
+			candidate := &releases[i]
+			if candidate.Draft || (!includePrerelease && candidate.Prerelease) || !isVersionTag(candidate.TagName) {
+				continue
+			}
+			if selected == nil {
+				selected = candidate
+				continue
+			}
+			comparison := compareSemver(strings.TrimPrefix(candidate.TagName, "v"), strings.TrimPrefix(selected.TagName, "v"))
+			if comparison > 0 || (comparison == 0 && candidate.PublishedAt.After(selected.PublishedAt)) {
+				selected = candidate
+			}
+		}
+		return selected
+	}
+	if selected := selectHighest(false); selected != nil {
+		return selected, nil
+	}
+	if selected := selectHighest(true); selected != nil {
+		return selected, nil
+	}
+	return nil, errors.New("更新仓库尚未发布有效的语义版本 Release")
+}
+
+func isVersionTag(tag string) bool {
+	var major, minor, patch int
+	_, err := fmt.Sscanf(strings.TrimPrefix(strings.TrimSpace(tag), "v"), "%d.%d.%d", &major, &minor, &patch)
+	return err == nil
 }
 
 func selectAssets(rel Release) (*Asset, *Asset) {

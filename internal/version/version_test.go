@@ -30,10 +30,26 @@ func TestNewer(t *testing.T) {
 		{"0.0.8", "v0.0.7", false},
 		{"0.0.10", "v0.0.9", false},
 		{"0.1.0", "v0.0.9", false},
+		{"v1.0.0-8-gabcdef-dirty", "v1.0.1", true},
+		{"v1.0.0-8-gabcdef-dirty", "v0.1.3", false},
 	}
 	for _, c := range cases {
 		if got := newer(c.current, c.latest); got != c.want {
 			t.Fatalf("newer(%q,%q)=%v want %v", c.current, c.latest, got, c.want)
+		}
+	}
+}
+
+func TestFormalVersionRemovesDevelopmentDescribeSuffix(t *testing.T) {
+	cases := map[string]string{
+		"v1.0.0-8-gd8dc3ac-dirty": "v1.0.0",
+		"v1.1.0-rc1-3-gabcdef":    "v1.1.0-rc1",
+		"v1.0.0-dirty":            "v1.0.0",
+		"v1.0.0":                  "v1.0.0",
+	}
+	for input, want := range cases {
+		if got := formalVersion(input); got != want {
+			t.Fatalf("formalVersion(%q)=%q want=%q", input, got, want)
 		}
 	}
 }
@@ -94,11 +110,20 @@ func TestCurrentUsesInjectedVersion(t *testing.T) {
 	}
 }
 
+func TestCurrentNormalizesInjectedDevelopmentDescribeToFormalVersion(t *testing.T) {
+	oldVersion := Version
+	defer func() { Version = oldVersion }()
+	Version = "v1.0.0-8-gd8dc3ac-dirty"
+	if got := Current().Version; got != "v1.0.0" {
+		t.Fatalf("Current().Version=%q want v1.0.0", got)
+	}
+}
+
 func TestDefaultUpdateRepositoryTargetsFork(t *testing.T) {
 	oldURL := repoLatestURL
 	defer func() { repoLatestURL = oldURL }()
 	SetRepoURL("")
-	if repoLatestURL != "https://api.github.com/repos/18181617731/GenericAgent-Admin/releases/latest" {
+	if repoLatestURL != "https://api.github.com/repos/18181617731/GenericAgent-Admin/releases?per_page=50" {
 		t.Fatalf("repoLatestURL = %q", repoLatestURL)
 	}
 	cur := Current()
@@ -111,9 +136,61 @@ func TestSetRepoURLAcceptsGitHubRepositoryURL(t *testing.T) {
 	oldURL := repoLatestURL
 	defer func() { repoLatestURL = oldURL }()
 	SetRepoURL("https://github.com/example/custom-admin.git")
-	if repoLatestURL != "https://api.github.com/repos/example/custom-admin/releases/latest" {
+	if repoLatestURL != "https://api.github.com/repos/example/custom-admin/releases?per_page=50" {
 		t.Fatalf("repoLatestURL = %q", repoLatestURL)
 	}
+}
+
+func TestFetchLatestSelectsHighestFormalVersionInsteadOfMostRecentlyPublishedOldTag(t *testing.T) {
+	oldURL := repoLatestURL
+	defer func() { repoLatestURL = oldURL }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v1.0.0", PublishedAt: time.Date(2026, 7, 14, 6, 32, 0, 0, time.UTC)},
+			{TagName: "v0.1.3", PublishedAt: time.Date(2026, 7, 14, 10, 2, 0, 0, time.UTC)},
+			{TagName: "v1.1.0-rc1", PublishedAt: time.Date(2026, 7, 14, 11, 0, 0, 0, time.UTC), Prerelease: true},
+		})
+	}))
+	defer srv.Close()
+	repoLatestURL = srv.URL
+
+	got, err := fetchLatest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TagName != "v1.0.0" {
+		t.Fatalf("fetchLatest tag=%q want v1.0.0", got.TagName)
+	}
+}
+
+func TestCheckEnablesUpdateForHigherFormalReleaseFromReleaseList(t *testing.T) {
+	oldURL, oldVersion := repoLatestURL, Version
+	defer func() { repoLatestURL, Version = oldURL, oldVersion }()
+	wantAsset := fmt.Sprintf("ga-admin-v1.0.1-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Release{
+			{TagName: "v0.1.3", PublishedAt: time.Now()},
+			{TagName: "v1.0.1", PublishedAt: time.Now().Add(-time.Hour), Assets: []Asset{
+				{Name: wantAsset, BrowserDownloadURL: srvURLForTest(r, wantAsset)},
+				{Name: wantAsset + ".sha256", BrowserDownloadURL: srvURLForTest(r, wantAsset+".sha256")},
+			}},
+		})
+	}))
+	defer srv.Close()
+	repoLatestURL = srv.URL
+	Version = "v1.0.0"
+
+	got, err := Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Update || got.Latest == nil || got.Latest.TagName != "v1.0.1" || got.Asset == nil || got.Asset.Name != wantAsset || got.Checksum == nil {
+		t.Fatalf("Check()=%#v, want applicable v1.0.1 update", got)
+	}
+}
+
+func srvURLForTest(r *http.Request, path string) string {
+	return "http://" + r.Host + "/" + path
 }
 
 func TestVerifySHA256(t *testing.T) {
@@ -237,7 +314,7 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 	}
 	script := string(data)
 	want := []string{
-		`git describe --tags --dirty --always`,
+		`git describe --tags --abbrev^=0 --match^=v[0-9]*`,
 		`git rev-parse --short HEAD`,
 		`Get-Date`,
 		`where npm.cmd`,

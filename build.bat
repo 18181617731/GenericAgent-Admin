@@ -7,7 +7,7 @@ call :resolve_npm || exit /b 1
 call :resolve_go || exit /b 1
 call :configure_go_proxy || exit /b 1
 
-for /f "usebackq delims=" %%i in (`git describe --tags --dirty --always 2^>nul`) do set "GA_VERSION=%%i"
+for /f "usebackq delims=" %%i in (`git describe --tags --abbrev^=0 --match^=v[0-9]* 2^>nul`) do set "GA_VERSION=%%i"
 if not defined GA_VERSION set "GA_VERSION=dev"
 
 for /f "usebackq delims=" %%i in (`git rev-parse --short HEAD 2^>nul`) do set "GA_COMMIT=%%i"

@@ -223,8 +223,8 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 `internal/version/version.go` 完整自更新流程：
 
 ```
-CheckUpdate()  → GET GitHub API releases/latest
-  ├─ 对比版本号
+CheckUpdate()  → GET GitHub API releases 列表
+  ├─ 选择最高正式语义版本并对比版本号
   ├─ 匹配 OS/ARCH 的 asset
   └─ 返回 CheckResult{Update: bool, Asset: ...}
 

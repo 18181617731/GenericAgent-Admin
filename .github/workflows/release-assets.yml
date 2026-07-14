@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload assets for; use semantic version tags such as v0.1.1 or explicit prerelease/fix tags
+        description: Release tag to build and upload assets for; use the current version line such as v1.0.1 or an explicit prerelease/fix tag
         required: true
-        default: v0.1.1
       confirm_overwrite_assets:
         description: Type true only after approving that existing assets for this tag may be overwritten
         required: true

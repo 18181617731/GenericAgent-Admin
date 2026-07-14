@@ -153,7 +153,7 @@ dist\cmd\chat_worker.py
 
 `build.bat` 会执行前端构建，然后用 `go build` 生成 exe，并通过 `-ldflags -X` 写入版本元数据：
 
-- `internal/version.Version`：来自 `git describe --tags --dirty --always`，失败时为 `dev`。
+- `internal/version.Version`：来自最近的正式语义版本 tag（`git describe --tags --abbrev=0 --match=v[0-9]*`），失败时为 `dev`；提交号和 UTC 构建时间单独展示，不再把 `-8-g<commit>-dirty` 等开发信息混入正式版本号。
 - `internal/version.Commit`：来自 `git rev-parse --short HEAD`，失败时为 `unknown`。
 - `internal/version.Date`：UTC 构建时间，如 `2026-06-01T12:00:00Z`。
 
@@ -165,7 +165,7 @@ dist\cmd\chat_worker.py
 
 ## 发布包约定
 
-总览页的版本管理默认从 `18181617731/GenericAgent-Admin` 的 GitHub Releases 检查和下载更新。`config.local.json` 中的 `update_repo_url` 可覆盖该默认值；可填写 GitHub 仓库地址，也可填写完整的 Release API URL。“检查更新”需要目标仓库至少有一个已发布 Release；“一键升级”还要求该 Release 包含当前平台的 ZIP 和 `.sha256` 资产。
+总览页的版本管理默认从 `18181617731/GenericAgent-Admin` 的 GitHub Releases 检查和下载更新。系统会读取 Release 列表并选择最高的正式语义版本，不依赖 GitHub `/releases/latest` 的发布时间排序，因此历史 tag 后补发布不会覆盖真正的新版本。`config.local.json` 中的 `update_repo_url` 可覆盖默认值；可填写 GitHub 仓库地址，也可填写返回单个 Release 或 Release 数组的完整 API URL。“检查更新”需要目标仓库至少有一个有效语义版本 Release；“一键升级”还要求该 Release 包含当前平台的 ZIP 和 `.sha256` 资产。
 
 自更新模块会在 Release 中查找与当前平台匹配的资产：
 
