@@ -54,7 +54,7 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 	profiles := []modelconfig.Profile{
 		{
 			VarName: "native_claude_config_beta",
-			Name:    "hidden beta name",
+			Name:    "Beta 服务商",
 			APIBase: "https://beta.example/v1",
 			APIKey:  "sk-beta-secret",
 			ModelConfigs: []modelconfig.ModelConfig{
@@ -64,7 +64,7 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 		},
 		{
 			VarName: "native_oai_config_alpha",
-			Name:    "hidden alpha name",
+			Name:    "Alpha 服务商",
 			APIBase: "https://alpha.example/v1",
 			APIKey:  "sk-alpha-secret",
 			ModelConfigs: []modelconfig.ModelConfig{
@@ -82,7 +82,7 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 
 	annotateChatLLMProviders(llms, profiles)
 
-	want := []string{"beta", "alpha", "alpha", "beta"}
+	want := []string{"Beta 服务商", "Alpha 服务商", "Alpha 服务商", "Beta 服务商"}
 	for i, provider := range want {
 		if llms[i]["provider"] != provider {
 			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, llms[i]["provider"], provider, llms)
@@ -99,16 +99,18 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 	}
 }
 
-func TestChatProviderDisplayNameMatchesModelsProviderProjection(t *testing.T) {
+func TestChatProviderDisplayNamePrefersConfiguredNameAndFallsBackToVariable(t *testing.T) {
 	cases := []struct {
 		profile modelconfig.Profile
 		want    string
 	}{
-		{profile: modelconfig.Profile{VarName: "native_oai_config_gpt55_medium_responses", Name: "gpt-5.6-sol"}, want: "gpt55_medium_responses"},
-		{profile: modelconfig.Profile{VarName: "native_claude_config_fwind_opus48", Name: "claude-opus-4-8[1m]"}, want: "fwind_opus48"},
-		{profile: modelconfig.Profile{VarName: "acme_api", Name: "acme-chat"}, want: "acme_api"},
-		{profile: modelconfig.Profile{VarName: "native_oai_config", Name: "must-not-be-used", Type: "native_oai"}, want: "Unknown provider"},
-		{profile: modelconfig.Profile{Name: "must-not-be-used", Type: "oai"}, want: "Unknown provider"},
+		{profile: modelconfig.Profile{VarName: "native_oai_config_gpt55_medium_responses", Name: "gpt-5.6-sol"}, want: "gpt-5.6-sol"},
+		{profile: modelconfig.Profile{VarName: "native_claude_config_fwind_opus48", Name: "claude-opus-4-8[1m]"}, want: "claude-opus-4-8[1m]"},
+		{profile: modelconfig.Profile{VarName: "acme_api", Name: "acme-chat"}, want: "acme-chat"},
+		{profile: modelconfig.Profile{VarName: "native_oai_config_gpt55", Type: "native_oai"}, want: "gpt55"},
+		{profile: modelconfig.Profile{VarName: "acme_api", Type: "oai"}, want: "acme_api"},
+		{profile: modelconfig.Profile{Name: "仅名称服务商", Type: "oai"}, want: "仅名称服务商"},
+		{profile: modelconfig.Profile{Type: "oai"}, want: "Unknown provider"},
 	}
 	for _, tc := range cases {
 		if got := chatProviderDisplayName(tc.profile); got != tc.want {
@@ -138,8 +140,8 @@ func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *test
 	annotateChatLLMProviders(llms, profiles)
 
 	for i, llm := range llms {
-		if got := llm["provider"]; got != "gpt55_medium_responses" {
-			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, got, "gpt55_medium_responses", llms)
+		if got := llm["provider"]; got != "gpt-5.6-sol" {
+			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, got, "gpt-5.6-sol", llms)
 		}
 	}
 }

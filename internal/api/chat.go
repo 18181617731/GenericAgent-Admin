@@ -774,6 +774,9 @@ func chatLLMModel(item map[string]interface{}) string {
 }
 
 func chatProviderDisplayName(profile modelconfig.Profile) string {
+	if displayName := strings.TrimSpace(profile.Name); displayName != "" {
+		return displayName
+	}
 	name := strings.TrimSpace(profile.VarName)
 	for _, prefix := range []string{"native_oai_config", "native_claude_config", "oai_config", "claude_config"} {
 		if strings.HasPrefix(name, prefix) {
