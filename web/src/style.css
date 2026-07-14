@@ -4451,7 +4451,146 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   }
 }
 
-/* ModelsPage scoped Ant Design refinement: clear utility panel, low decoration */
+/* /chat provider -> model cascade picker */
+.oa-composer .oa-composer-cascade {
+  position: relative;
+  flex: 0 1 210px;
+  width: min(210px, 48%);
+  min-width: 0;
+  max-width: 210px;
+  margin-left: auto;
+  padding: 0 9px 0 5px !important;
+  background: var(--surface-strong);
+  overflow: visible;
+  z-index: 25;
+}
+.oa-composer-cascade > button {
+  position: relative;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex: 1 1 auto !important;
+  grid-column: auto !important;
+  justify-self: stretch !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+.oa-composer-cascade > button:disabled { cursor: default; }
+.oa-cascade-current-model {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-composer-cascade > button > svg:last-child {
+  position: static;
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: .72;
+}
+.oa-cascade-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 390px;
+  max-width: min(390px, calc(100vw - 24px));
+  min-height: 190px;
+  display: grid;
+  grid-template-columns: minmax(126px, 38%) minmax(0, 1fr);
+  padding: 6px;
+  gap: 5px;
+  border: 1px solid rgba(0,0,0,.1);
+  border-radius: 15px;
+  background: var(--surface-strong);
+  box-shadow: 0 16px 44px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.07);
+  overflow: hidden;
+  animation: oa-cascade-in .14s ease;
+}
+@keyframes oa-cascade-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.oa-cascade-providers,
+.oa-cascade-models {
+  min-width: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.oa-cascade-providers { border-right: 1px solid rgba(0,0,0,.07); padding-right: 6px; }
+.oa-cascade-providers button,
+.oa-cascade-models button {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 9px;
+  padding: 7px 9px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.oa-cascade-providers button span,
+.oa-cascade-models button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-cascade-providers button svg { flex: 0 0 auto; margin-left: auto; color: var(--muted); opacity: .7; }
+.oa-cascade-providers button:hover,
+.oa-cascade-models button:hover { background: rgba(0,0,0,.055); }
+.oa-cascade-providers button.active { background: rgba(16,163,127,.1); color: #08785f; font-weight: 650; }
+.oa-cascade-models button { gap: 6px; }
+.oa-cascade-models button.active { background: rgba(16,163,127,.1); color: #08785f; font-weight: 650; }
+.oa-cascade-models button svg { flex: 0 0 auto; color: #10a37f; }
+.oa-cascade-heading {
+  padding: 5px 9px 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oa-cascade-empty { padding: 12px 9px; color: var(--muted); font-size: 12px; }
+html[data-theme="dark"] .oa-cascade-menu { border-color: rgba(255,255,255,.12); }
+html[data-theme="dark"] .oa-cascade-providers { border-right-color: rgba(255,255,255,.1); }
+html[data-theme="dark"] .oa-cascade-providers button:hover,
+html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,255,255,.07); }
+@media (max-width: 680px) {
+  .oa-composer .oa-composer-cascade {
+    flex: 1 1 150px;
+    width: auto;
+    max-width: 100%;
+    margin-left: 0;
+  }
+  .oa-cascade-menu {
+    right: -4px;
+    width: min(390px, calc(100vw - 24px));
+  }
+}
+
 /* ── Models Page ─────────────────────────────── */
 .models-page {
   --mp-accent: #6366f1;

@@ -1374,6 +1374,65 @@ const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAs
   </>
 })
 
+function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
+  const [open, setOpen] = useState(false)
+  const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
+  const ref = useRef()
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const h = e => { if (!ref.current?.contains(e.target)) close() }
+    const onScroll = e => { if (!ref.current?.contains(e.target)) close() }
+    document.addEventListener('mousedown', h)
+    window.addEventListener('scroll', onScroll, true)
+    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true) }
+  }, [open])
+  useEffect(() => {
+    if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
+    else if (groups[0]) setPreviewProvider(groups[0].value)
+    else setPreviewProvider('')
+  }, [selectedProvider, groups])
+
+  const activeGroup = groups.find(group => group.value === selectedProvider)
+  const previewGroup = groups.find(group => group.value === previewProvider) || activeGroup || groups[0]
+  const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
+  const displayModel = activeModel?.label || '\u672a\u53d1\u73b0\u6a21\u578b'
+
+  return (
+    <div className="oa-model-select oa-composer-cascade" ref={ref}>
+      <span>模型</span>
+      <button type="button" disabled={disabled} title={displayModel} aria-label={displayModel} onClick={() => setOpen(o => !o)}>
+        <span className="oa-cascade-current-model">{displayModel}</span>
+        <ChevronDown size={13} />
+      </button>
+      {open && <div className="oa-cascade-menu" role="dialog" aria-label="\u670d\u52a1\u5546\u548c\u6a21\u578b">
+        <div className="oa-cascade-providers">
+          {groups.map(group => (
+            <button key={group.value} type="button"
+              className={group.value === selectedProvider ? 'active' : ''}
+              onMouseEnter={() => setPreviewProvider(group.value)}
+              onFocus={() => setPreviewProvider(group.value)}
+              onClick={() => setPreviewProvider(group.value)}>
+              <span>{group.label}</span><ChevronRight size={13} />
+            </button>
+          ))}
+        </div>
+        <div className="oa-cascade-models">
+          <div className="oa-cascade-heading">{previewGroup?.label || '\u6a21\u578b'}</div>
+          {previewGroup?.models.length ? previewGroup.models.map(model => (
+            <button key={model.value} type="button"
+              className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
+              onClick={() => { onChange(model.value); setOpen(false) }}>
+              {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12} />}
+              <span>{model.label}</span>
+            </button>
+          )) : <div className="oa-cascade-empty">{ '\u672a\u53d1\u73b0\u6a21\u578b' }</div>}
+        </div>
+      </div>}
+    </div>
+  )
+}
+
 function CustomSelect({ value, onChange, options, disabled }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()
@@ -2323,13 +2382,16 @@ export default function ChatApp() {
 
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
-  const providerOptions = Array.from(new Set(llms.map(modelProvider))).map(provider => ({ value:provider, label:provider }))
-  const selectedProvider = activeModel ? modelProvider(activeModel) : (providerOptions[0]?.value || '')
-  const providerModels = llms.filter(m => modelProvider(m) === selectedProvider)
-  const selectProvider = (provider) => {
-    const firstModel = llms.find(m => modelProvider(m) === provider)
-    if (firstModel) saveModel(Number(firstModel.index))
-  }
+  const providerGroups = useMemo(() => {
+    const groups = new Map()
+    llms.forEach(model => {
+      const provider = modelProvider(model)
+      if (!groups.has(provider)) groups.set(provider, [])
+      groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model) })
+    })
+    return Array.from(groups, ([provider, models]) => ({ value: provider, label: provider, models }))
+  }, [llms])
+  const selectedProvider = activeModel ? modelProvider(activeModel) : (providerGroups[0]?.value || '')
   const isCurrentRunning = busy && streamingSid === sid
   const isFixedToolsMode = toolsMode === 'fixed'
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
@@ -2531,14 +2593,9 @@ export default function ChatApp() {
                 </div>
               )}
             </div>
-            <div className="oa-model-select oa-composer-provider"><span>服务商</span>
-              <CustomSelect value={selectedProvider} disabled={!providerOptions.length} onChange={selectProvider}
-                options={providerOptions.length ? providerOptions : [{value:'',label:'未发现服务商'}]} />
-            </div>
-            <div className="oa-model-select oa-composer-model"><span>{activeModel ? '模型' : '模型不可用'}</span>
-              <CustomSelect value={selectedModelNo} disabled={!providerModels.length} onChange={v=>saveModel(Number(v))}
-                options={providerModels.length ? providerModels.map(m=>({value:m.index,label:runtimeModelLabel(m)})) : [{value:0,label:'未发现模型'}]} />
-            </div>
+            <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
+              value={selectedModelNo} disabled={!providerGroups.length}
+              onChange={v=>saveModel(Number(v))} />
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
                 options={REASONING_EFFORT_OPTIONS} />
