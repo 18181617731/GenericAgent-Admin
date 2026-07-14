@@ -74,6 +74,10 @@ func (s *Server) loadModelsFromOfficialMyKey(reveal bool) (modelconfig.Draft, er
 }
 
 func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]modelconfig.Profile, error) {
+	return s.mergeModelSecretsForWriteByPreviousVar(profiles, nil)
+}
+
+func (s *Server) mergeModelSecretsForWriteByPreviousVar(profiles []modelconfig.Profile, previousVarNames []string) ([]modelconfig.Profile, error) {
 	merged := make([]modelconfig.Profile, len(profiles))
 	copy(merged, profiles)
 	if s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
@@ -106,6 +110,13 @@ func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]mo
 		key := strings.TrimSpace(merged[i].APIKey)
 		if key != "" && !modelconfig.IsMaskedSecret(key) {
 			continue // already has a real key, skip
+		}
+		// An explicit previous variable identity is used first for atomic renames.
+		if i < len(previousVarNames) {
+			if oldKey := byVar[strings.TrimSpace(previousVarNames[i])]; oldKey != "" {
+				merged[i].APIKey = oldKey
+				continue
+			}
 		}
 		// primary: match by VarName
 		if oldKey := byVar[strings.TrimSpace(merged[i].VarName)]; oldKey != "" {
@@ -388,15 +399,25 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	type exportProfileRequest struct {
+		modelconfig.Profile
+		PreviousVarName string `json:"previous_var_name"`
+	}
 	var p struct {
-		Profiles        []modelconfig.Profile `json:"profiles"`
-		OverwriteActive bool                  `json:"overwrite_active"`
+		Profiles        []exportProfileRequest `json:"profiles"`
+		OverwriteActive bool                   `json:"overwrite_active"`
 	}
 	if err := decode(r, &p); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	profiles, err := s.mergeModelSecretsForWrite(p.Profiles)
+	requestedProfiles := make([]modelconfig.Profile, len(p.Profiles))
+	previousVarNames := make([]string, len(p.Profiles))
+	for i, profile := range p.Profiles {
+		requestedProfiles[i] = profile.Profile
+		previousVarNames[i] = profile.PreviousVarName
+	}
+	profiles, err := s.mergeModelSecretsForWriteByPreviousVar(requestedProfiles, previousVarNames)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

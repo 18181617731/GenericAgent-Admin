@@ -314,6 +314,49 @@ func TestModelsExportRequiresDangerousConfirm(t *testing.T) {
 	}
 }
 
+func TestModelsExportRenamedProviderInheritsSecretByPreviousVarName(t *testing.T) {
+	root := t.TempDir()
+	const oldVar = "native_oai_config_gpt55_medium"
+	const newVar = "native_claude_config_gpt55_medium"
+	const secret = "sk-renamed-provider-secret"
+	writeTestMyKeyVar(t, root, oldVar, secret)
+	s := newModelTestServer(t, root)
+
+	payload := map[string]interface{}{
+		"overwrite_active": true,
+		"profiles": []map[string]interface{}{{
+			"var_name":         newVar,
+			"previous_var_name": oldVar,
+			"type":             "native_claude",
+			"name":             "renamed provider",
+			"apibase":          "https://api.example/v1",
+			"model":            "claude-test",
+			"apikey":           "sk-****cret",
+		}},
+	}
+	body, _ := json.Marshal(payload)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/models/export", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+	}
+
+	active, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read mykey.py: %v", err)
+	}
+	activeText := string(active)
+	if !strings.Contains(activeText, newVar) || !strings.Contains(activeText, secret) {
+		t.Fatalf("renamed provider did not inherit its saved secret:\n%s", activeText)
+	}
+	if strings.Contains(activeText, oldVar+" =") || strings.Contains(activeText, "previous_var_name") || strings.Contains(activeText, "****") {
+		t.Fatalf("transient rename data leaked into mykey.py:\n%s", activeText)
+	}
+}
+
 func TestModelsSaveAndExportUseMyKeySecretForOfficialGeneratedVarName(t *testing.T) {
 	root := t.TempDir()
 	const varName = "native_oai_config_gpt55_medium_responses"

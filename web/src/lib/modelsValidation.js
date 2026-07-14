@@ -2,7 +2,7 @@ const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 const text = (value) => String(value ?? '').trim()
 const numberValue = (value) => Number(value)
-const profileModels = (profile = {}) => {
+const legacyProfileModels = (profile = {}) => {
   const values = Array.isArray(profile.models) ? profile.models : []
   const seen = new Set()
   return [...values, profile.model].map(text).filter(value => {
@@ -10,6 +10,20 @@ const profileModels = (profile = {}) => {
     seen.add(value)
     return true
   })
+}
+
+const profileModelConfigs = (profile = {}) => {
+  if (Array.isArray(profile.model_configs) && profile.model_configs.length) {
+    return profile.model_configs.map(config => ({ ...config, model: text(config?.model) }))
+  }
+  const models = legacyProfileModels(profile)
+  const legacyConfigs = models.map(model => ({
+    model,
+    max_retries: profile.max_retries,
+    read_timeout: profile.read_timeout,
+    connect_timeout: profile.connect_timeout,
+  }))
+  return legacyConfigs
 }
 
 export function validateModelProfiles(profiles = []) {
@@ -23,10 +37,8 @@ export function validateModelProfiles(profiles = []) {
     const errors = []
     const warnings = []
     const varName = text(profile.var_name)
-    const models = profileModels(profile)
+    const configs = profileModelConfigs(profile)
     const apiBase = text(profile.apibase)
-    const maxRetries = numberValue(profile.max_retries ?? 3)
-    const readTimeout = numberValue(profile.read_timeout ?? 300)
 
     if (!varName) errors.push('varNameRequired')
     else if (!IDENTIFIER_RE.test(varName)) errors.push('varNameInvalid')
@@ -34,11 +46,24 @@ export function validateModelProfiles(profiles = []) {
     else if (!/(api|config|cookie)/i.test(varName)) errors.push('varNameDiscoveryToken')
     else if ((counts.get(varName) || 0) > 1) errors.push('varNameDuplicate')
 
-    if (!models.length) errors.push('modelRequired')
+    const seenModels = new Set()
+    for (const config of configs) {
+      const model = text(config.model)
+      if (!model) errors.push('modelRequired')
+      else if (seenModels.has(model)) errors.push('modelDuplicate')
+      else seenModels.add(model)
+
+      const maxRetries = numberValue(config.max_retries ?? 3)
+      const readTimeout = numberValue(config.read_timeout ?? 300)
+      if (!Number.isFinite(maxRetries) || maxRetries < 0) errors.push('maxRetriesInvalid')
+      if (!Number.isFinite(readTimeout) || readTimeout <= 0) errors.push('readTimeoutInvalid')
+      if (config.connect_timeout != null) {
+        const connectTimeout = numberValue(config.connect_timeout)
+        if (!Number.isFinite(connectTimeout) || connectTimeout <= 0) errors.push('connectTimeoutInvalid')
+      }
+    }
     if (!apiBase) errors.push('apiBaseRequired')
     else if (!/^https?:\/\//i.test(apiBase)) warnings.push('apiBaseProtocol')
-    if (!Number.isFinite(maxRetries) || maxRetries < 0) errors.push('maxRetriesInvalid')
-    if (!Number.isFinite(readTimeout) || readTimeout <= 0) errors.push('readTimeoutInvalid')
     if (!text(profile.apikey)) warnings.push('apiKeyEmpty')
 
     return { idx, errors, warnings, ok: errors.length === 0 }
