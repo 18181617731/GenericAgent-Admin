@@ -99,18 +99,47 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 	}
 }
 
-func TestChatProviderDisplayNameFallsBackAfterOfficialPrefix(t *testing.T) {
+func TestChatProviderDisplayNameMatchesModelsProviderProjection(t *testing.T) {
 	cases := []struct {
 		profile modelconfig.Profile
 		want    string
 	}{
-		{profile: modelconfig.Profile{VarName: "native_oai_config_openrouter", Name: "ignored"}, want: "openrouter"},
-		{profile: modelconfig.Profile{VarName: "native_claude_config", Name: "Claude direct"}, want: "Claude direct"},
-		{profile: modelconfig.Profile{Type: "oai"}, want: "oai"},
+		{profile: modelconfig.Profile{VarName: "native_oai_config_gpt55_medium_responses", Name: "gpt-5.6-sol"}, want: "gpt55_medium_responses"},
+		{profile: modelconfig.Profile{VarName: "native_claude_config_fwind_opus48", Name: "claude-opus-4-8[1m]"}, want: "fwind_opus48"},
+		{profile: modelconfig.Profile{VarName: "acme_api", Name: "acme-chat"}, want: "acme_api"},
+		{profile: modelconfig.Profile{VarName: "native_oai_config", Name: "must-not-be-used", Type: "native_oai"}, want: "Unknown provider"},
+		{profile: modelconfig.Profile{Name: "must-not-be-used", Type: "oai"}, want: "Unknown provider"},
 	}
 	for _, tc := range cases {
 		if got := chatProviderDisplayName(tc.profile); got != tc.want {
 			t.Fatalf("chatProviderDisplayName(%#v)=%q want=%q", tc.profile, got, tc.want)
+		}
+	}
+}
+
+func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *testing.T) {
+	profiles := []modelconfig.Profile{
+		{
+			VarName: "native_oai_config_gpt55_medium_responses",
+			Name:    "gpt-5.6-sol",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "gpt-5.6-sol"},
+				{Model: "gpt-5.6-terra"},
+				{Model: "gpt-5.6-luna"},
+			},
+		},
+	}
+	llms := []map[string]interface{}{
+		{"index": 0, "model": "gpt-5.6-sol"},
+		{"index": 1, "model": "gpt-5.6-terra"},
+		{"index": 2, "model": "gpt-5.6-luna"},
+	}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	for i, llm := range llms {
+		if got := llm["provider"]; got != "gpt55_medium_responses" {
+			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, got, "gpt55_medium_responses", llms)
 		}
 	}
 }

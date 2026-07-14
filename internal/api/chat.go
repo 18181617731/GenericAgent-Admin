@@ -785,12 +785,6 @@ func chatProviderDisplayName(profile modelconfig.Profile) string {
 	if name != "" {
 		return name
 	}
-	if name = strings.TrimSpace(profile.Name); name != "" {
-		return name
-	}
-	if name = strings.TrimSpace(profile.Type); name != "" {
-		return name
-	}
 	return "Unknown provider"
 }
 
