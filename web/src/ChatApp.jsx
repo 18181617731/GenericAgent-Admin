@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, FileImage, FileOutput, FileText, ImagePlus, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, ImagePlus, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -213,10 +213,24 @@ function isImageFile(f) {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(ref)
 }
 
+const FILE_KIND_RULES = [
+  { kind:'image', re:/\.(png|jpe?g|gif|webp|bmp|svg)$/i, Icon:FileImage },
+  { kind:'archive', re:/\.(zip|rar|7z|tar|gz|bz2|xz)$/i, Icon:FileArchive },
+  { kind:'sheet', re:/\.(csv|xls|xlsx|ods)$/i, Icon:FileSpreadsheet },
+  { kind:'code', re:/\.(c|cc|cpp|cs|css|go|h|hpp|html?|java|js|jsx|json|kt|kts|md|php|py|rb|rs|sh|sql|swift|toml|ts|tsx|vue|xml|ya?ml)$/i, Icon:FileCode2 },
+  { kind:'pdf', re:/\.pdf$/i, Icon:FileOutput },
+]
+
 function FileAttachment({ path }) {
   const clean = String(path || '').trim()
   const name = clean.split(/[\\/]/).filter(Boolean).pop() || clean || '文件'
-  const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(clean.split(/[?#]/)[0] || clean)
+  const extMatch = name.match(/\.([^.]+)$/)
+  const extension = extMatch ? extMatch[1].slice(0, 6).toUpperCase() : 'FILE'
+  const splitAt = Math.max(clean.lastIndexOf('\\'), clean.lastIndexOf('/'))
+  const directory = splitAt >= 0 ? clean.slice(0, splitAt) : '本地文件'
+  const visual = FILE_KIND_RULES.find((rule) => rule.re.test(name)) || { kind:'file', Icon:FileText }
+  const { kind, Icon } = visual
+  const isImage = kind === 'image'
   const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
   const open = async (mode) => {
     if (!confirmDanger('chat-file-open', `使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`)) return
@@ -226,14 +240,18 @@ function FileAttachment({ path }) {
       alert(`打开失败：${e?.message || e}`)
     }
   }
-  return <span className={`oa-file-card ${isImage ? 'oa-file-card-image' : ''}`}>
-    {isImage ? <button type="button" className="oa-file-preview" onClick={() => open('file')} title="打开图片">
-      <img src={imageUrl} alt={name} loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />
-    </button> : <span className="oa-file-icon"><FileText size={18}/></span>}
-    <span className="oa-file-meta"><b>{name}</b><em>{clean}</em></span>
+  return <span className={`oa-file-card oa-file-kind-${kind}`} title={clean}>
+    <button type="button" className="oa-file-leading" onClick={() => open('file')} aria-label={`打开文件 ${name}`}>
+      <Icon className="oa-file-fallback-icon" size={19}/>
+      {isImage && <img src={imageUrl} alt="" loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />}
+    </button>
+    <span className="oa-file-meta">
+      <span className="oa-file-name-row"><b>{name}</b><small>{extension}</small></span>
+      <em>{directory || '本地文件'}</em>
+    </span>
     <span className="oa-file-actions">
-      <button type="button" onClick={() => open('file')}>打开</button>
-      <button type="button" onClick={() => open('folder')}>位置</button>
+      <button type="button" onClick={() => open('file')} title="打开文件" aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
+      <button type="button" onClick={() => open('folder')} title="打开所在位置" aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
       <CopyButton text={clean} compact />
     </span>
   </span>
