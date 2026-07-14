@@ -2233,6 +2233,31 @@ export default function ChatApp() {
   useEffect(() => { loadSessions('', { open:true }).catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
 
   useEffect(() => {
+    let stopped = false
+    let inFlight = false
+    const refreshList = async () => {
+      if (stopped || inFlight || document.hidden) return
+      inFlight = true
+      try {
+        const d = await api('/api/chat/sessions')
+        if (!stopped) setSessions(d.sessions || [])
+      } catch {
+        // Background refresh is best-effort; keep manual refresh errors visible only.
+      } finally {
+        inFlight = false
+      }
+    }
+    const timer = window.setInterval(refreshList, 3000)
+    const onVisible = () => { if (!document.hidden) refreshList() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!toolsMenuOpen) return
     const onDown = (e) => { if (!toolsMenuRef.current?.contains(e.target)) setToolsMenuOpen(false) }
     const onKey = (e) => { if (e.key === 'Escape') setToolsMenuOpen(false) }
