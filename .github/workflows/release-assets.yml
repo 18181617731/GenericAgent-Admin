@@ -18,7 +18,54 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      source_ref: ${{ steps.release.outputs.source_ref }}
+    steps:
+      - name: Validate release boundary and source
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          CONFIRM_OVERWRITE: ${{ inputs.confirm_overwrite_assets }}
+        run: |
+          tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::This release workflow must use a semantic version tag such as v1.0.1, v1.0.1-fix1, or v1.0.1-rc1; got '$tag'."
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$CONFIRM_OVERWRITE" != "true" ]; then
+            echo "::error::Manual dispatch requires confirm_overwrite_assets=true because existing release assets may be overwritten."
+            exit 1
+          fi
+
+          source_ref="$GITHUB_REF"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            set +e
+            remote_tag=$(git ls-remote --exit-code --tags "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${tag}")
+            remote_status=$?
+            set -e
+            if [ "$remote_status" -eq 0 ] && [ -n "$remote_tag" ]; then
+              source_ref="$tag"
+              echo "::notice::Existing tag ${tag} will be rebuilt from its tagged commit."
+            elif [ "$remote_status" -eq 2 ]; then
+              source_ref="$GITHUB_SHA"
+              echo "::notice::New tag ${tag} will be created from ${GITHUB_SHA}."
+            else
+              echo "::error::Unable to inspect remote tag ${tag}; git ls-remote exited ${remote_status}."
+              exit 1
+            fi
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+          echo "::notice::Release boundary accepted for ${tag}; source ref is ${source_ref}."
+
   build:
+    needs: prepare
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -51,35 +98,21 @@ jobs:
             cgo: '0'
 
     steps:
-      - name: Release boundary preflight
-        shell: bash
-        run: |
-          tag='${{ inputs.tag || github.ref_name }}'
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::This release workflow must run with a semantic version tag such as v0.1.1, v0.1.1-fix1, or v0.1.1-rc1; got '$tag'."
-            exit 1
-          fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm_overwrite_assets }}" != "true" ]; then
-            echo "::error::Manual dispatch requires confirm_overwrite_assets=true because upload uses overwrite_files=true."
-            exit 1
-          fi
-          echo "::notice::Release boundary accepted for ${tag}; upload step uses overwrite_files=true."
-
-      - name: Checkout tag
-        uses: actions/checkout@v4
+      - name: Checkout release source
+        uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -96,10 +129,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.cgo }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           mkdir -p dist/cmd
           cp cmd/chat_worker.py dist/cmd/chat_worker.py
-          tag='${{ inputs.tag || github.ref_name }}'
+          tag="$RELEASE_TAG"
           COMMIT=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           LDFLAGS="-s -w -X genericagent-admin-go/internal/version.Version=${tag} -X genericagent-admin-go/internal/version.Commit=${COMMIT} -X genericagent-admin-go/internal/version.Date=${BUILD_DATE}"
@@ -111,8 +145,10 @@ jobs:
 
       - name: Package
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          tag='${{ inputs.tag || github.ref_name }}'
+          tag="$RELEASE_TAG"
           version="${tag#v}"
           name="ga-admin-${tag}-${{ matrix.goos }}-${{ matrix.goarch }}"
           mkdir -p package "$name"
@@ -133,13 +169,38 @@ jobs:
           cd package
           python -c "import hashlib, pathlib; [p.with_suffix(p.suffix + '.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\\n', encoding='utf-8') for p in pathlib.Path('.').glob('*.zip')]"
 
-      - name: Upload to GitHub Release
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: package/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          path: package
+          merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          find package -maxdepth 1 -type f -print | sort
+          test "$(find package -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 6
+          test "$(find package -maxdepth 1 -type f -name '*.zip.sha256' | wc -l)" -eq 6
+
+      - name: Create tag and publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          prerelease: ${{ contains(inputs.tag || github.ref_name, '-alpha') || contains(inputs.tag || github.ref_name, '-beta') || contains(inputs.tag || github.ref_name, '-rc') }}
-          files: |
-            package/*.zip
-            package/*.sha256
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ contains(needs.prepare.outputs.tag, '-alpha') || contains(needs.prepare.outputs.tag, '-beta') || contains(needs.prepare.outputs.tag, '-rc') }}
+          files: package/*
           fail_on_unmatched_files: true
           overwrite_files: true

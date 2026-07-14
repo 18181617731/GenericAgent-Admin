@@ -183,7 +183,7 @@ cmd/chat_worker.py    # Chat worker 固定相对路径
 README.txt            # 简短运行说明
 ```
 
-仓库的 `.github/workflows/release-assets.yml` 会在推送 `v*` tag 后构建 Windows/macOS/Linux 资产并上传到 GitHub Release。
+仓库的 `.github/workflows/release-assets.yml` 会在推送 `v*` tag 后构建 Windows/macOS/Linux 资产并上传到 GitHub Release。也可以从 Actions 手动输入尚不存在的新版本（例如 `v1.0.1`）：工作流会从触发时选定分支的提交构建全部平台，所有构建成功后再由单一发布任务创建 tag 和 Release；如果输入的 tag 已存在，则严格从该 tag 对应提交重建，避免资产与源码错位。
 
 ## 配置与私密文件
 

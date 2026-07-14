@@ -369,6 +369,40 @@ func TestRunBatOneClickContract(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-assets.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(data)
+	want := []string{
+		`source_ref="$GITHUB_SHA"`,
+		`git ls-remote --exit-code --tags`,
+		`uses: actions/checkout@v5`,
+		`ref: ${{ needs.prepare.outputs.source_ref }}`,
+		`uses: actions/setup-go@v6`,
+		`uses: actions/setup-node@v5`,
+		`uses: actions/upload-artifact@v5`,
+		`uses: actions/download-artifact@v5`,
+		`target_commitish: ${{ github.sha }}`,
+		`needs: [prepare, build]`,
+	}
+	for _, item := range want {
+		if !strings.Contains(workflow, item) {
+			t.Fatalf("release workflow missing %q", item)
+		}
+	}
+	for _, forbidden := range []string{
+		`uses: actions/checkout@v4`,
+		`ref: ${{ inputs.tag || github.ref_name }}`,
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Fatalf("release workflow still contains unsupported pattern %q", forbidden)
+		}
+	}
+}
+
 func TestUnzipRejectsUnsafePaths(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
