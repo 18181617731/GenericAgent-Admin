@@ -181,7 +181,6 @@ describe('model profile names', () => {
     const props = modelProps()
     const view = render(<Models {...props} />)
 
-    fireEvent.click(screen.getByText('主模型', { selector: '.model-card-name' }))
     const nameInput = screen.getByLabelText('模型名称')
     expect(nameInput.value).toBe('主模型')
     fireEvent.change(nameInput, { target: { value: '主模型-修改' } })
@@ -197,9 +196,10 @@ describe('model profile names', () => {
 
   test('should remove the profile when the delete action is confirmed by the page flow', async () => {
     const props = modelProps()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<Models {...props} />)
 
-    fireEvent.click(screen.getByTitle('删除此配置'))
+    fireEvent.click(screen.getByTitle('删除此服务商'))
     await waitFor(() => expect(props.deleteModelProfile).toHaveBeenCalledWith([]))
   })
 
@@ -207,10 +207,9 @@ describe('model profile names', () => {
     const props = modelProps({ profiles: [] })
     render(<Models {...props} />)
 
+    fireEvent.click(screen.getAllByRole('button', { name: '新增服务商' })[0])
     fireEvent.change(screen.getByLabelText('新增模型名称'), { target: { value: '新增中文模型' } })
-    const modelInput = screen.getAllByRole('combobox').at(-1)
-    fireEvent.change(modelInput, { target: { value: 'gpt-new' } })
-    fireEvent.keyDown(modelInput, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: '添加并保存' }))
 
     expect(props.addModelProfiles).not.toHaveBeenCalled()
   })
@@ -219,14 +218,13 @@ describe('model profile names', () => {
     const props = modelProps({ profiles: [] })
     render(<Models {...props} />)
 
+    fireEvent.click(screen.getAllByRole('button', { name: '新增服务商' })[0])
     fireEvent.change(screen.getByLabelText('新增模型名称'), { target: { value: '新增中文模型' } })
     fireEvent.change(screen.getByLabelText('BaseURL'), { target: { value: 'https://api.example/v1' } })
-    const modelInput = screen.getAllByRole('combobox').at(-1)
-    fireEvent.change(modelInput, { target: { value: 'gpt-new' } })
-    fireEvent.keyDown(modelInput, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: '添加并保存' }))
 
     await waitFor(() => expect(props.addModelProfiles).toHaveBeenCalledWith([
-      expect.objectContaining({ name: '新增中文模型', model: 'gpt-new' }),
+      expect.objectContaining({ name: '新增中文模型', apibase: 'https://api.example/v1' }),
     ]))
   })
 })

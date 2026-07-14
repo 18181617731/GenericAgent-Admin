@@ -334,12 +334,6 @@ function ProfileCard({
   const [discovered, setDiscovered] = useState([])
   const [dirty, setDirty] = useState(false)
   const [nameDirty, setNameDirty] = useState(false)
-  const patch = obj => { setDirty(true); patchProfile(idx, obj) }
-  const shownApiKey = revealedKey ?? p.apikey ?? ''
-  const revealed = revealedKey != null
-  const meta = protocolMeta(p.type || DEFAULT_PROTOCOL)
-  const canDiscover = supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)
-
   const selectedModels = profileModels(p)
   const meta = protocolMeta(p.type || DEFAULT_PROTOCOL)
   const revealed = revealedKey != null && String(revealedKey).trim() !== '' && !isMaskedSecret(revealedKey)
@@ -362,173 +356,34 @@ function ProfileCard({
     if (ok !== false) setDirty(false)
   }
 
+  const saveName = async value => {
+    if (!nameDirty) return
+    const name = value.trim()
+    const ok = await onSave?.(idx, profileKey, { ...p, name })
+    if (ok !== false) {
+      setDirty(false)
+      setNameDirty(false)
+    }
+  }
+
   const discover = async () => {
     if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)) return
     setDiscoverBusy(true)
     setDiscoverError('')
     try {
-      const d = await discoverModels({ protocol: p.type || DEFAULT_PROTOCOL, baseUrl: p.apibase, apiKey: shownApiKey, varName: p.var_name })
-      const models = d?.models || []
-      setDiscovered(models)
-      if (models.length && selectedModels.length === 0) savePatch(modelPatch([modelIdOf(models[0])]))
-    } catch (e) { setDiscErr(String(e?.message || e)) }
-    finally { setBusy(false) }
-  }
-
-  const advItems = [{
-    key: 'adv', label: '高级配置', children: (
-      <div className="form-grid">
-        <label>变量名<Input value={p.var_name || ''} onChange={e => patch({ var_name: e.target.value })} /></label>
-        <label>官方协议<Select value={p.type || DEFAULT_PROTOCOL} onChange={v => patch({ type: v, var_name: nextVarName(v, profiles) })} options={OFFICIAL_PROTOCOLS} /></label>
-        <label>流式<Select value={String(!!p.stream)} onChange={v => patch({ stream: v === 'true' })}
-          options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} /></label>
-        <label>重试<Input type="number" value={p.max_retries ?? 3} onChange={e => patch({ max_retries: Number(e.target.value) })} /></label>
-        <label>超时(s)<Input type="number" value={p.read_timeout ?? 300} onChange={e => patch({ read_timeout: Number(e.target.value) })} /></label>
-        <label>reasoning_effort<Input value={p.reasoning_effort || ''} onChange={e => patch({ reasoning_effort: e.target.value })} /></label>
-      </div>
-    )
-  }]
-
-  const headerTitle = p.name || p.model || p.var_name || `模型 ${idx + 1}`
-  const header = (
-    <div className="model-card-header">
-      <div className="model-card-name">{headerTitle}</div>
-      {!inGroup && (
-        <div className="model-card-sub">
-          <Tag color={meta.color} className="model-proto-tag">{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
-          {p.apibase && <span className="model-card-base">{p.apibase}</span>}
-        </div>
-      )}
-    </div>
-  )
-  const saveBusy = saveState?.status === 'saving'
-  const saveOk = saveState?.status === 'saved'
-  const saveErr = saveState?.status === 'error'
-  const extra = (
-    <Space size={6} onClick={e => e.stopPropagation()}>
-      <StatusTag result={result} />
-      {dirty && <span className="model-save-chip model-save-chip--dirty">未保存</span>}
-      {!dirty && saveOk && <span className="model-save-chip model-save-chip--ok">✓ 已保存</span>}
-      {saveErr && <span className="model-save-chip model-save-chip--err">✗ 失败</span>}
-      <Button size="small" type="primary" icon={<CheckCircle2 size={13} />} loading={saveBusy} disabled={saveBusy || result?.errors?.length > 0} onClick={saveManual}>保存</Button>
-      <Button size="small" danger icon={<Trash2 size={12} />} onClick={() => removeProfile(idx)} title="删除此配置" />
-    </Space>
-  )
-  const profileItems = [{
-    key: 'profile',
-    label: header,
-    extra,
-    children: (
-      <>
-        <div className="form-grid">
-          <label>名称<Input aria-label="模型名称" value={p.name || ''}
-            onChange={e => { setNameDirty(true); patch({ name: e.target.value }) }}
-            onBlur={e => { if (nameDirty) savePatch({ name: e.target.value }); setNameDirty(false) }}
-            onPressEnter={e => e.currentTarget.blur()} placeholder="例如：主模型" /></label>
-          <label>BaseURL<Input value={p.apibase || ''} onChange={e => patch({ apibase: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
-          <label className="span2">API Key
-            {revealed ? (
-              <Input
-                value={shownApiKey}
-                onChange={e => { onClearRevealedKey?.(idx, p, profileKey); patch({ apikey: e.target.value }) }}
-                placeholder="保留 ****** 表示不覆盖已保存密钥"
-                addonAfter={(
-                  <Space size={4}>
-                    <Button size="small" type="text" icon={<EyeOff size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>隐藏</Button>
-                    <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)}>刷新</Button>
-                  </Space>
-                )}
-              />
-            ) : (
-              <Input
-                type="password"
-                value={shownApiKey}
-                onChange={e => { onClearRevealedKey?.(idx, p, profileKey); patch({ apikey: e.target.value }) }}
-                placeholder="保留 ****** 表示不覆盖已保存密钥"
-                addonAfter={(
-                  <Space size={4}>
-                    <Button size="small" type="text" icon={<Eye size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>显示</Button>
-                  </Space>
-                )}
-              />
-            )}
-          </label>
-        </div>
-        {inGroup ? (
-          <div className="form-grid">
-            <label className="span2">Model ID
-              <Input value={p.model || ''} onChange={e => patch({ model: e.target.value, models: [e.target.value] })} placeholder="model id" />
-            </label>
-          </div>
-        ) : (
-          <>
-            <DiscoverRow value={selectedModels} onChange={models => savePatch(modelPatch(models))} opts={modelOpts}
-              onDiscover={discover} busy={busy} disabled={busy || !canDiscover || !p.apibase} />
-            {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
-          </>
-        )}
-        {discErr && <Alert type="error" showIcon message={discErr} className="model-inline-alert" />}
-        {dirty && <Alert type="warning" showIcon message="有修改尚未保存" description="手动编辑的内容需要点击右上角“保存”后才会写入 mykey.py。" className="model-inline-alert" />}
-        {saveErr && <Alert type="error" showIcon message={`保存失败：${saveState?.error || '未知错误'}`} className="model-inline-alert" />}
-        {result?.errors?.length > 0 && <Alert type="error" showIcon message="阻断项"
-          description={<ul>{result.errors.map(k => <li key={k}>{ERR_KEYS[k] || k}</li>)}</ul>} className="model-inline-alert" />}
-        {result?.warnings?.length > 0 && <Alert type="warning" showIcon message="警告"
-          description={<ul>{result.warnings.map(k => <li key={k}>{ERR_KEYS[k] || k}</li>)}</ul>} className="model-inline-alert" />}
-        <Collapse ghost items={advItems} />
-      </>
-    )
-  }]
-
-  return <Collapse className="model-profile-card" size="small" items={profileItems} />
-}
-
-function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
-  const [f, setF] = useState({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
-  const [busy, setBusy] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [discovered, setDiscovered] = useState([])
-  const [err, setErr] = useState('')
-  const pf = obj => setF(prev => ({ ...prev, ...obj }))
-  const meta = protocolMeta(f.protocol)
-  const canDiscover = supportsModelDiscovery(f.protocol)
-  const selectedModels = uniqueModels(f.models)
-  const modelOpts = useMemo(() => uniqueModels([...selectedModels, ...discovered.map(modelIdOf)]), [discovered, selectedModels])
-
-  const discover = async () => {
-    if (!canDiscover) return
-    setBusy(true); setErr('')
-    try {
-      const d = await discoverModels({ protocol: f.protocol || DEFAULT_PROTOCOL, baseUrl: f.baseUrl, apiKey: f.apiKey })
-      const models = d?.models || []
-      setDiscovered(models)
-    } catch (e) { setErr(String(e?.message || e)) }
-    finally { setBusy(false) }
-  }
-
-  const add = async (modelsValue = f.models) => {
-    const models = uniqueModels(modelsValue)
-    if (!models.length || !f.baseUrl || adding) return false
-    setAdding(true)
-    try {
-      const newProfiles = models.map((modelId, i) => ({
-        ...emptyProfile(profiles.length + i, f.protocol),
-        var_name: nextVarName(f.protocol, [...profiles, ...Array(i).fill({})]),
-        type: f.protocol, name: f.name, apibase: f.baseUrl, apikey: f.apiKey,
-        models: [modelId], model: modelId
-      }))
-      const ok = await addModelProfiles(newProfiles)
-      if (!ok) return false
-      setF({ protocol: DEFAULT_PROTOCOL, baseUrl: '', apiKey: '', models: [], name: '' })
-      setDiscovered([])
-      setErr('')
-      return true
-    } finally { setAdding(false) }
-  }
-
-  const handleModelsChange = models => {
-    const next = uniqueModels(models)
-    pf({ models: next })
-    if (next.length && f.baseUrl) add(next)
+      const configuredKey = String(p.apikey || '').trim()
+      const response = await discoverModels({
+        protocol: p.type || DEFAULT_PROTOCOL,
+        baseUrl: p.apibase,
+        apiKey: configuredKey && !isMaskedSecret(configuredKey) ? configuredKey : undefined,
+        varName: p.var_name,
+      })
+      setDiscovered(response?.models || [])
+    } catch (error) {
+      setDiscoverError(String(error?.message || error))
+    } finally {
+      setDiscoverBusy(false)
+    }
   }
 
   return (
@@ -538,7 +393,7 @@ function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
           <span className="model-source-index">{String(idx + 1).padStart(2, '0')}</span>
           <div>
             <div className="model-source-title-row">
-              <strong>{providerDisplayName(p.var_name) || `服务商 ${idx + 1}`}</strong>
+              <strong>{p.name || providerDisplayName(p.var_name) || `服务商 ${idx + 1}`}</strong>
               <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
               <span className="model-count-badge">{selectedModels.length} 个模型</span>
             </div>
@@ -565,6 +420,21 @@ function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
 
       <div className="model-source-body">
         <div className="model-primary-grid">
+          <label className="model-field">
+            <span className="model-field-label">显示名称</span>
+            <Input
+              aria-label="模型名称"
+              value={p.name || ''}
+              onChange={event => {
+                setNameDirty(true)
+                patch({ name: event.target.value })
+              }}
+              onBlur={event => saveName(event.target.value)}
+              onPressEnter={event => event.currentTarget.blur()}
+              placeholder="例如：主模型"
+            />
+            <small>可使用中文；失去焦点后自动保存。</small>
+          </label>
           <label className="model-field model-field--provider">
             <span className="model-field-label">名称</span>
             <Input
@@ -621,21 +491,36 @@ function AddProfileForm({ profiles, addModelProfiles, discoverModels, t }) {
             />
           </label>
         </div>
-        <div className="model-add-row2">
-          <label className="model-add-label">名称
-            <Input aria-label="新增模型名称" value={f.name || ''} onChange={e => pf({ name: e.target.value })} placeholder="例如：主模型" />
-          </label>
-          <label className="model-add-label">API Key（可选）
-            <Input type="password" value={f.apiKey} onChange={e => pf({ apiKey: e.target.value })} placeholder={t.hints?.savedSecret || '保留空白或填写密钥'} />
-          </label>
-        </div>
-        {meta.help && <p className="model-add-hint"><Tag color={meta.color} style={{marginRight:4}}>{protocolLabel(f.protocol)}</Tag>{meta.help}</p>}
-        <DiscoverRow value={selectedModels} onChange={handleModelsChange}
-          opts={modelOpts}
-          onDiscover={discover} busy={busy || adding} disabled={busy || adding || !canDiscover || !f.baseUrl} />
-        {!canDiscover && <Alert className="model-inline-alert" type="info" showIcon message="该官方协议没有通用模型列表接口，请手动填写 model。" />}
-        {err && <Alert className="model-inline-alert" type="error" showIcon message={err} />}
-        <p className="model-add-hint">选中或输入模型 ID 后会自动添加并保存，无需再点添加。</p>
+
+        <ModelConfigEditor
+          profile={p}
+          discovered={discovered}
+          onChange={patch}
+          onDiscover={discover}
+          busy={discoverBusy}
+          disabled={discoverBusy || !p.apibase || !supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)}
+        />
+
+        {discoverError && <Alert type="error" showIcon message={discoverError} className="model-inline-alert" />}
+        {saveError && <Alert type="error" showIcon message={`保存失败：${saveState?.error || '未知错误'}`} className="model-inline-alert" />}
+        {result?.errors?.length > 0 && (
+          <Alert
+            type="error"
+            showIcon
+            message="此服务商暂时不能保存"
+            description={<ul>{result.errors.map(key => <li key={key}>{ERR_KEYS[key] || key}</li>)}</ul>}
+            className="model-inline-alert"
+          />
+        )}
+        {result?.warnings?.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="保存前请留意"
+            description={<ul>{result.warnings.map(key => <li key={key}>{ERR_KEYS[key] || key}</li>)}</ul>}
+            className="model-inline-alert"
+          />
+        )}
       </div>
     </article>
   )
@@ -645,6 +530,7 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
   const [form, setForm] = useState(() => ({
     protocol: DEFAULT_PROTOCOL,
     providerVar: nextVarName(DEFAULT_PROTOCOL, profiles),
+    displayName: '',
     baseUrl: '',
     apiKey: '',
   }))
@@ -679,6 +565,7 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
         ...emptyProfile(profiles.length, form.protocol),
         var_name: varName,
         type: form.protocol,
+        name: form.displayName.trim(),
         apibase: form.baseUrl.trim(),
         apikey: form.apiKey,
         model: '',
@@ -693,6 +580,7 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
           protocolMeta(DEFAULT_PROTOCOL)?.prefix || 'native_oai_config',
           [...profiles, profile],
         ),
+        displayName: '',
         baseUrl: '',
         apiKey: '',
       })
@@ -712,6 +600,16 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
         <Button type="text" icon={<X size={16} />} onClick={onClose} aria-label="关闭新增面板" />
       </header>
       <div className="model-add-grid">
+        <label className="model-field">
+          <span className="model-field-label">显示名称</span>
+          <Input
+            aria-label="新增模型名称"
+            value={form.displayName}
+            onChange={event => patchForm({ displayName: event.target.value })}
+            placeholder="例如：主模型"
+          />
+          <small>可选，支持中文。</small>
+        </label>
         <label className="model-field">
           <span className="model-field-label">名称</span>
           <Input
@@ -800,7 +698,7 @@ export function Models({
 
   const removeProfile = async idx => {
     const profile = profiles[idx]
-    const name = profile?.var_name || `服务商 ${idx + 1}`
+    const name = profile?.name || profile?.var_name || `服务商 ${idx + 1}`
     if (!window.confirm(`删除“${name}”及其中 ${profileModels(profile).length} 个模型？\n\n此操作会立即保存到 mykey.py。`)) return
     onClearRevealedKey?.(idx, profile, profileKeyId(idx, profile))
     const nextProfiles = profiles.filter((_, index) => index !== idx)
@@ -946,7 +844,7 @@ export function Models({
                   aria-current={!addOpen && activeIndex === idx ? 'true' : undefined}
                 >
                   <span className="model-provider-item-top">
-                    <strong>{providerDisplayName(profile.var_name) || `服务商 ${idx + 1}`}</strong>
+                    <strong>{profile.name || providerDisplayName(profile.var_name) || `服务商 ${idx + 1}`}</strong>
                     <i className={`is-${state}`} title={state === 'error' ? '存在阻断项' : state === 'warning' ? '存在提醒' : '配置正常'} />
                   </span>
                   <span className="model-provider-base">{profile.apibase || '尚未填写 BaseURL'}</span>

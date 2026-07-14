@@ -62,14 +62,14 @@ GenericAgent-Admin-Go/
 
 ### Windows 一键启动
 
-首次拉取仓库后，安装 Node.js 22 和 Go 1.23 或更高版本，然后双击根目录的 `run.bat`。也可以在终端执行：
+首次拉取仓库后，安装 Node.js 22，然后双击根目录的 `run.bat`。也可以在终端执行：
 
 ```bat
 cd /d C:\path\to\GenericAgent-Admin-Go
 run.bat
 ```
 
-`run.bat` 首次运行时会使用 `npm ci` 安装锁定的前端依赖，然后构建并嵌入前端、编译 `dist\ga-admin.exe`、复制 Chat worker 并自动启动管理端。脚本会记录 `web/package-lock.json` 的 SHA-256；后续运行只有在 `node_modules` 缺失或锁文件变化时才重新执行 `npm ci`。Go 未加入 `PATH` 时，脚本会继续检查 `C:\Program Files\Go\bin\go.exe` 等常见安装位置。首次构建需要网络访问 npm 和 Go 依赖源；失败时窗口会保留错误信息。
+`run.bat` 首次运行时会使用 `npm ci` 安装锁定的前端依赖，然后构建并嵌入前端、编译 `dist\ga-admin.exe`、复制 Chat worker 并自动启动管理端。脚本会记录 `web/package-lock.json` 的 SHA-256；后续运行只有在 `node_modules` 缺失或锁文件变化时才重新执行 `npm ci`。Go 未加入 `PATH` 且常见安装位置也不存在时，脚本会从 Go 官方站点下载与当前 Windows 架构匹配的稳定版，校验 SHA-256 后解压到仓库的 `.tools\go`，无需管理员权限或修改系统 `PATH`。如果用户没有设置 `GOPROXY`，且 Go 仍使用国内网络经常无法访问的默认模块代理，构建过程会仅在当前脚本内改用 `https://goproxy.cn`；已有的环境变量或 `go env` 自定义配置不会被覆盖。首次构建需要网络访问 npm、Go 官方站点和 Go 依赖源；失败时窗口会保留错误信息。
 
 程序启动后默认打开 `http://127.0.0.1:8787`。首次使用在页面中选择已有 GenericAgent 根目录即可，不需要预先创建 `config.local.json`。
 

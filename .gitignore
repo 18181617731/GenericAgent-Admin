@@ -1,4 +1,5 @@
 /dist/
+/.tools/
 /web/dist/
 *.exe
 config.local.json

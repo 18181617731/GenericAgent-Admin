@@ -5,6 +5,7 @@ cd /d "%~dp0"
 
 call :resolve_npm || exit /b 1
 call :resolve_go || exit /b 1
+call :configure_go_proxy || exit /b 1
 
 for /f "usebackq delims=" %%i in (`git describe --tags --dirty --always 2^>nul`) do set "GA_VERSION=%%i"
 if not defined GA_VERSION set "GA_VERSION=dev"
@@ -83,7 +84,32 @@ if not defined GO_EXE if exist "%ProgramFiles%\Go\bin\go.exe" set "GO_EXE=%Progr
 if not defined GO_EXE if exist "%LOCALAPPDATA%\Programs\Go\bin\go.exe" set "GO_EXE=%LOCALAPPDATA%\Programs\Go\bin\go.exe"
 if not defined GO_EXE if exist "%SystemDrive%\Go\bin\go.exe" set "GO_EXE=%SystemDrive%\Go\bin\go.exe"
 if not defined GO_EXE (
-  echo ERROR: go.exe was not found. Install Go 1.23 or newer, or add it to PATH.
+  echo Go was not found; downloading a verified portable toolchain...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap-go.ps1" -InstallDir "%~dp0.tools\go" -MinimumVersion "1.23"
+  if errorlevel 1 (
+    echo ERROR: Unable to prepare Go 1.23 or newer automatically.
+    exit /b 1
+  )
+  if exist "%~dp0.tools\go\bin\go.exe" set "GO_EXE=%~dp0.tools\go\bin\go.exe"
+)
+if not defined GO_EXE (
+  echo ERROR: go.exe was not found after automatic setup.
   exit /b 1
+)
+exit /b 0
+
+:configure_go_proxy
+if defined GOPROXY (
+  echo Using GOPROXY from the current environment: %GOPROXY%
+  exit /b 0
+)
+
+set "CONFIGURED_GOPROXY="
+for /f "usebackq delims=" %%i in (`"%GO_EXE%" env GOPROXY 2^>nul`) do if not defined CONFIGURED_GOPROXY set "CONFIGURED_GOPROXY=%%i"
+if /I "%CONFIGURED_GOPROXY%"=="https://proxy.golang.org,direct" (
+  set "GOPROXY=https://goproxy.cn,direct"
+  echo The default Go module proxy is replaced with https://goproxy.cn for this build.
+) else if defined CONFIGURED_GOPROXY (
+  echo Using GOPROXY from go env: %CONFIGURED_GOPROXY%
 )
 exit /b 0
