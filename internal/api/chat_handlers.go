@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	if len(items) > 80 {
@@ -197,7 +197,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["warning"] = err.Error()
 	}
 	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
@@ -249,6 +249,89 @@ func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
+func validProjectModeName(raw string) (string, bool) {
+	name := strings.TrimSpace(raw)
+	if name == "" || name == "." || name == ".." || len([]byte(name)) > 128 || filepath.IsAbs(name) || filepath.Clean(name) != name || strings.ContainsAny(name, `/\\:`) || strings.HasSuffix(name, ".") {
+		return "", false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return "", false
+		}
+	}
+	return name, true
+}
+
+func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
+	cmd := strings.TrimSpace(prompt)
+	if cmd != "/project" && !strings.HasPrefix(cmd, "/project ") && !strings.HasPrefix(cmd, "/project\t") {
+		return false
+	}
+
+	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "/project"))
+	reply := ""
+	switch {
+	case arg == "" || strings.EqualFold(arg, "status"):
+		if strings.TrimSpace(cs.ProjectMode) == "" {
+			reply = "Project Mode 未启用。用法：`/project <项目名>`，关闭：`/project off`。"
+		} else {
+			reply = fmt.Sprintf("当前 Project Mode：`%s`\n\n项目记忆：`%s`\n\n关闭：`/project off`。", cs.ProjectMode, filepath.Join(s.CfgStore.Cfg.GARoot, "temp", "projects", cs.ProjectMode, "project_memory.md"))
+		}
+	case strings.EqualFold(arg, "off") || strings.EqualFold(arg, "disable") || strings.EqualFold(arg, "none"):
+		cs.ProjectMode = ""
+		reply = "已关闭当前会话的 Project Mode。项目文件和记忆均已保留。"
+	default:
+		name, ok := validProjectModeName(arg)
+		if !ok {
+			reply = "进入 Project Mode 失败：项目名必须是 1 个安全的目录名称（不能包含路径分隔符、冒号、控制字符或 `.` / `..`）。"
+			break
+		}
+		gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+		if gaRoot == "" {
+			reply = "进入 Project Mode 失败：GA Root 未配置。"
+			break
+		}
+		projectDir := filepath.Join(gaRoot, "temp", "projects", name)
+		if st, err := os.Lstat(projectDir); err == nil {
+			if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+				reply = fmt.Sprintf("进入 Project Mode 失败：项目路径不是安全目录：`%s`", projectDir)
+				break
+			}
+		} else if !os.IsNotExist(err) {
+			reply = fmt.Sprintf("进入 Project Mode 失败：无法检查项目目录：%v", err)
+			break
+		} else if err := os.MkdirAll(projectDir, 0755); err != nil {
+			reply = fmt.Sprintf("进入 Project Mode 失败：无法创建项目目录：%v", err)
+			break
+		}
+		memoryPath := filepath.Join(projectDir, "project_memory.md")
+		if f, err := os.OpenFile(memoryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644); err == nil {
+			if closeErr := f.Close(); closeErr != nil {
+				reply = fmt.Sprintf("进入 Project Mode 失败：无法初始化项目记忆：%v", closeErr)
+				break
+			}
+		} else if !os.IsExist(err) {
+			reply = fmt.Sprintf("进入 Project Mode 失败：无法初始化项目记忆：%v", err)
+			break
+		}
+		cs.ProjectMode = name
+		reply = fmt.Sprintf("已进入 Project Mode：`%s`\n\n项目目录：`%s`\n项目记忆：`%s`", name, projectDir, memoryPath)
+	}
+
+	msg := chatMessage{ID: newChatID(), Role: "assistant", Content: reply, CreatedAt: time.Now().Unix()}
+	cs.Messages = append(cs.Messages, msg)
+	cs.UpdatedAt = time.Now().Unix()
+	if err := saveChatSession(s.CfgStore.Cfg, *cs); err != nil {
+		s.endChatRun(sid)
+		bad(w, http.StatusInternalServerError, err.Error())
+		return true
+	}
+	s.publishChatRun(sid, map[string]interface{}{"type": "message", "message": msg, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+	s.endChatRun(sid)
+	s.streamChatRun(w, r, sid, 0)
+	return true
+}
+
 func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	var req struct {
 		Prompt       string        `json:"prompt"`
@@ -282,6 +365,9 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	if s.maybeHandleWorkspaceCommand(w, r, sid, &cs, req.Prompt) {
 		return
 	}
+	if s.maybeHandleProjectCommand(w, r, sid, &cs, req.Prompt) {
+		return
+	}
 	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
 	if err != nil {
 		s.endChatRun(sid)
@@ -313,6 +399,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"history_info":     cs.HistoryInfo,
 		"working":          cs.Working,
 		"workspace":        cs.Workspace,
+		"project_mode":     cs.ProjectMode,
 		"llm_no":           cs.Settings.LLMNo,
 		"tools_mode":       cs.Settings.ToolsMode,
 		"reasoning_effort": cs.Settings.ReasoningEffort,

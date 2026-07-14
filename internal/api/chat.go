@@ -100,6 +100,7 @@ type chatSession struct {
 	HistoryInfo []interface{}            `json:"history_info,omitempty"`
 	Working     map[string]interface{}   `json:"working,omitempty"`
 	Workspace   string                   `json:"workspace,omitempty"`
+	ProjectMode string                   `json:"project_mode,omitempty"`
 }
 
 const (

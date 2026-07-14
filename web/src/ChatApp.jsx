@@ -1707,6 +1707,13 @@ export default function ChatApp() {
 
   const applyStreamEvent = (ev, pendingId, clientUserID = '', sessionId = '') => {
     if (!isActiveSession(sessionId)) return
+    if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
+      setSessions(xs => xs.map(x => x.id === sessionId ? {
+        ...x,
+        ...(Object.prototype.hasOwnProperty.call(ev, 'workspace') ? { workspace: ev.workspace || '' } : {}),
+        ...(Object.prototype.hasOwnProperty.call(ev, 'project_mode') ? { project_mode: ev.project_mode || '' } : {}),
+      } : x))
+    }
     if (ev.type === 'user' && ev.message) {
       setMessages(xs => {
         if (!isActiveSession(sessionId)) return xs
@@ -1912,7 +1919,7 @@ export default function ChatApp() {
     setNotice('')
     setMenuOpen('')
     setMenuPos(null)
-    setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
+    setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
   }
 
@@ -2450,7 +2457,7 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title="展开侧栏" aria-label="展开侧栏"><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title="新对话" aria-label="新对话"><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
         </button>
