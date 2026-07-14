@@ -24,6 +24,8 @@ test('version update UI keeps destructive update behind status-aware controls', 
   assert.match(app, /disabled=\{versionBusy \|\| versionStatus\?\.running \|\| !versionCheck\?\.update\}/)
   assert.match(app, /setInterval\(\(\) => refreshVersionStatus\(\)\.catch\(e => setMsg\(e\.message\)\), 1500\)/)
   assert.match(app, /api\('\/api\/version\/status'\)/)
+  assert.match(app, /versionInfo\?\.update_source_url/)
+  assert.match(app, /versionInfo\.update_repository \|\| versionInfo\.update_source_url/)
 })
 
 const internalApiDir = new URL('../../../internal/api/', import.meta.url)
@@ -97,4 +99,3 @@ test('frontend sends dangerous header for every protected mutating API route it 
   assert.ok(seen.get('/api/ga/processes/kill') > 0, 'process kill call should be covered')
   assert.ok(seen.get('/api/ga/processes/adopt') > 0, 'process adopt call should be covered')
 })
-

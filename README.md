@@ -53,11 +53,25 @@ GenericAgent-Admin-Go/
 │  ├─ src/
 │  └─ dist/                         # Vite 构建产物，会被 Go embed
 ├─ build.bat                       # 本地 Windows 构建入口
+├─ run.bat                         # Windows 一键构建并启动
 ├─ config.example.json             # 配置示例
 └─ dist/                           # 本地构建输出，不提交
 ```
 
 ## 快速开始
+
+### Windows 一键启动
+
+首次拉取仓库后，安装 Node.js 22 和 Go 1.23 或更高版本，然后双击根目录的 `run.bat`。也可以在终端执行：
+
+```bat
+cd /d C:\path\to\GenericAgent-Admin-Go
+run.bat
+```
+
+`run.bat` 首次运行时会使用 `npm ci` 安装锁定的前端依赖，然后构建并嵌入前端、编译 `dist\ga-admin.exe`、复制 Chat worker 并自动启动管理端。脚本会记录 `web/package-lock.json` 的 SHA-256；后续运行只有在 `node_modules` 缺失或锁文件变化时才重新执行 `npm ci`。Go 未加入 `PATH` 时，脚本会继续检查 `C:\Program Files\Go\bin\go.exe` 等常见安装位置。首次构建需要网络访问 npm 和 Go 依赖源；失败时窗口会保留错误信息。
+
+程序启动后默认打开 `http://127.0.0.1:8787`。首次使用在页面中选择已有 GenericAgent 根目录即可，不需要预先创建 `config.local.json`。
 
 ### 1. 准备 GenericAgent
 
@@ -143,14 +157,15 @@ dist\cmd\chat_worker.py
 - `internal/version.Commit`：来自 `git rev-parse --short HEAD`，失败时为 `unknown`。
 - `internal/version.Date`：UTC 构建时间，如 `2026-06-01T12:00:00Z`。
 
-### v0.1.0-alpha release target
+### v1.0.0 初版
 
-- Target tag: `v0.1.0-alpha`. This alpha release is approved for the current commit, branch push, tag creation, and GitHub Release asset publication; formal `v0.1.0`, GitCode publication, live-service restart, and existing-asset overwrite remain separate approvals.
-- Version source: backend defaults still fall back to `dev`; local `build.bat` injects `git describe --tags --dirty --always`, commit, and UTC build date with Go `-ldflags`; the release workflow injects the triggering tag as `internal/version.Version`.
-- Scope baseline: start from `v0.0.30-fix1` and include the later local commit `2202eb6 feat(admin): harden files and model configuration UX`, plus the v0.1.0-alpha documentation/release-note updates from this pass.
-- Frontend display: the UI should continue reading version fields from the backend version API instead of hard-coding `v0.1.0-alpha` in React assets.
+- `v1.0.0` 是 `18181617731/GenericAgent-Admin` 的首个正式发布版本；仓库中更早的 tags 来自原项目历史，不代表本仓库已发布过对应 Release。
+- 后端默认版本仍为 `dev`；本地 `build.bat` 通过 Go `-ldflags` 写入 Git tag、commit 和 UTC 构建时间，Release workflow 使用触发构建的 tag 作为版本号。
+- 总览页从后端版本接口读取并展示版本信息和当前更新源，不在前端代码中硬编码版本号。
 
 ## 发布包约定
+
+总览页的版本管理默认从 `18181617731/GenericAgent-Admin` 的 GitHub Releases 检查和下载更新。`config.local.json` 中的 `update_repo_url` 可覆盖该默认值；可填写 GitHub 仓库地址，也可填写完整的 Release API URL。“检查更新”需要目标仓库至少有一个已发布 Release；“一键升级”还要求该 Release 包含当前平台的 ZIP 和 `.sha256` 资产。
 
 自更新模块会在 Release 中查找与当前平台匹配的资产：
 
@@ -249,19 +264,19 @@ git diff --check
 1. 确认工作区只包含本次要发布的改动。
 2. 执行前端测试、前端构建、Go 测试、Go 构建和 `git diff --check`。
 3. 提交代码。
-4. 打新 tag，例如 `v0.1.0`。
+4. 打新 tag，例如 `v1.0.0`。
 5. 推送 `main` 和 tag。
 6. GitHub Actions 根据 tag 构建并上传 Release assets。
 7. 在管理端“版本/更新”能力中验证新版本可发现、可下载且 sha256 校验通过。
 
-### v0.1.0-alpha release gates
+### v1.0.0 发布门禁
 
-Current v0.1.0-alpha status: approved for the current release commit, `main` push, `v0.1.0-alpha` tag creation, and GitHub Release asset publication. Formal `v0.1.0`, GitCode publication, live-service restart, and existing-asset overwrite remain separate approvals. Before tagging, verify:
+`v1.0.0` 发布前需要确认：
 
 - `git diff --check`、`go test -count=1 ./internal/api`、`go test ./...`、`go build ./...`、`npm.cmd --prefix web test`、`npm.cmd --prefix web run build` 的最终门禁证据。
 - `build.bat` 或等效 workflow 输出不包含 `config.local.json`、`model_profiles.json`、`mykey.py`、`.env`、`*.key` 等本地/私密文件。
-- The release commit should include only user-facing source, build scripts, documentation, workflow updates, tests, and required assets; local review notes, temporary backups, and troubleshooting artifacts are excluded by default.
-- The approved target branch is `main`; the approved target tag is `v0.1.0-alpha`.
+- 发布提交只包含应用代码、构建脚本、文档、测试和必要资源，不包含本地验证产物、临时备份或排查文件。
+- 发布目标分支为 `main`，目标 tag 为 `v1.0.0`。
 
 ## 故障排查
 

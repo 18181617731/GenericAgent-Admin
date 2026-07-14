@@ -26,13 +26,30 @@ var (
 	Date    = "unknown"
 )
 
-var repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
+const (
+	defaultUpdateRepository = "18181617731/GenericAgent-Admin"
+	defaultRepoLatestURL    = "https://api.github.com/repos/" + defaultUpdateRepository + "/releases/latest"
+)
+
+var repoLatestURL = defaultRepoLatestURL
 
 // SetRepoURL overrides the default update repo URL (e.g. from config.local.json).
 func SetRepoURL(url string) {
-	if url != "" {
-		repoLatestURL = url
+	url = strings.TrimSpace(url)
+	if url == "" {
+		repoLatestURL = defaultRepoLatestURL
+		return
 	}
+	const githubPrefix = "https://github.com/"
+	if strings.HasPrefix(url, githubPrefix) {
+		repository := strings.Trim(strings.TrimPrefix(url, githubPrefix), "/")
+		repository = strings.TrimSuffix(repository, ".git")
+		if strings.Count(repository, "/") == 1 {
+			repoLatestURL = "https://api.github.com/repos/" + repository + "/releases/latest"
+			return
+		}
+	}
+	repoLatestURL = url
 }
 
 const updateResponseHeaderTimeout = 15 * time.Second
@@ -68,6 +85,8 @@ type BuildInfo struct {
 	Exe                     string `json:"exe"`
 	UpdateSupported         bool   `json:"update_supported"`
 	UpdateUnsupportedReason string `json:"update_unsupported_reason,omitempty"`
+	UpdateRepository        string `json:"update_repository"`
+	UpdateSourceURL         string `json:"update_source_url"`
 }
 
 type Asset struct {
@@ -288,6 +307,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 func Current() BuildInfo {
 	exe, _ := os.Executable()
 	supported, reason := updateSupportStatus()
+	repository, sourceURL := currentUpdateSource()
 	return BuildInfo{
 		Version:                 effectiveVersion(),
 		Commit:                  effectiveCommit(),
@@ -298,7 +318,21 @@ func Current() BuildInfo {
 		Exe:                     exe,
 		UpdateSupported:         supported,
 		UpdateUnsupportedReason: reason,
+		UpdateRepository:        repository,
+		UpdateSourceURL:         sourceURL,
 	}
+}
+
+func currentUpdateSource() (string, string) {
+	const apiPrefix = "https://api.github.com/repos/"
+	const latestSuffix = "/releases/latest"
+	if strings.HasPrefix(repoLatestURL, apiPrefix) && strings.HasSuffix(repoLatestURL, latestSuffix) {
+		repository := strings.TrimSuffix(strings.TrimPrefix(repoLatestURL, apiPrefix), latestSuffix)
+		if strings.Count(repository, "/") == 1 {
+			return repository, "https://github.com/" + repository + "/releases"
+		}
+	}
+	return repoLatestURL, repoLatestURL
 }
 
 func updateSupportStatus() (bool, string) {
@@ -554,6 +588,10 @@ func fetchLatest(ctx context.Context) (rel *Release, err error) {
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		if resp.StatusCode == http.StatusNotFound {
+			repository, _ := currentUpdateSource()
+			return nil, fmt.Errorf("更新仓库 %s 尚未发布 GitHub Release", repository)
+		}
 		return nil, fmt.Errorf("github release check failed: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var out Release

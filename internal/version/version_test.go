@@ -94,6 +94,28 @@ func TestCurrentUsesInjectedVersion(t *testing.T) {
 	}
 }
 
+func TestDefaultUpdateRepositoryTargetsFork(t *testing.T) {
+	oldURL := repoLatestURL
+	defer func() { repoLatestURL = oldURL }()
+	SetRepoURL("")
+	if repoLatestURL != "https://api.github.com/repos/18181617731/GenericAgent-Admin/releases/latest" {
+		t.Fatalf("repoLatestURL = %q", repoLatestURL)
+	}
+	cur := Current()
+	if cur.UpdateRepository != "18181617731/GenericAgent-Admin" || cur.UpdateSourceURL != "https://github.com/18181617731/GenericAgent-Admin/releases" {
+		t.Fatalf("Current() update source = %#v", cur)
+	}
+}
+
+func TestSetRepoURLAcceptsGitHubRepositoryURL(t *testing.T) {
+	oldURL := repoLatestURL
+	defer func() { repoLatestURL = oldURL }()
+	SetRepoURL("https://github.com/example/custom-admin.git")
+	if repoLatestURL != "https://api.github.com/repos/example/custom-admin/releases/latest" {
+		t.Fatalf("repoLatestURL = %q", repoLatestURL)
+	}
+}
+
 func TestVerifySHA256(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "app.zip")
@@ -218,10 +240,19 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 		`git describe --tags --dirty --always`,
 		`git rev-parse --short HEAD`,
 		`Get-Date`,
+		`where npm.cmd`,
+		`%ProgramFiles%\nodejs\npm.cmd`,
+		`--prefix web ci`,
+		`[Security.Cryptography.SHA256]::Create()`,
+		`[IO.File]::ReadAllBytes('web\package-lock.json')`,
+		`web\node_modules\.ga-admin-package-lock.sha256`,
+		`Frontend dependencies are up to date; skipping npm ci.`,
+		`where go.exe`,
+		`%ProgramFiles%\Go\bin\go.exe`,
 		`-X genericagent-admin-go/internal/version.Version=%GA_VERSION%`,
 		`-X genericagent-admin-go/internal/version.Commit=%GA_COMMIT%`,
 		`-X genericagent-admin-go/internal/version.Date=%GA_DATE%`,
-		`go build -ldflags="%GA_LDFLAGS%" -o dist\ga-admin.exe .`,
+		`"%GO_EXE%" build -ldflags="%GA_LDFLAGS%" -o dist\ga-admin.exe .`,
 		`copy /Y cmd\chat_worker.py dist\cmd\chat_worker.py`,
 	}
 	for _, w := range want {
@@ -237,6 +268,26 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 	for _, b := range bad {
 		if strings.Contains(script, b) {
 			t.Fatalf("build.bat contains forbidden release/build metadata pattern %q in:\n%s", b, script)
+		}
+	}
+}
+
+func TestRunBatOneClickContract(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, "run.bat"))
+	if err != nil {
+		t.Fatalf("read run.bat: %v", err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		`call "%~dp0build.bat"`,
+		`if errorlevel 1`,
+		`if not exist "%~dp0dist\ga-admin.exe"`,
+		`start "" /D "%~dp0dist" "%~dp0dist\ga-admin.exe"`,
+		`pause`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("run.bat missing %q in:\n%s", want, script)
 		}
 	}
 }
@@ -492,6 +543,18 @@ func TestFetchLatestReportsInvalidRequestURL(t *testing.T) {
 	_, err := fetchLatest(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "create github release request") {
 		t.Fatalf("fetchLatest error = %v, want request creation context", err)
+	}
+}
+
+func TestFetchLatestReportsMissingPublishedRelease(t *testing.T) {
+	oldURL := repoLatestURL
+	defer func() { repoLatestURL = oldURL }()
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	repoLatestURL = srv.URL
+	_, err := fetchLatest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "尚未发布 GitHub Release") {
+		t.Fatalf("fetchLatest error = %v", err)
 	}
 }
 
