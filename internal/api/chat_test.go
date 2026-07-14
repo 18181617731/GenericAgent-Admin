@@ -234,6 +234,116 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 	}
 }
 
+func TestChatProjectModeCommandLifecycleAndPreservesMemory(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	h := s.Routes()
+
+	projectDir := filepath.Join(root, "temp", "projects", "alpha")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	memoryPath := filepath.Join(projectDir, "project_memory.md")
+	const originalMemory = "# existing project memory\n"
+	if err := os.WriteFile(memoryPath, []byte(originalMemory), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(prompt string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{"prompt": prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/chat/project-session", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("prompt %q status=%d body=%s", prompt, rr.Code, rr.Body.String())
+		}
+		return rr
+	}
+
+	activate := post("/project alpha")
+	if !strings.Contains(activate.Body.String(), `"project_mode":"alpha"`) {
+		t.Fatalf("activation stream missing project mode: %s", activate.Body.String())
+	}
+	cs, err := loadChatSession(s.CfgStore.Cfg, "project-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.ProjectMode != "alpha" {
+		t.Fatalf("ProjectMode=%q want alpha", cs.ProjectMode)
+	}
+	gotMemory, err := os.ReadFile(memoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotMemory) != originalMemory {
+		t.Fatalf("existing project memory was changed: %q", gotMemory)
+	}
+
+	status := post("/project status")
+	if !strings.Contains(status.Body.String(), "alpha") {
+		t.Fatalf("status response missing active project: %s", status.Body.String())
+	}
+	if got, err := loadChatSession(s.CfgStore.Cfg, "project-session"); err != nil || got.ProjectMode != "alpha" {
+		t.Fatalf("status changed persisted project mode: mode=%q err=%v", got.ProjectMode, err)
+	}
+
+	disable := post("/project off")
+	if !strings.Contains(disable.Body.String(), `"project_mode":""`) {
+		t.Fatalf("disable stream missing cleared project mode: %s", disable.Body.String())
+	}
+	cs, err = loadChatSession(s.CfgStore.Cfg, "project-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.ProjectMode != "" {
+		t.Fatalf("ProjectMode=%q want disabled", cs.ProjectMode)
+	}
+	gotMemory, err = os.ReadFile(memoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotMemory) != originalMemory {
+		t.Fatalf("disabling project mode changed memory: %q", gotMemory)
+	}
+}
+
+func TestChatProjectModeRejectsUnsafeNames(t *testing.T) {
+	invalid := []string{".", "..", "../escape", `a/b`, `a\\b`, "C:escape", "trailing.", "control\x1fchar"}
+	for _, raw := range invalid {
+		if got, ok := validProjectModeName(raw); ok {
+			t.Errorf("validProjectModeName(%q)=(%q, true), want rejection", raw, got)
+		}
+	}
+
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	body := strings.NewReader(`{"prompt":"/project ../escape"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/project-unsafe", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	cs, err := loadChatSession(s.CfgStore.Cfg, "project-unsafe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.ProjectMode != "" {
+		t.Fatalf("unsafe command persisted ProjectMode=%q", cs.ProjectMode)
+	}
+	if _, err := os.Stat(filepath.Join(root, "temp", "escape")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe command created an escaped path: %v", err)
+	}
+}
+
 func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
 	var captured map[string]interface{}
 	old := startChatWorkerFunc
@@ -263,7 +373,7 @@ func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
 		{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "search", "content": "tool data"}}},
 	}
 	seed := chatSession{
-		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2}, RawHistory: seedRawHistory,
+		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2}, ProjectMode: "alpha", RawHistory: seedRawHistory,
 		Messages: []chatMessage{
 			{ID: "u0", Role: "user", Content: "first question", CreatedAt: 1},
 			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
@@ -288,6 +398,9 @@ func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
 	}
 	if captured["llm_no"].(float64) != 2 {
 		t.Fatalf("llm_no=%#v want 2", captured["llm_no"])
+	}
+	if captured["project_mode"] != "alpha" {
+		t.Fatalf("project_mode=%#v want alpha", captured["project_mode"])
 	}
 	history, ok := captured["history"].([]interface{})
 	if !ok || len(history) != 2 {

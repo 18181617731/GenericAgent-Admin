@@ -1147,6 +1147,8 @@ def handle_request(agent, worker, req):
     tools_mode = str(req.get('tools_mode') or 'official')
     reasoning_effort = req.get('reasoning_effort') if 'reasoning_effort' in req else None
     root_for_req = Path(req.get('ga_root') or Path.cwd()).resolve()
+    project_mode = str(req.get('project_mode') or '').strip()
+    setattr(agent, '_ga_project_mode_name', project_mode or None)
     _select_llm_if_needed(agent, llm_no)
     if str(reasoning_effort or '').strip():
         _apply_reasoning_effort_setting(agent, reasoning_effort)

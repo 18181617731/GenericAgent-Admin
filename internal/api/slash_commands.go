@@ -28,6 +28,9 @@ var adminSlashCommands = []slashCommandItem{
 	{Cmd: "/effort high", Key: "/effort high", Insert: "/effort high", Desc: "设置 reasoning effort 为 high", BuiltIn: true, Source: "admin"},
 	{Cmd: "/effort xhigh", Key: "/effort xhigh", Insert: "/effort xhigh", Desc: "设置 reasoning effort 为 xhigh（Claude 对应 max）", BuiltIn: true, Source: "admin"},
 	{Cmd: "/effort off", Key: "/effort off", Insert: "/effort off", Desc: "清除 reasoning effort", BuiltIn: true, Source: "admin"},
+	{Cmd: "/project", Key: "/project", Insert: "/project", Desc: "查看当前会话 Project Mode", BuiltIn: true, Source: "admin"},
+	{Cmd: "/project <项目名>", Key: "/project", Insert: "/project ", Desc: "进入或切换当前会话的 Project Mode", BuiltIn: true, Source: "admin"},
+	{Cmd: "/project off", Key: "/project off", Insert: "/project off", Desc: "关闭当前会话 Project Mode", BuiltIn: true, Source: "admin"},
 	{Cmd: "/workspace <路径>", Key: "/workspace", Insert: "/workspace ", Desc: "为当前会话绑定项目目录", BuiltIn: true, Source: "admin"},
 	{Cmd: "/workspace off", Key: "/workspace off", Insert: "/workspace off", Desc: "关闭当前会话 workspace", BuiltIn: true, Source: "admin"},
 }

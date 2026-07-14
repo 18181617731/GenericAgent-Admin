@@ -1017,8 +1017,9 @@ pre, code { background:var(--surface-muted); color: var(--text); }
 .oa-chat:not(.is-collapsed) .oa-collapsed-actions{display:none}
 .oa-chat.is-collapsed .oa-title{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:min(520px,calc(100% - 220px));text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .oa-title b{font-size:18px;font-weight:600;letter-spacing:-.02em;color: var(--text)}
-.oa-title > span:not(.oa-workspace-badge){display:none}
+.oa-title > span:not(.oa-workspace-badge):not(.oa-project-badge){display:none}
 .oa-title .oa-workspace-badge{display:inline-flex;align-items:center;max-width:min(520px,calc(100vw - 360px));margin-top:4px;padding:2px 8px;border-radius:999px;background:#eef7ff;color:#0969da;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.oa-title .oa-project-badge{display:inline-flex;align-items:center;max-width:min(420px,calc(100vw - 360px));margin-top:4px;padding:2px 8px;border-radius:999px;background:#f1ebff;color:#6f42c1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .oa-model { font-size:18px; font-weight:600; letter-spacing:0; border-radius:10px; padding:6px 10px; }
 .oa-model:hover { background:#f3f3f3; }
 .oa-thread { background:var(--surface-strong); padding:0 0 16px; overflow-y:auto; min-height:0; scroll-behavior:auto; }
