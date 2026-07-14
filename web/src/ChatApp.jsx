@@ -6,7 +6,7 @@ import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
-import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, parseAssistantContent, previewLongText, textRenderStats } from './lib/chatTextSafety'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
@@ -270,22 +270,6 @@ function InlineRichText({ text = '' }) {
   if (last < src.length) nodes.push(<InlineMarkdown key={`t${n++}`} text={src.slice(last)} />)
   return <>{nodes}</>
 }
-
-const splitMarkdownParts = (text = '') => {
-  const parts = []
-  const re = /(`{3,})([^\n`]*)\n?([\s\S]*?)\1/g
-  let last = 0, m
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push({ type:'text', text:text.slice(last, m.index) })
-    parts.push({ type:'code', fence:m[1], lang:(m[2] || '').trim(), text:m[3] || '' })
-    last = re.lastIndex
-  }
-  if (last < text.length) parts.push({ type:'text', text:text.slice(last) })
-  if (!parts.length) parts.push({ type:'text', text })
-  return parts
-}
-
-const isToolResultText = (text = '') => /^\s*\[(Action|Status|Stdout|Stderr|Result|Output)\]/mi.test(String(text || ''))
 
 const normalizeToolParts = (parts = []) => {
   const out = []
