@@ -81,3 +81,23 @@ test('assistant parser ignores transcript markers inside fenced tool output', ()
   assert.equal(parsed.runs[1].title, 'real 25')
   assert.equal(parsed.body, 'final answer')
 })
+
+test('short inner fence does not close a longer tool-output fence', () => {
+  const text = [
+    'LLM Running (Turn 24)',
+    '<summary>real 24</summary>',
+    '`````text',
+    'code_run stdout starts a markdown sample:',
+    '```',
+    'LLM Running (Turn 999)',
+    '<summary>fake marker in tool output</summary>',
+    '`````',
+    'LLM Running (Turn 25)',
+    '<summary>real 25</summary>',
+    'real turn body',
+  ].join('\n')
+  const parsed = parseAssistantContent(text)
+  assert.deepEqual(parsed.runs.map(run => run.turn), [24, 25])
+  assert.match(parsed.runs[0].body, /Turn 999/)
+  assert.equal(parsed.runs[1].title, 'real 25')
+})

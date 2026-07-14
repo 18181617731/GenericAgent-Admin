@@ -19,6 +19,18 @@ import (
 	"genericagent-admin-go/internal/config"
 )
 
+func TestNormalizeChatSettingsPreservesOfficialReasoningEffortLevels(t *testing.T) {
+	levels := []string{"off", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	for _, level := range levels {
+		t.Run(level, func(t *testing.T) {
+			got := normalizeChatSettings(chatSettings{ReasoningEffort: level}).ReasoningEffort
+			if got != level {
+				t.Fatalf("normalizeChatSettings(%q)=%q want=%q", level, got, level)
+			}
+		})
+	}
+}
+
 func TestParseLLMJSONArrayFromMixedOutputIgnoresGAStartupLogs(t *testing.T) {
 	out := []byte("[ContextGuard] installed\r\n[MemoryLauncher] native\r\n[Info] Load mykeys from E:\\AITools\\GenericAgent\\mykey.py\r\n" +
 		`[{"index":0,"label":"NativeOAISession/gpt-5.5/cpa","name":"gpt-5.5/cpa","model":"cpa","active":true},{"index":1,"label":"NativeOAISession/deepseek-v4-pro/newapi","name":"deepseek-v4-pro/newapi","model":"newapi","active":false}]` +

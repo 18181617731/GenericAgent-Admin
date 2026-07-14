@@ -1,4 +1,4 @@
-import json, os, sys, time, traceback, threading, queue
+import json, os, sys, time, traceback, threading, queue, subprocess, re, socket
 from pathlib import Path
 
 
@@ -99,6 +99,7 @@ _CURRENT_USAGE = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
 # "[Output]" line marks the end of one turn, so we snapshot and reset there.
 _TURN_USAGES = []
+_ultraplan_ctx = [None]  # [objective] when in ultraplan mode, else [None]
 
 
 class _UsageCapturingStderr:
@@ -363,7 +364,7 @@ def _apply_tools_mode(agent, mode):
         return {'ok': False, 'message': '固定模式 Tools 注入失败：%s' % e, 'added': 0}
 
 
-EFFORT_LEVELS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
+EFFORT_LEVELS = ('off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 
 
 def _snapshot_reasoning_effort(agent):
@@ -373,9 +374,7 @@ def _snapshot_reasoning_effort(agent):
     except Exception:
         value = None
     value = str(value or '').strip().lower()
-    if value == 'max':
-        return 'xhigh'
-    if value in EFFORT_LEVELS and value != 'none':
+    if value in EFFORT_LEVELS:
         return value
     return 'off'
 
@@ -429,12 +428,10 @@ def _maybe_handle_effort_command(agent, prompt):
 
 def _apply_reasoning_effort_setting(agent, value):
     raw = str(value or '').strip().lower()
-    if raw in ('', 'off', 'none', 'clear', 'unset'):
+    if raw in ('', 'off', 'clear', 'unset'):
         effort = None
     elif raw in EFFORT_LEVELS:
         effort = raw
-    elif raw == 'max':
-        effort = 'xhigh'
     else:
         return
     try:
@@ -593,6 +590,552 @@ def _apply_workspace(agent, root, workspace):
         pass
     return str(ws)
 
+def _ultraplan_slug(text):
+    slug = re.sub(r'[^a-zA-Z0-9]+', '_', str(text or '')).strip('_').lower()
+    return (slug[:60] or 'objective')
+
+
+def _ultraplan_task_match_key(text):
+    """Normalize task/file text for Admin-side UltraPlan output matching."""
+    return re.sub(r'[^a-z0-9]+', '_', str(text or '').lower()).strip('_')
+
+
+def _build_ultraplan_output_index(run_dir_str):
+    """Map dashboard task descriptions to live .out.txt files without touching ga_ultraplan.py."""
+    index = {}
+    try:
+        run_dir = Path(run_dir_str)
+        if not run_dir.exists():
+            return index
+        for out_file in sorted(run_dir.glob('*.out.txt')):
+            name = out_file.name
+            task_id = name[:-8] if name.endswith('.out.txt') else out_file.stem
+            clean = re.sub(r'^\d+_', '', task_id)
+            aliases = {task_id, clean}
+            parts = [p for p in clean.split('_') if p]
+            # Stems often include a source prefix (admin_chat_*).  Add suffix aliases so
+            # dashboard labels like "architecture lens" match 001_admin_chat_architecture_lens.
+            for i in range(len(parts)):
+                suffix = '_'.join(parts[i:])
+                if suffix:
+                    aliases.add(suffix)
+            meta = {
+                'id': task_id,
+                'task_id': task_id,
+                'output_file': str(out_file),
+                'file': str(out_file),
+                'path': str(out_file),
+            }
+            for alias in aliases:
+                key = _ultraplan_task_match_key(alias)
+                if key:
+                    index.setdefault(key, meta)
+    except Exception:
+        pass
+    return index
+
+
+def _enrich_ultraplan_task_with_output(task, output_index):
+    """Attach id/output_file to parsed dashboard tasks when a matching .out.txt exists."""
+    if not isinstance(task, dict) or not output_index:
+        return task
+    candidates = []
+    desc = task.get('desc') or task.get('name') or task.get('title') or ''
+    key = _ultraplan_task_match_key(desc)
+    if key:
+        candidates.append(key)
+        words = [p for p in key.split('_') if p]
+        for i in range(len(words)):
+            suffix = '_'.join(words[i:])
+            if suffix:
+                candidates.append(suffix)
+    # Prefer exact/desc-suffix match, then file aliases that end with the desc key.
+    meta = None
+    for candidate in candidates:
+        meta = output_index.get(candidate)
+        if meta:
+            break
+    if meta is None and key:
+        suffix = '_' + key
+        for alias, alias_meta in output_index.items():
+            if alias == key or alias.endswith(suffix):
+                meta = alias_meta
+                break
+    if not meta:
+        return task
+    enriched = dict(task)
+    # A dashboard task may already carry its input prompt (`<stem>.txt`). Once
+    # the matching generated output exists, every path alias must point at that
+    # `.out.txt`; setdefault would preserve the input path in output_file.
+    for k, v in meta.items():
+        enriched[k] = v
+    return enriched
+
+
+def _enrich_ultraplan_phase_outputs(phase, output_index):
+    if not isinstance(phase, dict):
+        return phase
+    phase['tasks'] = [_enrich_ultraplan_task_with_output(t, output_index)
+                      for t in phase.get('tasks', [])]
+    phase['children'] = [_enrich_ultraplan_phase_outputs(ch, output_index)
+                         for ch in phase.get('children', [])]
+    return phase
+
+
+def _emit_ultraplan_line(emit, line, state):
+    """Parse a single UltraPlan marker line and update state dict, then emit ultraplan_event."""
+    import re
+    s = line.strip()
+    # [ultraplan] objective: xxx
+    m = re.match(r'^\[ultraplan\]\s*objective[:\s]+(.+)$', s, re.IGNORECASE)
+    if m:
+        state.setdefault('objective', m.group(1).strip())
+        emit({'type': 'ultraplan_event', 'state': dict(state)})
+        return
+    # [phase] name - desc
+    m = re.match(r'^\[phase\]\s*(.+)$', s, re.IGNORECASE)
+    if m:
+        rest = m.group(1).strip()
+        parts = rest.split(' - ', 1)
+        name = parts[0].strip()
+        desc = parts[1].strip() if len(parts) > 1 else ''
+        phases = state.setdefault('phases', [])
+        if not any(p['name'] == name for p in phases):
+            phases.append({'name': name, 'desc': desc, 'status': 'running', 'tasks': []})
+        else:
+            for p in phases:
+                if p['name'] == name:
+                    p['status'] = 'running'
+        emit({'type': 'ultraplan_event', 'state': dict(state)})
+        return
+    # [done] name (Xs)
+    m = re.match(r'^\[done\]\s*(.+?)(?:\s*\([^)]*\))?\s*$', s, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip()
+        for p in state.get('phases', []):
+            if p['name'] == name:
+                p['status'] = 'done'
+            for t in p.get('tasks', []):
+                if t['desc'] == name:
+                    t['status'] = 'done'
+        emit({'type': 'ultraplan_event', 'state': dict(state)})
+        return
+    # [fail] name (Xs)
+    m = re.match(r'^\[fail\]\s*(.+?)(?:\s*\([^)]*\))?\s*$', s, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip()
+        for p in state.get('phases', []):
+            if p['name'] == name:
+                p['status'] = 'fail'
+            for t in p.get('tasks', []):
+                if t['desc'] == name:
+                    t['status'] = 'fail'
+        emit({'type': 'ultraplan_event', 'state': dict(state)})
+        return
+    # [subagent] desc -> path
+    m = re.match(r'^\[subagent\]\s*(.+)$', s, re.IGNORECASE)
+    if m:
+        rest = m.group(1).strip()
+        parts = rest.split('->')
+        desc = parts[0].strip()
+        task_entry = {'desc': desc, 'status': 'running'}
+        if len(parts) > 1:
+            path_part = parts[1].strip()
+            # Extract file stem (e.g. "001_failure_modes_lens" from "001_failure_modes_lens.out.txt")
+            basename = path_part.replace('\\', '/').rsplit('/', 1)[-1]
+            stem = basename
+            if stem.endswith('.out.txt'):
+                stem = stem[:-8]
+            elif stem.endswith('.txt'):
+                stem = stem[:-4]
+            elif '.' in stem:
+                stem = stem.rsplit('.', 1)[0]
+            if stem:
+                task_entry['id'] = stem
+            if path_part:
+                # Derive .out.txt (actual output) from .txt (input/prompt file)
+                if path_part.endswith('.out.txt'):
+                    out_path = path_part
+                elif path_part.endswith('.txt'):
+                    out_path = path_part[:-4] + '.out.txt'
+                else:
+                    out_path = path_part + '.out.txt'
+                task_entry['output_file'] = out_path
+        phases = state.get('phases', [])
+        if phases:
+            phases[-1].setdefault('tasks', []).append(task_entry)
+        emit({'type': 'ultraplan_event', 'state': dict(state)})
+        return
+
+
+def _maybe_handle_ultraplan_command(root, prompt):
+    s = (prompt or '').strip()
+    if s != '/ultraplan' and not s.startswith('/ultraplan ') and not s.startswith('/ultraplan\t'):
+        _ultraplan_ctx[0] = None
+        return None, prompt, None
+    objective = s[len('/ultraplan'):].strip()
+    if not objective:
+        _ultraplan_ctx[0] = None
+        return None, None, (
+            'UltraPlan mode is explicit opt-in only.\n\n'
+            'Usage: `/ultraplan <objective>`\n\n'
+            'Normal chat is unchanged; only this slash command invokes UltraPlan.'
+        )
+    _ultraplan_ctx[0] = objective
+    return objective, None, None
+
+
+def _is_ultraplan_marker_line(line):
+    s = str(line or '').strip().lower()
+    return s.startswith(('[phase]', '[done]', '[fail]', '[subagent]', '[ultraplan]', '[next]'))
+
+
+def _emit_ultraplan_text(emit, text, state, chunks, buf):
+    if not text:
+        return
+    buf[0] += text
+    while '\n' in buf[0]:
+        line, buf[0] = buf[0].split('\n', 1)
+        stripped = line.strip()
+        if stripped and _is_ultraplan_marker_line(stripped):
+            _emit_ultraplan_line(emit, stripped, state)
+        else:
+            visible = line + '\n'
+            chunks.append(visible)
+            emit({'type': 'delta', 'delta': visible})
+
+
+def _drain_ultraplan_buf(emit, state, chunks, buf):
+    if not buf[0]:
+        return
+    stripped = buf[0].strip()
+    if stripped and _is_ultraplan_marker_line(stripped):
+        _emit_ultraplan_line(emit, stripped, state)
+    else:
+        chunks.append(buf[0])
+        emit({'type': 'delta', 'delta': buf[0]})
+    buf[0] = ''
+
+
+def _build_ultraplan_script(root, run_dir, objective, llm_no=0):
+    root = Path(root).resolve()
+    run_dir = Path(run_dir).resolve()
+    lines = [
+        '# Auto-generated by GA Admin Chat /ultraplan.',
+        'import os, sys',
+        'ROOT = ' + json.dumps(str(root), ensure_ascii=False),
+        'RUN_DIR = ' + json.dumps(str(run_dir), ensure_ascii=False),
+        'OBJECTIVE = ' + json.dumps(str(objective or ''), ensure_ascii=False),
+        'LLM_NO = ' + json.dumps(int(llm_no or 0)),
+        'BOUNDARY = "Do not start UltraPlan. Do not delegate. If decomposition is needed, report blocker only."',
+        'ARTIFACT = f"Save any artifacts under {RUN_DIR}; return paths."',
+        'os.makedirs(RUN_DIR, exist_ok=True)',
+        'if ROOT not in sys.path:',
+        '    sys.path.insert(0, ROOT)',
+        'from assets.ga_ultraplan import plan, phase, parallel',
+        'plan(RUN_DIR)',
+        "print('[ultraplan] objective: ' + OBJECTIVE, flush=True)",
+        '',
+        "# Phase 1: Explore - fan out by independent lenses",
+        "with phase('explore', 'analyze objective from multiple independent angles'):",
+        "    explore_lenses = parallel([",
+        "        {'desc': 'architecture lens', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nAnalyze the architecture/technical stack/core components needed. What systems/files/APIs are involved? {ARTIFACT} Return findings. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "        {'desc': 'failure modes lens', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nList potential failure scenarios, edge cases, and risks. What could go wrong? {ARTIFACT} Return findings. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "        {'desc': 'user intent lens', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nWhat is the user truly trying to achieve? What is the background/context/real need? {ARTIFACT} Return findings. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "        {'desc': 'data evidence lens', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nWhat data/files/external information is needed? Where to find it? {ARTIFACT} Return findings. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "        {'desc': 'constraints lens', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nIdentify time/resource/security constraints and boundaries. What are the limits? {ARTIFACT} Return findings. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "    ], max_workers=5)",
+        "    print('[explore] completed ' + str(len(explore_lenses)) + ' lenses', flush=True)",
+        '',
+        "# Phase 2: Execute - decompose into parallel subtasks",
+        "with phase('execute', 'break down and run independent subtasks'):",
+        "    # Reducer: synthesize exploration results and design subtasks",
+        "    synthesis_prompt = f'Objective: {OBJECTIVE}\\\\n\\\\nExploration results:\\\\n' + '\\\\n---\\\\n'.join([f'Lens {i+1}: {r}' for i, r in enumerate(explore_lenses)]) + f'\\\\n\\\\nBased on these lenses, break the objective into 3-5 independent, concrete subtasks that can run in parallel. For each subtask, provide: (1) ID, (2) description, (3) what it will do, (4) expected output. Return as structured list. Be concise. {BOUNDARY}'",
+        "    subtasks_design = parallel([{'desc': 'synthesize subtasks', 'prompt': synthesis_prompt, 'llm_no': LLM_NO, 'timeout': 1800}], max_workers=1)[0]",
+        "    print('[execute] subtasks designed: ' + str(subtasks_design)[:200], flush=True)",
+        "    ",
+        "    # Execute subtasks in parallel (static 4 workers for now; ideally parse subtasks_design)",
+        "    exec_results = parallel([",
+        "        {'desc': 'subtask 1', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nSubtasks plan:\\\\n{subtasks_design}\\\\n\\\\nExecute ONLY subtask 1. {ARTIFACT} Return results. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 3600},",
+        "        {'desc': 'subtask 2', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nSubtasks plan:\\\\n{subtasks_design}\\\\n\\\\nExecute ONLY subtask 2. {ARTIFACT} Return results. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 3600},",
+        "        {'desc': 'subtask 3', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nSubtasks plan:\\\\n{subtasks_design}\\\\n\\\\nExecute ONLY subtask 3. {ARTIFACT} Return results. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 3600},",
+        "        {'desc': 'subtask 4', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nSubtasks plan:\\\\n{subtasks_design}\\\\n\\\\nExecute ONLY subtask 4 if exists, otherwise return empty. {ARTIFACT} Return results. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 3600},",
+        "    ], max_workers=4)",
+        "    print('[execute] completed ' + str(len(exec_results)) + ' subtasks', flush=True)",
+        '',
+        "# Phase 3: Verify & Summarize",
+        "with phase('verify', 'validate results and produce final report'):",
+        "    verify_results = parallel([",
+        "        {'desc': 'completeness check', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nExecution results:\\\\n' + '\\\\n---\\\\n'.join([f'Result {i+1}: {r}' for i, r in enumerate(exec_results)]) + f'\\\\n\\\\nCheck: are all parts of the objective covered? Any gaps/errors? {ARTIFACT} Return findings. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "        {'desc': 'final integration', 'prompt': f'Objective: {OBJECTIVE}\\\\n\\\\nExecution results:\\\\n' + '\\\\n---\\\\n'.join([f'Result {i+1}: {r}' for i, r in enumerate(exec_results)]) + f'\\\\n\\\\nIntegrate all results into a coherent final report. {ARTIFACT} Return report. Be concise. {BOUNDARY}', 'llm_no': LLM_NO, 'timeout': 1800},",
+        "    ], max_workers=2)",
+        "    print('[verify] validation complete', flush=True)",
+        "    print('[summary] run_dir: ' + RUN_DIR, flush=True)",
+        "    print('[summary] final_report: ' + str(verify_results[1])[:500], flush=True)",
+        '',
+    ]
+    return '\n'.join(lines)
+
+
+def _parse_ultraplan_dashboard(html_text, run_dir_str):
+    """Parse 47831 dashboard HTML <pre> text, extract state for matching run_dir."""
+    import html as _html, re as _re
+    m = _re.search(r'<pre>(.*?)</pre>', html_text, _re.DOTALL)
+    if not m:
+        return None
+    text = _html.unescape(m.group(1))
+
+    # Find our session block by matching rundir:
+    in_our = False
+    session_lines = []
+    for raw in text.split('\n'):
+        line = raw.rstrip()
+        if line.startswith('rundir:'):
+            rd = line[len('rundir:'):].strip()
+            in_our = (rd.replace('\\', '/') == run_dir_str.replace('\\', '/'))
+            session_lines = []
+            continue
+        if line.startswith('== ') and line.endswith(' =='):
+            if in_our:
+                break  # next session started
+            in_our = False
+            continue
+        if in_our:
+            session_lines.append(line)
+
+    if not session_lines:
+        return None
+
+    result = {'phases': [], 'current': '', 'tasks': [], 'events': [], 'done': False}
+    section = None
+    phase_stack = []  # list of (indent_level, phase_dict)
+
+    for line in session_lines:
+        if line.startswith('current:'):
+            result['current'] = line[len('current:'):].strip()
+            continue
+        ls = line.strip()
+        if ls == 'phases:':
+            section = 'phases'
+            phase_stack = []
+            continue
+        if ls == 'recent tasks:':
+            section = 'tasks'
+            continue
+        if ls == 'events:':
+            section = 'events'
+            continue
+        if not ls:
+            continue
+
+        if section == 'phases':
+            # Phase line: "{indent}(>>|  ) {status:<7} {name}[ - {desc}][ | parallel: N tasks]"
+            pm = _re.match(r'^(\s*)(>>|  ) (\w+)\s+(.+)$', line)
+            if pm:
+                indent = len(pm.group(1))
+                active = pm.group(2).strip() == '>>'
+                status_raw = pm.group(3)
+                rest = _re.sub(r'\s*\|\s*parallel:.*$', '', pm.group(4)).strip()
+                parts = rest.split(' - ', 1)
+                name = parts[0].strip()
+                desc = parts[1].strip() if len(parts) > 1 else ''
+                status = 'running' if status_raw == 'run' else status_raw
+                phase = {'name': name, 'desc': desc, 'status': status,
+                         'active': active, 'tasks': [], 'children': []}
+                while phase_stack and phase_stack[-1][0] >= indent:
+                    phase_stack.pop()
+                if phase_stack:
+                    phase_stack[-1][1]['children'].append(phase)
+                else:
+                    result['phases'].append(phase)
+                phase_stack.append((indent, phase))
+                continue
+            # Task line: "{indent}   - {status:<5} {desc}"
+            tm = _re.match(r'^(\s+)- ?(\w+)\s+(.+)$', line)
+            if tm and phase_stack:
+                status_raw = tm.group(2)
+                status = 'running' if status_raw == 'run' else status_raw
+                phase_stack[-1][1]['tasks'].append(
+                    {'desc': tm.group(3).strip(), 'status': status})
+
+        elif section == 'tasks':
+            tm = _re.match(r'^\s+(\w+)\s+(.+)$', line)
+            if tm:
+                result['tasks'].append({'status': tm.group(1), 'desc': tm.group(2).strip()})
+
+        elif section == 'events':
+            em = _re.match(r'^\s+([\d.]+)s\s+(.+)$', line)
+            if em:
+                result['events'].append({'time': float(em.group(1)), 'msg': em.group(2).strip()})
+
+    output_index = _build_ultraplan_output_index(run_dir_str)
+    if output_index:
+        result['phases'] = [_enrich_ultraplan_phase_outputs(p, output_index)
+                            for p in result.get('phases', [])]
+        result['tasks'] = [_enrich_ultraplan_task_with_output(t, output_index)
+                           for t in result.get('tasks', [])]
+
+    # All phases done when none are in 'run'/'running' state
+    if result['phases'] and all(
+            p.get('status') not in ('run', 'running') for p in result['phases']):
+        result['done'] = True
+
+    return result
+
+
+def _allocate_ultraplan_port():
+    """Return a currently-free localhost port for one UltraPlan dashboard."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return int(s.getsockname()[1])
+
+
+def _poll_ultraplan_daemon(run_dir_str, state, emit, stop_event, dashboard_port):
+    """Background thread: poll a per-run UltraPlan dashboard, parse it, and emit ultraplan_event.
+    Also tail .out.txt files and emit ultraplan_output for task details."""
+    import urllib.request as _urlreq, hashlib as _md5, json as _j
+    from pathlib import Path as _Path
+    _up_port = int(dashboard_port or 47831)
+    url = f'http://127.0.0.1:{_up_port}/'
+    last_hash = None
+    # Track tail positions: {filename: (size, mtime)}
+    tail_state = {}
+    run_dir = _Path(run_dir_str)
+
+    # Wait up to 15s for daemon to come up
+    for _ in range(15):
+        if stop_event.is_set():
+            return
+        try:
+            with _urlreq.urlopen(url, timeout=2) as r:
+                r.read()
+            break
+        except Exception:
+            stop_event.wait(1.0)
+
+    while not stop_event.is_set():
+        # Poll dashboard
+        try:
+            with _urlreq.urlopen(url, timeout=3) as r:
+                html_bytes = r.read()
+            html_text = html_bytes.decode('utf-8', errors='replace')
+            parsed = _parse_ultraplan_dashboard(html_text, run_dir_str)
+            if parsed:
+                new_state = dict(state)
+                new_state['phases'] = parsed['phases']
+                new_state['current'] = parsed.get('current', '')
+                new_state['recent_tasks'] = parsed.get('tasks', [])
+                new_state['events'] = parsed.get('events', [])
+                # Keep the shared state object fresh so the final done/error message
+                # does not overwrite rich dashboard data with the initial header-only state.
+                state.update(new_state)
+                h = _md5.md5(_j.dumps(parsed, sort_keys=True, default=str).encode()).hexdigest()
+                if h != last_hash:
+                    last_hash = h
+                    emit({'type': 'ultraplan_event', 'state': dict(state)})
+        except Exception:
+            pass
+
+        # Tail .out.txt files
+        if run_dir.exists():
+            try:
+                for out_file in run_dir.glob('*.out.txt'):
+                    stat = out_file.stat()
+                    last_size, last_mtime = tail_state.get(str(out_file), (0, 0))
+                    # Read new content if file grew or was modified
+                    if stat.st_size > last_size or stat.st_mtime > last_mtime:
+                        try:
+                            with open(out_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                f.seek(last_size)
+                                new_lines = [line.rstrip('\r\n') for line in f.readlines()]
+                            if new_lines:
+                                # Extract task_id from filename: "001_task_name.out.txt" -> "001_task_name"
+                                name = out_file.name
+                                task_id = name[:-8] if name.endswith('.out.txt') else out_file.stem
+                                outputs = state.setdefault('task_outputs', {})
+                                outputs.setdefault(task_id, []).extend(new_lines)
+                                emit({'type': 'ultraplan_output', 'task_id': task_id, 'lines': new_lines})
+                            tail_state[str(out_file)] = (stat.st_size, stat.st_mtime)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        stop_event.wait(1.0)
+
+
+def _run_ultraplan_command(root, objective, llm_no, agent, history_info, working, emit):
+    root = Path(root).resolve()
+    temp_root = Path(os.environ.get('GA_TEMP') or (root / 'temp')).resolve()
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    run_dir = temp_root / ('ultraplan_%s_%s' % (_ultraplan_slug(objective), stamp))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    script_path = run_dir / 'admin_chat_ultraplan.py'
+    script_path.write_text(_build_ultraplan_script(root, run_dir, objective, llm_no), encoding='utf-8')
+    dashboard_port = _allocate_ultraplan_port()
+    dashboard_url = 'http://127.0.0.1:%s/' % dashboard_port
+    state = {'objective': objective, 'run_dir': str(run_dir), 'script': str(script_path), 'phases': [], 'dashboard_port': dashboard_port, 'dashboard_url': dashboard_url}
+    emit({'type': 'ultraplan_event', 'state': dict(state)})
+    chunks = []
+    buf = ['']
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    # Use a per-run UltraPlan dashboard daemon so a previous long exec on the
+    # default 47831 daemon cannot block this run's plan() registration.
+    env['GA_ULTRAPLAN_PORT'] = str(dashboard_port)
+    env['GA_ULTRAPLAN_BROWSER'] = '0'
+    env['GA_ULTRAPLAN_RUNDIR'] = str(run_dir)
+    cmd = [sys.executable, str(script_path)]
+
+    # Start dashboard polling thread before launching process
+    stop_poll = threading.Event()
+    poll_thread = threading.Thread(
+        target=_poll_ultraplan_daemon,
+        args=(str(run_dir), state, emit, stop_poll, dashboard_port),
+        daemon=True,
+    )
+    poll_thread.start()
+
+    proc = subprocess.Popen(
+        cmd, cwd=str(root),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True, encoding='utf-8', errors='replace',
+        bufsize=1, env=env,
+    )
+    rc = 0
+    try:
+        while True:
+            line = proc.stdout.readline() if proc.stdout else ''
+            if line:
+                _emit_ultraplan_text(emit, line, state, chunks, buf)
+                continue
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        rest = proc.stdout.read() if proc.stdout else ''
+        if rest:
+            _emit_ultraplan_text(emit, rest, state, chunks, buf)
+        rc = proc.wait()
+        _drain_ultraplan_buf(emit, state, chunks, buf)
+    finally:
+        stop_poll.set()
+        poll_thread.join(timeout=3)
+        _ultraplan_ctx[0] = None
+
+    state['complete'] = True
+    if rc != 0:
+        state['error'] = True
+        text = ''.join(chunks) or ('UltraPlan exited with code %s' % rc)
+        msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'error': True, 'ultraplan_state': dict(state)}
+        emit({'type': 'error', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': history_info or [], 'working': working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+        return
+    emit({'type': 'ultraplan_event', 'state': dict(state)})
+    msg = {'id': new_id(), 'role': 'assistant', 'content': ''.join(chunks), 'created_at': int(time.time()), 'ultraplan_state': dict(state)}
+    snap = _snapshot_ga_state(agent)
+    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': snap.get('history_info') or history_info or [], 'working': snap.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+
+
 def handle_request(agent, worker, req):
     _reset_usage()  # Clear usage accumulator for this turn
     prompt = req.get('prompt') or ''
@@ -629,11 +1172,21 @@ def handle_request(agent, worker, req):
     if immediate_done is not None:
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
+    ultraplan_objective, prompt, immediate_done = _maybe_handle_ultraplan_command(root_for_req, prompt)
+    if immediate_done is not None:
+        _emit_immediate_done(agent, immediate_done, history_info, working)
+        return
+    if ultraplan_objective:
+        _run_ultraplan_command(root_for_req, ultraplan_objective, llm_no, agent, history_info, working, emit)
+        return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
     mode_status = _apply_tools_mode(agent, tools_mode)
     if mode_status and not mode_status.get('ok'):
         emit({'type': 'notice', 'message': mode_status})
     chunks = []
+    _up_state = {'objective': _ultraplan_ctx[0]} if _ultraplan_ctx[0] else {}
+    _up_buf = ['']
+    _UP_MARKERS = ('[phase]', '[done]', '[fail]', '[subagent]', '[ultraplan]', '[next]')
     try:
         display_queue = agent.put_task(prompt, source='admin_chat')
         while True:
@@ -647,10 +1200,30 @@ def handle_request(agent, worker, req):
                 delta = str(item.get('next') or '')
                 if delta:
                     chunks.append(delta)
-                    emit({'type': 'delta', 'delta': delta})
+                    if _ultraplan_ctx[0]:
+                        _up_buf[0] += delta
+                        while '\n' in _up_buf[0]:
+                            line, _up_buf[0] = _up_buf[0].split('\n', 1)
+                            stripped = line.strip()
+                            if stripped and stripped.lower().startswith(_UP_MARKERS):
+                                _emit_ultraplan_line(emit, stripped, _up_state)
+                            else:
+                                emit({'type': 'delta', 'delta': line + '\n'})
+                    else:
+                        emit({'type': 'delta', 'delta': delta})
             if 'done' in item:
+                if _ultraplan_ctx[0] and _up_buf[0].strip():
+                    stripped = _up_buf[0].strip()
+                    if stripped.lower().startswith(_UP_MARKERS):
+                        _emit_ultraplan_line(emit, stripped, _up_state)
+                    else:
+                        emit({'type': 'delta', 'delta': _up_buf[0]})
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time())}
+                if _up_state.get('phases') or _up_state.get('objective'):
+                    _up_state['complete'] = True
+                    msg['ultraplan_state'] = dict(_up_state)
+                    _ultraplan_ctx[0] = None
                 state = _snapshot_ga_state(agent)
                 usage = _snapshot_usage()
                 usages = _snapshot_turn_usages()
