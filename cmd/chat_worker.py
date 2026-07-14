@@ -250,6 +250,50 @@ def _json_clone(value, fallback):
         return fallback
 
 
+def _coerce_llm_no(value):
+    """Return a safe non-negative model index for untrusted Admin input."""
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _resolve_request_root(value, fallback):
+    """Resolve a request root without letting malformed JSON break the worker."""
+    candidate = value or fallback
+    if not isinstance(candidate, (str, os.PathLike)):
+        candidate = fallback
+    try:
+        return Path(candidate).resolve()
+    except (OSError, TypeError, ValueError):
+        return Path(fallback).resolve()
+
+
+def _normalize_request(req):
+    """Normalize the JSON boundary while preserving the existing chat contract."""
+    if not isinstance(req, dict):
+        raise ValueError('chat worker request must be a JSON object')
+    normalized = dict(req)
+    normalized['prompt'] = normalized.get('prompt') if isinstance(normalized.get('prompt'), str) else ''
+    for name in ('history', 'raw_history', 'history_info'):
+        value = normalized.get(name)
+        normalized[name] = value if isinstance(value, list) else []
+    working = normalized.get('working')
+    normalized['working'] = working if isinstance(working, dict) else {}
+    normalized['llm_no'] = _coerce_llm_no(normalized.get('llm_no'))
+    if normalized.get('ga_root') is not None and not isinstance(normalized.get('ga_root'), (str, os.PathLike)):
+        normalized['ga_root'] = None
+    if not isinstance(normalized.get('project_mode'), str):
+        normalized['project_mode'] = ''
+    if normalized.get('tools_mode') not in ('official', 'fixed'):
+        normalized['tools_mode'] = 'official'
+    if normalized.get('reasoning_effort') is not None and not isinstance(normalized.get('reasoning_effort'), str):
+        normalized['reasoning_effort'] = None
+    return normalized
+
+
 def _snapshot_ga_state(agent):
     """Persist the GA official lightweight context state in addition to raw LLM history."""
     state = {'history_info': [], 'working': {}}
@@ -267,7 +311,6 @@ def _snapshot_ga_state(agent):
     except Exception:
         pass
     return state
-
 
 def _restore_ga_state(agent, history_info=None, working=None):
     """Restore GA's own WORKING MEMORY inputs so Admin matches official long-running GA."""
@@ -1137,16 +1180,17 @@ def _run_ultraplan_command(root, objective, llm_no, agent, history_info, working
 
 
 def handle_request(agent, worker, req):
+    req = _normalize_request(req)
     _reset_usage()  # Clear usage accumulator for this turn
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     raw_history = req.get('raw_history') or []
     history_info = req.get('history_info') or []
     working = req.get('working') or {}
-    llm_no = int(req.get('llm_no') or 0)
-    tools_mode = str(req.get('tools_mode') or 'official')
+    llm_no = req.get('llm_no', 0)
+    tools_mode = req.get('tools_mode') or 'official'
     reasoning_effort = req.get('reasoning_effort') if 'reasoning_effort' in req else None
-    root_for_req = Path(req.get('ga_root') or Path.cwd()).resolve()
+    root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
     project_mode = str(req.get('project_mode') or '').strip()
     setattr(agent, '_ga_project_mode_name', project_mode or None)
     _select_llm_if_needed(agent, llm_no)
@@ -1162,7 +1206,7 @@ def handle_request(agent, worker, req):
     if immediate_done is not None:
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
-    prompt, immediate_done = _maybe_handle_review_command(req.get('ga_root') or Path.cwd(), prompt)
+    prompt, immediate_done = _maybe_handle_review_command(root_for_req, prompt)
     if immediate_done is not None:
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
@@ -1250,10 +1294,10 @@ def main():
         if not line:
             continue
         try:
-            req = json.loads(line)
+            req = _normalize_request(json.loads(line))
             if first:
                 first = False
-                root = Path(req.get('ga_root') or root).resolve()
+                root = _resolve_request_root(req.get('ga_root'), root)
                 if str(root) not in sys.path:
                     sys.path.insert(0, str(root))
                 os.chdir(root)
@@ -1265,7 +1309,7 @@ def main():
                 worker.start()
             if req.get('op') == 'reinject_tools':
                 with agent_lock:
-                    root_for_req = Path(req.get('ga_root') or root).resolve()
+                    root_for_req = _resolve_request_root(req.get('ga_root'), root)
                     _apply_workspace(agent, root_for_req, req.get('workspace'))
                     emit({'type': 'reinject_tools', **_reinject_tools(agent)})
                 continue
