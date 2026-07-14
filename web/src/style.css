@@ -1309,6 +1309,7 @@ pre, code { background:var(--surface-muted); color: var(--text); }
 .oa-model-select:hover{border-color:rgba(0,0,0,.18);background:var(--surface-muted);box-shadow:0 2px 8px rgba(0,0,0,.07)}
 .oa-model-select:active{transform:translateY(.5px)}
 .oa-model-select:has(button:disabled){opacity:.42;cursor:not-allowed}
+.oa-composer-provider{min-width:0;max-width:min(180px, calc(100% - 56px));background:var(--surface-muted)}
 .oa-composer-model{min-width:0;max-width:min(200px, calc(100% - 56px));background:var(--surface-muted)}
 .oa-model-select > span{font-size:11px;font-weight:700;color:var(--surface-strong);background:#171717;border-radius:999px;padding:1px 8px;white-space:nowrap;letter-spacing:.01em;flex:0 0 auto}
 .oa-model-select select{appearance:none;border:0 !important;outline:0;background:transparent !important;box-shadow:none !important;border-radius:0 !important;color:var(--text);font-size:13px;font-weight:600;letter-spacing:-.01em;max-width:250px;padding-right:18px;cursor:pointer}
@@ -4255,6 +4256,7 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   gap:6px;
   padding:0 9px 0 5px;
 }
+.oa-composer-provider,
 .oa-composer-model { max-width:min(300px, calc(100% - 46px)); }
 .oa-model-select > span { font-size:10px; padding:1px 7px; }
 .oa-model-select select { font-size:12px; max-width:210px; }
@@ -4427,6 +4429,10 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 .oa-composer .oa-model-select .oa-cselect > button span {
   min-width: 0 !important;
 }
+.oa-composer .oa-composer-provider {
+  flex: 1 1 110px !important;
+  max-width: min(160px, 42vw) !important;
+}
 .oa-composer .oa-composer-model {
   flex: 1 1 120px !important;
   max-width: min(180px, 46vw) !important;
@@ -4437,6 +4443,7 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   max-width: 150px !important;
 }
 @media (max-width: 680px) {
+  .oa-composer .oa-composer-provider,
   .oa-composer .oa-composer-model,
   .oa-composer .oa-effort-select {
     flex: 1 1 100% !important;

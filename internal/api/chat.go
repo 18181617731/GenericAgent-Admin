@@ -14,12 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/modelconfig"
 )
 
 type chatMessage struct {
@@ -666,9 +668,12 @@ agent = GenericAgent()
 items = []
 for idx, label, active in agent.list_llms():
     text = str(label)
-    name = text.split('/', 1)[1] if '/' in text else text
-    model = text.rsplit('/', 1)[1] if '/' in text else ''
-    items.append({'index': int(idx), 'label': text, 'name': name, 'model': model, 'active': bool(active)})
+    client = agent.llmclients[int(idx)]
+    backend = client.backend
+    name = str(getattr(backend, 'name', '') or '')
+    model = str(getattr(backend, 'model', '') or '')
+    provider = type(backend).__name__
+    items.append({'index': int(idx), 'label': text, 'name': name, 'provider': provider, 'model': model, 'active': bool(active)})
 print(json.dumps(items, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", code, root)
 	cmd.Dir = root
@@ -683,7 +688,110 @@ print(json.dumps(items, ensure_ascii=False))`
 	if parseErr != nil {
 		return []map[string]interface{}{}, fmt.Errorf("parse GA LLMs failed: %v: %s", parseErr, strings.TrimSpace(string(out)))
 	}
+	if draft, importErr := s.loadModelsFromOfficialMyKey(false); importErr == nil {
+		annotateChatLLMProviders(llms, draft.Profiles)
+	}
 	return llms, nil
+}
+
+type chatProviderModel struct {
+	provider string
+	model    string
+	order    int
+	sequence int
+}
+
+func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelconfig.Profile) {
+	configured := make([]chatProviderModel, 0)
+	sequence := 0
+	for _, profile := range profiles {
+		provider := chatProviderDisplayName(profile)
+		configs := profile.ModelConfigs
+		if len(configs) == 0 {
+			configs = make([]modelconfig.ModelConfig, 0, len(profile.Models))
+			for _, model := range profile.Models {
+				configs = append(configs, modelconfig.ModelConfig{Model: model})
+			}
+		}
+		for _, config := range configs {
+			model := strings.TrimSpace(config.Model)
+			if model == "" {
+				continue
+			}
+			order := int(^uint(0) >> 1)
+			if config.SortOrder != nil {
+				order = *config.SortOrder
+			}
+			configured = append(configured, chatProviderModel{provider: provider, model: model, order: order, sequence: sequence})
+			sequence++
+		}
+	}
+	sort.SliceStable(configured, func(i, j int) bool {
+		if configured[i].order == configured[j].order {
+			return configured[i].sequence < configured[j].sequence
+		}
+		return configured[i].order < configured[j].order
+	})
+
+	used := make([]bool, len(configured))
+	unresolved := make([]int, 0)
+	for i, item := range llms {
+		model := chatLLMModel(item)
+		if i < len(configured) && (model == "" || configured[i].model == model) {
+			applyChatProviderModel(item, configured[i])
+			used[i] = true
+			continue
+		}
+		unresolved = append(unresolved, i)
+	}
+	for _, llmIndex := range unresolved {
+		item := llms[llmIndex]
+		model := chatLLMModel(item)
+		for configuredIndex, candidate := range configured {
+			if used[configuredIndex] || candidate.model != model {
+				continue
+			}
+			applyChatProviderModel(item, candidate)
+			used[configuredIndex] = true
+			break
+		}
+	}
+}
+
+func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
+	item["provider"] = configured.provider
+	if chatLLMModel(item) == "" {
+		item["model"] = configured.model
+	}
+}
+
+func chatLLMModel(item map[string]interface{}) string {
+	value, ok := item["model"]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func chatProviderDisplayName(profile modelconfig.Profile) string {
+	name := strings.TrimSpace(profile.VarName)
+	for _, prefix := range []string{"native_oai_config", "native_claude_config", "oai_config", "claude_config"} {
+		if strings.HasPrefix(name, prefix) {
+			name = strings.TrimPrefix(name, prefix)
+			name = strings.TrimPrefix(name, "_")
+			break
+		}
+	}
+	if name != "" {
+		return name
+	}
+	if name = strings.TrimSpace(profile.Name); name != "" {
+		return name
+	}
+	if name = strings.TrimSpace(profile.Type); name != "" {
+		return name
+	}
+	return "Unknown provider"
 }
 
 func parseLLMJSONArrayFromMixedOutput(out []byte) ([]map[string]interface{}, error) {

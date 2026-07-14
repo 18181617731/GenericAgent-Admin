@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/modelconfig"
 )
 
 func TestNormalizeChatSettingsPreservesOfficialReasoningEffortLevels(t *testing.T) {
@@ -45,6 +46,72 @@ func TestParseLLMJSONArrayFromMixedOutputIgnoresGAStartupLogs(t *testing.T) {
 	}
 	if llms[0]["name"] != "gpt-5.5/cpa" || llms[1]["name"] != "deepseek-v4-pro/newapi" {
 		t.Fatalf("unexpected llms: %#v", llms)
+	}
+}
+
+func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *testing.T) {
+	order0, order1, order2, order3 := 0, 1, 2, 3
+	profiles := []modelconfig.Profile{
+		{
+			VarName: "native_claude_config_beta",
+			Name:    "hidden beta name",
+			APIBase: "https://beta.example/v1",
+			APIKey:  "sk-beta-secret",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "model-b", SortOrder: &order1},
+				{Model: "shared", SortOrder: &order3},
+			},
+		},
+		{
+			VarName: "native_oai_config_alpha",
+			Name:    "hidden alpha name",
+			APIBase: "https://alpha.example/v1",
+			APIKey:  "sk-alpha-secret",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "model-a", SortOrder: &order0},
+				{Model: "shared", SortOrder: &order2},
+			},
+		},
+	}
+	llms := []map[string]interface{}{
+		{"index": 0, "model": "model-b", "provider": "NativeOAISession"},
+		{"index": 1, "model": "model-a", "provider": "NativeOAISession"},
+		{"index": 2, "model": "shared", "provider": "NativeOAISession"},
+		{"index": 3, "model": "shared", "provider": "NativeOAISession"},
+	}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	want := []string{"beta", "alpha", "alpha", "beta"}
+	for i, provider := range want {
+		if llms[i]["provider"] != provider {
+			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, llms[i]["provider"], provider, llms)
+		}
+	}
+	encoded, err := json.Marshal(llms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"sk-alpha-secret", "sk-beta-secret", "alpha.example", "beta.example"} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("annotated LLM response leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestChatProviderDisplayNameFallsBackAfterOfficialPrefix(t *testing.T) {
+	cases := []struct {
+		profile modelconfig.Profile
+		want    string
+	}{
+		{profile: modelconfig.Profile{VarName: "native_oai_config_openrouter", Name: "ignored"}, want: "openrouter"},
+		{profile: modelconfig.Profile{VarName: "native_claude_config", Name: "Claude direct"}, want: "Claude direct"},
+		{profile: modelconfig.Profile{Type: "oai"}, want: "oai"},
+	}
+	for _, tc := range cases {
+		if got := chatProviderDisplayName(tc.profile); got != tc.want {
+			t.Fatalf("chatProviderDisplayName(%#v)=%q want=%q", tc.profile, got, tc.want)
+		}
 	}
 }
 

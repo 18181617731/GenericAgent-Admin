@@ -44,6 +44,21 @@ const timelineKey = (v) => {
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 const shortTitle = (s) => s?.title || '新会话'
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
+const modelProvider = (m) => {
+  const provider = String(m?.provider || '').trim()
+  if (provider) return provider
+  const name = String(m?.name || '').trim()
+  const model = String(m?.model || '').trim()
+  if (name && model && name.endsWith(`/${model}`)) return name.slice(0, -(model.length + 1))
+  const split = name.lastIndexOf('/')
+  return (split > 0 ? name.slice(0, split) : name) || '未分组服务商'
+}
+const runtimeModelLabel = (m) => {
+  const model = String(m?.model || '').trim()
+  if (model) return model
+  const label = modelLabel(m)
+  return label.includes('/') ? label.split('/').pop() : label
+}
 
 const BUILTIN_SLASH_COMMANDS = [
   { cmd: '/continue', key: '/continue', insert: '/continue', desc: '列出可恢复的官方 GA 会话', builtIn: true },
@@ -2308,6 +2323,13 @@ export default function ChatApp() {
 
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
+  const providerOptions = Array.from(new Set(llms.map(modelProvider))).map(provider => ({ value:provider, label:provider }))
+  const selectedProvider = activeModel ? modelProvider(activeModel) : (providerOptions[0]?.value || '')
+  const providerModels = llms.filter(m => modelProvider(m) === selectedProvider)
+  const selectProvider = (provider) => {
+    const firstModel = llms.find(m => modelProvider(m) === provider)
+    if (firstModel) saveModel(Number(firstModel.index))
+  }
   const isCurrentRunning = busy && streamingSid === sid
   const isFixedToolsMode = toolsMode === 'fixed'
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
@@ -2509,9 +2531,13 @@ export default function ChatApp() {
                 </div>
               )}
             </div>
+            <div className="oa-model-select oa-composer-provider"><span>服务商</span>
+              <CustomSelect value={selectedProvider} disabled={!providerOptions.length} onChange={selectProvider}
+                options={providerOptions.length ? providerOptions : [{value:'',label:'未发现服务商'}]} />
+            </div>
             <div className="oa-model-select oa-composer-model"><span>{activeModel ? '模型' : '模型不可用'}</span>
-              <CustomSelect value={selectedModelNo} disabled={!llms.length} onChange={v=>saveModel(Number(v))}
-                options={llms.length ? llms.map(m=>({value:m.index,label:modelLabel(m)})) : [{value:0,label:'未发现模型'}]} />
+              <CustomSelect value={selectedModelNo} disabled={!providerModels.length} onChange={v=>saveModel(Number(v))}
+                options={providerModels.length ? providerModels.map(m=>({value:m.index,label:runtimeModelLabel(m)})) : [{value:0,label:'未发现模型'}]} />
             </div>
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
