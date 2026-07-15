@@ -369,8 +369,13 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .service-meta b, .service-meta code { font-size:12px; color:var(--text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .service-meta code { display:block; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .service-meta-compact { grid-template-columns:repeat(auto-fit, minmax(125px, 1fr)); }
-.service-meta .model-edit select { width:100%; margin-top:1px; padding:2px 4px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.7); color:var(--text); font-size:12px; font-family:inherit; cursor:pointer; }
-.service-meta .model-edit select:hover { border-color:var(--accent, #6366f1); }
+.service-meta .model-edit .service-model-select { width:100%; margin-top:1px; font-size:12px; font-family:inherit; }
+.service-meta .model-edit .service-model-select .ant-select-selector { border-color:var(--border); border-radius:7px; background:rgba(255,255,255,.7); }
+.service-meta .model-edit .service-model-select:hover .ant-select-selector { border-color:var(--accent, #6366f1); }
+.service-model-popup { width:min(420px, calc(100vw - 24px))!important; max-width:calc(100vw - 24px); }
+.service-model-popup .ant-select-item { min-height:32px; height:auto; }
+.service-model-popup .ant-select-item-option-content { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; line-height:1.45; }
+@media (max-width:720px) { .service-model-popup { width:calc(100vw - 72px)!important; } }
 .service-actions-row { grid-column:1 / -1; justify-content:flex-end; }
 .service-card.is-running { border-color:rgba(16,163,127,.26); }
 .service-card.is-stopped { border-color:rgba(148,163,184,.26); }
@@ -6832,6 +6837,16 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--model-accent) 76%, transparent);
 }
 
+.models-page .model-config-row.is-disabled {
+  background: color-mix(in srgb, #dc2626 4%, var(--card));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, #dc2626 46%, transparent);
+}
+
+.models-page .model-config-row.is-disabled .model-config-id {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .models-page .model-config-main {
   min-height: 56px;
   padding: 6px 12px;
@@ -6864,6 +6879,14 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
   display: grid;
   min-width: 0;
   gap: 1px;
+}
+
+.models-page .model-config-copy .ant-tag {
+  width: max-content;
+  max-width: 100%;
+  margin: 3px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .models-page .model-config-id,
@@ -7075,6 +7098,11 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
 
 .models-page .model-inline-alert {
   margin: 10px 0;
+  border-radius: 7px;
+}
+
+.models-page .model-availability-alert {
+  margin: 0 0 10px;
   border-radius: 7px;
 }
 

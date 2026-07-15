@@ -146,6 +146,22 @@ func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *test
 	}
 }
 
+func TestAnnotateChatLLMProvidersIgnoresDisabledModelMetadata(t *testing.T) {
+	disabled := false
+	profiles := []modelconfig.Profile{{
+		Name: "Available provider",
+		ModelConfigs: []modelconfig.ModelConfig{
+			{Model: "removed-model", Enabled: &disabled, AutoDisabled: true},
+			{Model: "active-model"},
+		},
+	}}
+	llms := []map[string]interface{}{{"index": 0, "model": "active-model"}}
+	annotateChatLLMProviders(llms, profiles)
+	if got := llms[0]["provider"]; got != "Available provider" {
+		t.Fatalf("provider=%v want Available provider: %#v", got, llms)
+	}
+}
+
 func TestMarkChatLLMActiveUsesSessionLLMNo(t *testing.T) {
 	llms := []map[string]interface{}{
 		{"index": float64(0), "active": true},

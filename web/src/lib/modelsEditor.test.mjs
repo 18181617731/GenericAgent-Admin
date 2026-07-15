@@ -7,6 +7,9 @@ import {
   createModelConfig,
   modelProtocolFields,
   profileModelConfigs,
+  isModelConfigEnabled,
+  modelAvailabilitySummary,
+  reconcileModelAvailability,
   orderedModelRows,
   applyModelOrder,
   mergePersistedModelOrder,
@@ -14,6 +17,45 @@ import {
   reasoningEffortOptions,
   withModelConfigs,
 } from './modelsEditor.js'
+
+test('reconcileModelAvailability auto-disables missing models and restores recovered models', () => {
+  const profile = {
+    model_configs: [
+      { model: 'active-model', reasoning_effort: 'high' },
+      { model: 'missing-model', read_timeout: 600 },
+      { model: 'recovered-model', enabled: false, auto_disabled: true },
+    ],
+  }
+  const checkedAt = '2026-07-15T02:00:00Z'
+  const result = reconcileModelAvailability(profile, ['active-model', 'recovered-model'], checkedAt)
+  const configs = result.profile.model_configs
+
+  assert.equal(isModelConfigEnabled(configs[0]), true)
+  assert.equal(configs[0].availability, 'available')
+  assert.equal(configs[1].enabled, false)
+  assert.equal(configs[1].auto_disabled, true)
+  assert.equal(configs[1].read_timeout, 600)
+  assert.equal(configs[2].enabled, true)
+  assert.equal(configs[2].auto_disabled, false)
+  assert.deepEqual(result.summary, { available: 2, unavailable: 1, disabled: 1, restored: 1, checkedAt })
+  assert.deepEqual(modelAvailabilitySummary(result.profile), {
+    total: 3,
+    enabled: 2,
+    disabled: 1,
+    unavailable: 1,
+    checked: 3,
+    checkedAt,
+  })
+  assert.equal(profile.model_configs[1].enabled, undefined)
+})
+
+test('reconcileModelAvailability preserves a manually disabled model when it is available', () => {
+  const profile = { model_configs: [{ model: 'manual-off', enabled: false }] }
+  const result = reconcileModelAvailability(profile, ['manual-off'], '2026-07-15T03:00:00Z')
+  assert.equal(result.profile.model_configs[0].enabled, false)
+  assert.equal(result.profile.model_configs[0].auto_disabled, undefined)
+  assert.equal(result.profile.model_configs[0].availability, 'available')
+})
 
 test('profileModelConfigs migrates legacy provider settings into independent rows', () => {
   const profile = {

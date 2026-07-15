@@ -294,6 +294,39 @@ func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 	}
 }
 
+func TestExportImportPreservesDisabledModelWithoutExposingItToGA(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"active-model","enabled":true},{"model":"missing-model","enabled":false,"auto_disabled":true,"availability":"unavailable","availability_checked_at":"2026-07-15T02:00:00Z","read_timeout":600}]}]}`)
+	var input Draft
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	rendered, err := Render(input.Profiles)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if strings.Contains(rendered, "\nnative_oai_config_acme_2 =") {
+		t.Fatalf("disabled model was rendered as a GA model variable:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `"auto_disabled": True`) || !strings.Contains(rendered, `"enabled": False`) {
+		t.Fatalf("disabled model metadata was not rendered as valid Python:\n%s", rendered)
+	}
+	if _, err := Export(root, input.Profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || len(draft.Profiles[0].ModelConfigs) != 2 {
+		t.Fatalf("imported disabled model config missing: %#v", draft.Profiles)
+	}
+	missing := draft.Profiles[0].ModelConfigs[1]
+	if ModelConfigEnabled(missing) || !missing.AutoDisabled || missing.Availability != "unavailable" || missing.ReadTimeout == nil || *missing.ReadTimeout != 600 {
+		t.Fatalf("disabled model config = %#v", missing)
+	}
+}
+
 func TestRenderUsesGlobalModelSortOrderAcrossProviders(t *testing.T) {
 	data := []byte(`{"profiles":[{"var_name":"native_oai_config_a","type":"native_oai","name":"Provider A","apibase":"https://a.example/v1","apikey":"sk-a-secret","model_configs":[{"model":"a-one","sort_order":0},{"model":"a-two","sort_order":2}]},{"var_name":"native_claude_config_b","type":"native_claude","name":"Provider B","apibase":"https://b.example/v1","apikey":"sk-b-secret","model_configs":[{"model":"b-one","sort_order":1}]}]}`)
 	var input Draft
@@ -311,7 +344,8 @@ func TestRenderUsesGlobalModelSortOrderAcrossProviders(t *testing.T) {
 	if first < 0 || second < 0 || third < 0 || !(first < second && second < third) {
 		t.Fatalf("render order does not follow sort_order (want A1, B1, A2):\n%s", rendered)
 	}
-	if strings.Contains(rendered, `"sort_order"`) {
+	runtimeSection := strings.Split(rendered, "# Admin-only provider grouping metadata")[0]
+	if strings.Contains(runtimeSection, `"sort_order"`) {
 		t.Fatalf("sort_order is admin metadata and must not enter model dictionaries:\n%s", rendered)
 	}
 	for _, modelID := range []string{"a-one", "b-one", "a-two"} {

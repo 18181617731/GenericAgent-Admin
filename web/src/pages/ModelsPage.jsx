@@ -12,6 +12,7 @@ import {
   ListOrdered,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   UploadCloud,
   X,
@@ -23,11 +24,14 @@ import {
   API_MODE_OPTIONS,
   THINKING_TYPE_OPTIONS,
   addModelConfigs,
+  isModelConfigEnabled,
+  modelAvailabilitySummary,
   modelProtocolFields,
   moveOrderedItem,
   orderedModelRows,
   profileModelConfigs,
   reasoningEffortOptions,
+  reconcileModelAvailability,
   removeModelConfig,
   updateModelConfig,
 } from '../lib/modelsEditor'
@@ -121,12 +125,14 @@ function OptionalBoolSelect({ value, onChange, trueLabel = '启用', falseLabel 
 function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
+  const enabled = isModelConfigEnabled(config)
+  const availability = config.availability || 'unknown'
   const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
     .filter(Boolean)
     .join(' · ') || '默认参数'
 
   return (
-    <article className={`model-config-row${configOpen ? ' is-open' : ''}`}>
+    <article className={`model-config-row${configOpen ? ' is-open' : ''}${enabled ? '' : ' is-disabled'}`}>
       <div className="model-config-main">
         <div className="model-config-identity">
           <span className="model-config-index" aria-hidden="true">
@@ -137,6 +143,11 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
               {config.model || '未命名模型'}
             </span>
             <span className="model-config-summary">{configSummary}</span>
+            {availability === 'unavailable'
+              ? <Tag color="error">{config.auto_disabled ? '已自动禁用' : '不可用'}</Tag>
+              : availability === 'available'
+                ? <Tag color={enabled ? 'success' : 'default'}>{enabled ? '可用' : '手动禁用'}</Tag>
+                : null}
           </div>
         </div>
         <Button
@@ -216,7 +227,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
   )
 }
 
-function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, busy, disabled }) {
+function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, busy, checking, disabled, availabilityResult }) {
   const [draft, setDraft] = useState('')
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const configs = profileModelConfigs(profile)
@@ -243,10 +254,25 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, bus
     <section className="model-config-editor">
       <div className="model-config-toolbar">
         <strong>模型列表</strong>
-        <Button onClick={openDiscover} disabled={disabled} icon={<RefreshCw size={14} />}>
-          获取模型
-        </Button>
+        <Space size={8}>
+          <Button onClick={onCheck} loading={checking} disabled={disabled || busy || checking} icon={<ShieldCheck size={14} />}>
+            检测并同步
+          </Button>
+          <Button onClick={openDiscover} disabled={disabled || checking} icon={<RefreshCw size={14} />}>
+            获取模型
+          </Button>
+        </Space>
       </div>
+
+      {availabilityResult && (
+        <Alert
+          type={availabilityResult.type}
+          showIcon
+          message={availabilityResult.message}
+          description={availabilityResult.description}
+          className="model-availability-alert"
+        />
+      )}
 
       <div className="model-config-table">
         <div className="model-config-table-head" aria-hidden="true">
@@ -332,9 +358,12 @@ function ProfileCard({
   const [discoverBusy, setDiscoverBusy] = useState(false)
   const [discoverError, setDiscoverError] = useState('')
   const [discovered, setDiscovered] = useState([])
+  const [availabilityBusy, setAvailabilityBusy] = useState(false)
+  const [availabilityResult, setAvailabilityResult] = useState(null)
   const [dirty, setDirty] = useState(false)
   const [nameDirty, setNameDirty] = useState(false)
   const selectedModels = profileModels(p)
+  const availability = modelAvailabilitySummary(p)
   const meta = protocolMeta(p.type || DEFAULT_PROTOCOL)
   const revealed = revealedKey != null && String(revealedKey).trim() !== '' && !isMaskedSecret(revealedKey)
   const shownApiKey = revealed ? revealedKey : (p.apikey ?? '')
@@ -366,23 +395,55 @@ function ProfileCard({
     }
   }
 
+  const requestProviderModels = async () => {
+    const configuredKey = String(p.apikey || '').trim()
+    const response = await discoverModels({
+      protocol: p.type || DEFAULT_PROTOCOL,
+      baseUrl: p.apibase,
+      apiKey: configuredKey && !isMaskedSecret(configuredKey) ? configuredKey : undefined,
+      varName: p.var_name,
+    })
+    return uniqueModels(response?.models || [])
+  }
+
   const discover = async () => {
     if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)) return
     setDiscoverBusy(true)
     setDiscoverError('')
     try {
-      const configuredKey = String(p.apikey || '').trim()
-      const response = await discoverModels({
-        protocol: p.type || DEFAULT_PROTOCOL,
-        baseUrl: p.apibase,
-        apiKey: configuredKey && !isMaskedSecret(configuredKey) ? configuredKey : undefined,
-        varName: p.var_name,
-      })
-      setDiscovered(response?.models || [])
+      setDiscovered(await requestProviderModels())
     } catch (error) {
       setDiscoverError(String(error?.message || error))
     } finally {
       setDiscoverBusy(false)
+    }
+  }
+
+  const checkAvailability = async () => {
+    if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)) return
+    setAvailabilityBusy(true)
+    setAvailabilityResult(null)
+    try {
+      const models = await requestProviderModels()
+      if (!models.length) throw new Error('服务商返回了空模型列表，为避免误禁用，未修改当前配置。')
+      setDiscovered(models)
+      const result = reconcileModelAvailability(p, models)
+      patchProfile(idx, result.profile)
+      const saved = await onSave?.(idx, profileKey, result.profile)
+      if (saved === false) {
+        patchProfile(idx, p)
+        throw new Error('模型状态保存失败，已恢复检测前配置。')
+      }
+      const { available, unavailable, disabled, restored, checkedAt } = result.summary
+      setAvailabilityResult({
+        type: unavailable ? 'warning' : 'success',
+        message: `检测完成：${available} 个可用，${unavailable} 个不可用`,
+        description: `本次自动禁用 ${disabled} 个，自动恢复 ${restored} 个。状态已保存；检测时间 ${new Date(checkedAt).toLocaleString()}。`,
+      })
+    } catch (error) {
+      setAvailabilityResult({ type: 'error', message: '检测失败，未修改模型状态', description: String(error?.message || error) })
+    } finally {
+      setAvailabilityBusy(false)
     }
   }
 
@@ -395,7 +456,7 @@ function ProfileCard({
             <div className="model-source-title-row">
               <strong>{p.name || providerDisplayName(p.var_name) || `服务商 ${idx + 1}`}</strong>
               <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
-              <span className="model-count-badge">{selectedModels.length} 个模型</span>
+              <span className="model-count-badge">{availability.enabled}/{selectedModels.length} 个启用</span>
             </div>
             <span className="model-source-base">{p.apibase || '尚未填写 BaseURL'}</span>
           </div>
@@ -497,7 +558,10 @@ function ProfileCard({
           discovered={discovered}
           onChange={patch}
           onDiscover={discover}
+          onCheck={checkAvailability}
           busy={discoverBusy}
+          checking={availabilityBusy}
+          availabilityResult={availabilityResult}
           disabled={discoverBusy || !p.apibase || !supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)}
         />
 
@@ -687,7 +751,11 @@ export function Models({
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
   const hasErrors = summary.errors > 0
-  const totalModels = profiles.reduce((count, profile) => count + profileModels(profile).length, 0)
+  const availabilityTotals = profiles.reduce((total, profile) => {
+    const state = modelAvailabilitySummary(profile)
+    return { total: total.total + state.total, enabled: total.enabled + state.enabled, disabled: total.disabled + state.disabled }
+  }, { total: 0, enabled: 0, disabled: 0 })
+  const totalModels = availabilityTotals.total
   const profileKeyId = (idx, profile) => getProfileKey?.(idx, profile)
     || profile?.client_id
     || `${profile?.var_name || nextVarName(profile?.type || DEFAULT_PROTOCOL, profiles)}:${profile?.type || DEFAULT_PROTOCOL}:${profile?.apibase || ''}:${idx}`
@@ -814,6 +882,7 @@ export function Models({
           <span className={`model-summary-dot${hasErrors ? ' is-error' : ''}`} />
           <strong>{summary.total} 个服务商</strong>
           <span>{totalModels} 个模型</span>
+          {availabilityTotals.disabled > 0 && <span className="is-warning">{availabilityTotals.disabled} 个已禁用</span>}
           {summary.errors > 0 && <span className="is-error">{summary.errors} 个阻断项</span>}
           {summary.warnings > 0 && <span className="is-warning">{summary.warnings} 个提醒</span>}
         </div>
@@ -833,8 +902,9 @@ export function Models({
             {profiles.map((profile, idx) => {
               const result = validation[idx]
               const count = profileModels(profile).length
+              const availability = modelAvailabilitySummary(profile)
               const meta = protocolMeta(profile.type || DEFAULT_PROTOCOL)
-              const state = result?.errors?.length ? 'error' : result?.warnings?.length ? 'warning' : 'ready'
+              const state = result?.errors?.length ? 'error' : (result?.warnings?.length || availability.unavailable) ? 'warning' : 'ready'
               return (
                 <button
                   key={profile.client_id || `provider-${idx}`}
@@ -845,10 +915,10 @@ export function Models({
                 >
                   <span className="model-provider-item-top">
                     <strong>{profile.name || providerDisplayName(profile.var_name) || `服务商 ${idx + 1}`}</strong>
-                    <i className={`is-${state}`} title={state === 'error' ? '存在阻断项' : state === 'warning' ? '存在提醒' : '配置正常'} />
+                    <i className={`is-${state}`} title={state === 'error' ? '存在阻断项' : availability.unavailable ? `${availability.unavailable} 个模型不可用` : state === 'warning' ? '存在提醒' : '配置正常'} />
                   </span>
                   <span className="model-provider-base">{profile.apibase || '尚未填写 BaseURL'}</span>
-                  <span className="model-provider-meta"><em>{meta?.shortLabel || protocolLabel(profile.type)}</em><b>{count} 个模型</b></span>
+                  <span className="model-provider-meta"><em>{meta?.shortLabel || protocolLabel(profile.type)}</em><b>{availability.enabled}/{count} 启用</b></span>
                 </button>
               )
             })}

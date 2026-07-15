@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Select } from 'antd'
 import { Eye, Play, Square } from 'lucide-react'
 import { modelLabel } from '../lib/format'
 
@@ -16,12 +17,21 @@ function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   const defaultLabel = (t && t.runModelDefault) || '默认（启动时选择）'
   const modelText = modelMatch ? modelLabel(modelMatch) : (isReflect ? defaultLabel : null)
   const editable = isReflect && !svc?.running && typeof onModel === 'function'
+  const modelOptions = [
+    { value: '', label: defaultLabel },
+    ...llms.map(model => ({ value: model.index, label: modelLabel(model) })),
+  ]
   return <div className={compact ? 'service-meta service-meta-compact' : 'service-meta'}>
     {editable
-      ? <span className="model-edit"><em>模型</em><select value={svc.model_no ?? ''} onChange={e => onModel(svc.name, e.target.value === '' ? null : Number(e.target.value))}>
-          <option value="">{defaultLabel}</option>
-          {llms.map(m => <option key={m.index} value={m.index}>{modelLabel(m)}</option>)}
-        </select></span>
+      ? <span className="model-edit"><em>模型</em><Select
+          aria-label="模型"
+          className="service-model-select"
+          classNames={{ popup: { root: 'service-model-popup' } }}
+          popupMatchSelectWidth={false}
+          value={svc.model_no ?? ''}
+          options={modelOptions}
+          onChange={value => onModel(svc.name, value === '' ? null : Number(value))}
+        /></span>
       : (modelText !== null && <span><em>模型</em><code title={modelText}>{modelText}</code></span>)}
     <span><em>PID</em><b>{servicePid(svc)}</b></span>
     <span><em>返回码</em><b>{serviceReturnCode(svc)}</b></span>

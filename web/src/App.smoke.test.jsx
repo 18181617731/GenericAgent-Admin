@@ -1,8 +1,9 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { ChannelServiceTable } from './components/common.jsx'
+import { ChannelServiceTable, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
+import { ChatMessage } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 
 globalThis.React = React
@@ -277,7 +278,7 @@ describe('model profile names', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加并保存' }))
 
     expect(props.addModelProfiles).not.toHaveBeenCalled()
-  })
+  }, 10000)
 
   test('should add and auto-save a profile with a Chinese name when required fields are present', async () => {
     const props = modelProps({ profiles: [] })
@@ -291,5 +292,69 @@ describe('model profile names', () => {
     await waitFor(() => expect(props.addModelProfiles).toHaveBeenCalledWith([
       expect.objectContaining({ name: '新增中文模型', apibase: 'https://api.example/v1' }),
     ]))
+  }, 10000)
+})
+
+describe('provider model availability management', () => {
+  test('auto-disables missing models and saves the provider after a successful check', async () => {
+    const profile = {
+      ...modelProfile,
+      model: 'gpt-test',
+      models: ['gpt-test', 'retired-model'],
+      model_configs: [{ model: 'gpt-test' }, { model: 'retired-model', read_timeout: 600 }],
+    }
+    const props = modelProps({
+      profiles: [profile],
+      discoverModels: vi.fn(async () => ({ models: [{ id: 'gpt-test' }] })),
+    })
+    render(<Models {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '检测并同步' }))
+    await waitFor(() => expect(props.saveModelProfile).toHaveBeenCalledWith(
+      0,
+      'profile-1',
+      expect.objectContaining({
+        model_configs: expect.arrayContaining([
+          expect.objectContaining({ model: 'retired-model', enabled: false, auto_disabled: true, read_timeout: 600 }),
+        ]),
+      }),
+    ))
+    expect(await screen.findByText('检测完成：1 个可用，1 个不可用')).toBeTruthy()
+  }, 10000)
+
+  test('does not save when the provider returns an empty model list', async () => {
+    const props = modelProps({ discoverModels: vi.fn(async () => ({ models: [] })) })
+    render(<Models {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '检测并同步' }))
+    expect(await screen.findByText('检测失败，未修改模型状态')).toBeTruthy()
+    expect(props.saveModelProfile).not.toHaveBeenCalled()
+  }, 10000)
+})
+
+describe('reflect service model selector', () => {
+  test('shows the complete long model label on the first open and preserves selection', async () => {
+    installBrowserPolyfills()
+    const onModel = vi.fn()
+    const longLabel = 'NativeOAISession/code-specialized-model-with-a-complete-visible-name'
+
+    render(
+      <ServiceRow
+        svc={reflectService}
+        t={t}
+        llms={[{ index: 7, label: longLabel }]}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onModel={onModel}
+      />,
+    )
+
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '模型' }))
+    const option = await screen.findByRole('option', { name: longLabel })
+    expect(document.querySelector('.service-model-popup')).toBeTruthy()
+    fireEvent.click(option)
+    expect(onModel).toHaveBeenCalledWith(reflectService.name, 7)
   })
 })

@@ -25,6 +25,10 @@ export const reasoningEffortOptions = protocol => (
 )
 
 const MODEL_SETTING_KEYS = [
+  'enabled',
+  'auto_disabled',
+  'availability',
+  'availability_checked_at',
   'stream',
   'max_retries',
   'read_timeout',
@@ -84,6 +88,21 @@ export const profileModelConfigs = (profile = {}) => {
   return models.map(model => ({ model, ...settings }))
 }
 
+export const isModelConfigEnabled = config => config?.enabled !== false
+
+export const modelAvailabilitySummary = (profile = {}) => {
+  const configs = profileModelConfigs(profile)
+  const checked = configs.filter(config => !!config.availability_checked_at)
+  return {
+    total: configs.length,
+    enabled: configs.filter(isModelConfigEnabled).length,
+    disabled: configs.filter(config => !isModelConfigEnabled(config)).length,
+    unavailable: configs.filter(config => config.availability === 'unavailable').length,
+    checked: checked.length,
+    checkedAt: checked.map(config => config.availability_checked_at).sort().at(-1) || '',
+  }
+}
+
 export const withModelConfigs = (profile = {}, configs = []) => {
   const normalized = (configs || []).map(config => ({
     ...config,
@@ -95,6 +114,40 @@ export const withModelConfigs = (profile = {}, configs = []) => {
     model: models[0] || '',
     models,
     model_configs: normalized,
+  }
+}
+
+export const reconcileModelAvailability = (profile = {}, values = [], checkedAt = new Date().toISOString()) => {
+  const availableModels = new Set(uniqueModelIds(values))
+  let disabled = 0
+  let restored = 0
+  let unavailable = 0
+  const configs = profileModelConfigs(profile).map(config => {
+    if (availableModels.has(modelIdOf(config))) {
+      const restore = config.auto_disabled === true
+      if (restore) restored += 1
+      return {
+        ...config,
+        enabled: restore ? true : config.enabled,
+        auto_disabled: restore ? false : config.auto_disabled,
+        availability: 'available',
+        availability_checked_at: checkedAt,
+      }
+    }
+    unavailable += 1
+    const autoDisable = isModelConfigEnabled(config) || config.auto_disabled === true
+    if (isModelConfigEnabled(config)) disabled += 1
+    return {
+      ...config,
+      enabled: autoDisable ? false : config.enabled,
+      auto_disabled: autoDisable,
+      availability: 'unavailable',
+      availability_checked_at: checkedAt,
+    }
+  })
+  return {
+    profile: withModelConfigs(profile, configs),
+    summary: { available: configs.length - unavailable, unavailable, disabled, restored, checkedAt },
   }
 }
 

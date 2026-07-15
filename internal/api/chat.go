@@ -729,6 +729,9 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 			}
 		}
 		for _, config := range configs {
+			if !modelconfig.ModelConfigEnabled(config) {
+				continue
+			}
 			model := strings.TrimSpace(config.Model)
 			if model == "" {
 				continue

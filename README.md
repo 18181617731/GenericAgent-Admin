@@ -71,7 +71,7 @@ run.bat
 
 `run.bat` 首次运行时会使用 `npm ci` 安装锁定的前端依赖，然后构建并嵌入前端、编译 `dist\ga-admin.exe`、复制 Chat worker 并自动启动管理端。脚本会记录 `web/package-lock.json` 的 SHA-256；后续运行只有在 `node_modules` 缺失或锁文件变化时才重新执行 `npm ci`。Go 未加入 `PATH` 且常见安装位置也不存在时，脚本会从 Go 官方站点下载与当前 Windows 架构匹配的稳定版，校验 SHA-256 后解压到仓库的 `.tools\go`，无需管理员权限或修改系统 `PATH`。如果用户没有设置 `GOPROXY`，且 Go 仍使用国内网络经常无法访问的默认模块代理，构建过程会仅在当前脚本内改用 `https://goproxy.cn`；已有的环境变量或 `go env` 自定义配置不会被覆盖。首次构建需要网络访问 npm、Go 官方站点和 Go 依赖源；失败时窗口会保留错误信息。
 
-程序启动后默认打开 `http://127.0.0.1:8787`。首次使用在页面中选择已有 GenericAgent 根目录即可，不需要预先创建 `config.local.json`。
+程序启动后默认打开 `http://127.0.0.1:8787`。如果当前电脑已连接 Tailscale，程序还会自动发现活动网卡上属于 `100.64.0.0/10` 的 Tailscale IPv4，并同时监听 `http://<Tailscale-IP>:8787`；不需要硬编码某台电脑的地址，也不会因此监听普通 WLAN/LAN 地址。首次使用在页面中选择已有 GenericAgent 根目录即可，不需要预先创建 `config.local.json`。
 
 ### 1. 准备 GenericAgent
 
@@ -110,6 +110,8 @@ go run .
 ```text
 http://127.0.0.1:8787
 ```
+
+同一 tailnet 中的其他设备可使用启动日志显示的 Tailscale URL 访问，例如 `http://100.x.y.z:8787`。如果本机或 tailnet ACL 阻止入站连接，需要为该端口放行 Tailscale 私有网络流量；不要将管理端口直接暴露到公网。
 
 前端开发时也可以在 `web/` 下运行 Vite dev server；正式 Go 程序使用 `web/dist` 的 embed 产物。
 

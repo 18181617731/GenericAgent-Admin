@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"flag"
-	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -51,19 +50,18 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
-	addr := fmt.Sprintf("%s:%d", cfgStore.Cfg.Host, cfgStore.Cfg.Port)
-	url := "http://" + addr
-	server := newHTTPServer(addr, srv.Routes())
+	addrs := adminListenAddresses(cfgStore.Cfg.Host, cfgStore.Cfg.Port, discoverTailscaleIPv4())
+	url := "http://" + addrs[0]
+	server := newHTTPServer(addrs[0], srv.Routes())
+	activeAddrs, err := startHTTPListeners(server, addrs)
+	if err != nil {
+		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)
+	}
 	go srv.StartAutostartServices()
-	go func() {
-		log.Printf("GenericAgent Admin Go listening on %s", url)
-		if launch.Headless {
-			log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
-		}
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen %s failed: %v; if the port is occupied, edit config.local.json and change port", addr, err)
-		}
-	}()
+	logListenURLs(activeAddrs)
+	if launch.Headless {
+		log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
+	}
 
 	if launch.Headless {
 		waitForShutdownSignal(server, srv.ShutdownCleanup)

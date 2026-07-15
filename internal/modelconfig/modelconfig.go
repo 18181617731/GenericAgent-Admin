@@ -53,18 +53,26 @@ func parseOptionalBoolString(v string) bool {
 }
 
 type ModelConfig struct {
-	Model              string                 `json:"model"`
-	SortOrder          *int                   `json:"sort_order,omitempty"`
-	Stream             *bool                  `json:"stream,omitempty"`
-	MaxRetries         *int                   `json:"max_retries,omitempty"`
-	ReadTimeout        *int                   `json:"read_timeout,omitempty"`
-	ConnectTimeout     *int                   `json:"connect_timeout,omitempty"`
-	UserAgent          string                 `json:"user_agent,omitempty"`
-	APIMode            string                 `json:"api_mode,omitempty"`
-	ThinkingType       string                 `json:"thinking_type,omitempty"`
-	ReasoningEffort    string                 `json:"reasoning_effort,omitempty"`
-	FakeCCSystemPrompt *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`
-	Extra              map[string]interface{} `json:"extra,omitempty"`
+	Model                 string                 `json:"model"`
+	SortOrder             *int                   `json:"sort_order,omitempty"`
+	Enabled               *bool                  `json:"enabled,omitempty"`
+	AutoDisabled          bool                   `json:"auto_disabled,omitempty"`
+	Availability          string                 `json:"availability,omitempty"`
+	AvailabilityCheckedAt string                 `json:"availability_checked_at,omitempty"`
+	Stream                *bool                  `json:"stream,omitempty"`
+	MaxRetries            *int                   `json:"max_retries,omitempty"`
+	ReadTimeout           *int                   `json:"read_timeout,omitempty"`
+	ConnectTimeout        *int                   `json:"connect_timeout,omitempty"`
+	UserAgent             string                 `json:"user_agent,omitempty"`
+	APIMode               string                 `json:"api_mode,omitempty"`
+	ThinkingType          string                 `json:"thinking_type,omitempty"`
+	ReasoningEffort       string                 `json:"reasoning_effort,omitempty"`
+	FakeCCSystemPrompt    *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`
+	Extra                 map[string]interface{} `json:"extra,omitempty"`
+}
+
+func ModelConfigEnabled(config ModelConfig) bool {
+	return config.Enabled == nil || *config.Enabled
 }
 
 type Profile struct {
@@ -342,11 +350,13 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 			if config.ConnectTimeout != nil && *config.ConnectTimeout <= 0 {
 				return fmt.Errorf("connect_timeout must be greater than zero for model %s", config.Model)
 			}
-			varName := expandedVarName(p.VarName, i)
-			if seen[varName] {
-				return fmt.Errorf("duplicate var_name: %s", varName)
+			if ModelConfigEnabled(config) {
+				varName := expandedVarName(p.VarName, i)
+				if seen[varName] {
+					return fmt.Errorf("duplicate var_name: %s", varName)
+				}
+				seen[varName] = true
 			}
-			seen[varName] = true
 		}
 		if p.APIBase == "" {
 			return errors.New("apibase and model are required")
@@ -509,12 +519,23 @@ if isinstance(groups, dict):
             continue
         configs=[]
         seen_models=set()
-        for child in children:
-            for config in model_configs_of(child):
+        managed_configs=meta.get('model_configs', []) if meta else []
+        if isinstance(managed_configs, list) and managed_configs:
+            for config in managed_configs:
+                if not isinstance(config, dict):
+                    continue
+                config=dict(config)
                 model=str(config.get('model', '')).strip()
                 if model and model not in seen_models:
                     seen_models.add(model)
                     configs.append(config)
+        else:
+            for child in children:
+                for config in model_configs_of(child):
+                    model=str(config.get('model', '')).strip()
+                    if model and model not in seen_models:
+                        seen_models.add(model)
+                        configs.append(config)
         models=[config['model'] for config in configs]
         base['var_name']=provider
         if meta:
@@ -654,6 +675,9 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 		configs := profileModelConfigs(p)
 		childVars := make([]string, 0, len(configs))
 		for i, config := range configs {
+			if !ModelConfigEnabled(config) {
+				continue
+			}
 			childVars = append(childVars, expandedVarName(p.VarName, i))
 			entries = append(entries, renderEntry{
 				profile:      p,
@@ -664,11 +688,12 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 			defaultOrder++
 		}
 		providerGroups[p.VarName] = map[string]interface{}{
-			"children": childVars,
-			"type":     p.Type,
-			"name":     p.Name,
-			"apibase":  p.APIBase,
-			"apikey":   p.APIKey,
+			"children":      childVars,
+			"model_configs": configs,
+			"type":          p.Type,
+			"name":          p.Name,
+			"apibase":       p.APIBase,
+			"apikey":        p.APIKey,
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -770,6 +795,18 @@ func pyVal(v interface{}) (string, error) {
 		return fmt.Sprintf("%v", x), nil
 	case int:
 		return fmt.Sprintf("%d", x), nil
+	case []interface{}:
+		parts := make([]string, 0, len(x))
+		for _, item := range x {
+			value, err := pyVal(item)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, value)
+		}
+		return "[" + strings.Join(parts, ", ") + "]", nil
+	case map[string]interface{}:
+		return pyDict(x)
 	case nil:
 		return "None", nil
 	default:
@@ -777,7 +814,11 @@ func pyVal(v interface{}) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return string(data), nil
+		var normalized interface{}
+		if err := json.Unmarshal(data, &normalized); err != nil {
+			return "", err
+		}
+		return pyVal(normalized)
 	}
 }
 
