@@ -821,6 +821,55 @@ func TestChatSaveSettingsPersistsValidJSON(t *testing.T) {
 	}
 }
 
+func TestChatSaveSettingsDropsPersistentWorkerWhenModelChanges(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	seed := chatSession{ID: "session-switch", Settings: chatSettings{LLMNo: 1}}
+	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+		t.Fatal(err)
+	}
+	worker := &chatWorker{SID: seed.ID}
+	s.ChatWorkers[seed.ID] = worker
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/"+seed.ID, strings.NewReader(`{"llm_no":3}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !worker.Dead {
+		t.Fatal("previous worker remained active after model change")
+	}
+	if got := s.ChatWorkers[seed.ID]; got != nil {
+		t.Fatalf("worker=%p want nil after model change", got)
+	}
+}
+
+func TestChatSaveSettingsKeepsPersistentWorkerWhenModelIsUnchanged(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	seed := chatSession{ID: "session-same-model", Settings: chatSettings{LLMNo: 3}}
+	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+		t.Fatal(err)
+	}
+	worker := &chatWorker{SID: seed.ID}
+	s.ChatWorkers[seed.ID] = worker
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/"+seed.ID, strings.NewReader(`{"llm_no":3}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if worker.Dead || s.ChatWorkers[seed.ID] != worker {
+		t.Fatal("unchanged model unexpectedly restarted the persistent worker")
+	}
+}
+
 func TestSaveChatSessionReportsCreateDirError(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "blocked")
 	if err := os.WriteFile(blocked, []byte("not a dir"), 0644); err != nil {

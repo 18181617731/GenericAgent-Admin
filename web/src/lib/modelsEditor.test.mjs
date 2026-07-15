@@ -10,6 +10,7 @@ import {
   isModelConfigEnabled,
   modelAvailabilitySummary,
   reconcileModelAvailability,
+  reconcileModelProbeResults,
   orderedModelRows,
   applyModelOrder,
   mergePersistedModelOrder,
@@ -55,6 +56,23 @@ test('reconcileModelAvailability preserves a manually disabled model when it is 
   assert.equal(result.profile.model_configs[0].enabled, false)
   assert.equal(result.profile.model_configs[0].auto_disabled, undefined)
   assert.equal(result.profile.model_configs[0].availability, 'available')
+})
+
+test('reconcileModelProbeResults rejects listed models that fail a real chat request', () => {
+  const profile = { model_configs: [{ model: 'listed-but-broken' }, { model: 'working-model', auto_disabled: true, enabled: false }] }
+  const result = reconcileModelProbeResults(profile, [
+    { id: 'listed-but-broken', available: false, status: 'request_failed', detail: 'HTTP 404', latency_ms: 15 },
+    { id: 'working-model', available: true, status: 'available', detail: '真实对话验证通过', latency_ms: 23 },
+  ], '2026-07-15T06:35:00Z')
+
+  assert.equal(result.profile.model_configs[0].enabled, false)
+  assert.equal(result.profile.model_configs[0].availability_detail, 'HTTP 404')
+  assert.equal(result.profile.model_configs[0].availability_latency_ms, 15)
+  assert.equal(result.profile.model_configs[1].enabled, true)
+  assert.equal(result.profile.model_configs[1].auto_disabled, false)
+  assert.deepEqual(result.summary, {
+    available: 1, unavailable: 1, disabled: 1, restored: 1, checkedAt: '2026-07-15T06:35:00Z',
+  })
 })
 
 test('profileModelConfigs migrates legacy provider settings into independent rows', () => {

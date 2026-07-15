@@ -59,6 +59,8 @@ type ModelConfig struct {
 	AutoDisabled          bool                   `json:"auto_disabled,omitempty"`
 	Availability          string                 `json:"availability,omitempty"`
 	AvailabilityCheckedAt string                 `json:"availability_checked_at,omitempty"`
+	AvailabilityDetail    string                 `json:"availability_detail,omitempty"`
+	AvailabilityLatencyMS int64                  `json:"availability_latency_ms,omitempty"`
 	Stream                *bool                  `json:"stream,omitempty"`
 	MaxRetries            *int                   `json:"max_retries,omitempty"`
 	ReadTimeout           *int                   `json:"read_timeout,omitempty"`

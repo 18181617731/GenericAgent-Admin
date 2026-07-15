@@ -1365,6 +1365,8 @@ export const ChatMessage = memo(function ChatMessage({ message: m, pending, onAs
   const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
   const pendingFiles = savedFilePaths.length > 0 ? [] : messageFiles.filter((file) => !isImageFile(file))
   const modelID = m.role === 'assistant' && typeof m.model_id === 'string' ? m.model_id.trim() : ''
+  const modelNo = m.role === 'assistant' && Number.isInteger(m.llm_no) ? m.llm_no : null
+  const modelIdentity = modelNo == null ? modelID : `#${modelNo} · ${modelID || '未知模型'}`
   const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
   const hasUsage = !turnUsages && m.role === 'assistant' && m.usage && (m.usage.input_tokens > 0 || m.usage.output_tokens > 0)
   const usageTotal = turnUsages ? sumUsages(turnUsages) : (hasUsage ? m.usage : null)
@@ -1374,7 +1376,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, pending, onAs
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
-      <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelID && <span className="oa-model-id" title={`Model ID: ${modelID}`}>{modelID}</span>}{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
+      <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity && <span className="oa-model-id" title={`Model: ${modelIdentity}`}>{modelIdentity}</span>}{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
       {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
@@ -1533,6 +1535,7 @@ export default function ChatApp() {
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
+  const [modelSwitching, setModelSwitching] = useState(false)
   const [toolsMode, setToolsMode] = useState('official')
   const [reasoningEffort, setReasoningEffort] = useState('off')
   const [menuOpen, setMenuOpen] = useState('')
@@ -1763,7 +1766,7 @@ export default function ChatApp() {
     if (ev.type === 'model' && typeof ev.model_id === 'string' && ev.model_id.trim()) {
       const modelID = ev.model_id.trim()
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
-        m.id === pendingId ? { ...m, model_id: modelID } : m
+        m.id === pendingId ? { ...m, model_id: modelID, ...(Number.isInteger(ev.llm_no) ? { llm_no: ev.llm_no } : {}) } : m
       ) : xs)
     }
     if (ev.type === 'turn_usage' && ev.usage && typeof ev.index === 'number') {
@@ -1781,6 +1784,7 @@ export default function ChatApp() {
         const elapsedMs = getElapsedMs(m)
         const finalMsg = { ...ev.message }
         if ((!finalMsg.model_id || !String(finalMsg.model_id).trim()) && m.model_id) finalMsg.model_id = m.model_id
+        if (!Number.isInteger(finalMsg.llm_no) && Number.isInteger(m.llm_no)) finalMsg.llm_no = m.llm_no
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         return finalMsg
@@ -2106,10 +2110,21 @@ export default function ChatApp() {
   }
 
   const saveModel = async (next) => {
+    if (next === llmNo || modelSwitching) return
+    const previous = llmNo
     setLlmNo(next)
     if (!sid) return
-    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode, reasoning_effort: reasoningEffort }) })
-    setNotice('模型已切换')
+    setModelSwitching(true)
+    setErr('')
+    try {
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode, reasoning_effort: reasoningEffort }) })
+      setNotice(`模型已切换到 #${next}，下一条消息将由该模型处理`)
+    } catch (e) {
+      setLlmNo(previous)
+      setErr(`模型切换失败：${e.message || String(e)}`)
+    } finally {
+      setModelSwitching(false)
+    }
   }
 
   const setToolsModeTo = async (next) => {
@@ -2339,6 +2354,10 @@ export default function ChatApp() {
   }, [cfg?.slash_commands, isProtectedSlashCommand])
 
   const send = async (textOverride = null) => {
+    if (modelSwitching) {
+      setNotice('正在切换模型，请稍候发送')
+      return
+    }
     const hasStringOverride = typeof textOverride === 'string'
     const sourceText = hasStringOverride ? textOverride : prompt
     const text = expandCustomSlashCommand(String(sourceText || '').trim())
@@ -2782,13 +2801,13 @@ export default function ChatApp() {
               )}
             </div>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
-              value={selectedModelNo} disabled={!providerGroups.length}
+              value={selectedModelNo} disabled={!providerGroups.length || isCurrentRunning || modelSwitching}
               onChange={v=>saveModel(Number(v))} />
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
                 options={REASONING_EFFORT_OPTIONS} />
             </div>
-            <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? '加入发送队列' : '发送'} aria-label={isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
+            <button className="oa-send" type="button" disabled={modelSwitching || (!prompt.trim() && !attachments.length)} onClick={() => send()} title={modelSwitching ? '正在切换模型' : isCurrentRunning ? '加入发送队列' : '发送'} aria-label={modelSwitching ? '正在切换模型' : isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>

@@ -433,7 +433,7 @@ func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 
 func TestExportImportPreservesDisabledModelWithoutExposingItToGA(t *testing.T) {
 	root := t.TempDir()
-	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"active-model","enabled":true},{"model":"missing-model","enabled":false,"auto_disabled":true,"availability":"unavailable","availability_checked_at":"2026-07-15T02:00:00Z","read_timeout":600}]}]}`)
+	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"active-model","enabled":true},{"model":"missing-model","enabled":false,"auto_disabled":true,"availability":"unavailable","availability_checked_at":"2026-07-15T02:00:00Z","availability_detail":"HTTP 404","availability_latency_ms":125,"read_timeout":600}]}]}`)
 	var input Draft
 	if err := json.Unmarshal(data, &input); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
@@ -459,7 +459,7 @@ func TestExportImportPreservesDisabledModelWithoutExposingItToGA(t *testing.T) {
 		t.Fatalf("imported disabled model config missing: %#v", draft.Profiles)
 	}
 	missing := draft.Profiles[0].ModelConfigs[1]
-	if ModelConfigEnabled(missing) || !missing.AutoDisabled || missing.Availability != "unavailable" || missing.ReadTimeout == nil || *missing.ReadTimeout != 600 {
+	if ModelConfigEnabled(missing) || !missing.AutoDisabled || missing.Availability != "unavailable" || missing.AvailabilityDetail != "HTTP 404" || missing.AvailabilityLatencyMS != 125 || missing.ReadTimeout == nil || *missing.ReadTimeout != 600 {
 		t.Fatalf("disabled model config = %#v", missing)
 	}
 }
@@ -641,7 +641,9 @@ func TestExportPreservesUTF8ProfileNameRoundTrip(t *testing.T) {
 		t.Fatal("mykey.py is not valid UTF-8")
 	}
 	text := string(data)
-	if !strings.HasPrefix(text, "# -*- coding: utf-8 -*-\n") || !strings.Contains(text, wantName) {
+	if !strings.Contains(text, managedModelsBegin) ||
+		!strings.Contains(text, "# -*- coding: utf-8 -*-\n") ||
+		!strings.Contains(text, wantName) {
 		t.Fatalf("mykey.py did not preserve UTF-8 name:\n%s", text)
 	}
 

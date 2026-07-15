@@ -31,7 +31,7 @@ import {
   orderedModelRows,
   profileModelConfigs,
   reasoningEffortOptions,
-  reconcileModelAvailability,
+  reconcileModelProbeResults,
   removeModelConfig,
   updateModelConfig,
 } from '../lib/modelsEditor'
@@ -127,6 +127,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
   const fields = modelProtocolFields(protocol)
   const enabled = isModelConfigEnabled(config)
   const availability = config.availability || 'unknown'
+  const availabilityTitle = [config.availability_detail, config.availability_latency_ms ? `${config.availability_latency_ms} ms` : ''].filter(Boolean).join(' · ')
   const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
     .filter(Boolean)
     .join(' · ') || '默认参数'
@@ -144,9 +145,9 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
             </span>
             <span className="model-config-summary">{configSummary}</span>
             {availability === 'unavailable'
-              ? <Tag color="error">{config.auto_disabled ? '已自动禁用' : '不可用'}</Tag>
+              ? <Tag color="error" title={availabilityTitle}>{config.auto_disabled ? '已自动禁用' : '不可用'}</Tag>
               : availability === 'available'
-                ? <Tag color={enabled ? 'success' : 'default'}>{enabled ? '可用' : '手动禁用'}</Tag>
+                ? <Tag color={enabled ? 'success' : 'default'} title={availabilityTitle}>{enabled ? '可用' : '手动禁用'}</Tag>
                 : null}
           </div>
         </div>
@@ -256,7 +257,7 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
         <strong>模型列表</strong>
         <Space size={8}>
           <Button onClick={onCheck} loading={checking} disabled={disabled || busy || checking} icon={<ShieldCheck size={14} />}>
-            检测并同步
+            对话检测并同步
           </Button>
           <Button onClick={openDiscover} disabled={disabled || checking} icon={<RefreshCw size={14} />}>
             获取模型
@@ -348,6 +349,7 @@ function ProfileCard({
   patchProfile,
   removeProfile,
   discoverModels,
+  probeModels,
   revealedKey,
   revealBusy,
   onRevealKey,
@@ -406,6 +408,19 @@ function ProfileCard({
     return uniqueModels(response?.models || [])
   }
 
+  const requestProviderProbe = async () => {
+    const configuredKey = String(p.apikey || '').trim()
+    const configs = profileModelConfigs(p)
+    return probeModels({
+      protocol: p.type || DEFAULT_PROTOCOL,
+      baseUrl: p.apibase,
+      apiKey: configuredKey && !isMaskedSecret(configuredKey) ? configuredKey : undefined,
+      varName: p.var_name,
+      models: configs.map(config => config.model),
+      modelOptions: Object.fromEntries(configs.map(config => [config.model, { api_mode: config.api_mode, user_agent: config.user_agent }])),
+    })
+  }
+
   const discover = async () => {
     if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)) return
     setDiscoverBusy(true)
@@ -424,10 +439,11 @@ function ProfileCard({
     setAvailabilityBusy(true)
     setAvailabilityResult(null)
     try {
-      const models = await requestProviderModels()
-      if (!models.length) throw new Error('服务商返回了空模型列表，为避免误禁用，未修改当前配置。')
-      setDiscovered(models)
-      const result = reconcileModelAvailability(p, models)
+      const response = await requestProviderProbe()
+      const probeResults = Array.isArray(response?.results) ? response.results : []
+      if (!probeResults.length) throw new Error('未获得任何真实对话检测结果，未修改当前配置。')
+      setDiscovered(probeResults.filter(item => item.available).map(item => ({ id: item.id })))
+      const result = reconcileModelProbeResults(p, probeResults, response.checked_at)
       patchProfile(idx, result.profile)
       const saved = await onSave?.(idx, profileKey, result.profile)
       if (saved === false) {
@@ -435,10 +451,11 @@ function ProfileCard({
         throw new Error('模型状态保存失败，已恢复检测前配置。')
       }
       const { available, unavailable, disabled, restored, checkedAt } = result.summary
+      const failures = probeResults.filter(item => !item.available).slice(0, 3).map(item => `${item.id}：${item.detail}`).join('；')
       setAvailabilityResult({
         type: unavailable ? 'warning' : 'success',
-        message: `检测完成：${available} 个可用，${unavailable} 个不可用`,
-        description: `本次自动禁用 ${disabled} 个，自动恢复 ${restored} 个。状态已保存；检测时间 ${new Date(checkedAt).toLocaleString()}。`,
+        message: `真实对话检测完成：${available} 个可用，${unavailable} 个不可用`,
+        description: `自动禁用 ${disabled} 个，自动恢复 ${restored} 个。${failures ? `失败摘要：${failures}。` : ''}检测时间 ${new Date(checkedAt).toLocaleString()}。`,
       })
     } catch (error) {
       setAvailabilityResult({ type: 'error', message: '检测失败，未修改模型状态', description: String(error?.message || error) })
@@ -728,6 +745,7 @@ export function Models({
   saveModelProfile,
   onSaveModelOrder,
   discoverModels,
+  probeModels,
   modelPreview,
   modelSaveStatus = {},
   importLoading = false,
@@ -961,6 +979,7 @@ export function Models({
                   patchProfile={patchProfile}
                   removeProfile={removeProfile}
                   discoverModels={discoverModels}
+                  probeModels={probeModels}
                   revealedKey={revealedKeys[key]}
                   revealBusy={!!revealBusy[key]}
                   onRevealKey={onRevealKey}

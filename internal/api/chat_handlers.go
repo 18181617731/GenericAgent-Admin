@@ -170,17 +170,27 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		bad(w, 400, err.Error())
 		return
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
+	sid = safeChatID(sid)
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
+	previousLLMNo := cs.Settings.LLMNo
 	cs.Settings = normalizeChatSettings(st)
+	if cs.Settings.LLMNo != previousLLMNo && s.chatRunActive(sid) {
+		bad(w, http.StatusConflict, "cannot switch models while chat is running")
+		return
+	}
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "settings": cs.Settings})
+	restarted := false
+	if cs.Settings.LLMNo != previousLLMNo {
+		restarted = s.resetChatWorker(sid)
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "settings": cs.Settings, "worker_restarted": restarted})
 }
 
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
@@ -359,9 +369,11 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		cs.Title = "新会话"
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
+	previousLLMNo := cs.Settings.LLMNo
 	if req.Settings != nil {
 		cs.Settings = normalizeChatSettings(*req.Settings)
 	}
+	modelChanged := cs.Settings.LLMNo != previousLLMNo
 	if s.maybeHandleWorkspaceCommand(w, r, sid, &cs, req.Prompt) {
 		return
 	}
@@ -389,6 +401,9 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		s.endChatRun(sid)
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if modelChanged {
+		s.resetChatWorker(sid)
 	}
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)

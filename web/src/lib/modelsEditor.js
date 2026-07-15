@@ -29,6 +29,8 @@ const MODEL_SETTING_KEYS = [
   'auto_disabled',
   'availability',
   'availability_checked_at',
+  'availability_detail',
+  'availability_latency_ms',
   'stream',
   'max_retries',
   'read_timeout',
@@ -119,11 +121,22 @@ export const withModelConfigs = (profile = {}, configs = []) => {
 
 export const reconcileModelAvailability = (profile = {}, values = [], checkedAt = new Date().toISOString()) => {
   const availableModels = new Set(uniqueModelIds(values))
+  const results = profileModelConfigs(profile).map(config => ({
+    id: modelIdOf(config),
+    available: availableModels.has(modelIdOf(config)),
+    status: availableModels.has(modelIdOf(config)) ? 'available' : 'unavailable',
+  }))
+  return reconcileModelProbeResults(profile, results, checkedAt)
+}
+
+export const reconcileModelProbeResults = (profile = {}, values = [], checkedAt = new Date().toISOString()) => {
+  const results = new Map((values || []).map(value => [modelIdOf(value?.id ?? value?.model), value]))
   let disabled = 0
   let restored = 0
   let unavailable = 0
   const configs = profileModelConfigs(profile).map(config => {
-    if (availableModels.has(modelIdOf(config))) {
+    const probe = results.get(modelIdOf(config))
+    if (probe?.available === true) {
       const restore = config.auto_disabled === true
       if (restore) restored += 1
       return {
@@ -132,6 +145,8 @@ export const reconcileModelAvailability = (profile = {}, values = [], checkedAt 
         auto_disabled: restore ? false : config.auto_disabled,
         availability: 'available',
         availability_checked_at: checkedAt,
+        availability_detail: probe.detail || '',
+        availability_latency_ms: Number(probe.latency_ms) || 0,
       }
     }
     unavailable += 1
@@ -143,6 +158,8 @@ export const reconcileModelAvailability = (profile = {}, values = [], checkedAt 
       auto_disabled: autoDisable,
       availability: 'unavailable',
       availability_checked_at: checkedAt,
+      availability_detail: probe?.detail || '未获得真实对话验证结果',
+      availability_latency_ms: Number(probe?.latency_ms) || 0,
     }
   })
   return {

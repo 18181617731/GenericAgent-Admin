@@ -189,15 +189,15 @@ describe('chat response model identity', () => {
   test('renders the concrete model ID on its assistant response', () => {
     const { container } = render(
       <ChatMessage
-        message={{ id: 'a1', role: 'assistant', content: 'Finished', model_id: '  vendor/model-v1  ', created_at: 0 }}
+        message={{ id: 'a1', role: 'assistant', content: 'Finished', model_id: '  vendor/model-v1  ', llm_no: 7, created_at: 0 }}
         pending={false}
         onAskReply={vi.fn()}
       />,
     )
 
     const badge = container.querySelector('.oa-model-id')
-    expect(badge?.textContent).toBe('vendor/model-v1')
-    expect(badge?.getAttribute('title')).toBe('Model ID: vendor/model-v1')
+    expect(badge?.textContent).toBe('#7 · vendor/model-v1')
+    expect(badge?.getAttribute('title')).toBe('Model: #7 · vendor/model-v1')
   })
 })
 
@@ -236,6 +236,7 @@ const modelProps = overrides => ({
   previewModels: vi.fn(),
   saveModelProfile: vi.fn(async () => true),
   discoverModels: vi.fn(async () => ({ models: [] })),
+  probeModels: vi.fn(async () => ({ results: [], checked_at: '2026-07-15T06:35:00Z' })),
   getProfileKey: () => 'profile-1',
   onRevealKey: vi.fn(),
   onClearRevealedKey: vi.fn(),
@@ -305,11 +306,17 @@ describe('provider model availability management', () => {
     }
     const props = modelProps({
       profiles: [profile],
-      discoverModels: vi.fn(async () => ({ models: [{ id: 'gpt-test' }] })),
+      probeModels: vi.fn(async () => ({
+        checked_at: '2026-07-15T06:35:00Z',
+        results: [
+          { id: 'gpt-test', available: true, detail: '真实对话验证通过', latency_ms: 20 },
+          { id: 'retired-model', available: false, detail: 'HTTP 404', latency_ms: 12 },
+        ],
+      })),
     })
     render(<Models {...props} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '检测并同步' }))
+    fireEvent.click(screen.getByRole('button', { name: '对话检测并同步' }))
     await waitFor(() => expect(props.saveModelProfile).toHaveBeenCalledWith(
       0,
       'profile-1',
@@ -319,14 +326,14 @@ describe('provider model availability management', () => {
         ]),
       }),
     ))
-    expect(await screen.findByText('检测完成：1 个可用，1 个不可用')).toBeTruthy()
+    expect(await screen.findByText('真实对话检测完成：1 个可用，1 个不可用')).toBeTruthy()
   }, 10000)
 
   test('does not save when the provider returns an empty model list', async () => {
-    const props = modelProps({ discoverModels: vi.fn(async () => ({ models: [] })) })
+    const props = modelProps({ probeModels: vi.fn(async () => ({ results: [] })) })
     render(<Models {...props} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '检测并同步' }))
+    fireEvent.click(screen.getByRole('button', { name: '对话检测并同步' }))
     expect(await screen.findByText('检测失败，未修改模型状态')).toBeTruthy()
     expect(props.saveModelProfile).not.toHaveBeenCalled()
   }, 10000)

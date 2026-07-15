@@ -270,11 +270,15 @@ func (s *Server) modelsDiscover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveModelDiscoveryAPIKey(r *http.Request) (string, error) {
-	apiKey := strings.TrimSpace(r.URL.Query().Get("api_key"))
+	return s.resolveModelAPIKey(r.URL.Query().Get("api_key"), r.URL.Query().Get("var_name"))
+}
+
+func (s *Server) resolveModelAPIKey(rawAPIKey, rawVarName string) (string, error) {
+	apiKey := strings.TrimSpace(rawAPIKey)
 	if apiKey != "" && !modelconfig.IsMaskedSecret(apiKey) {
 		return apiKey, nil
 	}
-	varName := strings.TrimSpace(r.URL.Query().Get("var_name"))
+	varName := strings.TrimSpace(rawVarName)
 	if varName == "" {
 		return apiKey, nil
 	}

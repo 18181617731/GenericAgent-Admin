@@ -29,6 +29,7 @@ type chatMessage struct {
 	Role           string                   `json:"role"`
 	Content        string                   `json:"content"`
 	ModelID        string                   `json:"model_id,omitempty"`
+	LLMNo          *int                     `json:"llm_no,omitempty"`
 	Files          []map[string]interface{} `json:"files,omitempty"`
 	CreatedAt      int64                    `json:"created_at"`
 	Error          bool                     `json:"error,omitempty"`
@@ -921,6 +922,18 @@ func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
 		_ = worker.Cmd.Process.Kill()
 		_, _ = worker.Cmd.Process.Wait()
 	}
+}
+
+func (s *Server) resetChatWorker(sid string) bool {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	worker := s.ChatWorkers[sid]
+	s.ChatMu.Unlock()
+	if worker == nil {
+		return false
+	}
+	s.dropChatWorker(sid, worker)
+	return true
 }
 
 func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {

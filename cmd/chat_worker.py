@@ -254,6 +254,13 @@ def _snapshot_model_id(agent):
         return ''
 
 
+def _snapshot_llm_no(agent):
+    try:
+        return int(getattr(agent, 'llm_no'))
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _json_clone(value, fallback):
     try:
         return json.loads(json.dumps(value, ensure_ascii=False, default=str))
@@ -355,17 +362,14 @@ def _restore_admin_history(agent, history, raw_history=None):
 
 
 def _select_llm_if_needed(agent, llm_no):
-    """Keep GA official lazy tool injection cache unless the user switches models."""
-    try:
-        current = getattr(agent, 'llm_no', None)
-        if current == llm_no:
-            return
-    except Exception:
-        pass
-    try:
+    """Select the requested model or fail before the old model can answer."""
+    current = _snapshot_llm_no(agent)
+    if current != llm_no:
         agent.next_llm(llm_no)
-    except Exception:
-        pass
+    actual = _snapshot_llm_no(agent)
+    if actual != llm_no:
+        raise RuntimeError('model switch failed: requested index %s, active index %s' % (llm_no, actual))
+    return actual
 
 
 def _load_tools_history(agent):
@@ -1204,8 +1208,8 @@ def handle_request(agent, worker, req):
     root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
     project_mode = str(req.get('project_mode') or '').strip()
     setattr(agent, '_ga_project_mode_name', project_mode or None)
-    _select_llm_if_needed(agent, llm_no)
-    emit({'type': 'model', 'model_id': _snapshot_model_id(agent)})
+    active_llm_no = _select_llm_if_needed(agent, llm_no)
+    emit({'type': 'model', 'model_id': _snapshot_model_id(agent), 'llm_no': active_llm_no})
     if str(reasoning_effort or '').strip():
         _apply_reasoning_effort_setting(agent, reasoning_effort)
     _restore_ga_state(agent, history_info, working)
@@ -1277,7 +1281,7 @@ def handle_request(agent, worker, req):
                     else:
                         emit({'type': 'delta', 'delta': _up_buf[0]})
                 text = str(item.get('done') or ''.join(chunks))
-                msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
+                msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent)}
                 if _up_state.get('phases') or _up_state.get('objective'):
                     _up_state['complete'] = True
                     msg['ultraplan_state'] = dict(_up_state)
@@ -1288,7 +1292,7 @@ def handle_request(agent, worker, req):
                 emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
                 return
     except Exception as e:
-        msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True}
+        msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
@@ -1328,7 +1332,7 @@ def main():
             with agent_lock:
                 handle_request(agent, worker, req)
         except Exception as e:
-            msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True}
+            msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent), 'error': True}
             emit({'type': 'error', 'message': msg})
 
 

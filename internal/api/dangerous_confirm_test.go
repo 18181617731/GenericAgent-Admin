@@ -199,6 +199,7 @@ func TestMutatingRoutesEitherRequireDangerousConfirmOrAreDocumentedSafe(t *testi
 		"/api/version/check":  true, // remote version metadata check only; no local writes.
 		"/api/setup/browse":   true, // validates/list paths for setup UX; no persisted configuration.
 		"/api/models/preview": true, // renders preview text only; no writes.
+		"/api/models/probe":   true, // sends bounded provider test requests; no local config writes.
 		"/api/channels/test":  true, // calls provider validation endpoints only; no local config writes.
 		"/api/chat/":          true, // first-party chat CRUD/run endpoint; intentionally outside dangerous-confirm UX.
 	}
@@ -222,6 +223,7 @@ func TestDocumentedSafeMutatingRoutesStayCurrent(t *testing.T) {
 		"/api/version/check":  true,
 		"/api/setup/browse":   true,
 		"/api/models/preview": true,
+		"/api/models/probe":   true,
 		"/api/channels/test":  true,
 		"/api/chat/":          true,
 	}

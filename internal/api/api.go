@@ -111,6 +111,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/raw", s.modelsRaw)
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
 	mux.HandleFunc("/api/models/discover", s.modelsDiscover)
+	mux.HandleFunc("/api/models/probe", s.modelsProbe)
 	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
 	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
 	mux.HandleFunc("/api/channels/test", s.channelTest)
@@ -188,6 +189,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/models/raw", Level: "dangerous", Action: "reveal_model_secrets", Reason: "returns unmasked model provider credentials after explicit dangerous authorization"},
 	{Path: "/api/models/import-mykey", Level: "dangerous", Action: "import_mykey_models", Reason: "can execute mykey import and reveal or persist provider credentials when explicitly authorized"},
 	{Path: "/api/models/discover", Level: "reversible", Action: "discover_provider_models", Reason: "queries the selected provider models endpoint without saving configuration"},
+	{Path: "/api/models/probe", Level: "reversible", Action: "probe_provider_models", Reason: "sends a minimal real chat request to verify configured model availability without saving configuration"},
 	{Path: "/api/models/export", Level: "dangerous", Action: "export_models", Reason: "writes active GA model configuration"},
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
