@@ -135,8 +135,8 @@ test('addModelConfigs quick-adds unique discovered models and keeps existing row
 const optionValues = options => options.map(option => option.value)
 
 test('modelProtocolFields distinguishes native and legacy protocol capabilities', () => {
-  assert.deepEqual(modelProtocolFields('native_oai'), { apiMode: true, reasoningFamily: 'oai' })
-  assert.deepEqual(modelProtocolFields('oai'), { apiMode: true, reasoningFamily: 'oai' })
+  assert.deepEqual(modelProtocolFields('native_oai'), { apiMode: true, reasoningFamily: 'oai', userAgent: true })
+  assert.deepEqual(modelProtocolFields('oai'), { apiMode: true, reasoningFamily: 'oai', userAgent: true })
   assert.deepEqual(modelProtocolFields('native_claude'), {
     thinkingType: true,
     reasoningFamily: 'claude',

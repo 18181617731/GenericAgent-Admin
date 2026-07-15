@@ -2,9 +2,9 @@ const text = value => String(value ?? '').trim()
 
 const DEFAULT_MODEL_PROTOCOL = 'native_oai'
 const MODEL_PROTOCOL_FIELDS = {
-  native_oai: { apiMode: true, reasoningFamily: 'oai' },
+  native_oai: { apiMode: true, reasoningFamily: 'oai', userAgent: true },
   native_claude: { thinkingType: true, reasoningFamily: 'claude', userAgent: true, fakeClaudeCode: true },
-  oai: { apiMode: true, reasoningFamily: 'oai' },
+  oai: { apiMode: true, reasoningFamily: 'oai', userAgent: true },
   claude: { thinkingType: true, reasoningFamily: 'claude' },
 }
 
