@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, parseAssistantContent, textRenderStats, previewLongText } from './chatTextSafety.js'
+import { MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, splitMarkdownParts, textRenderStats, previewLongText } from './chatTextSafety.js'
 
 test('many content lines do not trigger safe preview by line count alone', () => {
   const text = Array.from({ length: MARKDOWN_LINE_LIMIT + 20 }, (_, i) => `line ${i}`).join('\n')
@@ -100,4 +100,28 @@ test('short inner fence does not close a longer tool-output fence', () => {
   assert.deepEqual(parsed.runs.map(run => run.turn), [24, 25])
   assert.match(parsed.runs[0].body, /Turn 999/)
   assert.equal(parsed.runs[1].title, 'real 25')
+})
+
+test('trailing unclosed fence remains a code part while tool output streams', () => {
+  const text = [
+    'Tool preface',
+    '````text',
+    '{"tabs_only": false}',
+    '````',
+    '`````',
+    "[Info] {'status': 'success', 'metadata': {'tabs_count': 103}}",
+  ].join('\n')
+  const parts = splitMarkdownParts(text)
+  assert.deepEqual(parts.map(part => part.type), ['text', 'code', 'text', 'code'])
+  assert.equal(parts[1].fence, '````')
+  assert.equal(parts[1].lang, 'text')
+  assert.match(parts[1].text, /tabs_only/)
+  assert.equal(parts[3].fence, '`````')
+  assert.equal(parts[3].lang, '')
+  assert.match(parts[3].text, /^\[Info\].*tabs_count/)
+})
+
+test('Info is recognized as a tool result marker', () => {
+  assert.equal(isToolResultText("[Info] {'status': 'success'}"), true)
+  assert.equal(isToolResultText('[Information] ordinary prose'), false)
 })

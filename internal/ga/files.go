@@ -72,20 +72,19 @@ func SafeResolve(root, rel string) (string, string, error) {
 }
 
 func SafeResolveAny(root, p string) (string, string, error) {
-	if root == "" {
-		return "", "", errors.New("GA root is empty")
-	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", err
-	}
 	p = strings.TrimSpace(p)
-	var full, clean string
 	if filepath.IsAbs(p) {
-		full, clean, err = ensureWithinRoot(rootAbs, p)
-	} else {
-		full, clean, err = SafeResolve(root, p)
+		full, err := filepath.Abs(p)
+		if err != nil {
+			return "", "", err
+		}
+		clean := filepath.ToSlash(filepath.Clean(full))
+		if IsHiddenSafeFilePath(clean) {
+			return "", "", hiddenSafeFileError()
+		}
+		return full, clean, nil
 	}
+	full, clean, err := SafeResolve(root, p)
 	if err != nil {
 		return "", "", err
 	}
@@ -93,6 +92,36 @@ func SafeResolveAny(root, p string) (string, string, error) {
 		return "", "", hiddenSafeFileError()
 	}
 	return full, clean, nil
+}
+
+func safePathScopeRoot(root, full, clean string) (string, error) {
+	if filepath.IsAbs(filepath.FromSlash(clean)) {
+		return filepath.Abs(full)
+	}
+	return filepath.Abs(root)
+}
+
+func sameCleanPath(a, b string) bool {
+	aAbs, err := filepath.Abs(a)
+	if err != nil {
+		return false
+	}
+	bAbs, err := filepath.Abs(b)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(aAbs, bAbs)
+	return err == nil && rel == "."
+}
+
+func isFilesystemRoot(p string) bool {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	volume := filepath.VolumeName(abs)
+	root := volume + string(filepath.Separator)
+	return sameCleanPath(abs, root)
 }
 
 func ensureWithinRoot(rootAbs, full string) (string, string, error) {
@@ -151,11 +180,11 @@ func ensureWriteParentWithinRoot(root, abs string) error {
 }
 
 func ListSafe(root, rel string) ([]SafeFileEntry, error) {
-	full, clean, err := SafeResolve(root, rel)
+	full, clean, err := SafeResolveAny(root, rel)
 	if err != nil {
 		return nil, err
 	}
-	rootAbs, err := filepath.Abs(root)
+	scopeRoot, err := safePathScopeRoot(root, full, clean)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +201,7 @@ func ListSafe(root, rel string) ([]SafeFileEntry, error) {
 			continue
 		}
 		child := filepath.Join(full, de.Name())
-		if err := ensureRealPathWithinRoot(rootAbs, child); err != nil {
+		if err := ensureRealPathWithinRoot(scopeRoot, child); err != nil {
 			continue
 		}
 		info, err := de.Info()
@@ -272,7 +301,7 @@ func TailSafe(root, rel string, lines int) (SafeFileDetail, error) {
 	if lines <= 0 || lines > 2000 {
 		lines = 200
 	}
-	full, clean, err := SafeResolve(root, rel)
+	full, clean, err := SafeResolveAny(root, rel)
 	if err != nil {
 		return SafeFileDetail{}, err
 	}
@@ -331,12 +360,9 @@ func TailSafe(root, rel string, lines int) (SafeFileDetail, error) {
 }
 
 func WriteSafe(root, rel, content string) (SafeFileDetail, error) {
-	abs, clean, err := SafeResolve(root, rel)
+	abs, clean, err := SafeResolveAny(root, rel)
 	if err != nil {
 		return SafeFileDetail{}, err
-	}
-	if IsHiddenSafeFilePath(clean) {
-		return SafeFileDetail{}, hiddenSafeFileError()
 	}
 	if clean == "" {
 		return SafeFileDetail{}, errors.New("path is empty")
@@ -347,13 +373,17 @@ func WriteSafe(root, rel, content string) (SafeFileDetail, error) {
 	if !utf8.ValidString(content) {
 		return SafeFileDetail{}, errors.New("content is not valid UTF-8")
 	}
-	if err := ensureWriteParentWithinRoot(root, abs); err != nil {
+	if filepath.IsAbs(filepath.FromSlash(clean)) {
+		if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+			return SafeFileDetail{}, err
+		}
+	} else if err := ensureWriteParentWithinRoot(root, abs); err != nil {
 		return SafeFileDetail{}, err
 	}
 	if err := writeFileAtomic(abs, []byte(content), 0644); err != nil {
 		return SafeFileDetail{}, err
 	}
-	return ReadSafe(root, clean)
+	return readSafeResolved(abs, clean)
 }
 
 func DeleteSafe(root, rel string) error {
@@ -361,8 +391,11 @@ func DeleteSafe(root, rel string) error {
 	if err != nil {
 		return err
 	}
-	if clean == "" {
+	if clean == "" || (root != "" && sameCleanPath(abs, root)) {
 		return errors.New("cannot delete GA root")
+	}
+	if isFilesystemRoot(abs) {
+		return errors.New("cannot delete filesystem root")
 	}
 	if _, err := os.Stat(abs); err != nil {
 		return err
@@ -378,14 +411,15 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 	if maxHits <= 0 || maxHits > 500 {
 		maxHits = 100
 	}
-	base, clean, err := SafeResolve(root, rel)
+	base, clean, err := SafeResolveAny(root, rel)
 	if err != nil {
 		return nil, err
 	}
-	if IsHiddenSafeFilePath(clean) {
-		return nil, hiddenSafeFileError()
+	scopeRoot, err := safePathScopeRoot(root, base, clean)
+	if err != nil {
+		return nil, err
 	}
-	rootAbs, _ := filepath.Abs(root)
+	absoluteInput := filepath.IsAbs(filepath.FromSlash(clean))
 	hits := []FileSearchHit{}
 	lowerQ := strings.ToLower(q)
 	err = filepath.WalkDir(base, func(p string, de os.DirEntry, err error) error {
@@ -405,7 +439,7 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 		if de.IsDir() {
 			return nil
 		}
-		if err := ensureRealPathWithinRoot(rootAbs, p); err != nil {
+		if err := ensureRealPathWithinRoot(scopeRoot, p); err != nil {
 			return nil
 		}
 		info, err := de.Info()
@@ -426,12 +460,15 @@ func SearchSafe(root, rel, q string, maxHits int) ([]FileSearchHit, error) {
 			if len(line) > 0 {
 				lineNo++
 				if len(line) <= 64*1024 && strings.Contains(strings.ToLower(line), lowerQ) {
-					rel, _ := filepath.Rel(rootAbs, p)
+					hitPath := p
+					if !absoluteInput {
+						hitPath, _ = filepath.Rel(scopeRoot, p)
+					}
 					preview := strings.TrimSpace(line)
 					if len([]rune(preview)) > 240 {
 						preview = string([]rune(preview)[:240]) + "..."
 					}
-					hits = append(hits, FileSearchHit{Path: filepath.ToSlash(rel), Line: lineNo, Preview: preview})
+					hits = append(hits, FileSearchHit{Path: filepath.ToSlash(hitPath), Line: lineNo, Preview: preview})
 					if len(hits) >= maxHits {
 						break
 					}

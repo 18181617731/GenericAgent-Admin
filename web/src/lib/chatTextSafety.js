@@ -6,6 +6,33 @@ export const LONG_TEXT_PREVIEW_CHARS = 18000
 export const JSON_TREE_CHILD_LIMIT = 160
 export const JSON_TREE_STRING_LIMIT = 1400
 
+export const splitMarkdownParts = (text = '') => {
+  const src = String(text || '')
+  const parts = []
+  const closedFenceRe = /(`{3,})([^\n`]*)\n?([\s\S]*?)\1/g
+  let last = 0, match
+  while ((match = closedFenceRe.exec(src)) !== null) {
+    if (match.index > last) parts.push({ type:'text', text:src.slice(last, match.index) })
+    parts.push({ type:'code', fence:match[1], lang:(match[2] || '').trim(), text:match[3] || '' })
+    last = closedFenceRe.lastIndex
+  }
+  if (last < src.length) {
+    const tail = src.slice(last)
+    const open = /(^|\n)(`{3,})([^\n`]*)\n?/.exec(tail)
+    if (open) {
+      const fenceAt = open.index + open[1].length
+      if (fenceAt > 0) parts.push({ type:'text', text:tail.slice(0, fenceAt) })
+      parts.push({ type:'code', fence:open[2], lang:(open[3] || '').trim(), text:tail.slice(open.index + open[0].length) })
+    } else {
+      parts.push({ type:'text', text:tail })
+    }
+  }
+  if (!parts.length) parts.push({ type:'text', text:src })
+  return parts
+}
+
+export const isToolResultText = (text = '') => /^\s*\[(Action|Status|Info|Stdout|Stderr|Result|Output)\]/mi.test(String(text || ''))
+
 
 export const FINAL_MARKER_RE = /^```+\s*\n?\[Info\]\s*Final response to user\.\s*\n?```+\s*$/i
 export const TURN_HEADER_RE = /^\s*(?:\*\*)?\s*LLM Running\s*\(Turn\s+(\d+)\)\s*(?:\.\.\.)?\s*(?:\*\*)?\s*$/i

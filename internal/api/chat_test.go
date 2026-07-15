@@ -346,7 +346,7 @@ func TestChatProjectModeRejectsUnsafeNames(t *testing.T) {
 	}
 }
 
-func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
+func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	var captured map[string]interface{}
 	old := startChatWorkerFunc
 	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
@@ -362,6 +362,7 @@ func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
 				{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "calc", "content": "42"}}},
 				{"role": "assistant", "content": []map[string]interface{}{{"type": "text", "text": "ok"}}},
 			}
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "model", "model_id": "vendor/model-real"})
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "done", "message": done, "raw_history": rawHistory})
 		}()
 		return &chatWorker{SID: "session-hist", Stdin: stdinW, Stdout: stdoutR}, nil
@@ -425,9 +426,29 @@ func TestChatPostSendsPriorMessagesAndRawHistoryToWorker(t *testing.T) {
 	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") || strings.Contains(rr.Body.String(), "raw_history") || strings.Contains(rr.Body.String(), "tool_result") {
 		t.Fatalf("stream unexpectedly leaked prior/raw history: %s", rr.Body.String())
 	}
+	if strings.Count(rr.Body.String(), `"model_id":"vendor/model-real"`) < 2 {
+		t.Fatalf("stream missing model event or terminal message model_id: %s", rr.Body.String())
+	}
 	stored, err := loadChatSession(s.CfgStore.Cfg, "session-hist")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(stored.Messages) == 0 || stored.Messages[len(stored.Messages)-1].ModelID != "vendor/model-real" {
+		t.Fatalf("stored assistant model_id=%q want vendor/model-real: %#v", stored.Messages[len(stored.Messages)-1].ModelID, stored.Messages)
+	}
+
+	reloadReq := httptest.NewRequest(http.MethodGet, "/api/chat/session/session-hist", nil)
+	reloadRR := httptest.NewRecorder()
+	s.Routes().ServeHTTP(reloadRR, reloadReq)
+	if reloadRR.Code != http.StatusOK {
+		t.Fatalf("reload status=%d body=%s", reloadRR.Code, reloadRR.Body.String())
+	}
+	var reloaded chatSession
+	if err := json.Unmarshal(reloadRR.Body.Bytes(), &reloaded); err != nil {
+		t.Fatalf("decode reloaded session: %v body=%s", err, reloadRR.Body.String())
+	}
+	if len(reloaded.Messages) == 0 || reloaded.Messages[len(reloaded.Messages)-1].ModelID != "vendor/model-real" {
+		t.Fatalf("reloaded assistant model_id=%q want vendor/model-real: %#v", reloaded.Messages[len(reloaded.Messages)-1].ModelID, reloaded.Messages)
 	}
 	if len(stored.RawHistory) != 3 {
 		t.Fatalf("stored raw_history len=%d want 3: %#v", len(stored.RawHistory), stored.RawHistory)
@@ -688,6 +709,37 @@ func TestSaveChatUploadsSanitizesUnsafeNames(t *testing.T) {
 	}
 	if !strings.Contains(saved[1]["name"].(string), "upload.bin") {
 		t.Fatalf("fallback sanitized name = %q", saved[1]["name"])
+	}
+}
+
+func TestSaveChatUploadsSanitizesClosingBracket(t *testing.T) {
+	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
+	encoded := base64.StdEncoding.EncodeToString([]byte("x"))
+
+	saved, refs, err := saveChatUploads(cfg, []chatUpload{{
+		Name:    "report].txt",
+		Type:    "text/plain",
+		DataURL: encoded,
+	}})
+	if err != nil {
+		t.Fatalf("saveChatUploads: %v", err)
+	}
+	if len(saved) != 1 || len(refs) != 1 {
+		t.Fatalf("saved=%d refs=%d", len(saved), len(refs))
+	}
+	name, _ := saved[0]["name"].(string)
+	if strings.Contains(name, "]") {
+		t.Fatalf("saved name still contains closing bracket: %q", name)
+	}
+	if !strings.Contains(name, "report_.txt") {
+		t.Fatalf("sanitized name=%q want report_.txt", name)
+	}
+	path, _ := saved[0]["path"].(string)
+	if refs[0] != "[FILE:"+path+"]" {
+		t.Fatalf("file ref=%q want [FILE:%s]", refs[0], path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("saved file %q: %v", path, err)
 	}
 }
 

@@ -135,6 +135,71 @@ describe('channel frontend gates', () => {
   })
 })
 
+describe('Models provider editor', () => {
+  test('keeps focus in the provider name while its controlled value changes', () => {
+    installBrowserPolyfills()
+    globalThis.React = React
+
+    function ModelsHarness() {
+      const [profiles, setProfiles] = React.useState([{
+        var_name: 'native_oai_config_demo',
+        type: 'native_oai',
+        apibase: 'https://api.example.com/v1',
+        apikey: 'masked',
+        model: 'demo-model',
+        models: ['demo-model'],
+      }])
+      const patchProfile = (idx, patch) => {
+        setProfiles(current => current.map((profile, index) => (
+          index === idx ? { ...profile, ...patch } : profile
+        )))
+      }
+
+      return (
+        <Models
+          t={{}}
+          profiles={profiles}
+          persistedProfiles={profiles}
+          setProfiles={setProfiles}
+          patchProfile={patchProfile}
+          importModels={vi.fn()}
+          previewModels={vi.fn()}
+          riskCatalog={[]}
+          getProfileKey={(idx, profile) => `${profile.var_name}:${profile.type}:${profile.apibase}:${idx}`}
+        />
+      )
+    }
+
+    const { container } = render(<ModelsHarness />)
+    const nameInput = container.querySelector('.model-field--provider input')
+    nameInput.focus()
+    expect(document.activeElement).toBe(nameInput)
+
+    fireEvent.change(nameInput, { target: { value: 'renamed' } })
+
+    const updatedNameInput = container.querySelector('.model-field--provider input')
+    expect(updatedNameInput.value).toBe('renamed')
+    expect(document.activeElement).toBe(updatedNameInput)
+  })
+})
+
+
+describe('chat response model identity', () => {
+  test('renders the concrete model ID on its assistant response', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'a1', role: 'assistant', content: 'Finished', model_id: '  vendor/model-v1  ', created_at: 0 }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    const badge = container.querySelector('.oa-model-id')
+    expect(badge?.textContent).toBe('vendor/model-v1')
+    expect(badge?.getAttribute('title')).toBe('Model ID: vendor/model-v1')
+  })
+})
+
 
 describe('first-run setup shell', () => {
   test('App renders SetupWizard when GA root is not configured', async () => {
