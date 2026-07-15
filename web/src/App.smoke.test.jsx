@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage } from './ChatApp.jsx'
+import { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 
 globalThis.React = React
@@ -363,5 +363,43 @@ describe('reflect service model selector', () => {
     expect(document.querySelector('.service-model-popup')).toBeTruthy()
     fireEvent.click(option)
     expect(onModel).toHaveBeenCalledWith(reflectService.name, 7)
+  })
+})
+
+describe('mobile chat model selector', () => {
+  test('keeps the portal open through the viewport scroll caused by an iOS tap', async () => {
+    installBrowserPolyfills()
+    const onChange = vi.fn()
+    const groups = [{
+      value: 'provider-a',
+      label: 'Provider A',
+      models: [
+        { value: 3, label: 'model-three' },
+        { value: 4, label: 'model-four' },
+      ],
+    }]
+
+    render(
+      <div style={{ overflow: 'hidden' }}>
+        <ProviderModelCascade
+          groups={groups}
+          selectedProvider="provider-a"
+          value={3}
+          onChange={onChange}
+          mobile
+        />
+      </div>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 model-three' }))
+    const dialog = await screen.findByRole('dialog', { name: '服务商和模型' })
+    expect(dialog.closest('.oa-mobile-picker-backdrop')?.parentElement).toBe(document.body)
+
+    fireEvent.scroll(window)
+    expect(screen.getByRole('dialog', { name: '服务商和模型' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'model-four' }))
+    expect(onChange).toHaveBeenCalledWith(4)
+    expect(screen.queryByRole('dialog', { name: '服务商和模型' })).toBeNull()
   })
 })

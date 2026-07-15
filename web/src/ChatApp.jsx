@@ -1428,17 +1428,21 @@ function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, o
   </>
 }
 
-function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled, mobile = false }) {
+export function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled, mobile = false }) {
   const [open, setOpen] = useState(false)
   const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
   const ref = useRef()
   const menuRef = useRef()
+  const openedAt = useRef(0)
   useEffect(() => {
     if (!open) return
     const close = () => setOpen(false)
     const h = e => { if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close() }
     const onKeyDown = e => { if (e.key === 'Escape') close() }
-    const onScroll = e => { if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close() }
+    const onScroll = e => {
+      if (performance.now() - openedAt.current < 250) return
+      if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close()
+    }
     document.addEventListener('mousedown', h)
     document.addEventListener('keydown', onKeyDown)
     window.addEventListener('scroll', onScroll, true)
@@ -1463,7 +1467,10 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
     <>
       <div className="oa-model-select oa-composer-cascade" ref={ref}>
         <span>模型</span>
-        <button type="button" disabled={disabled} title={displayModel} aria-label={`选择模型，当前 ${displayModel}`} aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <button type="button" disabled={disabled} title={displayModel} aria-label={`选择模型，当前 ${displayModel}`} aria-expanded={open} onClick={() => {
+          openedAt.current = performance.now()
+          setOpen(o => !o)
+        }}>
           <span className="oa-cascade-current-model">{displayModel}</span><ChevronDown size={13}/>
         </button>
         {open && !mobile && menu}
