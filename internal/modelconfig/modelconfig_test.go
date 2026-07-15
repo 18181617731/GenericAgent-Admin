@@ -137,6 +137,143 @@ func TestStoreSaveAllowsMaskedSecret(t *testing.T) {
 	}
 }
 
+func TestExportPreservesChannelsAndOtherMyKeySource(t *testing.T) {
+	root := t.TempDir()
+	const original = `# User-maintained settings must survive model saves.
+telegram_bot_token = "telegram-secret"
+telegram_allowed_users = ["alice"]
+custom_settings = {"theme": "dark"}
+
+native_oai_config_old = {
+    "apikey": "sk-old-secret",
+    "apibase": "https://old.example/v1",
+    "model": "old-model",
+}
+`
+	active := filepath.Join(root, "mykey.py")
+	if err := os.WriteFile(active, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	profiles := []Profile{{
+		VarName:       "native_oai_config_new",
+		SourceVarName: "native_oai_config_old",
+		Type:          "native_oai",
+		Name:          "new",
+		APIBase:       "https://new.example/v1",
+		Model:         "new-model",
+		APIKey:        "sk-new-secret",
+	}}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	data, err := os.ReadFile(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`telegram_bot_token = "telegram-secret"`,
+		`telegram_allowed_users = ["alice"]`,
+		`custom_settings = {"theme": "dark"}`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Export() removed unrelated mykey.py source %q:\n%s", want, text)
+		}
+	}
+	if got := strings.Count(text, "# >>> GA Admin managed models >>>"); got != 1 {
+		t.Fatalf("managed model block begin count = %d, want 1:\n%s", got, text)
+	}
+	if got := strings.Count(text, "# <<< GA Admin managed models <<<"); got != 1 {
+		t.Fatalf("managed model block end count = %d, want 1:\n%s", got, text)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || draft.Profiles[0].VarName != "native_oai_config_new" {
+		t.Fatalf("runtime profiles = %#v, want only newly managed profile", draft.Profiles)
+	}
+
+	profiles[0].Model = "newer-model"
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("second Export() error = %v", err)
+	}
+	data, err = os.ReadFile(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = string(data)
+	if got := strings.Count(text, "# >>> GA Admin managed models >>>"); got != 1 {
+		t.Fatalf("second Export() managed block count = %d, want 1:\n%s", got, text)
+	}
+	if got := strings.Count(text, `telegram_bot_token = "telegram-secret"`); got != 1 {
+		t.Fatalf("second Export() channel assignment count = %d, want 1:\n%s", got, text)
+	}
+}
+
+func TestExportRejectsUnsafeSourceAssignmentsWithoutWriting(t *testing.T) {
+	tests := []struct {
+		name       string
+		original   string
+		wantErrSub string
+	}{
+		{
+			name: "duplicate assignments",
+			original: "native_oai_config_old = {'model': 'one'}\n" +
+				"native_oai_config_old = {'model': 'two'}\n",
+			wantErrSub: "multiple top-level assignments found",
+		},
+		{
+			name:       "chained assignment",
+			original:   "alias = native_oai_config_old = {'model': 'one'}\n",
+			wantErrSub: "not a standalone single-target assignment",
+		},
+		{
+			name:       "invalid syntax",
+			original:   "native_oai_config_old = {\n",
+			wantErrSub: "mykey.py syntax error",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			active := filepath.Join(root, "mykey.py")
+			if err := os.WriteFile(active, []byte(tt.original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			profiles := []Profile{{
+				VarName:       "native_oai_config_new",
+				SourceVarName: "native_oai_config_old",
+				Type:          "native_oai",
+				Name:          "new",
+				APIBase:       "https://new.example/v1",
+				Model:         "new-model",
+				APIKey:        "sk-new-secret",
+			}}
+
+			if _, err := Export(root, profiles, true); err == nil || !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Fatalf("Export() error = %v, want substring %q", err, tt.wantErrSub)
+			}
+			got, err := os.ReadFile(active)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.original {
+				t.Fatalf("mykey.py changed after rejected export:\n%s", got)
+			}
+			backups, err := filepath.Glob(filepath.Join(root, "mykey.py.bak-*"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(backups) != 0 {
+				t.Fatalf("rejected export created backups: %v", backups)
+			}
+		})
+	}
+}
+
 func TestExportWritesOfficialMyKeyAtomically(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing", "ga")
 	profiles := []Profile{{

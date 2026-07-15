@@ -415,7 +415,10 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 	previousVarNames := make([]string, len(p.Profiles))
 	for i, profile := range p.Profiles {
 		requestedProfiles[i] = profile.Profile
-		previousVarNames[i] = profile.PreviousVarName
+		previousVarNames[i] = strings.TrimSpace(profile.PreviousVarName)
+		if requestedProfiles[i].SourceVarName == "" {
+			requestedProfiles[i].SourceVarName = previousVarNames[i]
+		}
 	}
 	profiles, err := s.mergeModelSecretsForWriteByPreviousVar(requestedProfiles, previousVarNames)
 	if err != nil {
