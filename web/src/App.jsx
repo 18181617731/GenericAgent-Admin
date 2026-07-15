@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, Bot, Brain, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, XCircle, Download, Moon, Sun } from 'lucide-react'
+import { Activity, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, XCircle, Download, Moon, Sun } from 'lucide-react'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
@@ -115,6 +115,7 @@ export default function App() {
   const t = I18N[lang] || I18N.en
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [cfg, setCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
   const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
   const [setupEnv, setSetupEnv] = useState(null)
@@ -611,6 +612,18 @@ export default function App() {
   }
 
   const nav = NAV_ITEMS
+  const navigateTo = nextTab => {
+    setMobileNavOpen(false)
+    if (nextTab === 'chat') window.location.href = buildRoute('chat')
+    else setTab(nextTab)
+  }
+
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previous }
+  }, [mobileNavOpen])
 
   const needsSetup = !!health && !health?.ok
   if (needsSetup) {
@@ -635,7 +648,14 @@ export default function App() {
       </div>
     </div>}
     <div ref={appScope} className={`app app-tab-${tab}`}>
-    <aside className="sidebar"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button></div><nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav><button type="button" className="refresh" onClick={load} disabled={busy}><RefreshCw size={15} aria-hidden="true"/>{busy ? t.busy : t.refresh}</button>{msg && <div className="message" role="status" aria-live="polite">{msg}</div>}</aside>
+    <aside className="sidebar">
+      <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
+      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button></div>
+      <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{t.nav[tab]}</span><ChevronDown size={17}/></button>
+      <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
+      <button type="button" className="refresh" onClick={load} disabled={busy} aria-label={busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{busy ? t.busy : t.refresh}</span></button>
+      {msg && <div className="message" role="status" aria-live="polite">{msg}</div>}
+    </aside>
     <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label="正在加载页面…" />}>
@@ -781,6 +801,12 @@ export default function App() {
       </ErrorBoundary>
     </main>
   </div>
+      {mobileNavOpen && <div className="mobile-nav-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setMobileNavOpen(false) }}>
+        <section className="mobile-nav-sheet" role="dialog" aria-modal="true" aria-label="页面导航">
+          <header><div><b>前往功能页面</b><span>{t.nav[tab]}</span></div><button type="button" onClick={()=>setMobileNavOpen(false)} aria-label="关闭导航"><X size={18}/></button></header>
+          <div className="mobile-nav-grid">{nav.map(n => <button key={n} type="button" className={tab===n ? 'active' : ''} aria-current={tab===n ? 'page' : undefined} onClick={()=>navigateTo(n)}>{icon(n)}<span>{t.nav[n]}</span></button>)}</div>
+        </section>
+      </div>}
       </>}
 
 

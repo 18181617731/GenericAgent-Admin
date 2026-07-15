@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -1406,19 +1407,43 @@ const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAs
   </>
 })
 
-function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
+function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, onPreview, onSelect, onClose, mobile }) {
+  const previewGroup = groups.find(group => group.value === previewProvider) || groups[0]
+  return <>
+    {mobile && <div className="oa-mobile-picker-head"><div><b>选择模型</b><span>先选择服务商，再选择模型</span></div><button type="button" onClick={onClose} aria-label="关闭模型选择"><X size={18}/></button></div>}
+    <div className="oa-cascade-providers">
+      {groups.map(group => <button key={group.value} type="button" className={group.value === previewGroup?.value ? 'active' : ''}
+        onMouseEnter={() => onPreview(group.value)} onFocus={() => onPreview(group.value)} onClick={() => onPreview(group.value)}>
+        <span>{group.label}</span><ChevronRight size={13}/>
+      </button>)}
+    </div>
+    <div className="oa-cascade-models">
+      <div className="oa-cascade-heading">{previewGroup?.label || '模型'}</div>
+      {previewGroup?.models.length ? previewGroup.models.map(model => <button key={model.value} type="button"
+        className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
+        onClick={() => onSelect(model.value)}>
+        {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12}/>}<span>{model.label}</span>
+      </button>) : <div className="oa-cascade-empty">未发现模型</div>}
+    </div>
+  </>
+}
+
+function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled, mobile = false }) {
   const [open, setOpen] = useState(false)
   const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
   const ref = useRef()
+  const menuRef = useRef()
   useEffect(() => {
     if (!open) return
     const close = () => setOpen(false)
-    const h = e => { if (!ref.current?.contains(e.target)) close() }
-    const onScroll = e => { if (!ref.current?.contains(e.target)) close() }
+    const h = e => { if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close() }
+    const onKeyDown = e => { if (e.key === 'Escape') close() }
+    const onScroll = e => { if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close() }
     document.addEventListener('mousedown', h)
+    document.addEventListener('keydown', onKeyDown)
     window.addEventListener('scroll', onScroll, true)
-    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true) }
-  }, [open])
+    return () => { document.removeEventListener('mousedown', h); document.removeEventListener('keydown', onKeyDown); window.removeEventListener('scroll', onScroll, true) }
+  }, [open, mobile])
   useEffect(() => {
     if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
     else if (groups[0]) setPreviewProvider(groups[0].value)
@@ -1426,46 +1451,29 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
   }, [selectedProvider, groups])
 
   const activeGroup = groups.find(group => group.value === selectedProvider)
-  const previewGroup = groups.find(group => group.value === previewProvider) || activeGroup || groups[0]
   const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
   const displayModel = activeModel?.label || '\u672a\u53d1\u73b0\u6a21\u578b'
+  const selectModel = next => { onChange(next); setOpen(false) }
+  const menu = <div className={`oa-cascade-menu ${mobile ? 'oa-cascade-modal' : ''}`} ref={menuRef} role="dialog" aria-modal={mobile || undefined} aria-label="服务商和模型">
+    <ProviderModelMenu groups={groups} selectedProvider={selectedProvider} previewProvider={previewProvider} value={value}
+      onPreview={setPreviewProvider} onSelect={selectModel} onClose={() => setOpen(false)} mobile={mobile}/>
+  </div>
 
   return (
-    <div className="oa-model-select oa-composer-cascade" ref={ref}>
-      <span>模型</span>
-      <button type="button" disabled={disabled} title={displayModel} aria-label={displayModel} onClick={() => setOpen(o => !o)}>
-        <span className="oa-cascade-current-model">{displayModel}</span>
-        <ChevronDown size={13} />
-      </button>
-      {open && <div className="oa-cascade-menu" role="dialog" aria-label="\u670d\u52a1\u5546\u548c\u6a21\u578b">
-        <div className="oa-cascade-providers">
-          {groups.map(group => (
-            <button key={group.value} type="button"
-              className={group.value === selectedProvider ? 'active' : ''}
-              onMouseEnter={() => setPreviewProvider(group.value)}
-              onFocus={() => setPreviewProvider(group.value)}
-              onClick={() => setPreviewProvider(group.value)}>
-              <span>{group.label}</span><ChevronRight size={13} />
-            </button>
-          ))}
-        </div>
-        <div className="oa-cascade-models">
-          <div className="oa-cascade-heading">{previewGroup?.label || '\u6a21\u578b'}</div>
-          {previewGroup?.models.length ? previewGroup.models.map(model => (
-            <button key={model.value} type="button"
-              className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
-              onClick={() => { onChange(model.value); setOpen(false) }}>
-              {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12} />}
-              <span>{model.label}</span>
-            </button>
-          )) : <div className="oa-cascade-empty">{ '\u672a\u53d1\u73b0\u6a21\u578b' }</div>}
-        </div>
-      </div>}
-    </div>
+    <>
+      <div className="oa-model-select oa-composer-cascade" ref={ref}>
+        <span>模型</span>
+        <button type="button" disabled={disabled} title={displayModel} aria-label={`选择模型，当前 ${displayModel}`} aria-expanded={open} onClick={() => setOpen(o => !o)}>
+          <span className="oa-cascade-current-model">{displayModel}</span><ChevronDown size={13}/>
+        </button>
+        {open && !mobile && menu}
+      </div>
+      {open && mobile && createPortal(<div className="oa-mobile-picker-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(false) }}>{menu}</div>, document.body)}
+    </>
   )
 }
 
-function CustomSelect({ value, onChange, options, disabled }) {
+function CustomSelect({ value, onChange, options, disabled, native = false, ariaLabel = '选择选项' }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()
   useEffect(() => {
@@ -1479,6 +1487,9 @@ function CustomSelect({ value, onChange, options, disabled }) {
   }, [open])
   const label = options.find(o => String(o.value) === String(value))?.label ?? String(value)
   const displayLabel = label.includes('/') ? label.split('/').pop() : label
+  if (native) return <select className="oa-native-select" value={value} onChange={e => onChange(e.target.value)} disabled={disabled} aria-label={ariaLabel}>
+    {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+  </select>
   return (
     <div className="oa-cselect" ref={ref}>
       <button type="button" disabled={disabled} title={label} onClick={() => setOpen(o => !o)}>
@@ -2648,9 +2659,9 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title="展开侧栏" aria-label="展开侧栏"><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title="新对话" aria-label="新对话"><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <div className="oa-title"><b title={current ? shortTitle(current) : '新对话'}>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
-          <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
+          <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span>
         </button>
       </header>
 
@@ -2766,7 +2777,7 @@ export default function ChatApp() {
             })}
           </div>}
           {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>\u5c06\u4ee5\u89c4\u5212\u6a21\u5f0f\u6267\u884c\uff0c\u5e76\u5728\u5b8c\u6210\u540e\u5c55\u793a run \u76ee\u5f55\u4e0e\u65e5\u5fd7\u6458\u8981</b></div>}
-          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={'\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
+          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={isMobile ? '发送消息或添加文件…' : '\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'\u6dfb\u52a0\u9644\u4ef6'}><Paperclip size={17}/><span>{'\u9644\u4ef6'}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
@@ -2802,10 +2813,10 @@ export default function ChatApp() {
             </div>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length || isCurrentRunning || modelSwitching}
-              onChange={v=>saveModel(Number(v))} />
+              onChange={v=>saveModel(Number(v))} mobile={isMobile} />
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
-                options={REASONING_EFFORT_OPTIONS} />
+                options={REASONING_EFFORT_OPTIONS} native={isMobile} ariaLabel="推理强度" />
             </div>
             <button className="oa-send" type="button" disabled={modelSwitching || (!prompt.trim() && !attachments.length)} onClick={() => send()} title={modelSwitching ? '正在切换模型' : isCurrentRunning ? '加入发送队列' : '发送'} aria-label={modelSwitching ? '正在切换模型' : isCurrentRunning ? '加入发送队列' : '发送'}><Send size={17}/></button>
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
