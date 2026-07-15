@@ -250,33 +250,47 @@ func (s *Server) filesOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-func openLocalPath(p string, isDir bool, mode string) error {
-	startHidden := func(name string, args ...string) error {
-		cmd := exec.Command(name, args...)
-		hideChildWindow(cmd)
-		return cmd.Start()
-	}
-	switch runtime.GOOS {
+type localPathLaunch struct {
+	name       string
+	args       []string
+	hideWindow bool
+}
+
+func localPathLaunchSpec(goos, p string, isDir bool, mode string) localPathLaunch {
+	switch goos {
 	case "windows":
 		if mode == "folder" {
 			if isDir {
-				return startHidden("explorer", p)
+				return localPathLaunch{name: "explorer", args: []string{p}}
 			}
-			return startHidden("explorer", "/select,"+p)
+			return localPathLaunch{name: "explorer", args: []string{"/select," + p}}
 		}
-		return startHidden("rundll32", "url.dll,FileProtocolHandler", p)
+		return localPathLaunch{
+			name:       "rundll32",
+			args:       []string{"url.dll,FileProtocolHandler", p},
+			hideWindow: true,
+		}
 	case "darwin":
 		if mode == "folder" {
 			if isDir {
-				return startHidden("open", p)
+				return localPathLaunch{name: "open", args: []string{p}, hideWindow: true}
 			}
-			return startHidden("open", "-R", p)
+			return localPathLaunch{name: "open", args: []string{"-R", p}, hideWindow: true}
 		}
-		return startHidden("open", p)
+		return localPathLaunch{name: "open", args: []string{p}, hideWindow: true}
 	default:
 		if mode == "folder" && !isDir {
 			p = filepath.Dir(p)
 		}
-		return startHidden("xdg-open", p)
+		return localPathLaunch{name: "xdg-open", args: []string{p}, hideWindow: true}
 	}
+}
+
+func openLocalPath(p string, isDir bool, mode string) error {
+	launch := localPathLaunchSpec(runtime.GOOS, p, isDir, mode)
+	cmd := exec.Command(launch.name, launch.args...)
+	if launch.hideWindow {
+		hideChildWindow(cmd)
+	}
+	return cmd.Start()
 }

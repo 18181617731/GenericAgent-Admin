@@ -79,28 +79,141 @@ func TestTailSafeDoesNotTreatMidRuneStartAsBinary(t *testing.T) {
 	}
 }
 
-func TestSafeResolveAnyRejectsAbsolutePathOutsideRoot(t *testing.T) {
+func TestSafeResolveAnyAcceptsExplicitAbsolutePathsOutsideRoot(t *testing.T) {
 	root := t.TempDir()
-	outsideDir := t.TempDir()
-	outside := filepath.Join(outsideDir, "outside.txt")
-	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, _, err := SafeResolveAny(root, outside); err == nil || !strings.Contains(err.Error(), "escapes GA root") {
-		t.Fatalf("SafeResolveAny outside absolute err = %v, want escapes GA root", err)
-	}
-
+	outside := filepath.Join(t.TempDir(), "outside.txt")
 	inside := filepath.Join(root, "inside.txt")
-	if err := os.WriteFile(inside, []byte("ok"), 0644); err != nil {
-		t.Fatal(err)
+	for _, path := range []string{outside, inside} {
+		if err := os.WriteFile(path, []byte("ok"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		wantAbs, err := filepath.Abs(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		abs, clean, err := SafeResolveAny(root, path)
+		if err != nil {
+			t.Fatalf("SafeResolveAny(%q) error = %v, want nil", path, err)
+		}
+		if filepath.Clean(abs) != filepath.Clean(wantAbs) || clean != filepath.ToSlash(filepath.Clean(wantAbs)) {
+			t.Fatalf("SafeResolveAny(%q) = (%q, %q), want (%q, %q)", path, abs, clean, wantAbs, filepath.ToSlash(filepath.Clean(wantAbs)))
+		}
 	}
-	abs, rel, err := SafeResolveAny(root, inside)
+}
+
+func TestSafeFileOperationsAllowExplicitAbsolutePathsOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outsideRoot := t.TempDir()
+	target := filepath.Join(outsideRoot, "nested", "notes.txt")
+	wantPath := filepath.ToSlash(filepath.Clean(target))
+	content := "alpha\nneedle\nomega\n"
+
+	written, err := WriteSafe(root, target, content)
 	if err != nil {
+		t.Fatalf("WriteSafe absolute error = %v, want nil", err)
+	}
+	if written.Path != wantPath || written.Content != content {
+		t.Fatalf("WriteSafe detail = %#v, want path %q and content %q", written, wantPath, content)
+	}
+
+	read, err := ReadSafeAny(root, target)
+	if err != nil {
+		t.Fatalf("ReadSafeAny absolute error = %v, want nil", err)
+	}
+	if read.Path != wantPath || read.Content != content {
+		t.Fatalf("ReadSafeAny detail = %#v, want path %q and content %q", read, wantPath, content)
+	}
+
+	items, err := ListSafe(root, filepath.Dir(target))
+	if err != nil {
+		t.Fatalf("ListSafe absolute error = %v, want nil", err)
+	}
+	if len(items) != 1 || items[0].Name != filepath.Base(target) || items[0].Path != wantPath {
+		t.Fatalf("ListSafe absolute items = %#v, want notes.txt at %q", items, wantPath)
+	}
+
+	tail, err := TailSafe(root, target, 2)
+	if err != nil {
+		t.Fatalf("TailSafe absolute error = %v, want nil", err)
+	}
+	if tail.Path != wantPath || !strings.Contains(tail.Content, "omega") {
+		t.Fatalf("TailSafe absolute detail = %#v, want path %q containing omega", tail, wantPath)
+	}
+
+	hits, err := SearchSafe(root, outsideRoot, "needle", 10)
+	if err != nil {
+		t.Fatalf("SearchSafe absolute error = %v, want nil", err)
+	}
+	if len(hits) != 1 || hits[0].Path != wantPath || hits[0].Line != 2 {
+		t.Fatalf("SearchSafe absolute hits = %#v, want one line-2 hit at %q", hits, wantPath)
+	}
+
+	if err := DeleteSafe(root, target); err != nil {
+		t.Fatalf("DeleteSafe absolute error = %v, want nil", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target stat after DeleteSafe = %v, want not exist", err)
+	}
+	if _, err := os.Stat(outsideRoot); err != nil {
+		t.Fatalf("outside root was affected: %v", err)
+	}
+}
+
+func TestSafeFileOperationsKeepRelativePathsSandboxed(t *testing.T) {
+	root := t.TempDir()
+	escapeName := "escape-" + filepath.Base(root) + ".txt"
+	escapeRel := filepath.Join("..", escapeName)
+
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{name: "resolve", call: func() error { _, _, err := SafeResolveAny(root, escapeRel); return err }},
+		{name: "read", call: func() error { _, err := ReadSafeAny(root, escapeRel); return err }},
+		{name: "tail", call: func() error { _, err := TailSafe(root, escapeRel, 10); return err }},
+		{name: "write", call: func() error { _, err := WriteSafe(root, escapeRel, "blocked"); return err }},
+		{name: "delete", call: func() error { return DeleteSafe(root, escapeRel) }},
+		{name: "list", call: func() error { _, err := ListSafe(root, ".."); return err }},
+		{name: "search", call: func() error { _, err := SearchSafe(root, "..", "needle", 10); return err }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.call()
+			if err == nil || !strings.Contains(err.Error(), "escapes GA root") {
+				t.Fatalf("error = %v, want escapes GA root", err)
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(root), escapeName)); !os.IsNotExist(err) {
+		t.Fatalf("relative escape target stat = %v, want not exist", err)
+	}
+}
+
+func TestDeleteSafeRejectsGARootWithoutRemovingIt(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if abs != inside || rel != "inside.txt" {
-		t.Fatalf("SafeResolveAny inside = (%q, %q), want (%q, inside.txt)", abs, rel, inside)
+	for _, path := range []string{".", root} {
+		err := DeleteSafe(root, path)
+		if err == nil || !strings.Contains(err.Error(), "cannot delete GA root") {
+			t.Fatalf("DeleteSafe(%q) error = %v, want cannot delete GA root", path, err)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("marker after DeleteSafe(%q) = %v, want preserved", path, err)
+		}
+	}
+}
+
+func TestIsFilesystemRootRecognizesCurrentVolumeRoot(t *testing.T) {
+	root := t.TempDir()
+	volumeRoot := filepath.VolumeName(root) + string(os.PathSeparator)
+	if !isFilesystemRoot(volumeRoot) {
+		t.Fatalf("isFilesystemRoot(%q) = false, want true", volumeRoot)
+	}
+	if isFilesystemRoot(root) {
+		t.Fatalf("isFilesystemRoot(%q) = true, want false", root)
 	}
 }
 

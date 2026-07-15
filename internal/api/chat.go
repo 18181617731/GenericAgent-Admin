@@ -1288,7 +1288,7 @@ func sanitizeChatUploadName(name string) string {
 	}
 	name = strings.Map(func(r rune) rune {
 		switch {
-		case r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
+		case r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' || r == ']':
 			return '_'
 		case r < 32:
 			return '_'

@@ -798,7 +798,7 @@ export function Models({
               const state = result?.errors?.length ? 'error' : result?.warnings?.length ? 'warning' : 'ready'
               return (
                 <button
-                  key={profileKeyId(idx, profile)}
+                  key={profile.client_id || `provider-${idx}`}
                   type="button"
                   className={`model-provider-item${!addOpen && activeIndex === idx ? ' is-active' : ''}`}
                   onClick={() => openProfile(idx)}
@@ -842,7 +842,7 @@ export function Models({
           {profiles.map((profile, idx) => {
             const key = profileKeyId(idx, profile)
             return (
-              <div key={key} className="model-editor-slot" hidden={addOpen || activeIndex !== idx}>
+              <div key={profile.client_id || `provider-${idx}`} className="model-editor-slot" hidden={addOpen || activeIndex !== idx}>
                 <ProfileCard
                   profile={profile}
                   idx={idx}

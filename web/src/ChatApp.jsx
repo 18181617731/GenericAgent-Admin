@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, ImagePlus, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -10,6 +10,7 @@ import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TE
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
+import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 
 gsap.registerPlugin(useGSAP)
 
@@ -205,11 +206,18 @@ function JsonTree({ data, name = 'root', depth = 0 }) {
   </div>
 }
 
+const MAX_CHAT_UPLOAD_FILES = 8
+const MAX_CHAT_UPLOAD_BYTES_PER_FILE = 20 * 1024 * 1024
+const MAX_CHAT_UPLOAD_BYTES_TOTAL = 40 * 1024 * 1024
+
+const uploadFileName = (f) => String(f?.name || f?.Name || 'attachment')
+const uploadFileSource = (f) => String(f?.dataURL || f?.DataURL || f?.url || f?.URL || '')
+
 function isImageFile(f) {
   if (!f) return false
-  const mime = String(f.type || f.mime || '')
+  const mime = String(f.type || f.Type || f.mime || f.Mime || '')
   if (mime.startsWith('image/')) return true
-  const ref = String(f.name || f.url || f.path || f.dataURL || '').split(/[?#]/)[0]
+  const ref = String(f.name || f.Name || f.url || f.URL || f.path || f.Path || f.dataURL || f.DataURL || '').split(/[?#]/)[0]
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(ref)
 }
 
@@ -221,6 +229,8 @@ const FILE_KIND_RULES = [
   { kind:'pdf', re:/\.pdf$/i, Icon:FileOutput },
 ]
 
+const getFileVisual = (value) => FILE_KIND_RULES.find((rule) => rule.re.test(String(value || '').split(/[?#]/)[0])) || { kind:'file', Icon:FileText }
+
 function FileAttachment({ path }) {
   const clean = String(path || '').trim()
   const name = clean.split(/[\\/]/).filter(Boolean).pop() || clean || '文件'
@@ -228,7 +238,7 @@ function FileAttachment({ path }) {
   const extension = extMatch ? extMatch[1].slice(0, 6).toUpperCase() : 'FILE'
   const splitAt = Math.max(clean.lastIndexOf('\\'), clean.lastIndexOf('/'))
   const directory = splitAt >= 0 ? clean.slice(0, splitAt) : '本地文件'
-  const visual = FILE_KIND_RULES.find((rule) => rule.re.test(name)) || { kind:'file', Icon:FileText }
+  const visual = getFileVisual(name)
   const { kind, Icon } = visual
   const isImage = kind === 'image'
   const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
@@ -1288,11 +1298,10 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
   </div>
 })
 
-// 用户消息正文里会被自动追加附件清单（前端乐观态的“[图片附件]”或后端保存后的“[附件已保存]\n[FILE:...]”）。
-// 这些附件已经由 oa-message-images 单独渲染，若再经 InlineRichText 渲染 [FILE:] 会导致图片重复显示，故在展示前剥离该尾块。
+// User messages append a generated attachment block. Cards render it separately, so hide the raw suffix.
 const stripUserAttachmentBlock = (content = '') => {
   const src = String(content || '')
-  const markers = ['\n[图片附件]', '\n[附件已保存]', '[图片附件]', '[附件已保存]']
+  const markers = ['\n[\u9644\u4ef6]', '\n[\u56fe\u7247\u9644\u4ef6]', '\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]', '[\u9644\u4ef6]', '[\u56fe\u7247\u9644\u4ef6]', '[\u9644\u4ef6\u5df2\u4fdd\u5b58]']
   let cut = -1
   for (const marker of markers) {
     const i = src.lastIndexOf(marker)
@@ -1300,6 +1309,11 @@ const stripUserAttachmentBlock = (content = '') => {
   }
   return cut >= 0 ? src.slice(0, cut).trimEnd() : src
 }
+
+const extractSavedFilePaths = (content = '') => Array.from(
+  String(content || '').matchAll(/\[FILE:([^\]]+)\]/g),
+  (match) => match[1].trim(),
+).filter(Boolean)
 
 const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.output_tokens || 0) > 0 || (u.cached_tokens || 0) > 0)
 const formatElapsedMs = (ms = 0) => {
@@ -1344,8 +1358,13 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
-const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply, clockNow = 0 }) {
+export const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply, clockNow = 0 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
+  const messageFiles = Array.isArray(m.files) ? m.files : []
+  const imageFiles = messageFiles.filter(isImageFile)
+  const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
+  const pendingFiles = savedFilePaths.length > 0 ? [] : messageFiles.filter((file) => !isImageFile(file))
+  const modelID = m.role === 'assistant' && typeof m.model_id === 'string' ? m.model_id.trim() : ''
   const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
   const hasUsage = !turnUsages && m.role === 'assistant' && m.usage && (m.usage.input_tokens > 0 || m.usage.output_tokens > 0)
   const usageTotal = turnUsages ? sumUsages(turnUsages) : (hasUsage ? m.usage : null)
@@ -1355,8 +1374,17 @@ const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply,
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
-      <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
-      {Array.isArray(m.files) && m.files.some(isImageFile) && <div className="oa-message-images">{m.files.filter(isImageFile).map((f, i) => <img key={f.name || i} src={f.dataURL || f.url} alt={f.name || 'image'} />)}</div>}
+      <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelID && <span className="oa-model-id" title={`Model ID: ${modelID}`}>{modelID}</span>}{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
+      {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
+      {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
+        {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
+        {pendingFiles.map((file, i) => {
+          const name = uploadFileName(file)
+          const visual = getFileVisual(name)
+          const Icon = visual.Icon
+          return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
+        })}
+      </div>}
       {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
     </div>
@@ -1511,6 +1539,9 @@ export default function ChatApp() {
   const [menuPos, setMenuPos] = useState(null)
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
+  const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
+  const [selectedSessionIds, setSelectedSessionIds] = useState([])
+  const [batchDeleting, setBatchDeleting] = useState(false)
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
@@ -1729,6 +1760,12 @@ export default function ChatApp() {
         m.id === pendingId ? { ...m, run_started_at_ms: ev.run_started_at_ms } : m
       ) : xs)
     }
+    if (ev.type === 'model' && typeof ev.model_id === 'string' && ev.model_id.trim()) {
+      const modelID = ev.model_id.trim()
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
+        m.id === pendingId ? { ...m, model_id: modelID } : m
+      ) : xs)
+    }
     if (ev.type === 'turn_usage' && ev.usage && typeof ev.index === 'number') {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
         if (m.id !== pendingId) return m
@@ -1743,6 +1780,7 @@ export default function ChatApp() {
         if (m.id !== pendingId) return m
         const elapsedMs = getElapsedMs(m)
         const finalMsg = { ...ev.message }
+        if ((!finalMsg.model_id || !String(finalMsg.model_id).trim()) && m.model_id) finalMsg.model_id = m.model_id
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         return finalMsg
@@ -1941,6 +1979,8 @@ export default function ChatApp() {
   }
 
   const newSession = async () => {
+    setSessionManagerOpen(false)
+    setSelectedSessionIds([])
     const openToken = ++openSeqRef.current
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
@@ -1967,6 +2007,93 @@ export default function ChatApp() {
       setSid(''); setMessages([]); setBusy(false); setStreamingSid(''); setAutoFollow(true); setShowFollow(false); setNotice('会话已删除')
     }
     setTimeout(() => loadSessions('', { open:true }).catch(()=>{}), 0)
+  }
+
+  const openSessionManager = () => {
+    setSessionManagerOpen(true)
+    setSelectedSessionIds([])
+    setEditing('')
+    setDraftTitle('')
+    setMenuOpen('')
+    setMenuPos(null)
+  }
+
+  const closeSessionManager = () => {
+    if (batchDeleting) return
+    setSessionManagerOpen(false)
+    setSelectedSessionIds([])
+  }
+
+  const toggleSessionSelection = (id) => {
+    if (!id || batchDeleting) return
+    setSelectedSessionIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id])
+  }
+
+  const toggleAllSessions = () => {
+    if (batchDeleting) return
+    setSelectedSessionIds(ids => {
+      const selected = new Set(ids)
+      return sessions.length > 0 && sessions.every(session => selected.has(session.id))
+        ? []
+        : sessions.map(session => session.id)
+    })
+  }
+
+  const deleteSelectedSessions = async () => {
+    if (batchDeleting) return
+    const available = new Set(sessions.map(session => session.id))
+    const ids = normalizeSessionIds(selectedSessionIds).filter(id => available.has(id))
+    if (!ids.length || !confirmDanger('chat-session-batch-delete', `永久删除已选的 ${ids.length} 个会话？此操作不可恢复。`)) return
+
+    setBatchDeleting(true)
+    setErr('')
+    setNotice('')
+    try {
+      const result = await deleteChatSessions(ids, id => api(`/api/chat/session/${id}`, { method:'DELETE' }))
+      const deleted = new Set(result.deletedIds)
+      const activeDeleted = deleted.has(sid)
+      if (deleted.size) setSessions(xs => xs.filter(session => !deleted.has(session.id)))
+
+      if (activeDeleted) {
+        ++openSeqRef.current
+        activeSidRef.current = ''
+        streamAbortRef.current?.abort?.()
+        streamAbortRef.current = null
+        scrollModeRef.current = 'auto'
+        setSid('')
+        setMessages([])
+        setRawHistory([])
+        setHistoryInfo([])
+        setWorkingState(null)
+        setContextOpen(false)
+        setBusy(false)
+        setStreamingSid('')
+        setAutoFollow(true)
+        setShowFollow(false)
+      }
+
+      let refreshError = ''
+      if (deleted.size) {
+        try {
+          await loadSessions(activeDeleted ? '' : sid, { open: activeDeleted })
+        } catch (e) {
+          refreshError = e?.message || String(e)
+        }
+      }
+
+      if (result.failedIds.length) {
+        setSelectedSessionIds(result.failedIds)
+        const detail = result.failures[0]?.error?.message || ''
+        setErr(`${result.failedIds.length} 个会话删除失败${detail ? `：${detail}` : ''}${refreshError ? `；刷新失败：${refreshError}` : ''}`)
+      } else {
+        setSelectedSessionIds([])
+        setSessionManagerOpen(false)
+        if (refreshError) setErr(`已删除 ${result.deletedIds.length} 个会话，但刷新列表失败：${refreshError}`)
+        else setNotice(`已删除 ${result.deletedIds.length} 个会话`)
+      }
+    } finally {
+      setBatchDeleting(false)
+    }
   }
 
   const startRename = (s) => { setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null) }
@@ -2025,20 +2152,39 @@ export default function ChatApp() {
     }
   }
 
-  const addImageFiles = async (fileList) => {
-    const files = Array.from(fileList || []).filter(f => f && f.type?.startsWith('image/'))
+  const addAttachmentFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean)
     if (!files.length) return
-    const tooLarge = files.find(f => f.size > 8 * 1024 * 1024)
-    if (tooLarge) { setErr(`图片过大：${tooLarge.name}，单张限制 8MB`); return }
+    if (attachments.length + files.length > MAX_CHAT_UPLOAD_FILES) {
+      setErr(`\u9644\u4ef6\u6700\u591a\u4e0a\u4f20 ${MAX_CHAT_UPLOAD_FILES} \u4e2a`)
+      return
+    }
+    const tooLarge = files.find((file) => (Number(file.size) || 0) > MAX_CHAT_UPLOAD_BYTES_PER_FILE)
+    if (tooLarge) {
+      setErr(`\u9644\u4ef6\u8fc7\u5927\uff1a${tooLarge.name || 'attachment'}\uff0c\u5355\u4e2a\u9650\u5236 20MB`)
+      return
+    }
+    const totalBytes = attachments.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+      + files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+    if (totalBytes > MAX_CHAT_UPLOAD_BYTES_TOTAL) {
+      setErr('\u9644\u4ef6\u603b\u5927\u5c0f\u9650\u5236 40MB')
+      return
+    }
     const readOne = (file) => new Promise((resolve, reject) => {
       const reader = new FileReader()
-      reader.onload = () => resolve({ id:`img-${Date.now()}-${Math.random().toString(16).slice(2)}`, name:file.name || `pasted-${Date.now()}.png`, type:file.type || 'image/png', size:file.size || 0, dataURL:String(reader.result || '') })
-      reader.onerror = () => reject(reader.error || new Error('读取图片失败'))
+      reader.onload = () => resolve({
+        id:`file-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name:file.name || `attachment-${Date.now()}`,
+        type:file.type || 'application/octet-stream',
+        size:Number(file.size) || 0,
+        dataURL:String(reader.result || ''),
+      })
+      reader.onerror = () => reject(reader.error || new Error('\u8bfb\u53d6\u9644\u4ef6\u5931\u8d25'))
       reader.readAsDataURL(file)
     })
     try {
       const next = await Promise.all(files.map(readOne))
-      setAttachments(xs => [...xs, ...next].slice(0, 8))
+      setAttachments((current) => [...current, ...next].slice(0, MAX_CHAT_UPLOAD_FILES))
       setErr('')
     } catch (e) { setErr(e.message || String(e)) }
   }
@@ -2089,15 +2235,15 @@ export default function ChatApp() {
     guideQueued(item)
   }
   const onPaste = (e) => {
-    const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type?.startsWith('image/'))
-    if (imgs.length) {
+    const files = Array.from(e.clipboardData?.files || []).filter(Boolean)
+    if (files.length) {
       e.preventDefault()
-      addImageFiles(imgs)
+      addAttachmentFiles(files)
     }
   }
-  const onDropImages = (e) => {
+  const onDropFiles = (e) => {
     e.preventDefault(); setDragging(false)
-    addImageFiles(e.dataTransfer?.files)
+    addAttachmentFiles(e.dataTransfer?.files)
   }
 
 
@@ -2142,14 +2288,15 @@ export default function ChatApp() {
       setStreamingSid(id)
       setSessions(xs => xs.map(s => s.id === id ? { ...s, running:true } : s))
       setAutoFollow(true); setShowFollow(false)
-      const fileNote = files.length ? `\n\n[图片附件]\n${files.map(f => `- ${f.name}`).join('\n')}` : ''
-      const optimistic = { id:clientUserID, role:'user', content:(text || '请分析这张图片') + fileNote, files, created_at:Math.floor(Date.now()/1000) }
+      const fileNote = files.length ? `\n\n[\u9644\u4ef6]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
+      const attachmentPrompt = text || '\u8bf7\u5904\u7406\u8fd9\u4e9b\u9644\u4ef6'
+      const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
       setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:text || '请分析这张图片', files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }) })
+      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:attachmentPrompt, files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }) })
       if (!res.ok) throw new Error(await res.text())
       await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
@@ -2348,6 +2495,22 @@ export default function ChatApp() {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [toolsMenuOpen])
 
+  useEffect(() => {
+    if (!sessionManagerOpen) return
+    const previousOverflow = document.body.style.overflow
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || batchDeleting) return
+      setSessionManagerOpen(false)
+      setSelectedSessionIds([])
+    }
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [sessionManagerOpen, batchDeleting])
+
   const scrollToThreadEnd = (behavior = 'auto') => endRef.current?.scrollIntoView({ behavior, block:'end' })
   const resumeFollow = () => {
     setAutoFollow(true)
@@ -2389,6 +2552,9 @@ export default function ChatApp() {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
+  const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
+  const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
+  const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
   const providerGroups = useMemo(() => {
@@ -2419,7 +2585,11 @@ export default function ChatApp() {
         <div className="oa-logo"><Bot size={18}/><span>GenericAgent</span></div>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title="折叠"><Menu size={18}/></button>
       </div>
-      <button className="oa-new-chat" onClick={newSession}><MessageSquarePlus size={16}/><span>新对话</span></button>
+      <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>新对话</span></button>
+      <div className="oa-session-manager-head">
+        <span className="oa-session-manager-title">历史会话 <small>{sessions.length}</small></span>
+        <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>管理</button>
+      </div>
       <div className="oa-session-list">
         {sessions.map(s => <div key={s.id} className={`oa-session-row ${s.id===sid?'active':''} ${s.running?'is-running':''}`}>
           {editing === s.id ? <div className="oa-rename">
@@ -2439,7 +2609,7 @@ export default function ChatApp() {
         </div>)}
         {!sessions.length && <div className="oa-empty-list">暂无历史会话</div>}
       </div>
-      {menuOpen && menuPos && (() => {
+      {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
         return <div className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
@@ -2493,10 +2663,10 @@ export default function ChatApp() {
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
             return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''}`}>
-              <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '请分析这张图片')}>
+              <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '\u8bf7\u5904\u7406\u8fd9\u4e9b\u9644\u4ef6')}>
                 {isEditingQueue ? <textarea className="oa-queue-edit-input" value={queueDraft} autoFocus rows={2} onChange={e=>setQueueDraft(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) saveQueueEdit(q.id); if(e.key==='Escape') cancelQueueEdit() }} /> : <>
-                  <b>{q.text || '请分析这张图片'}</b>
-                  {q.files?.length ? <em>{q.files.length} 张图片</em> : null}
+                  <b>{q.text || '\u8bf7\u5904\u7406\u8fd9\u4e9b\u9644\u4ef6'}</b>
+                  {q.files?.length ? <em>{q.files.length} {'\u4e2a\u9644\u4ef6'}</em> : null}
                 </>}
               </div>
               <div className="oa-queue-actions">
@@ -2560,17 +2730,26 @@ export default function ChatApp() {
             </div>
           </div>
         </div>}
-        <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropImages}>
-          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{ addImageFiles(e.target.files); e.target.value='' }} />
+        <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropFiles}>
+          <input ref={fileRef} type="file" multiple hidden onChange={e=>{ addAttachmentFiles(e.target.files); e.target.value='' }} />
           {attachments.length > 0 && <div className="oa-attach-preview">
-            {attachments.map(a => <div className="oa-attach-thumb" key={a.id}>
-              <img src={a.dataURL} alt={a.name}/><span><FileImage size={12}/>{a.name}</span><button type="button" onClick={()=>removeAttachment(a.id)}><X size={12}/></button>
-            </div>)}
+            {attachments.map((attachment) => {
+              const name = uploadFileName(attachment)
+              const image = isImageFile(attachment)
+              const visual = getFileVisual(name)
+              const Icon = visual.Icon
+              const extension = (name.match(/\.([^.]+)$/)?.[1] || 'FILE').slice(0, 6).toUpperCase()
+              return <div className={`oa-attach-thumb ${image ? 'is-image' : `is-file oa-file-kind-${visual.kind}`}`} key={attachment.id} title={name}>
+                {image ? <img src={uploadFileSource(attachment)} alt={name}/> : <div className="oa-attach-file-icon"><Icon size={25}/><small>{extension}</small></div>}
+                <span>{image ? <FileImage size={12}/> : <Icon size={12}/>} {name}</span>
+                <button type="button" onClick={()=>removeAttachment(attachment.id)} title={'\u79fb\u9664\u9644\u4ef6'} aria-label={`\u79fb\u9664\u9644\u4ef6 ${name}`}><X size={12}/></button>
+              </div>
+            })}
           </div>}
-          {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>将以规划模式执行，并在完成后展示 run 目录与日志摘要</b></div>}
-          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder="向 GenericAgent 发送消息，可粘贴/拖拽图片…" rows={1}/>
+          {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>\u5c06\u4ee5\u89c4\u5212\u6a21\u5f0f\u6267\u884c\uff0c\u5e76\u5728\u5b8c\u6210\u540e\u5c55\u793a run \u76ee\u5f55\u4e0e\u65e5\u5fd7\u6458\u8981</b></div>}
+          <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={'\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
-            <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title="添加图片"><ImagePlus size={17}/><span>图片</span></button>
+            <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'\u6dfb\u52a0\u9644\u4ef6'}><Paperclip size={17}/><span>{'\u9644\u4ef6'}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
             <div className="oa-tools-menu" ref={toolsMenuRef}>
               <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
@@ -2616,5 +2795,46 @@ export default function ChatApp() {
         <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队 · 工具：{isFixedToolsMode ? '每次自动注入' : '官方默认'}</p>
       </footer>
     </main>
+
+    {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
+      <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
+        <header className="oa-session-manager-dialog-head">
+          <div>
+            <h2 id="oa-session-manager-dialog-title">管理历史会话</h2>
+            <p>选择不再需要的会话并批量删除</p>
+          </div>
+          <button className="oa-icon-btn" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label="关闭会话管理" autoFocus><X size={17}/></button>
+        </header>
+        <div className="oa-session-manager-toolbar">
+          <button className="oa-session-dialog-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting}>
+            <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && selectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
+            <span>{allSessionsSelected ? '取消全选' : '全选'}</span>
+          </button>
+          <span className="oa-session-dialog-count">已选 {selectedSessionCount} / {sessions.length}</span>
+        </div>
+        <div className="oa-session-manager-dialog-list">
+          {sessions.map(s => {
+            const selected = selectedSessionIdSet.has(s.id)
+            return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
+              <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
+              <span className="oa-session-dialog-copy">
+                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>当前</em>}</span>
+                <small><Clock3 size={12}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
+              </span>
+            </button>
+          })}
+          {!sessions.length && <div className="oa-session-manager-dialog-empty">暂无历史会话</div>}
+        </div>
+        <footer className="oa-session-manager-dialog-foot">
+          <small>删除后无法恢复</small>
+          <div>
+            <button className="oa-session-dialog-cancel" type="button" onClick={closeSessionManager} disabled={batchDeleting}>取消</button>
+            <button className="oa-session-dialog-delete" type="button" onClick={deleteSelectedSessions} disabled={!selectedSessionCount || batchDeleting}>
+              <Trash2 size={15}/><span>{batchDeleting ? '正在删除…' : `删除所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`}</span>
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>}
   </div>
 }

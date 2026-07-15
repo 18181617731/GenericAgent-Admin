@@ -710,6 +710,37 @@ func TestSaveChatUploadsSanitizesUnsafeNames(t *testing.T) {
 	}
 }
 
+func TestSaveChatUploadsSanitizesClosingBracket(t *testing.T) {
+	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
+	encoded := base64.StdEncoding.EncodeToString([]byte("x"))
+
+	saved, refs, err := saveChatUploads(cfg, []chatUpload{{
+		Name:    "report].txt",
+		Type:    "text/plain",
+		DataURL: encoded,
+	}})
+	if err != nil {
+		t.Fatalf("saveChatUploads: %v", err)
+	}
+	if len(saved) != 1 || len(refs) != 1 {
+		t.Fatalf("saved=%d refs=%d", len(saved), len(refs))
+	}
+	name, _ := saved[0]["name"].(string)
+	if strings.Contains(name, "]") {
+		t.Fatalf("saved name still contains closing bracket: %q", name)
+	}
+	if !strings.Contains(name, "report_.txt") {
+		t.Fatalf("sanitized name=%q want report_.txt", name)
+	}
+	path, _ := saved[0]["path"].(string)
+	if refs[0] != "[FILE:"+path+"]" {
+		t.Fatalf("file ref=%q want [FILE:%s]", refs[0], path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("saved file %q: %v", path, err)
+	}
+}
+
 func TestSaveChatUploadsCleansPartialFilesOnLaterFailure(t *testing.T) {
 	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
 	encoded := base64.StdEncoding.EncodeToString([]byte("ok"))
