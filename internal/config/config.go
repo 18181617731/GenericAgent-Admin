@@ -16,24 +16,25 @@ type SlashCommandItem struct {
 }
 
 type AppConfig struct {
-	GARoot           string             `json:"ga_root"`
-	ChatDataDir      string             `json:"chat_data_dir"`
-	Host             string             `json:"host"`
-	Port             int                `json:"port"`
-	LogTailLines     int                `json:"log_tail_lines"`
-	BufferLines      int                `json:"buffer_lines"`
-	PythonPath       string             `json:"python_path"`
-	EffectivePython  string             `json:"effective_python,omitempty"`
-	BootstrapDone    bool               `json:"bootstrap_done"`
-	ProxyMode        string             `json:"proxy_mode"` // off | system | custom
-	HTTPProxy        string             `json:"http_proxy"`
-	HTTPSProxy       string             `json:"https_proxy"`
-	AllProxy         string             `json:"all_proxy"`
-	NoProxy          string             `json:"no_proxy"`
-	ServiceAutostart []string           `json:"service_autostart"`
-	ServiceModels    map[string]int     `json:"service_models,omitempty"`
-	UpdateRepoURL    string             `json:"update_repo_url"`
-	SlashCommands    []SlashCommandItem `json:"slash_commands,omitempty"`
+	GARoot              string             `json:"ga_root"`
+	ChatDataDir         string             `json:"chat_data_dir"`
+	Host                string             `json:"host"`
+	Port                int                `json:"port"`
+	LogTailLines        int                `json:"log_tail_lines"`
+	BufferLines         int                `json:"buffer_lines"`
+	PythonPath          string             `json:"python_path"`
+	EffectivePython     string             `json:"effective_python,omitempty"`
+	BootstrapDone       bool               `json:"bootstrap_done"`
+	ProxyMode           string             `json:"proxy_mode"` // off | system | custom
+	HTTPProxy           string             `json:"http_proxy"`
+	HTTPSProxy          string             `json:"https_proxy"`
+	AllProxy            string             `json:"all_proxy"`
+	NoProxy             string             `json:"no_proxy"`
+	ServiceAutostart    []string           `json:"service_autostart"`
+	ServiceModels       map[string]int     `json:"service_models,omitempty"`
+	ModelProbeProviders []string           `json:"model_probe_providers,omitempty"`
+	UpdateRepoURL       string             `json:"update_repo_url"`
+	SlashCommands       []SlashCommandItem `json:"slash_commands,omitempty"`
 }
 
 func Validate(cfg AppConfig) error {
@@ -188,6 +189,7 @@ func (s *Store) Load() error {
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
 	}
+	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
 	cfg.EffectivePython = effectivePython(cfg)
 	if err := Validate(cfg); err != nil {
 		return err
@@ -215,6 +217,7 @@ func (s *Store) Save(cfg AppConfig) error {
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
 	}
+	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
 	cfg.EffectivePython = effectivePython(cfg)
 	if err := Validate(cfg); err != nil {
 		return err
@@ -228,6 +231,23 @@ func (s *Store) Save(cfg AppConfig) error {
 	}
 	s.Cfg = cfg
 	return nil
+}
+
+func normalizeUniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {

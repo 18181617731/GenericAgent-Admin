@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -12,6 +11,9 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
+
+export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
 gsap.registerPlugin(useGSAP)
 
@@ -45,21 +47,26 @@ const timelineKey = (v) => {
 }
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 const shortTitle = (s) => s?.title || '新会话'
-const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
-const modelProvider = (m) => {
-  const provider = String(m?.provider || '').trim()
-  if (provider) return provider
-  const name = String(m?.name || '').trim()
-  const model = String(m?.model || '').trim()
-  if (name && model && name.endsWith(`/${model}`)) return name.slice(0, -(model.length + 1))
-  const split = name.lastIndexOf('/')
-  return (split > 0 ? name.slice(0, split) : name) || '未分组服务商'
+const runtimeModelMatches = (m, modelID) => {
+  const target = String(modelID || '').trim()
+  if (!target) return false
+  return [m?.model, m?.name, runtimeModelLabel(m)].some(value => String(value || '').trim() === target)
 }
-const runtimeModelLabel = (m) => {
-  const model = String(m?.model || '').trim()
-  if (model) return model
-  const label = modelLabel(m)
-  return label.includes('/') ? label.split('/').pop() : label
+const messageModelIdentity = (message, models = []) => {
+  if (message?.role !== 'assistant') return { label: '', title: '' }
+  const modelID = typeof message.model_id === 'string' ? message.model_id.trim() : ''
+  const modelNo = Number.isInteger(message.llm_no) ? message.llm_no : null
+  const indexed = modelNo == null ? null : models.find(model => model.index === modelNo)
+  const matched = indexed && (!modelID || runtimeModelMatches(indexed, modelID))
+    ? indexed
+    : models.find(model => runtimeModelMatches(model, modelID))
+  const provider = matched ? modelProvider(matched) : ''
+  const model = modelID || (matched ? runtimeModelLabel(matched) : '')
+  const label = [provider, model].filter(Boolean).join(' · ') || '未知模型'
+  const details = [`模型：${model || '未知'}`]
+  if (provider) details.unshift(`服务商：${provider}`)
+  if (modelNo != null) details.push(`内部编号：#${modelNo}`)
+  return { label, title: details.join('；') }
 }
 
 const BUILTIN_SLASH_COMMANDS = [
@@ -163,7 +170,7 @@ function CopyButton({ text, compact = false }) {
       setTimeout(() => setOk(false), 1200)
     } catch {}
   }
-  return <button className={compact ? 'oa-mini-copy' : 'oa-copy'} onClick={copy} title="复制">
+  return <button className={compact ? 'oa-mini-copy' : 'oa-copy'} onClick={copy} title="复制" aria-label={ok ? '已复制' : '复制'}>
     {ok ? <Check size={14}/> : <Copy size={14}/>}<span>{ok ? '已复制' : '复制'}</span>
   </button>
 }
@@ -1359,15 +1366,13 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
-export const ChatMessage = memo(function ChatMessage({ message: m, pending, onAskReply, clockNow = 0 }) {
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, clockNow = 0 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles = messageFiles.filter(isImageFile)
   const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
   const pendingFiles = savedFilePaths.length > 0 ? [] : messageFiles.filter((file) => !isImageFile(file))
-  const modelID = m.role === 'assistant' && typeof m.model_id === 'string' ? m.model_id.trim() : ''
-  const modelNo = m.role === 'assistant' && Number.isInteger(m.llm_no) ? m.llm_no : null
-  const modelIdentity = modelNo == null ? modelID : `#${modelNo} · ${modelID || '未知模型'}`
+  const modelIdentity = messageModelIdentity(m, models)
   const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
   const hasUsage = !turnUsages && m.role === 'assistant' && m.usage && (m.usage.input_tokens > 0 || m.usage.output_tokens > 0)
   const usageTotal = turnUsages ? sumUsages(turnUsages) : (hasUsage ? m.usage : null)
@@ -1377,7 +1382,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, pending, onAs
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
-      <div className="oa-meta"><b>{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity && <span className="oa-model-id" title={`Model: ${modelIdentity}`}>{modelIdentity}</span>}{m.created_at && <span>{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
+      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
       {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
@@ -1394,91 +1399,18 @@ export const ChatMessage = memo(function ChatMessage({ message: m, pending, onAs
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, isCurrentRunning, onAskReply, clockNow }) {
+const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, clockNow }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
       const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-      nodes.push(<ChatMessage key={m.id} message={m} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} clockNow={clockNow} />)
+      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} clockNow={clockNow} />)
       return nodes
     })}
   </>
 })
-
-function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, onPreview, onSelect, onClose, mobile }) {
-  const previewGroup = groups.find(group => group.value === previewProvider) || groups[0]
-  return <>
-    {mobile && <div className="oa-mobile-picker-head"><div><b>选择模型</b><span>先选择服务商，再选择模型</span></div><button type="button" onClick={onClose} aria-label="关闭模型选择"><X size={18}/></button></div>}
-    <div className="oa-cascade-providers">
-      {groups.map(group => <button key={group.value} type="button" className={group.value === previewGroup?.value ? 'active' : ''}
-        onMouseEnter={() => onPreview(group.value)} onFocus={() => onPreview(group.value)} onClick={() => onPreview(group.value)}>
-        <span>{group.label}</span><ChevronRight size={13}/>
-      </button>)}
-    </div>
-    <div className="oa-cascade-models">
-      <div className="oa-cascade-heading">{previewGroup?.label || '模型'}</div>
-      {previewGroup?.models.length ? previewGroup.models.map(model => <button key={model.value} type="button"
-        className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
-        onClick={() => onSelect(model.value)}>
-        {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12}/>}<span>{model.label}</span>
-      </button>) : <div className="oa-cascade-empty">未发现模型</div>}
-    </div>
-  </>
-}
-
-export function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled, mobile = false }) {
-  const [open, setOpen] = useState(false)
-  const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
-  const ref = useRef()
-  const menuRef = useRef()
-  const openedAt = useRef(0)
-  useEffect(() => {
-    if (!open) return
-    const close = () => setOpen(false)
-    const h = e => { if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close() }
-    const onKeyDown = e => { if (e.key === 'Escape') close() }
-    const onScroll = e => {
-      if (performance.now() - openedAt.current < 250) return
-      if (!ref.current?.contains(e.target) && !menuRef.current?.contains(e.target)) close()
-    }
-    document.addEventListener('mousedown', h)
-    document.addEventListener('keydown', onKeyDown)
-    window.addEventListener('scroll', onScroll, true)
-    return () => { document.removeEventListener('mousedown', h); document.removeEventListener('keydown', onKeyDown); window.removeEventListener('scroll', onScroll, true) }
-  }, [open, mobile])
-  useEffect(() => {
-    if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
-    else if (groups[0]) setPreviewProvider(groups[0].value)
-    else setPreviewProvider('')
-  }, [selectedProvider, groups])
-
-  const activeGroup = groups.find(group => group.value === selectedProvider)
-  const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
-  const displayModel = activeModel?.label || '\u672a\u53d1\u73b0\u6a21\u578b'
-  const selectModel = next => { onChange(next); setOpen(false) }
-  const menu = <div className={`oa-cascade-menu ${mobile ? 'oa-cascade-modal' : ''}`} ref={menuRef} role="dialog" aria-modal={mobile || undefined} aria-label="服务商和模型">
-    <ProviderModelMenu groups={groups} selectedProvider={selectedProvider} previewProvider={previewProvider} value={value}
-      onPreview={setPreviewProvider} onSelect={selectModel} onClose={() => setOpen(false)} mobile={mobile}/>
-  </div>
-
-  return (
-    <>
-      <div className="oa-model-select oa-composer-cascade" ref={ref}>
-        <span>模型</span>
-        <button type="button" disabled={disabled} title={displayModel} aria-label={`选择模型，当前 ${displayModel}`} aria-expanded={open} onClick={() => {
-          openedAt.current = performance.now()
-          setOpen(o => !o)
-        }}>
-          <span className="oa-cascade-current-model">{displayModel}</span><ChevronDown size={13}/>
-        </button>
-        {open && !mobile && menu}
-      </div>
-      {open && mobile && createPortal(<div className="oa-mobile-picker-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(false) }}>{menu}</div>, document.body)}
-    </>
-  )
-}
 
 function CustomSelect({ value, onChange, options, disabled, native = false, ariaLabel = '选择选项' }) {
   const [open, setOpen] = useState(false)
@@ -2001,6 +1933,7 @@ export default function ChatApp() {
   }
 
   const newSession = async () => {
+    if (isNarrowChatViewport()) setCollapsed(true)
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
     const openToken = ++openSeqRef.current
@@ -2594,16 +2527,8 @@ export default function ChatApp() {
   const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
-  const providerGroups = useMemo(() => {
-    const groups = new Map()
-    llms.forEach(model => {
-      const provider = modelProvider(model)
-      if (!groups.has(provider)) groups.set(provider, [])
-      groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model) })
-    })
-    return Array.from(groups, ([provider, models]) => ({ value: provider, label: provider, models }))
-  }, [llms])
-  const selectedProvider = activeModel ? modelProvider(activeModel) : (providerGroups[0]?.value || '')
+  const providerGroups = useMemo(() => buildModelProviderGroups(llms), [llms])
+  const selectedProvider = findModelProviderValue(providerGroups, selectedModelNo) || (activeModel ? modelProvider(activeModel) : '')
   const isCurrentRunning = busy && streamingSid === sid
   const isFixedToolsMode = toolsMode === 'fixed'
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
@@ -2632,7 +2557,7 @@ export default function ChatApp() {
           {editing === s.id ? <div className="oa-rename">
             <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
             <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
-          </div> : <button className="oa-session" onClick={()=>openSession(s.id)} title={shortTitle(s)}>
+          </div> : <button className="oa-session" onClick={()=>{ if (isNarrowChatViewport()) setCollapsed(true); openSession(s.id) }} title={shortTitle(s)}>
             <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b></span>
             <small><Clock3 size={11}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条{s.running && <em className="oa-session-running-label">运行中</em>}</small>
           </button>}
@@ -2659,6 +2584,7 @@ export default function ChatApp() {
         <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>返回管理台</button>
       </div>
     </aside>
+    {!collapsed && <button className="oa-sidebar-backdrop" type="button" aria-label="关闭侧栏" onClick={()=>setCollapsed(true)}/>}
 
     <main className="oa-main">
       <header className="oa-topbar">
@@ -2690,7 +2616,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} clockNow={streamClock} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} clockNow={streamClock} />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>

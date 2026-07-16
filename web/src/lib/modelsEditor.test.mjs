@@ -180,6 +180,14 @@ test('orderedModelRows expands providers into the persisted global model order',
   assert.deepEqual(rows.map(row => row.id), ['0:0', '1:0', '0:1'])
 })
 
+test('orderedModelRows carries the configured provider display name', () => {
+  const profiles = orderingProfiles()
+  profiles[0].name = 'Acme 显示名称'
+  const rows = orderedModelRows(profiles)
+
+  assert.deepEqual(rows.map(row => row.providerName), ['Acme 显示名称', '', 'Acme 显示名称'])
+})
+
 test('orderedModelRows keeps legacy provider and model order without metadata', () => {
   const profiles = orderingProfiles().map(profile => ({
     ...profile,

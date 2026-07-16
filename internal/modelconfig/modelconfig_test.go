@@ -214,6 +214,45 @@ native_oai_config_old = {
 	}
 }
 
+func TestExportMigratesLegacyRenderedModelsBeforeApplyingGlobalOrder(t *testing.T) {
+	root := t.TempDir()
+	profiles := []Profile{
+		{VarName: "native_oai_config_a", Type: "native_oai", Name: "A", APIBase: "https://a.example/v1", APIKey: "sk-a", ModelConfigs: []ModelConfig{{Model: "a-one"}}},
+		{VarName: "native_claude_config_b", Type: "native_claude", Name: "B", APIBase: "https://b.example/v1", APIKey: "sk-b", ModelConfigs: []ModelConfig{{Model: "b-one"}}},
+	}
+	legacy, err := Render(profiles)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	active := filepath.Join(root, "mykey.py")
+	if err := os.WriteFile(active, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	zero, one := 0, 1
+	profiles[0].ModelConfigs[0].SortOrder = &one
+	profiles[1].ModelConfigs[0].SortOrder = &zero
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	data, err := os.ReadFile(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Count(text, "native_oai_config_a =") != 1 || strings.Count(text, "native_claude_config_b =") != 1 {
+		t.Fatalf("legacy model assignments were not removed:\n%s", text)
+	}
+	first := strings.Index(text, "native_claude_config_b =")
+	second := strings.Index(text, "native_oai_config_a =")
+	if first < 0 || second < 0 || first >= second {
+		t.Fatalf("runtime declaration order does not follow saved global order:\n%s", text)
+	}
+	if strings.Count(text, managedModelsBegin) != 1 || strings.Count(text, managedModelsEnd) != 1 {
+		t.Fatalf("managed model block count is invalid:\n%s", text)
+	}
+}
+
 func TestExportRejectsUnsafeSourceAssignmentsWithoutWriting(t *testing.T) {
 	tests := []struct {
 		name       string

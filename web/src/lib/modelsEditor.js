@@ -200,6 +200,7 @@ export const orderedModelRows = (profiles = []) => {
         profileIndex,
         configIndex,
         model: text(config.model),
+        providerName: text(profile.name),
         providerVarName: text(profile.var_name),
         variableName: `${text(profile.var_name)}${configIndex ? `_${configIndex + 1}` : ''}`,
         order: Number.isInteger(config.sort_order) ? config.sort_order : defaultOrder,

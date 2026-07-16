@@ -12,13 +12,14 @@ import {
   ListOrdered,
   Plus,
   RefreshCw,
+  Settings2,
   ShieldCheck,
   Trash2,
   UploadCloud,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Collapse, Drawer, Input, Modal, Select, Space, Tag } from 'antd'
+import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import {
   API_MODE_OPTIONS,
@@ -42,6 +43,13 @@ import {
   providerVarNameOnProtocolChange,
 } from '../lib/modelsProvider'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
+import {
+  modelProbeProviderKey,
+  modelProbeProviderName,
+  normalizeModelProbeProviderKeys,
+  resolveModelProbeTargets,
+  runModelBatchProbe,
+} from '../lib/modelBatchProbe'
 
 const DEFAULT_PROTOCOL = 'native_oai'
 const OFFICIAL_PROTOCOLS = [
@@ -257,7 +265,7 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
         <strong>模型列表</strong>
         <Space size={8}>
           <Button onClick={onCheck} loading={checking} disabled={disabled || busy || checking} icon={<ShieldCheck size={14} />}>
-            对话检测并同步
+            检测当前服务商
           </Button>
           <Button onClick={openDiscover} disabled={disabled || checking} icon={<RefreshCw size={14} />}>
             获取模型
@@ -746,6 +754,9 @@ export function Models({
   onSaveModelOrder,
   discoverModels,
   probeModels,
+  modelProbeProviders = [],
+  onSaveModelProbeProviders,
+  onSaveModelProfiles,
   modelPreview,
   modelSaveStatus = {},
   importLoading = false,
@@ -765,6 +776,15 @@ export function Models({
   const [orderSaving, setOrderSaving] = useState(false)
   const [orderError, setOrderError] = useState('')
   const [dragIndex, setDragIndex] = useState(null)
+  const [batchProbeBusy, setBatchProbeBusy] = useState(false)
+  const [batchProbeProgress, setBatchProbeProgress] = useState(null)
+  const [batchProbeResult, setBatchProbeResult] = useState(null)
+  const [probeScopeOpen, setProbeScopeOpen] = useState(false)
+  const [probeScopeMode, setProbeScopeMode] = useState('all')
+  const [probeScopeKeys, setProbeScopeKeys] = useState([])
+  const [probeScopeError, setProbeScopeError] = useState('')
+  const [probeScopeSaving, setProbeScopeSaving] = useState(false)
+  const [effectiveProbeProviders, setEffectiveProbeProviders] = useState(() => normalizeModelProbeProviderKeys(modelProbeProviders))
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
@@ -774,6 +794,13 @@ export function Models({
     return { total: total.total + state.total, enabled: total.enabled + state.enabled, disabled: total.disabled + state.disabled }
   }, { total: 0, enabled: 0, disabled: 0 })
   const totalModels = availabilityTotals.total
+  const incomingProbeProviderSignature = normalizeModelProbeProviderKeys(modelProbeProviders).join('\n')
+  const configuredProbeTargetCount = resolveModelProbeTargets(profiles, effectiveProbeProviders).length
+  const probeScopeLabel = !profiles.length
+    ? '加载中'
+    : effectiveProbeProviders.length
+      ? `已选 ${configuredProbeTargetCount}/${profiles.length}`
+      : `全部 ${profiles.length}`
   const profileKeyId = (idx, profile) => getProfileKey?.(idx, profile)
     || profile?.client_id
     || `${profile?.var_name || nextVarName(profile?.type || DEFAULT_PROTOCOL, profiles)}:${profile?.type || DEFAULT_PROTOCOL}:${profile?.apibase || ''}:${idx}`
@@ -781,6 +808,10 @@ export function Models({
   useEffect(() => {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(profiles.length - 1, 0)))
   }, [profiles.length])
+
+  useEffect(() => {
+    setEffectiveProbeProviders(incomingProbeProviderSignature ? incomingProbeProviderSignature.split('\n') : [])
+  }, [incomingProbeProviderSignature])
 
   const removeProfile = async idx => {
     const profile = profiles[idx]
@@ -850,6 +881,69 @@ export function Models({
     }
   }
 
+  const openProbeScope = () => {
+    const allKeys = profiles.map(modelProbeProviderKey)
+    const specific = effectiveProbeProviders.length > 0
+    setProbeScopeMode(specific ? 'selected' : 'all')
+    setProbeScopeKeys(specific ? effectiveProbeProviders.filter(key => allKeys.includes(key)) : allKeys)
+    setProbeScopeError('')
+    setProbeScopeOpen(true)
+  }
+
+  const saveProbeScope = async () => {
+    const allKeys = profiles.map(modelProbeProviderKey)
+    const selected = normalizeModelProbeProviderKeys(probeScopeKeys).filter(key => allKeys.includes(key))
+    if (probeScopeMode === 'selected' && !selected.length) {
+      setProbeScopeError('至少选择一个服务商。')
+      return
+    }
+    const next = probeScopeMode === 'all' ? [] : selected
+    setProbeScopeSaving(true)
+    setProbeScopeError('')
+    try {
+      const saved = await onSaveModelProbeProviders?.(next)
+      setEffectiveProbeProviders(normalizeModelProbeProviderKeys(saved ?? next))
+      setProbeScopeOpen(false)
+    } catch (error) {
+      setProbeScopeError(String(error?.message || error))
+    } finally {
+      setProbeScopeSaving(false)
+    }
+  }
+
+  const runBatchAvailability = async () => {
+    const targets = resolveModelProbeTargets(profiles, effectiveProbeProviders)
+    if (!targets.length) {
+      setBatchProbeResult({ type: 'error', message: '没有可检测的服务商', description: '请打开“检测范围”重新选择服务商。' })
+      return
+    }
+    setBatchProbeBusy(true)
+    setBatchProbeResult(null)
+    setBatchProbeProgress({ completed: 0, total: targets.length, current: targets[0].name })
+    try {
+      const outcome = await runModelBatchProbe({
+        profiles,
+        configuredKeys: effectiveProbeProviders,
+        probeModels,
+        onProgress: setBatchProbeProgress,
+      })
+      if (!outcome.summary.successfulProviders) throw new Error('所有服务商均检测失败，未修改模型状态。')
+      const saved = await onSaveModelProfiles?.(outcome.profiles)
+      if (saved === false || !onSaveModelProfiles) throw new Error('模型状态保存失败，未应用本次检测结果。')
+      const summary = outcome.summary
+      const failures = outcome.results.filter(item => item.error).slice(0, 3).map(item => `${item.name}：${item.error}`).join('；')
+      setBatchProbeResult({
+        type: summary.failedProviders || summary.unavailable ? 'warning' : 'success',
+        message: `批量检测完成：${summary.successfulProviders} 个服务商成功，${summary.failedProviders} 个失败`,
+        description: `${summary.available} 个模型可用，${summary.unavailable} 个不可用；自动禁用 ${summary.disabled} 个，自动恢复 ${summary.restored} 个。${failures ? `失败摘要：${failures}。` : ''}`,
+      })
+    } catch (error) {
+      setBatchProbeResult({ type: 'error', message: '批量检测失败', description: String(error?.message || error) })
+    } finally {
+      setBatchProbeBusy(false)
+    }
+  }
+
   const riskItems = [{
     key: 'risk',
     label: <Space size={7}><AlertTriangle size={14} />模型路由与保存安全</Space>,
@@ -881,6 +975,12 @@ export function Models({
     <section className="models-page">
       <header className="model-page-head model-page-head--actions-only">
         <div className="model-page-actions">
+          <Button type="primary" icon={<ShieldCheck size={14} />} onClick={runBatchAvailability} loading={batchProbeBusy} disabled={!profiles.length}>
+            对话检测并同步
+          </Button>
+          <Button icon={<Settings2 size={14} />} onClick={openProbeScope} disabled={batchProbeBusy || !profiles.length} title="配置一键检测涉及的服务商">
+            检测范围：{probeScopeLabel}
+          </Button>
           <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}>重新读取</Button>
           <Button
             icon={<ListOrdered size={14} />}
@@ -891,7 +991,7 @@ export function Models({
             模型顺序
           </Button>
           <Button icon={<FileCode2 size={14} />} onClick={openPreview}>配置预览</Button>
-          <Button type="primary" icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
+          <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
         </div>
       </header>
 
@@ -907,6 +1007,35 @@ export function Models({
         <div className="model-summary-source"><FileCode2 size={13} /><span>配置来源</span><code>mykey.py</code></div>
       </div>
 
+      {batchProbeBusy && (
+        <Alert
+          type="info"
+          showIcon
+          message={`正在检测 ${batchProbeProgress?.completed || 0}/${batchProbeProgress?.total || configuredProbeTargetCount} 个服务商`}
+          description={(
+            <div className="model-batch-progress">
+              <span>{batchProbeProgress?.current || '正在准备真实对话检测…'}</span>
+              <Progress
+                percent={batchProbeProgress?.total ? Math.round((batchProbeProgress.completed / batchProbeProgress.total) * 100) : 0}
+                size="small"
+                showInfo={false}
+              />
+            </div>
+          )}
+          className="model-page-alert"
+        />
+      )}
+      {!batchProbeBusy && batchProbeResult && (
+        <Alert
+          type={batchProbeResult.type}
+          showIcon
+          closable
+          onClose={() => setBatchProbeResult(null)}
+          message={batchProbeResult.message}
+          description={batchProbeResult.description}
+          className="model-page-alert"
+        />
+      )}
       {hasErrors && <Alert type="error" showIcon message="存在不能保存的服务商，请在目录中选择异常项并修复。" className="model-page-alert" />}
 
       <div className="model-workbench">
@@ -1004,6 +1133,53 @@ export function Models({
 
       <Collapse ghost items={riskItems} className="model-risk-collapse" />
 
+      {probeScopeOpen && (
+        <Modal
+          title="配置一键检测范围"
+          open
+          onCancel={() => { if (!probeScopeSaving) setProbeScopeOpen(false) }}
+          onOk={saveProbeScope}
+          okText="保存范围"
+          cancelText="取消"
+          confirmLoading={probeScopeSaving}
+          mask={{ closable: !probeScopeSaving }}
+          className="model-probe-scope-modal"
+        >
+          <Alert
+            type="info"
+            showIcon
+            message="配置会保存在当前 GA Admin 服务中"
+            description="默认检测目录中的全部服务商；选择指定范围后，后续一键检测只处理已勾选的服务商。"
+          />
+          <Radio.Group value={probeScopeMode} onChange={event => { setProbeScopeMode(event.target.value); setProbeScopeError('') }} className="model-probe-scope-mode">
+            <Radio value="all">全部服务商（默认）</Radio>
+            <Radio value="selected">指定服务商</Radio>
+          </Radio.Group>
+          <div className={`model-probe-provider-list${probeScopeMode === 'all' ? ' is-disabled' : ''}`}>
+            {profiles.map((profile, index) => {
+              const key = modelProbeProviderKey(profile, index)
+              return (
+                <Checkbox
+                  key={key}
+                  checked={probeScopeMode === 'all' || probeScopeKeys.includes(key)}
+                  disabled={probeScopeMode === 'all'}
+                  onChange={event => {
+                    setProbeScopeKeys(current => event.target.checked ? [...current, key] : current.filter(value => value !== key))
+                    setProbeScopeError('')
+                  }}
+                >
+                  <span className="model-probe-provider-option">
+                    <b>{modelProbeProviderName(profile, index)}</b>
+                    <small>{profile.apibase || '尚未填写 BaseURL'}</small>
+                  </span>
+                </Checkbox>
+              )
+            })}
+          </div>
+          {probeScopeError && <Alert type="error" showIcon message={probeScopeError} />}
+        </Modal>
+      )}
+
       <Drawer
         title="调整模型顺序"
         placement="right"
@@ -1060,7 +1236,7 @@ export function Models({
               <div className="model-order-copy">
                 <code>{row.variableName}</code>
                 <strong title={row.model}>{row.model || '未填写模型 ID'}</strong>
-                <span>服务商名称：{providerDisplayName(row.providerVarName) || '未命名'}</span>
+                <span>服务商名称：{row.providerName || providerDisplayName(row.providerVarName) || '未命名'}</span>
               </div>
               <div className="model-order-actions">
                 <Button

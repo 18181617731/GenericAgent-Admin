@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
-import { Select } from 'antd'
 import { Eye, Play, Square } from 'lucide-react'
-import { modelLabel } from '../lib/format'
+import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
 
 const serviceCommand = (svc) => Array.isArray(svc?.command) ? svc.command.join(' ') : (svc?.command || '-')
 const servicePid = (svc) => svc?.pid ?? '-'
@@ -15,23 +14,23 @@ function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
   const modelMatch = (svc?.model_no === null || svc?.model_no === undefined) ? null : llms.find(m => m.index === svc.model_no)
   const defaultLabel = (t && t.runModelDefault) || '默认（启动时选择）'
-  const modelText = modelMatch ? modelLabel(modelMatch) : (isReflect ? defaultLabel : null)
+  const modelText = modelMatch ? `${modelProvider(modelMatch)} · ${runtimeModelLabel(modelMatch)}` : (isReflect ? defaultLabel : null)
   const editable = isReflect && !svc?.running && typeof onModel === 'function'
-  const modelOptions = [
-    { value: '', label: defaultLabel },
-    ...llms.map(model => ({ value: model.index, label: modelLabel(model) })),
-  ]
+  const modelGroups = buildModelProviderGroups(llms, { defaultLabel })
+  const modelValue = svc.model_no ?? ''
+  const selectedProvider = findModelProviderValue(modelGroups, modelValue)
   return <div className={compact ? 'service-meta service-meta-compact' : 'service-meta'}>
     {editable
-      ? <span className="model-edit"><em>模型</em><Select
-          aria-label="模型"
-          className="service-model-select"
-          classNames={{ popup: { root: 'service-model-popup' } }}
-          popupMatchSelectWidth={false}
-          value={svc.model_no ?? ''}
-          options={modelOptions}
+      ? <div className="model-edit service-meta-item"><em>模型</em><ProviderModelCascade
+          groups={modelGroups}
+          selectedProvider={selectedProvider}
+          value={modelValue}
+          showLabel={false}
+          placement="auto"
+          align="start"
+          className="service-provider-cascade"
           onChange={value => onModel(svc.name, value === '' ? null : Number(value))}
-        /></span>
+        /></div>
       : (modelText !== null && <span><em>模型</em><code title={modelText}>{modelText}</code></span>)}
     <span><em>PID</em><b>{servicePid(svc)}</b></span>
     <span><em>返回码</em><b>{serviceReturnCode(svc)}</b></span>

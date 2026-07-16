@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, Copy, Eye, Play, RefreshCw, Square, Target, Terminal, Trash2, XCircle } from 'lucide-react'
 import { copyText, formatBytes, formatDuration, formatGoalTime, goalBudgetPercent, goalTurnPercent, outputLineCount } from '../lib/format'
 import { Panel } from '../components/common'
+import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from '../components/ModelProviderCascade.jsx'
 import { TurnList } from '../components/turns'
 
-export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, hive, setHive, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
+export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, llms = [], hive, setHive, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
   const goalList = goals || []
   const running = goalList.filter(g => g.running).length
   const selectedGoal = goalList.find(g => g.id === selected) || outputMeta?.goal || null
@@ -24,6 +25,8 @@ export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget
   const outputLimitLabel = Number(outputBytes || 0) > 0 ? formatBytes(outputBytes) : t.fields.outputDefault
   const selectedTurnPct = selectedGoal ? goalTurnPercent(selectedGoal) : 0
   const selectedBudgetPct = selectedGoal ? goalBudgetPercent(selectedGoal) : 0
+  const goalModelGroups = useMemo(() => buildModelProviderGroups(llms, { defaultLabel: '默认（模型顺序首位）' }), [llms])
+  const goalModelProvider = findModelProviderValue(goalModelGroups, llmNo ?? '')
 
   const copyOutput = async () => {
     try { await copyText(output || ''); setMsg(t.hints.goalOutputCopied) }
@@ -53,7 +56,16 @@ export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget
       <div className="form-grid compact-form goal-params">
         <label>{t.fields.budgetMinutes}<input type="number" min="1" max="43200" value={budget} onChange={e=>setBudget(e.target.value)}/></label>
         <label>{t.fields.maxTurns}<input type="number" min="0" max="10000" value={maxTurns} onChange={e=>setMaxTurns(e.target.value)}/></label>
-        <label>{t.fields.llmNo}<input type="number" min="0" value={llmNo} onChange={e=>setLLMNo(e.target.value)} placeholder="0"/></label>
+        <div className="goal-model-field"><span>{t.fields.llmNo}</span><ProviderModelCascade
+          groups={goalModelGroups}
+          selectedProvider={goalModelProvider}
+          value={llmNo ?? ''}
+          showLabel={false}
+          placement="auto"
+          align="end"
+          className="goal-model-cascade"
+          onChange={value=>setLLMNo(String(value ?? ''))}
+        /></div>
       </div>
       <label className="inline-field goal-hive-toggle"><input type="checkbox" checked={!!hive} onChange={e=>setHive?.(e.target.checked)}/><span>{t.fields.goalHive}</span></label>
       <p className="muted">{t.hints.goalHiveHelp}</p>

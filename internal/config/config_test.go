@@ -50,6 +50,26 @@ func TestStoreSaveCreatesRootAndWritesLoadableConfig(t *testing.T) {
 	}
 }
 
+func TestStorePersistsNormalizedModelProbeProviders(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	cfg := Default()
+	cfg.ModelProbeProviders = []string{" native_oai_config_primary ", "", "native_oai_config_primary", "native_claude_config_backup"}
+
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	want := []string{"native_oai_config_primary", "native_claude_config_backup"}
+	if !reflect.DeepEqual(store.Cfg.ModelProbeProviders, want) {
+		t.Fatalf("saved model probe providers = %#v, want %#v", store.Cfg.ModelProbeProviders, want)
+	}
+	reloaded := NewStore(root)
+	if !reflect.DeepEqual(reloaded.Cfg.ModelProbeProviders, want) {
+		t.Fatalf("reloaded model probe providers = %#v, want %#v", reloaded.Cfg.ModelProbeProviders, want)
+	}
+}
+
 func TestStoreSaveCleansTempFileOnValidationError(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)
