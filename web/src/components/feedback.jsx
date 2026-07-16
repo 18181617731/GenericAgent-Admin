@@ -1,4 +1,27 @@
-import { Component } from 'react'
+import { Component, useState } from 'react'
+import { Check, Copy, RefreshCw, X } from 'lucide-react'
+import { feedbackTone } from '../lib/ux'
+
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    const copied = document.execCommand?.('copy') === true
+    textarea.remove()
+    return copied
+  } catch {
+    return false
+  }
+}
 
 // 统一的加载/错误反馈组件：路由级 Suspense fallback、行内 spinner、骨架屏、错误边界。
 // 设计：沿用暖白磨砂 + 绿色强调色，尊重 prefers-reduced-motion。
@@ -28,6 +51,43 @@ export function Skeleton({ lines = 3, className = '' }) {
       {Array.from({ length: lines }).map((_, i) => (
         <div key={i} className="ga-skeleton-line" />
       ))}
+    </div>
+  )
+}
+
+export function MessageBanner({
+  message,
+  tone = 'auto',
+  title = '',
+  details = '',
+  onDismiss,
+  onRetry,
+  retryLabel = '重试',
+  copyable = false,
+  className = '',
+}) {
+  const [copyState, setCopyState] = useState('idle')
+  if (!message) return null
+  const resolvedTone = feedbackTone(message, tone)
+  const isError = resolvedTone === 'error'
+  const copyText = [message, details].filter(Boolean).join('\n')
+  const copy = async () => {
+    const copied = await copyToClipboard(copyText)
+    setCopyState(copied ? 'copied' : 'failed')
+    window.setTimeout(() => setCopyState('idle'), 1600)
+  }
+  return (
+    <div className={`ga-message-banner is-${resolvedTone} ${className}`.trim()} role={isError ? 'alert' : 'status'} aria-live={isError ? 'assertive' : 'polite'}>
+      <div className="ga-message-copy">
+        {title && <strong>{title}</strong>}
+        <span>{message}</span>
+        {details && <details><summary>查看详情</summary><pre>{details}</pre></details>}
+      </div>
+      <div className="ga-message-actions">
+        {onRetry && <button type="button" onClick={onRetry}><RefreshCw size={14} aria-hidden="true"/>{retryLabel}</button>}
+        {copyable && <button type="button" onClick={copy} aria-label={copyState === 'copied' ? '已复制详情' : copyState === 'failed' ? '复制失败' : '复制详情'}>{copyState === 'copied' ? <Check size={14}/> : <Copy size={14}/>}<span>{copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制'}</span></button>}
+        {onDismiss && <button type="button" className="ga-message-dismiss" onClick={onDismiss} aria-label="关闭消息"><X size={15}/></button>}
+      </div>
     </div>
   )
 }

@@ -1037,6 +1037,24 @@ func TestNormalizeStatusAfterRestartLeavesActiveDownloadRunning(t *testing.T) {
 	}
 }
 
+func TestNormalizeStatusAfterRestartMarksOldDownloadAsInterrupted(t *testing.T) {
+	started := time.Now().Add(-time.Minute).UTC()
+	st := UpdateStatus{ID: "interrupted-download", PID: os.Getpid() + 1, Running: true, Stage: "downloading", Progress: 35, Message: "downloading", StartedAt: started, UpdatedAt: started}
+	got := normalizeStatusAfterRestart(st)
+	if got.Running || got.Stage != "error" {
+		t.Fatalf("interrupted status = %+v", got)
+	}
+	if got.Progress != 35 {
+		t.Fatalf("progress = %d want 35", got.Progress)
+	}
+	if !strings.Contains(got.Error, "downloading") || !strings.Contains(got.Error, "PID") || !strings.Contains(got.Message, "重新开始升级") {
+		t.Fatalf("interrupted detail is not actionable: %+v", got)
+	}
+	if got.EndedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("interrupted timestamps missing: %+v", got)
+	}
+}
+
 func TestNormalizeStatusAfterRestartLeavesCurrentProcessRestarting(t *testing.T) {
 	st := UpdateStatus{ID: "same-process-test", PID: os.Getpid(), Running: true, Stage: "restarting", Progress: 95, Message: "restarting"}
 	got := normalizeStatusAfterRestart(st)

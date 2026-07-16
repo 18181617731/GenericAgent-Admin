@@ -189,9 +189,28 @@ func normalizeStatusAfterRestart(st UpdateStatus) UpdateStatus {
 		}
 		return st
 	}
+	if st.PID != 0 && st.PID != os.Getpid() {
+		switch st.Stage {
+		case "restarting", "applying":
+			return verifyAppliedVersion(st)
+		default:
+			now := time.Now()
+			stage := st.Stage
+			if stage == "" {
+				stage = "unknown"
+			}
+			st.Running = false
+			st.Stage = "error"
+			st.Error = fmt.Sprintf("升级在 %s 阶段中断：原进程 PID %d 已退出", stage, st.PID)
+			st.Message = st.Error + "，可以重新开始升级"
+			st.UpdatedAt = now
+			st.EndedAt = now
+			return st
+		}
+	}
 	switch st.Stage {
 	case "restarting", "applying":
-		if st.PID != 0 && st.PID == os.Getpid() {
+		if st.PID == os.Getpid() {
 			return st
 		}
 		return verifyAppliedVersion(st)

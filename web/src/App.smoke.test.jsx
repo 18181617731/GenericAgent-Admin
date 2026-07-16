@@ -7,6 +7,7 @@ import { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
+import { MessageBanner } from './components/feedback.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -440,8 +441,8 @@ describe('reflect service model selector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
     expect(await screen.findByRole('dialog', { name: '服务商和模型' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Provider A' }))
-    fireEvent.click(screen.getByRole('button', { name: longLabel }))
+    fireEvent.click(screen.getByRole('option', { name: 'Provider A' }))
+    fireEvent.click(screen.getByRole('option', { name: longLabel }))
     expect(onModel).toHaveBeenCalledWith(reflectService.name, 7)
   }, 10000)
 })
@@ -495,8 +496,8 @@ describe('goal mode model selector', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '启动 Goal Mode' }))
     fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Provider A' }))
-    fireEvent.click(screen.getByRole('button', { name: 'goal-model' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Provider A' }))
+    fireEvent.click(screen.getByRole('option', { name: 'goal-model' }))
     expect(setLLMNo).toHaveBeenCalledWith('7')
   }, 10000)
 })
@@ -533,9 +534,72 @@ describe('mobile chat model selector', () => {
     fireEvent.scroll(window)
     expect(screen.getByRole('dialog', { name: '服务商和模型' })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'model-four' }))
+    fireEvent.click(screen.getByRole('option', { name: 'model-four' }))
     expect(onChange).toHaveBeenCalledWith(4)
     expect(screen.queryByRole('dialog', { name: '服务商和模型' })).toBeNull()
+  })
+
+  test('locks background scrolling and restores focus when Escape closes the mobile picker', async () => {
+    installBrowserPolyfills()
+    const groups = [{ value: 'provider-a', label: 'Provider A', models: [{ value: 3, label: 'model-three' }] }]
+    render(<ProviderModelCascade groups={groups} selectedProvider="provider-a" value={3} onChange={vi.fn()} mobile />)
+
+    const trigger = screen.getByRole('button', { name: /选择模型/ })
+    trigger.focus()
+    fireEvent.click(trigger)
+    await screen.findByRole('dialog', { name: '服务商和模型' })
+    expect(document.body.style.overflow).toBe('hidden')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '服务商和模型' })).toBeNull())
+    expect(document.body.style.overflow).toBe('')
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+})
+
+describe('keyboard-friendly model selector', () => {
+  test('filters models and supports arrow navigation across provider and model columns', async () => {
+    installBrowserPolyfills()
+    const onChange = vi.fn()
+    const groups = [
+      { value: 'openai', label: 'OpenAI', models: [{ value: 1, label: 'gpt-5' }] },
+      { value: 'anthropic', label: 'Anthropic', models: [{ value: 2, label: 'claude-sonnet' }] },
+    ]
+    render(<ProviderModelCascade groups={groups} selectedProvider="openai" value={1} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+
+    const search = await screen.findByRole('textbox', { name: '搜索服务商或模型' })
+    expect(document.activeElement).toBe(search)
+    fireEvent.change(search, { target: { value: 'sonnet' } })
+    expect(screen.queryByRole('option', { name: 'gpt-5' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'claude-sonnet' })).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: '' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: 'OpenAI' })).toBeTruthy())
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'OpenAI' }))
+    fireEvent.keyDown(document.activeElement, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Anthropic' }))
+    fireEvent.keyDown(document.activeElement, { key: 'ArrowRight' })
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('option', { name: 'claude-sonnet' })))
+    fireEvent.click(document.activeElement)
+    expect(onChange).toHaveBeenCalledWith(2)
+  })
+})
+
+describe('shared action feedback', () => {
+  test('announces inferred errors and supports copying and dismissing the message', async () => {
+    const onDismiss = vi.fn()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    render(<MessageBanner message="升级失败：网络不可用" onDismiss={onDismiss} copyable />)
+    expect(screen.getByRole('alert').textContent).toContain('升级失败')
+    fireEvent.click(screen.getByRole('button', { name: '复制详情' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('升级失败：网络不可用'))
+    expect(screen.getByRole('button', { name: '已复制详情' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭消息' }))
+    expect(onDismiss).toHaveBeenCalledOnce()
+    delete navigator.clipboard
   })
 })
 
@@ -551,7 +615,7 @@ describe('mobile file workflow', () => {
     fileContent: '', loadedFileContent: '', loadedFilePath: '', setFileContent: vi.fn(),
     fileSearch: '', setFileSearch: vi.fn(), searchHits: [], tailLines: 200, setTailLines: vi.fn(),
     loadFiles: vi.fn(), readFile: vi.fn(), tailFile: vi.fn(), saveFile: vi.fn(), deleteFile: vi.fn(),
-    downloadFile: vi.fn(), runSearch: vi.fn(), busy: false,
+    downloadFile: vi.fn(), runSearch: vi.fn(), clearSearch: vi.fn(), busy: false,
   })
 
   test('should keep directory browsing separate from selected file actions', () => {
@@ -574,5 +638,24 @@ describe('mobile file workflow', () => {
     rerender(<FilesPage {...props} filePath="memory/notes.md" loadedFilePath="memory/notes.md" fileContent="hello" loadedFileContent="hello"/>)
     expect(screen.getByRole('tab', { name: '预览' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('textbox', { name: '文件内容编辑器' }).value).toBe('hello')
+  })
+
+  test('protects dirty content before opening another file and exposes search result counts', () => {
+    const props = fileProps()
+    props.fileContent = 'changed'
+    props.loadedFileContent = 'original'
+    props.loadedFilePath = 'memory/current.md'
+    props.fileSearch = 'note'
+    props.searchHits = [{ path: 'memory/notes.md', line: 2, preview: 'note' }]
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<FilesPage {...props}/>)
+
+    expect(screen.getByText('1', { selector: '.files-search-results-head span' })).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: /notes\.md/i })[0])
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(props.readFile).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '清空文件搜索' }))
+    expect(props.clearSearch).toHaveBeenCalledOnce()
   })
 })

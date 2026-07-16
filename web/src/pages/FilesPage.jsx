@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, Download, FileText, Folder, FolderOpen, Save, Search, Trash2, Undo2 } from 'lucide-react'
+import { ChevronRight, Download, FileText, Folder, FolderOpen, Save, Search, Trash2, Undo2, X } from 'lucide-react'
 import { Panel } from '../components/common'
 import { fileEditorDirty, saveReviewText } from '../lib/filesSafety'
+import { shouldConfirmFileReplacement } from '../lib/ux'
 
 const parentPath = (path) => {
   const normalized = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
@@ -37,6 +38,7 @@ export function FilesPage({
   deleteFile,
   downloadFile,
   runSearch,
+  clearSearch,
   busy = false,
 }) {
   const [mobileView, setMobileView] = useState('browse')
@@ -69,16 +71,32 @@ export function FilesPage({
     }
   }, [loadedFilePath])
 
+  useEffect(() => {
+    if (!dirty) return undefined
+    const warn = event => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  const guardedReadFile = (path) => {
+    if (shouldConfirmFileReplacement({ dirty, loadedPath: loadedFilePath, nextPath: path })
+      && !window.confirm(`“${pathName(loadedFilePath) || '当前文件'}”有未保存更改。放弃更改并打开“${pathName(path)}”？`)) return
+    readFile(path)
+  }
+
   const openEntry = (entry) => {
     if (entry.kind === 'dir') {
       setMobileView('browse')
       loadFiles(entry.path)
       return
     }
-    readFile(entry.path)
+    guardedReadFile(entry.path)
   }
 
-  const openSearchHit = (path) => readFile(path)
+  const openSearchHit = (path) => guardedReadFile(path)
 
   return (
     <section className="files-page">
@@ -94,7 +112,7 @@ export function FilesPage({
           </div>
           <div className="files-browse-actions">
             <button type="button" onClick={() => loadFiles(parent)} disabled={busy || !browsePath} title="返回上级目录"><Undo2 size={15}/>上级</button>
-            <span className="files-current-path" title={browsePath || '/'}>{browsePath || '/'}</span>
+            <span className="files-current-path" title={browsePath || '/'}>{browsePath || '/'} · {fileList?.length || 0} 项</span>
           </div>
           <div className="files-search-row">
             <input aria-label="文件搜索文本" value={fileSearch} onChange={e => setFileSearch(e.target.value)} placeholder={t.hints.searchText} onKeyDown={e => e.key === 'Enter' && fileSearch.trim() && runSearch()}/>
@@ -109,7 +127,7 @@ export function FilesPage({
             </button>)}
           </div>
           {(fileSearch || searchHits.length > 0) && <div className="files-search-results">
-            <h4>{t.lists.searchResults}</h4>
+            <div className="files-search-results-head"><h4>{t.lists.searchResults} <span>{searchHits.length}</span></h4><button type="button" onClick={() => clearSearch?.()} aria-label="清空文件搜索"><X size={14}/>清空</button></div>
             {searchEmpty && <p className="muted">{t.hints?.searchEmpty || searchHint}</p>}
             {searchHits.map(hit => <button type="button" className="hit" key={`${hit.path}:${hit.line}`} onClick={() => openSearchHit(hit.path)} title={`${hit.path}:${hit.line} · ${hit.preview}`}><b>{pathName(hit.path)}:{hit.line}</b><span>{hit.preview}</span></button>)}
           </div>}
@@ -122,7 +140,7 @@ export function FilesPage({
           </div>
           <div className="files-target-row">
             <input aria-label="当前文件路径" value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="输入要读取或保存的文件路径"/>
-            <button type="button" onClick={() => readFile(filePath)} disabled={!hasFilePath || busy}><FileText size={15}/>{t.read}</button>
+            <button type="button" onClick={() => guardedReadFile(filePath)} disabled={!hasFilePath || busy}><FileText size={15}/>{t.read}</button>
           </div>
           <div className="files-editor-actions">
             <label className="files-tail-field"><span>{t.hints.tailLines}</span><input aria-label={t.hints.tailLines} type="number" min="1" max="2000" value={tailLines} onChange={e => setTailLines(Number(e.target.value))}/></label>

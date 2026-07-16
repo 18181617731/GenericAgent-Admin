@@ -2746,6 +2746,7 @@ export default function ChatApp() {
             </div>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length || isCurrentRunning || modelSwitching}
+              disabledReason={!providerGroups.length ? '尚未配置可用模型' : modelSwitching ? '正在切换模型' : isCurrentRunning ? '回复生成期间不可切换模型' : ''}
               onChange={v=>saveModel(Number(v))} mobile={isMobile} />
             <div className="oa-model-select oa-effort-select"><span>推理</span>
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}

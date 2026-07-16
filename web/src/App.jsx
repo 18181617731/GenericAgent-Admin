@@ -11,10 +11,11 @@ import { modelValidationSummary, validateModelProfiles } from './lib/modelsValid
 import { applyModelOrder, mergePersistedModelOrder } from './lib/modelsEditor'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
+import { updateStatusPresentation } from './lib/ux'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
-import { ErrorBoundary, RouteFallback } from './components/feedback'
+import { ErrorBoundary, MessageBanner, RouteFallback } from './components/feedback'
 import { ProcessGuard } from './components/ProcessGuard'
 import SetupWizard from './components/SetupWizard.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
@@ -162,6 +163,7 @@ export default function App() {
   }, { scope: appScope, dependencies: [tab, lang] })
 
   const inv = health?.inventory || {}
+  const versionUX = updateStatusPresentation(versionStatus)
   const schedule = scheduleData || inv.schedule || {}
   const tasks = normalizeScheduleTasksPayload(schedule).tasks
   const taskSvcs = useMemo(() => group(services, s => s.kind === 'task' || s.name?.includes('task') || s.name?.includes('scheduler')), [services])
@@ -667,19 +669,55 @@ export default function App() {
         </div>
       </div>
     </div>}
-    <div ref={appScope} className={`app app-tab-${tab}`}>
+    <div ref={appScope} className={`app app-tab-${tab}`} aria-busy={busy || versionBusy || undefined}>
     <aside className="sidebar">
       <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
       <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button></div>
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{t.nav[tab]}</span><ChevronDown size={17}/></button>
       <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
       <button type="button" className="refresh" onClick={load} disabled={busy} aria-label={busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{busy ? t.busy : t.refresh}</span></button>
-      {msg && <div className="message" role="status" aria-live="polite">{msg}</div>}
+      <MessageBanner message={msg} onDismiss={() => setMsg('')} copyable className="message" />
     </aside>
     <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label="正在加载页面…" />}>
-      {tab==='overview' && <section><div className="stats"><Stat label={t.cards.processes} value={services.length} icon={<Server/>}/><Stat label={t.cards.running} value={services.filter(s=>s.running).length} icon={<Activity/>}/><Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/><Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/></div><ObservabilityCard snapshot={observability} error={observabilityError} onRefresh={() => readObservability().catch(e => { setObservability(null); setObservabilityError(e.message) })}/><div className="grid2"><Panel title={t.cards.version}><div className="version-card"><div className="autostart-head"><Download size={18}/><strong>GA Admin {versionInfo?.version || 'dev'}</strong><span className={versionCheck?.update ? 'err' : 'ok'}>{versionCheck ? (versionCheck.update ? '有更新' : '已是最新') : (versionInfo?.goos ? `${versionInfo.goos}/${versionInfo.goarch}` : t.empty)}</span></div><p className="muted">提交 {versionInfo?.commit || '未知'} · {versionInfo?.date || '未知'}</p><p className="muted">运行时 {versionInfo?.runtime || '-'} · 程序 {versionInfo?.exe || '-'}</p>{versionInfo?.update_source_url && <p className="muted">更新源：<a href={versionInfo.update_source_url} target="_blank" rel="noreferrer">{versionInfo.update_repository || versionInfo.update_source_url}</a></p>}{versionInfo && !versionInfo.update_supported && <p className="warn">一键升级不可用：{versionInfo.update_unsupported_reason || '当前平台暂不支持'}</p>}{versionCheck?.latest && <p>最新版本：<a href={versionCheck.latest.html_url} target="_blank" rel="noreferrer">{versionCheck.latest.tag_name}</a></p>}{versionCheck?.asset && <code>{versionCheck.asset.name}</code>}{versionStatus?.stage && <div className="update-progress"><div className="update-progress-head"><span>{versionStatus.running ? '升级中' : (versionStatus.error ? '升级失败' : '升级状态')}</span><b>{versionStatus.progress || 0}%</b></div><div className="progress-bar"><span style={{width:`${Math.max(0, Math.min(100, versionStatus.progress || 0))}%`}}/></div><p className={versionStatus.error ? 'err' : 'muted'}>{versionStatus.message || versionStatus.stage}</p>{versionStatus.stage && <code>{versionStatus.stage}</code>}</div>}<div className="actions"><button onClick={checkVersion} disabled={versionBusy || versionStatus?.running}>{versionBusy ? t.busy : '检查更新'}</button><button onClick={updateVersion} disabled={versionBusy || versionStatus?.running || !versionCheck?.update}>{versionStatus?.running ? '升级中…' : '一键升级'}</button><button className="secondary" onClick={()=>refreshVersionStatus().catch(e=>setMsg(e.message))}>刷新进度</button></div></div></Panel><Panel title="GA 源代码更新"><div className="version-card"><div className="version-head"><GitPullRequest size={18}/><strong>Git 更新</strong><span className={gitStatus?.error ? 'err' : (gitStatus?.latest ? 'ok' : 'warn')}>{gitStatus?.error ? '检查失败' : (gitStatus ? (gitStatus.latest ? '已是最新' : `落后 ${gitStatus.behind || 0} 个提交`) : '未检查')}</span></div><p className="muted">自动 fetch 后对比上游分支；更新只执行 git pull --ff-only。</p>{gitStatus?.root && <code>{gitStatus.root}</code>}<p>分支: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>{gitStatus?.upstream && <p>上游: {gitStatus.upstream}　领先 {gitStatus.ahead || 0} / 落后 {gitStatus.behind || 0}</p>}{gitStatus?.dirty && <p className="warn">工作区有未提交修改</p>}{gitStatus?.error && <p className="err">{gitStatus.error}</p>}{gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}{gitResult?.pull && <pre className="mini-log">{gitResult.pull}</pre>}<div className="actions"><button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : '检查是否最新'}</button><button onClick={updateGASource} disabled={gitBusy || busy || gitStatus?.latest}>{gitBusy ? t.busy : '更新 GA 源代码'}</button></div></div></Panel><Panel title={t.lists.autostart}><div className="autostart-card"><div className="autostart-head"><Power size={18}/><strong>{t.autostart}</strong><span className={autostart?.enabled ? 'ok' : 'muted'}>{autostart?.supported ? (autostart?.enabled ? t.enabled : t.disabled) : t.unsupported}</span></div><p>{!autostart?.supported ? t.hints.autostartUnsupported : (autostart?.enabled ? t.hints.autostartEnabled : t.hints.autostartDisabled)}</p>{autostart?.path && <code>{autostart.path}</code>}<button onClick={toggleAutostart} disabled={busy || !autostart?.supported}>{autostart?.enabled ? t.disableAutostart : t.enableAutostart}</button></div></Panel><Panel title={t.lists.riskHints}><ul className="risk"><li>{t.root}: {root}</li><li>sche_tasks JSON: {t.backup}</li><li>mykey.py: {t.backup}</li></ul></Panel></div></section>}
+      {tab === 'overview' && <section>
+        <div className="stats">
+          <Stat label={t.cards.processes} value={services.length} icon={<Server/>}/>
+          <Stat label={t.cards.running} value={services.filter(s => s.running).length} icon={<Activity/>}/>
+          <Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/>
+          <Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/>
+        </div>
+        <ObservabilityCard snapshot={observability} error={observabilityError} onRefresh={() => readObservability().catch(e => { setObservability(null); setObservabilityError(e.message) })}/>
+        <div className="grid2">
+          <Panel title={t.cards.version}>
+            <div className="version-card">
+              <div className="autostart-head"><Download size={18}/><strong>GA Admin {versionInfo?.version || 'dev'}</strong><span className={versionCheck?.update ? 'err' : 'ok'}>{versionCheck ? (versionCheck.update ? '有更新' : '已是最新') : (versionInfo?.goos ? `${versionInfo.goos}/${versionInfo.goarch}` : t.empty)}</span></div>
+              <p className="muted">提交 {versionInfo?.commit || '未知'} · {versionInfo?.date || '未知'}</p>
+              <p className="muted">运行时 {versionInfo?.runtime || '-'} · 程序 {versionInfo?.exe || '-'}</p>
+              {versionInfo?.update_source_url && <p className="muted">更新源：<a href={versionInfo.update_source_url} target="_blank" rel="noreferrer">{versionInfo.update_repository || versionInfo.update_source_url}</a></p>}
+              {versionInfo && !versionInfo.update_supported && <p className="warn">一键升级不可用：{versionInfo.update_unsupported_reason || '当前平台暂不支持'}</p>}
+              {versionCheck?.latest && <p>最新版本：<a href={versionCheck.latest.html_url} target="_blank" rel="noreferrer">{versionCheck.latest.tag_name}</a></p>}
+              {versionCheck?.asset && <code>{versionCheck.asset.name}</code>}
+              {versionStatus?.stage && <div className="update-progress" role="status" aria-live="polite">
+                <div className="update-progress-head"><span>{versionUX.title}</span><b>{versionStatus.progress || 0}%</b></div>
+                <div className="progress-bar" role="progressbar" aria-label="升级进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.max(0, Math.min(100, versionStatus.progress || 0))}><span style={{ width: `${Math.max(0, Math.min(100, versionStatus.progress || 0))}%` }}/></div>
+                <p className={versionUX.failed ? 'err' : 'muted'}>{versionStatus.message || versionStatus.stage}</p>
+                {versionStatus.stage && <code>{versionStatus.stage}</code>}
+                {versionUX.failed && <MessageBanner message={versionUX.interrupted ? '上次升级未完成，可以安全地重新开始。' : '升级没有完成，请查看详情后重试。'} tone="error" details={versionUX.detail} onRetry={updateVersion} retryLabel={versionUX.actionLabel} copyable/>}
+              </div>}
+              <div className="actions">
+                <button onClick={checkVersion} disabled={versionBusy || versionStatus?.running}>{versionBusy ? t.busy : '检查更新'}</button>
+                <button onClick={updateVersion} disabled={versionBusy || versionStatus?.running || (!versionCheck?.update && !versionUX.canRetry)}>{versionStatus?.running ? '升级中…' : versionUX.actionLabel}</button>
+                <button className="secondary" onClick={() => refreshVersionStatus().catch(e => setMsg(e.message))}>刷新进度</button>
+              </div>
+            </div>
+          </Panel>
+          <Panel title="GA 源代码更新"><div className="version-card"><div className="version-head"><GitPullRequest size={18}/><strong>Git 更新</strong><span className={gitStatus?.error ? 'err' : (gitStatus?.latest ? 'ok' : 'warn')}>{gitStatus?.error ? '检查失败' : (gitStatus ? (gitStatus.latest ? '已是最新' : `落后 ${gitStatus.behind || 0} 个提交`) : '未检查')}</span></div><p className="muted">自动 fetch 后对比上游分支；更新只执行 git pull --ff-only。</p>{gitStatus?.root && <code>{gitStatus.root}</code>}<p>分支: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>{gitStatus?.upstream && <p>上游: {gitStatus.upstream}　领先 {gitStatus.ahead || 0} / 落后 {gitStatus.behind || 0}</p>}{gitStatus?.dirty && <p className="warn">工作区有未提交修改</p>}{gitStatus?.error && <p className="err">{gitStatus.error}</p>}{gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}{gitResult?.pull && <pre className="mini-log">{gitResult.pull}</pre>}<div className="actions"><button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : '检查是否最新'}</button><button onClick={updateGASource} disabled={gitBusy || busy || gitStatus?.latest}>{gitBusy ? t.busy : '更新 GA 源代码'}</button></div></div></Panel>
+          <Panel title={t.lists.autostart}><div className="autostart-card"><div className="autostart-head"><Power size={18}/><strong>{t.autostart}</strong><span className={autostart?.enabled ? 'ok' : 'muted'}>{autostart?.supported ? (autostart?.enabled ? t.enabled : t.disabled) : t.unsupported}</span></div><p>{!autostart?.supported ? t.hints.autostartUnsupported : (autostart?.enabled ? t.hints.autostartEnabled : t.hints.autostartDisabled)}</p>{autostart?.path && <code>{autostart.path}</code>}<button onClick={toggleAutostart} disabled={busy || !autostart?.supported}>{autostart?.enabled ? t.disableAutostart : t.enableAutostart}</button></div></Panel>
+          <Panel title={t.lists.riskHints}><ul className="risk"><li>{t.root}: {root}</li><li>sche_tasks JSON: {t.backup}</li><li>mykey.py: {t.backup}</li></ul></Panel>
+        </div>
+      </section>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands}/>}
       {tab==='control' && <section>
         <div className="stats">
@@ -716,7 +754,7 @@ export default function App() {
           <Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="正常"/></Panel>
         </div>
       </section>}
-      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} busy={busy}/>}
+      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} busy={busy}/>}
 
       {tab==='tasks' && <section className="tasks-page">
         <div className="stats schedule-stats">
