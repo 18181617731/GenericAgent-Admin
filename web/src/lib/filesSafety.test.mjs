@@ -17,6 +17,7 @@ test('dirnameForPath handles root, nested, and windows separators', () => {
 
 test('fileEditorDirty and saveReviewText expose save-safety states', () => {
   assert.equal(fileEditorDirty('new', 'old'), true)
+  assert.equal(fileEditorDirty('first\nsecond\n', 'first\r\nsecond\r\n'), false)
   assert.match(saveReviewText({ path: 'a.txt', loadedPath: 'b.txt', dirty: true }), /loaded from b\.txt to a\.txt/)
   assert.match(saveReviewText({ path: 'a.txt', loadedPath: 'a.txt', dirty: true }), /saving changes to a\.txt/)
   assert.match(saveReviewText({ path: '', loadedPath: 'a.txt', dirty: true }), /Choose a file/)

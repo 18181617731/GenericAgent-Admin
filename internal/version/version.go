@@ -184,6 +184,9 @@ func readStatusLocked() UpdateStatus {
 
 func normalizeStatusAfterRestart(st UpdateStatus) UpdateStatus {
 	if !st.Running {
+		if st.Stage == "done" && st.Check != nil && st.Check.Latest != nil {
+			return verifyAppliedVersion(st)
+		}
 		return st
 	}
 	switch st.Stage {
@@ -191,16 +194,35 @@ func normalizeStatusAfterRestart(st UpdateStatus) UpdateStatus {
 		if st.PID != 0 && st.PID == os.Getpid() {
 			return st
 		}
-		now := time.Now()
-		st.Running = false
-		st.Stage = "done"
-		st.Progress = 100
-		if st.Message == "" {
-			st.Message = "升级已应用，服务已重启"
-		}
-		st.UpdatedAt = now
-		st.EndedAt = now
+		return verifyAppliedVersion(st)
 	}
+	return st
+}
+
+func verifyAppliedVersion(st UpdateStatus) UpdateStatus {
+	now := time.Now()
+	st.Running = false
+	st.Progress = 100
+	target := ""
+	if st.Check != nil && st.Check.Latest != nil {
+		target = formalVersion(st.Check.Latest.TagName)
+	}
+	current := formalVersion(effectiveVersion())
+	if target != "" && current == target {
+		st.Stage = "done"
+		st.Message = fmt.Sprintf("升级成功，当前版本 %s", current)
+		st.Error = ""
+	} else {
+		st.Stage = "error"
+		if target == "" {
+			st.Error = "升级后无法确认目标版本"
+		} else {
+			st.Error = fmt.Sprintf("升级未生效：当前版本 %s，目标版本 %s", current, target)
+		}
+		st.Message = st.Error
+	}
+	st.UpdatedAt = now
+	st.EndedAt = now
 	return st
 }
 
@@ -498,27 +520,32 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 
 	var content string
 	var script string
-	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		script = filepath.Join(work, "apply-update.cmd")
 		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
-		cmd = exec.Command("cmd", "/C", "start", "", script)
 	} else {
 		script = filepath.Join(work, "apply-update.sh")
 		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
-		cmd = exec.Command("bash", script)
 	}
 	if err := writeFileAtomic(script, []byte(content), 0600); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("restarting", "升级包已就绪，正在重启服务", 95, &check)
+	cmd := updateScriptCommand(runtime.GOOS, script)
 	cmd.Dir = work
 	hideChildWindow(cmd)
 	if err := cmd.Start(); err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{}, fmt.Errorf("启动升级脚本失败: %w", err)
 	}
 	go func() { time.Sleep(500 * time.Millisecond); exitProcess(0) }()
 	return ApplyResult{OK: true, Message: "update downloaded; restarting", Script: script}, nil
+}
+
+func updateScriptCommand(goos, script string) *exec.Cmd {
+	if goos == "windows" {
+		return exec.Command("cmd", "/D", "/Q", "/C", script)
+	}
+	return exec.Command("bash", script)
 }
 
 func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string) string {
@@ -530,6 +557,8 @@ set "BAK=%s"
 set "WORKER=%s"
 set "NEW_WORKER=%s"
 set "WORKER_BAK=%s"
+set "WORKER_HAD_ORIGINAL=0"
+for %%%%D in ("%%OLD%%") do set "OLD_DIR=%%%%~dpD"
 for /L %%%%i in (1,1,30) do (
   move /Y "%%OLD%%" "%%BAK%%" >nul 2>nul && goto replaced
   timeout /t 1 /nobreak >nul
@@ -541,7 +570,10 @@ move /Y "%%NEW%%" "%%OLD%%" >nul
 if errorlevel 1 (move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul & exit /b 1)
 if not "%%NEW_WORKER%%"=="" (
   for %%%%D in ("%%WORKER%%") do if not exist "%%%%~dpD" mkdir "%%%%~dpD"
-  if exist "%%WORKER%%" move /Y "%%WORKER%%" "%%WORKER_BAK%%" >nul 2>nul
+  if exist "%%WORKER%%" (
+    set "WORKER_HAD_ORIGINAL=1"
+    move /Y "%%WORKER%%" "%%WORKER_BAK%%" >nul 2>nul
+  )
   move /Y "%%NEW_WORKER%%" "%%WORKER%%" >nul
   if errorlevel 1 (
     if exist "%%WORKER_BAK%%" move /Y "%%WORKER_BAK%%" "%%WORKER%%" >nul 2>nul
@@ -550,7 +582,20 @@ if not "%%NEW_WORKER%%"=="" (
     exit /b 1
   )
 )
-start "" "%%OLD%%"
+start "" /D "%%OLD_DIR%%" "%%OLD%%"
+if errorlevel 1 goto launch_failed
+exit /b 0
+:launch_failed
+if "%%WORKER_HAD_ORIGINAL%%"=="1" (
+  if exist "%%WORKER%%" del /Q "%%WORKER%%" >nul 2>nul
+  if exist "%%WORKER_BAK%%" move /Y "%%WORKER_BAK%%" "%%WORKER%%" >nul 2>nul
+) else if exist "%%WORKER%%" (
+  del /Q "%%WORKER%%" >nul 2>nul
+)
+move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
+move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
+start "" /D "%%OLD_DIR%%" "%%OLD%%"
+exit /b 1
 `, oldExe, newExe, backup, worker, newWorker, workerBackup)
 }
 

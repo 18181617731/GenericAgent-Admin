@@ -9,7 +9,9 @@ export const dirnameForPath = (path = '') => {
   return normalized.includes('/') ? normalized.split('/').slice(0, -1).join('/') : ''
 }
 
-export const fileEditorDirty = (content = '', loadedContent = '') => content !== loadedContent
+const normalizedEditorText = value => String(value || '').replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+
+export const fileEditorDirty = (content = '', loadedContent = '') => normalizedEditorText(content) !== normalizedEditorText(loadedContent)
 
 export const saveReviewText = ({ path = '', loadedPath = '', dirty = false } = {}) => {
   if (!path) return 'Choose a file before saving.'

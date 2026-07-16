@@ -102,6 +102,7 @@ export function ProviderModelCascade({
     const onMouseDown = event => { if (!isInside(event.target)) close() }
     const onKeyDown = event => { if (event.key === 'Escape') close() }
     const onScroll = event => {
+      if (mobileMode) return
       if (performance.now() - openedAt.current < 250) return
       if (!isInside(event.target)) close()
     }

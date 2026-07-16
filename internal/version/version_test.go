@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -234,6 +235,9 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%OLD%" "%BAK%"`,
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
+		`start "" /D "%OLD_DIR%" "%OLD%"`,
+		`if errorlevel 1 goto launch_failed`,
+		`:launch_failed`,
 	}
 	for _, w := range want {
 		if !strings.Contains(script, w) {
@@ -252,7 +256,8 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak")
 	want := []string{
 		`for %%D in ("%WORKER%") do if not exist "%%~dpD" mkdir "%%~dpD"`,
-		`if exist "%WORKER%" move /Y "%WORKER%" "%WORKER_BAK%"`,
+		`if exist "%WORKER%" (`,
+		`move /Y "%WORKER%" "%WORKER_BAK%"`,
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
@@ -260,6 +265,36 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
 			t.Fatalf("script missing rollback step %q in:\n%s", sub, script)
+		}
+	}
+}
+
+func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak")
+	want := []string{
+		`if errorlevel 1 goto launch_failed`,
+		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
+		`move /Y "%OLD%" "%NEW%"`,
+		`move /Y "%BAK%" "%OLD%"`,
+		`start "" /D "%OLD_DIR%" "%OLD%"`,
+		`exit /b 1`,
+	}
+	for _, sub := range want {
+		if !strings.Contains(script, sub) {
+			t.Fatalf("script missing launch rollback step %q in:\n%s", sub, script)
+		}
+	}
+}
+
+func TestWindowsUpdateCommandRunsScriptDirectlyWithoutVisibleStartShell(t *testing.T) {
+	cmd := updateScriptCommand("windows", `C:\Temp\ga-admin-update\apply-update.cmd`)
+	want := []string{"cmd", "/D", "/Q", "/C", `C:\Temp\ga-admin-update\apply-update.cmd`}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("update command args = %#v, want %#v", cmd.Args, want)
+	}
+	for _, arg := range cmd.Args {
+		if strings.EqualFold(arg, "start") {
+			t.Fatalf("update command must not spawn a visible start shell: %#v", cmd.Args)
 		}
 	}
 }
@@ -911,11 +946,13 @@ func TestCurrentUpdateLimitsPinPackageAndChecksumCeilings(t *testing.T) {
 
 func TestCurrentUpdateStatusNormalizesRestartingAfterRelaunch(t *testing.T) {
 	oldStatus := statusPathOverride
+	oldVersion := Version
 	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
+	Version = "v9.9.9"
+	defer func() { statusPathOverride = oldStatus; Version = oldVersion }()
 
 	started := time.Now().Add(-time.Minute).UTC()
-	st := UpdateStatus{ID: "restart-test", PID: os.Getpid() + 1, Running: true, Stage: "restarting", Progress: 95, Message: "升级包已就绪，正在重启服务", StartedAt: started, UpdatedAt: started}
+	st := UpdateStatus{ID: "restart-test", PID: os.Getpid() + 1, Running: true, Stage: "restarting", Progress: 95, Message: "升级包已就绪，正在重启服务", Check: &CheckResult{Latest: &Release{TagName: "v9.9.9"}}, StartedAt: started, UpdatedAt: started}
 	b, err := json.Marshal(st)
 	if err != nil {
 		t.Fatal(err)
@@ -928,8 +965,67 @@ func TestCurrentUpdateStatusNormalizesRestartingAfterRelaunch(t *testing.T) {
 	if got.Running || got.Stage != "done" || got.Progress != 100 {
 		t.Fatalf("normalized status = %+v", got)
 	}
+	if got.Error != "" || !strings.Contains(got.Message, "v9.9.9") {
+		t.Fatalf("normalized success status = %+v", got)
+	}
 	if got.EndedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Fatalf("normalized timestamps missing: %+v", got)
+	}
+}
+
+func TestCurrentUpdateStatusRejectsFalseSuccessWhenVersionDidNotChange(t *testing.T) {
+	oldStatus := statusPathOverride
+	oldVersion := Version
+	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
+	Version = "v1.0.2"
+	defer func() { statusPathOverride = oldStatus; Version = oldVersion }()
+
+	started := time.Now().Add(-time.Minute).UTC()
+	st := UpdateStatus{
+		ID: "restart-failed-test", PID: os.Getpid() + 1, Running: true,
+		Stage: "restarting", Progress: 95, Message: "升级包已就绪，正在重启服务",
+		Check: &CheckResult{Latest: &Release{TagName: "v1.0.3"}}, StartedAt: started, UpdatedAt: started,
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPathOverride, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CurrentUpdateStatus()
+	if got.Running || got.Stage != "error" || got.Progress != 100 {
+		t.Fatalf("false success was not rejected: %+v", got)
+	}
+	if !strings.Contains(got.Error, "当前版本 v1.0.2") || !strings.Contains(got.Error, "目标版本 v1.0.3") {
+		t.Fatalf("false success error is not actionable: %+v", got)
+	}
+}
+
+func TestCurrentUpdateStatusRechecksLegacyDoneStatus(t *testing.T) {
+	oldStatus := statusPathOverride
+	oldVersion := Version
+	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
+	Version = "v1.0.2"
+	defer func() { statusPathOverride = oldStatus; Version = oldVersion }()
+
+	st := UpdateStatus{
+		ID: "legacy-false-success", Running: false, Stage: "done", Progress: 100,
+		Message: "update downloaded; restarting",
+		Check:   &CheckResult{Latest: &Release{TagName: "v1.0.4"}},
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPathOverride, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CurrentUpdateStatus()
+	if got.Stage != "error" || !strings.Contains(got.Error, "当前版本 v1.0.2") || !strings.Contains(got.Error, "目标版本 v1.0.4") {
+		t.Fatalf("legacy false success was not corrected: %+v", got)
 	}
 }
 
