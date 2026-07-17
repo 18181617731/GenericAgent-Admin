@@ -681,7 +681,7 @@ if not "%%NEW_WORKER%%"=="" (
   )
 )
 for /L %%%%R in (1,1,10) do (
-  start "" /D "%%OLD_DIR%%" "%%OLD%%"
+  powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"
   if errorlevel 1 goto launch_failed
   timeout /t 2 /nobreak >nul
   tasklist /FI "IMAGENAME eq ga-admin.exe" /NH 2>nul | find /I "ga-admin.exe" >nul && exit /b 0
@@ -697,7 +697,7 @@ if "%%WORKER_HAD_ORIGINAL%%"=="1" (
 )
 move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
 move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
-start "" /D "%%OLD_DIR%%" "%%OLD%%"
+powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"
 exit /b 1
 `, oldExe, newExe, backup, worker, newWorker, workerBackup)
 }

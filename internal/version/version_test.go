@@ -242,7 +242,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%OLD%" "%BAK%"`,
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
-		`start "" /D "%OLD_DIR%" "%OLD%"`,
+		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"`,
 		`if errorlevel 1 goto launch_failed`,
 		`for /L %%R in (1,1,10) do (`,
 		`tasklist /FI "IMAGENAME eq ga-admin.exe"`,
@@ -286,7 +286,7 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
-		`start "" /D "%OLD_DIR%" "%OLD%"`,
+		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"`,
 		`exit /b 1`,
 	}
 	for _, sub := range want {
