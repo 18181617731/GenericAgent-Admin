@@ -26,6 +26,24 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+/* Upstream worldline controls retained when merging the fork's chat UX. */
+.oa-message-editor{display:grid;gap:8px;width:min(680px,100%)}
+.oa-edit-textarea{width:100%;min-height:96px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-strong);color:var(--text);resize:vertical}
+.oa-edit-actions{display:flex;justify-content:flex-end;gap:7px}
+.oa-edit-actions button{display:inline-flex;align-items:center;gap:5px;min-height:34px;padding:6px 11px}
+.oa-msg-version{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:8px;color:var(--muted);font-size:12px}
+.oa-msg-version button{width:30px;min-width:30px;height:30px;padding:0;display:grid;place-items:center;border-radius:9px}
+.oa-worldline-drawer{position:absolute;z-index:30;top:68px;right:18px;width:min(390px,calc(100vw - 36px));max-height:calc(100dvh - 92px);display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid var(--border);border-radius:18px;background:var(--surface-strong);box-shadow:0 22px 64px rgba(0,0,0,.18);overflow:hidden}
+.oa-worldline-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;border-bottom:1px solid var(--border)}
+.oa-worldline-heading{min-width:0;display:grid;gap:2px}.oa-worldline-title{display:flex;align-items:center;gap:6px;font-weight:700}.oa-worldline-subtitle{color:var(--muted);font-size:11px}
+.oa-worldline-header-actions{display:flex;gap:5px}.oa-worldline-icon-btn{width:34px;min-width:34px;height:34px;padding:0;display:grid;place-items:center}
+.oa-worldline-body{min-height:0;padding:10px;overflow:auto}.oa-worldline-tools{display:grid;gap:8px;margin-bottom:9px}.oa-worldline-overview{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}
+.oa-worldline-search{display:flex;align-items:center;gap:6px;min-height:38px;padding:0 9px;border:1px solid var(--border);border-radius:10px;background:var(--surface-muted)}.oa-worldline-search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);outline:0}.oa-worldline-search button{width:28px;min-width:28px;height:28px;padding:0}
+.oa-worldline-state,.oa-worldline-alert{padding:18px 12px;text-align:center;color:var(--muted);font-size:13px}.oa-worldline-alert{color:var(--red)}
+.oa-wl-tree{display:grid;gap:5px}.oa-wl-node{width:100%;min-height:48px;display:flex;align-items:center;gap:9px;padding:8px 10px 8px calc(10px + var(--wl-depth,0) * 15px);text-align:left;background:transparent}.oa-wl-node.is-path{background:rgba(16,163,127,.06)}.oa-wl-node.is-current{border-color:rgba(16,163,127,.35);background:rgba(16,163,127,.12)}
+.oa-wl-node-mark{flex:0 0 auto}.oa-wl-node-copy{min-width:0;display:grid;gap:2px}.oa-wl-node-copy b,.oa-wl-node-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.oa-wl-node-copy small{color:var(--muted);font-size:10px}.oa-wl-switching{margin-left:auto;color:var(--green);font-size:10px}
+@media(max-width:680px){.oa-worldline-drawer{position:fixed;top:auto;right:0;bottom:0;left:0;width:100%;max-height:78dvh;border-radius:18px 18px 0 0;padding-bottom:env(safe-area-inset-bottom)}}
+
 /* Product usability pass: shared feedback, keyboard focus, touch targets, and resilient pickers. */
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
   outline: 3px solid rgba(16, 163, 127, .34);

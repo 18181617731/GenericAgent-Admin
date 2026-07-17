@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,12 @@ import (
 	"testing"
 	"time"
 )
+
+type versionRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn versionRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
 
 func TestNewer(t *testing.T) {
 	cases := []struct {
@@ -849,6 +856,90 @@ func TestDownloadRetriesTransientResponses(t *testing.T) {
 	data, err := os.ReadFile(dest)
 	if err != nil || string(data) != "release asset" {
 		t.Fatalf("downloaded data=%q err=%v", data, err)
+	}
+}
+
+func TestReleaseDownloadCandidatesUseMirrorsOnlyForGitHubAssets(t *testing.T) {
+	oldMirrors := updateMirrorPrefixes
+	updateMirrorPrefixes = []string{"https://gh-proxy.com/", "https://ghfast.top/"}
+	defer func() { updateMirrorPrefixes = oldMirrors }()
+	t.Setenv("GA_ADMIN_UPDATE_MIRRORS", "https://custom.example/;not-a-url")
+	t.Setenv("GA_ADMIN_UPDATE_DISABLE_MIRRORS", "false")
+
+	raw := "https://github.com/example/admin/releases/download/v1.2.3/ga-admin.zip"
+	candidates := releaseDownloadCandidates(raw)
+	if len(candidates) != 4 {
+		t.Fatalf("candidates=%#v want direct + custom + 2 defaults", candidates)
+	}
+	if candidates[0].URL != raw || candidates[0].Label != "GitHub 直连" {
+		t.Fatalf("first candidate=%#v", candidates[0])
+	}
+	if candidates[1].URL != "https://custom.example/"+raw || candidates[1].Label != "镜像 custom.example" {
+		t.Fatalf("custom candidate=%#v", candidates[1])
+	}
+	if got := releaseDownloadCandidates("https://downloads.example/release.zip"); len(got) != 1 {
+		t.Fatalf("non-GitHub candidates=%#v want direct only", got)
+	}
+	t.Setenv("GA_ADMIN_UPDATE_DISABLE_MIRRORS", "true")
+	if got := releaseDownloadCandidates(raw); len(got) != 1 {
+		t.Fatalf("disabled mirror candidates=%#v want direct only", got)
+	}
+}
+
+func TestDownloadReleaseAssetFallsBackToMirror(t *testing.T) {
+	oldClient := downloadHTTPClient
+	oldDelay := downloadRetryDelay
+	oldMirrors := updateMirrorPrefixes
+	defer func() {
+		downloadHTTPClient = oldClient
+		downloadRetryDelay = oldDelay
+		updateMirrorPrefixes = oldMirrors
+	}()
+	t.Setenv("GA_ADMIN_UPDATE_MIRRORS", "")
+	t.Setenv("GA_ADMIN_UPDATE_DISABLE_MIRRORS", "false")
+	updateMirrorPrefixes = []string{"https://mirror.test/"}
+	downloadRetryDelay = 0
+	requests := make([]string, 0, 2)
+	downloadHTTPClient = &http.Client{Transport: versionRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.URL.String())
+		if req.URL.Hostname() == "github.com" {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable", Header: make(http.Header), Body: io.NopCloser(strings.NewReader("temporary")), Request: req}, nil
+		}
+		if req.URL.Hostname() == "mirror.test" {
+			body := "verified asset"
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), ContentLength: int64(len(body)), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		}
+		return nil, fmt.Errorf("unexpected host %s", req.URL.Hostname())
+	})}
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+	raw := "https://github.com/example/admin/releases/download/v1.2.3/asset.zip"
+
+	source, err := downloadReleaseAsset(context.Background(), raw, dest, maxUpdatePackageBytes)
+	if err != nil {
+		t.Fatalf("downloadReleaseAsset: %v", err)
+	}
+	if source != "镜像 mirror.test" {
+		t.Fatalf("source=%q", source)
+	}
+	if len(requests) != 2 || requests[0] != raw || requests[1] != "https://mirror.test/"+raw {
+		t.Fatalf("requests=%#v", requests)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "verified asset" {
+		t.Fatalf("downloaded data=%q err=%v", data, err)
+	}
+}
+
+func TestUpdateMirrorPrefixRequiresHTTPSOrLoopbackHTTP(t *testing.T) {
+	for _, prefix := range []string{"https://mirror.example/", "http://127.0.0.1:8080/", "http://localhost:8080/"} {
+		if _, ok := validUpdateMirrorPrefix(prefix); !ok {
+			t.Fatalf("valid mirror prefix rejected: %s", prefix)
+		}
+	}
+	for _, prefix := range []string{"http://mirror.example/", "ftp://mirror.example/", "https://user:pass@mirror.example/", "not-a-url"} {
+		if _, ok := validUpdateMirrorPrefix(prefix); ok {
+			t.Fatalf("invalid mirror prefix accepted: %s", prefix)
+		}
 	}
 }
 

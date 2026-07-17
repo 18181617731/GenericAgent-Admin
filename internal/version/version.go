@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,9 +63,13 @@ const (
 )
 
 var (
-	updateHTTPClient   = &http.Client{Transport: updateHTTPTransport(updateResponseHeaderTimeout, true)}
-	downloadHTTPClient = &http.Client{Transport: updateHTTPTransport(downloadResponseHeaderTimeout, true)}
-	downloadRetryDelay = 500 * time.Millisecond
+	updateHTTPClient     = &http.Client{Transport: updateHTTPTransport(updateResponseHeaderTimeout, true)}
+	downloadHTTPClient   = &http.Client{Transport: updateHTTPTransport(downloadResponseHeaderTimeout, true)}
+	downloadRetryDelay   = 500 * time.Millisecond
+	updateMirrorPrefixes = []string{
+		"https://gh-proxy.com/",
+		"https://ghfast.top/",
+	}
 )
 
 func updateHTTPTransport(headerTimeout time.Duration, allowHTTP2 bool) http.RoundTripper {
@@ -558,8 +563,17 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	}
 	zipPath := filepath.Join(work, check.Asset.Name)
 	emit("downloading", "正在下载升级包", 25, &check)
-	if err := download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes); err != nil {
+	downloadSource := "GitHub 直连"
+	if hasAssetDigest {
+		downloadSource, err = downloadReleaseAsset(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes)
+	} else {
+		err = download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes)
+	}
+	if err != nil {
 		return ApplyResult{}, err
+	}
+	if downloadSource != "GitHub 直连" {
+		emit("downloaded_via_mirror", fmt.Sprintf("GitHub 直连不可用，已通过%s下载；正在使用官方 SHA256 校验", downloadSource), 55, &check)
 	}
 	sumPath := ""
 	if !hasAssetDigest {
@@ -851,16 +865,23 @@ func splitVer(s string) [3]int {
 }
 
 func download(ctx context.Context, url, dest string, maxBytes int64) error {
+	return downloadWithAttempts(ctx, url, dest, maxBytes, downloadMaxAttempts)
+}
+
+func downloadWithAttempts(ctx context.Context, url, dest string, maxBytes int64, maxAttempts int) error {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
 	var lastErr error
 	attempts := 0
-	for attempt := 1; attempt <= downloadMaxAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
 		retryable, err := downloadOnce(ctx, url, dest, maxBytes)
 		if err == nil {
 			return nil
 		}
 		lastErr = err
-		if !retryable || attempt == downloadMaxAttempts {
+		if !retryable || attempt == maxAttempts {
 			break
 		}
 		if err := waitDownloadRetry(ctx, downloadRetryDelay*time.Duration(attempt)); err != nil {
@@ -868,6 +889,78 @@ func download(ctx context.Context, url, dest string, maxBytes int64) error {
 		}
 	}
 	return fmt.Errorf("下载失败（已尝试 %d 次）: %w", attempts, lastErr)
+}
+
+type releaseDownloadCandidate struct {
+	URL   string
+	Label string
+}
+
+func downloadReleaseAsset(ctx context.Context, rawURL, dest string, maxBytes int64) (string, error) {
+	candidates := releaseDownloadCandidates(rawURL)
+	errorsBySource := make([]string, 0, len(candidates))
+	for i, candidate := range candidates {
+		attempts := downloadMaxAttempts
+		if i == 0 && len(candidates) > 1 {
+			attempts = 1
+		}
+		if err := downloadWithAttempts(ctx, candidate.URL, dest, maxBytes, attempts); err == nil {
+			return candidate.Label, nil
+		} else {
+			errorsBySource = append(errorsBySource, candidate.Label+": "+err.Error())
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+	}
+	return "", fmt.Errorf("升级包下载失败；%s", strings.Join(errorsBySource, "；"))
+}
+
+func releaseDownloadCandidates(rawURL string) []releaseDownloadCandidate {
+	candidates := []releaseDownloadCandidate{{URL: rawURL, Label: "GitHub 直连"}}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "github.com") || !strings.Contains(parsed.EscapedPath(), "/releases/download/") {
+		return candidates
+	}
+	if disabled, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("GA_ADMIN_UPDATE_DISABLE_MIRRORS"))); disabled {
+		return candidates
+	}
+	prefixes := append(parseUpdateMirrorPrefixes(os.Getenv("GA_ADMIN_UPDATE_MIRRORS")), updateMirrorPrefixes...)
+	seen := map[string]bool{rawURL: true}
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		mirror, ok := validUpdateMirrorPrefix(prefix)
+		if !ok {
+			continue
+		}
+		candidateURL := strings.TrimRight(prefix, "/") + "/" + rawURL
+		if seen[candidateURL] {
+			continue
+		}
+		seen[candidateURL] = true
+		candidates = append(candidates, releaseDownloadCandidate{URL: candidateURL, Label: "镜像 " + mirror.Hostname()})
+	}
+	return candidates
+}
+
+func parseUpdateMirrorPrefixes(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+}
+
+func validUpdateMirrorPrefix(prefix string) (*url.URL, bool) {
+	parsed, err := url.Parse(prefix)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, false
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return parsed, true
+	}
+	if strings.EqualFold(parsed.Scheme, "http") && (parsed.Hostname() == "localhost" || net.ParseIP(parsed.Hostname()).IsLoopback()) {
+		return parsed, true
+	}
+	return nil, false
 }
 
 func downloadOnce(ctx context.Context, url, dest string, maxBytes int64) (retryable bool, err error) {

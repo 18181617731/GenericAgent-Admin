@@ -11,6 +11,7 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
@@ -1377,7 +1378,131 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
-export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, clockNow = 0 }) {
+function initWorldline(sid = '') {
+  return { sid, status: 'idle', data: null, error: null, switchingNodeId: '' }
+}
+
+export function worldlineLoadStarted(prev, sid) {
+  const id = String(sid || '')
+  if (!id) return initWorldline('')
+  if (prev?.sid === id) return prev.data
+    ? { ...prev, error: null }
+    : { ...prev, status: 'loading', error: null, switchingNodeId: '' }
+  return { sid: id, status: 'loading', data: null, error: null, switchingNodeId: '' }
+}
+
+export function worldlineForSession(state, sid) {
+  const id = String(sid || '')
+  if (state?.sid === id) return state
+  return id ? { sid: id, status: 'loading', data: null, error: null, switchingNodeId: '' } : initWorldline('')
+}
+
+export function worldlineOwnsMappedNode(state, sid, nodeId) {
+  const id = String(sid || '')
+  const target = String(nodeId || '')
+  return Boolean(id && target && state?.sid === id && Array.isArray(state.data?.nodes)
+    && state.data.nodes.some(node => String(node.id) === target && node.mapping_status === 'mapped'))
+}
+
+function nodeVersionInfo(data, messageId) {
+  if (!data || !messageId) return null
+  const node = data.nodes?.find(item => String(item.tail_message_id) === String(messageId) || String(item.user_message_id) === String(messageId))
+  if (!node) return null
+  const siblings = (data.nodes || []).filter(item => item.parent_id != null && String(item.parent_id) === String(node.parent_id))
+    .sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
+  const index = siblings.findIndex(item => String(item.id) === String(node.id))
+  if (index < 0 || siblings.length < 2) return null
+  return { index: index + 1, total: siblings.length, previous_node_id: siblings[index - 1]?.id || null, next_node_id: siblings[index + 1]?.id || null }
+}
+
+export function worldlineLoaded(prev, resp, sid) {
+  if (prev.sid !== sid) return prev
+  if (!resp || resp.status === 'unavailable') return { ...prev, status: resp?.status || 'unavailable', data: null, error: null }
+  if (resp.status === 'degraded') return { ...prev, status: 'degraded', data: resp, error: null }
+  return { ...prev, status: resp.nodes?.length ? 'ready' : 'empty', data: resp, error: null, switchingNodeId: '' }
+}
+
+function worldlineErrored(prev, err, sid) {
+  if (prev.sid !== sid) return prev
+  const message = err?.message || String(err) || '加载失败'
+  return prev.data ? { ...prev, status: 'stale-error', error: message } : { ...prev, status: 'error', error: message }
+}
+
+export function projectWorldline(nodes = []) {
+  const safeNodes = Array.isArray(nodes) ? nodes : []
+  const byParent = new Map()
+  safeNodes.forEach((node, sourceOrder) => {
+    const key = String(node.parent_id ?? '')
+    const items = byParent.get(key) || []
+    items.push({ ...node, nodeId: String(node.id), sourceOrder })
+    byParent.set(key, items)
+  })
+  byParent.forEach(items => items.sort((a, b) => (a.ordinal ?? a.sourceOrder) - (b.ordinal ?? b.sourceOrder)))
+  const rows = []
+  const visited = new Set()
+  const visit = (parentId, depth) => {
+    const children = byParent.get(String(parentId ?? '')) || []
+    const childDepth = depth + (children.length > 1 ? 1 : 0)
+    children.forEach((node, siblingIndex) => {
+      if (visited.has(node.nodeId)) return
+      visited.add(node.nodeId)
+      rows.push({ ...node, branchDepth: childDepth, siblingCount: children.length, siblingIndex })
+      visit(node.id, childDepth)
+    })
+  }
+  visit('', 0)
+  safeNodes.forEach((node, sourceOrder) => {
+    const nodeId = String(node.id)
+    if (!visited.has(nodeId)) rows.push({ ...node, nodeId, sourceOrder, branchDepth: 0, siblingCount: 1, siblingIndex: 0 })
+  })
+  return rows
+}
+
+export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClose }) {
+  const data = state.data
+  const nodes = Array.isArray(data?.nodes) ? data.nodes : []
+  const [query, setQuery] = useState('')
+  const currentPath = new Set((data?.current_path || []).map(String))
+  const currentNodeId = data?.head == null ? '' : String(data.head)
+  const switchingNodeId = String(state.switchingNodeId || '')
+  const interactionLocked = disabled || Boolean(switchingNodeId)
+  const showTree = nodes.length > 0 && ['ready', 'ok', 'stale-error', 'degraded'].includes(state.status)
+  const projectedNodes = useMemo(() => projectWorldline(nodes), [nodes])
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleNodes = normalizedQuery
+    ? projectedNodes.filter(node => [node.title, node.summary, node.model, node.id].filter(Boolean).join(' ').toLocaleLowerCase().includes(normalizedQuery))
+    : projectedNodes
+  const branchPointCount = projectedNodes.filter(node => node.siblingCount > 1 && node.siblingIndex === 0).length
+  const degradedReason = data?.degraded_reason || state.error || '未知原因'
+
+  return <aside className="oa-worldline-drawer" aria-label="对话分支导航">
+    <div className="oa-worldline-header">
+      <div className="oa-worldline-heading"><span className="oa-worldline-title"><GitBranch size={15}/>对话分支</span><span className="oa-worldline-subtitle">查看并切换当前对话的历史路径</span></div>
+      <div className="oa-worldline-header-actions"><button type="button" className="oa-worldline-icon-btn" onClick={onRefresh} disabled={interactionLocked} aria-label="刷新对话分支"><RefreshCw size={14}/></button><button type="button" className="oa-worldline-icon-btn" onClick={() => onClose?.()} aria-label="关闭对话分支"><X size={14}/></button></div>
+    </div>
+    <div className="oa-worldline-body">
+      {showTree && <div className="oa-worldline-tools"><div className="oa-worldline-overview"><span>{nodes.length} 条记录</span><span>{branchPointCount ? `${branchPointCount} 处分叉` : '单一路径'}</span></div><label className="oa-worldline-search"><Search size={13} aria-hidden="true"/><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索对话内容或模型" aria-label="搜索对话分支"/>{query && <button type="button" onClick={() => setQuery('')} aria-label="清空分支搜索"><X size={12}/></button>}</label></div>}
+      {state.status === 'idle' && <div className="oa-worldline-state">打开一个对话后，这里会显示分支路径</div>}
+      {state.status === 'loading' && <div className="oa-worldline-state">正在读取分支拓扑</div>}
+      {state.status === 'unavailable' && <div className="oa-worldline-state">当前运行环境未提供分支导航</div>}
+      {state.status === 'empty' && <div className="oa-worldline-state">发送消息后，这里会显示可切换的对话路径</div>}
+      {state.status === 'degraded' && <div className="oa-worldline-alert" role="alert">分支服务暂不可用：{degradedReason}</div>}
+      {state.status === 'error' && <div className="oa-worldline-alert" role="alert">读取分支失败：{state.error || '未知错误'}</div>}
+      {state.status === 'stale-error' && <div className="oa-worldline-alert" role="alert">刷新失败，继续显示上次路径：{state.error || '未知错误'}</div>}
+      {showTree && (visibleNodes.length ? <div className="oa-wl-tree">{visibleNodes.map(node => {
+        const nodeId = node.nodeId
+        const isCurrent = nodeId === currentNodeId
+        const isPath = currentPath.has(nodeId)
+        const isMapped = node.mapping_status === 'mapped'
+        const isSwitching = switchingNodeId === nodeId
+        const label = node.title || node.summary || `分支 ${node.id}`
+        return <button key={nodeId} type="button" className={`oa-wl-node ${isPath ? 'is-path' : ''} ${isCurrent ? 'is-current' : ''} ${isSwitching ? 'is-switching' : ''}`} data-branch-depth={Math.min(Number(node.branchDepth) || 0, 7)} style={{ '--wl-depth': Math.min(Number(node.branchDepth) || 0, 7) }} onClick={() => isMapped && !isCurrent && !interactionLocked && onSwitch(node.id)} disabled={!isMapped || isCurrent || interactionLocked} aria-current={isCurrent ? 'step' : undefined}><span className="oa-wl-node-mark" aria-hidden="true">{isCurrent ? <Check size={13}/> : <GitBranch size={13}/>}</span><span className="oa-wl-node-copy"><b>{label}</b><small>{isCurrent ? '当前分支' : isPath ? '当前路径' : isMapped ? '可切换' : '旧记录 · 不可切换'}</small></span>{isSwitching && <span className="oa-wl-switching">切换中</span>}</button>
+      })}</div> : <div className="oa-worldline-state oa-worldline-no-results">没有匹配的对话记录</div>)}
+    </div>
+  </aside>
+}
+
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
@@ -1390,10 +1515,29 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const elapsedMs = getElapsedMs(m, clockNow || Date.now())
   const showUsageRow = m.role === 'assistant' && (usageHasTokens(usageTotal) || elapsedMs > 0)
   const usageLabel = m.role === 'assistant' ? '总计' : null
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(userText)
+  const [copied, setCopied] = useState(false)
+  const resetDraft = () => { setDraft(userText); setEditing(false) }
+  const submitEdit = async () => {
+    if (!draft.trim() || draft.trim() === String(userText || '').trim()) { setEditing(false); return }
+    try {
+      await onEditResend?.({ text: draft.trim(), files: messageFiles, sourceUserMessageId: m.id })
+      setEditing(false)
+    } catch {
+      // Keep the editor open so the user can retry after a failed resend.
+    }
+  }
+  const copyContent = () => {
+    navigator.clipboard?.writeText(m.role === 'user' ? userText : (m.content || '')).then?.(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
-      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <CopyButton text={m.role === 'user' ? userText : m.content} compact />}</div>
+      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重发"><Edit3 size={13}/></button>}</div>
       {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
@@ -1404,20 +1548,21 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/><div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>重发</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
+      {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
     </div>
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, clockNow }) {
+const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, clockNow, worldline, onSwitchVersion }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
       const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} clockNow={clockNow} />)
+      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} editDisabled={isCurrentRunning} clockNow={clockNow} version={nodeVersionInfo(worldline?.data, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
       return nodes
     })}
   </>
@@ -2713,7 +2858,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} clockNow={streamClock} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={handleEditResend} clockNow={streamClock} worldline={visibleWorldline} onSwitchVersion={handleSwitchVersion} />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
