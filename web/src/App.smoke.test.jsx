@@ -8,7 +8,7 @@ import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
-import { GlobalFeedback } from './components/feedback.jsx'
+import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {

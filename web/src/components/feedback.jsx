@@ -1,5 +1,5 @@
-import { Component, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { Component, useEffect, useState } from 'react'
+import { Check, Copy, RefreshCw, X } from 'lucide-react'
 
 // 统一的加载/错误反馈组件：路由级 Suspense fallback、行内 spinner、骨架屏、错误边界。
 // 设计：沿用暖白磨砂 + 绿色强调色，尊重 prefers-reduced-motion。
@@ -33,11 +33,52 @@ export function Skeleton({ lines = 3, className = '' }) {
   )
 }
 
-export const feedbackTone = message => {
+export const feedbackTone = (message, explicit = 'auto') => {
+  if (explicit && explicit !== 'auto') return explicit
   const text = String(message || '').toLowerCase()
   if (/失败|错误|无效|不可用|缺少|超时|拒绝|无法|必须|不能|不存在|failed|error|invalid|required|timeout|denied|cannot|unable|must be|does not|not found/.test(text)) return 'error'
   if (/正在|启动中|升级中|读取中|保存中|loading|starting|updating|saving/.test(text)) return 'progress'
   return 'success'
+}
+
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    const copied = document.execCommand?.('copy') === true
+    textarea.remove()
+    return copied
+  } catch {
+    return false
+  }
+}
+
+export function MessageBanner({ message, tone = 'auto', title = '', details = '', onDismiss, onRetry, retryLabel = '重试', copyable = false, className = '' }) {
+  const [copyState, setCopyState] = useState('idle')
+  if (!message) return null
+  const resolvedTone = feedbackTone(message, tone)
+  const copy = async () => {
+    const copied = await copyToClipboard([message, details].filter(Boolean).join('\n'))
+    setCopyState(copied ? 'copied' : 'failed')
+    window.setTimeout(() => setCopyState('idle'), 1600)
+  }
+  return <div className={`ga-message-banner is-${resolvedTone} ${className}`.trim()} role={resolvedTone === 'error' ? 'alert' : 'status'} aria-live={resolvedTone === 'error' ? 'assertive' : 'polite'}>
+    <div className="ga-message-copy">{title && <strong>{title}</strong>}<span>{message}</span>{details && <details><summary>查看详情</summary><pre>{details}</pre></details>}</div>
+    <div className="ga-message-actions">
+      {onRetry && <button type="button" onClick={onRetry}><RefreshCw size={14} aria-hidden="true"/>{retryLabel}</button>}
+      {copyable && <button type="button" onClick={copy} aria-label={copyState === 'copied' ? '已复制详情' : copyState === 'failed' ? '复制失败' : '复制详情'}>{copyState === 'copied' ? <Check size={14}/> : <Copy size={14}/>}<span>{copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制'}</span></button>}
+      {onDismiss && <button type="button" className="ga-message-dismiss" onClick={onDismiss} aria-label="关闭消息"><X size={15}/></button>}
+    </div>
+  </div>
 }
 
 export function GlobalFeedback({ message, onDismiss, placement = 'bottom', successTimeout = 4500 }) {

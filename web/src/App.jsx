@@ -13,7 +13,6 @@ import { modelValidationSummary, validateModelProfiles } from './lib/modelsValid
 import { applyModelOrder, mergePersistedModelOrder } from './lib/modelsEditor'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
-import { updateStatusPresentation } from './lib/ux'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
@@ -168,7 +167,6 @@ export default function App() {
   }, { scope: appScope, dependencies: [tab, lang] })
 
   const inv = health?.inventory || {}
-  const versionUX = updateStatusPresentation(versionStatus)
   const schedule = scheduleData || inv.schedule || {}
   const tasks = normalizeScheduleTasksPayload(schedule).tasks
   const fileDirty = fileEditorDirty(fileContent, loadedFileContent)
