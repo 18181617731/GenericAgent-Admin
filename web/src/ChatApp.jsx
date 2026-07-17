@@ -11,6 +11,7 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 
 gsap.registerPlugin(useGSAP)
 
@@ -1479,10 +1480,14 @@ export const ChatMessage = memo(function ChatMessage({
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0)
 
   const resetDraft = () => { setDraft(userText); setEditing(false) }
-  const submitEdit = () => {
+  const submitEdit = async () => {
     if (!draft.trim() || draft.trim() === userText.trim()) { setEditing(false); return }
-    onEditResend?.({ text: draft.trim(), files: messageFiles, sourceUserMessageId: m.id })
-    setEditing(false)
+    try {
+      await onEditResend?.({ text: draft.trim(), files: messageFiles, sourceUserMessageId: m.id })
+      setEditing(false)
+    } catch {
+      // Keep the editor and draft open so the user can retry after a failed request.
+    }
   }
   const copyContent = () => {
     const txt = m.role === 'user' ? userText : (m.content || '')
@@ -2362,40 +2367,15 @@ export default function ChatApp() {
     }
   }
 
-  const handleEditResend = async ({ text, files, sourceUserMessageId }) => {
-    if (!sid || busy) return
-    streamAbortRef.current?.abort?.()
-    const ctrl = new AbortController()
-    streamAbortRef.current = ctrl
-    const pendingId = `fork-${Date.now()}`
-    setBusy(true); setStreamingSid(sid); setAutoFollow(true); setShowFollow(false)
-    try {
-      const forkRes = await api('/api/chat/fork', {
-        method: 'POST',
-        body: JSON.stringify({ session_id: sid, message_id: sourceUserMessageId, text, files: files || [] })
-      })
-      const newSid = forkRes.session_id || sid
-      if (newSid !== sid) {
-        await loadSessions(newSid)
-        return
-      }
-      setMessages(xs => {
-        const cutIdx = xs.findIndex(m => String(m.id) === String(sourceUserMessageId))
-        const kept = cutIdx >= 0 ? xs.slice(0, cutIdx) : xs
-        return [...kept, { id: pendingId, role: 'user', content: text, files: files || [] }, { id: `${pendingId}-reply`, role: 'assistant', content: '' }]
-      })
-      const res = await fetch(`/api/chat/stream/${newSid}`, { signal: ctrl.signal, headers: { 'Content-Type': 'application/json' } })
-      if (!res.ok) throw new Error(await res.text())
-      await readStream(res, `${pendingId}-reply`, '', newSid)
-      await Promise.all([loadWorldline(newSid), loadSessions(newSid)])
-    } catch (e) {
-      if (e.name !== 'AbortError') setErr(e.message || String(e))
-    } finally {
-      if (streamAbortRef.current === ctrl) {
-        streamAbortRef.current = null
-        setBusy(false); setStreamingSid('')
-      }
-    }
+  const handleEditResend = async ({ text, sourceUserMessageId }) => {
+    const item = buildEditResendItem({
+      sessionId: sid,
+      messageId: sourceUserMessageId,
+      text,
+      busy,
+      streamingSid,
+    })
+    await runSend(item)
   }
 
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
@@ -2762,8 +2742,9 @@ export default function ChatApp() {
     const ctrl = new AbortController()
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
-    setBusy(true); setStreamingSid(sid || 'new'); setErr(''); setNotice('')
-    let id = sid
+    const targetSessionID = item.sessionId || sid
+    setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
+    let id = targetSessionID
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -2784,15 +2765,30 @@ export default function ChatApp() {
       const attachmentPrompt = text || '请处理这些附件'
       const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
-      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:attachmentPrompt, files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }) })
+      if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
+      const payload = buildChatRunPayload({
+        prompt: attachmentPrompt,
+        files,
+        settings: { llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort },
+        clientUserID,
+        sourceUserMessageId: item.sourceUserMessageId,
+      })
+      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
+      if (sourceMessageID) setMessages(xs => {
+        if (!isActiveSession(id)) return xs
+        const cutIdx = xs.findIndex(m => String(m.id) === sourceMessageID)
+        if (cutIdx < 0) return xs
+        return [...xs.slice(0, cutIdx), optimistic, pending]
+      })
       await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
+      if (item.propagateError) throw e
     } finally {
       if (runToken !== runSeqRef.current || openToken !== openSeqRef.current || !isActiveSession(id)) return
       if (id) {
