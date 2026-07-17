@@ -1,7 +1,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ChatMessage, WorldlineNavigator, worldlineForSession, worldlineLoaded, worldlineLoadStarted, worldlineOwnsMappedNode } from './ChatApp.jsx'
+import { ChatMessage, WorldlineNavigator, projectWorldline, worldlineForSession, worldlineLoaded, worldlineLoadStarted, worldlineOwnsMappedNode } from './ChatApp.jsx'
 
 globalThis.React = React
 
@@ -48,15 +48,45 @@ describe('worldline session state', () => {
   })
 })
 
+describe('worldline branch-depth projection', () => {
+  test('keeps a continuous path on one track and only indents at branch points', () => {
+    const rows = projectWorldline([
+      { id:'root', parent_id:null, ordinal:0 },
+      { id:'turn-2', parent_id:'root', ordinal:0 },
+      { id:'choice-a', parent_id:'turn-2', ordinal:0 },
+      { id:'choice-b', parent_id:'turn-2', ordinal:1 },
+      { id:'after-a', parent_id:'choice-a', ordinal:0 },
+      { id:'deep-a', parent_id:'after-a', ordinal:0 },
+      { id:'deep-b', parent_id:'after-a', ordinal:1 },
+    ])
+    const depth = Object.fromEntries(rows.map(row => [row.id, row.branchDepth]))
+    expect(depth).toEqual({ root:0, 'turn-2':0, 'choice-a':1, 'after-a':1, 'deep-a':2, 'deep-b':2, 'choice-b':1 })
+    expect(rows.filter(row => ['choice-a', 'choice-b'].includes(row.id)).map(row => row.siblingCount)).toEqual([2, 2])
+  })
+})
+
 describe('persistent worldline navigation', () => {
-  test('renders nested hydrated path and switches to a mapped sibling', () => {
+  test('renders branch-level tracks and switches to a mapped sibling', () => {
     const onSwitch = vi.fn()
     renderNav({ status:'ready', data:tree, error:'', switchingNodeId:'' }, { onSwitch })
-    expect(screen.getByText('4 个节点 · 当前路径 2 层')).toBeTruthy()
+    expect(screen.getByText('4 条记录')).toBeTruthy()
+    expect(screen.getByText('1 处分叉')).toBeTruthy()
+    expect(screen.getByText('Root').closest('button').getAttribute('data-branch-depth')).toBe('0')
+    expect(screen.getByText('Current child').closest('button').getAttribute('data-branch-depth')).toBe('1')
+    expect(screen.getByText('Sibling branch').closest('button').getAttribute('data-branch-depth')).toBe('1')
     expect(screen.getByText('Current child').closest('button').getAttribute('aria-current')).toBe('step')
     expect(screen.getByText('Legacy branch').closest('button').disabled).toBe(true)
     fireEvent.click(screen.getByText('Sibling branch').closest('button'))
     expect(onSwitch).toHaveBeenCalledWith('sibling')
+  })
+
+  test('filters long histories by content and clears the query', () => {
+    renderNav({ status:'ready', data:tree, error:'', switchingNodeId:'' })
+    fireEvent.change(screen.getByLabelText('搜索对话分支'), { target:{ value:'Sibling' } })
+    expect(screen.getByText('Sibling branch')).toBeTruthy()
+    expect(screen.queryByText('Current child')).toBeNull()
+    fireEvent.click(screen.getByLabelText('清空分支搜索'))
+    expect(screen.getByText('Current child')).toBeTruthy()
   })
 
   test.each([

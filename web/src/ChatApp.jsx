@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -1638,60 +1638,97 @@ const MessageList = memo(function MessageList({
   )
 })
 
+export function projectWorldline(nodes = []) {
+  const safeNodes = Array.isArray(nodes) ? nodes : []
+  const byParent = new Map()
+  safeNodes.forEach((node, order) => {
+    const parentId = String(node.parent_id ?? '')
+    const entry = { ...node, nodeId: String(node.id), sourceOrder: order }
+    byParent.set(parentId, [...(byParent.get(parentId) || []), entry])
+  })
+  byParent.forEach(children => children.sort((a, b) => (a.ordinal ?? a.sourceOrder) - (b.ordinal ?? b.sourceOrder)))
+
+  const rows = []
+  const visited = new Set()
+  function visit(parentId, depth) {
+    const children = byParent.get(String(parentId ?? '')) || []
+    const childDepth = depth + (children.length > 1 ? 1 : 0)
+    children.forEach((node, siblingIndex) => {
+      if (visited.has(node.nodeId)) return
+      visited.add(node.nodeId)
+      rows.push({ ...node, branchDepth: childDepth, siblingCount: children.length, siblingIndex })
+      visit(node.id, childDepth)
+    })
+  }
+  visit('', 0)
+  safeNodes.forEach((node, sourceOrder) => {
+    const nodeId = String(node.id)
+    if (!visited.has(nodeId)) rows.push({ ...node, nodeId, sourceOrder, branchDepth: 0, siblingCount: 1, siblingIndex: 0 })
+  })
+  return rows
+}
+
 export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClose }) {
   const data = state.data
   const nodes = Array.isArray(data?.nodes) ? data.nodes : []
+  const [query, setQuery] = useState('')
+  const treeRef = useRef(null)
   const currentPath = new Set((data?.current_path || []).map(String))
   const currentNodeId = data?.head == null ? '' : String(data.head)
   const switchingNodeId = String(state.switchingNodeId || '')
   const interactionLocked = disabled || Boolean(switchingNodeId)
   const showTree = nodes.length > 0 && ['ready', 'ok', 'stale-error', 'degraded'].includes(state.status)
+  const projectedNodes = useMemo(() => projectWorldline(nodes), [nodes])
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleNodes = normalizedQuery
+    ? projectedNodes.filter(node => [node.title, node.summary, node.model, node.id]
+      .filter(Boolean).join(' ').toLocaleLowerCase().includes(normalizedQuery))
+    : projectedNodes
+  const branchPointCount = projectedNodes.filter(node => node.siblingCount > 1 && node.siblingIndex === 0).length
 
-  function renderTree(parentId) {
-    const children = nodes
-      .filter(node => String(node.parent_id ?? '') === String(parentId ?? ''))
-      .sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
+  useEffect(() => {
+    if (!showTree || normalizedQuery) return
+    treeRef.current?.querySelector('.oa-wl-node.is-current')?.scrollIntoView?.({ block:'nearest' })
+  }, [currentNodeId, normalizedQuery, showTree])
 
-    return children.map(node => {
-      const nodeId = String(node.id)
-      const isCurrent = nodeId === currentNodeId
-      const isPath = currentPath.has(nodeId)
-      const isMapped = node.mapping_status === 'mapped'
-      const isSwitching = switchingNodeId === nodeId
-      const canSwitch = isMapped && !isCurrent && !interactionLocked
-      const label = node.title || node.summary || `分支 ${node.id}`
-      const detail = isCurrent
-        ? '当前分支'
-        : isPath
-          ? '当前路径'
-          : isMapped
-            ? '可切换'
-            : '旧记录 · 不可切换'
-      const childTree = renderTree(node.id)
+  function renderNode(node) {
+    const nodeId = node.nodeId
+    const isCurrent = nodeId === currentNodeId
+    const isPath = currentPath.has(nodeId)
+    const isMapped = node.mapping_status === 'mapped'
+    const isSwitching = switchingNodeId === nodeId
+    const canSwitch = isMapped && !isCurrent && !interactionLocked
+    const label = node.title || node.summary || `分支 ${node.id}`
+    const detail = isCurrent
+      ? '当前分支'
+      : isPath
+        ? '当前路径'
+        : isMapped
+          ? '可切换'
+          : '旧记录 · 不可切换'
 
-      return (
-        <div key={nodeId} className="oa-wl-branch">
-          <button
-            type="button"
-            className={`oa-wl-node ${isPath ? 'is-path' : ''} ${isCurrent ? 'is-current' : ''} ${isSwitching ? 'is-switching' : ''}`}
-            onClick={() => canSwitch && onSwitch(node.id)}
-            disabled={!canSwitch}
-            aria-current={isCurrent ? 'step' : undefined}
-            title={isMapped ? label : `${label}（旧记录不可切换）`}
-          >
-            <span className="oa-wl-node-mark" aria-hidden="true">
-              {isCurrent ? <Check size={13}/> : <GitBranch size={13}/>}
-            </span>
-            <span className="oa-wl-node-copy">
-              <b>{label}</b>
-              <small>{detail}</small>
-            </span>
-            {isSwitching && <span className="oa-wl-switching">切换中</span>}
-          </button>
-          {childTree.length > 0 && <div className="oa-wl-children">{childTree}</div>}
-        </div>
-      )
-    })
+    return (
+      <button
+        key={nodeId}
+        type="button"
+        className={`oa-wl-node ${isPath ? 'is-path' : ''} ${isCurrent ? 'is-current' : ''} ${isSwitching ? 'is-switching' : ''} ${node.branchDepth > 0 ? 'has-branch-depth' : ''} ${node.siblingCount > 1 ? 'is-branch-choice' : ''}`}
+        data-branch-depth={Math.min(Number(node.branchDepth) || 0, 7)}
+        style={{ '--wl-depth': Math.min(Number(node.branchDepth) || 0, 7) }}
+        onClick={() => canSwitch && onSwitch(node.id)}
+        disabled={!canSwitch}
+        aria-current={isCurrent ? 'step' : undefined}
+        title={isMapped ? label : `${label}（旧记录不可切换）`}
+      >
+        <span className="oa-wl-node-mark" aria-hidden="true">
+          {isCurrent ? <Check size={13}/> : <GitBranch size={13}/>}
+        </span>
+        <span className="oa-wl-node-copy">
+          <b>{label}</b>
+          <small>{detail}</small>
+        </span>
+        {isSwitching && <span className="oa-wl-switching">切换中</span>}
+      </button>
+    )
   }
 
   const degradedReason = data?.degraded_reason || state.error || '未知原因'
@@ -1728,8 +1765,26 @@ export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClo
 
       <div className="oa-worldline-body">
         {showTree && (
-          <div className="oa-worldline-overview">
-            {nodes.length} 个节点 · 当前路径 {currentPath.size} 层
+          <div className="oa-worldline-tools">
+            <div className="oa-worldline-overview">
+              <span>{nodes.length} 条记录</span>
+              <span>{branchPointCount ? `${branchPointCount} 处分叉` : '单一路径'}</span>
+            </div>
+            <label className="oa-worldline-search">
+              <Search size={13} aria-hidden="true"/>
+              <input
+                type="search"
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="搜索对话内容或模型"
+                aria-label="搜索对话分支"
+              />
+              {query && (
+                <button type="button" onClick={() => setQuery('')} aria-label="清空分支搜索" title="清空">
+                  <X size={12}/>
+                </button>
+              )}
+            </label>
           </div>
         )}
         {state.status === 'idle' && <div className="oa-worldline-state">打开一个对话后，这里会显示分支路径</div>}
@@ -1745,7 +1800,11 @@ export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClo
         {state.status === 'stale-error' && (
           <div className="oa-worldline-alert" role="alert">刷新失败，继续显示上次路径：{state.error || '未知错误'}</div>
         )}
-        {showTree && <div className="oa-wl-tree">{renderTree(null)}</div>}
+        {showTree && (
+          visibleNodes.length
+            ? <div className="oa-wl-tree" ref={treeRef}>{visibleNodes.map(renderNode)}</div>
+            : <div className="oa-worldline-state oa-worldline-no-results">没有匹配的对话记录</div>
+        )}
       </div>
     </aside>
   )
