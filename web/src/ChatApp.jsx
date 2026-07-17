@@ -1400,6 +1400,21 @@ export function worldlineLoadStarted(prev, sid) {
   }
   return { sid: id, status: 'loading', data: null, error: null, switchingNodeId: '' }
 }
+export function worldlineForSession(state, sid) {
+  const id = String(sid || '')
+  if (state?.sid === id) return state
+  return id
+    ? { sid: id, status: 'loading', data: null, error: null, switchingNodeId: '' }
+    : initWorldline('')
+}
+
+export function worldlineOwnsMappedNode(state, sid, nodeId) {
+  const id = String(sid || '')
+  const target = String(nodeId || '')
+  if (!id || !target || state?.sid !== id || !Array.isArray(state.data?.nodes)) return false
+  return state.data.nodes.some(node => String(node.id) === target && node.mapping_status === 'mapped')
+}
+
 function getNodesMap(data) {
   if (!data?.nodes) return new Map()
   return new Map(data.nodes.map(n => [String(n.id), n]))
@@ -1956,6 +1971,7 @@ export default function ChatApp() {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  const visibleWorldline = worldlineForSession(worldline, sid)
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
   const officialSlashKeys = useMemo(() => new Set(effectiveSlashCommands.map(c => builtinSlashCommandKey(c))), [effectiveSlashCommands])
@@ -2260,16 +2276,30 @@ export default function ChatApp() {
   }
 
   const handleSwitchVersion = async (nodeId) => {
-    if (!sid || !nodeId) return
-    setWorldline(prev => ({ ...prev, switchingNodeId: String(nodeId) }))
+    const targetSid = String(sid || '')
+    const targetNodeId = String(nodeId || '')
+    if (
+      !targetSid ||
+      activeSidRef.current !== targetSid ||
+      !worldlineOwnsMappedNode(worldline, targetSid, targetNodeId)
+    ) return
+    setWorldline(prev => worldlineOwnsMappedNode(prev, targetSid, targetNodeId)
+      ? { ...prev, switchingNodeId: targetNodeId }
+      : prev)
     try {
-      await api(`/api/chat/worldline/${sid}/switch`, { method: 'POST', body: JSON.stringify({ node_id: nodeId }) })
-      await openSession(sid, false)
-      await loadWorldline(sid)
+      await api(`/api/chat/worldline/${targetSid}/switch`, { method: 'POST', body: JSON.stringify({ node_id: targetNodeId }) })
+      if (!isActiveSession(targetSid)) return
+      await openSession(targetSid, false)
+      if (!isActiveSession(targetSid)) return
+      await loadWorldline(targetSid)
     } catch (e) {
-      setErr(e.message || String(e))
+      if (isActiveSession(targetSid)) setErr(e.message || String(e))
     } finally {
-      setWorldline(prev => ({ ...prev, switchingNodeId: null }))
+      setWorldline(prev => (
+        prev.sid === targetSid && String(prev.switchingNodeId || '') === targetNodeId
+          ? { ...prev, switchingNodeId: '' }
+          : prev
+      ))
     }
   }
 
@@ -2333,6 +2363,7 @@ export default function ChatApp() {
   const openSession = async (id, refreshList = true) => {
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
+    setWorldline(prev => worldlineLoadStarted(prev, id))
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
@@ -2344,8 +2375,9 @@ export default function ChatApp() {
     const d = await api(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
-    setSid(d.id)
+    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
+    setSid(d.id)
     setMessages(d.messages || [])
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
@@ -2384,6 +2416,7 @@ export default function ChatApp() {
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
+    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id, openToken)
@@ -2398,6 +2431,7 @@ export default function ChatApp() {
     if (id === sid) {
       ++openSeqRef.current
       activeSidRef.current = ''
+      setWorldline(prev => worldlineLoadStarted(prev, ''))
       streamAbortRef.current?.abort?.()
       streamAbortRef.current = null
       scrollModeRef.current = 'auto'
@@ -2454,6 +2488,7 @@ export default function ChatApp() {
       if (activeDeleted) {
         ++openSeqRef.current
         activeSidRef.current = ''
+        setWorldline(prev => worldlineLoadStarted(prev, ''))
         streamAbortRef.current?.abort?.()
         streamAbortRef.current = null
         scrollModeRef.current = 'auto'
@@ -2676,6 +2711,7 @@ export default function ChatApp() {
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
         activeSidRef.current = id
+        setWorldline(prev => worldlineLoadStarted(prev, id))
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
@@ -3031,7 +3067,7 @@ export default function ChatApp() {
           <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
         </button>
         <button className={`oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={()=>setWorldlineOpen(v=>!v)} disabled={!sid} title="对话分支导航">
-          <GitBranch size={16}/>对话分支<span>{worldline?.data?.nodes?.length || 0}</span>
+          <GitBranch size={16}/>对话分支<span>{visibleWorldline.data?.nodes?.length || 0}</span>
         </button>
       </header>
 
@@ -3044,7 +3080,7 @@ export default function ChatApp() {
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
       {worldlineOpen && <WorldlineNavigator
-        state={worldline}
+        state={visibleWorldline}
         disabled={busy}
         onRefresh={() => loadWorldline(sid)}
         onSwitch={handleSwitchVersion}
@@ -3065,7 +3101,7 @@ export default function ChatApp() {
           isCurrentRunning={isCurrentRunning}
           onAskReply={fillAskReply}
           clockNow={streamClock}
-          worldline={worldline}
+          worldline={visibleWorldline}
           onSwitchVersion={handleSwitchVersion}
           onEditResend={handleEditResend}
         />

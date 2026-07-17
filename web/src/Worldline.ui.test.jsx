@@ -1,7 +1,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ChatMessage, WorldlineNavigator, worldlineLoaded, worldlineLoadStarted } from './ChatApp.jsx'
+import { ChatMessage, WorldlineNavigator, worldlineForSession, worldlineLoaded, worldlineLoadStarted, worldlineOwnsMappedNode } from './ChatApp.jsx'
 
 globalThis.React = React
 
@@ -30,6 +30,21 @@ describe('worldline session state', () => {
     expect(ready.status).toBe('ready')
     expect(ready.data.head).toBe('child')
     expect(worldlineLoaded(ready, { ...tree, head:'root' }, 'old')).toBe(ready)
+  })
+
+  test('never exposes another session topology during a sid transition', () => {
+    const oldReady = { sid:'old', status:'ready', data:tree, error:null, switchingNodeId:'' }
+    expect(worldlineForSession(oldReady, 'new')).toEqual({ sid:'new', status:'loading', data:null, error:null, switchingNodeId:'' })
+    expect(worldlineForSession(oldReady, '')).toEqual({ sid:'', status:'idle', data:null, error:null, switchingNodeId:'' })
+    expect(worldlineForSession(oldReady, 'old')).toBe(oldReady)
+  })
+
+  test('only accepts mapped nodes owned by the active session topology', () => {
+    const ready = { sid:'old', status:'ready', data:tree, error:null, switchingNodeId:'' }
+    expect(worldlineOwnsMappedNode(ready, 'old', 'sibling')).toBe(true)
+    expect(worldlineOwnsMappedNode(ready, 'new', 'sibling')).toBe(false)
+    expect(worldlineOwnsMappedNode(ready, 'old', 'legacy')).toBe(false)
+    expect(worldlineOwnsMappedNode(ready, 'old', 'missing')).toBe(false)
   })
 })
 
