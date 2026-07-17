@@ -680,9 +680,14 @@ if not "%%NEW_WORKER%%"=="" (
     exit /b 1
   )
 )
-start "" /D "%%OLD_DIR%%" "%%OLD%%"
-if errorlevel 1 goto launch_failed
-exit /b 0
+for /L %%%%R in (1,1,10) do (
+  start "" /D "%%OLD_DIR%%" "%%OLD%%"
+  if errorlevel 1 goto launch_failed
+  timeout /t 2 /nobreak >nul
+  tasklist /FI "IMAGENAME eq ga-admin.exe" /NH 2>nul | find /I "ga-admin.exe" >nul && exit /b 0
+)
+echo updated process exited during restart attempts
+goto launch_failed
 :launch_failed
 if "%%WORKER_HAD_ORIGINAL%%"=="1" (
   if exist "%%WORKER%%" del /Q "%%WORKER%%" >nul 2>nul

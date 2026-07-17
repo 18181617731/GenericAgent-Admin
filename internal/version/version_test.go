@@ -244,6 +244,9 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
 		`start "" /D "%OLD_DIR%" "%OLD%"`,
 		`if errorlevel 1 goto launch_failed`,
+		`for /L %%R in (1,1,10) do (`,
+		`tasklist /FI "IMAGENAME eq ga-admin.exe"`,
+		`find /I "ga-admin.exe"`,
 		`:launch_failed`,
 	}
 	for _, w := range want {
