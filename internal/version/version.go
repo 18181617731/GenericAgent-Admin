@@ -681,10 +681,8 @@ if not "%%NEW_WORKER%%"=="" (
   )
 )
 for /L %%%%R in (1,1,10) do (
-  powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"
-  if errorlevel 1 goto launch_failed
-  timeout /t 2 /nobreak >nul
-  tasklist /FI "IMAGENAME eq ga-admin.exe" /NH 2>nul | find /I "ga-admin.exe" >nul && exit /b 0
+  powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "$ErrorActionPreference='Stop'; try { $p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru; Start-Sleep -Seconds 2; if ($p.HasExited) { exit 1 }; exit 0 } catch { exit 1 }"
+  if not errorlevel 1 exit /b 0
 )
 echo updated process exited during restart attempts
 goto launch_failed

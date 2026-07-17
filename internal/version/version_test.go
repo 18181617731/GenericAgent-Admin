@@ -242,11 +242,11 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%OLD%" "%BAK%"`,
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
-		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"`,
-		`if errorlevel 1 goto launch_failed`,
+		`$p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru`,
+		`Start-Sleep -Seconds 2`,
+		`if ($p.HasExited) { exit 1 }`,
+		`if not errorlevel 1 exit /b 0`,
 		`for /L %%R in (1,1,10) do (`,
-		`tasklist /FI "IMAGENAME eq ga-admin.exe"`,
-		`find /I "ga-admin.exe"`,
 		`:launch_failed`,
 	}
 	for _, w := range want {
@@ -282,7 +282,11 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
 	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak")
 	want := []string{
-		`if errorlevel 1 goto launch_failed`,
+		`$ErrorActionPreference='Stop'`,
+		`try { $p=Start-Process`,
+		`} catch { exit 1 }`,
+		`if not errorlevel 1 exit /b 0`,
+		`goto launch_failed`,
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
