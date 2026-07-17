@@ -13,6 +13,7 @@ import { modelValidationSummary, validateModelProfiles } from './lib/modelsValid
 import { applyModelOrder, mergePersistedModelOrder } from './lib/modelsEditor'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
+import { updateStatusPresentation } from './lib/ux'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
@@ -167,6 +168,7 @@ export default function App() {
   }, { scope: appScope, dependencies: [tab, lang] })
 
   const inv = health?.inventory || {}
+  const versionUX = updateStatusPresentation(versionStatus)
   const schedule = scheduleData || inv.schedule || {}
   const tasks = normalizeScheduleTasksPayload(schedule).tasks
   const fileDirty = fileEditorDirty(fileContent, loadedFileContent)
@@ -732,7 +734,7 @@ export default function App() {
         </div>
       </div>
     </div>}
-    <div ref={appScope} className={`app app-tab-${tab}`}>
+    <div ref={appScope} className={`app app-tab-${tab}`} aria-busy={busy || versionBusy || undefined}>
     <aside className="sidebar">
       <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
       <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button></div>
@@ -780,7 +782,7 @@ export default function App() {
           <Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="正常"/></Panel>
         </div>
       </section>}
-      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} busy={busy}/>}
+      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} busy={busy}/>}
 
       {tab==='tasks' && <section className="tasks-page">
         <div className="stats schedule-stats">

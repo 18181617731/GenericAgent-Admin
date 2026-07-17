@@ -26,3 +26,10 @@ test('log-view keeps a readable foreground over its forced dark background', () 
   assert.ok(logViewRule, 'missing forced dark log-view background rule')
   assert.match(logViewRule, /color\s*:\s*#d7e1ea\s*!important/i)
 })
+
+test('product usability styles preserve keyboard focus, touch targets, and reduced motion', () => {
+  assert.match(css, /:focus-visible\s*\{[^}]*outline\s*:\s*3px/is)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*min-height\s*:\s*44px/i)
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*animation-duration\s*:\s*\.001ms/i)
+  assert.match(css, /html\[data-theme="dark"\]\s+\.ga-message-banner\.is-error/i)
+})
