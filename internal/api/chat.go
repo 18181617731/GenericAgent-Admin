@@ -92,16 +92,17 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 }
 
 type chatSession struct {
-	ID          string                   `json:"id"`
-	Title       string                   `json:"title"`
-	UpdatedAt   int64                    `json:"updated_at"`
-	Messages    []chatMessage            `json:"messages"`
-	Settings    chatSettings             `json:"settings"`
-	RawHistory  []map[string]interface{} `json:"raw_history,omitempty"`
-	HistoryInfo []interface{}            `json:"history_info,omitempty"`
-	Working     map[string]interface{}   `json:"working,omitempty"`
-	Workspace   string                   `json:"workspace,omitempty"`
-	ProjectMode string                   `json:"project_mode,omitempty"`
+	ID            string                   `json:"id"`
+	Title         string                   `json:"title"`
+	UpdatedAt     int64                    `json:"updated_at"`
+	Messages      []chatMessage            `json:"messages"`
+	Settings      chatSettings             `json:"settings"`
+	RawHistory    []map[string]interface{} `json:"raw_history,omitempty"`
+	HistoryInfo   []interface{}            `json:"history_info,omitempty"`
+	Working       map[string]interface{}   `json:"working,omitempty"`
+	WorldlineHead string                   `json:"worldline_head,omitempty"`
+	Workspace     string                   `json:"workspace,omitempty"`
+	ProjectMode   string                   `json:"project_mode,omitempty"`
 }
 
 const (
@@ -142,7 +143,85 @@ type chatWorker struct {
 	Mu     sync.Mutex
 }
 
+func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interface{}) (chatMessage, error) {
+	worker, err := startChatWorker(cfg, sid+"-btw")
+	if err != nil {
+		return chatMessage{}, err
+	}
+	waited := false
+	defer func() {
+		_ = worker.Stdin.Close()
+		if !waited && worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+			_, _ = worker.Cmd.Process.Wait()
+		}
+	}()
+	if err := json.NewEncoder(worker.Stdin).Encode(req); err != nil {
+		return chatMessage{}, err
+	}
+	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
+	for {
+		line, readErr := readChatWorkerLine(reader)
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			var ev map[string]interface{}
+			if err := json.Unmarshal(line, &ev); err == nil {
+				typ, _ := ev["type"].(string)
+				if typ == "btw_done" {
+					data, err := json.Marshal(ev["message"])
+					if err != nil {
+						return chatMessage{}, err
+					}
+					var msg chatMessage
+					if err := json.Unmarshal(data, &msg); err != nil {
+						return chatMessage{}, err
+					}
+					if strings.TrimSpace(msg.Content) == "" {
+						return chatMessage{}, fmt.Errorf("btw worker returned empty response")
+					}
+					_ = worker.Stdin.Close()
+					waitErr := worker.Cmd.Wait()
+					waited = true
+					if waitErr != nil {
+						return chatMessage{}, waitErr
+					}
+					return msg, nil
+				}
+				if typ == "error" {
+					data, _ := json.Marshal(ev["message"])
+					var msg chatMessage
+					_ = json.Unmarshal(data, &msg)
+					if strings.TrimSpace(msg.Content) != "" {
+						return chatMessage{}, fmt.Errorf("%s", msg.Content)
+					}
+					return chatMessage{}, fmt.Errorf("btw worker failed")
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return chatMessage{}, fmt.Errorf("btw worker exited before response")
+			}
+			return chatMessage{}, readErr
+		}
+	}
+}
+
+var runOneShotBTWWorkerFunc = runOneShotBTWWorker
+
 func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
+	s.runChatWorkerOwned(sid, nil, cs, cmdReq)
+}
+
+func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, cmdReq map[string]interface{}) {
+	worldlineResend, _ := cmdReq["_ga_worldline_resend"].(bool)
+	delete(cmdReq, "_ga_worldline_resend")
+	saveTerminal := func(session chatSession) error {
+		if worldlineResend {
+			return s.saveChatSessionExact(session)
+		}
+		return s.saveChatSessionMerged(session)
+	}
 	startedAt := time.Now()
 	elapsedMillis := func() int64 {
 		ms := time.Since(startedAt).Milliseconds()
@@ -155,9 +234,9 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	if err != nil {
 		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 		cs.Messages = append(cs.Messages, msg)
-		_ = saveChatSession(s.CfgStore.Cfg, cs)
+		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
-		s.endChatRun(sid)
+		s.endChatRunOwned(sid, token)
 		return
 	}
 	s.setChatRunCmd(sid, worker.Cmd)
@@ -167,9 +246,9 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		s.dropChatWorker(sid, worker)
 		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 		cs.Messages = append(cs.Messages, msg)
-		_ = saveChatSession(s.CfgStore.Cfg, cs)
+		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
-		s.endChatRun(sid)
+		s.endChatRunOwned(sid, token)
 		return
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
@@ -188,6 +267,7 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	var finalReasoningEffort string
 	var finalModelID string
 	var taskOutputsAccumulator = make(map[string][]string)
+	var terminalLine []byte
 	var readErr error
 	for {
 		line, err := readChatWorkerLine(reader)
@@ -293,9 +373,9 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 			delete(ev, "history_info")
 			delete(ev, "working")
 			if cleanLine, err := json.Marshal(ev); err == nil {
-				s.publishChatLine(sid, cleanLine)
+				terminalLine = cleanLine
 			} else {
-				s.publishChatLine(sid, line)
+				terminalLine = append([]byte(nil), line...)
 			}
 			break
 		}
@@ -338,6 +418,27 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 	}
 	fallbackMessages = append(fallbackMessages, final)
 	cs.Messages = append(cs.Messages, final)
+	if !final.Error && s.ownsChatRun(sid, token) && len(cs.Messages) >= 2 {
+		userMsg := cs.Messages[len(cs.Messages)-2]
+		if userMsg.Role == "user" {
+			bound, bindErr := s.chatWorldlineRPCLocked(sid, worker, cs.Workspace, map[string]interface{}{
+				"action":               "bind",
+				"turn_status":          "completed",
+				"has_final_answer":     true,
+				"user_message_id":      userMsg.ID,
+				"assistant_message_id": final.ID,
+				"display_path":         cs.Messages,
+			})
+			if bindErr != nil {
+				final.Error = true
+				final.Content = strings.TrimSpace(final.Content) + fmt.Sprintf("\n\n[Worldline bind failed: %v]", bindErr)
+				cs.Messages[len(cs.Messages)-1] = final
+				terminalLine, _ = json.Marshal(map[string]interface{}{"type": "error", "message": final})
+			} else if bound.Tree.Head != nil && s.ownsChatRun(sid, token) {
+				cs.WorldlineHead = *bound.Tree.Head
+			}
+		}
+	}
 	if len(finalRawHistory) > 0 {
 		cs.RawHistory = finalRawHistory
 	} else {
@@ -353,11 +454,26 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 		cs.Settings.ReasoningEffort = normalizeChatSettings(chatSettings{ReasoningEffort: finalReasoningEffort}).ReasoningEffort
 	}
 	cs.UpdatedAt = time.Now().Unix()
-	_ = saveChatSession(s.CfgStore.Cfg, cs)
-	if final.Error {
-	} else {
+	if token != nil && !s.ownsChatRun(sid, token) {
+		s.endChatRunOwned(sid, token)
+		return
 	}
-	s.endChatRun(sid)
+	if saveErr := saveTerminal(cs); saveErr != nil {
+		commitFailure := chatMessage{
+			ID:        newChatID(),
+			Role:      "assistant",
+			Content:   fmt.Sprintf("Failed to persist terminal chat state: %v", saveErr),
+			CreatedAt: time.Now().Unix(),
+			Error:     true,
+		}
+		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": commitFailure})
+		s.endChatRunOwned(sid, token)
+		return
+	}
+	if len(terminalLine) > 0 {
+		s.publishChatLine(sid, terminalLine)
+	}
+	s.endChatRunOwned(sid, token)
 }
 
 func chatRawHistoryFromEvent(ev map[string]interface{}) []map[string]interface{} {
@@ -499,17 +615,26 @@ func (s *Server) reinjectChatWorkerTools(sid string) (map[string]interface{}, er
 	}
 }
 
-func (s *Server) beginChatRun(sid string) bool {
+func (s *Server) beginChatRun(sid string) *chatRun {
+	sid = safeChatID(sid)
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	if s.ChatRuns == nil {
 		s.ChatRuns = map[string]*chatRun{}
 	}
 	if r := s.ChatRuns[sid]; r != nil && !r.Done {
-		return false
+		return nil
 	}
-	s.ChatRuns[sid] = &chatRun{SID: sid, Subscribers: map[chan []byte]bool{}}
-	return true
+	token := &chatRun{SID: sid, Subscribers: map[chan []byte]bool{}}
+	s.ChatRuns[sid] = token
+	return token
+}
+
+func (s *Server) ownsChatRun(sid string, token *chatRun) bool {
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	r := s.ChatRuns[safeChatID(sid)]
+	return token != nil && r == token && !token.Done && !token.Canceled
 }
 
 func (s *Server) setChatRunCmd(sid string, cmd *exec.Cmd) {
@@ -578,9 +703,14 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 	}
 }
 
-func (s *Server) endChatRun(sid string) {
+func (s *Server) endChatRunOwned(sid string, token *chatRun) {
+	sid = safeChatID(sid)
 	s.ChatMu.Lock()
 	r := s.ChatRuns[sid]
+	if token != nil && r != token {
+		s.ChatMu.Unlock()
+		return
+	}
 	if r != nil && !r.Done {
 		r.Done = true
 		for ch := range r.Subscribers {
@@ -592,12 +722,14 @@ func (s *Server) endChatRun(sid string) {
 	go func() {
 		time.Sleep(5 * time.Minute)
 		s.ChatMu.Lock()
-		if rr := s.ChatRuns[sid]; rr != nil && rr.Done {
+		if rr := s.ChatRuns[sid]; rr == r && rr.Done {
 			delete(s.ChatRuns, sid)
 		}
 		s.ChatMu.Unlock()
 	}()
 }
+
+func (s *Server) endChatRun(sid string) { s.endChatRunOwned(sid, nil) }
 
 func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid string, from int) {
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -927,7 +1059,7 @@ func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {
 	cmd := exec.Command(py, script)
 	cmd.Dir = root
 	hideChildWindow(cmd)
-	cmd.Env = pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root, "GA_ULTRAPLAN_BROWSER=0")
+	cmd.Env = chatWorkerEnvironment(cfg, root, sid)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -998,6 +1130,19 @@ func pythonEnvWithAdminProxy(cfg config.AppConfig, extra ...string) []string {
 	}
 	env = append(env, extra...)
 	return env
+}
+
+func chatWorkerEnvironment(cfg config.AppConfig, root, sid string) []string {
+	env := pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "GA_ROOT="+root, "GA_ULTRAPLAN_BROWSER=0")
+	filtered := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(key, "GA_ADMIN_SESSION_ID") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return append(filtered, "GA_ADMIN_SESSION_ID="+safeChatID(sid))
 }
 
 func resolveChatWorkerScript() (string, error) {
@@ -1114,6 +1259,26 @@ func copyDirIfTargetEmpty(src, dst string) error {
 	}
 	return nil
 }
+func (s *Server) mutateChatSession(sid string, token *chatRun, mutate func(*chatSession) error) (chatSession, error) {
+	if !s.ownsChatRun(sid, token) {
+		return chatSession{}, fmt.Errorf("chat run is no longer owned")
+	}
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	if s.chatSessionMutationHook != nil {
+		s.chatSessionMutationHook()
+	}
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		return chatSession{}, err
+	}
+	if err = mutate(&cs); err != nil {
+		return chatSession{}, err
+	}
+	err = saveChatSessionLocked(s.CfgStore.Cfg, cs)
+	return cs, err
+}
+
 func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	if err := ensureChatDataMigrated(cfg); err != nil {
 		return chatSession{}, err
@@ -1142,7 +1307,65 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	cs.Settings = normalizeChatSettings(cs.Settings)
 	return cs, nil
 }
+func mergeChatMessageLists(first, second []chatMessage) []chatMessage {
+	out := make([]chatMessage, 0, len(first)+len(second))
+	seen := make(map[string]bool, len(first)+len(second))
+	appendUnique := func(items []chatMessage) {
+		for _, msg := range items {
+			if msg.ID != "" && seen[msg.ID] {
+				continue
+			}
+			if msg.ID != "" {
+				seen[msg.ID] = true
+			}
+			out = append(out, msg)
+		}
+	}
+	appendUnique(first)
+	appendUnique(second)
+	return out
+}
+
+func (s *Server) saveChatSessionMerged(cs chatSession) error {
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	latest, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	if err != nil {
+		return err
+	}
+	cs.Messages = mergeChatMessageLists(latest.Messages, cs.Messages)
+	return saveChatSession(s.CfgStore.Cfg, cs)
+}
+
+func (s *Server) saveChatSessionExact(cs chatSession) error {
+	if s.chatExactSaveHook != nil {
+		if err := s.chatExactSaveHook(cs); err != nil {
+			return err
+		}
+	}
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+}
+
+func (s *Server) persistChatSessionIfMissing(cs chatSession) error {
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	_, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, cs.ID))
+	if err == nil {
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+}
+
 func saveChatSession(cfg config.AppConfig, cs chatSession) error {
+	return saveChatSessionLocked(cfg, cs)
+}
+
+func saveChatSessionLocked(cfg config.AppConfig, cs chatSession) error {
 	if err := ensureChatDataMigrated(cfg); err != nil {
 		return err
 	}

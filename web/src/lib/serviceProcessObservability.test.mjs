@@ -21,7 +21,7 @@ test('process guard table includes identity and command context', () => {
   assert.match(processGuard, /processPath/)
   assert.match(processGuard, /<th>可执行文件<\/th><th>命令<\/th>/)
   assert.match(processGuard, /colSpan="6"/)
-  assert.match(processGuard, /\u6700\u8fd1\u626b\u63cf\uff1a\{snapshot\.scanned_at\} \u00b7 \u603b\u8ba1 \{counts\.total\}/)
+  assert.match(processGuard, /最近扫描：\{snapshot\.scanned_at\} · 总计 \{counts\.total\}/)
 })
 
 test('service actions remain dangerous-confirm guarded', () => {

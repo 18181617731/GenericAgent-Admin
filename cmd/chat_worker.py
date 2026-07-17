@@ -1190,6 +1190,370 @@ def _run_ultraplan_command(root, objective, llm_no, agent, history_info, working
     emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': snap.get('history_info') or history_info or [], 'working': snap.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
 
 
+
+_WORLDLINE_HOOK_INSTALLED = False
+
+
+def _safe_session_id(value):
+    value = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value or 'session')).strip('._')
+    return value[:120] or 'session'
+
+
+def _worldline_root(ga_root):
+    sid = _safe_session_id(os.environ.get('GA_ADMIN_SESSION_ID'))
+    return Path(ga_root) / 'temp' / 'rewind_data' / 'ga-admin' / sid
+
+
+def _install_worldline_hook():
+    global _WORLDLINE_HOOK_INSTALLED
+    if _WORLDLINE_HOOK_INSTALLED:
+        return
+    from plugins import hooks as plugin_hooks
+
+    def _before(ctx):
+        try:
+            if (ctx or {}).get('tool_name') not in ('file_write', 'file_patch'):
+                return ctx
+            handler = ctx.get('self')
+            path = (ctx.get('args') or {}).get('path')
+            store = getattr(getattr(handler, 'parent', None), '_admin_worldline_store', None)
+            if store is not None and path:
+                store.track_pre_edit(handler._get_abs_path(path))
+        except Exception:
+            pass
+        return ctx
+
+    plugin_hooks.register('tool_before')(_before)
+    _WORLDLINE_HOOK_INSTALLED = True
+
+
+def _ensure_worldline_store(agent, ga_root, workspace):
+    from frontends.worldline import RewindStore
+    cwd = os.path.realpath(str(workspace or ga_root))
+    store = getattr(agent, '_admin_worldline_store', None)
+    if store is not None:
+        if os.path.realpath(store.cwd) != cwd:
+            raise RuntimeError('worldline workspace changed within this chat session')
+        return store
+    store = RewindStore(str(_worldline_root(ga_root)), cwd)
+    agent._admin_worldline_store = store
+    _install_worldline_hook()
+    return store
+
+
+def _worldline_title(store, history, fallback):
+    parent = store.head if store.head in store.nodes else store.root_id
+    parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
+    for item in (history or [])[parent_len:]:
+        if isinstance(item, dict) and str(item.get('role') or '').lower() == 'user':
+            text = _chat_content_text(item.get('content')).strip()
+            if text:
+                return store._strip_project_mode(text).replace('\n', ' ').strip()[:160]
+    return str(fallback or 'checkpoint').replace('\n', ' ').strip()[:160] or 'checkpoint'
+
+
+def _commit_worldline(agent, prompt):
+    store = getattr(agent, '_admin_worldline_store', None)
+    if store is None:
+        return None
+    history = _snapshot_backend_history(agent)
+    parent = store.head if store.head in store.nodes else store.root_id
+    parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
+    if len(history) <= parent_len:
+        store._touched.clear()
+        store.save()
+        return None
+    state = _snapshot_ga_state(agent)
+    working = state.get('working') if isinstance(state, dict) else {}
+    key_info = working.get('key_info') if isinstance(working, dict) else None
+    return store.commit(
+        _worldline_title(store, history, prompt), history=history,
+        hist_info=state.get('history_info') if isinstance(state, dict) else None,
+        key_info=key_info if isinstance(key_info, str) else None,
+    )
+
+
+_WORLDLINE_SID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
+_WORLDLINE_SIDECAR_SCHEMA = 1
+_WORLDLINE_PUBLIC_SCHEMA = 1
+_WORLDLINE_PUBLIC_NODE_LIMIT = 1000
+_WORLDLINE_SIDECAR_LOCKS = {}
+_WORLDLINE_SIDECAR_LOCKS_GUARD = threading.Lock()
+
+
+def _worldline_sid(value):
+    sid = str(value or '')
+    if not _WORLDLINE_SID_RE.fullmatch(sid):
+        raise ValueError('invalid worldline sid')
+    return sid
+
+
+def _worldline_sidecar_path(ga_root, sid):
+    return Path(ga_root) / 'temp' / 'rewind_data' / 'ga-admin' / 'admin_sidecars' / (_worldline_sid(sid) + '.json')
+
+
+def _worldline_sidecar_lock(path):
+    key = os.path.normcase(os.path.abspath(str(path)))
+    with _WORLDLINE_SIDECAR_LOCKS_GUARD:
+        lock = _WORLDLINE_SIDECAR_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _WORLDLINE_SIDECAR_LOCKS[key] = lock
+        return lock
+
+
+def _empty_worldline_sidecar(sid):
+    return {'schema_version': _WORLDLINE_SIDECAR_SCHEMA, 'sid': sid, 'next_ordinal': 1, 'bindings': {}}
+
+
+def _load_worldline_sidecar(ga_root, sid):
+    sid = _worldline_sid(sid)
+    path = _worldline_sidecar_path(ga_root, sid)
+    if not path.exists():
+        return _empty_worldline_sidecar(sid), 'missing'
+    try:
+        with path.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return _empty_worldline_sidecar(sid), 'malformed'
+    if not isinstance(data, dict) or data.get('schema_version') != _WORLDLINE_SIDECAR_SCHEMA:
+        return _empty_worldline_sidecar(sid), 'legacy'
+    if data.get('sid') != sid or not isinstance(data.get('bindings'), dict):
+        return _empty_worldline_sidecar(sid), 'malformed'
+    clean = _empty_worldline_sidecar(sid)
+    next_ordinal = data.get('next_ordinal')
+    if isinstance(next_ordinal, int) and not isinstance(next_ordinal, bool) and next_ordinal > 0:
+        clean['next_ordinal'] = next_ordinal
+    max_ordinal = 0
+    for node_id, binding in data['bindings'].items():
+        if not isinstance(node_id, str) or not isinstance(binding, dict):
+            continue
+        user_id = binding.get('user_message_id')
+        assistant_id = binding.get('assistant_message_id')
+        if not isinstance(user_id, str) or not user_id or not isinstance(assistant_id, str) or not assistant_id:
+            continue
+        ordinal = binding.get('ordinal')
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 1:
+            ordinal = clean['next_ordinal']
+            clean['next_ordinal'] += 1
+        created_at = binding.get('created_at')
+        if not isinstance(created_at, int) or isinstance(created_at, bool) or created_at < 0:
+            created_at = 0
+        max_ordinal = max(max_ordinal, ordinal)
+        clean['bindings'][node_id] = {
+            'user_message_id': user_id,
+            'assistant_message_id': assistant_id,
+            'display_path': _json_clone(binding.get('display_path'), None),
+            'ordinal': ordinal,
+            'created_at': created_at,
+        }
+    clean['next_ordinal'] = max(clean['next_ordinal'], max_ordinal + 1)
+    return clean, 'ok'
+
+
+def _save_worldline_sidecar(ga_root, sid, data):
+    path = _worldline_sidecar_path(ga_root, sid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + '.tmp-' + str(os.getpid()) + '-' + new_id())
+    try:
+        with tmp.open('w', encoding='utf-8', newline='\n') as f:
+            json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(str(tmp), str(path))
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _worldline_path(store, node_id):
+    if not node_id or node_id not in store.nodes:
+        return []
+    path, seen, current = [], set(), node_id
+    while current in store.nodes and current not in seen:
+        seen.add(current)
+        path.append(current)
+        current = store.nodes[current].get('parent')
+    path.reverse()
+    return path
+
+
+def _bind_worldline_head(store, ga_root, sid, req):
+    if req.get('turn_status') != 'completed' or req.get('has_final_answer') is not True:
+        raise ValueError('worldline binding requires a completed final answer')
+    node_id = str(req.get('node_id') or store.head or '')
+    if not node_id or node_id != store.head or node_id not in store.nodes:
+        raise ValueError('worldline binding requires the current completed head')
+    user_id = str(req.get('user_message_id') or '')
+    assistant_id = str(req.get('assistant_message_id') or '')
+    if not user_id or not assistant_id:
+        raise ValueError('worldline binding requires stable message ids')
+    path = _worldline_sidecar_path(ga_root, sid)
+    with _worldline_sidecar_lock(path):
+        sidecar, _ = _load_worldline_sidecar(ga_root, sid)
+        previous = sidecar['bindings'].get(node_id) or {}
+        ordinal = previous.get('ordinal')
+        created_at = previous.get('created_at')
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 1:
+            ordinal = sidecar['next_ordinal']
+            sidecar['next_ordinal'] += 1
+        if not isinstance(created_at, int) or isinstance(created_at, bool) or created_at < 1:
+            created_at = int(time.time())
+        sidecar['bindings'][node_id] = {
+            'user_message_id': user_id,
+            'assistant_message_id': assistant_id,
+            'display_path': _json_clone(req.get('display_path'), None),
+            'ordinal': ordinal,
+            'created_at': created_at,
+        }
+        _save_worldline_sidecar(ga_root, sid, sidecar)
+    return _json_clone(sidecar['bindings'][node_id], {})
+
+
+def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
+    from frontends.worldline import tree_from_store
+    tree = tree_from_store(store, time.time())
+    bindings = sidecar.get('bindings', {}) if isinstance(sidecar, dict) else {}
+    current_path = _worldline_path(store, store.head)
+    ordered, seen = [], set()
+
+    def add(node_id):
+        if node_id in seen or node_id not in tree.nodes or len(ordered) >= _WORLDLINE_PUBLIC_NODE_LIMIT:
+            return
+        seen.add(node_id)
+        ordered.append(node_id)
+
+    # Keep the active path usable even when a wide tree is truncated. Traverse
+    # iteratively so adversarially deep histories cannot exhaust Python's stack.
+    for node_id in current_path:
+        add(node_id)
+    stack = [tree.root_id]
+    while stack and len(ordered) < _WORLDLINE_PUBLIC_NODE_LIMIT:
+        node_id = stack.pop()
+        if node_id in seen or node_id not in tree.nodes:
+            continue
+        add(node_id)
+        stack.extend(reversed(list(tree.nodes[node_id].children)))
+    if len(ordered) < _WORLDLINE_PUBLIC_NODE_LIMIT:
+        for node_id in tree.nodes:
+            add(node_id)
+            if len(ordered) >= _WORLDLINE_PUBLIC_NODE_LIMIT:
+                break
+
+    out = []
+    for fallback_ordinal, node_id in enumerate(ordered):
+        node = tree.nodes[node_id]
+        binding = bindings.get(node_id)
+        depth = max(0, len(_worldline_path(store, node_id)) - 1)
+        out.append({
+            'id': node_id, 'parent_id': node.parent_id if node.parent_id in seen else None,
+            'children': [child_id for child_id in node.children if child_id in seen],
+            'depth': depth,
+            'ordinal': binding.get('ordinal', fallback_ordinal) if binding else fallback_ordinal,
+            'title': node.title,
+            'created_at': binding.get('created_at', 0) if binding else 0,
+            'kind': node.kind, 'files': list(node.files),
+            'ago': node.ago, 'rw_tag': node.rw_tag,
+            'mapping_status': 'mapped' if binding is not None else 'unmapped',
+            'user_message_id': binding.get('user_message_id') if binding else None,
+            'assistant_message_id': binding.get('assistant_message_id') if binding else None,
+        })
+    return {
+        'schema_version': _WORLDLINE_PUBLIC_SCHEMA,
+        'root_id': tree.root_id if tree.root_id in seen else (ordered[0] if ordered else None),
+        'head': store.head if store.head in seen else None,
+        'current_path': [node_id for node_id in current_path if node_id in seen],
+        'sidecar_status': sidecar_status,
+        'truncated': len(tree.nodes) > len(ordered),
+        'nodes': out,
+    }
+
+
+def _apply_worldline_restore(agent, result):
+    history = result.get('history')
+    if isinstance(history, list):
+        agent.llmclient.backend.history = _json_clone(history, [])
+    hist_info = result.get('hist_info')
+    if isinstance(hist_info, list):
+        agent.history = _json_clone(hist_info, [])
+    working = _snapshot_ga_state(agent).get('working') or {}
+    if result.get('key_info') is not None:
+        working['key_info'] = result.get('key_info') or ''
+    _restore_ga_state(agent, hist_info if isinstance(hist_info, list) else None, working)
+
+
+def handle_worldline_request(agent, req):
+    from frontends.worldline import restore_plan
+    req = _normalize_request(req)
+    root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
+    workspace = _apply_workspace(agent, root_for_req, req.get('workspace'))
+    store = _ensure_worldline_store(agent, root_for_req, workspace)
+    action = str(req.get('action') or 'state').lower()
+    sid = _worldline_sid(req.get('sid'))
+    result = None
+    if action == 'bind':
+        result = _bind_worldline_head(store, root_for_req, sid, req)
+    elif action == 'restore_mapped':
+        node_id = str(req.get('node_id') or '')
+        sidecar, status = _load_worldline_sidecar(root_for_req, sid)
+        binding = sidecar['bindings'].get(node_id)
+        if status != 'ok' or binding is None:
+            raise ValueError('worldline node has no Admin message mapping')
+        result = restore_plan(store, node_id, mode='conversation', to='at')
+        if result is None:
+            raise ValueError('worldline node not found')
+        _apply_worldline_restore(agent, result)
+        result['display_path'] = _json_clone(binding.get('display_path'), None)
+        result['user_message_id'] = binding['user_message_id']
+        result['assistant_message_id'] = binding['assistant_message_id']
+    elif action == 'restore':
+        node_id = str(req.get('node_id') or '')
+        mode = str(req.get('mode') or 'both').lower()
+        to = str(req.get('to') or 'at').lower()
+        if mode not in ('both', 'conversation', 'code') or to not in ('at', 'before'):
+            raise ValueError('invalid worldline restore mode')
+        result = restore_plan(store, node_id, mode=mode, to=to)
+        if result is None:
+            raise ValueError('worldline node not found')
+        _apply_worldline_restore(agent, result)
+    elif action not in ('state', 'list'):
+        raise ValueError('invalid worldline action')
+    sidecar, sidecar_status = _load_worldline_sidecar(root_for_req, sid)
+    emit({
+        'type': 'worldline', 'action': action,
+        'tree': _worldline_nodes(store, sidecar, sidecar_status),
+        'result': result, 'raw_history': _snapshot_backend_history(agent),
+        'history_info': _snapshot_ga_state(agent).get('history_info') or [],
+        'working': _snapshot_ga_state(agent).get('working') or {},
+    })
+
+def handle_btw_request(agent, req):
+    """Run the official side-question command without mutating the main GA history."""
+    req = _normalize_request(req)
+    prompt = req.get('prompt') or '/btw'
+    history = req.get('history') or []
+    raw_history = req.get('raw_history') or []
+    llm_no = req.get('llm_no', 0)
+    reasoning_effort = req.get('reasoning_effort') if 'reasoning_effort' in req else None
+    root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
+    _select_llm_if_needed(agent, llm_no)
+    if str(reasoning_effort or '').strip():
+        _apply_reasoning_effort_setting(agent, reasoning_effort)
+    _apply_workspace(agent, root_for_req, req.get('workspace'))
+    _restore_admin_history(agent, history, raw_history)
+    from frontends.btw_cmd import handle_frontend_command
+    started = time.time()
+    content = handle_frontend_command(agent, prompt)
+    msg = {
+        'id': new_id(), 'role': 'assistant', 'content': content,
+        'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent),
+        'elapsed_ms': max(1, int((time.time() - started) * 1000)),
+    }
+    emit({'type': 'btw_done', 'message': msg})
+
+
 def handle_request(agent, worker, req):
     req = _normalize_request(req)
     _reset_usage()  # Clear usage accumulator for this turn
@@ -1210,6 +1574,7 @@ def handle_request(agent, worker, req):
         _apply_reasoning_effort_setting(agent, reasoning_effort)
     _restore_ga_state(agent, history_info, working)
     applied_workspace = _apply_workspace(agent, root_for_req, req.get('workspace'))
+    _ensure_worldline_store(agent, root_for_req, applied_workspace)
     if applied_workspace and isinstance(working, dict):
         working['workspace'] = applied_workspace
         working['project_root'] = applied_workspace
@@ -1285,6 +1650,7 @@ def handle_request(agent, worker, req):
                 state = _snapshot_ga_state(agent)
                 usage = _snapshot_usage()
                 usages = _snapshot_turn_usages()
+                _commit_worldline(agent, prompt)
                 emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
                 return
     except Exception as e:
@@ -1319,6 +1685,13 @@ def main():
                 agent.inc_out = True
                 worker = threading.Thread(target=agent.run, name='ga-admin-chat-worker', daemon=True)
                 worker.start()
+            if req.get('op') == 'btw':
+                handle_btw_request(agent, req)
+                return
+            if req.get('op') == 'worldline':
+                with agent_lock:
+                    handle_worldline_request(agent, req)
+                continue
             if req.get('op') == 'reinject_tools':
                 with agent_lock:
                     root_for_req = _resolve_request_root(req.get('ga_root'), root)

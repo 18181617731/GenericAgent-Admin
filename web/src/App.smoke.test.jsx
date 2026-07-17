@@ -6,6 +6,8 @@ import App, { ChannelsPage } from './App.jsx'
 import { ChatMessage } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 
+globalThis.React = React
+
 const t = {
   refresh: 'Refresh',
   save: 'Save',
@@ -132,7 +134,6 @@ describe('channel frontend gates', () => {
 describe('Models provider editor', () => {
   test('keeps focus in the provider name while its controlled value changes', () => {
     installBrowserPolyfills()
-    globalThis.React = React
 
     function ModelsHarness() {
       const [profiles, setProfiles] = React.useState([{
@@ -178,19 +179,28 @@ describe('Models provider editor', () => {
 })
 
 
-describe('chat response model identity', () => {
-  test('renders the concrete model ID on its assistant response', () => {
+describe('chat response identity and time', () => {
+  test('renders the concrete model ID and message time above its assistant response', () => {
+    const createdAt = '2026-07-17T08:09:10.000Z'
     const { container } = render(
       <ChatMessage
-        message={{ id: 'a1', role: 'assistant', content: 'Finished', model_id: '  vendor/model-v1  ', created_at: 0 }}
+        message={{ id: 'a1', role: 'assistant', content: 'Finished', model_id: '  vendor/model-v1  ', created_at: createdAt }}
         pending={false}
         onAskReply={vi.fn()}
       />,
     )
 
+    const body = container.querySelector('.oa-msg-body')
+    const meta = container.querySelector('.oa-meta')
     const badge = container.querySelector('.oa-model-id')
+    const separator = container.querySelector('.oa-meta-separator')
+    const time = container.querySelector('.oa-message-time')
+    expect(body?.firstElementChild).toBe(meta)
     expect(badge?.textContent).toBe('vendor/model-v1')
     expect(badge?.getAttribute('title')).toBe('Model ID: vendor/model-v1')
+    expect(separator?.textContent).toBe('·')
+    expect(time?.textContent).toBe(new Date(createdAt).toLocaleString())
+    expect(time?.getAttribute('datetime')).toBe(createdAt)
   })
 })
 

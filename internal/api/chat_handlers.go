@@ -77,6 +77,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatSaveSettings(w, r, parts[1])
 			return
 		}
+	case "fork":
+		if len(parts) == 2 && r.Method == http.MethodPost {
+			s.chatForkSession(w, r, parts[1])
+			return
+		}
 	case "state":
 		if len(parts) == 1 && r.Method == http.MethodGet {
 			s.chatState(w, r, "")
@@ -84,6 +89,20 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatState(w, r, parts[1])
+			return
+		}
+	case "btw":
+		if len(parts) == 2 && r.Method == http.MethodPost {
+			s.chatBTW(w, r, parts[1])
+			return
+		}
+	case "worldline":
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.chatWorldlineState(w, r, parts[1])
+			return
+		}
+		if len(parts) == 3 && parts[2] == "switch" && r.Method == http.MethodPost {
+			s.chatWorldlineSwitch(w, r, parts[1])
 			return
 		}
 	case "stream":
@@ -118,6 +137,111 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{}), RawHistory: []map[string]interface{}{}}
 	writeJSON(w, chatSessionForClient(cs))
+}
+
+func visibleRawUserText(item map[string]interface{}) (string, bool) {
+	content, ok := item["content"]
+	if !ok {
+		return "", false
+	}
+	text := rawChatText(content)
+	return text, text != ""
+}
+
+func rawHistoryBeforeMessage(cs chatSession, messageIndex int) ([]map[string]interface{}, error) {
+	if len(cs.RawHistory) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+	target := cs.Messages[messageIndex]
+	occurrence := 0
+	for i := 0; i <= messageIndex; i++ {
+		if cs.Messages[i].Role == "user" && cs.Messages[i].Content == target.Content {
+			occurrence++
+		}
+	}
+	seen := 0
+	for i, item := range cs.RawHistory {
+		role, _ := item["role"].(string)
+		text, ok := visibleRawUserText(item)
+		if role != "user" || !ok || text != target.Content {
+			continue
+		}
+		seen++
+		if seen == occurrence {
+			return append([]map[string]interface{}(nil), cs.RawHistory[:i]...), nil
+		}
+	}
+	return nil, fmt.Errorf("raw history does not contain the selected user message")
+}
+
+func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid string) {
+	sid = safeChatID(sid)
+	if sid == "" {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	if s.chatRunActive(sid) {
+		bad(w, http.StatusConflict, "chat is already running")
+		return
+	}
+	var req struct {
+		MessageID string `json:"message_id"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	messageID := safeChatID(req.MessageID)
+	if messageID == "" {
+		bad(w, http.StatusBadRequest, "message_id is required")
+		return
+	}
+
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		bad(w, http.StatusNotFound, "session not found")
+		return
+	}
+	targetIndex := -1
+	for i := range cs.Messages {
+		if cs.Messages[i].ID == messageID && cs.Messages[i].Role == "user" {
+			targetIndex = i
+			break
+		}
+	}
+	if targetIndex < 0 {
+		bad(w, http.StatusNotFound, "user message not found")
+		return
+	}
+	raw, err := rawHistoryBeforeMessage(cs, targetIndex)
+	if err != nil {
+		bad(w, http.StatusConflict, err.Error())
+		return
+	}
+	title := strings.TrimSpace(cs.Title)
+	if title == "" || title == "新会话" {
+		title = "编辑分支"
+	} else {
+		title += " · 分支"
+	}
+	fork := chatSession{
+		ID:          newChatID(),
+		Title:       title,
+		Messages:    append([]chatMessage(nil), cs.Messages[:targetIndex]...),
+		Settings:    cs.Settings,
+		RawHistory:  raw,
+		HistoryInfo: []interface{}{},
+		Working:     nil,
+		Workspace:   cs.Workspace,
+		ProjectMode: cs.ProjectMode,
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, fork); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, chatSessionForClient(fork))
 }
 
 func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid string) {
@@ -160,7 +284,23 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 }
 
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {
-	_ = os.Remove(chatSessionPath(s.CfgStore.Cfg, safeChatID(sid)))
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	if s.chatRunActive(sid) {
+		bad(w, http.StatusConflict, "chat is already running")
+		return
+	}
+	s.ChatMu.Lock()
+	worker := s.ChatWorkers[sid]
+	s.ChatMu.Unlock()
+	if worker != nil {
+		s.dropChatWorker(sid, worker)
+	}
+	_ = os.Remove(chatSessionPath(s.CfgStore.Cfg, sid))
+	sidecar := filepath.Join(s.CfgStore.Cfg.GARoot, "temp", "rewind_data", "ga-admin", "admin_sidecars", sid+".json")
+	_ = os.Remove(sidecar)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -332,25 +472,92 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "/btw" || (!strings.HasPrefix(prompt, "/btw ") && !strings.HasPrefix(prompt, "/btw\t")) {
+		bad(w, http.StatusBadRequest, "a non-empty /btw question is required")
+		return
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	s.SessionMu.Unlock()
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cmdReq := map[string]interface{}{
+		"op":               "btw",
+		"prompt":           prompt,
+		"history":          cs.Messages,
+		"raw_history":      cs.RawHistory,
+		"workspace":        cs.Workspace,
+		"project_mode":     cs.ProjectMode,
+		"llm_no":           cs.Settings.LLMNo,
+		"tools_mode":       cs.Settings.ToolsMode,
+		"reasoning_effort": cs.Settings.ReasoningEffort,
+		"ga_root":          s.CfgStore.Cfg.GARoot,
+	}
+	msg, err := runOneShotBTWWorkerFunc(s.CfgStore.Cfg, sid, cmdReq)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.SessionMu.Lock()
+	latest, loadErr := loadChatSession(s.CfgStore.Cfg, sid)
+	if loadErr == nil {
+		latest.Messages = mergeChatMessageLists(latest.Messages, []chatMessage{msg})
+		latest.UpdatedAt = time.Now().Unix()
+		loadErr = saveChatSession(s.CfgStore.Cfg, latest)
+	}
+	s.SessionMu.Unlock()
+	if loadErr != nil {
+		bad(w, http.StatusInternalServerError, loadErr.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "message": msg})
+}
+
 func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	var req struct {
-		Prompt       string        `json:"prompt"`
-		Files        []chatUpload  `json:"files"`
-		Settings     *chatSettings `json:"settings"`
-		ClientUserID string        `json:"client_user_id"`
+		Prompt              string        `json:"prompt"`
+		Files               []chatUpload  `json:"files"`
+		Settings            *chatSettings `json:"settings"`
+		ClientUserID        string        `json:"client_user_id"`
+		SourceUserMessageID string        `json:"source_user_message_id"`
 	}
 	if err := decodeLimited(r, &req, maxChatPostBodyBytes); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
 	sid = safeChatID(sid)
-	if !s.beginChatRun(sid) {
+	cmd, immediate, parseErr := parseImmediateChatCommand(req.Prompt)
+	if parseErr != nil {
+		bad(w, http.StatusBadRequest, parseErr.Error())
+		return
+	}
+	if immediate && commandNeedsDanger(cmd) && !requireDangerousHeader(w, r) {
+		return
+	}
+	token := s.beginChatRun(sid)
+	if token == nil {
 		bad(w, 409, "chat is already running")
+		return
+	}
+	if immediate {
+		s.maybeHandleImmediateChatCommand(w, r, sid, token, cmd)
 		return
 	}
 	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
 	if err != nil {
-		s.endChatRun(sid)
+		s.endChatRunOwned(sid, token)
 		bad(w, 500, err.Error())
 		return
 	}
@@ -368,9 +575,21 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	if s.maybeHandleProjectCommand(w, r, sid, &cs, req.Prompt) {
 		return
 	}
+	if sourceID := strings.TrimSpace(req.SourceUserMessageID); sourceID != "" {
+		if len(req.Files) > 0 {
+			s.endChatRunOwned(sid, token)
+			bad(w, http.StatusBadRequest, "worldline edit/resend does not accept new attachments")
+			return
+		}
+		if err := s.prepareChatWorldlineResend(sid, token, &cs, sourceID); err != nil {
+			s.endChatRunOwned(sid, token)
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
 	if err != nil {
-		s.endChatRun(sid)
+		s.endChatRunOwned(sid, token)
 		bad(w, 400, err.Error())
 		return
 	}
@@ -385,27 +604,34 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
 	cs.Messages = append(cs.Messages, userMsg)
 	updateChatTitle(&cs)
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
-		s.endChatRun(sid)
-		bad(w, http.StatusInternalServerError, err.Error())
+	var saveErr error
+	if strings.TrimSpace(req.SourceUserMessageID) != "" {
+		saveErr = s.saveChatSessionExact(cs)
+	} else {
+		saveErr = s.saveChatSessionMerged(cs)
+	}
+	if saveErr != nil {
+		s.endChatRunOwned(sid, token)
+		bad(w, http.StatusInternalServerError, saveErr.Error())
 		return
 	}
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
 	cmdReq := map[string]interface{}{
-		"prompt":           display,
-		"history":          workerHistory,
-		"raw_history":      cs.RawHistory,
-		"history_info":     cs.HistoryInfo,
-		"working":          cs.Working,
-		"workspace":        cs.Workspace,
-		"project_mode":     cs.ProjectMode,
-		"llm_no":           cs.Settings.LLMNo,
-		"tools_mode":       cs.Settings.ToolsMode,
-		"reasoning_effort": cs.Settings.ReasoningEffort,
-		"ga_root":          s.CfgStore.Cfg.GARoot,
+		"prompt":               display,
+		"history":              workerHistory,
+		"raw_history":          cs.RawHistory,
+		"history_info":         cs.HistoryInfo,
+		"working":              cs.Working,
+		"workspace":            cs.Workspace,
+		"project_mode":         cs.ProjectMode,
+		"llm_no":               cs.Settings.LLMNo,
+		"tools_mode":           cs.Settings.ToolsMode,
+		"reasoning_effort":     cs.Settings.ReasoningEffort,
+		"ga_root":              s.CfgStore.Cfg.GARoot,
+		"_ga_worldline_resend": strings.TrimSpace(req.SourceUserMessageID) != "",
 	}
-	go s.runChatWorker(sid, cs, cmdReq)
+	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
 	s.streamChatRun(w, r, sid, 0)
 }
 
@@ -447,6 +673,7 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	sid = safeChatID(sid)
 	var cmd *exec.Cmd
 	var worker *chatWorker
+	var token *chatRun
 	s.ChatMu.Lock()
 	run := s.ChatRuns[sid]
 	if run == nil || run.Done {
@@ -455,9 +682,13 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 		return
 	}
 	run.Canceled = true
+	token = run
 	cmd = run.Cmd
 	worker = s.ChatWorkers[sid]
 	s.ChatMu.Unlock()
+	// Immediate commands do not have a worker process to kill. End their run here
+	// so cancellation always releases SSE subscribers and the session reservation.
+	s.endChatRunOwned(sid, token)
 	if worker != nil {
 		s.dropChatWorker(sid, worker)
 	} else if cmd != nil && cmd.Process != nil {

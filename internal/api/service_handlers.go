@@ -58,22 +58,26 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	if q.Params == nil || strings.TrimSpace(q.Params["llm_no"]) == "" {
-		if models := s.CfgStore.Cfg.ServiceModels; models != nil {
-			if no, ok := models[q.Name]; ok {
-				if q.Params == nil {
-					q.Params = map[string]string{}
-				}
-				q.Params["llm_no"] = strconv.Itoa(no)
-			}
-		}
-	}
-	svc, err := s.Svc.StartWithParams(q.Name, q.Params)
+	svc, err := s.startServiceByName(q.Name, q.Params)
 	if err != nil {
 		bad(w, 404, err.Error())
 		return
 	}
 	writeJSON(w, svc)
+}
+
+func (s *Server) startServiceByName(name string, params map[string]string) (service.ServiceInfo, error) {
+	if params == nil || strings.TrimSpace(params["llm_no"]) == "" {
+		if models := s.CfgStore.Cfg.ServiceModels; models != nil {
+			if no, ok := models[name]; ok {
+				if params == nil {
+					params = map[string]string{}
+				}
+				params["llm_no"] = strconv.Itoa(no)
+			}
+		}
+	}
+	return s.Svc.StartWithParams(name, params)
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {

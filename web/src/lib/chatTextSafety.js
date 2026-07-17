@@ -140,7 +140,7 @@ export const textRenderStats = (text = '') => {
 
 export const previewLongText = (text = '', limit = LONG_TEXT_PREVIEW_CHARS) => {
   const src = String(text || '')
-  let head = src.slice(0, limit).replace(/\r\n/g, '\n').replace(/\n{8,}/g, '\n\n\u2026 \u8fde\u7eed\u7a7a\u884c\u5df2\u6298\u53e0 \u2026\n\n')
-  if (src.length > limit) head += `\n\n\u2026 \u5df2\u622a\u65ad\u9884\u89c8\uff0c\u5b8c\u6574\u5185\u5bb9 ${src.length.toLocaleString()} \u5b57\u7b26\uff0c\u53ef\u590d\u5236\u5168\u6587\u3002`
+  let head = src.slice(0, limit).replace(/\r\n/g, '\n').replace(/\n{8,}/g, '\n\n… 连续空行已折叠 …\n\n')
+  if (src.length > limit) head += `\n\n… 已截断预览，完整内容 ${src.length.toLocaleString()} 字符，可复制全文。`
   return head
 }

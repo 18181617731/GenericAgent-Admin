@@ -29,14 +29,18 @@ import (
 )
 
 type Server struct {
-	CfgStore    *config.Store
-	Svc         *service.Manager
-	Models      *modelconfig.Store
-	Static      fs.FS
-	ReactApp    *reactAppBridge
-	ChatMu      sync.Mutex
-	ChatRuns    map[string]*chatRun
-	ChatWorkers map[string]*chatWorker
+	CfgStore                *config.Store
+	Svc                     *service.Manager
+	Models                  *modelconfig.Store
+	Static                  fs.FS
+	ReactApp                *reactAppBridge
+	ChatMu                  sync.Mutex
+	SessionMu               sync.Mutex
+	ChatRuns                map[string]*chatRun
+	ChatWorkers             map[string]*chatWorker
+	chatSessionMutationHook func()
+	chatExactSaveHook       func(chatSession) error
+	chatWorldlineRPCHook    func(string, map[string]interface{}) error
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {

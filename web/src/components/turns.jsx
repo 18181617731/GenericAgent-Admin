@@ -2,10 +2,10 @@ import { useState } from 'react'
 
 function statusIcon(s) {
   const status = normalizeStatus(s)
-  if (status === 'running') return '\u25CB'  // ○ spinning vibe
-  if (status === 'done') return '\u2713'     // ✓
-  if (status === 'error') return '\u2717'    // ✗
-  return '\u00B7'                            // · pending
+  if (status === 'running') return '○'  // ○ spinning vibe
+  if (status === 'done') return '✓'     // ✓
+  if (status === 'error') return '✗'    // ✗
+  return '·'                            // · pending
 }
 
 function normalizeStatus(s) {
@@ -43,7 +43,7 @@ function TaskOutput({ output }) {
             return <div key={i} className="up-log-summary">{text}</div>
           }
           // Highlight tool calls (🛠️ emoji)
-          if (text.includes('\u{1F6E0}') || text.includes('🛠️')) {
+          if (text.includes('🛠') || text.includes('🛠️')) {
             return <div key={i} className="up-log-tool">{text}</div>
           }
           return <div key={i}>{text}</div>
@@ -110,7 +110,7 @@ function UltraPlanBoard({ data }) {
   return (
     <div className={`up-board${done ? ' up-board--done' : ''}`}>
       <div className="up-header">
-        <span className="up-label">{done ? '\u2713 UltraPlan' : '\u25CE UltraPlan'}</span>
+        <span className="up-label">{done ? '✓ UltraPlan' : '◎ UltraPlan'}</span>
         <span className="up-objective">{data.objective || 'UltraPlan run'}</span>
       </div>
       {phases.length > 0 && (
