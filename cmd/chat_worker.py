@@ -1303,7 +1303,15 @@ def _worldline_sidecar_lock(path):
 
 
 def _empty_worldline_sidecar(sid):
-    return {'schema_version': _WORLDLINE_SIDECAR_SCHEMA, 'sid': sid, 'next_ordinal': 1, 'bindings': {}}
+    return {
+        'schema_version': _WORLDLINE_SIDECAR_SCHEMA,
+        'sid': sid,
+        'next_ordinal': 1,
+        'bindings': {},
+        # Physical conv/code bridge -> logical conversation node. Bridges remain
+        # in the core store; Admin folds them out of its message-version tree.
+        'aliases': {},
+    }
 
 
 def _load_worldline_sidecar(ga_root, sid):
@@ -1348,6 +1356,13 @@ def _load_worldline_sidecar(ga_root, sid):
             'created_at': created_at,
         }
     clean['next_ordinal'] = max(clean['next_ordinal'], max_ordinal + 1)
+    aliases = data.get('aliases', {})
+    if isinstance(aliases, dict):
+        for physical_id, logical_id in aliases.items():
+            if (isinstance(physical_id, str) and physical_id and
+                    isinstance(logical_id, str) and logical_id and
+                    physical_id != logical_id):
+                clean['aliases'][physical_id] = logical_id
     return clean, 'ok'
 
 
@@ -1378,6 +1393,35 @@ def _worldline_path(store, node_id):
         current = store.nodes[current].get('parent')
     path.reverse()
     return path
+
+
+def _logical_worldline_node(sidecar, node_id):
+    aliases = sidecar.get('aliases', {}) if isinstance(sidecar, dict) else {}
+    current, seen = node_id, set()
+    while isinstance(current, str) and current:
+        if current in seen:
+            return node_id
+        seen.add(current)
+        target = aliases.get(current)
+        if not isinstance(target, str) or not target:
+            return current
+        current = target
+    return node_id
+
+
+def _record_worldline_alias(ga_root, sid, physical_id, logical_id):
+    if not isinstance(physical_id, str) or not physical_id:
+        return
+    if not isinstance(logical_id, str) or not logical_id or physical_id == logical_id:
+        return
+    path = _worldline_sidecar_path(ga_root, sid)
+    with _worldline_sidecar_lock(path):
+        sidecar, _ = _load_worldline_sidecar(ga_root, sid)
+        logical_id = _logical_worldline_node(sidecar, logical_id)
+        if physical_id == logical_id:
+            return
+        sidecar['aliases'][physical_id] = logical_id
+        _save_worldline_sidecar(ga_root, sid, sidecar)
 
 
 def _bind_worldline_head(store, ga_root, sid, req):
@@ -1416,28 +1460,85 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
     from frontends.worldline import tree_from_store
     tree = tree_from_store(store, time.time())
     bindings = sidecar.get('bindings', {}) if isinstance(sidecar, dict) else {}
-    current_path = _worldline_path(store, store.head)
+    aliases = sidecar.get('aliases', {}) if isinstance(sidecar, dict) else {}
+
+    # Only fold aliases that still match the core bridge topology: a bridge and
+    # its logical conversation node are siblings. Ignore stale/corrupt entries.
+    folded = {}
+    for physical_id in aliases:
+        if physical_id == tree.root_id or physical_id not in tree.nodes:
+            continue
+        logical_id = _logical_worldline_node(sidecar, physical_id)
+        if logical_id == physical_id or logical_id not in tree.nodes:
+            continue
+        if tree.nodes[physical_id].parent_id != tree.nodes[logical_id].parent_id:
+            continue
+        folded[physical_id] = logical_id
+    hidden = set(folded)
+    visible = [node_id for node_id in tree.nodes if node_id not in hidden]
+
+    public_parent = {}
+    for node_id in visible:
+        parent_id = tree.nodes[node_id].parent_id
+        if parent_id in hidden:
+            parent_id = folded[parent_id]
+        public_parent[node_id] = parent_id if parent_id in tree.nodes and parent_id not in hidden else None
+        if public_parent[node_id] == node_id:
+            public_parent[node_id] = None
+
+    # Preserve core traversal order while attaching descendants of an internal
+    # bridge to the selected logical node.
+    physical_order, visited = [], set()
+    stack = [tree.root_id]
+    while stack:
+        node_id = stack.pop()
+        if node_id in visited or node_id not in tree.nodes:
+            continue
+        visited.add(node_id)
+        physical_order.append(node_id)
+        stack.extend(reversed(list(tree.nodes[node_id].children)))
+    physical_order.extend(node_id for node_id in tree.nodes if node_id not in visited)
+    public_children = {node_id: [] for node_id in visible}
+    for node_id in physical_order:
+        if node_id in hidden or node_id not in public_children:
+            continue
+        parent_id = public_parent[node_id]
+        if parent_id in public_children and node_id not in public_children[parent_id]:
+            public_children[parent_id].append(node_id)
+
+    logical_head = folded.get(store.head, store.head)
+
+    def public_path(node_id):
+        path, path_seen = [], set()
+        while node_id in public_parent and node_id not in path_seen:
+            path_seen.add(node_id)
+            path.append(node_id)
+            node_id = public_parent[node_id]
+        path.reverse()
+        return path
+
+    current_path = public_path(logical_head)
     ordered, seen = [], set()
 
     def add(node_id):
-        if node_id in seen or node_id not in tree.nodes or len(ordered) >= _WORLDLINE_PUBLIC_NODE_LIMIT:
+        if node_id in seen or node_id not in public_children or len(ordered) >= _WORLDLINE_PUBLIC_NODE_LIMIT:
             return
         seen.add(node_id)
         ordered.append(node_id)
 
-    # Keep the active path usable even when a wide tree is truncated. Traverse
-    # iteratively so adversarially deep histories cannot exhaust Python's stack.
+    # Keep the logical active path usable even when a wide tree is truncated.
     for node_id in current_path:
         add(node_id)
-    stack = [tree.root_id]
+    public_root = tree.root_id if tree.root_id in public_children else (visible[0] if visible else None)
+    stack = [public_root] if public_root else []
     while stack and len(ordered) < _WORLDLINE_PUBLIC_NODE_LIMIT:
         node_id = stack.pop()
-        if node_id in seen or node_id not in tree.nodes:
+        if node_id in seen or node_id not in public_children:
             continue
         add(node_id)
-        stack.extend(reversed(list(tree.nodes[node_id].children)))
+        stack.extend(reversed(public_children[node_id]))
     if len(ordered) < _WORLDLINE_PUBLIC_NODE_LIMIT:
-        for node_id in tree.nodes:
+        for node_id in visible:
             add(node_id)
             if len(ordered) >= _WORLDLINE_PUBLIC_NODE_LIMIT:
                 break
@@ -1446,11 +1547,11 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
     for fallback_ordinal, node_id in enumerate(ordered):
         node = tree.nodes[node_id]
         binding = bindings.get(node_id)
-        depth = max(0, len(_worldline_path(store, node_id)) - 1)
+        parent_id = public_parent[node_id]
         out.append({
-            'id': node_id, 'parent_id': node.parent_id if node.parent_id in seen else None,
-            'children': [child_id for child_id in node.children if child_id in seen],
-            'depth': depth,
+            'id': node_id, 'parent_id': parent_id if parent_id in seen else None,
+            'children': [child_id for child_id in public_children[node_id] if child_id in seen],
+            'depth': max(0, len(public_path(node_id)) - 1),
             'ordinal': binding.get('ordinal', fallback_ordinal) if binding else fallback_ordinal,
             'title': node.title,
             'created_at': binding.get('created_at', 0) if binding else 0,
@@ -1462,11 +1563,11 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
         })
     return {
         'schema_version': _WORLDLINE_PUBLIC_SCHEMA,
-        'root_id': tree.root_id if tree.root_id in seen else (ordered[0] if ordered else None),
-        'head': store.head if store.head in seen else None,
+        'root_id': public_root if public_root in seen else (ordered[0] if ordered else None),
+        'head': logical_head if logical_head in seen else None,
         'current_path': [node_id for node_id in current_path if node_id in seen],
         'sidecar_status': sidecar_status,
-        'truncated': len(tree.nodes) > len(ordered),
+        'truncated': len(visible) > len(ordered),
         'nodes': out,
     }
 
@@ -1501,10 +1602,12 @@ def handle_worldline_request(agent, req):
         binding = sidecar['bindings'].get(node_id)
         if status != 'ok' or binding is None:
             raise ValueError('worldline node has no Admin message mapping')
-        result = restore_plan(store, node_id, mode='conversation', to='at')
+        logical_target = _logical_worldline_node(sidecar, node_id)
+        result = restore_plan(store, node_id, mode='conv', to='at')
         if result is None:
             raise ValueError('worldline node not found')
         _apply_worldline_restore(agent, result)
+        _record_worldline_alias(root_for_req, sid, result.get('target'), logical_target)
         result['display_path'] = _json_clone(binding.get('display_path'), None)
         result['user_message_id'] = binding['user_message_id']
         result['assistant_message_id'] = binding['assistant_message_id']
@@ -1514,10 +1617,24 @@ def handle_worldline_request(agent, req):
         to = str(req.get('to') or 'at').lower()
         if mode not in ('both', 'conversation', 'code') or to not in ('at', 'before'):
             raise ValueError('invalid worldline restore mode')
-        result = restore_plan(store, node_id, mode=mode, to=to)
+        core_mode = 'conv' if mode == 'conversation' else mode
+        sidecar_before, _ = _load_worldline_sidecar(root_for_req, sid)
+        logical_target = None
+        if core_mode == 'conv':
+            physical_target = node_id
+            if to == 'before' and node_id in store.nodes:
+                physical_target = store.nodes[node_id].get('parent')
+                if physical_target not in store.nodes:
+                    physical_target = node_id
+            logical_target = _logical_worldline_node(sidecar_before, physical_target)
+        elif core_mode == 'code':
+            logical_target = _logical_worldline_node(sidecar_before, store.head)
+        result = restore_plan(store, node_id, mode=core_mode, to=to)
         if result is None:
             raise ValueError('worldline node not found')
         _apply_worldline_restore(agent, result)
+        if logical_target is not None:
+            _record_worldline_alias(root_for_req, sid, result.get('target'), logical_target)
     elif action not in ('state', 'list'):
         raise ValueError('invalid worldline action')
     sidecar, sidecar_status = _load_worldline_sidecar(root_for_req, sid)
