@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -733,6 +734,66 @@ func TestExportBacksUpExistingActive(t *testing.T) {
 	}
 	if string(activeData) == string(old) || !strings.Contains(string(activeData), "sk-real-secret") {
 		t.Fatalf("active not replaced with rendered key: %q", string(activeData))
+	}
+}
+
+func TestExportKeepsOnlyTwoNewestMyKeyBackups(t *testing.T) {
+	root := t.TempDir()
+	active := filepath.Join(root, "mykey.py")
+	if err := os.WriteFile(active, []byte("current"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("mykey.py.bak-20200101-00000%d", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	profiles := []Profile{{
+		VarName: "api_config_rotation",
+		Type:    "openai",
+		Name:    "rotation",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-test",
+		APIKey:  "sk-test",
+	}}
+	res, err := Export(root, profiles, true)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(root, "mykey.py.bak-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(backups)
+	if len(backups) != myKeyBackupLimit {
+		t.Fatalf("backup count = %d, want %d: %v", len(backups), myKeyBackupLimit, backups)
+	}
+	newBackup, _ := res["backup_path"].(string)
+	if backups[1] != newBackup || filepath.Base(backups[0]) != "mykey.py.bak-20200101-000003" {
+		t.Fatalf("kept backups = %v, new backup = %q", backups, newBackup)
+	}
+}
+
+func TestExportPrunesBackupsWhenActiveMyKeyIsMissing(t *testing.T) {
+	root := t.TempDir()
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("mykey.py.bak-20200101-00000%d", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profiles := []Profile{{VarName: "api_config_new", Type: "openai", Name: "new", APIBase: "https://api.example/v1", Model: "gpt-test", APIKey: "sk-test"}}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(root, "mykey.py.bak-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != myKeyBackupLimit {
+		t.Fatalf("backup count = %d, want %d: %v", len(backups), myKeyBackupLimit, backups)
 	}
 }
 

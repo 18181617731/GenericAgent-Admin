@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+const myKeyBackupLimit = 2
+
 type OptionalBool bool
 
 func (b *OptionalBool) UnmarshalJSON(data []byte) error {
@@ -1110,14 +1112,34 @@ func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string
 	}
 	res := map[string]interface{}{"activated": true, "active_path": active, "saved_path": active, "backup_path": nil}
 	if existing != nil {
-		bak := filepath.Join(gaRoot, fmt.Sprintf("mykey.py.bak-%s", time.Now().Format("20060102-150405")))
+		bak := filepath.Join(gaRoot, fmt.Sprintf("mykey.py.bak-%s", time.Now().Format("20060102-150405-000000000")))
 		if err := writeFileAtomic(bak, existing, 0600); err != nil {
 			return nil, err
 		}
 		res["backup_path"] = bak
 	}
+	if err := pruneMyKeyBackups(gaRoot, myKeyBackupLimit); err != nil {
+		return nil, err
+	}
 	if err := writeFileAtomic(active, []byte(text), 0600); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+func pruneMyKeyBackups(gaRoot string, keep int) error {
+	backups, err := filepath.Glob(filepath.Join(gaRoot, "mykey.py.bak-*"))
+	if err != nil {
+		return err
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(backups)))
+	if keep < 0 {
+		keep = 0
+	}
+	for _, backup := range backups[min(keep, len(backups)):] {
+		if err := os.Remove(backup); err != nil {
+			return fmt.Errorf("remove old mykey backup %s: %w", filepath.Base(backup), err)
+		}
+	}
+	return nil
 }

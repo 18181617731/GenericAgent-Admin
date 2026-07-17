@@ -33,3 +33,11 @@ test('product usability styles preserve keyboard focus, touch targets, and reduc
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*animation-duration\s*:\s*\.001ms/i)
   assert.match(css, /html\[data-theme="dark"\]\s+\.ga-message-banner\.is-error/i)
 })
+
+test('git sync logs stay bounded and scrollable', () => {
+  const logRule = ruleBodies('.mini-log')[0]
+  assert.match(logRule, /max-height\s*:\s*280px/i)
+  assert.match(logRule, /overflow\s*:\s*auto/i)
+  assert.match(logRule, /white-space\s*:\s*pre-wrap/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*\.mini-log\s*\{[^}]*max-height\s*:\s*220px/i)
+})
