@@ -66,6 +66,7 @@ var (
 	updateHTTPClient     = &http.Client{Transport: updateHTTPTransport(updateResponseHeaderTimeout, true)}
 	downloadHTTPClient   = &http.Client{Transport: updateHTTPTransport(downloadResponseHeaderTimeout, true)}
 	downloadRetryDelay   = 500 * time.Millisecond
+	releaseDirectTimeout = 35 * time.Second
 	updateMirrorPrefixes = []string{
 		"https://gh-proxy.com/",
 		"https://ghfast.top/",
@@ -901,14 +902,20 @@ func downloadReleaseAsset(ctx context.Context, rawURL, dest string, maxBytes int
 	errorsBySource := make([]string, 0, len(candidates))
 	for i, candidate := range candidates {
 		attempts := downloadMaxAttempts
+		attemptCtx := ctx
+		cancelAttempt := func() {}
 		if i == 0 && len(candidates) > 1 {
 			attempts = 1
+			if releaseDirectTimeout > 0 {
+				attemptCtx, cancelAttempt = context.WithTimeout(ctx, releaseDirectTimeout)
+			}
 		}
-		if err := downloadWithAttempts(ctx, candidate.URL, dest, maxBytes, attempts); err == nil {
+		err := downloadWithAttempts(attemptCtx, candidate.URL, dest, maxBytes, attempts)
+		cancelAttempt()
+		if err == nil {
 			return candidate.Label, nil
-		} else {
-			errorsBySource = append(errorsBySource, candidate.Label+": "+err.Error())
 		}
+		errorsBySource = append(errorsBySource, candidate.Label+": "+err.Error())
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}

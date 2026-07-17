@@ -930,6 +930,45 @@ func TestDownloadReleaseAssetFallsBackToMirror(t *testing.T) {
 	}
 }
 
+func TestDownloadReleaseAssetTimesOutDirectAttemptWithoutCancelingMirror(t *testing.T) {
+	oldClient := downloadHTTPClient
+	oldDelay := downloadRetryDelay
+	oldMirrors := updateMirrorPrefixes
+	oldTimeout := releaseDirectTimeout
+	defer func() {
+		downloadHTTPClient = oldClient
+		downloadRetryDelay = oldDelay
+		updateMirrorPrefixes = oldMirrors
+		releaseDirectTimeout = oldTimeout
+	}()
+	t.Setenv("GA_ADMIN_UPDATE_MIRRORS", "")
+	t.Setenv("GA_ADMIN_UPDATE_DISABLE_MIRRORS", "false")
+	updateMirrorPrefixes = []string{"https://mirror.test/"}
+	downloadRetryDelay = 0
+	releaseDirectTimeout = 15 * time.Millisecond
+	downloadHTTPClient = &http.Client{Transport: versionRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Hostname() == "github.com" {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		body := "mirror after timeout"
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), ContentLength: int64(len(body)), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+
+	source, err := downloadReleaseAsset(context.Background(), "https://github.com/example/admin/releases/download/v1.2.3/asset.zip", dest, maxUpdatePackageBytes)
+	if err != nil {
+		t.Fatalf("downloadReleaseAsset after direct timeout: %v", err)
+	}
+	if source != "镜像 mirror.test" {
+		t.Fatalf("source=%q", source)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "mirror after timeout" {
+		t.Fatalf("downloaded data=%q err=%v", data, err)
+	}
+}
+
 func TestUpdateMirrorPrefixRequiresHTTPSOrLoopbackHTTP(t *testing.T) {
 	for _, prefix := range []string{"https://mirror.example/", "http://127.0.0.1:8080/", "http://localhost:8080/"} {
 		if _, ok := validUpdateMirrorPrefix(prefix); !ok {
