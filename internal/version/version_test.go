@@ -315,6 +315,27 @@ func TestReleaseAssetContract(t *testing.T) {
 	}
 }
 
+func TestReleaseAssetDigestAvoidsChecksumDownload(t *testing.T) {
+	data := []byte("verified release")
+	sum := sha256.Sum256(data)
+	digest := fmt.Sprintf("%x", sum)
+	asset := &Asset{Digest: "sha256:" + digest}
+	got, ok := releaseAssetSHA256(asset)
+	if !ok || got != digest {
+		t.Fatalf("release digest=(%q,%v) want (%q,true)", got, ok, digest)
+	}
+	path := filepath.Join(t.TempDir(), "release.zip")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySHA256Value(path, got); err != nil {
+		t.Fatalf("verify release digest: %v", err)
+	}
+	if _, ok := releaseAssetSHA256(&Asset{Digest: "sha256:not-hex"}); ok {
+		t.Fatal("malformed release digest was accepted")
+	}
+}
+
 func TestCurrentIncludesBuildDate(t *testing.T) {
 	oldVersion, oldCommit, oldDate := Version, Commit, Date
 	defer func() { Version, Commit, Date = oldVersion, oldCommit, oldDate }()
@@ -611,6 +632,19 @@ func TestStartApplyLatestReportsInitialStatusWriteError(t *testing.T) {
 	}
 }
 
+func TestFinishApplyStatusDoesNotReportSuccessBeforeRestart(t *testing.T) {
+	st := UpdateStatus{ID: "restart-pending", Running: true, Stage: "preparing", Progress: 85}
+	got := finishApplyStatus(st, ApplyResult{
+		OK: true, Message: "升级包已就绪，正在重启服务", Script: "apply-update.cmd", Restarting: true,
+	})
+	if !got.Running || got.Stage != "restarting" || got.Progress != 95 {
+		t.Fatalf("restart was reported as terminal success: %+v", got)
+	}
+	if !got.EndedAt.IsZero() || got.Script != "apply-update.cmd" {
+		t.Fatalf("restart-pending status lost metadata: %+v", got)
+	}
+}
+
 func TestCurrentUpdateStatusReportsCorruptStatusFile(t *testing.T) {
 	oldStatus := statusPathOverride
 	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
@@ -764,10 +798,12 @@ func TestFetchLatestTimesOutWaitingForResponseHeaders(t *testing.T) {
 }
 
 func TestDownloadTimesOutWaitingForResponseHeadersAndLeavesNoFile(t *testing.T) {
-	oldClient := updateHTTPClient
-	defer func() { updateHTTPClient = oldClient }()
+	oldClient := downloadHTTPClient
+	oldDelay := downloadRetryDelay
+	defer func() { downloadHTTPClient = oldClient; downloadRetryDelay = oldDelay }()
 
-	updateHTTPClient = &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 25 * time.Millisecond}}
+	downloadHTTPClient = &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 25 * time.Millisecond}}
+	downloadRetryDelay = 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write([]byte("ok"))
@@ -782,6 +818,50 @@ func TestDownloadTimesOutWaitingForResponseHeadersAndLeavesNoFile(t *testing.T) 
 	}
 	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("timed-out download should not create dest, stat err=%v", statErr)
+	}
+}
+
+func TestDownloadRetriesTransientResponses(t *testing.T) {
+	oldClient := downloadHTTPClient
+	oldDelay := downloadRetryDelay
+	defer func() { downloadHTTPClient = oldClient; downloadRetryDelay = oldDelay }()
+
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts < downloadMaxAttempts {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("release asset"))
+	}))
+	defer srv.Close()
+	downloadHTTPClient = srv.Client()
+	downloadRetryDelay = 0
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+
+	if err := download(context.Background(), srv.URL, dest, maxUpdatePackageBytes); err != nil {
+		t.Fatalf("download after retry: %v", err)
+	}
+	if attempts != downloadMaxAttempts {
+		t.Fatalf("download attempts=%d want %d", attempts, downloadMaxAttempts)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "release asset" {
+		t.Fatalf("downloaded data=%q err=%v", data, err)
+	}
+}
+
+func TestDownloadTransportAllowsSlowReleaseHeaders(t *testing.T) {
+	transport, ok := updateHTTPTransport(downloadResponseHeaderTimeout, true).(*http.Transport)
+	if !ok {
+		t.Fatal("download transport is not *http.Transport")
+	}
+	if transport.ResponseHeaderTimeout != 90*time.Second {
+		t.Fatalf("download response header timeout=%s", transport.ResponseHeaderTimeout)
+	}
+	if !transport.ForceAttemptHTTP2 {
+		t.Fatal("release downloads must retain HTTP/2 for the configured proxy path")
 	}
 }
 
@@ -968,8 +1048,53 @@ func TestCurrentUpdateStatusNormalizesRestartingAfterRelaunch(t *testing.T) {
 	if got.Error != "" || !strings.Contains(got.Message, "v9.9.9") {
 		t.Fatalf("normalized success status = %+v", got)
 	}
+	if got.AppliedVersion != "v9.9.9" {
+		t.Fatalf("applied version = %q, want v9.9.9", got.AppliedVersion)
+	}
 	if got.EndedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Fatalf("normalized timestamps missing: %+v", got)
+	}
+	var persisted UpdateStatus
+	persistedData, err := os.ReadFile(statusPathOverride)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(persistedData, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Stage != "done" || persisted.AppliedVersion != "v9.9.9" {
+		t.Fatalf("verified status was not persisted: %+v", persisted)
+	}
+}
+
+func TestVerifiedUpdateHistorySurvivesLaterLocalRebuild(t *testing.T) {
+	oldStatus := statusPathOverride
+	oldVersion := Version
+	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
+	Version = "v9.9.9"
+	defer func() { statusPathOverride = oldStatus; Version = oldVersion }()
+
+	st := UpdateStatus{
+		ID: "persistent-success", PID: os.Getpid() + 1, Running: true,
+		Stage: "restarting", Progress: 95,
+		Check: &CheckResult{Latest: &Release{TagName: "v9.9.9"}},
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPathOverride, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	first := CurrentUpdateStatus()
+	if first.Stage != "done" || first.AppliedVersion != "v9.9.9" {
+		t.Fatalf("first verification = %+v", first)
+	}
+	Version = "v1.0.2"
+	second := CurrentUpdateStatus()
+	if second.Stage != "done" || second.AppliedVersion != "v9.9.9" || second.Error != "" {
+		t.Fatalf("later local rebuild rewrote update history: %+v", second)
 	}
 }
 

@@ -166,7 +166,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/setup/deps/install", Level: "dangerous", Action: "install_dependencies", Reason: "executes pip install in the configured GA root and streams process output"},
 	{Path: "/api/setup/smoke", Level: "dangerous", Action: "run_setup_smoke", Reason: "executes Python in the configured GA root to verify bootstrap readiness"},
 	{Path: "/api/setup/complete", Level: "reversible", Action: "complete_bootstrap", Reason: "marks first-run bootstrap complete and persists GA root/Python settings"},
-	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_pull", Reason: "executes git pull --ff-only in GA root"},
+	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_sync", Reason: "runs daily_git_pull_merge_push to merge, commit, and push the GA repository"},
 	{Path: "/api/version/update", Level: "dangerous", Action: "self_update", Reason: "downloads and applies Admin-Go release"},
 	{Path: "/api/services/start", Level: "dangerous", Action: "start_process", Reason: "starts GA Python service process"},
 	{Path: "/api/services/stop", Level: "dangerous", Action: "stop_process", Reason: "stops a managed GA service process"},

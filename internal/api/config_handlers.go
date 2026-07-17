@@ -418,9 +418,14 @@ func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}
 	commit, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
 	status, _ := runGitCommand(ctx, abs, "status", "--short")
 	upstream, _ := runGitCommand(ctx, abs, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	expectedOrigin := ""
+	if strings.TrimSpace(branch) != "" {
+		expectedOrigin = "origin/" + strings.TrimSpace(branch)
+	}
+	trackingMatchesOrigin := strings.TrimSpace(upstream) == expectedOrigin && expectedOrigin != ""
 	ahead := 0
 	behind := 0
-	if strings.TrimSpace(upstream) != "" {
+	if trackingMatchesOrigin {
 		aheadBehind, err := runGitCommand(ctx, abs, "rev-list", "--left-right", "--count", "HEAD...@{u}")
 		if err != nil {
 			return nil, err
@@ -438,10 +443,18 @@ func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}
 			return nil, fmt.Errorf("invalid git behind count %q: %w", parts[1], err)
 		}
 	}
+	dirty := strings.TrimSpace(status) != ""
+	conflicts := gitStatusConflict(status)
+	tracking := strings.TrimSpace(upstream)
+	remoteLatest := trackingMatchesOrigin && behind == 0
+	synchronized := remoteLatest && ahead == 0 && !dirty && !conflicts
 	return map[string]interface{}{
 		"ok": true, "root": abs, "branch": strings.TrimSpace(branch), "commit": strings.TrimSpace(commit),
-		"upstream": strings.TrimSpace(upstream), "ahead": ahead, "behind": behind,
-		"latest": behind == 0, "dirty": strings.TrimSpace(status) != "", "status": status,
+		"upstream": tracking, "ahead": ahead, "behind": behind,
+		"expected_origin": expectedOrigin, "tracking_matches_origin": trackingMatchesOrigin,
+		"latest": remoteLatest, "remote_latest": remoteLatest, "synchronized": synchronized,
+		"dirty": dirty, "conflicts": conflicts, "changed_files": gitChangedFileCount(status), "status": status,
+		"strategy": gaGitSyncStrategy, "strategy_available": gaGitSyncAvailable(abs),
 	}, nil
 }
 
@@ -474,7 +487,7 @@ func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
 	var fetchOut string
 	var fetchErr error
 	if remote {
-		fetchOut, fetchErr = runGitCommand(ctx, abs, "fetch", "--all", "--prune")
+		fetchOut, fetchErr = runGitCommand(ctx, abs, "fetch", "origin", "--prune")
 	}
 	st, err := gaGitStatusForRoot(ctx, abs)
 	if err != nil {
@@ -507,28 +520,42 @@ func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "GA root is not a git repository")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	before, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
-	branch, _ := runGitCommand(ctx, abs, "branch", "--show-current")
-	statusBefore, _ := runGitCommand(ctx, abs, "status", "--short")
-	fetchOut, err := runGitCommand(ctx, abs, "fetch", "--all", "--prune")
+	beforeStatus, err := gaGitStatusForRoot(ctx, abs)
 	if err != nil {
-		bad(w, 500, strings.TrimSpace(fetchOut+"\n"+err.Error()))
+		bad(w, 400, err.Error())
 		return
 	}
-	pullOut, err := runGitCommand(ctx, abs, "pull", "--ff-only")
-	if err != nil {
-		bad(w, 500, strings.TrimSpace(pullOut+"\n"+err.Error()))
+	if beforeStatus["conflicts"] == true {
+		bad(w, 409, "GA 仓库存在未解决冲突，请人工处理后再同步")
 		return
 	}
-	after, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
-	statusAfter, _ := runGitCommand(ctx, abs, "status", "--short")
-	writeJSON(w, map[string]interface{}{
-		"ok": true, "root": abs, "branch": branch, "before": before, "after": after,
-		"changed": before != after, "status_before": statusBefore, "status_after": statusAfter,
-		"fetch": fetchOut, "pull": pullOut,
-	})
+	if beforeStatus["tracking_matches_origin"] != true {
+		bad(w, 409, fmt.Sprintf("当前分支必须跟踪 %s 后才能同步", beforeStatus["expected_origin"]))
+		return
+	}
+	if beforeStatus["strategy_available"] != true {
+		bad(w, 400, "GA 仓库缺少 sche_tasks/git_autosync.py，无法执行 daily_git_pull_merge_push")
+		return
+	}
+	python := resolvePythonForRoot(abs, s.CfgStore.Cfg.EffectivePython)
+	syncOut, err := runGAAutoSyncFunc(ctx, python, gaGitSyncScript(abs), abs)
+	if err != nil {
+		bad(w, 500, strings.TrimSpace(syncOut+"\n"+err.Error()))
+		return
+	}
+	afterStatus, err := gaGitStatusForRoot(ctx, abs)
+	if err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	afterStatus["before"] = beforeStatus["commit"]
+	afterStatus["after"] = afterStatus["commit"]
+	afterStatus["changed"] = beforeStatus["commit"] != afterStatus["commit"]
+	afterStatus["sync_output"] = syncOut
+	afterStatus["remote_checked"] = true
+	writeJSON(w, afterStatus)
 }
 
 func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {

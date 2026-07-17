@@ -13,6 +13,7 @@ tmp/
 temp_run_logs/
 /temp/e2e-model-name/
 /output/playwright/
+/output/update-status-fixture/
 *.log
 __pycache__/
 *.pyc

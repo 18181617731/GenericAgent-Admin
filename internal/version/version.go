@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -54,20 +55,30 @@ func SetRepoURL(url string) {
 	repoLatestURL = url
 }
 
-const updateResponseHeaderTimeout = 15 * time.Second
+const (
+	updateResponseHeaderTimeout   = 15 * time.Second
+	downloadResponseHeaderTimeout = 90 * time.Second
+	downloadMaxAttempts           = 3
+)
 
-var updateHTTPClient = &http.Client{Transport: updateHTTPTransport()}
+var (
+	updateHTTPClient   = &http.Client{Transport: updateHTTPTransport(updateResponseHeaderTimeout, true)}
+	downloadHTTPClient = &http.Client{Transport: updateHTTPTransport(downloadResponseHeaderTimeout, true)}
+	downloadRetryDelay = 500 * time.Millisecond
+)
 
-func updateHTTPTransport() http.RoundTripper {
+func updateHTTPTransport(headerTimeout time.Duration, allowHTTP2 bool) http.RoundTripper {
 	tr, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		return &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
-			ResponseHeaderTimeout: updateResponseHeaderTimeout,
+			ResponseHeaderTimeout: headerTimeout,
+			ForceAttemptHTTP2:     allowHTTP2,
 		}
 	}
 	clone := tr.Clone()
-	clone.ResponseHeaderTimeout = updateResponseHeaderTimeout
+	clone.ResponseHeaderTimeout = headerTimeout
+	clone.ForceAttemptHTTP2 = allowHTTP2
 	return clone
 }
 
@@ -95,6 +106,7 @@ type Asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
+	Digest             string `json:"digest,omitempty"`
 }
 
 type Release struct {
@@ -118,24 +130,26 @@ type CheckResult struct {
 }
 
 type ApplyResult struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
-	Script  string `json:"script,omitempty"`
+	OK         bool   `json:"ok"`
+	Message    string `json:"message"`
+	Script     string `json:"script,omitempty"`
+	Restarting bool   `json:"restarting,omitempty"`
 }
 
 type UpdateStatus struct {
-	ID        string       `json:"id,omitempty"`
-	PID       int          `json:"pid,omitempty"`
-	Running   bool         `json:"running"`
-	Stage     string       `json:"stage"`
-	Progress  int          `json:"progress"`
-	Message   string       `json:"message"`
-	Error     string       `json:"error,omitempty"`
-	Script    string       `json:"script,omitempty"`
-	Check     *CheckResult `json:"check,omitempty"`
-	StartedAt time.Time    `json:"started_at,omitempty"`
-	UpdatedAt time.Time    `json:"updated_at,omitempty"`
-	EndedAt   time.Time    `json:"ended_at,omitempty"`
+	ID             string       `json:"id,omitempty"`
+	PID            int          `json:"pid,omitempty"`
+	Running        bool         `json:"running"`
+	Stage          string       `json:"stage"`
+	Progress       int          `json:"progress"`
+	Message        string       `json:"message"`
+	Error          string       `json:"error,omitempty"`
+	Script         string       `json:"script,omitempty"`
+	AppliedVersion string       `json:"applied_version,omitempty"`
+	Check          *CheckResult `json:"check,omitempty"`
+	StartedAt      time.Time    `json:"started_at,omitempty"`
+	UpdatedAt      time.Time    `json:"updated_at,omitempty"`
+	EndedAt        time.Time    `json:"ended_at,omitempty"`
 }
 
 var (
@@ -158,7 +172,7 @@ func statusPath() string {
 func CurrentUpdateStatus() UpdateStatus {
 	updateMu.Lock()
 	defer updateMu.Unlock()
-	return readStatusLocked()
+	return currentStatusLocked()
 }
 
 func readStatusLocked() UpdateStatus {
@@ -179,12 +193,32 @@ func readStatusLocked() UpdateStatus {
 			EndedAt:   now,
 		}
 	}
-	return normalizeStatusAfterRestart(st)
+	return st
+}
+
+func currentStatusLocked() UpdateStatus {
+	stored := readStatusLocked()
+	normalized := normalizeStatusAfterRestart(stored)
+	if statusNeedsPersistence(stored, normalized) {
+		_ = writeStatusLocked(normalized)
+	}
+	return normalized
+}
+
+func statusNeedsPersistence(stored, normalized UpdateStatus) bool {
+	if normalized.Running || (normalized.Stage != "done" && normalized.Stage != "error") {
+		return false
+	}
+	return stored.Running != normalized.Running ||
+		stored.Stage != normalized.Stage ||
+		stored.Message != normalized.Message ||
+		stored.Error != normalized.Error ||
+		stored.AppliedVersion != normalized.AppliedVersion
 }
 
 func normalizeStatusAfterRestart(st UpdateStatus) UpdateStatus {
 	if !st.Running {
-		if st.Stage == "done" && st.Check != nil && st.Check.Latest != nil {
+		if st.Stage == "done" && st.AppliedVersion == "" && st.Check != nil && st.Check.Latest != nil {
 			return verifyAppliedVersion(st)
 		}
 		return st
@@ -212,6 +246,7 @@ func verifyAppliedVersion(st UpdateStatus) UpdateStatus {
 		st.Stage = "done"
 		st.Message = fmt.Sprintf("升级成功，当前版本 %s", current)
 		st.Error = ""
+		st.AppliedVersion = current
 	} else {
 		st.Stage = "error"
 		if target == "" {
@@ -229,6 +264,10 @@ func verifyAppliedVersion(st UpdateStatus) UpdateStatus {
 func writeStatus(st UpdateStatus) error {
 	updateMu.Lock()
 	defer updateMu.Unlock()
+	return writeStatusLocked(st)
+}
+
+func writeStatusLocked(st UpdateStatus) error {
 	st.UpdatedAt = time.Now()
 	if st.ID == "" {
 		st.ID = fmt.Sprintf("update-%d", st.UpdatedAt.Unix())
@@ -275,7 +314,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 
 func StartApplyLatest() (UpdateStatus, error) {
 	updateMu.Lock()
-	cur := readStatusLocked()
+	cur := currentStatusLocked()
 	updateMu.Unlock()
 	if cur.Running {
 		return cur, nil
@@ -317,15 +356,27 @@ func StartApplyLatest() (UpdateStatus, error) {
 			_ = writeStatus(st)
 			return
 		}
-		st.Running = false
-		st.Stage = "done"
-		st.Progress = 100
-		st.Message = res.Message
-		st.Script = res.Script
-		st.EndedAt = time.Now()
+		st = finishApplyStatus(st, res)
 		_ = writeStatus(st)
 	}()
 	return st, nil
+}
+
+func finishApplyStatus(st UpdateStatus, res ApplyResult) UpdateStatus {
+	st.Script = res.Script
+	st.Message = res.Message
+	if res.Restarting {
+		st.Running = true
+		st.Stage = "restarting"
+		st.Progress = 95
+		st.EndedAt = time.Time{}
+		return st
+	}
+	st.Running = false
+	st.Stage = "done"
+	st.Progress = 100
+	st.EndedAt = time.Now()
+	return st
 }
 
 func Current() BuildInfo {
@@ -468,8 +519,12 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if !check.Update {
 		return ApplyResult{OK: true, Message: "already up to date"}, nil
 	}
-	if check.Asset == nil || check.Checksum == nil {
-		return ApplyResult{}, errors.New("missing release asset or checksum for current platform")
+	if check.Asset == nil {
+		return ApplyResult{}, errors.New("missing release asset for current platform")
+	}
+	assetDigest, hasAssetDigest := releaseAssetSHA256(check.Asset)
+	if !hasAssetDigest && check.Checksum == nil {
+		return ApplyResult{}, errors.New("missing release asset digest or checksum for current platform")
 	}
 	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
 		return ApplyResult{}, errors.New("one-click self update is only implemented for Windows and Linux packages")
@@ -483,18 +538,27 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, err
 	}
 	zipPath := filepath.Join(work, check.Asset.Name)
-	sumPath := filepath.Join(work, check.Checksum.Name)
 	emit("downloading", "正在下载升级包", 25, &check)
 	if err := download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes); err != nil {
 		return ApplyResult{}, err
 	}
-	emit("downloading_checksum", "正在下载校验文件", 55, &check)
-	if err := download(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes); err != nil {
-		return ApplyResult{}, err
+	sumPath := ""
+	if !hasAssetDigest {
+		sumPath = filepath.Join(work, check.Checksum.Name)
+		emit("downloading_checksum", "正在下载校验文件", 55, &check)
+		if err := download(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes); err != nil {
+			return ApplyResult{}, err
+		}
 	}
 	emit("verifying", "正在校验 SHA256", 65, &check)
-	if err := verifySHA256(zipPath, sumPath); err != nil {
-		return ApplyResult{}, err
+	if hasAssetDigest {
+		if err := verifySHA256Value(zipPath, assetDigest); err != nil {
+			return ApplyResult{}, err
+		}
+	} else {
+		if err := verifySHA256(zipPath, sumPath); err != nil {
+			return ApplyResult{}, err
+		}
 	}
 	dir := filepath.Join(work, "unzipped")
 	emit("extracting", "正在解压升级包", 75, &check)
@@ -538,7 +602,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, fmt.Errorf("启动升级脚本失败: %w", err)
 	}
 	go func() { time.Sleep(500 * time.Millisecond); exitProcess(0) }()
-	return ApplyResult{OK: true, Message: "update downloaded; restarting", Script: script}, nil
+	return ApplyResult{OK: true, Message: "升级包已就绪，正在重启服务", Script: script, Restarting: true}, nil
 }
 
 func updateScriptCommand(goos, script string) *exec.Cmd {
@@ -767,14 +831,35 @@ func splitVer(s string) [3]int {
 	return out
 }
 
-func download(ctx context.Context, url, dest string, maxBytes int64) (err error) {
+func download(ctx context.Context, url, dest string, maxBytes int64) error {
+	var lastErr error
+	attempts := 0
+	for attempt := 1; attempt <= downloadMaxAttempts; attempt++ {
+		attempts = attempt
+		retryable, err := downloadOnce(ctx, url, dest, maxBytes)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !retryable || attempt == downloadMaxAttempts {
+			break
+		}
+		if err := waitDownloadRetry(ctx, downloadRetryDelay*time.Duration(attempt)); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("下载失败（已尝试 %d 次）: %w", attempts, lastErr)
+}
+
+func downloadOnce(ctx context.Context, url, dest string, maxBytes int64) (retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("create download request: %w", err)
+		return false, fmt.Errorf("create download request: %w", err)
 	}
-	resp, err := updateHTTPClient.Do(req)
+	req.Header.Set("User-Agent", "ga-admin-updater")
+	resp, err := downloadHTTPClient.Do(req)
 	if err != nil {
-		return err
+		return retryableDownloadError(ctx, err), err
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
@@ -782,19 +867,46 @@ func download(ctx context.Context, url, dest string, maxBytes int64) (err error)
 		}
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download failed: %s", resp.Status)
+		return retryableDownloadStatus(resp.StatusCode), fmt.Errorf("download failed: %s", resp.Status)
 	}
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
-		return fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
+		return false, fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
 	}
 	r := resp.Body
 	if maxBytes > 0 {
 		r = http.MaxBytesReader(nil, resp.Body, maxBytes)
 	}
 	if err := writeStreamAtomic(dest, r, 0600); err != nil {
-		return fmt.Errorf("write download file: %w", err)
+		return retryableDownloadError(ctx, err), fmt.Errorf("write download file: %w", err)
 	}
-	return nil
+	return false, nil
+}
+
+func retryableDownloadStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooEarly ||
+		status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+func retryableDownloadError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func waitDownloadRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func writeStreamAtomic(path string, r io.Reader, perm os.FileMode) (err error) {
@@ -840,6 +952,29 @@ func verifySHA256(file, sumFile string) error {
 		return errors.New("empty sha256 file")
 	}
 	want := strings.ToLower(fields[0])
+	return verifySHA256Value(file, want)
+}
+
+func releaseAssetSHA256(asset *Asset) (string, bool) {
+	if asset == nil {
+		return "", false
+	}
+	digest := strings.TrimSpace(strings.ToLower(asset.Digest))
+	const prefix = "sha256:"
+	if !strings.HasPrefix(digest, prefix) {
+		return "", false
+	}
+	digest = strings.TrimPrefix(digest, prefix)
+	decoded, err := hex.DecodeString(digest)
+	return digest, err == nil && len(decoded) == sha256.Size
+}
+
+func verifySHA256Value(file, want string) error {
+	want = strings.TrimSpace(strings.ToLower(want))
+	decoded, err := hex.DecodeString(want)
+	if err != nil || len(decoded) != sha256.Size {
+		return fmt.Errorf("invalid sha256 digest: %q", want)
+	}
 	f, err := os.Open(file)
 	if err != nil {
 		return err

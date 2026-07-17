@@ -26,16 +26,28 @@ export const parseApiResponse = async (res, url = '') => {
   return body
 }
 
+export const readableApiError = (error, url = '') => {
+  if (error?.name === 'AbortError') return error
+  const message = String(error?.message || error || '')
+  if (error instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(message)) {
+    return new Error(`无法连接 GA Admin 服务，请确认服务仍在运行后重试${url ? `（${url}）` : ''}`)
+  }
+  return error instanceof Error ? error : new Error(message || '请求失败')
+}
+
 export const api = async (url, options = {}) => {
   const { dangerous = false, headers = {}, ...rest } = options
   const req = { ...rest, headers: apiHeaders({ dangerous, headers, body: rest.body }) }
-  return parseApiResponse(await fetch(url, req), url)
+  try { return await parseApiResponse(await fetch(url, req), url) }
+  catch (error) { throw readableApiError(error, url) }
 }
 
 export const apiStream = async (url, options = {}) => {
   const { dangerous = false, headers = {}, ...rest } = options
   const req = { ...rest, headers: apiHeaders({ dangerous, headers, body: rest.body }) }
-  const res = await fetch(url, req)
-  if (!res.ok) await parseApiResponse(res, url)
-  return res
+  try {
+    const res = await fetch(url, req)
+    if (!res.ok) await parseApiResponse(res, url)
+    return res
+  } catch (error) { throw readableApiError(error, url) }
 }

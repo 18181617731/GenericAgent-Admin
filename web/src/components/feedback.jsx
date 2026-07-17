@@ -1,4 +1,5 @@
-import { Component } from 'react'
+import { Component, useEffect } from 'react'
+import { X } from 'lucide-react'
 
 // 统一的加载/错误反馈组件：路由级 Suspense fallback、行内 spinner、骨架屏、错误边界。
 // 设计：沿用暖白磨砂 + 绿色强调色，尊重 prefers-reduced-motion。
@@ -30,6 +31,28 @@ export function Skeleton({ lines = 3, className = '' }) {
       ))}
     </div>
   )
+}
+
+export const feedbackTone = message => {
+  const text = String(message || '').toLowerCase()
+  if (/失败|错误|无效|不可用|缺少|超时|拒绝|无法|必须|不能|不存在|failed|error|invalid|required|timeout|denied|cannot|unable|must be|does not|not found/.test(text)) return 'error'
+  if (/正在|启动中|升级中|读取中|保存中|loading|starting|updating|saving/.test(text)) return 'progress'
+  return 'success'
+}
+
+export function GlobalFeedback({ message, onDismiss, placement = 'bottom', successTimeout = 4500 }) {
+  const tone = feedbackTone(message)
+  useEffect(() => {
+    if (!message || tone !== 'success' || !successTimeout) return undefined
+    const timer = window.setTimeout(onDismiss, successTimeout)
+    return () => window.clearTimeout(timer)
+  }, [message, onDismiss, successTimeout, tone])
+  if (!message) return null
+  return <div className={`global-feedback global-feedback-${tone} is-${placement}`} role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'}>
+    <span className="global-feedback-mark" aria-hidden="true"/>
+    <p>{message}</p>
+    <button type="button" onClick={onDismiss} aria-label="关闭提示"><X size={16}/></button>
+  </div>
 }
 
 

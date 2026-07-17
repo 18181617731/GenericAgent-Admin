@@ -7,6 +7,8 @@ import { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
+import { SettingsPage } from './pages/SettingsPage.jsx'
+import { GlobalFeedback } from './components/feedback.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -574,5 +576,47 @@ describe('mobile file workflow', () => {
     rerender(<FilesPage {...props} filePath="memory/notes.md" loadedFilePath="memory/notes.md" fileContent="hello" loadedFileContent="hello"/>)
     expect(screen.getByRole('tab', { name: '预览' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('textbox', { name: '文件内容编辑器' }).value).toBe('hello')
+  })
+})
+
+describe('configuration editing experience', () => {
+  const settingsT = {
+    busy: '执行中', root: 'GenericAgent 根目录',
+    nav: { settings: '配置' },
+    fields: { pythonPath: 'Python 解释器', pythonAuto: '自动选择', chatDataDir: '聊天目录', chatDataAuto: '自动目录' },
+  }
+
+  test('should expose one save action and a reset action when settings are dirty', () => {
+    const onSave = vi.fn()
+    const onReset = vi.fn()
+    render(<SettingsPage t={settingsT} root="D:/GA" setRoot={vi.fn()} config={{ proxy_mode: 'off', slash_commands: [] }} setConfig={vi.fn()} dirty busy={false} onSave={onSave} onReset={onReset}/>)
+
+    expect(screen.getByText('有未保存更改')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '放弃更改' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存全部配置' }))
+    expect(onReset).toHaveBeenCalledTimes(1)
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByRole('button', { name: /保存/ })).toHaveLength(1)
+  })
+
+  test('should keep save and reset disabled when settings match persisted configuration', () => {
+    render(<SettingsPage t={settingsT} root="D:/GA" setRoot={vi.fn()} config={{ proxy_mode: 'off', slash_commands: [] }} setConfig={vi.fn()} dirty={false} busy={false} onSave={vi.fn()} onReset={vi.fn()}/>)
+    expect(screen.getByRole('button', { name: '放弃更改' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: '保存全部配置' }).disabled).toBe(true)
+  })
+})
+
+describe('global feedback experience', () => {
+  test('should keep errors assertive and dismissible', () => {
+    const onDismiss = vi.fn()
+    render(<GlobalFeedback message="保存失败：permission denied" onDismiss={onDismiss} successTimeout={0}/>)
+    expect(screen.getByRole('alert')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+  })
+
+  test('should expose successful feedback as a polite status', () => {
+    render(<GlobalFeedback message="配置已保存" onDismiss={vi.fn()} successTimeout={0}/>)
+    expect(screen.getByRole('status')).toBeTruthy()
   })
 })
