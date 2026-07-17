@@ -219,7 +219,7 @@ export const mergePersistedModelOrder = (draftProfiles = [], persistedProfiles =
 
   persistedProfiles.forEach((profile, profileIndex) => {
     profileModelConfigs(profile).forEach(config => {
-      const key = `${profileIndex}\u0000${modelIdOf(config)}`
+      const key = `${profileIndex}\0${modelIdOf(config)}`
       const orders = persistedOrders.get(key) || []
       orders.push(Number.isInteger(config.sort_order) ? config.sort_order : persistedCount)
       persistedOrders.set(key, orders)
@@ -232,7 +232,7 @@ export const mergePersistedModelOrder = (draftProfiles = [], persistedProfiles =
   return draftProfiles.map((profile, profileIndex) => withModelConfigs(
     profile,
     profileModelConfigs(profile).map(config => {
-      const key = `${profileIndex}\u0000${modelIdOf(config)}`
+      const key = `${profileIndex}\0${modelIdOf(config)}`
       const occurrence = consumed.get(key) || 0
       const persistedOrder = persistedOrders.get(key)?.[occurrence]
       consumed.set(key, occurrence + 1)

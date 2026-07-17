@@ -458,16 +458,45 @@ func TestSlashCommandsIncludesGAPaletteEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[string]slashCommandItem{}
+	semanticCounts := map[string]int{}
 	for _, c := range got.Commands {
 		seen[c.Cmd] = c
+		semanticKey := strings.ToLower(strings.TrimSpace(c.Key)) + "\x00" + strings.ToLower(c.Insert)
+		semanticCounts[semanticKey]++
 	}
-	if seen["/scheduler"].Source != "ga" || seen["/resume"].Source != "ga" {
-		t.Fatalf("GA palette commands missing: %#v", seen)
+	for semanticKey, count := range semanticCounts {
+		if count > 1 {
+			t.Fatalf("duplicate slash command semantics %q: count=%d commands=%#v", semanticKey, count, got.Commands)
+		}
+	}
+	if seen["/scheduler [status|run]"].Source != "admin" || seen["/resume [args]"].Source != "admin" {
+		t.Fatalf("admin command variants should win semantic duplicates: %#v", seen)
+	}
+	if _, ok := seen["/scheduler"]; ok {
+		t.Fatalf("GA scheduler duplicate should be removed: %#v", seen["/scheduler"])
+	}
+	if _, ok := seen["/resume"]; ok {
+		t.Fatalf("GA resume duplicate should be removed: %#v", seen["/resume"])
 	}
 	if seen["/goal [goal]"].Insert != "/goal " || seen["/goal [goal]"].Key != "/goal" {
 		t.Fatalf("goal metadata not normalized: %#v", seen["/goal [goal]"])
 	}
 	if _, ok := seen["/review <自然语言请求>"]; !ok {
 		t.Fatalf("admin built-in review command missing")
+	}
+	if btw, ok := seen["/btw <问题>"]; !ok || btw.Key != "/btw" || btw.Insert != "/btw " {
+		t.Fatalf("admin built-in btw command missing or malformed: %#v", btw)
+	}
+	if worldline, ok := seen["/worldline"]; !ok || worldline.Source != "admin" || worldline.Insert != "/worldline" {
+		t.Fatalf("admin built-in worldline list command missing or malformed: %#v", worldline)
+	}
+	if restore, ok := seen["/worldline restore <节点> [both|conversation|code] [at|before]"]; !ok || restore.Key != "/worldline restore" || restore.Insert != "/worldline restore " {
+		t.Fatalf("admin built-in worldline restore command missing or malformed: %#v", restore)
+	}
+	if _, ok := seen["/continue"]; !ok {
+		t.Fatalf("bare continue variant missing")
+	}
+	if _, ok := seen["/continue <编号>"]; !ok {
+		t.Fatalf("parameterized continue variant missing")
 	}
 }

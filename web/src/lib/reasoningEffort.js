@@ -17,7 +17,7 @@ export const normalizeReasoningEffort = (value) => {
 }
 
 const LABELS = {
-  off: '\u9ed8\u8ba4',
+  off: '默认',
   none: 'None',
   minimal: 'Minimal',
   low: 'Low',

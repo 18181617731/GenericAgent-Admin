@@ -21,6 +21,7 @@ var adminSlashCommands = []slashCommandItem{
 	{Cmd: "/continue <编号>", Key: "/continue", Insert: "/continue ", Desc: "恢复第 N 个官方 GA 会话，可继续对话", BuiltIn: true, Source: "admin"},
 	{Cmd: "/review <自然语言请求>", Key: "/review", Insert: "/review ", Desc: "审阅当前改动；可继续输入范围或关注点", BuiltIn: true, Source: "admin"},
 	{Cmd: "/review help", Key: "/review help", Insert: "/review help", Desc: "显示 /review 帮助，不启动审阅", BuiltIn: true, Source: "admin"},
+	{Cmd: "/btw <问题>", Key: "/btw", Insert: "/btw ", Desc: "在当前任务执行期间提问，不中断主任务", BuiltIn: true, Source: "admin"},
 	{Cmd: "/improve", Key: "/improve", Insert: "/improve", Desc: "发送记忆提炼请求（L3 skill + L1 索引）", BuiltIn: true, Source: "admin"},
 	{Cmd: "/effort", Key: "/effort", Insert: "/effort", Desc: "查看当前 reasoning effort", BuiltIn: true, Source: "admin"},
 	{Cmd: "/effort low", Key: "/effort low", Insert: "/effort low", Desc: "设置 reasoning effort 为 low", BuiltIn: true, Source: "admin"},
@@ -33,6 +34,17 @@ var adminSlashCommands = []slashCommandItem{
 	{Cmd: "/project off", Key: "/project off", Insert: "/project off", Desc: "关闭当前会话 Project Mode", BuiltIn: true, Source: "admin"},
 	{Cmd: "/workspace <路径>", Key: "/workspace", Insert: "/workspace ", Desc: "为当前会话绑定项目目录", BuiltIn: true, Source: "admin"},
 	{Cmd: "/workspace off", Key: "/workspace off", Insert: "/workspace off", Desc: "关闭当前会话 workspace", BuiltIn: true, Source: "admin"},
+	{Cmd: "/help", Key: "/help", Insert: "/help", Desc: "显示 GA Admin 命令目录", BuiltIn: true, Source: "admin"},
+	{Cmd: "/rewind [n]", Key: "/rewind", Insert: "/rewind ", Desc: "回退最近 n 个用户回合", BuiltIn: true, Source: "admin"},
+	{Cmd: "/worldline", Key: "/worldline", Insert: "/worldline", Desc: "查看当前会话的世界线节点", BuiltIn: true, Source: "admin"},
+	{Cmd: "/worldline restore <节点> [both|conversation|code] [at|before]", Key: "/worldline restore", Insert: "/worldline restore ", Desc: "恢复到世界线节点（需要危险确认）", BuiltIn: true, Source: "admin"},
+	{Cmd: "/clear", Key: "/clear", Insert: "/clear", Desc: "清空当前会话", BuiltIn: true, Source: "admin"},
+	{Cmd: "/services [status|start <name...>]", Key: "/services", Insert: "/services ", Desc: "查看或启动服务（start 需要危险确认）", BuiltIn: true, Source: "admin"},
+	{Cmd: "/scheduler [status|run]", Key: "/scheduler", Insert: "/scheduler ", Desc: "查看或启动 scheduler（run 需要危险确认）", BuiltIn: true, Source: "admin"},
+	{Cmd: "/status", Key: "/status", Insert: "/status", Desc: "显示会话、设置与服务状态", BuiltIn: true, Source: "admin"},
+	{Cmd: "/verbose [off|tools|full]", Key: "/verbose", Insert: "/verbose ", Desc: "投影工具调用审计信息", BuiltIn: true, Source: "admin"},
+	{Cmd: "/export [name.md|name.json]", Key: "/export", Insert: "/export ", Desc: "导出会话记录", BuiltIn: true, Source: "admin"},
+	{Cmd: "/resume [args]", Key: "/resume", Insert: "/resume ", Desc: "通过官方 GA worker 恢复会话", BuiltIn: true, Source: "admin"},
 }
 
 func (s *Server) slashCommands(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +71,10 @@ func mergeSlashCommands(groups ...[]slashCommandItem) []slashCommandItem {
 			if item.Insert == "" {
 				item.Insert = slashInsertFor(item.Cmd)
 			}
-			key := strings.ToLower(strings.TrimSpace(item.Cmd))
+			// Different labels can produce the same completion action. Keep the
+			// first source while preserving variants whose insertion differs; the
+			// trailing space is meaningful for parameterized commands.
+			key := strings.ToLower(strings.TrimSpace(item.Key)) + "\x00" + strings.ToLower(item.Insert)
 			if seen[key] {
 				continue
 			}

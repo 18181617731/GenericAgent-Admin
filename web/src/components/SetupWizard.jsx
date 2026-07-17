@@ -109,7 +109,7 @@ export default function SetupWizard({ initialRoot = '', onComplete }) {
   const canInstallPython = Boolean(env.can_auto_install_python)
   const pythonStatus = pythonDisplay(state?.python, pythonInfo)
   const selectedPython = pythonDisplay(state?.python, pythonInfo)
-  const gitStatus = gitInfo.version || gitInfo.path || gitInfo.error || '\u672a\u68c0\u6d4b\u5230 Git\uff0c\u5c06\u4f7f\u7528 ZIP \u5f52\u6863\u5b89\u88c5'
+  const gitStatus = gitInfo.version || gitInfo.path || gitInfo.error || '未检测到 Git，将使用 ZIP 归档安装'
   const installSourceCopy = gitOk
     ? '优先使用 Git clone；如网络或 Git 异常，将自动回退到 GitHub ZIP 归档。'
     : '未检测到 Git，将直接下载 GitHub ZIP 归档安装 GenericAgent。'

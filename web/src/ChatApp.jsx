@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -21,29 +21,38 @@ const prefersReducedMotion = () => typeof window !== 'undefined' && window.match
 const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches
 const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 560px)').matches
 
-const fmtTime = (v) => {
-  if (!v) return ''
-  try { return new Date(v * 1000).toLocaleString() } catch { return '' }
+const timestampMs = (v) => {
+  if (v instanceof Date) return v.getTime()
+  if (typeof v === 'number') return Number.isFinite(v) ? (Math.abs(v) < 1e12 ? v * 1000 : v) : NaN
+  if (typeof v === 'string') {
+    const raw = v.trim()
+    if (!raw) return NaN
+    const numeric = Number(raw)
+    if (Number.isFinite(numeric)) return Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric
+  }
+  return new Date(v).getTime()
 }
+const dateFromTimestamp = (v) => {
+  const ms = timestampMs(v)
+  return Number.isFinite(ms) ? new Date(ms) : null
+}
+const fmtTime = (v) => dateFromTimestamp(v)?.toLocaleString() || ''
 const fmtTimelineDate = (v) => {
   if (!v) return '今天'
-  try {
-    const d = new Date(v * 1000)
-    const now = new Date()
-    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-    const diff = Math.round((today - day) / 86400000)
-    if (diff === 0) return '今天'
-    if (diff === 1) return '昨天'
-    return d.toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' })
-  } catch { return '' }
+  const d = dateFromTimestamp(v)
+  if (!d) return ''
+  const now = new Date()
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const diff = Math.round((today - day) / 86400000)
+  if (diff === 0) return '今天'
+  if (diff === 1) return '昨天'
+  return d.toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' })
 }
 const timelineKey = (v) => {
   if (!v) return 'today'
-  try {
-    const d = new Date(v * 1000)
-    return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`
-  } catch { return 'unknown' }
+  const d = dateFromTimestamp(v)
+  return d ? `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}` : 'unknown'
 }
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 const shortTitle = (s) => s?.title || '新会话'
@@ -712,9 +721,9 @@ function parseSubagentOutput(raw) {
     }
     const mS = tr.match(/^<summary>([\s\S]*?)<\/summary>$/)
     if (mS) { flush(target()); target().push({ type: 'summary', text: mS[1] }); i++; continue }
-    if (/\uD83D\uDEE0/.test(tr)) {
+    if (/🛠/.test(tr)) {
       flush(target())
-      const mTool = tr.match(/[\uD83D\uDEE0]\uFE0F?\s+(\w+)\(([\s\S]+)\)\s*$/)
+      const mTool = tr.match(/[🛠]️?\s+(\w+)\(([\s\S]+)\)\s*$/)
       if (mTool) {
         let args = {}
         try { args = JSON.parse(mTool[2]) } catch (_) {}
@@ -741,7 +750,7 @@ function parseSubagentOutput(raw) {
 
 function ToolCallCollapse({ name, args }) {
   const keys = Object.keys(args)
-  const preview = keys.slice(0, 3).join(' \u00b7 ') + (keys.length > 3 ? ` +${keys.length - 3}` : '')
+  const preview = keys.slice(0, 3).join(' · ') + (keys.length > 3 ? ` +${keys.length - 3}` : '')
   const label = (
     <span className="sa-tool-collapse-label">
       <Tag color="blue" style={{ fontFamily: 'var(--mono,ui-monospace,monospace)', fontSize: 11, marginRight: 6 }}>{name}</Tag>
@@ -806,7 +815,7 @@ function SubagentOutputBlock({ text, onAskReply }) {
     const summaryText = t.children.find(s => s.type === 'summary')?.text || ''
     const toolCount = t.children.filter(s => s.type === 'tool').length
     const preview = summaryText
-      ? summaryText.slice(0, 52) + (summaryText.length > 52 ? '\u2026' : '')
+      ? summaryText.slice(0, 52) + (summaryText.length > 52 ? '…' : '')
       : toolCount > 0 ? `${toolCount} tool call${toolCount > 1 ? 's' : ''}` : ''
     const label = (
       <span className="sa-turn-label">
@@ -924,7 +933,7 @@ function UltraPlanTaskRow({ task, onAskReply }) {
       </div>
       {open && hasOutput && (
         <div className="oa-up-task-output">
-          {loading && <div className="oa-up-task-output-meta">Loading output\u2026</div>}
+          {loading && <div className="oa-up-task-output-meta">Loading output…</div>}
           {error && <div className="oa-up-task-output-error">{error}</div>}
           {!loading && !error && content && <SubagentOutputBlock text={content} onAskReply={onAskReply} />}
           {!loading && !error && !content && status === 'running' && (
@@ -953,12 +962,12 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
   return (
     <div className="oa-up-dash">
       <div className="oa-up-head">
-        <span className="oa-up-icon">{'\u26a1'}</span>
+        <span className="oa-up-icon">{'⚡'}</span>
         <span className="oa-up-title">UltraPlan</span>
         {objective && <span className="oa-up-obj">{objective}</span>}
         {complete
-          ? <span className="oa-up-badge oa-up-done">{'\u5b8c\u6210'}</span>
-          : (phases.length > 0 || recentTasks.length > 0) && <span className="oa-up-badge oa-up-run">{'\u6267\u884c\u4e2d\u2026'}</span>}
+          ? <span className="oa-up-badge oa-up-done">{'完成'}</span>
+          : (phases.length > 0 || recentTasks.length > 0) && <span className="oa-up-badge oa-up-run">{'执行中…'}</span>}
       </div>
       {!complete && current && (
         <div className="oa-up-current"><span className="oa-up-current-dot"></span>{current}</div>
@@ -980,7 +989,7 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
           {phases.map((ph, i) => (
             <div key={i} className={`oa-up-phase ${ph.status || 'running'}`}>
               <span className="oa-up-phase-icon">
-                {ph.status === 'done' ? '\u2713' : ph.status === 'fail' ? '\u2717' : '\u25cc'}
+                {ph.status === 'done' ? '✓' : ph.status === 'fail' ? '✗' : '◌'}
               </span>
               <div className="oa-up-phase-body">
                 <div className="oa-up-phase-info">
@@ -1004,11 +1013,11 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
       )}
       {resultFiles.length > 0 && (
         <div className="oa-up-files">
-          <div className="oa-up-files-head">{'\u4ea7\u51fa\u6587\u4ef6'} ({resultFiles.length})</div>
+          <div className="oa-up-files-head">{'产出文件'} ({resultFiles.length})</div>
           <div className="oa-up-files-list">
             {resultFiles.map((r, i) => (
               <div key={i} className="oa-up-file-item" onClick={() => openFile(r.file)} title={r.file}>
-                <span className="oa-up-file-icon">{'\ud83d\udcc4'}</span>
+                <span className="oa-up-file-icon">{'📄'}</span>
                 <div className="oa-up-file-body">
                   <div className="oa-up-file-desc">{r.desc}</div>
                   <div className="oa-up-file-path">{r.file}</div>
@@ -1020,7 +1029,7 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
       )}
       {events.length > 0 && (
         <details className="oa-up-events">
-          <summary>{'\u65e5\u5fd7'} ({events.length})</summary>
+          <summary>{'日志'} ({events.length})</summary>
           <div className="oa-up-events-body">
             {events.map((e, i) => (
               <div key={i} className={`oa-up-event oa-up-event-${e.tag}`}>
@@ -1072,13 +1081,13 @@ function AskUserPanel({ call, onReply }) {
   return <div className="oa-ask-panel">
     <div className="oa-ask-banner">
       <span className="oa-ask-avatar">?</span>
-      <div><b>{'\u9700\u8981\u7528\u6237\u786e\u8ba4'}</b><p>{'\u667a\u80fd\u4f53\u6b63\u5728\u7b49\u5f85\u4f60\u7684\u9009\u62e9\u6216\u8865\u5145\u4fe1\u606f'}</p></div>
+      <div><b>{'需要用户确认'}</b><p>{'智能体正在等待你的选择或补充信息'}</p></div>
     </div>
     {hasStructured ? <div className="oa-ask-body">
-      {ask.question && <div className="oa-ask-question"><span>{'\u95ee\u9898'}</span><p>{ask.question}</p></div>}
-      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{'\u5feb\u6377\u56de\u590d'}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(e)=>{e.stopPropagation(); onReply?.(x)}} title={'\u70b9\u51fb\u586b\u5165\u8f93\u5165\u6846'}>{x}</button>)}</div></div>}
-    </div> : call.args && <div className="oa-tool-args"><span>{'\ud83d\udcac question'}</span><pre>{call.args}</pre></div>}
-    {call.result && <div className="oa-tool-result oa-ask-result"><span>{'\ud83d\udce4 result'}</span><pre>{call.result}</pre></div>}
+      {ask.question && <div className="oa-ask-question"><span>{'问题'}</span><p>{ask.question}</p></div>}
+      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{'快捷回复'}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(e)=>{e.stopPropagation(); onReply?.(x)}} title={'点击填入输入框'}>{x}</button>)}</div></div>}
+    </div> : call.args && <div className="oa-tool-args"><span>{'💬 question'}</span><pre>{call.args}</pre></div>}
+    {call.result && <div className="oa-tool-result oa-ask-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
   </div>
 }
 
@@ -1088,18 +1097,18 @@ function ToolCallBlock({ call, onAskReply }) {
   const [open, setOpen] = useState(isAskUser)
   const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
   const askPayload = isAskUser ? getAskUserPayload(call) : null
-  const askSummary = askPayload?.question || '\u7b49\u5f85\u7528\u6237\u786e\u8ba4'
+  const askSummary = askPayload?.question || '等待用户确认'
   return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-      <span className="oa-tool-icon">{isAskUser ? '\u2753' : '\ud83d\udee0\ufe0f'}</span><span>{isAskUser ? 'Ask user' : 'Tool'}</span><b>{toolName}</b>
+      <span className="oa-tool-icon">{isAskUser ? '❓' : '🛠️'}</span><span>{isAskUser ? 'Ask user' : 'Tool'}</span><b>{toolName}</b>
       {isAskUser && <strong className="oa-ask-headline">{askSummary}</strong>}
       {resultStatus && <em>{resultStatus}</em>}
-      {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? `${askPayload.candidates.length} \u4e2a\u9009\u9879` : '\u7b49\u5f85\u56de\u590d'}</em>}
+      {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? `${askPayload.candidates.length} 个选项` : '等待回复'}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
     </button>
     {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} /> : <>
-      {call.args && <div className="oa-tool-args"><span>{'\ud83d\udce5 args'}</span><pre>{call.args}</pre></div>}
-      {call.result && <div className="oa-tool-result"><span>{'\ud83d\udce4 result'}</span><pre>{call.result}</pre></div>}
+      {call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>}
+      {call.result && <div className="oa-tool-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
     </>)}
   </div>
 }
@@ -1284,18 +1293,20 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
       {stackOpen && boxedRuns.map((r, i) => {
         const open = isTurnOpen(r, i)
         const tu = turnUsages && turnUsages[i]
-        return <section className={`oa-turn-card ${open ? 'open' : 'collapsed'}`} key={`${r.turn}-${i}`}>
-          <button className="oa-turn-toggle" type="button" onClick={() => toggleTurn(r, i)} aria-expanded={open} title={r.title || '执行步骤'}>
-            <span className="oa-turn-pill">Turn {r.turn}</span>
-            <b>{r.title || '执行步骤'}</b>
-            <UsageRow u={tu} className="oa-usage-inline" />
-            <ChevronDown size={15} className="oa-turn-chevron"/>
-          </button>
-          {open && (r.body ? renderAssistantBody(r.body, onAskReply) : <p className="oa-turn-empty">该轮暂无详细输出</p>)}
-        </section>
+        return <div className="oa-turn-node" key={`${r.turn}-${i}`}>
+          <section className={`oa-turn-card ${open ? 'open' : 'collapsed'}`}>
+            <button className="oa-turn-toggle" type="button" onClick={() => toggleTurn(r, i)} aria-expanded={open} title={r.title || '执行步骤'}>
+              <span className="oa-turn-index">步骤 {r.turn}</span>
+              <b>{r.title || '执行步骤'}</b>
+              <UsageRow u={tu} className="oa-usage-inline" />
+              <ChevronDown size={15} className="oa-turn-chevron"/>
+            </button>
+            {open && (r.body ? renderAssistantBody(r.body, onAskReply) : <p className="oa-turn-empty">该轮暂无详细输出</p>)}
+          </section>
+        </div>
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
-        <div className="oa-turn-current-head"><span>Turn {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
+        <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">步骤 {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
         {lastRun.body ? renderAssistantBody(lastRun.body, onAskReply) : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
@@ -1309,7 +1320,7 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
 // User messages append a generated attachment block. Cards render it separately, so hide the raw suffix.
 const stripUserAttachmentBlock = (content = '') => {
   const src = String(content || '')
-  const markers = ['\n[\u9644\u4ef6]', '\n[\u56fe\u7247\u9644\u4ef6]', '\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]', '[\u9644\u4ef6]', '[\u56fe\u7247\u9644\u4ef6]', '[\u9644\u4ef6\u5df2\u4fdd\u5b58]']
+  const markers = ['\n[附件]', '\n[图片附件]', '\n[附件已保存]', '[附件]', '[图片附件]', '[附件已保存]']
   let cut = -1
   for (const marker of markers) {
     const i = src.lastIndexOf(marker)
@@ -1369,7 +1380,7 @@ const sumUsages = (usages) => {
 export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, clockNow = 0 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
-  const imageFiles = messageFiles.filter(isImageFile)
+  const imageFiles   = messageFiles.filter(isImageFile)
   const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
   const pendingFiles = savedFilePaths.length > 0 ? [] : messageFiles.filter((file) => !isImageFile(file))
   const modelIdentity = messageModelIdentity(m, models)
@@ -1477,6 +1488,8 @@ export default function ChatApp() {
   const [historyInfo, setHistoryInfo] = useState([])
   const [workingState, setWorkingState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
+  const [worldline, setWorldline] = useState(() => initWorldline(''))
+  const [worldlineOpen, setWorldlineOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
@@ -1574,6 +1587,7 @@ export default function ChatApp() {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
+  const visibleWorldline = worldlineForSession(worldline, sid)
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
   const officialSlashKeys = useMemo(() => new Set(effectiveSlashCommands.map(c => builtinSlashCommandKey(c))), [effectiveSlashCommands])
@@ -1688,6 +1702,7 @@ export default function ChatApp() {
     saveSlashCmds(newCmds)
   }
   useEffect(() => { activeSidRef.current = sid }, [sid])
+  useEffect(() => { if (sid) loadWorldline(sid) }, [sid])
 
   const isActiveSession = (sessionId) => !sessionId || activeSidRef.current === sessionId
 
@@ -1866,6 +1881,56 @@ export default function ChatApp() {
     }
   }
 
+  const loadWorldline = async (id) => {
+    if (!id) return
+    setWorldline(prev => worldlineLoadStarted(prev, id))
+    try {
+      const data = await api(`/api/chat/worldline/${id}`)
+      setWorldline(prev => worldlineLoaded(prev, data, id))
+    } catch (e) {
+      setWorldline(prev => worldlineErrored(prev, e, id))
+    }
+  }
+
+  const handleSwitchVersion = async (nodeId) => {
+    const targetSid = String(sid || '')
+    const targetNodeId = String(nodeId || '')
+    if (
+      !targetSid ||
+      activeSidRef.current !== targetSid ||
+      !worldlineOwnsMappedNode(worldline, targetSid, targetNodeId)
+    ) return
+    setWorldline(prev => worldlineOwnsMappedNode(prev, targetSid, targetNodeId)
+      ? { ...prev, switchingNodeId: targetNodeId }
+      : prev)
+    try {
+      await api(`/api/chat/worldline/${targetSid}/switch`, { method: 'POST', body: JSON.stringify({ node_id: targetNodeId }) })
+      if (!isActiveSession(targetSid)) return
+      await openSession(targetSid, false)
+      if (!isActiveSession(targetSid)) return
+      await loadWorldline(targetSid)
+    } catch (e) {
+      if (isActiveSession(targetSid)) setErr(e.message || String(e))
+    } finally {
+      setWorldline(prev => (
+        prev.sid === targetSid && String(prev.switchingNodeId || '') === targetNodeId
+          ? { ...prev, switchingNodeId: '' }
+          : prev
+      ))
+    }
+  }
+
+  const handleEditResend = async ({ text, sourceUserMessageId }) => {
+    const item = buildEditResendItem({
+      sessionId: sid,
+      messageId: sourceUserMessageId,
+      text,
+      busy,
+      streamingSid,
+    })
+    await runSend(item)
+  }
+
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return
@@ -1890,6 +1955,7 @@ export default function ChatApp() {
   const openSession = async (id, refreshList = true) => {
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
+    setWorldline(prev => worldlineLoadStarted(prev, id))
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
@@ -1901,8 +1967,9 @@ export default function ChatApp() {
     const d = await api(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
-    setSid(d.id)
+    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
+    setSid(d.id)
     setMessages(d.messages || [])
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
@@ -1942,6 +2009,7 @@ export default function ChatApp() {
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
+    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     await loadChatState(d.id, openToken)
@@ -1956,6 +2024,7 @@ export default function ChatApp() {
     if (id === sid) {
       ++openSeqRef.current
       activeSidRef.current = ''
+      setWorldline(prev => worldlineLoadStarted(prev, ''))
       streamAbortRef.current?.abort?.()
       streamAbortRef.current = null
       scrollModeRef.current = 'auto'
@@ -2012,6 +2081,7 @@ export default function ChatApp() {
       if (activeDeleted) {
         ++openSeqRef.current
         activeSidRef.current = ''
+        setWorldline(prev => worldlineLoadStarted(prev, ''))
         streamAbortRef.current?.abort?.()
         streamAbortRef.current = null
         scrollModeRef.current = 'auto'
@@ -2122,18 +2192,18 @@ export default function ChatApp() {
     const files = Array.from(fileList || []).filter(Boolean)
     if (!files.length) return
     if (attachments.length + files.length > MAX_CHAT_UPLOAD_FILES) {
-      setErr(`\u9644\u4ef6\u6700\u591a\u4e0a\u4f20 ${MAX_CHAT_UPLOAD_FILES} \u4e2a`)
+      setErr(`附件最多上传 ${MAX_CHAT_UPLOAD_FILES} 个`)
       return
     }
     const tooLarge = files.find((file) => (Number(file.size) || 0) > MAX_CHAT_UPLOAD_BYTES_PER_FILE)
     if (tooLarge) {
-      setErr(`\u9644\u4ef6\u8fc7\u5927\uff1a${tooLarge.name || 'attachment'}\uff0c\u5355\u4e2a\u9650\u5236 20MB`)
+      setErr(`附件过大：${tooLarge.name || 'attachment'}，单个限制 20MB`)
       return
     }
     const totalBytes = attachments.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
       + files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
     if (totalBytes > MAX_CHAT_UPLOAD_BYTES_TOTAL) {
-      setErr('\u9644\u4ef6\u603b\u5927\u5c0f\u9650\u5236 40MB')
+      setErr('附件总大小限制 40MB')
       return
     }
     const readOne = (file) => new Promise((resolve, reject) => {
@@ -2145,7 +2215,7 @@ export default function ChatApp() {
         size:Number(file.size) || 0,
         dataURL:String(reader.result || ''),
       })
-      reader.onerror = () => reject(reader.error || new Error('\u8bfb\u53d6\u9644\u4ef6\u5931\u8d25'))
+      reader.onerror = () => reject(reader.error || new Error('读取附件失败'))
       reader.readAsDataURL(file)
     })
     try {
@@ -2237,14 +2307,16 @@ export default function ChatApp() {
     const ctrl = new AbortController()
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
-    setBusy(true); setStreamingSid(sid || 'new'); setErr(''); setNotice('')
-    let id = sid
+    const targetSessionID = item.sessionId || sid
+    setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
+    let id = targetSessionID
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
         activeSidRef.current = id
+        setWorldline(prev => worldlineLoadStarted(prev, id))
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
@@ -2254,19 +2326,34 @@ export default function ChatApp() {
       setStreamingSid(id)
       setSessions(xs => xs.map(s => s.id === id ? { ...s, running:true } : s))
       setAutoFollow(true); setShowFollow(false)
-      const fileNote = files.length ? `\n\n[\u9644\u4ef6]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
-      const attachmentPrompt = text || '\u8bf7\u5904\u7406\u8fd9\u4e9b\u9644\u4ef6'
+      const fileNote = files.length ? `\n\n[附件]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
+      const attachmentPrompt = text || '请处理这些附件'
       const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
-      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify({ prompt:attachmentPrompt, files, settings:{ llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }) })
+      if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
+      const payload = buildChatRunPayload({
+        prompt: attachmentPrompt,
+        files,
+        settings: { llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort },
+        clientUserID,
+        sourceUserMessageId: item.sourceUserMessageId,
+      })
+      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
+      if (sourceMessageID) setMessages(xs => {
+        if (!isActiveSession(id)) return xs
+        const cutIdx = xs.findIndex(m => String(m.id) === sourceMessageID)
+        if (cutIdx < 0) return xs
+        return [...xs.slice(0, cutIdx), optimistic, pending]
+      })
       await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
+      if (item.propagateError) throw e
     } finally {
       if (runToken !== runSeqRef.current || openToken !== openSeqRef.current || !isActiveSession(id)) return
       if (id) {
@@ -2596,6 +2683,9 @@ export default function ChatApp() {
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span>
         </button>
+        <button className={`oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={()=>setWorldlineOpen(v=>!v)} disabled={!sid} title="对话分支导航">
+          <GitBranch size={16}/>对话分支<span>{visibleWorldline.data?.nodes?.length || 0}</span>
+        </button>
       </header>
 
       {contextOpen && <aside className="oa-context-drawer" aria-label="模型上下文">
@@ -2606,6 +2696,13 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
+      {worldlineOpen && <WorldlineNavigator
+        state={visibleWorldline}
+        disabled={busy}
+        onRefresh={() => loadWorldline(sid)}
+        onSwitch={handleSwitchVersion}
+        onClose={() => setWorldlineOpen(false)}
+      />}
 
       <div className="oa-banner-slot" aria-live="polite">
         {(err || notice) && <div className={`oa-banner ${err ? 'error' : ''}`}>{err || notice}</div>}
@@ -2626,10 +2723,10 @@ export default function ChatApp() {
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
             return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''}`}>
-              <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '\u8bf7\u5904\u7406\u8fd9\u4e9b\u9644\u4ef6')}>
+              <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '请处理这些附件')}>
                 {isEditingQueue ? <textarea className="oa-queue-edit-input" value={queueDraft} autoFocus rows={2} onChange={e=>setQueueDraft(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) saveQueueEdit(q.id); if(e.key==='Escape') cancelQueueEdit() }} /> : <>
-                  <b>{q.text || '\u8bf7\u5904\u7406\u8fd9\u4e9b\u9644\u4ef6'}</b>
-                  {q.files?.length ? <em>{q.files.length} {'\u4e2a\u9644\u4ef6'}</em> : null}
+                  <b>{q.text || '请处理这些附件'}</b>
+                  {q.files?.length ? <em>{q.files.length} {'个附件'}</em> : null}
                 </>}
               </div>
               <div className="oa-queue-actions">
@@ -2705,14 +2802,14 @@ export default function ChatApp() {
               return <div className={`oa-attach-thumb ${image ? 'is-image' : `is-file oa-file-kind-${visual.kind}`}`} key={attachment.id} title={name}>
                 {image ? <img src={uploadFileSource(attachment)} alt={name}/> : <div className="oa-attach-file-icon"><Icon size={25}/><small>{extension}</small></div>}
                 <span>{image ? <FileImage size={12}/> : <Icon size={12}/>} {name}</span>
-                <button type="button" onClick={()=>removeAttachment(attachment.id)} title={'\u79fb\u9664\u9644\u4ef6'} aria-label={`\u79fb\u9664\u9644\u4ef6 ${name}`}><X size={12}/></button>
+                <button type="button" onClick={()=>removeAttachment(attachment.id)} title={'移除附件'} aria-label={`移除附件 ${name}`}><X size={12}/></button>
               </div>
             })}
           </div>}
           {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>\u5c06\u4ee5\u89c4\u5212\u6a21\u5f0f\u6267\u884c\uff0c\u5e76\u5728\u5b8c\u6210\u540e\u5c55\u793a run \u76ee\u5f55\u4e0e\u65e5\u5fd7\u6458\u8981</b></div>}
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={isMobile ? '发送消息或添加文件…' : '\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
-            <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'\u6dfb\u52a0\u9644\u4ef6'}><Paperclip size={17}/><span>{'\u9644\u4ef6'}</span></button>
+            <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'添加附件'}><Paperclip size={17}/><span>{'附件'}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
             <div className="oa-tools-menu" ref={toolsMenuRef}>
               <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">

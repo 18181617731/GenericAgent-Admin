@@ -17,6 +17,8 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() {}
 }
 
+globalThis.React = React
+
 const t = {
   refresh: 'Refresh',
   save: 'Save',
@@ -143,7 +145,6 @@ describe('channel frontend gates', () => {
 describe('Models provider editor', () => {
   test('keeps focus in the provider name while its controlled value changes', () => {
     installBrowserPolyfills()
-    globalThis.React = React
 
     function ModelsHarness() {
       const [profiles, setProfiles] = React.useState([{
@@ -200,6 +201,8 @@ describe('chat response model identity', () => {
       />,
     )
 
+    const body = container.querySelector('.oa-msg-body')
+    const meta = container.querySelector('.oa-meta')
     const badge = container.querySelector('.oa-model-id')
     expect(badge?.textContent).toBe('服务商 A · model-v1')
     expect(badge?.getAttribute('title')).toBe('服务商：服务商 A；模型：model-v1；内部编号：#7')

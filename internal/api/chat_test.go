@@ -605,6 +605,50 @@ func TestChatNewSessionDoesNotPersistDraftUntilFirstSend(t *testing.T) {
 	}
 }
 
+func TestChatFirstImmediateCommandPersistsSessionWithoutHistory(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	h := s.Routes()
+
+	newRR := httptest.NewRecorder()
+	h.ServeHTTP(newRR, httptest.NewRequest(http.MethodPost, "/api/chat/session/new", nil))
+	if newRR.Code != http.StatusOK {
+		t.Fatalf("new status=%d body=%s", newRR.Code, newRR.Body.String())
+	}
+	var created chatSession
+	if err := json.Unmarshal(newRR.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode new session: %v", err)
+	}
+
+	helpRR := httptest.NewRecorder()
+	helpReq := httptest.NewRequest(http.MethodPost, "/api/chat/"+created.ID, strings.NewReader(`{"prompt":"/help","client_user_id":"help-user"}`))
+	helpReq.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(helpRR, helpReq)
+	if helpRR.Code != http.StatusOK {
+		t.Fatalf("help command=%d body=%s", helpRR.Code, helpRR.Body.String())
+	}
+	if !strings.Contains(helpRR.Body.String(), `"type":"command_result"`) {
+		t.Fatalf("missing command result: %s", helpRR.Body.String())
+	}
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); err != nil {
+		t.Fatalf("session was not persisted by first immediate command: %v", err)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ID != created.ID || stored.Title != "新会话" || len(stored.Messages) != 0 || len(stored.RawHistory) != 0 || len(stored.HistoryInfo) != 0 || stored.Working != nil {
+		t.Fatalf("immediate command polluted persisted session: %+v", stored)
+	}
+
+	listRR := httptest.NewRecorder()
+	h.ServeHTTP(listRR, httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil))
+	if listRR.Code != http.StatusOK || !strings.Contains(listRR.Body.String(), created.ID) {
+		t.Fatalf("session missing after first immediate command: status=%d body=%s", listRR.Code, listRR.Body.String())
+	}
+}
+
 func TestSaveChatUploadsRejectsTooManyFiles(t *testing.T) {
 	cfg := config.AppConfig{GARoot: t.TempDir(), ChatDataDir: t.TempDir()}
 	files := make([]chatUpload, maxChatUploadFiles+1)
@@ -1136,5 +1180,268 @@ func TestChatFileRouteUsesBaseNameOnly(t *testing.T) {
 	s.Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || rr.Body.String() != "safe upload" {
 		t.Fatalf("chat file basename lookup status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestChatBTWPreservesMainResultThatFinishesFirst(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	base := chatMessage{ID: "base", Role: "user", Content: "main question"}
+	originalRaw := []map[string]interface{}{{"role": "user", "content": "raw main question"}}
+	if err := saveChatSession(s.CfgStore.Cfg, chatSession{
+		ID:         "btw-first",
+		Title:      "main question",
+		Messages:   []chatMessage{base},
+		RawHistory: originalRaw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	old := runOneShotBTWWorkerFunc
+	defer func() { runOneShotBTWWorkerFunc = old }()
+	calls := 0
+	runOneShotBTWWorkerFunc = func(cfg config.AppConfig, sid string, req map[string]interface{}) (chatMessage, error) {
+		calls++
+		if sid != "btw-first" || req["prompt"] != "/btw side question" {
+			t.Fatalf("unexpected btw request sid=%q req=%#v", sid, req)
+		}
+		history, ok := req["history"].([]chatMessage)
+		if !ok || len(history) != 1 || history[0].ID != "base" {
+			t.Fatalf("unexpected btw history snapshot: %#v", req["history"])
+		}
+		latest, err := loadChatSession(cfg, sid)
+		if err != nil {
+			return chatMessage{}, err
+		}
+		latest.Messages = append(latest.Messages, chatMessage{ID: "main", Role: "assistant", Content: "main result"})
+		if err := saveChatSession(cfg, latest); err != nil {
+			return chatMessage{}, err
+		}
+		return chatMessage{ID: "btw", Role: "assistant", Content: "side result"}, nil
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/btw/btw-first", strings.NewReader(`{"prompt":"/btw side question"}`))
+	req.Header.Set("Content-Type", "application/json")
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("btw worker calls=%d want=1", calls)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, "btw-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []string{"base", "main", "btw"}
+	if len(stored.Messages) != len(wantIDs) {
+		t.Fatalf("stored messages=%#v", stored.Messages)
+	}
+	for i, want := range wantIDs {
+		if stored.Messages[i].ID != want {
+			t.Fatalf("stored message[%d].ID=%q want=%q: %#v", i, stored.Messages[i].ID, want, stored.Messages)
+		}
+	}
+	if len(stored.RawHistory) != 1 || stored.RawHistory[0]["content"] != "raw main question" {
+		t.Fatalf("btw changed raw history: %#v", stored.RawHistory)
+	}
+}
+
+func TestSaveChatSessionMergedPreservesBTWThatFinishesFirst(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	base := chatMessage{ID: "base", Role: "user", Content: "main question"}
+	initial := chatSession{ID: "main-last", Messages: []chatMessage{base}}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	staleMain, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest.Messages = append(latest.Messages, chatMessage{ID: "btw", Role: "assistant", Content: "side result"})
+	if err := saveChatSession(s.CfgStore.Cfg, latest); err != nil {
+		t.Fatal(err)
+	}
+	staleMain.Messages = append(staleMain.Messages, chatMessage{ID: "main", Role: "assistant", Content: "main result"})
+	if err := s.saveChatSessionMerged(staleMain); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []string{"base", "btw", "main"}
+	if len(stored.Messages) != len(wantIDs) {
+		t.Fatalf("stored messages=%#v", stored.Messages)
+	}
+	for i, want := range wantIDs {
+		if stored.Messages[i].ID != want {
+			t.Fatalf("stored message[%d].ID=%q want=%q: %#v", i, stored.Messages[i].ID, want, stored.Messages)
+		}
+	}
+}
+
+func TestChatBTWRejectsEmptyQuestionWithoutStartingWorker(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	old := runOneShotBTWWorkerFunc
+	defer func() { runOneShotBTWWorkerFunc = old }()
+	calls := 0
+	runOneShotBTWWorkerFunc = func(config.AppConfig, string, map[string]interface{}) (chatMessage, error) {
+		calls++
+		return chatMessage{}, nil
+	}
+
+	for _, prompt := range []string{"/btw", "not a btw command"} {
+		rr := httptest.NewRecorder()
+		body, _ := json.Marshal(map[string]string{"prompt": prompt})
+		req := httptest.NewRequest(http.MethodPost, "/api/chat/btw/invalid", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		s.Routes().ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("prompt=%q status=%d body=%s", prompt, rr.Code, rr.Body.String())
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("btw worker calls=%d want=0", calls)
+	}
+}
+
+func TestChatWorkerEnvironmentInjectsOnlyCurrentSessionID(t *testing.T) {
+	t.Setenv("GA_ADMIN_SESSION_ID", "stale-parent-session")
+	env := chatWorkerEnvironment(config.AppConfig{}, t.TempDir(), "safe-session")
+
+	var values []string
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(key, "GA_ADMIN_SESSION_ID") {
+			values = append(values, value)
+		}
+	}
+	if len(values) != 1 || values[0] != "safe-session" {
+		t.Fatalf("GA_ADMIN_SESSION_ID values=%#v want=[safe-session]", values)
+	}
+}
+
+func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	textPart := func(text string) []interface{} {
+		return []interface{}{map[string]interface{}{"type": "text", "text": text}}
+	}
+	source := chatSession{
+		ID:    "fork-source",
+		Title: "Original",
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "repeat"},
+			{ID: "a1", Role: "assistant", Content: "first answer"},
+			{ID: "u2", Role: "user", Content: "repeat"},
+			{ID: "a2", Role: "assistant", Content: "future answer"},
+		},
+		Settings:    chatSettings{LLMNo: 2, ToolsMode: "full"},
+		Workspace:   "workspace-a",
+		ProjectMode: "project-a",
+		HistoryInfo: []interface{}{map[string]interface{}{"future": true}},
+		Working:     map[string]interface{}{"future": true},
+		RawHistory: []map[string]interface{}{
+			{"role": "user", "content": textPart("repeat")},
+			{"role": "assistant", "content": textPart("first answer")},
+			{"role": "assistant", "content": []interface{}{map[string]interface{}{"type": "tool_use", "id": "tool-1", "name": "code_run"}}},
+			{"role": "user", "content": []interface{}{map[string]interface{}{"type": "tool_result", "tool_use_id": "tool-1", "content": "result"}}},
+			{"role": "user", "content": textPart("repeat")},
+			{"role": "assistant", "content": textPart("future answer")},
+		},
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, source); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"message_id": "u2"})
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/fork/fork-source", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fork status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var response chatSession
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ID == "" || response.ID == source.ID {
+		t.Fatalf("fork ID=%q source=%q", response.ID, source.ID)
+	}
+	fork, err := loadChatSession(s.CfgStore.Cfg, response.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fork.Messages) != 2 || fork.Messages[0].ID != "u1" || fork.Messages[1].ID != "a1" {
+		t.Fatalf("fork messages=%#v", fork.Messages)
+	}
+	if len(fork.RawHistory) != 4 {
+		t.Fatalf("fork raw history len=%d want=4: %#v", len(fork.RawHistory), fork.RawHistory)
+	}
+	if got := fmt.Sprint(fork.RawHistory[2]["role"]); got != "assistant" {
+		t.Fatalf("tool-use role=%q", got)
+	}
+	if got := fmt.Sprint(fork.RawHistory[3]["role"]); got != "user" {
+		t.Fatalf("tool-result role=%q", got)
+	}
+	if fork.Settings.LLMNo != 2 || fork.Workspace != source.Workspace || fork.ProjectMode != source.ProjectMode {
+		t.Fatalf("fork configuration changed: %#v", fork)
+	}
+	if len(fork.HistoryInfo) != 0 || fork.Working != nil {
+		t.Fatalf("future state leaked: history_info=%#v working=%#v", fork.HistoryInfo, fork.Working)
+	}
+	storedSource, err := loadChatSession(s.CfgStore.Cfg, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(storedSource.Messages) != 4 || len(storedSource.RawHistory) != 6 {
+		t.Fatalf("source was mutated: %#v", storedSource)
+	}
+}
+
+func TestChatForkSessionLegacyAndRawMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		raw        []map[string]interface{}
+		wantStatus int
+		wantRawLen int
+	}{
+		{name: "legacy empty raw", raw: []map[string]interface{}{}, wantStatus: http.StatusOK, wantRawLen: 0},
+		{name: "raw mismatch", raw: []map[string]interface{}{{"role": "user", "content": []interface{}{map[string]interface{}{"type": "text", "text": "different"}}}}, wantStatus: http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newGoalTestServer(t, t.TempDir())
+			s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+			source := chatSession{ID: "fork-case", Messages: []chatMessage{{ID: "target", Role: "user", Content: "selected"}}, RawHistory: tc.raw}
+			if err := saveChatSession(s.CfgStore.Cfg, source); err != nil {
+				t.Fatal(err)
+			}
+			body := strings.NewReader(`{"message_id":"target"}`)
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/chat/fork/fork-case", body)
+			req.Header.Set("Content-Type", "application/json")
+			s.Routes().ServeHTTP(rr, req)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if tc.wantStatus == http.StatusOK {
+				var fork chatSession
+				if err := json.Unmarshal(rr.Body.Bytes(), &fork); err != nil {
+					t.Fatal(err)
+				}
+				if len(fork.RawHistory) != tc.wantRawLen {
+					t.Fatalf("raw len=%d want=%d", len(fork.RawHistory), tc.wantRawLen)
+				}
+			}
+		})
 	}
 }

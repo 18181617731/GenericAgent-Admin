@@ -7,7 +7,7 @@ afterEach(() => cleanup())
 
 describe('chat file attachments', () => {
   test('renders a saved non-image upload as a file path card', () => {
-    const content = 'Review this\n\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n[FILE:C:/tmp/report.pdf]'
+    const content = 'Review this\n\n[附件已保存]\n[FILE:C:/tmp/report.pdf]'
     const { container } = render(
       <ChatMessage
         message={{ id:'u-file', role:'user', content, files:[], created_at:0 }}
