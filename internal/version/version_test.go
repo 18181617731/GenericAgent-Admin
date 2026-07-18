@@ -390,6 +390,49 @@ func TestWindowsUpdateCommandRunsScriptDirectlyWithoutVisibleStartShell(t *testi
 	}
 }
 
+func TestWindowsDetachedUpdateScriptSurvivesLauncherExit(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows detached process contract")
+	}
+	if os.Getenv("GA_TEST_DETACHED_UPDATE_HELPER") == "1" {
+		script := os.Getenv("GA_TEST_DETACHED_UPDATE_SCRIPT")
+		cmd := updateScriptCommand("windows", script)
+		cmd.Dir = filepath.Dir(script)
+		detachChildProcess(cmd)
+		if err := cmd.Start(); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+
+	dir := filepath.Join(t.TempDir(), "detached update")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "detached marker.txt")
+	script := filepath.Join(dir, "delayed update.cmd")
+	content := fmt.Sprintf("@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 2\"\r\n> \"%s\" echo detached\r\n", marker)
+	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	helper := exec.Command(os.Args[0], "-test.run=^TestWindowsDetachedUpdateScriptSurvivesLauncherExit$")
+	helper.Env = append(os.Environ(),
+		"GA_TEST_DETACHED_UPDATE_HELPER=1",
+		"GA_TEST_DETACHED_UPDATE_SCRIPT="+script,
+	)
+	if output, err := helper.CombinedOutput(); err != nil {
+		t.Fatalf("detached update helper failed: %v output=%s", err, output)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(marker); err == nil && strings.Contains(string(data), "detached") {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("detached update script stopped with its launcher: %s", script)
+}
+
 func TestReleaseAssetContract(t *testing.T) {
 	want := fmt.Sprintf("ga-admin-v2.0.0-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
 	rel := Release{Assets: []Asset{

@@ -641,7 +641,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	emit("restarting", "升级包已就绪，正在重启服务", 95, &check)
 	cmd := updateScriptCommand(runtime.GOOS, script)
 	cmd.Dir = work
-	hideChildWindow(cmd)
+	detachChildProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		return ApplyResult{}, fmt.Errorf("启动升级脚本失败: %w", err)
 	}
