@@ -14,8 +14,9 @@ func hideChildWindow(cmd *exec.Cmd) {
 func detachChildProcess(cmd *exec.Cmd) {
 	const detachedProcess = 0x00000008
 	const createNewProcessGroup = 0x00000200
+	const createBreakawayFromJob = 0x01000000
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
-		CreationFlags: detachedProcess | createNewProcessGroup,
+		CreationFlags: detachedProcess | createNewProcessGroup | createBreakawayFromJob,
 	}
 }
