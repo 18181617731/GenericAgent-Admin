@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 const common = readFileSync(new URL('../components/common.jsx', import.meta.url), 'utf8')
 const processGuard = readFileSync(new URL('../components/ProcessGuard.jsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
+const picker = readFileSync(new URL('../components/ModelCascadePicker.jsx', import.meta.url), 'utf8')
 
 test('service cards expose lifecycle metadata without mutating services', () => {
   assert.match(common, /serviceReturnCode/)
@@ -40,6 +41,7 @@ test('reflect services can start with a safe model fallback', () => {
   assert.match(common, /startsWith\('reflect\/'\)/)
   assert.match(app, /setReflectLLMNo\(current => current !== '' \? current : \(fallbackModel\?\.index\?\.toString\(\) \|\| '0'\)\)/)
   assert.match(app, /if \(!\/\^\\d\+\$\/\.test\(selectedLLMNo\)\)/)
-  assert.match(app, /llms\.length \? llms\.map/)
-  assert.match(app, /<option value="0">.*0<\/option>/)
+  assert.match(app, /<ModelCascadePicker models=\{llms\} value=\{reflectLLMNo\}/)
+  assert.match(picker, /groupRuntimeModels\(models\)/)
+  assert.match(picker, /onChange\(model\.value\)/)
 })

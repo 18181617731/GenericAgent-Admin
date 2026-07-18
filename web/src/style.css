@@ -8490,6 +8490,54 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
 .goal-model-cascade > button { width:100%; }
 .service-provider-cascade .oa-cascade-current-model,
 .goal-model-cascade .oa-cascade-current-model { text-align:left; }
+
+/* Shared cascade picker used by the native chat page and model forms. */
+.model-cascade-picker {
+  position: relative;
+  z-index: 25;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-strong);
+}
+.model-cascade-picker > button { min-height: 36px; flex: 1; min-width: 0; }
+.model-cascade-picker .oa-cascade-menu { animation: model-cascade-fade .14s ease; }
+@keyframes model-cascade-fade { from { opacity: 0; } to { opacity: 1; } }
+.model-cascade-picker .model-cascade-label {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #fff;
+  background: #171717;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.model-cascade-picker.placement-bottom .oa-cascade-menu { top: calc(100% + 8px); bottom: auto; }
+.service-meta .model-edit { overflow: visible; }
+.service-meta .model-cascade-picker { min-height: 32px; border-radius: 8px; padding-inline: 5px; }
+.service-meta .model-cascade-picker > button { min-height: 30px; }
+.native-chat .chat-settings .model-cascade-picker { width: min(360px, 100%); }
+@media (max-width: 720px) {
+  .model-cascade-picker .oa-cascade-menu {
+    position: absolute;
+    right: auto;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    top: auto;
+    width: min(360px, calc(100vw - 28px));
+    max-height: min(440px, calc(100dvh - 24px));
+    transform: translateX(-50%);
+    z-index: 1200;
+  }
+  .model-cascade-picker.placement-bottom .oa-cascade-menu { top: auto; bottom: calc(100% + 8px); }
+}
 .goal-model-field {
   display:grid;
   gap:7px;

@@ -64,6 +64,34 @@ export const goalBudgetPercent = (g) => {
 
 export const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `模型 ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
 
+export const modelProvider = (model) => {
+  const provider = String(model?.provider || '').trim()
+  if (provider) return provider
+  const name = String(model?.name || '').trim()
+  const runtimeModel = String(model?.model || '').trim()
+  if (name && runtimeModel && name.endsWith(`/${runtimeModel}`)) return name.slice(0, -(runtimeModel.length + 1))
+  const split = name.lastIndexOf('/')
+  return (split > 0 ? name.slice(0, split) : name) || '未分组服务商'
+}
+
+export const runtimeModelLabel = (model) => {
+  const runtimeModel = String(model?.model || '').trim()
+  if (runtimeModel) return runtimeModel
+  const label = modelLabel(model)
+  return label.includes('/') ? label.split('/').pop() : label
+}
+
+export const groupRuntimeModels = (models = []) => {
+  const groups = new Map()
+  models.forEach(model => {
+    if (model?.index === undefined || model?.index === null) return
+    const provider = modelProvider(model)
+    if (!groups.has(provider)) groups.set(provider, [])
+    groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model), source: model })
+  })
+  return Array.from(groups, ([provider, groupedModels]) => ({ value: provider, label: provider, models: groupedModels }))
+}
+
 export const fuzzyMatch = (text, filter) => {
   if (!filter) return true
   const lower = text.toLowerCase(), fl = filter.toLowerCase()
