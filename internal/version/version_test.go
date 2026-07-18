@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -251,9 +252,9 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
 		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
-		`Start-Process powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$env:RESTART_SCRIPT)`,
-		`if ($p.HasExited) { exit 1 }`,
-		`if not errorlevel 1 exit /b 0`,
+		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
+		`$env:RESTART_SCRIPT`,
+		`if errorlevel 1 goto launch_failed`,
 		`:launch_failed`,
 	}
 	for _, w := range want {
@@ -291,11 +292,8 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
 	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
 	want := []string{
-		`$ErrorActionPreference='Stop'`,
-		`try { $p=Start-Process`,
-		`} catch { exit 1 }`,
-		`if not errorlevel 1 exit /b 0`,
-		`goto launch_failed`,
+		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
+		`if errorlevel 1 goto launch_failed`,
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
 		`move /Y "%OLD%" "%NEW%"`,
@@ -311,23 +309,65 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 }
 
 func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
-	script := windowsRestartScript()
+	script := windowsRestartScript(
+		`C:\Program Files\GA Admin\ga-admin.exe`,
+		`C:\Temp\new ga-admin.exe`,
+		`C:\Program Files\GA Admin\ga-admin.exe.bak`,
+		`C:\Program Files\GA Admin\cmd\chat_worker.py`,
+		`C:\Program Files\GA Admin\cmd\chat_worker.py.bak`,
+		`C:\Program Files\GA Admin\cmd\frontends\worldline.py`,
+		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
+	)
 	want := []string{
+		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
+		`$OldDir = 'C:\Program Files\GA Admin'`,
+		`$LogFile = Join-Path $PSScriptRoot 'restart-update.log'`,
+		`Write-RestartLog "launcher started old=$Old"`,
 		`Start-Sleep -Seconds 3`,
 		`for ($attempt = 1; $attempt -le 10; $attempt++)`,
 		`Get-NetTCPConnection -State Listen -OwningProcess $process.Id`,
-		`if (-not $process.HasExited -and $listener) { exit 0 }`,
+		`if (-not $process.HasExited -and $listener) {`,
+		`listener=$($listener.LocalPort) verified`,
 		`Stop-Process -Id $process.Id -Force`,
-		`Move-Item -LiteralPath $env:WORLDLINE_BAK -Destination $env:WORLDLINE`,
-		`Move-Item -LiteralPath $env:WORKER_BAK -Destination $env:WORKER`,
-		`Move-Item -LiteralPath $env:BAK -Destination $env:OLD`,
-		`Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR`,
+		`if (Test-Path -LiteralPath $WorldlineBackup)`,
+		`if (Test-Path -LiteralPath $WorkerBackup)`,
+		`Move-Item -LiteralPath $Backup -Destination $Old`,
+		`Start-Process -FilePath $Old -WorkingDirectory $OldDir`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
 			t.Fatalf("restart script missing %q in:\n%s", sub, script)
 		}
 	}
+}
+
+func TestWindowsDetachedRestartCommandLaunchesQuotedScript(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows process launch contract")
+	}
+	dir := filepath.Join(t.TempDir(), "restart files")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "restart probe.ps1")
+	marker := filepath.Join(dir, "restart marker.txt")
+	content := fmt.Sprintf("$Marker = %s\nStart-Sleep -Milliseconds 300\nSet-Content -LiteralPath $Marker -Value 'detached' -Encoding UTF8\n", powerShellSingleQuoted(marker))
+	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsRestartLaunchPowerShell())
+	command.Env = append(os.Environ(), "RESTART_SCRIPT="+script)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("detached restart command failed: %v output=%s", err, output)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(marker); err == nil && strings.Contains(string(data), "detached") {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("detached restart command did not run quoted script %s", script)
 }
 
 func TestWindowsUpdateCommandRunsScriptDirectlyWithoutVisibleStartShell(t *testing.T) {

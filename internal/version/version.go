@@ -627,7 +627,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if runtime.GOOS == "windows" {
 		script = filepath.Join(work, "apply-update.cmd")
 		restartScript := filepath.Join(work, "restart-update.ps1")
-		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript()), 0600); err != nil {
+		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript(exe, newExe, backup, worker, workerBackup, worldline, worldlineBackup)), 0600); err != nil {
 			return ApplyResult{}, err
 		}
 		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript)
@@ -721,10 +721,9 @@ move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
 move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
 exit /b 1
 :runtime_files_ready
-powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "$ErrorActionPreference='Stop'; try { $p=Start-Process powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$env:RESTART_SCRIPT) -WindowStyle Hidden -PassThru; Start-Sleep -Seconds 1; if ($p.HasExited) { exit 1 }; exit 0 } catch { exit 1 }"
-if not errorlevel 1 exit /b 0
-echo failed to start independent restart verifier
-goto launch_failed
+powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "%s"
+if errorlevel 1 goto launch_failed
+exit /b 0
 :launch_failed
 if "%%WORLDLINE_HAD_ORIGINAL%%"=="1" (
   if exist "%%WORLDLINE%%" del /Q "%%WORLDLINE%%" >nul 2>nul
@@ -742,40 +741,82 @@ move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
 move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
 powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"
 exit /b 1
-`, oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript)
+`, oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript, windowsRestartLaunchPowerShell())
 }
 
-func windowsRestartScript() string {
-	return `$ErrorActionPreference = 'SilentlyContinue'
+func windowsRestartLaunchPowerShell() string {
+	return `$ErrorActionPreference='Stop'; try { $quote=[char]34; $command='powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '+$quote+$env:RESTART_SCRIPT+$quote; $result=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$command}; if ($result.ReturnValue -ne 0) { exit 1 }; exit 0 } catch { exit 1 }`
+}
+
+func powerShellSingleQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func windowsRestartScript(oldExe, newExe, backup, worker, workerBackup, worldline, worldlineBackup string) string {
+	return fmt.Sprintf(`$Old = %s
+$OldDir = %s
+$New = %s
+$Backup = %s
+$Worker = %s
+$WorkerBackup = %s
+$Worldline = %s
+$WorldlineBackup = %s
+$ErrorActionPreference = 'SilentlyContinue'
+$LogFile = Join-Path $PSScriptRoot 'restart-update.log'
+function Write-RestartLog([string]$Message) {
+  Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format o) $Message" -Encoding UTF8 -ErrorAction SilentlyContinue
+}
+Write-RestartLog "launcher started old=$Old"
 Start-Sleep -Seconds 3
 for ($attempt = 1; $attempt -le 10; $attempt++) {
-  $process = Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru
+  try {
+    $process = Start-Process -FilePath $Old -WorkingDirectory $OldDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+    Write-RestartLog "attempt=$attempt pid=$($process.Id) started"
+  } catch {
+    Write-RestartLog "attempt=$attempt start_failed=$($_.Exception.Message)"
+    Start-Sleep -Seconds 1
+    continue
+  }
   Start-Sleep -Seconds 8
   $process.Refresh()
   $listener = if (-not $process.HasExited) { Get-NetTCPConnection -State Listen -OwningProcess $process.Id -ErrorAction SilentlyContinue | Select-Object -First 1 }
-  if (-not $process.HasExited -and $listener) { exit 0 }
+  if (-not $process.HasExited -and $listener) {
+    Write-RestartLog "attempt=$attempt pid=$($process.Id) listener=$($listener.LocalPort) verified"
+    exit 0
+  }
+  Write-RestartLog "attempt=$attempt pid=$($process.Id) listener_missing exited=$($process.HasExited)"
   if (-not $process.HasExited) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
   }
 }
-if ($env:WORLDLINE_HAD_ORIGINAL -eq '1') {
-  Remove-Item -LiteralPath $env:WORLDLINE -Force -ErrorAction SilentlyContinue
-  Move-Item -LiteralPath $env:WORLDLINE_BAK -Destination $env:WORLDLINE -Force -ErrorAction SilentlyContinue
+Write-RestartLog 'all restart attempts failed; restoring backup'
+if (Test-Path -LiteralPath $WorldlineBackup) {
+  Remove-Item -LiteralPath $Worldline -Force -ErrorAction SilentlyContinue
+  Move-Item -LiteralPath $WorldlineBackup -Destination $Worldline -Force -ErrorAction SilentlyContinue
 } else {
-  Remove-Item -LiteralPath $env:WORLDLINE -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Worldline -Force -ErrorAction SilentlyContinue
 }
-if ($env:WORKER_HAD_ORIGINAL -eq '1') {
-  Remove-Item -LiteralPath $env:WORKER -Force -ErrorAction SilentlyContinue
-  Move-Item -LiteralPath $env:WORKER_BAK -Destination $env:WORKER -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $WorkerBackup) {
+  Remove-Item -LiteralPath $Worker -Force -ErrorAction SilentlyContinue
+  Move-Item -LiteralPath $WorkerBackup -Destination $Worker -Force -ErrorAction SilentlyContinue
 } else {
-  Remove-Item -LiteralPath $env:WORKER -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Worker -Force -ErrorAction SilentlyContinue
 }
-Move-Item -LiteralPath $env:OLD -Destination $env:NEW -Force -ErrorAction SilentlyContinue
-Move-Item -LiteralPath $env:BAK -Destination $env:OLD -Force -ErrorAction SilentlyContinue
-Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden
+Move-Item -LiteralPath $Old -Destination $New -Force -ErrorAction SilentlyContinue
+Move-Item -LiteralPath $Backup -Destination $Old -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $Old -WorkingDirectory $OldDir -WindowStyle Hidden
 exit 1
-`
+`,
+		powerShellSingleQuoted(oldExe),
+		powerShellSingleQuoted(filepath.Dir(oldExe)),
+		powerShellSingleQuoted(newExe),
+		powerShellSingleQuoted(backup),
+		powerShellSingleQuoted(worker),
+		powerShellSingleQuoted(workerBackup),
+		powerShellSingleQuoted(worldline),
+		powerShellSingleQuoted(worldlineBackup),
+	)
 }
 
 func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup string) string {
