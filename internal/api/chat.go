@@ -55,6 +55,26 @@ type chatSettings struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
+type chatSettingsPatch struct {
+	LLMNo           int       `json:"llm_no"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	ExtraSysPrompts *[]string `json:"extra_sys_prompts"`
+}
+
+func normalizeChatExtraSysPrompts(prompts []string) []string {
+	cleaned := make([]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		prompt = strings.TrimSpace(prompt)
+		if prompt != "" {
+			cleaned = append(cleaned, prompt)
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
+}
+
 func normalizeChatSettings(st chatSettings) chatSettings {
 	switch strings.ToLower(strings.TrimSpace(st.ReasoningEffort)) {
 	case "", "default", "model":
@@ -82,17 +102,18 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 }
 
 type chatSession struct {
-	ID            string                   `json:"id"`
-	Title         string                   `json:"title"`
-	UpdatedAt     int64                    `json:"updated_at"`
-	Messages      []chatMessage            `json:"messages"`
-	Settings      chatSettings             `json:"settings"`
-	RawHistory    []map[string]interface{} `json:"raw_history,omitempty"`
-	HistoryInfo   []interface{}            `json:"history_info,omitempty"`
-	Working       map[string]interface{}   `json:"working,omitempty"`
-	WorldlineHead string                   `json:"worldline_head,omitempty"`
-	Workspace     string                   `json:"workspace,omitempty"`
-	ProjectMode   string                   `json:"project_mode,omitempty"`
+	ID              string                   `json:"id"`
+	Title           string                   `json:"title"`
+	UpdatedAt       int64                    `json:"updated_at"`
+	Messages        []chatMessage            `json:"messages"`
+	Settings        chatSettings             `json:"settings"`
+	RawHistory      []map[string]interface{} `json:"raw_history,omitempty"`
+	HistoryInfo     []interface{}            `json:"history_info,omitempty"`
+	Working         map[string]interface{}   `json:"working,omitempty"`
+	WorldlineHead   string                   `json:"worldline_head,omitempty"`
+	Workspace       string                   `json:"workspace,omitempty"`
+	ProjectMode     string                   `json:"project_mode,omitempty"`
+	ExtraSysPrompts []string                 `json:"extra_sys_prompts,omitempty"`
 }
 
 const (

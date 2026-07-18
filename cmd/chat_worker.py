@@ -298,6 +298,10 @@ def _normalize_request(req):
         normalized['ga_root'] = None
     if not isinstance(normalized.get('project_mode'), str):
         normalized['project_mode'] = ''
+    prompts = normalized.get('extra_sys_prompts')
+    if not isinstance(prompts, list):
+        prompts = []
+    normalized['extra_sys_prompts'] = [str(value).strip() for value in prompts if str(value).strip()]
     if normalized.get('reasoning_effort') is not None and not isinstance(normalized.get('reasoning_effort'), str):
         normalized['reasoning_effort'] = None
     return normalized
@@ -1629,6 +1633,8 @@ def handle_request(agent, worker, req):
     root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
     project_mode = str(req.get('project_mode') or '').strip()
     setattr(agent, '_ga_project_mode_name', project_mode or None)
+    extra_sys_prompts = req.get('extra_sys_prompts') or []
+    setattr(agent, 'extra_sys_prompts', list(extra_sys_prompts) if isinstance(extra_sys_prompts, list) else [])
     _select_llm_if_needed(agent, llm_no)
     emit({'type': 'model', 'model_id': _snapshot_model_id(agent)})
     if str(reasoning_effort or '').strip():

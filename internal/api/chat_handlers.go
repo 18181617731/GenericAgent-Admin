@@ -300,8 +300,8 @@ func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid s
 }
 
 func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid string) {
-	var st chatSettings
-	if err := decode(r, &st); err != nil {
+	var patch chatSettingsPatch
+	if err := decode(r, &patch); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
@@ -310,12 +310,22 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		bad(w, 500, err.Error())
 		return
 	}
-	cs.Settings = normalizeChatSettings(st)
+	cs.Settings = normalizeChatSettings(chatSettings{
+		LLMNo:           patch.LLMNo,
+		ReasoningEffort: patch.ReasoningEffort,
+	})
+	if patch.ExtraSysPrompts != nil {
+		cs.ExtraSysPrompts = normalizeChatExtraSysPrompts(*patch.ExtraSysPrompts)
+	}
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "settings": cs.Settings})
+	writeJSON(w, map[string]interface{}{
+		"ok":                true,
+		"settings":          cs.Settings,
+		"extra_sys_prompts": cs.ExtraSysPrompts,
+	})
 }
 
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
@@ -332,7 +342,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["warning"] = err.Error()
 	}
 	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
@@ -619,6 +629,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"working":              cs.Working,
 		"workspace":            cs.Workspace,
 		"project_mode":         cs.ProjectMode,
+		"extra_sys_prompts":    cs.ExtraSysPrompts,
 		"llm_no":               cs.Settings.LLMNo,
 		"reasoning_effort":     cs.Settings.ReasoningEffort,
 		"ga_root":              s.CfgStore.Cfg.GARoot,

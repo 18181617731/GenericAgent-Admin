@@ -374,7 +374,7 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 		{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "search", "content": "tool data"}}},
 	}
 	seed := chatSession{
-		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2}, ProjectMode: "alpha", RawHistory: seedRawHistory,
+		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2}, ProjectMode: "alpha", ExtraSysPrompts: []string{"be concise", "cite sources"}, RawHistory: seedRawHistory,
 		Messages: []chatMessage{
 			{ID: "u0", Role: "user", Content: "first question", CreatedAt: 1},
 			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
@@ -402,6 +402,10 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if captured["project_mode"] != "alpha" {
 		t.Fatalf("project_mode=%#v want alpha", captured["project_mode"])
+	}
+	extraPrompts, ok := captured["extra_sys_prompts"].([]interface{})
+	if !ok || len(extraPrompts) != 2 || extraPrompts[0] != "be concise" || extraPrompts[1] != "cite sources" {
+		t.Fatalf("extra_sys_prompts=%#v want persisted session prompts", captured["extra_sys_prompts"])
 	}
 	history, ok := captured["history"].([]interface{})
 	if !ok || len(history) != 2 {
@@ -829,7 +833,7 @@ func TestChatSaveSettingsRejectsMalformedJSON(t *testing.T) {
 func TestChatSaveSettingsPersistsValidJSON(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/session-ok", strings.NewReader(`{"llm_no":3}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/session-ok", strings.NewReader(`{"llm_no":3,"extra_sys_prompts":["  be concise  "," ","cite sources"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
@@ -844,6 +848,9 @@ func TestChatSaveSettingsPersistsValidJSON(t *testing.T) {
 	}
 	if cs.Settings.LLMNo != 3 {
 		t.Fatalf("settings not persisted: %#v", cs.Settings)
+	}
+	if len(cs.ExtraSysPrompts) != 2 || cs.ExtraSysPrompts[0] != "be concise" || cs.ExtraSysPrompts[1] != "cite sources" {
+		t.Fatalf("extra system prompts not normalized and persisted: %#v", cs.ExtraSysPrompts)
 	}
 }
 

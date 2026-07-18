@@ -1948,6 +1948,10 @@ export default function ChatApp() {
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
   const [reasoningEffort, setReasoningEffort] = useState('off')
+  const [extraSysPrompts, setExtraSysPrompts] = useState([])
+  const [extraPromptOpen, setExtraPromptOpen] = useState(false)
+  const [extraPromptDraft, setExtraPromptDraft] = useState([])
+  const [extraPromptSaving, setExtraPromptSaving] = useState(false)
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
   const [editing, setEditing] = useState('')
@@ -2381,9 +2385,11 @@ export default function ChatApp() {
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
     const nextReasoningEffort = normalizeReasoningEffort(st.settings?.reasoning_effort)
+    const nextExtraSysPrompts = Array.isArray(st.extra_sys_prompts) ? st.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : []
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
     setReasoningEffort(nextReasoningEffort)
+    setExtraSysPrompts(nextExtraSysPrompts)
     if (id && st.running) {
       attachRunningStream(id)
     } else if (id && streamingSid && streamingSid !== id) {
@@ -2588,6 +2594,37 @@ export default function ChatApp() {
     } catch (e) {
       setReasoningEffort(prev)
       setErr(e.message || String(e))
+    }
+  }
+
+  const openExtraPromptEditor = () => {
+    setExtraPromptDraft(extraSysPrompts.length ? [...extraSysPrompts] : [''])
+    setExtraPromptOpen(true)
+  }
+  const updateExtraPromptDraft = (index, value) => {
+    setExtraPromptDraft(xs => xs.map((item, i) => i === index ? value : item))
+  }
+  const saveExtraPrompts = async () => {
+    if (!sid) {
+      setErr('请先创建或打开会话')
+      return
+    }
+    const next = extraPromptDraft.map(value => String(value || '').trim()).filter(Boolean)
+    setExtraPromptSaving(true)
+    try {
+      const d = await api(`/api/chat/settings/${sid}`, {
+        method:'POST',
+        body: JSON.stringify({ llm_no: llmNo, reasoning_effort: reasoningEffort, extra_sys_prompts: next }),
+      })
+      const saved = Array.isArray(d.extra_sys_prompts) ? d.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : next
+      setExtraSysPrompts(saved)
+      setExtraPromptDraft(saved)
+      setExtraPromptOpen(false)
+      setNotice(saved.length ? `已启用 ${saved.length} 条额外系统提示` : '已清空额外系统提示')
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setExtraPromptSaving(false)
     }
   }
 
@@ -3195,6 +3232,29 @@ export default function ChatApp() {
             </div>
           </div>
         </div>}
+        {extraPromptOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setExtraPromptOpen(false)}>
+          <div className="oa-cmd-manager" role="dialog" aria-modal="true" aria-label="额外系统提示" onMouseDown={e=>e.stopPropagation()}>
+            <div className="oa-cmd-manager-head">
+              <div><h3>额外系统提示</h3><p>仅用于当前会话，每次运行时动态追加到 Agent 的系统提示中。</p></div>
+              <button className="oa-icon-btn" type="button" onClick={()=>setExtraPromptOpen(false)} title="关闭"><X size={16}/></button>
+            </div>
+            <div className="oa-cmd-manager-actions">
+              <button className="oa-guide-btn" type="button" onClick={()=>setExtraPromptDraft(xs => [...xs, ''])}><Plus size={14}/>新增一条</button>
+              <span>{extraPromptDraft.filter(value => String(value || '').trim()).length} 条有效提示</span>
+            </div>
+            <div className="oa-cmd-manager-list">
+              {extraPromptDraft.length === 0 && <div className="oa-cmd-empty">暂无额外系统提示。保存后将清空当前会话的配置。</div>}
+              {extraPromptDraft.map((value, index) => <div className="oa-cmd-edit-card oa-extra-prompt-card" key={index}>
+                <textarea value={value} onChange={e=>updateExtraPromptDraft(index, e.target.value)} placeholder={`额外系统提示 ${index + 1}`} rows={4} autoFocus={index === 0}/>
+                <button type="button" onClick={()=>setExtraPromptDraft(xs => xs.filter((_, i) => i !== index))}><Trash2 size={14}/>删除</button>
+              </div>)}
+            </div>
+            <div className="oa-cmd-manager-actions">
+              <button className="oa-guide-btn" type="button" onClick={saveExtraPrompts} disabled={extraPromptSaving}>{extraPromptSaving ? '保存中…' : '保存'}</button>
+              <button type="button" onClick={()=>setExtraPromptOpen(false)} disabled={extraPromptSaving}>取消</button>
+            </div>
+          </div>
+        </div>}
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropFiles}>
           <input ref={fileRef} type="file" multiple hidden onChange={e=>{ addAttachmentFiles(e.target.files); e.target.value='' }} />
           {attachments.length > 0 && <div className="oa-attach-preview">
@@ -3216,6 +3276,7 @@ export default function ChatApp() {
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'添加附件'}><Paperclip size={17}/><span>{'附件'}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
+            <button className={`oa-attach-btn ${extraPromptOpen || extraSysPrompts.length ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} title="管理本会话的额外系统提示"><Bot size={16}/><span>系统提示{extraSysPrompts.length ? ` ${extraSysPrompts.length}` : ''}</span></button>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length}
               onChange={v=>saveModel(Number(v))} />

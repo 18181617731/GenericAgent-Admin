@@ -92,6 +92,17 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", done)
         self.assertIn("usages", done)
 
+    def test_extra_system_prompts_are_replaced_and_cleared_each_turn(self):
+        agent = FakeAgent()
+        first = self.request("first prompt")
+        first["extra_sys_prompts"] = ["  be concise  ", "", "use JSON"]
+
+        chat_worker.handle_request(agent, FakeWorker(), first)
+        self.assertEqual(agent.extra_sys_prompts, ["be concise", "use JSON"])
+
+        chat_worker.handle_request(agent, FakeWorker(), self.request("second prompt"))
+        self.assertEqual(agent.extra_sys_prompts, [])
+
     def test_official_task_error_keeps_ordinary_error_protocol_shape(self):
         agent = FakeAgent(fail=True)
 
