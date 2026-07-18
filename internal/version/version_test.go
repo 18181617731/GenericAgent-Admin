@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -236,6 +237,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`C:\Temp\cmd\frontends\worldline.py`,
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
 		`C:\Temp\restart-update.ps1`,
+		`C:\Temp\restart-update-launch.cmd`,
 	)
 	want := []string{
 		`set "OLD=C:\Program Files\GA Admin\ga-admin.exe"`,
@@ -248,11 +250,13 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`set "NEW_WORLDLINE=C:\Temp\cmd\frontends\worldline.py"`,
 		`set "WORLDLINE_BAK=C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak"`,
 		`set "RESTART_SCRIPT=C:\Temp\restart-update.ps1"`,
+		`set "RESTART_LAUNCHER=C:\Temp\restart-update-launch.cmd"`,
 		`move /Y "%OLD%" "%BAK%"`,
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
 		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
-		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%RESTART_SCRIPT%"`,
+		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
+		`/TR ^"^"%RESTART_LAUNCHER%^"^"`,
 		`if errorlevel 1 goto launch_failed`,
 		`:launch_failed`,
 	}
@@ -270,7 +274,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1", "restart-update-launch.cmd")
 	want := []string{
 		`for %%D in ("%WORKER%") do if not exist "%%~dpD" mkdir "%%~dpD"`,
 		`if exist "%WORKER%" (`,
@@ -289,15 +293,16 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1", "restart-update-launch.cmd")
 	want := []string{
-		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%RESTART_SCRIPT%"`,
+		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
 		`if errorlevel 1 goto launch_failed`,
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
-		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"`,
+		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
+		`schtasks.exe /Run /TN "GenericAgent-Admin-Restart"`,
 		`exit /b 1`,
 	}
 	for _, sub := range want {
@@ -318,10 +323,9 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
 	)
 	want := []string{
-		`param([switch]$Run)`,
-		`if (-not $Run)`,
-		`$PSCommandPath + $quote + ' -Run'`,
-		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
+		`$TaskName = 'GenericAgent-Admin-Restart'`,
+		`function Remove-RestartTask`,
+		`Remove-RestartTask`,
 		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
 		`$OldDir = 'C:\Program Files\GA Admin'`,
 		`$LogFile = Join-Path $PSScriptRoot 'restart-update.log'`,
@@ -355,7 +359,7 @@ func TestWindowsDetachedRestartCommandLaunchesQuotedScript(t *testing.T) {
 	script := filepath.Join(dir, "restart probe.ps1")
 	launcher := filepath.Join(dir, "launch probe.cmd")
 	marker := filepath.Join(dir, "restart marker.txt")
-	content := fmt.Sprintf("param([switch]$Run)\n%s\n$Marker = %s\nStart-Sleep -Milliseconds 300\nSet-Content -LiteralPath $Marker -Value 'detached' -Encoding UTF8\n", windowsCIMSelfLaunchBlock(), powerShellSingleQuoted(marker))
+	content := fmt.Sprintf("$Marker = %s\nStart-Sleep -Seconds 2\nSet-Content -LiteralPath $Marker -Value 'detached' -Encoding UTF8\n", powerShellSingleQuoted(marker))
 	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -363,9 +367,15 @@ func TestWindowsDetachedRestartCommandLaunchesQuotedScript(t *testing.T) {
 	if err := os.WriteFile(launcher, []byte(launcherContent), 0600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("cmd", "/D", "/Q", "/C", launcher)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("detached restart command failed: %v output=%s", err, output)
+	taskName := "GenericAgent-Detached-Test-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	defer exec.Command("schtasks.exe", "/Delete", "/TN", taskName, "/F").Run()
+	create := exec.Command("schtasks.exe", "/Create", "/TN", taskName, "/SC", "DAILY", "/ST", "00:00", "/TR", fmt.Sprintf("\"%s\"", launcher), "/F")
+	if output, err := create.CombinedOutput(); err != nil {
+		t.Fatalf("scheduled restart task creation failed: %v output=%s", err, output)
+	}
+	run := exec.Command("schtasks.exe", "/Run", "/TN", taskName)
+	if output, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("scheduled restart task launch failed: %v output=%s", err, output)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
