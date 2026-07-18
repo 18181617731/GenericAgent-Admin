@@ -467,7 +467,7 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`uses: actions/upload-artifact@v5`,
 		`uses: actions/download-artifact@v5`,
 		`cp cmd/frontends/worldline.py dist/cmd/frontends/worldline.py`,
-		`go run ./cmd/package-chat-runtime --worker cmd/chat_worker.py --worldline cmd/frontends/worldline.py --output dist/cmd/chat_worker.py`,
+		`GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 go run ./cmd/package-chat-runtime`,
 		`from frontends.worldline import RewindStore, restore_plan, tree_from_store`,
 		`test -f dist/legacy-upgrade/cmd/frontends/worldline.py`,
 		`target_commitish: ${{ github.sha }}`,
