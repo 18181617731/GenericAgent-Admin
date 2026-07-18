@@ -49,6 +49,7 @@ GenericAgent-Admin-Go/
 ├─ main.go                         # 程序入口，启动 API、静态前端与系统托盘
 ├─ internal/                       # Go 后端模块：api/config/ga/service/version 等
 ├─ cmd/chat_worker.py              # Chat worker，发布包必须保留 cmd/ 路径
+├─ cmd/frontends/worldline.py      # Admin Chat 分支/回退运行时
 ├─ web/                            # React/Vite 前端源码
 │  ├─ src/
 │  └─ dist/                         # Vite 构建产物，会被 Go embed
@@ -151,6 +152,7 @@ build.bat
 ```text
 dist\ga-admin.exe
 dist\cmd\chat_worker.py
+dist\cmd\frontends\worldline.py
 ```
 
 `build.bat` 会执行前端构建，然后用 `go build` 生成 exe，并通过 `-ldflags -X` 写入版本元数据：
@@ -184,6 +186,7 @@ zip 内必须包含：
 ga-admin.exe          # Windows
 ga-admin              # macOS/Linux
 cmd/chat_worker.py    # Chat worker 固定相对路径
+cmd/frontends/worldline.py # Admin Chat 世界线运行时
 README.txt            # 简短运行说明
 ```
 
@@ -285,7 +288,7 @@ git diff --check
 ## 故障排查
 
 - 页面打开但功能为空：先检查 `config.local.json` 的 `ga_root` 是否指向真实 GenericAgent 根目录。
-- Chat 无响应：确认 `cmd/chat_worker.py` 在发布包中存在，且 GA Python 环境可 import 所需依赖。
+- Chat 无响应：确认 `cmd/chat_worker.py` 与 `cmd/frontends/worldline.py` 在发布包中存在，且 GA Python 环境可 import 所需依赖。
 - Goal 无日志：检查 `temp/goal_admin_<id>.log` 路径、Python 解释器和 `reflect/goal_mode.py` 是否存在。
 - 自更新找不到资产：确认 Release 资产名严格匹配 `ga-admin-<tag>-<goos>-<goarch>.zip`，并带有同名 `.sha256`。
 - TMWebDriver 不就绪：先使用页面“安装依赖”补齐 `requests`、`bottle`、`simple-websocket-server`，再使用“修复/启动”按钮检查 `18766` 端口和扩展目录。
@@ -302,7 +305,7 @@ git diff --check
 Before creating a local Windows package or a release asset:
 
 - Run the normal validation gates first; `build.bat` only installs/builds the web app and compiles `dist\ga-admin.exe`, it is not a substitute for tests.
-- Keep `cmd\chat_worker.py` beside the executable in packaged builds; the batch script copies it to `dist\cmd\chat_worker.py`.
+- Keep `cmd\chat_worker.py` and `cmd\frontends\worldline.py` beside the executable in packaged builds; the worker also embeds a compressed compatibility copy for upgrades from legacy installers.
 - Confirm local-only secrets such as `config.local.json`, `mykey.py`, `.env`, and `*.key` files are not present in the working tree, `dist`, or release assets.
 - After an approved publication, verify the update flow from the Admin UI so the asset name and sha256 sidecar are both discoverable.
 

@@ -132,7 +132,9 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           mkdir -p dist/cmd
-          cp cmd/chat_worker.py dist/cmd/chat_worker.py
+          mkdir -p dist/cmd/frontends
+          cp cmd/frontends/worldline.py dist/cmd/frontends/worldline.py
+          go run ./cmd/package-chat-runtime --worker cmd/chat_worker.py --worldline cmd/frontends/worldline.py --output dist/cmd/chat_worker.py
           tag="$RELEASE_TAG"
           COMMIT=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -142,6 +144,17 @@ jobs:
           else
             go build -ldflags="$LDFLAGS" -o dist/ga-admin .
           fi
+
+      - name: Verify packaged chat runtime
+        shell: bash
+        run: |
+          python -c "compile(open('dist/cmd/chat_worker.py', encoding='utf-8').read(), 'chat_worker.py', 'exec'); compile(open('dist/cmd/frontends/worldline.py', encoding='utf-8').read(), 'worldline.py', 'exec')"
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=dist/cmd python -c "from frontends.worldline import RewindStore, restore_plan, tree_from_store; print('worldline runtime ok')"
+          mkdir -p dist/legacy-upgrade/cmd
+          cp dist/cmd/chat_worker.py dist/legacy-upgrade/cmd/chat_worker.py
+          PYTHONDONTWRITEBYTECODE=1 python dist/legacy-upgrade/cmd/chat_worker.py </dev/null
+          test -f dist/legacy-upgrade/cmd/frontends/worldline.py
+          rm -rf dist/legacy-upgrade
 
       - name: Package
         shell: bash

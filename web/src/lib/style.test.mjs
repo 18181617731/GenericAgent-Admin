@@ -41,3 +41,18 @@ test('git sync logs stay bounded and scrollable', () => {
   assert.match(logRule, /white-space\s*:\s*pre-wrap/i)
   assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*\.mini-log\s*\{[^}]*max-height\s*:\s*220px/i)
 })
+
+test('mobile chat keeps semantic colors for total usage metrics', () => {
+  for (const [selector, color] of [
+    ['span.oa-usage-time', '#7c3aed'],
+    ['span.oa-usage-in', '#2563eb'],
+    ['span.oa-usage-cache', '#b66b00'],
+    ['span.oa-usage-out', '#08785f'],
+  ]) {
+    assert.match(css, new RegExp(`@media\\s*\\(max-width:\\s*680px\\)[\\s\\S]*?\\.oa-usage\\.oa-usage-total\\s+${selector.replaceAll('.', '\\.')}\\s*\\{[^}]*color\\s*:\\s*${color}`, 'i'))
+  }
+})
+
+test('touch sidebars expose actions without an iOS hover-first tap', () => {
+  assert.match(css, /@media\s*\(hover:\s*none\),\s*\(pointer:\s*coarse\)[\s\S]*?\.oa-session-more\s*\{[^}]*opacity\s*:\s*1[^}]*pointer-events\s*:\s*auto/i)
+})

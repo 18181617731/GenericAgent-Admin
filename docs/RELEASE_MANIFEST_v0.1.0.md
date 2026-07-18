@@ -34,6 +34,7 @@ Each platform zip should include only runtime files needed by ordinary users:
 | `ga-admin.exe` | yes | no | Windows GUI executable. |
 | `ga-admin` | no | yes | macOS/Linux executable. |
 | `cmd/chat_worker.py` | yes | yes | Fixed relative worker path used by the Chat panel. |
+| `cmd/frontends/worldline.py` | yes | yes | Chat branch/checkpoint runtime; also embedded in the packaged worker for legacy upgrades. |
 | `README.txt` | yes | yes | Short package-local launch notes. |
 | Embedded web UI in executable | yes | yes | React/Vite UI is embedded by the Go build and is not a separate source tree in the zip. |
 

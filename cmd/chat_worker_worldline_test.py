@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
-GA_ROOT = Path(__file__).resolve().parents[4]
-if str(GA_ROOT) not in sys.path:
-    sys.path.insert(0, str(GA_ROOT))
+RUNTIME_ROOT = Path(__file__).resolve().parent
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
 WORKER_PATH = Path(__file__).with_name('chat_worker.py')
 SPEC = importlib.util.spec_from_file_location('ga_admin_chat_worker_worldline_tested', WORKER_PATH)
 worker = importlib.util.module_from_spec(SPEC)
@@ -318,6 +318,25 @@ class WorldlineSidecarTests(unittest.TestCase):
         self.assertEqual(loaded['aliases'][bridge1], v1)
         self.assertEqual(loaded['aliases'][bridge2], v2)
         self.assertEqual(loaded['aliases'][bridge3], v2)
+
+    def test_real_store_restores_admin_history_and_key_info(self):
+        from frontends.worldline import RewindStore, restore_plan
+
+        workspace = self.root / 'workspace-state'
+        workspace.mkdir()
+        store = RewindStore(str(self.root / 'rewind-state'), str(workspace))
+        history = [
+            {'role': 'user', 'content': 'stateful turn'},
+            {'role': 'assistant', 'content': 'stateful answer'},
+        ]
+        hist_info = [{'role': 'assistant', 'summary': 'saved summary'}]
+        node = store.commit('stateful', history=history, hist_info=hist_info, key_info='saved key')
+
+        result = restore_plan(store, node, mode='conv', to='at')
+
+        self.assertEqual(result['history'], history)
+        self.assertEqual(result['hist_info'], hist_info)
+        self.assertEqual(result['key_info'], 'saved key')
 
 
 if __name__ == '__main__':

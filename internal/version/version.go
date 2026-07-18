@@ -612,18 +612,24 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if workerErr != nil {
 		return ApplyResult{}, fmt.Errorf("chat_worker.py missing from package: %w", workerErr)
 	}
+	newWorldline, worldlineErr := findFile(dir, "worldline.py")
+	if worldlineErr != nil {
+		return ApplyResult{}, fmt.Errorf("frontends/worldline.py missing from package: %w", worldlineErr)
+	}
 	worker := filepath.Join(filepath.Dir(exe), "cmd", "chat_worker.py")
+	worldline := filepath.Join(filepath.Dir(exe), "cmd", "frontends", "worldline.py")
 	backup := exe + ".bak"
 	workerBackup := worker + ".bak"
+	worldlineBackup := worldline + ".bak"
 
 	var content string
 	var script string
 	if runtime.GOOS == "windows" {
 		script = filepath.Join(work, "apply-update.cmd")
-		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
+		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup)
 	} else {
 		script = filepath.Join(work, "apply-update.sh")
-		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
+		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup)
 	}
 	if err := writeFileAtomic(script, []byte(content), 0600); err != nil {
 		return ApplyResult{}, err
@@ -646,7 +652,7 @@ func updateScriptCommand(goos, script string) *exec.Cmd {
 	return exec.Command("bash", script)
 }
 
-func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string) string {
+func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup string) string {
 	return fmt.Sprintf(`@echo off
 setlocal
 set "OLD=%s"
@@ -656,6 +662,10 @@ set "WORKER=%s"
 set "NEW_WORKER=%s"
 set "WORKER_BAK=%s"
 set "WORKER_HAD_ORIGINAL=0"
+set "WORLDLINE=%s"
+set "NEW_WORLDLINE=%s"
+set "WORLDLINE_BAK=%s"
+set "WORLDLINE_HAD_ORIGINAL=0"
 for %%%%D in ("%%OLD%%") do set "OLD_DIR=%%%%~dpD"
 for /L %%%%i in (1,1,30) do (
   move /Y "%%OLD%%" "%%BAK%%" >nul 2>nul && goto replaced
@@ -680,6 +690,32 @@ if not "%%NEW_WORKER%%"=="" (
     exit /b 1
   )
 )
+if not "%%NEW_WORLDLINE%%"=="" (
+  for %%%%D in ("%%WORLDLINE%%") do if not exist "%%%%~dpD" mkdir "%%%%~dpD"
+  if exist "%%WORLDLINE%%" (
+    set "WORLDLINE_HAD_ORIGINAL=1"
+    move /Y "%%WORLDLINE%%" "%%WORLDLINE_BAK%%" >nul 2>nul
+  )
+  move /Y "%%NEW_WORLDLINE%%" "%%WORLDLINE%%" >nul
+  if errorlevel 1 goto runtime_files_failed
+)
+goto runtime_files_ready
+:runtime_files_failed
+if "%%WORLDLINE_HAD_ORIGINAL%%"=="1" (
+  if exist "%%WORLDLINE_BAK%%" move /Y "%%WORLDLINE_BAK%%" "%%WORLDLINE%%" >nul 2>nul
+) else if exist "%%WORLDLINE%%" (
+  del /Q "%%WORLDLINE%%" >nul 2>nul
+)
+if "%%WORKER_HAD_ORIGINAL%%"=="1" (
+  if exist "%%WORKER%%" del /Q "%%WORKER%%" >nul 2>nul
+  if exist "%%WORKER_BAK%%" move /Y "%%WORKER_BAK%%" "%%WORKER%%" >nul 2>nul
+) else if exist "%%WORKER%%" (
+  del /Q "%%WORKER%%" >nul 2>nul
+)
+move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
+move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
+exit /b 1
+:runtime_files_ready
 for /L %%%%R in (1,1,10) do (
   powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "$ErrorActionPreference='Stop'; try { $p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru; Start-Sleep -Seconds 2; if ($p.HasExited) { exit 1 }; exit 0 } catch { exit 1 }"
   if not errorlevel 1 exit /b 0
@@ -687,6 +723,12 @@ for /L %%%%R in (1,1,10) do (
 echo updated process exited during restart attempts
 goto launch_failed
 :launch_failed
+if "%%WORLDLINE_HAD_ORIGINAL%%"=="1" (
+  if exist "%%WORLDLINE%%" del /Q "%%WORLDLINE%%" >nul 2>nul
+  if exist "%%WORLDLINE_BAK%%" move /Y "%%WORLDLINE_BAK%%" "%%WORLDLINE%%" >nul 2>nul
+) else if exist "%%WORLDLINE%%" (
+  del /Q "%%WORLDLINE%%" >nul 2>nul
+)
 if "%%WORKER_HAD_ORIGINAL%%"=="1" (
   if exist "%%WORKER%%" del /Q "%%WORKER%%" >nul 2>nul
   if exist "%%WORKER_BAK%%" move /Y "%%WORKER_BAK%%" "%%WORKER%%" >nul 2>nul
@@ -697,10 +739,10 @@ move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
 move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
 powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"
 exit /b 1
-`, oldExe, newExe, backup, worker, newWorker, workerBackup)
+`, oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup)
 }
 
-func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string) string {
+func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup string) string {
 	return fmt.Sprintf(`#!/bin/bash
 OLD="%s"
 NEW="%s"
@@ -708,6 +750,9 @@ BAK="%s"
 WORKER="%s"
 NEW_WORKER="%s"
 WORKER_BAK="%s"
+WORLDLINE="%s"
+NEW_WORLDLINE="%s"
+WORLDLINE_BAK="%s"
 for i in $(seq 1 30); do
   mv "$OLD" "$BAK" 2>/dev/null && break
   sleep 1
@@ -732,8 +777,19 @@ if [ -n "$NEW_WORKER" ]; then
     exit 1
   fi
 fi
+if [ -n "$NEW_WORLDLINE" ]; then
+  mkdir -p "$(dirname "$WORLDLINE")" 2>/dev/null
+  [ -f "$WORLDLINE" ] && cp "$WORLDLINE" "$WORLDLINE_BAK"
+  cp "$NEW_WORLDLINE" "$WORLDLINE"
+  if [ $? -ne 0 ]; then
+    [ -f "$WORLDLINE_BAK" ] && cp "$WORLDLINE_BAK" "$WORLDLINE"
+    [ -f "$WORKER_BAK" ] && cp "$WORKER_BAK" "$WORKER"
+    cp "$BAK" "$OLD"
+    exit 1
+  fi
+fi
 exec "$OLD"
-`, oldExe, newExe, backup, worker, newWorker, workerBackup)
+`, oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup)
 }
 
 func fetchLatest(ctx context.Context) (rel *Release, err error) {

@@ -9,13 +9,15 @@ from types import SimpleNamespace
 
 # Import production worker code without rewriting its pre-existing tracked cache.
 sys.dont_write_bytecode = True
-GA_ROOT = Path(__file__).resolve().parents[4]
-if str(GA_ROOT) not in sys.path:
-    sys.path.insert(0, str(GA_ROOT))
+RUNTIME_ROOT = Path(__file__).resolve().parent
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
 WORKER_PATH = Path(__file__).with_name("chat_worker.py")
 SPEC = importlib.util.spec_from_file_location("ga_admin_chat_worker_under_test", WORKER_PATH)
 chat_worker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(chat_worker)
+# Protocol tests use a minimal fake Agent without a GenericAgent checkout.
+chat_worker._install_worldline_hook = lambda: None
 
 
 class FakeWorker:

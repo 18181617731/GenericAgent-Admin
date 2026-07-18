@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -12,6 +12,7 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
+import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
@@ -1378,6 +1379,37 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
+export function GeneratedImageGallery({ content = '' }) {
+  const paths = useMemo(() => extractGeneratedImagePaths(content), [content])
+  const [activePath, setActivePath] = useState('')
+  useEffect(() => {
+    if (activePath && !paths.includes(activePath)) setActivePath('')
+  }, [activePath, paths])
+  if (!paths.length) return null
+  const activeName = activePath?.split(/[\\/]/).filter(Boolean).pop() || 'generated-image'
+  return <>
+    <div className="oa-generated-images" aria-label="生成图片">
+      {paths.map(path => {
+        const name = path.split(/[\\/]/).filter(Boolean).pop() || '生成图片'
+        return <button key={path} type="button" className="oa-generated-image-thumb" onClick={() => setActivePath(path)} aria-label={`查看原图 ${name}`} title={path}>
+          <img src={generatedImageURL(path)} alt={name} loading="lazy" />
+          <span><FileImage size={13}/>{name}</span>
+        </button>
+      })}
+    </div>
+    {activePath && <div className="oa-generated-image-lightbox" role="dialog" aria-modal="true" aria-label="生成图片预览" onMouseDown={event => { if (event.target === event.currentTarget) setActivePath('') }}>
+      <section>
+        <header><b title={activePath}>{activeName}</b><button type="button" onClick={() => setActivePath('')} aria-label="关闭图片预览"><X size={18}/></button></header>
+        <a className="oa-generated-image-original" href={generatedImageURL(activePath)} target="_blank" rel="noopener noreferrer" title="在新窗口查看原图"><img src={generatedImageURL(activePath)} alt={activeName}/></a>
+        <footer>
+          <a href={generatedImageURL(activePath)} target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>查看原图</a>
+          <a href={generatedImageDownloadURL(activePath)} download><Download size={15}/>下载图片</a>
+        </footer>
+      </section>
+    </div>}
+  </>
+}
+
 function initWorldline(sid = '') {
   return { sid, status: 'idle', data: null, error: null, switchingNodeId: '' }
 }
@@ -1548,7 +1580,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/><div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>重发</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <><AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /><GeneratedImageGallery content={m.content}/></> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/><div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>重发</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
     </div>
@@ -2127,6 +2159,12 @@ export default function ChatApp() {
     setMenuPos(null)
     setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
+  }
+
+  const selectSidebarSession = (id) => {
+    if (!id) return
+    openSession(id).catch(error => setErr(error?.message || String(error)))
+    if (isNarrowChatViewport()) setCollapsed(true)
   }
 
   const loadSessions = async (prefer = sid, options = {}) => {
@@ -2789,7 +2827,7 @@ export default function ChatApp() {
           {editing === s.id ? <div className="oa-rename">
             <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
             <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
-          </div> : <button className="oa-session" onClick={()=>{ if (isNarrowChatViewport()) setCollapsed(true); openSession(s.id) }} title={shortTitle(s)}>
+          </div> : <button type="button" className="oa-session" onClick={()=>selectSidebarSession(s.id)} title={shortTitle(s)}>
             <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b></span>
             <small><Clock3 size={11}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条{s.running && <em className="oa-session-running-label">运行中</em>}</small>
           </button>}

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
+import ChatApp, { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
@@ -558,6 +558,66 @@ describe('mobile chat model selector', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '服务商和模型' })).toBeNull())
     expect(document.body.style.overflow).toBe('')
     await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+})
+
+describe('mobile chat session navigation', () => {
+  test('switches a history session with one tap and closes the sidebar', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation(query => ({
+        matches: /max-width:\s*(?:900|560)px/.test(query) || /prefers-reduced-motion/.test(query),
+        media: query,
+        addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+      })),
+    })
+    Element.prototype.scrollIntoView = vi.fn()
+    const sessions = [
+      { id:'one', title:'First chat', count:2, updated_at:'2026-07-17T12:00:00Z' },
+      { id:'two', title:'Second chat', count:4, updated_at:'2026-07-17T13:00:00Z' },
+    ]
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.startsWith('/api/chat/session/')) {
+        const id = path.split('/').pop()
+        const row = sessions.find(item => item.id === id)
+        return jsonResponse({ ...row, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      }
+      if (path.startsWith('/api/chat/state/')) return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path.startsWith('/api/chat/worldline/')) return jsonResponse({ schema_version:1, nodes:[], current_path:[] })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('First chat'))
+    fireEvent.click(screen.getByRole('button', { name:'展开侧栏' }))
+    const second = screen.getByRole('button', { name:/Second chat/ })
+    fireEvent.click(second)
+
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Second chat'))
+    expect(document.querySelector('.oa-sidebar')?.classList.contains('collapsed')).toBe(true)
+    expect(screen.queryByRole('button', { name:'关闭侧栏' })).toBeNull()
+    expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === '/api/chat/session/two')).toHaveLength(1)
+  }, 15000)
+})
+
+describe('assistant generated image gallery', () => {
+  test('opens a local generated image preview and exposes original and download actions', () => {
+    const path = String.raw`G:\MygenericAgent\temp\comfy output\final image.png`
+    render(<ChatMessage message={{ id:'a1', role:'assistant', content:`图片已生成：${path}` }} />)
+    const thumb = screen.getByRole('button', { name:'查看原图 final image.png' })
+    const image = thumb.querySelector('img')
+    expect(image?.getAttribute('src')).toBe(`/api/files/image?path=${encodeURIComponent(path)}`)
+
+    fireEvent.click(thumb)
+    expect(screen.getByRole('dialog', { name:'生成图片预览' })).toBeTruthy()
+    expect(screen.getByRole('link', { name:'查看原图' }).getAttribute('href')).toBe(`/api/files/image?path=${encodeURIComponent(path)}`)
+    expect(screen.getByRole('link', { name:'下载图片' }).getAttribute('href')).toBe(`/api/files/download?path=${encodeURIComponent(path)}`)
+    fireEvent.click(screen.getByRole('button', { name:'关闭图片预览' }))
+    expect(screen.queryByRole('dialog', { name:'生成图片预览' })).toBeNull()
   })
 })
 

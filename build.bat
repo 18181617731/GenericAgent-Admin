@@ -36,7 +36,9 @@ if errorlevel 1 (
 )
 
 if not exist dist\cmd mkdir dist\cmd
-copy /Y cmd\chat_worker.py dist\cmd\chat_worker.py >nul || exit /b 1
+"%GO_EXE%" run .\cmd\package-chat-runtime --worker cmd\chat_worker.py --worldline cmd\frontends\worldline.py --output dist\cmd\chat_worker.py || exit /b 1
+if not exist dist\cmd\frontends mkdir dist\cmd\frontends
+copy /Y cmd\frontends\worldline.py dist\cmd\frontends\worldline.py >nul || exit /b 1
 
 echo Built dist\ga-admin.exe
 echo Version %GA_VERSION% Commit %GA_COMMIT% Date %GA_DATE%

@@ -2,6 +2,34 @@ import json, os, sys, time, traceback, threading, queue, subprocess, re, socket
 from pathlib import Path
 
 
+_BUNDLED_WORLDLINE_B64 = "__GA_ADMIN_BUNDLED_WORLDLINE_B64__"
+
+
+def _ensure_bundled_worldline_runtime():
+    """Restore the packaged worldline sidecar when upgrading from legacy installers.
+
+    Releases before v1.0.13 only copied chat_worker.py during self-update.  Packaged
+    workers therefore carry a compressed copy so the first chat can repair the
+    missing sibling atomically. Source checkouts already contain the sidecar and
+    never decode the placeholder.
+    """
+    target = Path(__file__).resolve().parent / 'frontends' / 'worldline.py'
+    if target.is_file():
+        return
+    payload = _BUNDLED_WORLDLINE_B64
+    if not payload or payload == '__GA_ADMIN_BUNDLED_WORLDLINE_B64__':
+        return
+    import base64, zlib
+    data = zlib.decompress(base64.b64decode(payload.encode('ascii')))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_name(target.name + '.tmp')
+    temp.write_bytes(data)
+    os.replace(temp, target)
+
+
+_ensure_bundled_worldline_runtime()
+
+
 def _force_utf8_stdio():
     # Windows pipes otherwise may inherit the active ANSI code page and corrupt CJK text.
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -1212,7 +1240,13 @@ def _install_worldline_hook():
     global _WORLDLINE_HOOK_INSTALLED
     if _WORLDLINE_HOOK_INSTALLED:
         return
-    from plugins import hooks as plugin_hooks
+    try:
+        from plugins import hooks as plugin_hooks
+    except ImportError:
+        # Conversation checkpoints still work on minimal/older GA installs;
+        # only pre-edit file snapshots require the optional hook registry.
+        _WORLDLINE_HOOK_INSTALLED = True
+        return
 
     def _before(ctx):
         try:

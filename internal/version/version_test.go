@@ -231,6 +231,9 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\chat_worker.py`,
 		`C:\Temp\cmd\chat_worker.py`,
 		`C:\Program Files\GA Admin\cmd\chat_worker.py.bak`,
+		`C:\Program Files\GA Admin\cmd\frontends\worldline.py`,
+		`C:\Temp\cmd\frontends\worldline.py`,
+		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
 	)
 	want := []string{
 		`set "OLD=C:\Program Files\GA Admin\ga-admin.exe"`,
@@ -239,9 +242,13 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`set "WORKER=C:\Program Files\GA Admin\cmd\chat_worker.py"`,
 		`set "NEW_WORKER=C:\Temp\cmd\chat_worker.py"`,
 		`set "WORKER_BAK=C:\Program Files\GA Admin\cmd\chat_worker.py.bak"`,
+		`set "WORLDLINE=C:\Program Files\GA Admin\cmd\frontends\worldline.py"`,
+		`set "NEW_WORLDLINE=C:\Temp\cmd\frontends\worldline.py"`,
+		`set "WORLDLINE_BAK=C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak"`,
 		`move /Y "%OLD%" "%BAK%"`,
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
+		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
 		`$p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru`,
 		`Start-Sleep -Seconds 2`,
 		`if ($p.HasExited) { exit 1 }`,
@@ -263,7 +270,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak")
 	want := []string{
 		`for %%D in ("%WORKER%") do if not exist "%%~dpD" mkdir "%%~dpD"`,
 		`if exist "%WORKER%" (`,
@@ -271,6 +278,8 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
+		`:runtime_files_failed`,
+		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
@@ -280,7 +289,7 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak")
 	want := []string{
 		`$ErrorActionPreference='Stop'`,
 		`try { $p=Start-Process`,
@@ -288,6 +297,7 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 		`if not errorlevel 1 exit /b 0`,
 		`goto launch_failed`,
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
+		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
 		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"`,
@@ -400,7 +410,8 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 		`-X genericagent-admin-go/internal/version.Commit=%GA_COMMIT%`,
 		`-X genericagent-admin-go/internal/version.Date=%GA_DATE%`,
 		`"%GO_EXE%" build -ldflags="%GA_LDFLAGS%" -o dist\ga-admin.exe .`,
-		`copy /Y cmd\chat_worker.py dist\cmd\chat_worker.py`,
+		`"%GO_EXE%" run .\cmd\package-chat-runtime --worker cmd\chat_worker.py --worldline cmd\frontends\worldline.py --output dist\cmd\chat_worker.py`,
+		`copy /Y cmd\frontends\worldline.py dist\cmd\frontends\worldline.py`,
 	}
 	for _, w := range want {
 		if !strings.Contains(script, w) {
@@ -455,6 +466,10 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`uses: actions/setup-node@v5`,
 		`uses: actions/upload-artifact@v5`,
 		`uses: actions/download-artifact@v5`,
+		`cp cmd/frontends/worldline.py dist/cmd/frontends/worldline.py`,
+		`go run ./cmd/package-chat-runtime --worker cmd/chat_worker.py --worldline cmd/frontends/worldline.py --output dist/cmd/chat_worker.py`,
+		`from frontends.worldline import RewindStore, restore_plan, tree_from_store`,
+		`test -f dist/legacy-upgrade/cmd/frontends/worldline.py`,
 		`target_commitish: ${{ github.sha }}`,
 		`needs: [prepare, build]`,
 	}
@@ -1075,6 +1090,11 @@ func makeUpdateZip(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	_, _ = w.Write([]byte("new worker"))
+	w, err = zw.Create("cmd/frontends/worldline.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte("new worldline runtime"))
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
