@@ -362,8 +362,8 @@ describe('model profile names', () => {
     })
     const { container } = render(<Models {...props} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '模型顺序' }))
-    fireEvent.click(screen.getByRole('button', { name: '上移 model-d' }), {
+    fireEvent.click(container.querySelector('.model-page-actions button[title="调整已保存模型的全局顺序"]'))
+    fireEvent.click(container.ownerDocument.querySelector('button[aria-label="上移 model-d"]'), {
       clientX: 520,
       clientY: 420,
       detail: 1,
@@ -371,7 +371,7 @@ describe('model profile names', () => {
     expect([...container.ownerDocument.querySelectorAll('.model-order-copy strong')].map(node => node.textContent))
       .toEqual(['model-a', 'model-b', 'model-d', 'model-c'])
 
-    fireEvent.click(screen.getByRole('button', { name: '上移 model-c' }), {
+    fireEvent.click(container.ownerDocument.querySelector('button[aria-label="上移 model-c"]'), {
       clientX: 520,
       clientY: 420,
       detail: 1,
@@ -379,8 +379,8 @@ describe('model profile names', () => {
 
     expect([...container.ownerDocument.querySelectorAll('.model-order-copy strong')].map(node => node.textContent))
       .toEqual(['model-a', 'model-d', 'model-b', 'model-c'])
-    expect(screen.getByRole('button', { name: '上移 model-d' }).closest('.model-order-row')?.classList.contains('is-repeat-target')).toBe(true)
-  }, 20000)
+    expect(container.ownerDocument.querySelector('button[aria-label="上移 model-d"]')?.closest('.model-order-row')?.classList.contains('is-repeat-target')).toBe(true)
+  }, 10000)
 })
 
 describe('provider model availability management', () => {
