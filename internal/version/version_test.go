@@ -302,7 +302,8 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
 		`move /Y "%OLD%" "%NEW%"`,
 		`move /Y "%BAK%" "%OLD%"`,
-		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"`,
+		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
+		`schtasks.exe /Run /TN "GenericAgent-Admin-Restart"`,
 		`exit /b 1`,
 	}
 	for _, sub := range want {
