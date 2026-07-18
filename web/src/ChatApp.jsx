@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -1947,7 +1947,6 @@ export default function ChatApp() {
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
-  const [toolsMode, setToolsMode] = useState('official')
   const [reasoningEffort, setReasoningEffort] = useState('off')
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
@@ -1963,7 +1962,6 @@ export default function ChatApp() {
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
-  const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
   const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
@@ -1974,7 +1972,6 @@ export default function ChatApp() {
   const [cmdEditContent, setCmdEditContent] = useState('')
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const [streamClock, setStreamClock] = useState(() => Date.now())
-  const toolsMenuRef = useRef(null)
   const threadRef = useRef(null)
   const endRef = useRef(null)
   const fileRef = useRef(null)
@@ -2383,11 +2380,9 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
-    const nextToolsMode = st.settings?.tools_mode === 'fixed' ? 'fixed' : 'official'
     const nextReasoningEffort = normalizeReasoningEffort(st.settings?.reasoning_effort)
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
-    setToolsMode(nextToolsMode)
     setReasoningEffort(nextReasoningEffort)
     if (id && st.running) {
       attachRunningStream(id)
@@ -2422,7 +2417,6 @@ export default function ChatApp() {
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
     setLlmNo(d.settings?.llm_no || 0)
-    setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     setErr('')
     setNotice('')
     setMenuOpen('')
@@ -2457,7 +2451,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
     await loadChatState(d.id, openToken)
   }
 
@@ -2579,23 +2573,8 @@ export default function ChatApp() {
   const saveModel = async (next) => {
     setLlmNo(next)
     if (!sid) return
-    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode, reasoning_effort: reasoningEffort }) })
+    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: reasoningEffort }) })
     setNotice('模型已切换')
-  }
-
-  const setToolsModeTo = async (next) => {
-    if (next === toolsMode) { setToolsMenuOpen(false); return }
-    const prev = toolsMode
-    setToolsMode(next)
-    setToolsMenuOpen(false)
-    if (!sid) return
-    try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: next, reasoning_effort: reasoningEffort }) })
-      setNotice(next === 'fixed' ? '已设为自动注入：每次发消息都带上工具' : '已设为官方行为：会话开始按 GA 默认方式注入工具，需要时可点“立即注入一次”')
-    } catch (e) {
-      setToolsMode(prev)
-      setErr(e.message || String(e))
-    }
   }
 
   const saveReasoningEffort = async (value) => {
@@ -2604,7 +2583,7 @@ export default function ChatApp() {
     setReasoningEffort(next)
     if (!sid) return
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: toolsMode, reasoning_effort: next }) })
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, reasoning_effort: next }) })
       setNotice(next === 'off' ? '推理强度已设为默认' : `推理强度已设为 ${next}`)
     } catch (e) {
       setReasoningEffort(prev)
@@ -2612,16 +2591,6 @@ export default function ChatApp() {
     }
   }
 
-  const reinjectTools = async () => {
-    if (!sid) return
-    if (isCurrentRunning) { setNotice('当前正在执行，完成后再重注入 Tools'); return }
-    try {
-      const d = await api(`/api/chat/reinject-tools/${sid}`, { method:'POST' })
-      setNotice(d?.message || 'Tools 已重注入')
-    } catch (e) {
-      setErr(e.message || String(e))
-    }
-  }
 
   const addAttachmentFiles = async (fileList) => {
     const files = Array.from(fileList || []).filter(Boolean)
@@ -2773,7 +2742,7 @@ export default function ChatApp() {
       const payload = buildChatRunPayload({
         prompt: attachmentPrompt,
         files,
-        settings: { llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort },
+        settings: { llm_no: item.llmNo ?? llmNo, reasoning_effort: item.reasoningEffort || reasoningEffort },
         clientUserID,
         sourceUserMessageId: item.sourceUserMessageId,
       })
@@ -2841,7 +2810,7 @@ export default function ChatApp() {
       return
     }
     if (!text && !files.length) return
-    const item = { text, files, llmNo, toolsMode, reasoningEffort }
+    const item = { text, files, llmNo, reasoningEffort }
     setPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
@@ -2975,15 +2944,6 @@ export default function ChatApp() {
   }, [])
 
   useEffect(() => {
-    if (!toolsMenuOpen) return
-    const onDown = (e) => { if (!toolsMenuRef.current?.contains(e.target)) setToolsMenuOpen(false) }
-    const onKey = (e) => { if (e.key === 'Escape') setToolsMenuOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [toolsMenuOpen])
-
-  useEffect(() => {
     if (!sessionManagerOpen) return
     const previousOverflow = document.body.style.overflow
     const onKey = (e) => {
@@ -3056,7 +3016,6 @@ export default function ChatApp() {
   }, [llms])
   const selectedProvider = activeModel ? modelProvider(activeModel) : (providerGroups[0]?.value || '')
   const isCurrentRunning = busy && streamingSid === sid
-  const isFixedToolsMode = toolsMode === 'fixed'
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
   const copyContext = async () => {
     try {
@@ -3257,36 +3216,6 @@ export default function ChatApp() {
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'添加附件'}><Paperclip size={17}/><span>{'附件'}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
-            <div className="oa-tools-menu" ref={toolsMenuRef}>
-              <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
-                <Wrench size={16}/><span>工具</span>{isFixedToolsMode && <span className="oa-tools-state">自动</span>}<ChevronDown size={14}/>
-              </button>
-              {toolsMenuOpen && isMobile && <div className="oa-tools-backdrop" onClick={()=>setToolsMenuOpen(false)}/>}
-              {toolsMenuOpen && (
-                <div className={`oa-tools-pop ${isMobile ? 'oa-tools-modal' : ''}`} role={isMobile ? 'dialog' : 'menu'} aria-modal={isMobile || undefined}>
-                  {isMobile && <div className="oa-tools-modal-bar"/>}
-                  <div className="oa-tools-pop-head">工具注入方式</div>
-                  <button className={`oa-tools-opt ${!isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={!isFixedToolsMode} onClick={()=>setToolsModeTo('official')}>
-                    <Wrench size={16}/>
-                    <span className="oa-tools-opt-text"><b>官方行为<span className="oa-tools-tag">默认</span></b><small>会话开始按 GA 默认方式注入工具，需要时再点“立即注入一次”</small></span>
-                    {!isFixedToolsMode && <Check size={16}/>}
-                  </button>
-                  <button className={`oa-tools-opt ${isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={isFixedToolsMode} onClick={()=>setToolsModeTo('fixed')}>
-                    <Pin size={16}/>
-                    <span className="oa-tools-opt-text"><b>自动注入</b><small>每次发消息都自动带上工具</small></span>
-                    {isFixedToolsMode && <Check size={16}/>}
-                  </button>
-                  {!isFixedToolsMode && (
-                    <>
-                      <div className="oa-tools-pop-sep"/>
-                      <button className="oa-tools-act" type="button" disabled={!sid || isCurrentRunning} onClick={()=>{ setToolsMenuOpen(false); reinjectTools() }}>
-                        <RefreshCw size={15}/><span>立即注入一次</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length}
               onChange={v=>saveModel(Number(v))} />
@@ -3298,7 +3227,7 @@ export default function ChatApp() {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队 · 工具：{isFixedToolsMode ? '每次自动注入' : '官方默认'}</p>
+        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队</p>
       </footer>
     </main>
 

@@ -22,7 +22,7 @@ export function ChatPage({ t, slashCommands }) {
   const [sessions, setSessions] = useState([]), [sid, setSid] = useState(''), [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const [files, setFiles] = useState([])
-  const [settings, setSettings] = useState({ llm_no: 0, tools_mode: 'official' })
+  const [settings, setSettings] = useState({ llm_no: 0 })
   const activeSidRef = useRef('')
   const fileInputRef = useRef(null)
   const promptRef = useRef(null)
@@ -57,7 +57,7 @@ export function ChatPage({ t, slashCommands }) {
     activeSidRef.current = d.id
     setSid(d.id)
     setMessages(d.messages || [])
-    setSettings({ llm_no: d.settings?.llm_no || 0, tools_mode: d.settings?.tools_mode || 'official' })
+    setSettings({ llm_no: d.settings?.llm_no || 0 })
   }
   const newSession = async () => {
     if (busy) { setErr('当前正在执行，完成后可创建新会话'); return }
@@ -66,7 +66,7 @@ export function ChatPage({ t, slashCommands }) {
     setSid(d.id)
     setMessages([])
     setFiles([])
-    setSettings({ llm_no: d.settings?.llm_no || 0, tools_mode: d.settings?.tools_mode || 'official' })
+    setSettings({ llm_no: d.settings?.llm_no || 0 })
   }
   useEffect(()=>{ loadSessions().catch(e=>setErr(e.message)) }, [])
   useEffect(() => {
@@ -99,15 +99,6 @@ export function ChatPage({ t, slashCommands }) {
     const cur = activeSidRef.current || sid
     if (!cur) return
     try { await api(`/api/chat/${cur}/cancel`, { method:'POST', body:'{}' }) } catch(e) { setErr(e.message) }
-  }
-
-  const reinjectTools = async () => {
-    const cur = activeSidRef.current || sid
-    if (!cur || busy) return
-    try {
-      const ev = await api(`/api/chat/${cur}/reinject-tools`, { method:'POST', body:'{}' })
-      setErr(ev.message || ev.result?.message || 'Tools 已重注入')
-    } catch(e) { setErr(e.message) }
   }
 
   const send = async () => {
@@ -178,7 +169,7 @@ export function ChatPage({ t, slashCommands }) {
     {err && <div className="message">{err}</div>}
     <div className="chat-grid"><aside className="chat-sessions"><button className="primary" onClick={newSession}>+ 新会话</button>{sessions.map(s => <button key={s.id} className={s.id===sid?'active':''} onClick={()=>openSession(s.id)}><b>{s.title || '新会话'}</b><small>{s.count || 0} 条</small></button>)}</aside>
       <main className="chat-main"><TurnList messages={messages} empty="选择或创建会话后开始对话"/>
-        <div className="chat-settings"><label>LLM <input type="number" min="0" value={settings.llm_no} onChange={e=>setSettings(v => ({...v, llm_no:Number(e.target.value)||0}))}/></label><label>Tools <select value={settings.tools_mode} onChange={e=>setSettings(v => ({...v, tools_mode:e.target.value}))}><option value="official">官方模式</option><option value="fixed">固定注入</option></select></label><button type="button" onClick={reinjectTools} disabled={!sid || busy}>重注入 Tools</button></div>
+        <div className="chat-settings"><label>LLM <input type="number" min="0" value={settings.llm_no} onChange={e=>setSettings(v => ({...v, llm_no:Number(e.target.value)||0}))}/></label></div>
         {files.length > 0 && <div className="chat-attachments">{files.map((f, i) => <span key={`${f.name}-${i}`}><Paperclip size={13}/>{f.name}<small>{compactFileSize(f.size)}</small><button type="button" onClick={()=>removeFile(i)}><X size={12}/></button></span>)}</div>}
         {cmdDrawer.open && <div className="chat-cmd-drawer" ref={cmdDrawerRef}>{filteredCmds.length === 0 ? <div className="chat-cmd-empty">无匹配命令</div> : filteredCmds.map((c, i) => <div key={c.cmd} ref={i === cmdDrawer.selectedIdx ? selectedCmdRef : null} className={`chat-cmd-item${i === cmdDrawer.selectedIdx ? ' selected' : ''}`} onMouseDown={() => applyCmd(c.cmd, promptRef.current?.value ?? prompt)} onMouseEnter={() => setCmdDrawer(d => ({...d, selectedIdx: i}))}><span className="chat-cmd-name">{c.cmd}</span><span className="chat-cmd-desc">{c.desc}</span></div>)}</div>}
         <div className="chat-compose"><input ref={fileInputRef} type="file" multiple hidden onChange={e=>addFiles(e.target.files)}/><button className="icon" type="button" onClick={()=>fileInputRef.current?.click()} disabled={busy}><Paperclip size={16}/></button><textarea ref={promptRef} value={prompt} onChange={e => { const v = e.target.value; setPrompt(v); if (v.startsWith('/')) { const after = v.slice(1).split(' ')[0]; setCmdDrawer(d => ({ open: true, filter: after, selectedIdx: 0 })); } else if (cmdDrawer.open) closeCmdDrawer() }} onKeyDown={e => { if (cmdDrawer.open) { if (e.key === 'ArrowDown') { e.preventDefault(); setCmdDrawer(d => ({...d, selectedIdx: Math.min(d.selectedIdx + 1, filteredCmds.length - 1)})) } else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdDrawer(d => ({...d, selectedIdx: Math.max(d.selectedIdx - 1, 0)})) } else if ((e.key === 'Enter' || e.key === 'Tab') && filteredCmds[cmdDrawer.selectedIdx]) { e.preventDefault(); applyCmd(filteredCmds[cmdDrawer.selectedIdx].cmd, e.currentTarget.value) } else if (e.key === 'Escape') { e.preventDefault(); closeCmdDrawer() } else if (e.key === 'Enter' && e.ctrlKey) { closeCmdDrawer(); send() } } else if (e.key === 'Enter' && e.ctrlKey) send() }} placeholder="输入给 GenericAgent 的任务，Ctrl+Enter 发送；可附加图片/文件"/><button disabled={busy || (!prompt.trim() && files.length===0)} onClick={send}>{busy?'执行中...':'发送'}</button>{busy && <button className="danger" type="button" onClick={stop}><Square size={14}/>停止</button>}</div>

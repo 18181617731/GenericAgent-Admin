@@ -72,7 +72,6 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "llm_no": 0,
             "ga_root": str(WORKER_PATH.parents[1]),
             "project_mode": "",
-            "tools_mode": "official",
             "reasoning_effort": "high",
         }
 

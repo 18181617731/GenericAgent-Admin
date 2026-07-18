@@ -115,11 +115,6 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatCancel(w, r, parts[1])
 			return
 		}
-	case "reinject-tools":
-		if len(parts) == 2 && r.Method == http.MethodPost {
-			s.chatReinjectTools(w, r, parts[1])
-			return
-		}
 	case "file":
 		if len(parts) >= 2 && r.Method == http.MethodGet {
 			s.chatFile(w, r, strings.Join(parts[1:], "/"))
@@ -501,7 +496,6 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 		"workspace":        cs.Workspace,
 		"project_mode":     cs.ProjectMode,
 		"llm_no":           cs.Settings.LLMNo,
-		"tools_mode":       cs.Settings.ToolsMode,
 		"reasoning_effort": cs.Settings.ReasoningEffort,
 		"ga_root":          s.CfgStore.Cfg.GARoot,
 	}
@@ -626,7 +620,6 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"workspace":            cs.Workspace,
 		"project_mode":         cs.ProjectMode,
 		"llm_no":               cs.Settings.LLMNo,
-		"tools_mode":           cs.Settings.ToolsMode,
 		"reasoning_effort":     cs.Settings.ReasoningEffort,
 		"ga_root":              s.CfgStore.Cfg.GARoot,
 		"_ga_worldline_resend": strings.TrimSpace(req.SourceUserMessageID) != "",
@@ -641,32 +634,6 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) 
 		_, _ = fmt.Sscanf(v, "%d", &from)
 	}
 	s.streamChatRun(w, r, safeChatID(sid), from)
-}
-
-func (s *Server) chatReinjectTools(w http.ResponseWriter, r *http.Request, sid string) {
-	sid = safeChatID(sid)
-	if s.chatRunActive(sid) {
-		bad(w, http.StatusConflict, "chat is already running")
-		return
-	}
-	ev, err := s.reinjectChatWorkerTools(sid)
-	if err != nil {
-		bad(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if ev == nil {
-		bad(w, http.StatusInternalServerError, "worker returned empty response")
-		return
-	}
-	if ok, _ := ev["ok"].(bool); !ok {
-		msg, _ := ev["message"].(string)
-		if msg == "" {
-			msg = "tools reinjection failed"
-		}
-		bad(w, http.StatusInternalServerError, msg)
-		return
-	}
-	writeJSON(w, ev)
 }
 
 func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {

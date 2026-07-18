@@ -1277,7 +1277,7 @@ func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 			{ID: "u2", Role: "user", Content: "repeat"},
 			{ID: "a2", Role: "assistant", Content: "future answer"},
 		},
-		Settings:    chatSettings{LLMNo: 2, ToolsMode: "full"},
+		Settings:    chatSettings{LLMNo: 2},
 		Workspace:   "workspace-a",
 		ProjectMode: "project-a",
 		HistoryInfo: []interface{}{map[string]interface{}{"future": true}},

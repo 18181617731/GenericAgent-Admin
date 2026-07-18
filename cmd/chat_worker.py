@@ -298,8 +298,6 @@ def _normalize_request(req):
         normalized['ga_root'] = None
     if not isinstance(normalized.get('project_mode'), str):
         normalized['project_mode'] = ''
-    if normalized.get('tools_mode') not in ('official', 'fixed'):
-        normalized['tools_mode'] = 'official'
     if normalized.get('reasoning_effort') is not None and not isinstance(normalized.get('reasoning_effort'), str):
         normalized['reasoning_effort'] = None
     return normalized
@@ -346,9 +344,6 @@ def _restore_admin_history(agent, history, raw_history=None):
     try:
         restored = raw_history if isinstance(raw_history, list) and raw_history else _admin_history_to_backend(history)
         restored = json.loads(json.dumps(restored, ensure_ascii=False, default=str)) if isinstance(restored, list) else []
-        sticky_tools_history = getattr(agent, '_admin_sticky_tools_history', []) or []
-        if sticky_tools_history:
-            restored.extend(json.loads(json.dumps(sticky_tools_history, ensure_ascii=False, default=str)))
         agent.llmclient.backend.history = restored
     except Exception:
         pass
@@ -366,56 +361,6 @@ def _select_llm_if_needed(agent, llm_no):
         agent.next_llm(llm_no)
     except Exception:
         pass
-
-
-def _load_tools_history(agent):
-    hist_path = Path(getattr(agent, 'script_dir', os.getcwd())) / 'assets' / 'tool_usable_history.json'
-    with hist_path.open('r', encoding='utf-8') as f:
-        items = json.load(f)
-    return items if isinstance(items, list) else []
-
-
-def _inject_tools_history(agent, sticky=True):
-    items = _load_tools_history(agent)
-    if sticky:
-        agent._admin_sticky_tools_history = items
-    if items:
-        agent.llmclient.backend.history.extend(items)
-    return len(items)
-
-
-def _reset_tools_schema(agent):
-    try:
-        agent.llmclient.last_tools = ''
-    except Exception:
-        pass
-
-
-def _reinject_tools(agent):
-    """Mirror GA Streamlit's manual Tools reinjection button.
-
-    Official GA does two things: clear llmclient.last_tools so the next model
-    request resends the tool schemas, then append assets/tool_usable_history.json
-    into backend history as a reminder of available tool usage.
-    """
-    _reset_tools_schema(agent)
-    added = 0
-    try:
-        added = _inject_tools_history(agent, sticky=True)
-    except Exception as e:
-        return {'ok': False, 'message': '工具历史注入失败：%s' % e, 'added': added}
-    return {'ok': True, 'message': '已重新注入 Tools，下一次请求会重新发送工具定义', 'added': added}
-
-
-def _apply_tools_mode(agent, mode):
-    if mode != 'fixed':
-        return None
-    _reset_tools_schema(agent)
-    try:
-        added = _inject_tools_history(agent, sticky=False)
-        return {'ok': True, 'message': '固定模式：本次请求已注入 Tools', 'added': added}
-    except Exception as e:
-        return {'ok': False, 'message': '固定模式 Tools 注入失败：%s' % e, 'added': 0}
 
 
 EFFORT_LEVELS = ('off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
@@ -1680,7 +1625,6 @@ def handle_request(agent, worker, req):
     history_info = req.get('history_info') or []
     working = req.get('working') or {}
     llm_no = req.get('llm_no', 0)
-    tools_mode = req.get('tools_mode') or 'official'
     reasoning_effort = req.get('reasoning_effort') if 'reasoning_effort' in req else None
     root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
     project_mode = str(req.get('project_mode') or '').strip()
@@ -1720,9 +1664,6 @@ def handle_request(agent, worker, req):
         _run_ultraplan_command(root_for_req, ultraplan_objective, llm_no, agent, history_info, working, emit)
         return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
-    mode_status = _apply_tools_mode(agent, tools_mode)
-    if mode_status and not mode_status.get('ok'):
-        emit({'type': 'notice', 'message': mode_status})
     chunks = []
     _up_state = {'objective': _ultraplan_ctx[0]} if _ultraplan_ctx[0] else {}
     _up_buf = ['']
@@ -1808,12 +1749,6 @@ def main():
             if req.get('op') == 'worldline':
                 with agent_lock:
                     handle_worldline_request(agent, req)
-                continue
-            if req.get('op') == 'reinject_tools':
-                with agent_lock:
-                    root_for_req = _resolve_request_root(req.get('ga_root'), root)
-                    _apply_workspace(agent, root_for_req, req.get('workspace'))
-                    emit({'type': 'reinject_tools', **_reinject_tools(agent)})
                 continue
             with agent_lock:
                 handle_request(agent, worker, req)

@@ -40,9 +40,6 @@ type chatMessage struct {
 }
 
 const (
-	chatToolsModeOfficial = "official"
-	chatToolsModeFixed    = "fixed"
-
 	chatReasoningEffortOff     = "off"
 	chatReasoningEffortNone    = "none"
 	chatReasoningEffortMinimal = "minimal"
@@ -55,17 +52,10 @@ const (
 
 type chatSettings struct {
 	LLMNo           int    `json:"llm_no"`
-	ToolsMode       string `json:"tools_mode,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 func normalizeChatSettings(st chatSettings) chatSettings {
-	switch st.ToolsMode {
-	case chatToolsModeFixed:
-		// keep
-	default:
-		st.ToolsMode = chatToolsModeOfficial
-	}
 	switch strings.ToLower(strings.TrimSpace(st.ReasoningEffort)) {
 	case "", "default", "model":
 		st.ReasoningEffort = ""
@@ -579,48 +569,6 @@ func (s *Server) chatRunActive(sid string) bool {
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
 	return r != nil && !r.Done
-}
-
-func (s *Server) reinjectChatWorkerTools(sid string) (map[string]interface{}, error) {
-	sid = safeChatID(sid)
-	workspace := ""
-	if cs, err := loadChatSession(s.CfgStore.Cfg, sid); err == nil {
-		workspace = strings.TrimSpace(cs.Workspace)
-	}
-	worker, err := s.getChatWorker(sid)
-	if err != nil {
-		return nil, err
-	}
-	worker.Mu.Lock()
-	defer worker.Mu.Unlock()
-	if err := json.NewEncoder(worker.Stdin).Encode(map[string]interface{}{"op": "reinject_tools", "ga_root": s.CfgStore.Cfg.GARoot, "workspace": workspace}); err != nil {
-		s.dropChatWorker(sid, worker)
-		return nil, err
-	}
-	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
-	for {
-		line, err := readChatWorkerLine(reader)
-		if len(bytes.TrimSpace(line)) == 0 {
-			if err != nil {
-				s.dropChatWorker(sid, worker)
-				return nil, err
-			}
-			continue
-		}
-		var ev map[string]interface{}
-		if json.Unmarshal(bytes.TrimSpace(line), &ev) == nil {
-			if ev["type"] == "reinject_tools" {
-				return ev, nil
-			}
-			if ev["type"] == "error" {
-				return ev, nil
-			}
-		}
-		if err != nil {
-			s.dropChatWorker(sid, worker)
-			return nil, err
-		}
-	}
 }
 
 func (s *Server) beginChatRun(sid string) *chatRun {
