@@ -562,6 +562,14 @@ func appendChatRawHistoryFallback(raw []map[string]interface{}, messages ...chat
 	return out
 }
 
+func projectModeWorkspace(cfg config.AppConfig, name string) string {
+	name, ok := validProjectModeName(name)
+	if !ok {
+		return ""
+	}
+	return filepath.Join(cfg.GARoot, "temp", "projects", name)
+}
+
 func chatSessionForClient(cs chatSession) chatSession {
 	return cs
 }

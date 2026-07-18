@@ -431,7 +431,7 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 			reply = "进入 Project Mode 失败：GA Root 未配置。"
 			break
 		}
-		projectDir := filepath.Join(gaRoot, "temp", "projects", name)
+		projectDir := projectModeWorkspace(s.CfgStore.Cfg, name)
 		if st, err := os.Lstat(projectDir); err == nil {
 			if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
 				reply = fmt.Sprintf("进入 Project Mode 失败：项目路径不是安全目录：`%s`", projectDir)
