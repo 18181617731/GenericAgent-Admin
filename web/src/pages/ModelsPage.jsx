@@ -18,7 +18,7 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import {
@@ -52,6 +52,7 @@ import {
 } from '../lib/modelBatchProbe'
 
 const DEFAULT_PROTOCOL = 'native_oai'
+const ORDER_REPEAT_DISTANCE_PX = 8
 const OFFICIAL_PROTOCOLS = [
   { value: 'native_oai', label: 'Native OAI（推荐 / OpenAI 兼容）', shortLabel: 'Native OAI', prefix: 'native_oai_config', discover: true, color: 'blue', help: '适合 OpenAI-compatible 接口，新配置优先使用。' },
   { value: 'native_claude', label: 'Native Claude（Anthropic 兼容）', shortLabel: 'Native Claude', prefix: 'native_claude_config', discover: true, color: 'purple', help: '适合 Anthropic-compatible 接口。' },
@@ -776,6 +777,8 @@ export function Models({
   const [orderSaving, setOrderSaving] = useState(false)
   const [orderError, setOrderError] = useState('')
   const [dragIndex, setDragIndex] = useState(null)
+  const [repeatOrderRowId, setRepeatOrderRowId] = useState('')
+  const orderMoveSessionRef = useRef(null)
   const [batchProbeBusy, setBatchProbeBusy] = useState(false)
   const [batchProbeProgress, setBatchProbeProgress] = useState(null)
   const [batchProbeResult, setBatchProbeResult] = useState(null)
@@ -837,10 +840,15 @@ export function Models({
   const openAdd = () => setAddOpen(true)
 
   const persistedOrderCount = orderedModelRows(persistedProfiles).length
+  const resetOrderMoveSession = () => {
+    orderMoveSessionRef.current = null
+    setRepeatOrderRowId('')
+  }
   const openModelOrder = () => {
     setOrderRows(orderedModelRows(persistedProfiles))
     setOrderError('')
     setDragIndex(null)
+    resetOrderMoveSession()
     setOrderOpen(true)
   }
   const closeModelOrder = () => {
@@ -849,14 +857,38 @@ export function Models({
     setOrderRows([])
     setOrderError('')
     setDragIndex(null)
+    resetOrderMoveSession()
   }
-  const moveModelOrder = (fromIndex, toIndex) => {
-    setOrderRows(current => moveOrderedItem(current, fromIndex, toIndex))
+  const moveModelOrder = (rowId, direction, event) => {
+    const isPointerClick = Number(event?.detail) > 0
+    const pointer = isPointerClick
+      ? { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 }
+      : null
+    const session = orderMoveSessionRef.current
+    const repeatsAtSamePosition = pointer
+      && session
+      && session.direction === direction
+      && Math.hypot(pointer.x - session.x, pointer.y - session.y) <= ORDER_REPEAT_DISTANCE_PX
+      && orderRows.some(row => row.id === session.rowId)
+    const targetRowId = repeatsAtSamePosition ? session.rowId : rowId
+
+    setOrderRows(current => {
+      const fromIndex = current.findIndex(row => row.id === targetRowId)
+      return moveOrderedItem(current, fromIndex, fromIndex + direction)
+    })
+    orderMoveSessionRef.current = pointer
+      ? { rowId: targetRowId, direction, ...pointer }
+      : null
+    setRepeatOrderRowId(targetRowId)
     setOrderError('')
   }
   const dropModelOrder = toIndex => {
-    if (Number.isInteger(dragIndex)) moveModelOrder(dragIndex, toIndex)
+    if (Number.isInteger(dragIndex)) {
+      setOrderRows(current => moveOrderedItem(current, dragIndex, toIndex))
+      setOrderError('')
+    }
     setDragIndex(null)
+    resetOrderMoveSession()
   }
   const saveModelOrder = async () => {
     if (!onSaveModelOrder) {
@@ -874,6 +906,7 @@ export function Models({
       setOrderOpen(false)
       setOrderRows([])
       setDragIndex(null)
+      resetOrderMoveSession()
     } catch (error) {
       setOrderError(error?.message || '保存失败，当前排序草稿已保留。')
     } finally {
@@ -1211,9 +1244,10 @@ export function Models({
             <div
               key={row.id}
               role="listitem"
-              className={`model-order-row${dragIndex === index ? ' is-dragging' : ''}`}
+              className={`model-order-row${dragIndex === index ? ' is-dragging' : ''}${repeatOrderRowId === row.id ? ' is-repeat-target' : ''}`}
               draggable={!orderSaving}
               onDragStart={event => {
+                resetOrderMoveSession()
                 setDragIndex(index)
                 event.dataTransfer.effectAllowed = 'move'
                 event.dataTransfer.setData('text/plain', row.id)
@@ -1246,7 +1280,7 @@ export function Models({
                   aria-label={`上移 ${row.model || row.variableName}`}
                   title="上移"
                   disabled={orderSaving || index === 0}
-                  onClick={() => moveModelOrder(index, index - 1)}
+                  onClick={event => moveModelOrder(row.id, -1, event)}
                 />
                 <Button
                   type="text"
@@ -1255,7 +1289,7 @@ export function Models({
                   aria-label={`下移 ${row.model || row.variableName}`}
                   title="下移"
                   disabled={orderSaving || index === orderRows.length - 1}
-                  onClick={() => moveModelOrder(index, index + 1)}
+                  onClick={event => moveModelOrder(row.id, 1, event)}
                 />
               </div>
             </div>

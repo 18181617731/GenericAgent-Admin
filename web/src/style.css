@@ -7828,6 +7828,12 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
 }
 
+.model-order-row.is-repeat-target {
+  border-color: rgba(22, 119, 255, 0.62);
+  background: color-mix(in srgb, var(--card) 92%, #1677ff 8%);
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
 .model-order-row.is-dragging {
   border-style: dashed;
   opacity: 0.46;
@@ -7914,6 +7920,10 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
 
 [data-theme="dark"] .model-order-row:hover {
   box-shadow: none;
+}
+
+[data-theme="dark"] .model-order-row.is-repeat-target {
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.18);
 }
 
 @media (max-width: 640px) {

@@ -347,6 +347,40 @@ describe('model profile names', () => {
     expect(screen.getByText('服务商名称：主模型')).toBeTruthy()
     expect(screen.queryByText('服务商名称：1')).toBeNull()
   }, 10000)
+
+  test('repeated clicks at one position keep moving the same model upward', () => {
+    const orderedProfile = {
+      ...modelProfile,
+      model: 'model-a',
+      models: ['model-a', 'model-b', 'model-c', 'model-d'],
+      model_configs: ['model-a', 'model-b', 'model-c', 'model-d'].map(model => ({ model })),
+    }
+    const props = modelProps({
+      profiles: [orderedProfile],
+      persistedProfiles: [orderedProfile],
+      onSaveModelOrder: vi.fn(async () => true),
+    })
+    const { container } = render(<Models {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '模型顺序' }))
+    fireEvent.click(screen.getByRole('button', { name: '上移 model-d' }), {
+      clientX: 520,
+      clientY: 420,
+      detail: 1,
+    })
+    expect([...container.ownerDocument.querySelectorAll('.model-order-copy strong')].map(node => node.textContent))
+      .toEqual(['model-a', 'model-b', 'model-d', 'model-c'])
+
+    fireEvent.click(screen.getByRole('button', { name: '上移 model-c' }), {
+      clientX: 520,
+      clientY: 420,
+      detail: 1,
+    })
+
+    expect([...container.ownerDocument.querySelectorAll('.model-order-copy strong')].map(node => node.textContent))
+      .toEqual(['model-a', 'model-d', 'model-b', 'model-c'])
+    expect(screen.getByRole('button', { name: '上移 model-d' }).closest('.model-order-row')?.classList.contains('is-repeat-target')).toBe(true)
+  }, 20000)
 })
 
 describe('provider model availability management', () => {
