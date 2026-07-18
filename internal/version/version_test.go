@@ -252,8 +252,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
 		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
-		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
-		`$env:RESTART_SCRIPT`,
+		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%RESTART_SCRIPT%"`,
 		`if errorlevel 1 goto launch_failed`,
 		`:launch_failed`,
 	}
@@ -292,7 +291,7 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
 	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
 	want := []string{
-		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
+		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%RESTART_SCRIPT%"`,
 		`if errorlevel 1 goto launch_failed`,
 		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
 		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
@@ -319,6 +318,10 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
 	)
 	want := []string{
+		`param([switch]$Run)`,
+		`if (-not $Run)`,
+		`$PSCommandPath + $quote + ' -Run'`,
+		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
 		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
 		`$OldDir = 'C:\Program Files\GA Admin'`,
 		`$LogFile = Join-Path $PSScriptRoot 'restart-update.log'`,
@@ -350,13 +353,17 @@ func TestWindowsDetachedRestartCommandLaunchesQuotedScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(dir, "restart probe.ps1")
+	launcher := filepath.Join(dir, "launch probe.cmd")
 	marker := filepath.Join(dir, "restart marker.txt")
-	content := fmt.Sprintf("$Marker = %s\nStart-Sleep -Milliseconds 300\nSet-Content -LiteralPath $Marker -Value 'detached' -Encoding UTF8\n", powerShellSingleQuoted(marker))
+	content := fmt.Sprintf("param([switch]$Run)\n%s\n$Marker = %s\nStart-Sleep -Milliseconds 300\nSet-Content -LiteralPath $Marker -Value 'detached' -Encoding UTF8\n", windowsCIMSelfLaunchBlock(), powerShellSingleQuoted(marker))
 	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsRestartLaunchPowerShell())
-	command.Env = append(os.Environ(), "RESTART_SCRIPT="+script)
+	launcherContent := "@echo off\r\npowershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%~dp0restart probe.ps1\"\r\n"
+	if err := os.WriteFile(launcher, []byte(launcherContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("cmd", "/D", "/Q", "/C", launcher)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("detached restart command failed: %v output=%s", err, output)
 	}

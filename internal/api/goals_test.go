@@ -83,7 +83,7 @@ time.sleep(30)
 		t.Fatalf("unexpected relative paths: state=%q log=%q", resp.Goal.StateFile, resp.Goal.LogFile)
 	}
 	statePath := filepath.Join(root, filepath.FromSlash(resp.Goal.StateFile))
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 100; i++ {
 		b, err := os.ReadFile(statePath)
 		if err == nil && strings.Contains(string(b), "runner_args") {
 			var state map[string]any

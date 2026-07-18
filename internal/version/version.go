@@ -721,7 +721,7 @@ move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
 move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
 exit /b 1
 :runtime_files_ready
-powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "%s"
+powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%%RESTART_SCRIPT%%"
 if errorlevel 1 goto launch_failed
 exit /b 0
 :launch_failed
@@ -741,11 +741,22 @@ move /Y "%%OLD%%" "%%NEW%%" >nul 2>nul
 move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
 powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden"
 exit /b 1
-`, oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript, windowsRestartLaunchPowerShell())
+`, oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript)
 }
 
-func windowsRestartLaunchPowerShell() string {
-	return `$ErrorActionPreference='Stop'; try { $quote=[char]34; $command='powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '+$quote+$env:RESTART_SCRIPT+$quote; $result=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$command}; if ($result.ReturnValue -ne 0) { exit 1 }; exit 0 } catch { exit 1 }`
+func windowsCIMSelfLaunchBlock() string {
+	return `if (-not $Run) {
+  $ErrorActionPreference = 'Stop'
+  try {
+    $quote = [char]34
+    $command = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + $quote + $PSCommandPath + $quote + ' -Run'
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = $command}
+    if ($result.ReturnValue -ne 0) { exit 1 }
+    exit 0
+  } catch {
+    exit 1
+  }
+}`
 }
 
 func powerShellSingleQuoted(value string) string {
@@ -753,7 +764,9 @@ func powerShellSingleQuoted(value string) string {
 }
 
 func windowsRestartScript(oldExe, newExe, backup, worker, workerBackup, worldline, worldlineBackup string) string {
-	return fmt.Sprintf(`$Old = %s
+	return fmt.Sprintf(`param([switch]$Run)
+%s
+$Old = %s
 $OldDir = %s
 $New = %s
 $Backup = %s
@@ -808,6 +821,7 @@ Move-Item -LiteralPath $Backup -Destination $Old -Force -ErrorAction SilentlyCon
 Start-Process -FilePath $Old -WorkingDirectory $OldDir -WindowStyle Hidden
 exit 1
 `,
+		windowsCIMSelfLaunchBlock(),
 		powerShellSingleQuoted(oldExe),
 		powerShellSingleQuoted(filepath.Dir(oldExe)),
 		powerShellSingleQuoted(newExe),
