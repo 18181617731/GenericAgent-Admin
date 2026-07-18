@@ -234,6 +234,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py`,
 		`C:\Temp\cmd\frontends\worldline.py`,
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
+		`C:\Temp\restart-update.ps1`,
 	)
 	want := []string{
 		`set "OLD=C:\Program Files\GA Admin\ga-admin.exe"`,
@@ -245,15 +246,14 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`set "WORLDLINE=C:\Program Files\GA Admin\cmd\frontends\worldline.py"`,
 		`set "NEW_WORLDLINE=C:\Temp\cmd\frontends\worldline.py"`,
 		`set "WORLDLINE_BAK=C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak"`,
+		`set "RESTART_SCRIPT=C:\Temp\restart-update.ps1"`,
 		`move /Y "%OLD%" "%BAK%"`,
 		`move /Y "%NEW%" "%OLD%"`,
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
 		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
-		`$p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru`,
-		`Start-Sleep -Seconds 8`,
+		`Start-Process powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$env:RESTART_SCRIPT)`,
 		`if ($p.HasExited) { exit 1 }`,
 		`if not errorlevel 1 exit /b 0`,
-		`for /L %%R in (1,1,10) do (`,
 		`:launch_failed`,
 	}
 	for _, w := range want {
@@ -270,7 +270,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
 	want := []string{
 		`for %%D in ("%WORKER%") do if not exist "%%~dpD" mkdir "%%~dpD"`,
 		`if exist "%WORKER%" (`,
@@ -289,7 +289,7 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
 	want := []string{
 		`$ErrorActionPreference='Stop'`,
 		`try { $p=Start-Process`,
@@ -306,6 +306,26 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
 			t.Fatalf("script missing launch rollback step %q in:\n%s", sub, script)
+		}
+	}
+}
+
+func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
+	script := windowsRestartScript()
+	want := []string{
+		`Start-Sleep -Seconds 3`,
+		`for ($attempt = 1; $attempt -le 10; $attempt++)`,
+		`Get-NetTCPConnection -State Listen -OwningProcess $process.Id`,
+		`if (-not $process.HasExited -and $listener) { exit 0 }`,
+		`Stop-Process -Id $process.Id -Force`,
+		`Move-Item -LiteralPath $env:WORLDLINE_BAK -Destination $env:WORLDLINE`,
+		`Move-Item -LiteralPath $env:WORKER_BAK -Destination $env:WORKER`,
+		`Move-Item -LiteralPath $env:BAK -Destination $env:OLD`,
+		`Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR`,
+	}
+	for _, sub := range want {
+		if !strings.Contains(script, sub) {
+			t.Fatalf("restart script missing %q in:\n%s", sub, script)
 		}
 	}
 }
