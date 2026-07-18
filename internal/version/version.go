@@ -717,7 +717,7 @@ move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul
 exit /b 1
 :runtime_files_ready
 for /L %%%%R in (1,1,10) do (
-  powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "$ErrorActionPreference='Stop'; try { $p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru; Start-Sleep -Seconds 2; if ($p.HasExited) { exit 1 }; exit 0 } catch { exit 1 }"
+  powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "$ErrorActionPreference='Stop'; try { $p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru; Start-Sleep -Seconds 8; if ($p.HasExited) { exit 1 }; exit 0 } catch { exit 1 }"
   if not errorlevel 1 exit /b 0
 )
 echo updated process exited during restart attempts

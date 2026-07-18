@@ -250,7 +250,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`move /Y "%NEW_WORKER%" "%WORKER%"`,
 		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
 		`$p=Start-Process -FilePath $env:OLD -WorkingDirectory $env:OLD_DIR -WindowStyle Hidden -PassThru`,
-		`Start-Sleep -Seconds 2`,
+		`Start-Sleep -Seconds 8`,
 		`if ($p.HasExited) { exit 1 }`,
 		`if not errorlevel 1 exit /b 0`,
 		`for /L %%R in (1,1,10) do (`,
