@@ -1190,6 +1190,15 @@ def _ensure_worldline_store(agent, ga_root, workspace):
     return store
 
 
+_WORLDLINE_PROJECT_MODE_BLOCK_RE = re.compile(
+    r"\s*-{3,}\s*\[PROJECT MODE:.*?(?:\n-{3,}\s*|$)", re.DOTALL,
+)
+
+
+def _strip_worldline_project_mode(text):
+    return _WORLDLINE_PROJECT_MODE_BLOCK_RE.sub('', text or '')
+
+
 def _worldline_title(store, history, fallback):
     parent = store.head if store.head in store.nodes else store.root_id
     parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
@@ -1197,7 +1206,7 @@ def _worldline_title(store, history, fallback):
         if isinstance(item, dict) and str(item.get('role') or '').lower() == 'user':
             text = _chat_content_text(item.get('content')).strip()
             if text:
-                return store._strip_project_mode(text).replace('\n', ' ').strip()[:160]
+                return _strip_worldline_project_mode(text).replace('\n', ' ').strip()[:160]
     return str(fallback or 'checkpoint').replace('\n', ' ').strip()[:160] or 'checkpoint'
 
 
