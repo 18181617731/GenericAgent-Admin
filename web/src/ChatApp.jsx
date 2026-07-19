@@ -2617,22 +2617,26 @@ export default function ChatApp() {
     setPromptPresets(next)
     return next
   }
-  const openExtraPromptEditor = async () => {
+  const openExtraPromptEditor = () => {
     const targetSid = activeSidRef.current
     const targetOpenToken = openSeqRef.current
+    const initialSelection = extraSysPromptPresetID
     setPromptPresetManagerOpen(false)
-    try {
-      const [freshState] = await Promise.all([
-        loadChatState(targetSid, targetOpenToken),
-        loadPromptPresets(),
-      ])
+    setExtraPromptTargetSid(targetSid)
+    setExtraPromptSelection(initialSelection)
+    setExtraPromptOpen(true)
+
+    Promise.all([
+      loadChatState(targetSid, targetOpenToken),
+      loadPromptPresets(),
+    ]).then(([freshState]) => {
       if (!freshState || targetOpenToken !== openSeqRef.current || activeSidRef.current !== targetSid) return
-      setExtraPromptTargetSid(targetSid)
-      setExtraPromptSelection(freshState.extraSysPromptPresetID)
-      setExtraPromptOpen(true)
-    } catch (e) {
-      setErr(e.message || String(e))
-    }
+      setExtraPromptSelection(current => current === initialSelection ? freshState.extraSysPromptPresetID : current)
+    }).catch(e => {
+      if (targetOpenToken === openSeqRef.current && activeSidRef.current === targetSid) {
+        setErr(e.message || String(e))
+      }
+    })
   }
   const openPromptPresetManager = () => {
     setExtraPromptDraft(promptPresets.map(item => ({ ...item })))
