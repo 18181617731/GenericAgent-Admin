@@ -5241,6 +5241,137 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
   font-size: 12px;
   font-weight: 750;
 }
+
+/* Per-session system-prompt preset picker and global preset editor */
+.oa-prompt-preset-dialog { width: min(700px, calc(100vw - 32px)); }
+.oa-prompt-preset-dialog.is-managing { width: min(780px, calc(100vw - 32px)); }
+.oa-prompt-preset-dialog .oa-cmd-manager-actions > button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 11px;
+  border: 1px solid rgba(23,23,23,.10);
+  border-radius: 10px;
+  background: rgba(255,255,255,.84);
+  color: var(--text);
+  cursor: pointer;
+}
+.oa-prompt-preset-dialog .oa-cmd-manager-actions > button:hover { background: rgba(247,245,241,.96); }
+.oa-prompt-preset-dialog .oa-cmd-manager-actions > button:disabled { cursor: wait; opacity: .58; }
+.oa-prompt-preset-picker { gap: 9px; }
+.oa-prompt-preset-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid rgba(23,23,23,.10);
+  border-radius: 14px;
+  background: rgba(247,245,241,.68);
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.oa-prompt-preset-option:hover {
+  border-color: rgba(16,163,127,.25);
+  background: rgba(16,163,127,.045);
+}
+.oa-prompt-preset-option.is-selected {
+  border-color: rgba(16,163,127,.42);
+  background: rgba(16,163,127,.08);
+  box-shadow: inset 3px 0 0 #10a37f;
+}
+.oa-prompt-preset-option.is-orphaned { border-style: dashed; background: rgba(245,158,11,.06); }
+.oa-prompt-preset-option.is-orphaned.is-selected { border-color: rgba(217,119,6,.38); box-shadow: inset 3px 0 0 #d97706; }
+.oa-prompt-preset-option > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.oa-prompt-preset-radio {
+  width: 21px;
+  height: 21px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(23,23,23,.20);
+  border-radius: 50%;
+  background: #fff;
+  color: transparent;
+}
+.oa-prompt-preset-option.is-selected .oa-prompt-preset-radio { border-color: #10a37f; background: #10a37f; color: #fff; }
+.oa-prompt-preset-option.is-orphaned.is-selected .oa-prompt-preset-radio { border-color: #d97706; background: #d97706; }
+.oa-prompt-preset-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.oa-prompt-preset-copy b { font-size: 13px; line-height: 1.3; }
+.oa-prompt-preset-copy small {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.oa-prompt-preset-option em {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(217,119,6,.10);
+  color: #a16207;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+.oa-prompt-preset-editor-list { gap: 10px; }
+.oa-cmd-edit-card.oa-prompt-preset-edit-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+}
+.oa-prompt-preset-edit-head {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oa-prompt-preset-edit-head input { flex: 1; }
+.oa-prompt-preset-edit-head code {
+  max-width: 42%;
+  overflow: hidden;
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: rgba(23,23,23,.055);
+  color: var(--muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-prompt-preset-edit-card textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 104px;
+  padding: 9px 10px;
+  resize: vertical;
+  border: 1px solid rgba(23,23,23,.12);
+  border-radius: 10px;
+  background: rgba(255,255,255,.9);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+.oa-prompt-preset-edit-card textarea:focus,
+.oa-prompt-preset-edit-head input:focus {
+  border-color: rgba(16,163,127,.5);
+  outline: 2px solid rgba(16,163,127,.12);
+}
+.oa-prompt-preset-footer { padding-top: 2px; }
+.oa-prompt-preset-footer > button:first-child { margin-right: auto; }
+
 .oa-attach-btn.is-open { border-color: rgba(16,163,127,.28); background: rgba(16,163,127,.10); color: #08745c; }
 @media (max-width: 720px) {
   .oa-cmd-manager-backdrop { align-items: flex-end; padding: 10px; }
@@ -5249,6 +5380,15 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
   .oa-cmd-edit-card { grid-template-columns: 1fr; }
   .oa-cmd-manage-row { grid-template-columns: 1fr; }
   .oa-cmd-manage-row.is-locked { grid-template-columns: 1fr; }
+  .oa-prompt-preset-dialog,
+  .oa-prompt-preset-dialog.is-managing { width: 100%; }
+  .oa-cmd-edit-card.oa-prompt-preset-edit-card { grid-template-columns: 1fr; }
+  .oa-prompt-preset-edit-head { align-items: stretch; flex-direction: column; }
+  .oa-prompt-preset-edit-head code { max-width: 100%; }
+  .oa-prompt-preset-option { grid-template-columns: 24px minmax(0, 1fr); }
+  .oa-prompt-preset-option em { grid-column: 2; justify-self: start; }
+  .oa-prompt-preset-footer { width: 100%; align-items: stretch; flex-direction: row; }
+  .oa-prompt-preset-footer > button:first-child { flex: 1; margin-right: 0; }
 }
 
 .oa-ultraplan-mode {

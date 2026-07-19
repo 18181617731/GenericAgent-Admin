@@ -29,6 +29,8 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "PUT" {
+		s.ConfigMu.Lock()
+		defer s.ConfigMu.Unlock()
 		var c config.AppConfig
 		if err := decode(r, &c); err != nil {
 			bad(w, 400, err.Error())

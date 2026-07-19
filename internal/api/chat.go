@@ -56,9 +56,10 @@ type chatSettings struct {
 }
 
 type chatSettingsPatch struct {
-	LLMNo           int       `json:"llm_no"`
-	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
-	ExtraSysPrompts *[]string `json:"extra_sys_prompts"`
+	LLMNo                  int       `json:"llm_no"`
+	ReasoningEffort        string    `json:"reasoning_effort,omitempty"`
+	ExtraSysPrompts        *[]string `json:"extra_sys_prompts"`
+	ExtraSysPromptPresetID *string   `json:"extra_sys_prompt_preset_id,omitempty"`
 }
 
 func normalizeChatExtraSysPrompts(prompts []string) []string {
@@ -102,18 +103,19 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 }
 
 type chatSession struct {
-	ID              string                   `json:"id"`
-	Title           string                   `json:"title"`
-	UpdatedAt       int64                    `json:"updated_at"`
-	Messages        []chatMessage            `json:"messages"`
-	Settings        chatSettings             `json:"settings"`
-	RawHistory      []map[string]interface{} `json:"raw_history,omitempty"`
-	HistoryInfo     []interface{}            `json:"history_info,omitempty"`
-	Working         map[string]interface{}   `json:"working,omitempty"`
-	WorldlineHead   string                   `json:"worldline_head,omitempty"`
-	Workspace       string                   `json:"workspace,omitempty"`
-	ProjectMode     string                   `json:"project_mode,omitempty"`
-	ExtraSysPrompts []string                 `json:"extra_sys_prompts,omitempty"`
+	ID                     string                   `json:"id"`
+	Title                  string                   `json:"title"`
+	UpdatedAt              int64                    `json:"updated_at"`
+	Messages               []chatMessage            `json:"messages"`
+	Settings               chatSettings             `json:"settings"`
+	RawHistory             []map[string]interface{} `json:"raw_history,omitempty"`
+	HistoryInfo            []interface{}            `json:"history_info,omitempty"`
+	Working                map[string]interface{}   `json:"working,omitempty"`
+	WorldlineHead          string                   `json:"worldline_head,omitempty"`
+	Workspace              string                   `json:"workspace,omitempty"`
+	ProjectMode            string                   `json:"project_mode,omitempty"`
+	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
+	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 }
 
 const (

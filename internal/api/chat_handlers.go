@@ -315,16 +315,34 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		ReasoningEffort: patch.ReasoningEffort,
 	})
 	if patch.ExtraSysPrompts != nil {
+		// Legacy clients send prompt text directly. Treat that as an explicit
+		// unbind even if they also happen to include a stale preset ID.
 		cs.ExtraSysPrompts = normalizeChatExtraSysPrompts(*patch.ExtraSysPrompts)
+		cs.ExtraSysPromptPresetID = ""
+	} else if patch.ExtraSysPromptPresetID != nil {
+		presetID := strings.TrimSpace(*patch.ExtraSysPromptPresetID)
+		if presetID == "" {
+			cs.ExtraSysPromptPresetID = ""
+			cs.ExtraSysPrompts = nil
+		} else {
+			preset, ok := findExtraSystemPromptPreset(s.CfgStore.Cfg.ExtraSystemPromptPresets, presetID)
+			if !ok {
+				bad(w, http.StatusBadRequest, "extra system prompt preset not found")
+				return
+			}
+			cs.ExtraSysPromptPresetID = preset.ID
+			cs.ExtraSysPrompts = []string{preset.Content}
+		}
 	}
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"ok":                true,
-		"settings":          cs.Settings,
-		"extra_sys_prompts": cs.ExtraSysPrompts,
+		"ok":                         true,
+		"settings":                   cs.Settings,
+		"extra_sys_prompts":          cs.ExtraSysPrompts,
+		"extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID,
 	})
 }
 
@@ -342,7 +360,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["warning"] = err.Error()
 	}
 	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
