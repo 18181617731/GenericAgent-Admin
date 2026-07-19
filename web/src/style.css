@@ -1762,19 +1762,43 @@ html[data-theme="dark"] .oa-file-card .oa-mini-copy:hover{
   cursor:pointer;
 }
 .oa-composer .oa-image-button:hover{ background:#ececec; color: var(--text); }
-.oa-message-images{
+.oa-msg-images{
   display:flex;
+  max-width:100%;
+  align-items:flex-end;
   flex-wrap:wrap;
   gap:8px;
   margin:2px 0 10px;
 }
-.oa-message-images img{
-  max-width:min(260px,100%);
-  max-height:220px;
-  object-fit:contain;
+.oa-msg-image-link{
+  display:block;
+  width:112px;
+  height:112px;
+  flex:0 0 112px;
+  overflow:hidden;
   border:1px solid #e5e5e5;
   border-radius:14px;
   background:var(--surface-muted);
+  cursor:zoom-in;
+}
+.oa-msg-image{
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  transition:transform .18s ease;
+}
+.oa-msg-image-link:hover .oa-msg-image{ transform:scale(1.035); }
+.oa-msg-image-link:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+@media (max-width:620px){
+  .oa-msg-image-link{
+    width:96px;
+    height:96px;
+    flex-basis:96px;
+  }
 }
 @media (max-width: 680px){
   .oa-composer-actions{align-items:stretch; flex-direction:column;}

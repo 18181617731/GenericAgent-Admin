@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -1518,9 +1518,14 @@ export const ChatMessage = memo(function ChatMessage({
           : (<>
               {imageFiles.length > 0 && (
                 <div className="oa-msg-images">
-                  {imageFiles.map((f, i) => (
-                    <img key={i} src={f.url || f.data_url} alt={f.name || '图片'} className="oa-msg-image" />
-                  ))}
+                  {imageFiles.map((f, i) => {
+                    const src = f.url || f.data_url
+                    return (
+                      <a key={i} className="oa-msg-image-link" href={src} target="_blank" rel="noreferrer" title="打开原图">
+                        <img src={src} alt={f.name || '图片'} className="oa-msg-image" />
+                      </a>
+                    )
+                  })}
                 </div>
               )}
               {editing
