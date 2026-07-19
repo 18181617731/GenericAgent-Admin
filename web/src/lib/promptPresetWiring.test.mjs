@@ -10,7 +10,7 @@ function functionBlock(source, start, end) {
   return source.slice(from, to)
 }
 
-const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
 
 test('prompt preset picker opens from authoritative state for one stable session', () => {
   const load = functionBlock(main, '  const loadChatState = async', '  const openSession = async')
