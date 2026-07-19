@@ -34,6 +34,12 @@ type runningProc struct {
 	startedAt time.Time
 }
 
+type LogEvent struct {
+	Reset bool
+	Lines []string
+	Line  string
+}
+
 type Manager struct {
 	GARoot          string
 	EffectivePython string
@@ -41,6 +47,7 @@ type Manager struct {
 	mu              sync.Mutex
 	procs           map[string]*runningProc
 	buffers         map[string][]string
+	subscribers     map[string]map[chan LogEvent]struct{}
 }
 
 func NewManager(gaRoot string, bufferLines int) *Manager {
@@ -51,7 +58,14 @@ func NewManagerWithPython(gaRoot string, effectivePython string, bufferLines int
 	if bufferLines <= 0 {
 		bufferLines = 1000
 	}
-	return &Manager{GARoot: gaRoot, EffectivePython: strings.TrimSpace(effectivePython), BufferLines: bufferLines, procs: map[string]*runningProc{}, buffers: map[string][]string{}}
+	return &Manager{
+		GARoot:          gaRoot,
+		EffectivePython: strings.TrimSpace(effectivePython),
+		BufferLines:     bufferLines,
+		procs:           map[string]*runningProc{},
+		buffers:         map[string][]string{},
+		subscribers:     map[string]map[chan LogEvent]struct{}{},
+	}
 }
 
 func (m *Manager) SetRoot(root string, effectivePython string, bufferLines int) {
@@ -240,7 +254,7 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 		return s, err
 	}
 
-	m.buffers[name] = []string{fmt.Sprintf("$ %s %s", s.Command[0], strings.Join(cmdArgs, " "))}
+	m.resetLocked(name, []string{fmt.Sprintf("$ %s %s", s.Command[0], strings.Join(cmdArgs, " "))})
 	m.mu.Unlock()
 	if killed, err := m.stopConflictingService(s); err != nil {
 		return s, err
@@ -352,6 +366,56 @@ func (m *Manager) appendLocked(name, line string) {
 		b = b[len(b)-m.BufferLines:]
 	}
 	m.buffers[name] = b
+	m.publishLocked(name, LogEvent{Line: line})
+}
+
+func (m *Manager) resetLocked(name string, lines []string) {
+	m.buffers[name] = append([]string{}, lines...)
+	m.publishLocked(name, LogEvent{Reset: true, Lines: append([]string{}, lines...)})
+}
+
+func (m *Manager) publishLocked(name string, event LogEvent) {
+	for subscriber := range m.subscribers[name] {
+		select {
+		case subscriber <- event:
+		default:
+			// A slow client must not block the process pipe. Replace its stale
+			// backlog with a fresh snapshot so it catches up without losing state.
+			for len(subscriber) > 0 {
+				<-subscriber
+			}
+			snapshot := append([]string{}, m.buffers[name]...)
+			subscriber <- LogEvent{Reset: true, Lines: snapshot}
+		}
+	}
+}
+
+func (m *Manager) Subscribe(name string, lines int) ([]string, <-chan LogEvent, func()) {
+	m.mu.Lock()
+	snapshot := append([]string{}, m.buffers[name]...)
+	if lines > 0 && len(snapshot) > lines {
+		snapshot = snapshot[len(snapshot)-lines:]
+	}
+	subscriber := make(chan LogEvent, 256)
+	if m.subscribers[name] == nil {
+		m.subscribers[name] = map[chan LogEvent]struct{}{}
+	}
+	m.subscribers[name][subscriber] = struct{}{}
+	m.mu.Unlock()
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			m.mu.Lock()
+			delete(m.subscribers[name], subscriber)
+			if len(m.subscribers[name]) == 0 {
+				delete(m.subscribers, name)
+			}
+			close(subscriber)
+			m.mu.Unlock()
+		})
+	}
+	return snapshot, subscriber, cancel
 }
 
 func (m *Manager) Stop(name string) error {

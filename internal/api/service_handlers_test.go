@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,61 @@ func TestServicesSummaryReturnsCountsOnGET(t *testing.T) {
 	for _, want := range []string{`"total":1`, `"running":0`, `"stopped":1`} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("status=%d missing %s body=%s", rr.Code, want, body)
+		}
+	}
+}
+
+func TestLogLinesQueryIsBounded(t *testing.T) {
+	s := newServiceHandlerTestServer(t, t.TempDir())
+	for _, tc := range []struct {
+		raw  string
+		want int
+		ok   bool
+	}{
+		{raw: "", want: 1, ok: true},
+		{raw: "37", want: 37, ok: true},
+		{raw: "0"},
+		{raw: "5001"},
+		{raw: "nope"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/logs/launch.py?lines="+tc.raw, nil)
+		got, err := s.requestedLogLines(req)
+		if tc.ok && (err != nil || got != tc.want) {
+			t.Fatalf("lines=%q got=%d err=%v want=%d", tc.raw, got, err, tc.want)
+		}
+		if !tc.ok && err == nil {
+			t.Fatalf("lines=%q unexpectedly accepted as %d", tc.raw, got)
+		}
+	}
+}
+
+func TestLogStreamStartsWithSnapshot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "launch.py"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := newServiceHandlerTestServer(t, root)
+	ts := httptest.NewServer(s.Routes())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/logs/launch.py/stream?lines=37")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("content-type=%q", got)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	for _, want := range []string{"event: snapshot", `data: {"lines":[]}`} {
+		if !scanner.Scan() {
+			t.Fatalf("missing %q: %v", want, scanner.Err())
+		}
+		if got := scanner.Text(); got != want {
+			t.Fatalf("line=%q want=%q", got, want)
 		}
 	}
 }

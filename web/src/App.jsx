@@ -117,6 +117,8 @@ export default function App() {
   const [tab, setTab] = useState(initialRoute.tab)
   const [cfg, setCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
   const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
+  const [logStreamState, setLogStreamState] = useState('idle'), [logStreamNonce, setLogStreamNonce] = useState(0), [followLogs, setFollowLogs] = useState(true)
+  const logViewRef = useRef(null)
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
@@ -281,11 +283,63 @@ export default function App() {
     setPendingServiceName('')
   }
 
-  const serviceAction = async (name, action, params = null) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { const body = { name }; if (params) body.params = params; await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) }); await load(); if (selected === name) setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const serviceAction = async (name, action, params = null) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { const body = { name }; if (params) body.params = params; await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) }); await load(); if (selected === name) setLogStreamNonce(value => value + 1) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', `${enabled ? '启用' : '禁用'}服务 ${name} 自启动？`)) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const setServiceModel = async (name, llm_no) => { setBusy(true); try { const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) }); setServices(d.services || []); setMsg(t.saved || '已保存') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const loadServiceLogs = async (name = selected) => { if (!name) return; setSelected(name); setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) }
-  const viewServiceLogs = async (name) => { setTab('logs'); await loadServiceLogs(name) }
+  const loadServiceLogs = (name = selected) => {
+    if (!name) return
+    setSelected(name)
+    setFollowLogs(true)
+    setLogStreamNonce(value => value + 1)
+  }
+  const viewServiceLogs = (name) => { setTab('logs'); loadServiceLogs(name) }
+
+  useEffect(() => {
+    if (tab !== 'logs' || !selected) {
+      setLogStreamState('idle')
+      return undefined
+    }
+    const maxLines = clampTailLines(tailLines, 20, 2000)
+    const source = new EventSource(`/api/logs/${encodeURIComponent(selected)}/stream?lines=${maxLines}`)
+    const readPayload = (event) => {
+      try { return JSON.parse(event.data) } catch { return null }
+    }
+    setLogs([])
+    setLogStreamState('connecting')
+    source.onopen = () => setLogStreamState('live')
+    source.addEventListener('snapshot', (event) => {
+      const payload = readPayload(event)
+      setLogs(Array.isArray(payload?.lines) ? payload.lines.map(String).slice(-maxLines) : [])
+    })
+    source.addEventListener('reset', (event) => {
+      const payload = readPayload(event)
+      setLogs(Array.isArray(payload?.lines) ? payload.lines.map(String).slice(-maxLines) : [])
+    })
+    source.addEventListener('log', (event) => {
+      const payload = readPayload(event)
+      if (payload?.line === undefined) return
+      setLogs(current => [...current, String(payload.line)].slice(-maxLines))
+    })
+    source.onerror = () => setLogStreamState('reconnecting')
+    return () => {
+      source.close()
+      setLogStreamState('idle')
+    }
+  }, [tab, selected, tailLines, logStreamNonce])
+
+  useEffect(() => {
+    if (!followLogs || tab !== 'logs') return undefined
+    const frame = window.requestAnimationFrame(() => {
+      const view = logViewRef.current
+      if (view) view.scrollTop = view.scrollHeight
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [logs, followLogs, tab])
+
+  const handleLogScroll = (event) => {
+    const view = event.currentTarget
+    setFollowLogs(view.scrollHeight - view.scrollTop - view.clientHeight < 48)
+  }
   const pickGoalId = (items = [], preferred = '') => {
     if (preferred && items.some(g => g.id === preferred)) return preferred
     return items.find(g => g.running)?.id || items[0]?.id || ''
@@ -773,7 +827,38 @@ export default function App() {
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><div className="settings-block"><label>斜杠命令列表</label><p className="muted">在独立的 Chat 页面可管理命令。此处仅展示已配置的命令列表。</p>{(cfg?.slash_commands||[]).length > 0 ? (cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span className="muted">{item.desc}</span></div>)) : <p className="muted">暂无配置命令</p>}</div></Panel></section>}
       {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
-      {tab==='logs' && <section className="logs-page"><div className="logs-layout"><Panel title={t.lists.processes} className="logs-side"><div className="logs-toolbar"><label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label><button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button></div><div className="logs-service-list">{services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}><span className={s.running?'dot running':'dot'}></span><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></button>)}</div></Panel><Panel title={`Logs · ${selected || '-'}`} className="log-panel"><div className="log-head"><div>{selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}<span className="log-count">{logs.length} lines · UTF-8</span></div><div className="actions"><button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button><button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button></div></div><pre className="log-view">{logs.join('\n') || t.hints.noLogs}</pre></Panel></div></section>}        </Suspense>
+      {tab==='logs' && <section className="logs-page">
+        <div className="logs-layout">
+          <Panel title={t.lists.processes} className="logs-side">
+            <div className="logs-toolbar">
+              <label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label>
+              <button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button>
+            </div>
+            <div className="logs-service-list">
+              {services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}>
+                <span className={s.running?'dot running':'dot'}></span>
+                <span className="log-service-copy"><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></span>
+              </button>)}
+            </div>
+          </Panel>
+          <Panel title={`Logs · ${selected || '-'}`} className="log-panel">
+            <div className="log-head">
+              <div className="log-meta">
+                <div className={`stream-state ${logStreamState}`}><span></span>{logStreamState === 'live' ? (lang === 'zh' ? '实时传输' : 'Live') : logStreamState === 'reconnecting' ? (lang === 'zh' ? '正在重连' : 'Reconnecting') : logStreamState === 'connecting' ? (lang === 'zh' ? '正在连接' : 'Connecting') : (lang === 'zh' ? '未连接' : 'Idle')}</div>
+                <span className="log-count">{logs.length} lines · UTF-8</span>
+                {selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}
+              </div>
+              <div className="actions log-actions">
+                <button className={followLogs ? 'active' : ''} disabled={!selected} onClick={()=>setFollowLogs(value=>!value)}><Activity size={14}/>{lang === 'zh' ? '跟随' : 'Follow'}</button>
+                <button disabled={!logs.length} onClick={()=>setLogs([])}><Trash2 size={14}/>{t.clear}</button>
+                <button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button>
+                <button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button>
+              </div>
+            </div>
+            <pre ref={logViewRef} onScroll={handleLogScroll} className="log-view">{logs.join('\n') || t.hints.noLogs}</pre>
+          </Panel>
+        </div>
+      </section>}        </Suspense>
       </ErrorBoundary>
     </main>
   </div>
