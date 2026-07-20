@@ -367,33 +367,54 @@ func TestUnzipExtractsRegularFile(t *testing.T) {
 	}
 }
 
-func TestFindFileReportsWalkError(t *testing.T) {
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "missing")
-	got, err := findFile(missing, "ga-admin.exe")
-	if err == nil {
-		t.Fatalf("findFile(%q) = %q, nil error; want walk error", missing, got)
+func TestUpdatePayloadUsesReleaseTopLevelDirectory(t *testing.T) {
+	assetName := "ga-admin-v9.9.9-windows-amd64.zip"
+	zipPath := filepath.Join(t.TempDir(), assetName)
+	makeUpdateZip(t, zipPath)
+	dest := filepath.Join(t.TempDir(), "unzipped")
+	if err := unzip(zipPath, dest); err != nil {
+		t.Fatalf("unzip update package: %v", err)
 	}
-	if !strings.Contains(err.Error(), "walk package") {
-		t.Fatalf("findFile error = %v, want walk package context", err)
+
+	gotExe, gotWorker, err := updatePayload(dest, assetName, "ga-admin.exe")
+	if err != nil {
+		t.Fatalf("updatePayload: %v", err)
+	}
+	root := filepath.Join(dest, strings.TrimSuffix(assetName, ".zip"))
+	if want := filepath.Join(root, "ga-admin.exe"); gotExe != want {
+		t.Fatalf("executable = %q, want %q", gotExe, want)
+	}
+	if want := filepath.Join(root, "cmd", "chat_worker.py"); gotWorker != want {
+		t.Fatalf("worker = %q, want %q", gotWorker, want)
 	}
 }
 
-func TestFindFileReturnsCaseInsensitiveMatch(t *testing.T) {
-	dir := t.TempDir()
-	want := filepath.Join(dir, "nested", "GA-ADMIN.EXE")
-	if err := os.MkdirAll(filepath.Dir(want), 0755); err != nil {
-		t.Fatal(err)
+func TestUpdatePayloadRejectsUnexpectedTopLevelLayout(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths []string
+	}{
+		{name: "flat package", paths: []string{"ga-admin.exe", "cmd/chat_worker.py"}},
+		{name: "extra top-level entry", paths: []string{"ga-admin-v9.9.9-windows-amd64/ga-admin.exe", "ga-admin-v9.9.9-windows-amd64/cmd/chat_worker.py", "README.txt"}},
+		{name: "wrong root name", paths: []string{"other/ga-admin.exe", "other/cmd/chat_worker.py"}},
 	}
-	if err := os.WriteFile(want, []byte("exe"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := findFile(dir, "ga-admin.exe")
-	if err != nil {
-		t.Fatalf("findFile: %v", err)
-	}
-	if got != want {
-		t.Fatalf("findFile = %q, want %q", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range tt.paths {
+				path := filepath.Join(dir, filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("payload"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, err := updatePayload(dir, "ga-admin-v9.9.9-windows-amd64.zip", "ga-admin.exe")
+			if err == nil || !strings.Contains(err.Error(), "exactly one top-level directory") {
+				t.Fatalf("updatePayload error = %v, want top-level directory error", err)
+			}
+		})
 	}
 }
 
@@ -639,12 +660,16 @@ func makeUpdateZip(t *testing.T, path string) {
 	}
 	defer f.Close()
 	zw := zip.NewWriter(f)
-	w, err := zw.Create("ga-admin.exe")
+	rootName := strings.TrimSuffix(filepath.Base(path), ".zip")
+	if rootName == "" {
+		t.Fatalf("invalid update zip path %q", path)
+	}
+	w, err := zw.Create(rootName + "/ga-admin.exe")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _ = w.Write([]byte("new exe"))
-	w, err = zw.Create("cmd/chat_worker.py")
+	w, err = zw.Create(rootName + "/cmd/chat_worker.py")
 	if err != nil {
 		t.Fatal(err)
 	}
