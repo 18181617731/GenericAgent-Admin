@@ -13,6 +13,7 @@ import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEf
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
+import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 
 gsap.registerPlugin(useGSAP)
 
@@ -1510,7 +1511,8 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
 })
 
 export const ChatMessage = memo(function ChatMessage({
-  message: m, pending, onAskReply, clockNow = 0,
+  message: m, pending, onAskReply, onEditResend,
+  editDisabled = false, clockNow = 0,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
@@ -1519,6 +1521,11 @@ export const ChatMessage = memo(function ChatMessage({
   const pendingFiles   = savedFilePaths.length > 0 ? [] : messageFiles.filter(f => !isImageFile(f))
   const [copied,  setCopied]  = useState(false)
   const [copyErr, setCopyErr] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [editDraft, setEditDraft] = useState(userText || '')
+  const [editSubmitting, setEditSubmitting] = useState(false)
+  const [editError, setEditError] = useState('')
+  const editRef = useRef(null)
   const ageText = m.role === 'user' ? formatAge(m.created_at) : ''
   const assistantModelId = m.role === 'assistant' ? String(m.model_id || '').trim() : ''
   const assistantCreatedAt = m.role === 'assistant' ? dateFromTimestamp(m.created_at) : null
@@ -1535,9 +1542,35 @@ export const ChatMessage = memo(function ChatMessage({
       .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
       .catch(e => setCopyErr(String(e)))
   }
+  const startMessageEdit = () => {
+    setEditDraft(userText || '')
+    setEditError('')
+    setEditing(true)
+    requestAnimationFrame(() => editRef.current?.focus())
+  }
+  const cancelMessageEdit = () => {
+    if (editSubmitting) return
+    setEditing(false)
+    setEditError('')
+    setEditDraft(userText || '')
+  }
+  const submitMessageEdit = async () => {
+    const nextText = editDraft.trim()
+    if (!nextText || editSubmitting || !onEditResend) return
+    setEditSubmitting(true)
+    setEditError('')
+    try {
+      await onEditResend(m.id, nextText)
+      setEditing(false)
+    } catch (e) {
+      setEditError(e?.message || String(e))
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
 
   return (
-    <article className={`oa-message ${m.role} ${pending ? 'pending' : ''}`} data-id={m.id}>
+    <article className={`oa-message ${m.role} ${pending ? 'pending' : ''} ${editing ? 'oa-message-editing' : ''}`} data-id={m.id}>
       <div className="oa-msg-body">
         {m.role === 'assistant'
           ? (<>
@@ -1569,7 +1602,24 @@ export const ChatMessage = memo(function ChatMessage({
                   })}
                 </div>
               )}
-<div className="oa-msg-text">
+              {editing
+                ? (<div className="oa-message-editor">
+                    <textarea ref={editRef} value={editDraft}
+                      onChange={e => setEditDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') cancelMessageEdit()
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submitMessageEdit() }
+                      }}
+                      disabled={editSubmitting} aria-label="编辑已发送消息" />
+                    {editError && <div className="oa-message-editor-error" role="alert">{editError}</div>}
+                    <div className="oa-message-editor-actions">
+                      <span className="oa-message-editor-hint">重发会从此消息继续，且不携带原附件</span>
+                      <button type="button" className="oa-message-editor-cancel" onClick={cancelMessageEdit} disabled={editSubmitting}>取消</button>
+                      <button type="button" className="oa-message-editor-submit" onClick={submitMessageEdit}
+                        disabled={editSubmitting || !editDraft.trim()}>{editSubmitting ? '发送中…' : '发送'}</button>
+                    </div>
+                  </div>)
+                : (<div className="oa-msg-text">
                     {userText}
                     {savedFilePaths.length > 0 && (
                       <div className="oa-msg-saved-paths">
@@ -1583,7 +1633,7 @@ export const ChatMessage = memo(function ChatMessage({
                         {pendingFiles.map((f, i) => <span key={i} className="oa-msg-file">{f.name}</span>)}
                       </div>
                     )}
-                  </div>
+                  </div>)}
             </>)
         }
         {showUsageRow && <UsageRow u={usageTotal} elapsedMs={elapsedMs} live={pending} label="总计" className="oa-usage-total" />}
@@ -1596,6 +1646,13 @@ export const ChatMessage = memo(function ChatMessage({
           onClick={copyContent} title="复制" aria-label="复制消息">
           {copied ? <Check size={13}/> : <Copy size={13}/>}
         </button>
+        {m.role === 'user' && !pending && onEditResend && (
+          <button type="button" className="oa-icon-btn oa-message-edit-trigger"
+            onClick={startMessageEdit} disabled={editDisabled}
+            title={editDisabled ? '对话运行中，请等待完成后再编辑' : '编辑并重新发送'} aria-label="编辑并重新发送">
+            <Edit3 size={13}/>
+          </button>
+        )}
         {m.role === 'user' && !pending && onAskReply && (
           <button type="button" className="oa-icon-btn oa-ask-reply-btn"
             onClick={() => onAskReply(m.content)}
@@ -1609,7 +1666,7 @@ export const ChatMessage = memo(function ChatMessage({
 })
 
 const MessageList = memo(function MessageList({
-  messages, isCurrentRunning, onAskReply, clockNow,
+  messages, isCurrentRunning, onAskReply, onEditResend, clockNow,
 }) {
   return (
     <>
@@ -1630,6 +1687,8 @@ const MessageList = memo(function MessageList({
             message={m}
             pending={isCurrentRunning && i === messages.length - 1}
             onAskReply={onAskReply}
+            onEditResend={onEditResend}
+            editDisabled={isCurrentRunning}
             clockNow={clockNow}
           />
         )
@@ -2584,6 +2643,17 @@ export default function ChatApp() {
     setTimeout(focusPrompt, 0)
   }, [])
 
+  const editAndResend = async (messageId, text) => {
+    const item = buildEditResendItem({
+      sessionId: activeSidRef.current,
+      messageId,
+      text,
+      busy,
+      streamingSid,
+    })
+    await runSend(item)
+  }
+
   const runSend = async (item = {}) => {
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
@@ -2618,13 +2688,26 @@ export default function ChatApp() {
       const attachmentPrompt = text || '请处理这些附件'
       optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
-      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const payload = { prompt:attachmentPrompt, files, settings:{ llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }
+      if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
+      const payload = buildChatRunPayload({
+        prompt: attachmentPrompt,
+        files,
+        settings: { llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort },
+        clientUserID,
+        sourceUserMessageId: sourceMessageID,
+      })
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
+      if (sourceMessageID) setMessages(xs => {
+        if (!isActiveSession(id)) return xs
+        const cutIdx = xs.findIndex(message => String(message.id) === sourceMessageID)
+        if (cutIdx < 0) return xs
+        return [...xs.slice(0, cutIdx), optimistic, pending]
+      })
       commandPatch = await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
@@ -3016,6 +3099,7 @@ export default function ChatApp() {
           messages={messages}
           isCurrentRunning={isCurrentRunning}
           onAskReply={fillAskReply}
+          onEditResend={editAndResend}
           clockNow={streamClock}
         />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
