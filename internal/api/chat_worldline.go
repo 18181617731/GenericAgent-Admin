@@ -289,7 +289,7 @@ func (s *Server) prepareChatWorldlineResend(sid string, token *chatRun, cs *chat
 	}
 	worker.Mu.Lock()
 	defer worker.Mu.Unlock()
-	state, err := s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), map[string]interface{}{"action": "state"})
+	state, err := s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), map[string]interface{}{"action": "state", "activate": true})
 	if err != nil {
 		return err
 	}
