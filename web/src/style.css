@@ -2178,7 +2178,7 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
 .entry span, .service-card span, .task-row span { overflow-wrap: anywhere; }
 .risk { max-height: 360px; overflow: auto; padding-right: 8px; }
 
-/* Service/control pages */
+/* Service pages */
 .service-card { grid-template-columns: minmax(0, 1fr) auto auto; }
 .service-card em { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .svc-actions, .actions { align-items: center; }
@@ -3183,8 +3183,7 @@ pre, code { font-variant-ligatures: none; }
 .app:not(.app-tab-chat) .entry,
 .app:not(.app-tab-chat) .root-box,
 .app:not(.app-tab-chat) .version-card,
-.app:not(.app-tab-chat) .tmwd-card,
-.app:not(.app-tab-chat) .control-card {
+.app:not(.app-tab-chat) .tmwd-card {
   border: 1px solid var(--quiet-line);
   background: var(--quiet-panel);
   box-shadow: var(--quiet-shadow);

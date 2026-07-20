@@ -59,7 +59,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
-	mux.HandleFunc("/api/ga/control", s.gaControl)
 	mux.HandleFunc("/api/ga/git-update", s.requireDangerousConfirm(s.gaGitUpdate))
 	mux.HandleFunc("/api/ga/git-status", s.gaGitStatus)
 	mux.HandleFunc("/api/ga/git-mirror", s.requireDangerousConfirm(s.gitMirrorConfig))
@@ -254,14 +253,6 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, ga.BuildHealth(s.CfgStore.Cfg.GARoot))
-}
-
-func (s *Server) gaControl(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		bad(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	writeJSON(w, ga.BuildControlPlane(s.CfgStore.Cfg.GARoot))
 }
 
 type tmwebdriverCheck struct {
@@ -699,6 +690,10 @@ func chromeSecurePreferencePaths() []string {
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		bad(w, 405, "method not allowed")
+		return
+	}
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+		bad(w, http.StatusNotFound, "api route not found")
 		return
 	}
 	if s.Static == nil {
