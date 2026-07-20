@@ -12,6 +12,7 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
+import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
 
@@ -1676,7 +1677,6 @@ export default function ChatApp() {
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
   const [modelSwitching, setModelSwitching] = useState(false)
-  const [toolsMode, setToolsMode] = useState('official')
   const [reasoningEffort, setReasoningEffort] = useState('off')
   const [extraSysPrompts, setExtraSysPrompts] = useState([])
   const [extraSysPromptPresetID, setExtraSysPromptPresetID] = useState('')
@@ -2330,7 +2330,7 @@ export default function ChatApp() {
     setModelSwitching(true)
     setErr('')
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, tools_mode: toolsMode, reasoning_effort: reasoningEffort }) })
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: reasoningEffort }) })
       setNotice(`模型已切换到 #${next}，下一条消息将由该模型处理`)
     } catch (e) {
       setLlmNo(previous)

@@ -547,6 +547,13 @@ if isinstance(groups, dict):
             continue
         configs=[]
         seen_models=set()
+        declaration_order_by_model={}
+        for child_var in child_vars:
+            if not isinstance(child_var, str) or child_var not in profiles_by_var:
+                continue
+            child_model=str(profiles_by_var[child_var].get('model', '') or '').strip()
+            if child_model and child_model not in declaration_order_by_model:
+                declaration_order_by_model[child_model]=declaration_order_by_var[child_var]
         managed_configs=meta.get('model_configs', []) if meta else []
         if isinstance(managed_configs, list) and managed_configs:
             for config in managed_configs:
@@ -555,6 +562,8 @@ if isinstance(groups, dict):
                 config=dict(config)
                 model=str(config.get('model', '')).strip()
                 if model and model not in seen_models:
+                    if model in declaration_order_by_model:
+                        config['sort_order']=declaration_order_by_model[model]
                     seen_models.add(model)
                     configs.append(config)
         else:

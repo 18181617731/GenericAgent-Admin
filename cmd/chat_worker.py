@@ -1680,6 +1680,8 @@ def handle_request(agent, worker, req):
     root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
     project_mode = str(req.get('project_mode') or '').strip()
     setattr(agent, '_ga_project_mode_name', project_mode or None)
+    extra_sys_prompts = req.get('extra_sys_prompts') or []
+    setattr(agent, 'extra_sys_prompts', list(extra_sys_prompts) if isinstance(extra_sys_prompts, list) else [])
     active_llm_no = _select_llm_if_needed(agent, llm_no)
     emit({'type': 'model', 'model_id': _snapshot_model_id(agent), 'llm_no': active_llm_no})
     if str(reasoning_effort or '').strip():

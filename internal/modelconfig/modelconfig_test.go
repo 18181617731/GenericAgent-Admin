@@ -592,6 +592,59 @@ native_oai_config_a_2 = {
 	}
 }
 
+func TestImportMyKeyUsesRuntimeDeclarationOrderOverStaleGroupMetadata(t *testing.T) {
+	root := t.TempDir()
+	mykey := `native_oai_config_a_2 = {
+    "apikey": "sk-a-secret",
+    "apibase": "https://a.example/v1",
+    "model": "shared",
+}
+
+native_oai_config_b = {
+    "apikey": "sk-b-secret",
+    "apibase": "https://b.example/v1",
+    "model": "shared",
+}
+
+_ga_admin_provider_groups = {
+    "native_oai_config_a": {
+        "children": ["native_oai_config_a_2"],
+        "model_configs": [{"model": "shared", "sort_order": 9}],
+        "type": "native_oai",
+        "name": "Provider A",
+        "apibase": "https://a.example/v1",
+        "apikey": "sk-a-secret",
+    },
+    "native_oai_config_b": {
+        "children": ["native_oai_config_b"],
+        "model_configs": [{"model": "shared"}],
+        "type": "native_oai",
+        "name": "Provider B",
+        "apibase": "https://b.example/v1",
+        "apikey": "sk-b-secret",
+    },
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(mykey), 0600); err != nil {
+		t.Fatalf("write mykey.py: %v", err)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	orders := map[string]int{}
+	for _, profile := range draft.Profiles {
+		if len(profile.ModelConfigs) != 1 || profile.ModelConfigs[0].SortOrder == nil {
+			t.Fatalf("profile missing imported runtime order: %#v", profile)
+		}
+		orders[profile.Name] = *profile.ModelConfigs[0].SortOrder
+	}
+	if orders["Provider A"] != 0 || orders["Provider B"] != 1 {
+		t.Fatalf("runtime declaration orders = %#v, want Provider A=0 Provider B=1", orders)
+	}
+}
+
 func TestImportLegacyMyKeyGroupsProfilesByProviderIdentity(t *testing.T) {
 	root := t.TempDir()
 	mykey := `native_oai_config_gpt55 = {

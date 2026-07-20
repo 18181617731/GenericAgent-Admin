@@ -22,25 +22,26 @@ type ExtraSystemPromptPreset struct {
 }
 
 type AppConfig struct {
-	GARoot              string             `json:"ga_root"`
-	ChatDataDir         string             `json:"chat_data_dir"`
-	Host                string             `json:"host"`
-	Port                int                `json:"port"`
-	LogTailLines        int                `json:"log_tail_lines"`
-	BufferLines         int                `json:"buffer_lines"`
-	PythonPath          string             `json:"python_path"`
-	EffectivePython     string             `json:"effective_python,omitempty"`
-	BootstrapDone       bool               `json:"bootstrap_done"`
-	ProxyMode           string             `json:"proxy_mode"` // off | system | custom
-	HTTPProxy           string             `json:"http_proxy"`
-	HTTPSProxy          string             `json:"https_proxy"`
-	AllProxy            string             `json:"all_proxy"`
-	NoProxy             string             `json:"no_proxy"`
-	ServiceAutostart    []string           `json:"service_autostart"`
-	ServiceModels       map[string]int     `json:"service_models,omitempty"`
-	ModelProbeProviders []string           `json:"model_probe_providers,omitempty"`
-	UpdateRepoURL       string             `json:"update_repo_url"`
-	SlashCommands       []SlashCommandItem `json:"slash_commands,omitempty"`
+	GARoot                   string                    `json:"ga_root"`
+	ChatDataDir              string                    `json:"chat_data_dir"`
+	Host                     string                    `json:"host"`
+	Port                     int                       `json:"port"`
+	LogTailLines             int                       `json:"log_tail_lines"`
+	BufferLines              int                       `json:"buffer_lines"`
+	PythonPath               string                    `json:"python_path"`
+	EffectivePython          string                    `json:"effective_python,omitempty"`
+	BootstrapDone            bool                      `json:"bootstrap_done"`
+	ProxyMode                string                    `json:"proxy_mode"` // off | system | custom
+	HTTPProxy                string                    `json:"http_proxy"`
+	HTTPSProxy               string                    `json:"https_proxy"`
+	AllProxy                 string                    `json:"all_proxy"`
+	NoProxy                  string                    `json:"no_proxy"`
+	ServiceAutostart         []string                  `json:"service_autostart"`
+	ServiceModels            map[string]int            `json:"service_models,omitempty"`
+	ModelProbeProviders      []string                  `json:"model_probe_providers,omitempty"`
+	UpdateRepoURL            string                    `json:"update_repo_url"`
+	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
+	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
 }
 
 func Validate(cfg AppConfig) error {

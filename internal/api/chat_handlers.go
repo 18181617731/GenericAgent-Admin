@@ -312,10 +312,31 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		return
 	}
 	previousLLMNo := cs.Settings.LLMNo
-	cs.Settings = normalizeChatSettings(st)
+	cs.Settings = normalizeChatSettings(chatSettings{
+		LLMNo:           patch.LLMNo,
+		ReasoningEffort: patch.ReasoningEffort,
+	})
 	if cs.Settings.LLMNo != previousLLMNo && s.chatRunActive(sid) {
 		bad(w, http.StatusConflict, "cannot switch models while chat is running")
 		return
+	}
+	if patch.ExtraSysPrompts != nil {
+		cs.ExtraSysPrompts = normalizeChatExtraSysPrompts(*patch.ExtraSysPrompts)
+		cs.ExtraSysPromptPresetID = ""
+	} else if patch.ExtraSysPromptPresetID != nil {
+		presetID := strings.TrimSpace(*patch.ExtraSysPromptPresetID)
+		if presetID == "" {
+			cs.ExtraSysPromptPresetID = ""
+			cs.ExtraSysPrompts = nil
+		} else {
+			preset, ok := findExtraSystemPromptPreset(s.CfgStore.Cfg.ExtraSystemPromptPresets, presetID)
+			if !ok {
+				bad(w, http.StatusBadRequest, "extra system prompt preset not found")
+				return
+			}
+			cs.ExtraSysPromptPresetID = preset.ID
+			cs.ExtraSysPrompts = []string{preset.Content}
+		}
 	}
 	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
@@ -325,7 +346,13 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 	if cs.Settings.LLMNo != previousLLMNo {
 		restarted = s.resetChatWorker(sid)
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "settings": cs.Settings, "worker_restarted": restarted})
+	writeJSON(w, map[string]interface{}{
+		"ok":                         true,
+		"settings":                   cs.Settings,
+		"extra_sys_prompts":          cs.ExtraSysPrompts,
+		"extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID,
+		"worker_restarted":           restarted,
+	})
 }
 
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
