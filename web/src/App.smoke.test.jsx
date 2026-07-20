@@ -1,7 +1,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { ChannelServiceTable, ServiceRow } from './components/common.jsx'
+import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
 import ChatApp, { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
@@ -139,6 +139,29 @@ describe('channel frontend gates', () => {
     await waitFor(() => expect(screen.getByText(/mykey\.py/i)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /Start/i }))
     expect(onReflectStart).toHaveBeenCalledWith(reflectService.name)
+  })
+})
+
+describe('overview observability', () => {
+  test('explains system state and important counts without raw internal labels', () => {
+    const onRefresh = vi.fn()
+    render(<ObservabilityCard snapshot={{
+      ok: true,
+      coreFiles: [{ exists: true }, { exists: true }],
+      memory: { sops: [{}, {}] },
+      riskItems: [{}, {}, {}],
+      warnings: [],
+      errors: [],
+      generatedAt: '2026-07-20T10:00:00+08:00',
+    }} onRefresh={onRefresh}/>)
+    expect(screen.getByText('运行概览')).toBeTruthy()
+    expect(screen.getByText('系统状态')).toBeTruthy()
+    expect(screen.getByText('核心文件')).toBeTruthy()
+    expect(screen.getByText('知识与 SOP')).toBeTruthy()
+    expect(screen.getByText('操作保护')).toBeTruthy()
+    expect(screen.queryByText('Health checks')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(onRefresh).toHaveBeenCalledOnce()
   })
 })
 

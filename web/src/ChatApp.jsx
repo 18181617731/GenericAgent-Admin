@@ -1569,7 +1569,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
-      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重发"><Edit3 size={13}/></button>}</div>
+      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重发"><Edit3 size={13}/></button>}</div>
       {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
@@ -2881,7 +2881,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={handleEditResend} clockNow={streamClock} worldline={visibleWorldline} onSwitchVersion={handleSwitchVersion} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} clockNow={streamClock} />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>

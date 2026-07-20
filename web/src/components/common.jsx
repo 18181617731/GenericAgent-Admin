@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { Eye, Play, Square } from 'lucide-react'
+import { BookOpenCheck, CircleCheckBig, Eye, FileCheck2, Play, RefreshCw, ShieldCheck, Square, TriangleAlert } from 'lucide-react'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
+import { observabilitySummary } from '../lib/observability.js'
 
 const serviceCommand = (svc) => Array.isArray(svc?.command) ? svc.command.join(' ') : (svc?.command || '-')
 const servicePid = (svc) => svc?.pid ?? '-'
@@ -41,7 +42,12 @@ function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   </div>
 }
 
-export function Stat({ label, value, icon }) { return <div className="stat"><div>{icon}</div><span>{label}</span><b>{value}</b></div> }
+export function Stat({ label, value, detail = '', tone = '', icon }) {
+  return <div className={`stat${tone ? ` is-${tone}` : ''}`}>
+    <div>{icon}</div>
+    <div className="stat-content"><span>{label}</span><b>{value}</b>{detail && <small>{detail}</small>}</div>
+  </div>
+}
 export function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
 export function EntryList({ items = [], empty }) { return <div className="entry-list">{items.length ? items.map((e, i) => <div className="entry" key={`${e.path || e.name}-${i}`}><b>{e.name || e.path}</b><span>{e.path}{e.kind ? ` - ${e.kind}` : ''}{e.size ? ` - ${e.size} B` : ''}</span></div>) : <p className="muted">{empty}</p>}</div> }
 export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel, llms = [], t }) {
@@ -103,23 +109,27 @@ export function DangerRecoveryNotice({
 }
 
 export function ObservabilityCard({ snapshot, error = '', onRefresh }) {
-  const stats = [
-    ['Health checks', count(snapshot?.checks)],
-    ['核心文件', count(snapshot?.coreFiles?.filter?.(item => item?.exists) || [])],
-    ['记忆 SOP', count(snapshot?.memory?.sops)],
-    ['Risk rules', count(snapshot?.riskItems)],
-  ]
+  const summary = observabilitySummary(snapshot)
+  const icons = { status: CircleCheckBig, core: FileCheck2, knowledge: BookOpenCheck, protection: ShieldCheck }
   const missing = snapshot?.missingCore || []
-  return <section className="observability-card" aria-label="只读观测">
+  const checkedAt = snapshot?.generatedAt ? new Date(snapshot.generatedAt).toLocaleString() : ''
+  return <section className="observability-card" aria-label="运行概览">
     <div className="observability-head">
-      <div><b>只读观测</b><span>{snapshot?.root || 'GET /api/health + /api/ga/inventory + /api/risk/catalog'}</span></div>
-      <button type="button" onClick={onRefresh}>刷新</button>
+      <div><b>运行概览</b><span>{summary.detail}</span></div>
+      <button type="button" onClick={onRefresh} title="重新读取运行概览"><RefreshCw size={14}/>刷新</button>
     </div>
     {error ? <p className="err-text">{error}</p> : <>
-      <div className="observability-stats">{stats.map(([label, value]) => <span key={label}><em>{label}</em><b>{value}</b></span>)}</div>
+      {summary.stats.length > 0
+        ? <div className="observability-stats">{summary.stats.map(item => {
+          const Icon = icons[item.key] || TriangleAlert
+          return <div key={item.key} className={`observability-stat is-${summary.tone}`}>
+            <Icon size={18} aria-hidden="true"/>
+            <div><em>{item.label}</em><b>{item.value}</b><small>{item.detail}</small></div>
+          </div>
+        })}</div>
+        : <p className="observability-empty">正在读取本机 GenericAgent 状态</p>}
       <div className="observability-body">
-        <p className={snapshot?.ok ? 'ok' : 'warn'}>{snapshot ? (snapshot.ok ? '健康端点报告正常' : '健康端点需要关注') : '等待只读快照'}</p>
-        {snapshot?.generatedAt && <p className="muted">生成时间：{snapshot.generatedAt}</p>}
+        {checkedAt && <p className="muted">上次检查：{checkedAt}</p>}
         {missing.length > 0 && <p className="warn">核心文件缺失：{missing.map(x => x.path || x.name).join(', ')}</p>}
       </div>
     </>}

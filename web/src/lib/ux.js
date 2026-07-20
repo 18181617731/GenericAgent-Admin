@@ -43,6 +43,13 @@ export function updateStatusPresentation(status = {}) {
   }
 }
 
+export function shouldHideCompletedVersionProgress(status = {}, currentVersion = '') {
+  return status?.stage === 'done' &&
+    !status?.running &&
+    Boolean(status?.applied_version) &&
+    String(status.applied_version) === String(currentVersion)
+}
+
 export function shouldConfirmFileReplacement({ dirty, loadedPath, nextPath }) {
   if (!dirty) return false
   const current = String(loadedPath || '').trim()

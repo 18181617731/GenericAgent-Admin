@@ -4,6 +4,7 @@ import {
   feedbackTone,
   filterModelProviderGroups,
   modelGroupStats,
+  shouldHideCompletedVersionProgress,
   shouldConfirmFileReplacement,
   updateStatusPresentation,
 } from './ux.js'
@@ -40,4 +41,11 @@ test('file replacement confirmation is only required for dirty content moving to
   assert.equal(shouldConfirmFileReplacement({ dirty: false, loadedPath: 'a', nextPath: 'b' }), false)
   assert.equal(shouldConfirmFileReplacement({ dirty: true, loadedPath: 'a', nextPath: 'a' }), false)
   assert.equal(shouldConfirmFileReplacement({ dirty: true, loadedPath: 'a', nextPath: 'b' }), true)
+})
+
+test('completed version progress hides only after the applied version is running', () => {
+  const done = { stage: 'done', running: false, applied_version: 'v1.0.29' }
+  assert.equal(shouldHideCompletedVersionProgress(done, 'v1.0.29'), true)
+  assert.equal(shouldHideCompletedVersionProgress(done, 'v1.0.30'), false)
+  assert.equal(shouldHideCompletedVersionProgress({ stage: 'done' }, 'v1.0.29'), false)
 })

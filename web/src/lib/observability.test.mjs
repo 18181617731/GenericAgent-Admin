@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { apiHeaders } from './api.js'
-import { READ_ONLY_OBSERVABILITY_ENDPOINTS, buildObservabilitySnapshot, observabilityRequest, observabilityStats } from './observability.js'
+import { READ_ONLY_OBSERVABILITY_ENDPOINTS, buildObservabilitySnapshot, observabilityRequest, observabilityStats, observabilitySummary } from './observability.js'
 
 test('observability endpoints stay read-only GET without dangerous confirm header', () => {
   for (const endpoint of READ_ONLY_OBSERVABILITY_ENDPOINTS) {
@@ -72,4 +72,32 @@ test('buildObservabilitySnapshot accepts array risks and flags write-like stale 
   assert.equal(snapshot.ok, false)
   assert.equal(snapshot.riskItems.length, 3)
   assert.deepEqual(snapshot.writeRiskItems.map(item => item.action), ['delete stale cache', ''])
+})
+
+test('observability summary explains healthy state instead of exposing raw counters', () => {
+  const summary = observabilitySummary({
+    ok: true,
+    coreFiles: [{ exists: true }, { exists: true }],
+    memory: { sops: [{}, {}, {}] },
+    riskItems: [{}, {}],
+    warnings: [],
+    errors: [],
+  })
+  assert.equal(summary.status, '正常')
+  assert.deepEqual(summary.stats.map(item => [item.label, item.value]), [
+    ['系统状态', '正常'], ['核心文件', '2/2'], ['知识与 SOP', '3 项'], ['操作保护', '2 项'],
+  ])
+  assert.match(summary.stats[3].detail, /需确认/)
+})
+
+test('observability summary calls missing core files out as actionable', () => {
+  const summary = observabilitySummary({ ok: true, coreFiles: [{ exists: true }, { exists: false }], memory: {}, riskItems: [] })
+  assert.equal(summary.status, '需处理')
+  assert.equal(summary.stats[1].detail, '1 项缺失')
+})
+
+test('observability summary avoids claiming healthy when core file data is missing', () => {
+  const summary = observabilitySummary({ ok: true, coreFiles: [], memory: {}, riskItems: [] })
+  assert.equal(summary.status, '待检查')
+  assert.match(summary.detail, /尚未取得核心文件清单/)
 })
