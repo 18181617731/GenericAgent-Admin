@@ -23,7 +23,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
   const [sessions, setSessions] = useState([]), [sid, setSid] = useState(''), [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const [files, setFiles] = useState([])
-  const [settings, setSettings] = useState({ llm_no: 0, tools_mode: 'official' })
+  const [settings, setSettings] = useState({ llm_no: 0 })
   const activeSidRef = useRef('')
   const fileInputRef = useRef(null)
   const promptRef = useRef(null)
@@ -58,7 +58,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     activeSidRef.current = d.id
     setSid(d.id)
     setMessages(d.messages || [])
-    setSettings({ llm_no: d.settings?.llm_no || 0, tools_mode: d.settings?.tools_mode || 'official' })
+    setSettings({ llm_no: d.settings?.llm_no || 0 })
   }
   const newSession = async () => {
     if (busy) { setErr('当前正在执行，完成后可创建新会话'); return }
@@ -67,7 +67,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     setSid(d.id)
     setMessages([])
     setFiles([])
-    setSettings({ llm_no: d.settings?.llm_no || 0, tools_mode: d.settings?.tools_mode || 'official' })
+    setSettings({ llm_no: d.settings?.llm_no || 0 })
   }
   useEffect(()=>{ loadSessions().catch(e=>setErr(e.message)) }, [])
   useEffect(() => {
@@ -100,15 +100,6 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     const cur = activeSidRef.current || sid
     if (!cur) return
     try { await api(`/api/chat/${cur}/cancel`, { method:'POST', body:'{}' }) } catch(e) { setErr(e.message) }
-  }
-
-  const reinjectTools = async () => {
-    const cur = activeSidRef.current || sid
-    if (!cur || busy) return
-    try {
-      const ev = await api(`/api/chat/${cur}/reinject-tools`, { method:'POST', body:'{}' })
-      setErr(ev.message || ev.result?.message || 'Tools 已重注入')
-    } catch(e) { setErr(e.message) }
   }
 
   const send = async () => {

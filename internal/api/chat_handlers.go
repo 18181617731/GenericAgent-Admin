@@ -115,11 +115,6 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatCancel(w, r, parts[1])
 			return
 		}
-	case "reinject-tools":
-		if len(parts) == 2 && r.Method == http.MethodPost {
-			s.chatReinjectTools(w, r, parts[1])
-			return
-		}
 	case "file":
 		if len(parts) >= 2 && r.Method == http.MethodGet {
 			s.chatFile(w, r, strings.Join(parts[1:], "/"))
@@ -305,8 +300,8 @@ func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid s
 }
 
 func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid string) {
-	var st chatSettings
-	if err := decode(r, &st); err != nil {
+	var patch chatSettingsPatch
+	if err := decode(r, &patch); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
@@ -347,7 +342,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["warning"] = err.Error()
 	}
 	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
@@ -441,7 +436,7 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 			reply = "进入 Project Mode 失败：GA Root 未配置。"
 			break
 		}
-		projectDir := filepath.Join(gaRoot, "temp", "projects", name)
+		projectDir := projectModeWorkspace(s.CfgStore.Cfg, name)
 		if st, err := os.Lstat(projectDir); err == nil {
 			if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
 				reply = fmt.Sprintf("进入 Project Mode 失败：项目路径不是安全目录：`%s`", projectDir)
@@ -511,7 +506,6 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 		"workspace":        cs.Workspace,
 		"project_mode":     cs.ProjectMode,
 		"llm_no":           cs.Settings.LLMNo,
-		"tools_mode":       cs.Settings.ToolsMode,
 		"reasoning_effort": cs.Settings.ReasoningEffort,
 		"ga_root":          s.CfgStore.Cfg.GARoot,
 	}
@@ -640,8 +634,8 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"working":              cs.Working,
 		"workspace":            cs.Workspace,
 		"project_mode":         cs.ProjectMode,
+		"extra_sys_prompts":    cs.ExtraSysPrompts,
 		"llm_no":               cs.Settings.LLMNo,
-		"tools_mode":           cs.Settings.ToolsMode,
 		"reasoning_effort":     cs.Settings.ReasoningEffort,
 		"ga_root":              s.CfgStore.Cfg.GARoot,
 		"_ga_worldline_resend": strings.TrimSpace(req.SourceUserMessageID) != "",
@@ -656,32 +650,6 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) 
 		_, _ = fmt.Sscanf(v, "%d", &from)
 	}
 	s.streamChatRun(w, r, safeChatID(sid), from)
-}
-
-func (s *Server) chatReinjectTools(w http.ResponseWriter, r *http.Request, sid string) {
-	sid = safeChatID(sid)
-	if s.chatRunActive(sid) {
-		bad(w, http.StatusConflict, "chat is already running")
-		return
-	}
-	ev, err := s.reinjectChatWorkerTools(sid)
-	if err != nil {
-		bad(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if ev == nil {
-		bad(w, http.StatusInternalServerError, "worker returned empty response")
-		return
-	}
-	if ok, _ := ev["ok"].(bool); !ok {
-		msg, _ := ev["message"].(string)
-		if msg == "" {
-			msg = "tools reinjection failed"
-		}
-		bad(w, http.StatusInternalServerError, msg)
-		return
-	}
-	writeJSON(w, ev)
 }
 
 func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {

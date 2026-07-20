@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,54 @@ func TestReadPipeContinuesAfterOversizedLine(t *testing.T) {
 	}
 	if logs[1] != "after" {
 		t.Fatalf("second line lost after oversized line: %#v", logs)
+	}
+}
+
+func TestManagerSubscribeDeliversTailLogResetAndCancel(t *testing.T) {
+	m := NewManager(t.TempDir(), 10)
+	m.readPipe("svc.py", strings.NewReader("one\ntwo\nthree\n"))
+
+	snapshot, events, cancel := m.Subscribe("svc.py", 2)
+	if got := strings.Join(snapshot, ","); got != "two,three" {
+		t.Fatalf("snapshot=%q want=%q", got, "two,three")
+	}
+
+	m.readPipe("svc.py", strings.NewReader("four\n"))
+	if event := <-events; event.Reset || event.Line != "four" {
+		t.Fatalf("log event=%#v", event)
+	}
+
+	m.mu.Lock()
+	m.resetLocked("svc.py", []string{"fresh"})
+	m.mu.Unlock()
+	if event := <-events; !event.Reset || strings.Join(event.Lines, ",") != "fresh" {
+		t.Fatalf("reset event=%#v", event)
+	}
+
+	cancel()
+	cancel()
+	if event, open := <-events; open {
+		t.Fatalf("subscription remained open after cancel: %#v", event)
+	}
+}
+
+func TestManagerSubscribeSlowClientCatchesUpWithReset(t *testing.T) {
+	m := NewManager(t.TempDir(), 3)
+	var input strings.Builder
+	for i := 0; i < 257; i++ {
+		fmt.Fprintf(&input, "line-%03d\n", i)
+	}
+
+	_, events, cancel := m.Subscribe("svc.py", 3)
+	defer cancel()
+	m.readPipe("svc.py", strings.NewReader(input.String()))
+
+	event := <-events
+	if !event.Reset {
+		t.Fatalf("slow subscriber event=%#v, want reset", event)
+	}
+	if got := strings.Join(event.Lines, ","); got != "line-254,line-255,line-256" {
+		t.Fatalf("reset lines=%q", got)
 	}
 }
 

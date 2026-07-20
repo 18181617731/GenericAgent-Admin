@@ -1,9 +1,12 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"genericagent-admin-go/internal/service"
 )
@@ -190,6 +193,10 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/logs/"))
+	if strings.HasSuffix(name, "/stream") {
+		s.logStream(w, r, strings.TrimSpace(strings.TrimSuffix(name, "/stream")))
+		return
+	}
 	if name == "" {
 		bad(w, http.StatusBadRequest, "service name required")
 		return
@@ -198,6 +205,82 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusNotFound, "service not found")
 		return
 	}
-	lines := s.CfgStore.Cfg.LogTailLines
+	lines, err := s.requestedLogLines(r)
+	if err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(w, map[string]interface{}{"name": name, "lines": s.Svc.Logs(name, lines)})
+}
+
+func (s *Server) requestedLogLines(r *http.Request) (int, error) {
+	lines := s.CfgStore.Cfg.LogTailLines
+	raw := strings.TrimSpace(r.URL.Query().Get("lines"))
+	if raw == "" {
+		return lines, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 || parsed > 5000 {
+		return 0, fmt.Errorf("lines must be an integer between 1 and 5000")
+	}
+	return parsed, nil
+}
+
+func (s *Server) logStream(w http.ResponseWriter, r *http.Request, name string) {
+	if name == "" {
+		bad(w, http.StatusBadRequest, "service name required")
+		return
+	}
+	if _, ok := s.Svc.Find(name); !ok {
+		bad(w, http.StatusNotFound, "service not found")
+		return
+	}
+	lines, err := s.requestedLogLines(r)
+	if err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		bad(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	snapshot, events, cancel := s.Svc.Subscribe(name, lines)
+	defer cancel()
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	writeLogSSE(w, "snapshot", map[string]interface{}{"lines": snapshot})
+	flusher.Flush()
+
+	keepAlive := time.NewTicker(15 * time.Second)
+	defer keepAlive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, open := <-events:
+			if !open {
+				return
+			}
+			if event.Reset {
+				writeLogSSE(w, "reset", map[string]interface{}{"lines": event.Lines})
+			} else {
+				writeLogSSE(w, "log", map[string]interface{}{"line": event.Line})
+			}
+			flusher.Flush()
+		case <-keepAlive.C:
+			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func writeLogSSE(w http.ResponseWriter, event string, payload interface{}) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
 }

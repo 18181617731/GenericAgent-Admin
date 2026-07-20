@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -1678,6 +1678,15 @@ export default function ChatApp() {
   const [modelSwitching, setModelSwitching] = useState(false)
   const [toolsMode, setToolsMode] = useState('official')
   const [reasoningEffort, setReasoningEffort] = useState('off')
+  const [extraSysPrompts, setExtraSysPrompts] = useState([])
+  const [extraSysPromptPresetID, setExtraSysPromptPresetID] = useState('')
+  const [promptPresets, setPromptPresets] = useState([])
+  const [extraPromptOpen, setExtraPromptOpen] = useState(false)
+  const [extraPromptSelection, setExtraPromptSelection] = useState('')
+  const [extraPromptTargetSid, setExtraPromptTargetSid] = useState('')
+  const [promptPresetManagerOpen, setPromptPresetManagerOpen] = useState(false)
+  const [extraPromptDraft, setExtraPromptDraft] = useState([])
+  const [extraPromptSaving, setExtraPromptSaving] = useState(false)
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
   const [editing, setEditing] = useState('')
@@ -1692,7 +1701,6 @@ export default function ChatApp() {
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
-  const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
   const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
@@ -1703,7 +1711,6 @@ export default function ChatApp() {
   const [cmdEditContent, setCmdEditContent] = useState('')
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const [streamClock, setStreamClock] = useState(() => Date.now())
-  const toolsMenuRef = useRef(null)
   const threadRef = useRef(null)
   const endRef = useRef(null)
   const fileRef = useRef(null)
@@ -2110,15 +2117,17 @@ export default function ChatApp() {
 
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
-    if (openToken !== openSeqRef.current || !isActiveSession(id)) return
+    if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
-    const nextToolsMode = st.settings?.tools_mode === 'fixed' ? 'fixed' : 'official'
     const nextReasoningEffort = normalizeReasoningEffort(st.settings?.reasoning_effort)
+    const nextExtraSysPrompts = Array.isArray(st.extra_sys_prompts) ? st.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : []
+    const nextExtraSysPromptPresetID = String(st.extra_sys_prompt_preset_id || '').trim()
     setLlms(nextLlms)
     setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
-    setToolsMode(nextToolsMode)
     setReasoningEffort(nextReasoningEffort)
+    setExtraSysPrompts(nextExtraSysPrompts)
+    setExtraSysPromptPresetID(nextExtraSysPromptPresetID)
     if (id && st.running) {
       attachRunningStream(id)
     } else if (id && streamingSid && streamingSid !== id) {
@@ -2127,6 +2136,7 @@ export default function ChatApp() {
       setBusy(false)
       setStreamingSid('')
     }
+    return { extraSysPromptPresetID: nextExtraSysPromptPresetID, extraSysPrompts: nextExtraSysPrompts }
   }
 
   const openSession = async (id, refreshList = true) => {
@@ -2152,7 +2162,6 @@ export default function ChatApp() {
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
     setLlmNo(d.settings?.llm_no || 0)
-    setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
     setErr('')
     setNotice('')
     setMenuOpen('')
@@ -2194,7 +2203,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0); setToolsMode(d.settings?.tools_mode === 'fixed' ? 'fixed' : 'official')
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
     await loadChatState(d.id, openToken)
   }
 
@@ -2331,28 +2340,13 @@ export default function ChatApp() {
     }
   }
 
-  const setToolsModeTo = async (next) => {
-    if (next === toolsMode) { setToolsMenuOpen(false); return }
-    const prev = toolsMode
-    setToolsMode(next)
-    setToolsMenuOpen(false)
-    if (!sid) return
-    try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: next, reasoning_effort: reasoningEffort }) })
-      setNotice(next === 'fixed' ? '已设为自动注入：每次发消息都带上工具' : '已设为官方行为：会话开始按 GA 默认方式注入工具，需要时可点“立即注入一次”')
-    } catch (e) {
-      setToolsMode(prev)
-      setErr(e.message || String(e))
-    }
-  }
-
   const saveReasoningEffort = async (value) => {
     const next = normalizeReasoningEffort(value)
     const prev = reasoningEffort
     setReasoningEffort(next)
     if (!sid) return
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, tools_mode: toolsMode, reasoning_effort: next }) })
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, reasoning_effort: next }) })
       setNotice(next === 'off' ? '推理强度已设为默认' : `推理强度已设为 ${next}`)
     } catch (e) {
       setReasoningEffort(prev)
@@ -2360,16 +2354,101 @@ export default function ChatApp() {
     }
   }
 
-  const reinjectTools = async () => {
-    if (!sid) return
-    if (isCurrentRunning) { setNotice('当前正在执行，完成后再重注入 Tools'); return }
+  const loadPromptPresets = async () => {
+    const d = await api('/api/extra-system-prompt-presets')
+    const next = normalizePromptPresets(d?.presets)
+    setPromptPresets(next)
+    return next
+  }
+  const openExtraPromptEditor = () => {
+    const targetSid = activeSidRef.current
+    const targetOpenToken = openSeqRef.current
+    const initialSelection = extraSysPromptPresetID
+    setPromptPresetManagerOpen(false)
+    setExtraPromptTargetSid(targetSid)
+    setExtraPromptSelection(initialSelection)
+    setExtraPromptOpen(true)
+
+    Promise.all([
+      loadChatState(targetSid, targetOpenToken),
+      loadPromptPresets(),
+    ]).then(([freshState]) => {
+      if (!freshState || targetOpenToken !== openSeqRef.current || activeSidRef.current !== targetSid) return
+      setExtraPromptSelection(current => current === initialSelection ? freshState.extraSysPromptPresetID : current)
+    }).catch(e => {
+      if (targetOpenToken === openSeqRef.current && activeSidRef.current === targetSid) {
+        setErr(e.message || String(e))
+      }
+    })
+  }
+  const openPromptPresetManager = () => {
+    setExtraPromptDraft(promptPresets.map(item => ({ ...item })))
+    setPromptPresetManagerOpen(true)
+  }
+  const updateExtraPromptDraft = (id, field, value) => {
+    setExtraPromptDraft(items => items.map(item => item.id === id ? { ...item, [field]: value } : item))
+  }
+  const saveExtraPromptSelection = async () => {
+    const targetSid = extraPromptTargetSid
+    if (!targetSid) {
+      setErr('请先创建或打开会话')
+      return
+    }
+    if (activeSidRef.current !== targetSid) {
+      setExtraPromptOpen(false)
+      setErr('会话已切换，请重新选择系统提示预设')
+      return
+    }
+    const targetOpenToken = openSeqRef.current
+    setExtraPromptSaving(true)
     try {
-      const d = await api(`/api/chat/reinject-tools/${sid}`, { method:'POST' })
-      setNotice(d?.message || 'Tools 已重注入')
+      const d = await api(`/api/chat/settings/${targetSid}`, {
+        method:'POST',
+        body: JSON.stringify({ llm_no: llmNo, reasoning_effort: reasoningEffort, ...promptPresetPatch(extraPromptSelection) }),
+      })
+      if (targetOpenToken !== openSeqRef.current || activeSidRef.current !== targetSid) {
+        setExtraPromptOpen(false)
+        return
+      }
+      const savedID = String(d.extra_sys_prompt_preset_id || '').trim()
+      const savedPrompts = Array.isArray(d.extra_sys_prompts) ? d.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : []
+      setExtraSysPromptPresetID(savedID)
+      setExtraSysPrompts(savedPrompts)
+      setExtraPromptSelection(savedID)
+      setExtraPromptOpen(false)
+      setNotice(savedID ? `已为当前会话启用「${selectedPromptPresetView({ presets: promptPresets, selectedID: savedID, snapshot: savedPrompts }).name}」` : '当前会话已停用额外系统提示')
     } catch (e) {
       setErr(e.message || String(e))
+    } finally {
+      setExtraPromptSaving(false)
     }
   }
+  const savePromptPresets = async () => {
+    const next = normalizePromptPresets(extraPromptDraft)
+    if (next.some(item => !item.name || !item.content)) {
+      setErr('每个预设都需要名称和提示内容')
+      return
+    }
+    if (!confirmDanger('chat-extra-system-prompt-presets-save', `保存 ${next.length} 个全局系统提示预设？这会写入 GA Admin 配置文件。`)) return
+    setExtraPromptSaving(true)
+    try {
+      const d = await api('/api/extra-system-prompt-presets', {
+        dangerous:true,
+        method:'PUT',
+        body: JSON.stringify({ presets: next }),
+      })
+      const saved = normalizePromptPresets(d?.presets)
+      setPromptPresets(saved)
+      setExtraPromptDraft(saved.map(item => ({ ...item })))
+      setPromptPresetManagerOpen(false)
+      setNotice(`已保存 ${saved.length} 个系统提示预设`)
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setExtraPromptSaving(false)
+    }
+  }
+
 
   const addAttachmentFiles = async (fileList) => {
     const files = Array.from(fileList || []).filter(Boolean)
@@ -2521,7 +2600,7 @@ export default function ChatApp() {
       const payload = buildChatRunPayload({
         prompt: attachmentPrompt,
         files,
-        settings: { llm_no: item.llmNo ?? llmNo, tools_mode: item.toolsMode || toolsMode, reasoning_effort: item.reasoningEffort || reasoningEffort },
+        settings: { llm_no: item.llmNo ?? llmNo, reasoning_effort: item.reasoningEffort || reasoningEffort },
         clientUserID,
         sourceUserMessageId: item.sourceUserMessageId,
       })
@@ -2593,7 +2672,7 @@ export default function ChatApp() {
       return
     }
     if (!text && !files.length) return
-    const item = { text, files, llmNo, toolsMode, reasoningEffort }
+    const item = { text, files, llmNo, reasoningEffort }
     setPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
@@ -2699,7 +2778,11 @@ export default function ChatApp() {
     }
   }
 
-  useEffect(() => { loadSessions('', { open:true }).catch(e=>setErr(e.message)); return () => streamAbortRef.current?.abort?.() }, [])
+  useEffect(() => {
+    loadSessions('', { open:true }).catch(e=>setErr(e.message))
+    loadPromptPresets().catch(e=>setErr(e.message))
+    return () => streamAbortRef.current?.abort?.()
+  }, [])
 
   useEffect(() => {
     let stopped = false
@@ -2725,15 +2808,6 @@ export default function ChatApp() {
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
-
-  useEffect(() => {
-    if (!toolsMenuOpen) return
-    const onDown = (e) => { if (!toolsMenuRef.current?.contains(e.target)) setToolsMenuOpen(false) }
-    const onKey = (e) => { if (e.key === 'Escape') setToolsMenuOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [toolsMenuOpen])
 
   useEffect(() => {
     if (!sessionManagerOpen) return
@@ -2800,7 +2874,7 @@ export default function ChatApp() {
   const providerGroups = useMemo(() => buildModelProviderGroups(llms), [llms])
   const selectedProvider = findModelProviderValue(providerGroups, selectedModelNo) || (activeModel ? modelProvider(activeModel) : '')
   const isCurrentRunning = busy && streamingSid === sid
-  const isFixedToolsMode = toolsMode === 'fixed'
+  const activePromptPreset = selectedPromptPresetView({ presets: promptPresets, selectedID: extraSysPromptPresetID, snapshot: extraSysPrompts })
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
   const copyContext = async () => {
     try {
@@ -2973,6 +3047,66 @@ export default function ChatApp() {
             </div>
           </div>
         </div>}
+        {extraPromptOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setExtraPromptOpen(false)}>
+          <div className={`oa-cmd-manager oa-prompt-preset-dialog ${promptPresetManagerOpen ? 'is-managing' : 'is-picking'}`} role="dialog" aria-modal="true" aria-label="系统提示预设" onMouseDown={e=>e.stopPropagation()}>
+            <div className="oa-cmd-manager-head">
+              <div>
+                <h3>{promptPresetManagerOpen ? '管理系统提示预设' : '选择系统提示预设'}</h3>
+                <p>{promptPresetManagerOpen ? '预设全局可用；已绑定会话会保留选择时的内容快照。' : '每个会话可启用一个预设，运行 Agent 时动态追加。'}</p>
+              </div>
+              <button className="oa-icon-btn" type="button" onClick={()=>setExtraPromptOpen(false)} title="关闭"><X size={16}/></button>
+            </div>
+            {promptPresetManagerOpen ? <>
+              <div className="oa-cmd-manager-actions">
+                <button className="oa-guide-btn" type="button" onClick={()=>setExtraPromptDraft(items => [...items, createPromptPreset(items)])}><Plus size={14}/>新增预设</button>
+                <span>{extraPromptDraft.length} 个预设</span>
+              </div>
+              <div className="oa-cmd-manager-list oa-prompt-preset-editor-list">
+                {extraPromptDraft.length === 0 && <div className="oa-cmd-empty">暂无预设。新增后填写名称和提示内容。</div>}
+                {extraPromptDraft.map((item, index) => <div className="oa-cmd-edit-card oa-prompt-preset-edit-card" key={item.id}>
+                  <div className="oa-prompt-preset-edit-head">
+                    <input value={item.name} onChange={e=>updateExtraPromptDraft(item.id, 'name', e.target.value)} placeholder={`预设名称 ${index + 1}`} aria-label={`预设名称 ${index + 1}`}/>
+                    <code title="稳定预设 ID">{item.id}</code>
+                  </div>
+                  <textarea value={item.content} onChange={e=>updateExtraPromptDraft(item.id, 'content', e.target.value)} placeholder="输入追加到 Agent 系统提示中的内容" rows={5}/>
+                  <button type="button" onClick={()=>setExtraPromptDraft(items => items.filter(preset => preset.id !== item.id))}><Trash2 size={14}/>删除</button>
+                </div>)}
+              </div>
+              <div className="oa-cmd-manager-actions oa-prompt-preset-footer">
+                <button className="oa-guide-btn" type="button" onClick={savePromptPresets} disabled={extraPromptSaving}>{extraPromptSaving ? '保存中…' : '保存全局预设'}</button>
+                <button type="button" onClick={()=>setPromptPresetManagerOpen(false)} disabled={extraPromptSaving}><ChevronLeft size={14}/>返回选择</button>
+              </div>
+            </> : <>
+              <div className="oa-cmd-manager-actions">
+                <span>{promptPresets.length} 个可用预设</span>
+                <button type="button" onClick={openPromptPresetManager}><Edit3 size={14}/>管理预设</button>
+              </div>
+              <div className="oa-cmd-manager-list oa-prompt-preset-picker" role="radiogroup" aria-label="当前会话系统提示预设">
+                <label className={`oa-prompt-preset-option ${extraPromptSelection === '' ? 'is-selected' : ''}`}>
+                  <input type="radio" name="extra-system-prompt-preset" value="" checked={extraPromptSelection === ''} onChange={()=>setExtraPromptSelection('')}/>
+                  <span className="oa-prompt-preset-radio"><Check size={13}/></span>
+                  <span className="oa-prompt-preset-copy"><b>不使用预设</b><small>仅使用 Agent 默认系统提示</small></span>
+                </label>
+                {activePromptPreset.orphaned && <label className={`oa-prompt-preset-option is-orphaned ${extraPromptSelection === activePromptPreset.id ? 'is-selected' : ''}`}>
+                  <input type="radio" name="extra-system-prompt-preset" value={activePromptPreset.id} checked={extraPromptSelection === activePromptPreset.id} onChange={()=>setExtraPromptSelection(activePromptPreset.id)}/>
+                  <span className="oa-prompt-preset-radio"><Check size={13}/></span>
+                  <span className="oa-prompt-preset-copy"><b>已删除的预设</b><small>{activePromptPreset.content || '当前会话仍保留原内容快照'}</small></span>
+                  <em>快照</em>
+                </label>}
+                {promptPresets.map(item => <label className={`oa-prompt-preset-option ${extraPromptSelection === item.id ? 'is-selected' : ''}`} key={item.id}>
+                  <input type="radio" name="extra-system-prompt-preset" value={item.id} checked={extraPromptSelection === item.id} onChange={()=>setExtraPromptSelection(item.id)}/>
+                  <span className="oa-prompt-preset-radio"><Check size={13}/></span>
+                  <span className="oa-prompt-preset-copy"><b>{item.name}</b><small>{item.content}</small></span>
+                </label>)}
+                {promptPresets.length === 0 && !activePromptPreset.orphaned && <div className="oa-cmd-empty">还没有预设。先进入“管理预设”新建一个。</div>}
+              </div>
+              <div className="oa-cmd-manager-actions oa-prompt-preset-footer">
+                <button className="oa-guide-btn" type="button" onClick={saveExtraPromptSelection} disabled={extraPromptSaving}>{extraPromptSaving ? '应用中…' : '应用到当前会话'}</button>
+                <button type="button" onClick={()=>setExtraPromptOpen(false)} disabled={extraPromptSaving}>取消</button>
+              </div>
+            </>}
+          </div>
+        </div>}
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropFiles}>
           <input ref={fileRef} type="file" multiple hidden onChange={e=>{ addAttachmentFiles(e.target.files); e.target.value='' }} />
           {attachments.length > 0 && <div className="oa-attach-preview">
@@ -2994,36 +3128,7 @@ export default function ChatApp() {
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={'添加附件'}><Paperclip size={17}/><span>{'附件'}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title="管理自定义斜杠命令"><Sparkles size={16}/><span>命令</span></button>
-            <div className="oa-tools-menu" ref={toolsMenuRef}>
-              <button className={`oa-tools-trigger ${toolsMenuOpen ? 'is-open' : ''}`} type="button" disabled={!sid} onClick={()=>setToolsMenuOpen(o=>!o)} aria-haspopup="menu" aria-expanded={toolsMenuOpen} title="工具注入设置">
-                <Wrench size={16}/><span>工具</span>{isFixedToolsMode && <span className="oa-tools-state">自动</span>}<ChevronDown size={14}/>
-              </button>
-              {toolsMenuOpen && isMobile && <div className="oa-tools-backdrop" onClick={()=>setToolsMenuOpen(false)}/>}
-              {toolsMenuOpen && (
-                <div className={`oa-tools-pop ${isMobile ? 'oa-tools-modal' : ''}`} role={isMobile ? 'dialog' : 'menu'} aria-modal={isMobile || undefined}>
-                  {isMobile && <div className="oa-tools-modal-bar"/>}
-                  <div className="oa-tools-pop-head">工具注入方式</div>
-                  <button className={`oa-tools-opt ${!isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={!isFixedToolsMode} onClick={()=>setToolsModeTo('official')}>
-                    <Wrench size={16}/>
-                    <span className="oa-tools-opt-text"><b>官方行为<span className="oa-tools-tag">默认</span></b><small>会话开始按 GA 默认方式注入工具，需要时再点“立即注入一次”</small></span>
-                    {!isFixedToolsMode && <Check size={16}/>}
-                  </button>
-                  <button className={`oa-tools-opt ${isFixedToolsMode ? 'is-active' : ''}`} type="button" role="menuitemradio" aria-checked={isFixedToolsMode} onClick={()=>setToolsModeTo('fixed')}>
-                    <Pin size={16}/>
-                    <span className="oa-tools-opt-text"><b>自动注入</b><small>每次发消息都自动带上工具</small></span>
-                    {isFixedToolsMode && <Check size={16}/>}
-                  </button>
-                  {!isFixedToolsMode && (
-                    <>
-                      <div className="oa-tools-pop-sep"/>
-                      <button className="oa-tools-act" type="button" disabled={!sid || isCurrentRunning} onClick={()=>{ setToolsMenuOpen(false); reinjectTools() }}>
-                        <RefreshCw size={15}/><span>立即注入一次</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+            <button className={`oa-attach-btn ${extraPromptOpen || extraSysPromptPresetID ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} title={extraSysPromptPresetID ? `当前预设：${activePromptPreset.name}` : '选择本会话的系统提示预设'}><Bot size={16}/><span>系统提示{extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length || isCurrentRunning || modelSwitching}
               disabledReason={!providerGroups.length ? '尚未配置可用模型' : modelSwitching ? '正在切换模型' : isCurrentRunning ? '回复生成期间不可切换模型' : ''}
@@ -3036,7 +3141,7 @@ export default function ChatApp() {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队 · 工具：{isFixedToolsMode ? '每次自动注入' : '官方默认'}</p>
+        <p>Enter 发送 · Shift + Enter 换行 · 回复中发送会排队</p>
       </footer>
     </main>
 

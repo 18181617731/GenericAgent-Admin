@@ -38,6 +38,24 @@ class WorldlineSidecarTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_worldline_title_strips_project_mode_without_store_private_helper(self):
+        store = SimpleNamespace(
+            root_id='root',
+            head='root',
+            nodes={'root': {'parent': None, 'children': []}},
+            rebuild_history=lambda _node_id: [],
+        )
+        history = [{
+            'role': 'user',
+            'content': (
+                'Keep this title\n\n'
+                '---\n[PROJECT MODE: ga-admin]\n'
+                'Injected project instructions\n---\n'
+            ),
+        }]
+
+        self.assertEqual(worker._worldline_title(store, history, 'fallback'), 'Keep this title')
+
     def test_projection_preserves_sibling_order_repeated_title_identity_and_path(self):
         nodes = {
             key: SimpleNamespace(

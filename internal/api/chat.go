@@ -41,9 +41,6 @@ type chatMessage struct {
 }
 
 const (
-	chatToolsModeOfficial = "official"
-	chatToolsModeFixed    = "fixed"
-
 	chatReasoningEffortOff     = "off"
 	chatReasoningEffortNone    = "none"
 	chatReasoningEffortMinimal = "minimal"
@@ -56,17 +53,31 @@ const (
 
 type chatSettings struct {
 	LLMNo           int    `json:"llm_no"`
-	ToolsMode       string `json:"tools_mode,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
-func normalizeChatSettings(st chatSettings) chatSettings {
-	switch st.ToolsMode {
-	case chatToolsModeFixed:
-		// keep
-	default:
-		st.ToolsMode = chatToolsModeOfficial
+type chatSettingsPatch struct {
+	LLMNo                  int       `json:"llm_no"`
+	ReasoningEffort        string    `json:"reasoning_effort,omitempty"`
+	ExtraSysPrompts        *[]string `json:"extra_sys_prompts"`
+	ExtraSysPromptPresetID *string   `json:"extra_sys_prompt_preset_id,omitempty"`
+}
+
+func normalizeChatExtraSysPrompts(prompts []string) []string {
+	cleaned := make([]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		prompt = strings.TrimSpace(prompt)
+		if prompt != "" {
+			cleaned = append(cleaned, prompt)
+		}
 	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
+}
+
+func normalizeChatSettings(st chatSettings) chatSettings {
 	switch strings.ToLower(strings.TrimSpace(st.ReasoningEffort)) {
 	case "", "default", "model":
 		st.ReasoningEffort = ""
@@ -93,17 +104,19 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 }
 
 type chatSession struct {
-	ID            string                   `json:"id"`
-	Title         string                   `json:"title"`
-	UpdatedAt     int64                    `json:"updated_at"`
-	Messages      []chatMessage            `json:"messages"`
-	Settings      chatSettings             `json:"settings"`
-	RawHistory    []map[string]interface{} `json:"raw_history,omitempty"`
-	HistoryInfo   []interface{}            `json:"history_info,omitempty"`
-	Working       map[string]interface{}   `json:"working,omitempty"`
-	WorldlineHead string                   `json:"worldline_head,omitempty"`
-	Workspace     string                   `json:"workspace,omitempty"`
-	ProjectMode   string                   `json:"project_mode,omitempty"`
+	ID                     string                   `json:"id"`
+	Title                  string                   `json:"title"`
+	UpdatedAt              int64                    `json:"updated_at"`
+	Messages               []chatMessage            `json:"messages"`
+	Settings               chatSettings             `json:"settings"`
+	RawHistory             []map[string]interface{} `json:"raw_history,omitempty"`
+	HistoryInfo            []interface{}            `json:"history_info,omitempty"`
+	Working                map[string]interface{}   `json:"working,omitempty"`
+	WorldlineHead          string                   `json:"worldline_head,omitempty"`
+	Workspace              string                   `json:"workspace,omitempty"`
+	ProjectMode            string                   `json:"project_mode,omitempty"`
+	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
+	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 }
 
 const (
@@ -563,6 +576,14 @@ func appendChatRawHistoryFallback(raw []map[string]interface{}, messages ...chat
 	return out
 }
 
+func projectModeWorkspace(cfg config.AppConfig, name string) string {
+	name, ok := validProjectModeName(name)
+	if !ok {
+		return ""
+	}
+	return filepath.Join(cfg.GARoot, "temp", "projects", name)
+}
+
 func chatSessionForClient(cs chatSession) chatSession {
 	return cs
 }
@@ -572,48 +593,6 @@ func (s *Server) chatRunActive(sid string) bool {
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
 	return r != nil && !r.Done
-}
-
-func (s *Server) reinjectChatWorkerTools(sid string) (map[string]interface{}, error) {
-	sid = safeChatID(sid)
-	workspace := ""
-	if cs, err := loadChatSession(s.CfgStore.Cfg, sid); err == nil {
-		workspace = strings.TrimSpace(cs.Workspace)
-	}
-	worker, err := s.getChatWorker(sid)
-	if err != nil {
-		return nil, err
-	}
-	worker.Mu.Lock()
-	defer worker.Mu.Unlock()
-	if err := json.NewEncoder(worker.Stdin).Encode(map[string]interface{}{"op": "reinject_tools", "ga_root": s.CfgStore.Cfg.GARoot, "workspace": workspace}); err != nil {
-		s.dropChatWorker(sid, worker)
-		return nil, err
-	}
-	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
-	for {
-		line, err := readChatWorkerLine(reader)
-		if len(bytes.TrimSpace(line)) == 0 {
-			if err != nil {
-				s.dropChatWorker(sid, worker)
-				return nil, err
-			}
-			continue
-		}
-		var ev map[string]interface{}
-		if json.Unmarshal(bytes.TrimSpace(line), &ev) == nil {
-			if ev["type"] == "reinject_tools" {
-				return ev, nil
-			}
-			if ev["type"] == "error" {
-				return ev, nil
-			}
-		}
-		if err != nil {
-			s.dropChatWorker(sid, worker)
-			return nil, err
-		}
-	}
 }
 
 func (s *Server) beginChatRun(sid string) *chatRun {

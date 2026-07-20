@@ -15,6 +15,12 @@ type SlashCommandItem struct {
 	Content string `json:"content,omitempty"`
 }
 
+type ExtraSystemPromptPreset struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
 type AppConfig struct {
 	GARoot              string             `json:"ga_root"`
 	ChatDataDir         string             `json:"chat_data_dir"`

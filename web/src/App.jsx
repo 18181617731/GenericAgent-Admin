@@ -122,6 +122,8 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [cfg, setCfg] = useState(null), [persistedCfg, setPersistedCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
   const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
+  const [logStreamState, setLogStreamState] = useState('idle'), [logStreamNonce, setLogStreamNonce] = useState(0), [followLogs, setFollowLogs] = useState(true)
+  const logViewRef = useRef(null)
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
@@ -299,11 +301,63 @@ export default function App() {
     setPendingServiceName('')
   }
 
-  const serviceAction = async (name, action, params = null) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { const body = { name }; if (params) body.params = params; await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) }); await load(); if (selected === name) setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const serviceAction = async (name, action, params = null) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { const body = { name }; if (params) body.params = params; await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) }); await load(); if (selected === name) setLogStreamNonce(value => value + 1) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', `${enabled ? '启用' : '禁用'}服务 ${name} 自启动？`)) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const setServiceModel = async (name, llm_no) => { setBusy(true); try { const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) }); setServices(d.services || []); setMsg(t.saved || '已保存') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const loadServiceLogs = async (name = selected) => { if (!name) return; setSelected(name); setLogs((await api(`/api/logs/${encodeURIComponent(name)}?lines=${tailLines}`)).lines || []) }
-  const viewServiceLogs = async (name) => { setTab('logs'); await loadServiceLogs(name) }
+  const loadServiceLogs = (name = selected) => {
+    if (!name) return
+    setSelected(name)
+    setFollowLogs(true)
+    setLogStreamNonce(value => value + 1)
+  }
+  const viewServiceLogs = (name) => { setTab('logs'); loadServiceLogs(name) }
+
+  useEffect(() => {
+    if (tab !== 'logs' || !selected) {
+      setLogStreamState('idle')
+      return undefined
+    }
+    const maxLines = clampTailLines(tailLines, 20, 2000)
+    const source = new EventSource(`/api/logs/${encodeURIComponent(selected)}/stream?lines=${maxLines}`)
+    const readPayload = (event) => {
+      try { return JSON.parse(event.data) } catch { return null }
+    }
+    setLogs([])
+    setLogStreamState('connecting')
+    source.onopen = () => setLogStreamState('live')
+    source.addEventListener('snapshot', (event) => {
+      const payload = readPayload(event)
+      setLogs(Array.isArray(payload?.lines) ? payload.lines.map(String).slice(-maxLines) : [])
+    })
+    source.addEventListener('reset', (event) => {
+      const payload = readPayload(event)
+      setLogs(Array.isArray(payload?.lines) ? payload.lines.map(String).slice(-maxLines) : [])
+    })
+    source.addEventListener('log', (event) => {
+      const payload = readPayload(event)
+      if (payload?.line === undefined) return
+      setLogs(current => [...current, String(payload.line)].slice(-maxLines))
+    })
+    source.onerror = () => setLogStreamState('reconnecting')
+    return () => {
+      source.close()
+      setLogStreamState('idle')
+    }
+  }, [tab, selected, tailLines, logStreamNonce])
+
+  useEffect(() => {
+    if (!followLogs || tab !== 'logs') return undefined
+    const frame = window.requestAnimationFrame(() => {
+      const view = logViewRef.current
+      if (view) view.scrollTop = view.scrollHeight
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [logs, followLogs, tab])
+
+  const handleLogScroll = (event) => {
+    const view = event.currentTarget
+    setFollowLogs(view.scrollHeight - view.scrollTop - view.clientHeight < 48)
+  }
   const pickGoalId = (items = [], preferred = '') => {
     if (preferred && items.some(g => g.id === preferred)) return preferred
     return items.find(g => g.running)?.id || items[0]?.id || ''

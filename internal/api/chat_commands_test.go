@@ -349,7 +349,7 @@ func TestWorldlineRestorePersistsRestoredSession(t *testing.T) {
 		t.Fatalf("restore status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	workerReq := <-requests
-	if workerReq["action"] != "restore" || workerReq["node_id"] != "node-1" || workerReq["mode"] != "conversation" || workerReq["to"] != "before" {
+	if workerReq["action"] != "restore" || workerReq["sid"] != sid || workerReq["node_id"] != "node-1" || workerReq["mode"] != "conversation" || workerReq["to"] != "before" {
 		t.Fatalf("worker request: %#v", workerReq)
 	}
 
