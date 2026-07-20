@@ -216,6 +216,103 @@ func TestChatCancelEndsImmediateRunAndReleasesSubscriber(t *testing.T) {
 	}
 }
 
+func TestChatCancelPersistsPartialOutput(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	sid := "cancel-partial"
+	startedAtMS := int64(1234)
+	pendingID := "assistant-pending"
+	cs := chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "user-1", Role: "user", Content: "keep this context", CreatedAt: 1},
+			{ID: pendingID, Role: "assistant", CreatedAt: 2, RunStartedAtMS: startedAtMS},
+		},
+		Settings: normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+		t.Fatal(err)
+	}
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("missing run")
+	}
+	s.ChatMu.Lock()
+	token.PendingAssistantID = pendingID
+	token.RunStartedAtMS = startedAtMS
+	s.ChatMu.Unlock()
+	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "partial "})
+	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "answer"})
+
+	rr := httptest.NewRecorder()
+	s.chatCancel(rr, httptest.NewRequest(http.MethodPost, "/api/chat/cancel/"+sid, nil), sid)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("cancel status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Messages) != 2 {
+		t.Fatalf("messages=%#v", stored.Messages)
+	}
+	got := stored.Messages[1]
+	if got.ID != pendingID || got.Role != "assistant" || got.Content != "partial answer\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]" {
+		t.Fatalf("persisted partial=%#v", got)
+	}
+	if !got.Error || got.ElapsedMS <= 0 || got.RunStartedAtMS != startedAtMS {
+		t.Fatalf("missing interruption metadata: %#v", got)
+	}
+	raw, err := json.Marshal(stored.RawHistory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "keep this context") || !strings.Contains(string(raw), "partial answer") {
+		t.Fatalf("raw history missing canceled turn: %s", raw)
+	}
+	if s.chatRunActive(sid) {
+		t.Fatal("canceled run remained active after persistence")
+	}
+}
+
+func TestChatCancelDoesNotOverwriteTerminalMessage(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	sid := "cancel-terminal"
+	pendingID := "assistant-final"
+	cs := chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "user-1", Role: "user", Content: "question", CreatedAt: 1},
+			{ID: pendingID, Role: "assistant", Content: "completed answer", CreatedAt: 2, ModelID: "model-x", ElapsedMS: 9},
+		},
+		Settings: normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+		t.Fatal(err)
+	}
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("missing run")
+	}
+	s.ChatMu.Lock()
+	token.PendingAssistantID = pendingID
+	token.RunStartedAtMS = 1
+	s.ChatMu.Unlock()
+	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "stale partial"})
+
+	rr := httptest.NewRecorder()
+	s.chatCancel(rr, httptest.NewRequest(http.MethodPost, "/api/chat/cancel/"+sid, nil), sid)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("cancel status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Messages) != 2 || stored.Messages[1].Content != "completed answer" || stored.Messages[1].Error {
+		t.Fatalf("terminal message was overwritten: %#v", stored.Messages)
+	}
+}
+
 func TestImmediateCommandCanceledBeforePublishHasNoResult(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	sid := "canceled-command"

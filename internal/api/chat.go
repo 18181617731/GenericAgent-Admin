@@ -137,12 +137,15 @@ const (
 type chatUpload struct{ Name, Type, DataURL string }
 
 type chatRun struct {
-	SID         string
-	Events      [][]byte
-	Done        bool
-	Canceled    bool
-	Cmd         *exec.Cmd
-	Subscribers map[chan []byte]bool
+	SID                string
+	Events             [][]byte
+	Done               bool
+	Canceled           bool
+	CancelReady        bool
+	PendingAssistantID string
+	RunStartedAtMS     int64
+	Cmd                *exec.Cmd
+	Subscribers        map[chan []byte]bool
 }
 
 const chatRunSubscriberBuffer = 4096
@@ -262,8 +265,17 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		return
 	}
 	s.setChatRunCmd(sid, worker.Cmd)
+	if token != nil && !s.ownsChatRun(sid, token) {
+		s.dropChatWorker(sid, worker)
+		s.endChatRunOwned(sid, token)
+		return
+	}
 	worker.Mu.Lock()
 	defer worker.Mu.Unlock()
+	if token != nil && !s.ownsChatRun(sid, token) {
+		s.endChatRunOwned(sid, token)
+		return
+	}
 	if err := json.NewEncoder(worker.Stdin).Encode(cmdReq); err != nil {
 		s.dropChatWorker(sid, worker)
 		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
@@ -645,6 +657,22 @@ func (s *Server) beginChatRun(sid string) *chatRun {
 	return token
 }
 
+func (s *Server) saveChatRunPending(sid string, token *chatRun, pendingID string, startedAtMS int64, save func() error) (bool, error) {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	r := s.ChatRuns[sid]
+	if token == nil || r != token || r.Done || r.Canceled {
+		return false, nil
+	}
+	if err := save(); err != nil {
+		return true, err
+	}
+	r.PendingAssistantID = pendingID
+	r.RunStartedAtMS = startedAtMS
+	return true, nil
+}
+
 func (s *Server) ownsChatRun(sid string, token *chatRun) bool {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
@@ -667,14 +695,7 @@ func (s *Server) chatRunCanceled(sid string) bool {
 	return r != nil && r.Canceled
 }
 
-func (s *Server) chatRunPartialContent(sid string) string {
-	s.ChatMu.Lock()
-	r := s.ChatRuns[safeChatID(sid)]
-	var events [][]byte
-	if r != nil {
-		events = append(events, r.Events...)
-	}
-	s.ChatMu.Unlock()
+func chatPartialContentFromEvents(events [][]byte) string {
 	var b strings.Builder
 	for _, line := range events {
 		var ev map[string]interface{}
@@ -688,6 +709,81 @@ func (s *Server) chatRunPartialContent(sid string) string {
 	return b.String()
 }
 
+func (s *Server) chatRunPartialContent(sid string) string {
+	s.ChatMu.Lock()
+	r := s.ChatRuns[safeChatID(sid)]
+	var events [][]byte
+	if r != nil {
+		events = append(events, r.Events...)
+	}
+	s.ChatMu.Unlock()
+	return chatPartialContentFromEvents(events)
+}
+
+func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64, events [][]byte) error {
+	if strings.TrimSpace(pendingID) == "" {
+		return nil
+	}
+	now := time.Now()
+	elapsedMS := int64(1)
+	if startedAtMS > 0 {
+		elapsedMS = now.UnixMilli() - startedAtMS
+		if elapsedMS < 1 {
+			elapsedMS = 1
+		}
+	}
+	content := strings.TrimSpace(chatPartialContentFromEvents(events))
+	if content != "" {
+		content += "\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]"
+	} else {
+		content = "\u5df2\u505c\u6b62\u751f\u6210"
+	}
+	final := chatMessage{
+		ID:             pendingID,
+		Role:           "assistant",
+		Content:        content,
+		CreatedAt:      now.Unix(),
+		Error:          true,
+		ElapsedMS:      elapsedMS,
+		RunStartedAtMS: startedAtMS,
+	}
+
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		return err
+	}
+	target := -1
+	for i := range cs.Messages {
+		if cs.Messages[i].ID == pendingID {
+			target = i
+			break
+		}
+	}
+	if target >= 0 {
+		existing := cs.Messages[target]
+		if strings.TrimSpace(existing.Content) != "" || existing.Error || existing.ElapsedMS > 0 || existing.ModelID != "" || len(existing.Usage) > 0 || len(existing.Usages) > 0 {
+			return nil
+		}
+		cs.Messages[target] = final
+	} else {
+		target = len(cs.Messages)
+		cs.Messages = append(cs.Messages, final)
+	}
+	fallback := make([]chatMessage, 0, 2)
+	for i := target - 1; i >= 0; i-- {
+		if cs.Messages[i].Role == "user" {
+			fallback = append(fallback, cs.Messages[i])
+			break
+		}
+	}
+	fallback = append(fallback, final)
+	cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallback...)
+	cs.UpdatedAt = now.Unix()
+	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+}
+
 func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {
 	b, _ := json.Marshal(ev)
 	s.publishChatLine(sid, b)
@@ -697,7 +793,7 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[sid]
-	if r == nil {
+	if r == nil || r.Canceled {
 		return
 	}
 	b := append([]byte(nil), line...)
@@ -723,6 +819,10 @@ func (s *Server) endChatRunOwned(sid string, token *chatRun) {
 	s.ChatMu.Lock()
 	r := s.ChatRuns[sid]
 	if token != nil && r != token {
+		s.ChatMu.Unlock()
+		return
+	}
+	if r != nil && r.Canceled && !r.CancelReady {
 		s.ChatMu.Unlock()
 		return
 	}

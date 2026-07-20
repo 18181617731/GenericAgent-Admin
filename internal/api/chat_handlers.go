@@ -631,11 +631,16 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		cs.Messages = append(cs.Messages, pendingMsg)
 	}
 	updateChatTitle(&cs)
-	var saveErr error
-	if strings.TrimSpace(req.SourceUserMessageID) != "" {
-		saveErr = s.saveChatSessionExact(cs)
-	} else {
-		saveErr = s.saveChatSessionMerged(cs)
+	owned, saveErr := s.saveChatRunPending(sid, token, pendingMsg.ID, runStartedAtMS, func() error {
+		if strings.TrimSpace(req.SourceUserMessageID) != "" {
+			return s.saveChatSessionExact(cs)
+		}
+		return s.saveChatSessionMerged(cs)
+	})
+	if !owned {
+		s.endChatRunOwned(sid, token)
+		bad(w, http.StatusConflict, "chat run was canceled")
+		return
 	}
 	if saveErr != nil {
 		s.endChatRunOwned(sid, token)
@@ -683,6 +688,9 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	var cmd *exec.Cmd
 	var worker *chatWorker
 	var token *chatRun
+	var events [][]byte
+	var pendingID string
+	var startedAtMS int64
 	s.ChatMu.Lock()
 	run := s.ChatRuns[sid]
 	if run == nil || run.Done {
@@ -694,14 +702,28 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	token = run
 	cmd = run.Cmd
 	worker = s.ChatWorkers[sid]
+	events = append(events, run.Events...)
+	pendingID = run.PendingAssistantID
+	startedAtMS = run.RunStartedAtMS
 	s.ChatMu.Unlock()
-	// Immediate commands do not have a worker process to kill. End their run here
-	// so cancellation always releases SSE subscribers and the session reservation.
-	s.endChatRunOwned(sid, token)
+
 	if worker != nil {
 		s.dropChatWorker(sid, worker)
+		worker.Mu.Lock()
+		worker.Mu.Unlock()
 	} else if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
+	}
+	persistErr := s.persistCanceledChatRun(sid, pendingID, startedAtMS, events)
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current == token {
+		current.CancelReady = true
+	}
+	s.ChatMu.Unlock()
+	s.endChatRunOwned(sid, token)
+	if persistErr != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", persistErr))
+		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
 }
