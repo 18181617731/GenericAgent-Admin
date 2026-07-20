@@ -2,7 +2,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -11,7 +11,6 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
-import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 
 gsap.registerPlugin(useGSAP)
@@ -1388,86 +1387,14 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
-// ── Worldline helpers ──────────────────────────────────────────────────────────────────────────────
-function initWorldline(sid = '') {
-  return { sid, status: 'idle', data: null, error: null, switchingNodeId: '' }
-}
-export function worldlineLoadStarted(prev, sid) {
-  const id = String(sid || '')
-  if (!id) return initWorldline('')
-  if (prev?.sid === id) {
-    return prev.data
-      ? { ...prev, error: null }
-      : { ...prev, status: 'loading', error: null, switchingNodeId: '' }
-  }
-  return { sid: id, status: 'loading', data: null, error: null, switchingNodeId: '' }
-}
-export function worldlineForSession(state, sid) {
-  const id = String(sid || '')
-  if (state?.sid === id) return state
-  return id
-    ? { sid: id, status: 'loading', data: null, error: null, switchingNodeId: '' }
-    : initWorldline('')
-}
-
-export function worldlineOwnsMappedNode(state, sid, nodeId) {
-  const id = String(sid || '')
-  const target = String(nodeId || '')
-  if (!id || !target || state?.sid !== id || !Array.isArray(state.data?.nodes)) return false
-  return state.data.nodes.some(node => String(node.id) === target && node.mapping_status === 'mapped')
-}
-
-function getNodesMap(data) {
-  if (!data?.nodes) return new Map()
-  return new Map(data.nodes.map(n => [String(n.id), n]))
-}
-function nodeVersionInfo(data, messageId) {
-  if (!data || !messageId) return null
-  const node = data.nodes?.find(n =>
-    String(n.tail_message_id) === String(messageId) ||
-    String(n.user_message_id) === String(messageId))
-  if (!node) return null
-  const siblings = (data.nodes?.filter(n =>
-    n.parent_id != null && String(n.parent_id) === String(node.parent_id)) ?? [])
-  const sorted = [...siblings].sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-  const idx = sorted.findIndex(n => String(n.id) === String(node.id))
-  if (idx < 0 || sorted.length < 2) return null
-  return {
-    index: idx + 1,
-    total: sorted.length,
-    node_id: node.id,
-    previous_node_id: idx > 0 ? sorted[idx - 1].id : null,
-    next_node_id: idx < sorted.length - 1 ? sorted[idx + 1].id : null,
-  }
-}
-export function worldlineLoaded(prev, resp, sid) {
-  if (prev.sid !== sid) return prev
-  if (!resp || resp.status === 'unavailable')
-    return { ...prev, status: resp?.status ?? 'unavailable', data: null, error: null }
-  if (resp.status === 'degraded')
-    return { ...prev, status: 'degraded', data: resp, error: null }
-  return { ...prev, status: resp.nodes?.length ? 'ready' : 'empty', data: resp, error: null, switchingNodeId: '' }
-}
-function worldlineErrored(prev, err, sid) {
-  if (prev.sid !== sid) return prev
-  const msg = err?.message || String(err) || '加载失败'
-  return prev.data
-    ? { ...prev, status: 'stale-error', error: msg }
-    : { ...prev, status: 'error', error: msg }
-}
-
 export const ChatMessage = memo(function ChatMessage({
-  message: m, pending, onAskReply, onEditResend,
-  editDisabled = false, clockNow = 0,
-  version, onSwitchVersion, switchingNodeId = '',
+  message: m, pending, onAskReply, clockNow = 0,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
   const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
   const pendingFiles   = savedFilePaths.length > 0 ? [] : messageFiles.filter(f => !isImageFile(f))
-  const [editing, setEditing] = useState(false)
-  const [draft,   setDraft]   = useState(userText)
   const [copied,  setCopied]  = useState(false)
   const [copyErr, setCopyErr] = useState('')
   const ageText = m.role === 'user' ? formatAge(m.created_at) : ''
@@ -1480,16 +1407,6 @@ export const ChatMessage = memo(function ChatMessage({
   const elapsedMs = getElapsedMs(m, clockNow)
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0)
 
-  const resetDraft = () => { setDraft(userText); setEditing(false) }
-  const submitEdit = async () => {
-    if (!draft.trim() || draft.trim() === userText.trim()) { setEditing(false); return }
-    try {
-      await onEditResend?.({ text: draft.trim(), files: messageFiles, sourceUserMessageId: m.id })
-      setEditing(false)
-    } catch {
-      // Keep the editor and draft open so the user can retry after a failed request.
-    }
-  }
   const copyContent = () => {
     const txt = m.role === 'user' ? userText : (m.content || '')
     navigator.clipboard.writeText(txt)
@@ -1528,26 +1445,7 @@ export const ChatMessage = memo(function ChatMessage({
                   })}
                 </div>
               )}
-              {editing
-                ? (<div className="oa-message-editor">
-                    <textarea
-                      className="oa-edit-textarea" value={draft} autoFocus
-                      rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)}
-                      onChange={e => setDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitEdit()
-                        if (e.key === 'Escape') resetDraft()
-                      }}
-                    />
-                    <div className="oa-edit-actions">
-                      <button type="button" className="oa-edit-submit" onClick={submitEdit}
-                        disabled={!draft.trim() || editDisabled}>
-                        <Send size={13}/>重发
-                      </button>
-                      <button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button>
-                    </div>
-                  </div>)
-                : (<div className="oa-msg-text">
+<div className="oa-msg-text">
                     {userText}
                     {savedFilePaths.length > 0 && (
                       <div className="oa-msg-saved-paths">
@@ -1561,8 +1459,7 @@ export const ChatMessage = memo(function ChatMessage({
                         {pendingFiles.map((f, i) => <span key={i} className="oa-msg-file">{f.name}</span>)}
                       </div>
                     )}
-                  </div>)
-              }
+                  </div>
             </>)
         }
         {showUsageRow && <UsageRow u={usageTotal} elapsedMs={elapsedMs} live={pending} label="总计" className="oa-usage-total" />}
@@ -1575,13 +1472,6 @@ export const ChatMessage = memo(function ChatMessage({
           onClick={copyContent} title="复制" aria-label="复制消息">
           {copied ? <Check size={13}/> : <Copy size={13}/>}
         </button>
-        {m.role === 'user' && !pending && (
-          <button type="button" className="oa-icon-btn oa-edit-btn"
-            onClick={() => { setDraft(userText); setEditing(v => !v) }}
-            disabled={editDisabled} title="编辑并重发" aria-label="编辑并重发">
-            <Edit3 size={13}/>
-          </button>
-        )}
         {m.role === 'user' && !pending && onAskReply && (
           <button type="button" className="oa-icon-btn oa-ask-reply-btn"
             onClick={() => onAskReply(m.content)}
@@ -1589,32 +1479,13 @@ export const ChatMessage = memo(function ChatMessage({
             <MessageSquarePlus size={13}/>
           </button>
         )}
-        {version && (
-          <div className="oa-version-nav"
-            aria-label={`消息版本 ${version.index}/${version.total}`}>
-            <button type="button"
-              onClick={() => onSwitchVersion?.(version.previous_node_id)}
-              disabled={!version.previous_node_id || !!switchingNodeId}
-              aria-label="上一个消息版本">
-              <ChevronLeft size={14}/>
-            </button>
-            <span>{version.index} / {version.total}</span>
-            <button type="button"
-              onClick={() => onSwitchVersion?.(version.next_node_id)}
-              disabled={!version.next_node_id || !!switchingNodeId}
-              aria-label="下一个消息版本">
-              <ChevronRight size={14}/>
-            </button>
-          </div>
-        )}
       </div>
     </article>
   )
 })
 
 const MessageList = memo(function MessageList({
-  messages, isCurrentRunning, onAskReply, onEditResend, clockNow,
-  worldline, onSwitchVersion,
+  messages, isCurrentRunning, onAskReply, clockNow,
 }) {
   return (
     <>
@@ -1635,12 +1506,7 @@ const MessageList = memo(function MessageList({
             message={m}
             pending={isCurrentRunning && i === messages.length - 1}
             onAskReply={onAskReply}
-            onEditResend={onEditResend}
-            editDisabled={isCurrentRunning}
             clockNow={clockNow}
-            version={nodeVersionInfo(worldline?.data, m.id)}
-            onSwitchVersion={onSwitchVersion}
-            switchingNodeId={worldline?.switchingNodeId}
           />
         )
         return nodes
@@ -1648,179 +1514,6 @@ const MessageList = memo(function MessageList({
     </>
   )
 })
-
-export function projectWorldline(nodes = []) {
-  const safeNodes = Array.isArray(nodes) ? nodes : []
-  const byParent = new Map()
-  safeNodes.forEach((node, order) => {
-    const parentId = String(node.parent_id ?? '')
-    const entry = { ...node, nodeId: String(node.id), sourceOrder: order }
-    byParent.set(parentId, [...(byParent.get(parentId) || []), entry])
-  })
-  byParent.forEach(children => children.sort((a, b) => (a.ordinal ?? a.sourceOrder) - (b.ordinal ?? b.sourceOrder)))
-
-  const rows = []
-  const visited = new Set()
-  function visit(parentId, depth) {
-    const children = byParent.get(String(parentId ?? '')) || []
-    const childDepth = depth + (children.length > 1 ? 1 : 0)
-    children.forEach((node, siblingIndex) => {
-      if (visited.has(node.nodeId)) return
-      visited.add(node.nodeId)
-      rows.push({ ...node, branchDepth: childDepth, siblingCount: children.length, siblingIndex })
-      visit(node.id, childDepth)
-    })
-  }
-  visit('', 0)
-  safeNodes.forEach((node, sourceOrder) => {
-    const nodeId = String(node.id)
-    if (!visited.has(nodeId)) rows.push({ ...node, nodeId, sourceOrder, branchDepth: 0, siblingCount: 1, siblingIndex: 0 })
-  })
-  return rows
-}
-
-export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClose }) {
-  const data = state.data
-  const nodes = Array.isArray(data?.nodes) ? data.nodes : []
-  const [query, setQuery] = useState('')
-  const treeRef = useRef(null)
-  const currentPath = new Set((data?.current_path || []).map(String))
-  const currentNodeId = data?.head == null ? '' : String(data.head)
-  const switchingNodeId = String(state.switchingNodeId || '')
-  const interactionLocked = disabled || Boolean(switchingNodeId)
-  const showTree = nodes.length > 0 && ['ready', 'ok', 'stale-error', 'degraded'].includes(state.status)
-  const projectedNodes = useMemo(() => projectWorldline(nodes), [nodes])
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  const visibleNodes = normalizedQuery
-    ? projectedNodes.filter(node => [node.title, node.summary, node.model, node.id]
-      .filter(Boolean).join(' ').toLocaleLowerCase().includes(normalizedQuery))
-    : projectedNodes
-  const branchPointCount = projectedNodes.filter(node => node.siblingCount > 1 && node.siblingIndex === 0).length
-
-  useEffect(() => {
-    if (!showTree || normalizedQuery) return
-    treeRef.current?.querySelector('.oa-wl-node.is-current')?.scrollIntoView?.({ block:'nearest' })
-  }, [currentNodeId, normalizedQuery, showTree])
-
-  function renderNode(node) {
-    const nodeId = node.nodeId
-    const isCurrent = nodeId === currentNodeId
-    const isPath = currentPath.has(nodeId)
-    const isMapped = node.mapping_status === 'mapped'
-    const isSwitching = switchingNodeId === nodeId
-    const canSwitch = isMapped && !isCurrent && !interactionLocked
-    const label = node.title || node.summary || `分支 ${node.id}`
-    const detail = isCurrent
-      ? '当前分支'
-      : isPath
-        ? '当前路径'
-        : isMapped
-          ? '可切换'
-          : '旧记录 · 不可切换'
-
-    return (
-      <button
-        key={nodeId}
-        type="button"
-        className={`oa-wl-node ${isPath ? 'is-path' : ''} ${isCurrent ? 'is-current' : ''} ${isSwitching ? 'is-switching' : ''} ${node.branchDepth > 0 ? 'has-branch-depth' : ''} ${node.siblingCount > 1 ? 'is-branch-choice' : ''}`}
-        data-branch-depth={Math.min(Number(node.branchDepth) || 0, 7)}
-        style={{ '--wl-depth': Math.min(Number(node.branchDepth) || 0, 7) }}
-        onClick={() => canSwitch && onSwitch(node.id)}
-        disabled={!canSwitch}
-        aria-current={isCurrent ? 'step' : undefined}
-        title={isMapped ? label : `${label}（旧记录不可切换）`}
-      >
-        <span className="oa-wl-node-mark" aria-hidden="true">
-          {isCurrent ? <Check size={13}/> : <GitBranch size={13}/>}
-        </span>
-        <span className="oa-wl-node-copy">
-          <b>{label}</b>
-          <small>{detail}</small>
-        </span>
-        {isSwitching && <span className="oa-wl-switching">切换中</span>}
-      </button>
-    )
-  }
-
-  const degradedReason = data?.degraded_reason || state.error || '未知原因'
-
-  return (
-    <aside className="oa-worldline-drawer" aria-label="对话分支导航">
-      <div className="oa-worldline-header">
-        <div className="oa-worldline-heading">
-          <span className="oa-worldline-title"><GitBranch size={15}/>对话分支</span>
-          <span className="oa-worldline-subtitle">查看并切换当前对话的历史路径</span>
-        </div>
-        <div className="oa-worldline-header-actions">
-          <button
-            type="button"
-            className="oa-worldline-icon-btn"
-            onClick={onRefresh}
-            disabled={interactionLocked}
-            title="刷新"
-            aria-label="刷新对话分支"
-          >
-            <RefreshCw size={14}/>
-          </button>
-          <button
-            type="button"
-            className="oa-worldline-icon-btn"
-            onClick={() => onClose?.()}
-            title="关闭"
-            aria-label="关闭对话分支"
-          >
-            <X size={14}/>
-          </button>
-        </div>
-      </div>
-
-      <div className="oa-worldline-body">
-        {showTree && (
-          <div className="oa-worldline-tools">
-            <div className="oa-worldline-overview">
-              <span>{nodes.length} 条记录</span>
-              <span>{branchPointCount ? `${branchPointCount} 处分叉` : '单一路径'}</span>
-            </div>
-            <label className="oa-worldline-search">
-              <Search size={13} aria-hidden="true"/>
-              <input
-                type="search"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder="搜索对话内容或模型"
-                aria-label="搜索对话分支"
-              />
-              {query && (
-                <button type="button" onClick={() => setQuery('')} aria-label="清空分支搜索" title="清空">
-                  <X size={12}/>
-                </button>
-              )}
-            </label>
-          </div>
-        )}
-        {state.status === 'idle' && <div className="oa-worldline-state">打开一个对话后，这里会显示分支路径</div>}
-        {state.status === 'loading' && <div className="oa-worldline-state">正在读取分支拓扑</div>}
-        {state.status === 'unavailable' && <div className="oa-worldline-state">当前运行环境未提供分支导航</div>}
-        {state.status === 'empty' && <div className="oa-worldline-state">发送消息后，这里会显示可切换的对话路径</div>}
-        {state.status === 'degraded' && (
-          <div className="oa-worldline-alert" role="alert">分支服务暂不可用：{degradedReason}</div>
-        )}
-        {state.status === 'error' && (
-          <div className="oa-worldline-alert" role="alert">读取分支失败：{state.error || '未知错误'}</div>
-        )}
-        {state.status === 'stale-error' && (
-          <div className="oa-worldline-alert" role="alert">刷新失败，继续显示上次路径：{state.error || '未知错误'}</div>
-        )}
-        {showTree && (
-          visibleNodes.length
-            ? <div className="oa-wl-tree" ref={treeRef}>{visibleNodes.map(renderNode)}</div>
-            : <div className="oa-worldline-state oa-worldline-no-results">没有匹配的对话记录</div>
-        )}
-      </div>
-    </aside>
-  )
-}
-
 
 function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
   const [open, setOpen] = useState(false)
@@ -1943,8 +1636,6 @@ export default function ChatApp() {
   const [historyInfo, setHistoryInfo] = useState([])
   const [workingState, setWorkingState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
-  const [worldline, setWorldline] = useState(() => initWorldline(''))
-  const [worldlineOpen, setWorldlineOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
@@ -2047,7 +1738,6 @@ export default function ChatApp() {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
-  const visibleWorldline = worldlineForSession(worldline, sid)
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
   const officialSlashKeys = useMemo(() => new Set(effectiveSlashCommands.map(c => builtinSlashCommandKey(c))), [effectiveSlashCommands])
@@ -2162,7 +1852,6 @@ export default function ChatApp() {
     saveSlashCmds(newCmds)
   }
   useEffect(() => { activeSidRef.current = sid }, [sid])
-  useEffect(() => { if (sid) loadWorldline(sid) }, [sid])
 
   const isActiveSession = (sessionId) => !sessionId || activeSidRef.current === sessionId
 
@@ -2340,56 +2029,6 @@ export default function ChatApp() {
     }
   }
 
-  const loadWorldline = async (id) => {
-    if (!id) return
-    setWorldline(prev => worldlineLoadStarted(prev, id))
-    try {
-      const data = await api(`/api/chat/worldline/${id}`)
-      setWorldline(prev => worldlineLoaded(prev, data, id))
-    } catch (e) {
-      setWorldline(prev => worldlineErrored(prev, e, id))
-    }
-  }
-
-  const handleSwitchVersion = async (nodeId) => {
-    const targetSid = String(sid || '')
-    const targetNodeId = String(nodeId || '')
-    if (
-      !targetSid ||
-      activeSidRef.current !== targetSid ||
-      !worldlineOwnsMappedNode(worldline, targetSid, targetNodeId)
-    ) return
-    setWorldline(prev => worldlineOwnsMappedNode(prev, targetSid, targetNodeId)
-      ? { ...prev, switchingNodeId: targetNodeId }
-      : prev)
-    try {
-      await api(`/api/chat/worldline/${targetSid}/switch`, { method: 'POST', body: JSON.stringify({ node_id: targetNodeId }) })
-      if (!isActiveSession(targetSid)) return
-      await openSession(targetSid, false)
-      if (!isActiveSession(targetSid)) return
-      await loadWorldline(targetSid)
-    } catch (e) {
-      if (isActiveSession(targetSid)) setErr(e.message || String(e))
-    } finally {
-      setWorldline(prev => (
-        prev.sid === targetSid && String(prev.switchingNodeId || '') === targetNodeId
-          ? { ...prev, switchingNodeId: '' }
-          : prev
-      ))
-    }
-  }
-
-  const handleEditResend = async ({ text, sourceUserMessageId }) => {
-    const item = buildEditResendItem({
-      sessionId: sid,
-      messageId: sourceUserMessageId,
-      text,
-      busy,
-      streamingSid,
-    })
-    await runSend(item)
-  }
-
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
@@ -2417,7 +2056,6 @@ export default function ChatApp() {
   const openSession = async (id, refreshList = true) => {
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
-    setWorldline(prev => worldlineLoadStarted(prev, id))
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
@@ -2429,7 +2067,6 @@ export default function ChatApp() {
     const d = await api(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
-    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
     setSid(d.id)
     setMessages(d.messages || [])
@@ -2469,7 +2106,6 @@ export default function ChatApp() {
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
-    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
     await loadChatState(d.id, openToken)
@@ -2484,7 +2120,6 @@ export default function ChatApp() {
     if (id === sid) {
       ++openSeqRef.current
       activeSidRef.current = ''
-      setWorldline(prev => worldlineLoadStarted(prev, ''))
       streamAbortRef.current?.abort?.()
       streamAbortRef.current = null
       scrollModeRef.current = 'auto'
@@ -2541,7 +2176,6 @@ export default function ChatApp() {
       if (activeDeleted) {
         ++openSeqRef.current
         activeSidRef.current = ''
-        setWorldline(prev => worldlineLoadStarted(prev, ''))
         streamAbortRef.current?.abort?.()
         streamAbortRef.current = null
         scrollModeRef.current = 'auto'
@@ -2835,7 +2469,6 @@ export default function ChatApp() {
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
         activeSidRef.current = id
-        setWorldline(prev => worldlineLoadStarted(prev, id))
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
@@ -2849,26 +2482,13 @@ export default function ChatApp() {
       const attachmentPrompt = text || '请处理这些附件'
       const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
-      const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
-      if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const payload = buildChatRunPayload({
-        prompt: attachmentPrompt,
-        files,
-        settings: { llm_no: item.llmNo ?? llmNo, reasoning_effort: item.reasoningEffort || reasoningEffort },
-        clientUserID,
-        sourceUserMessageId: item.sourceUserMessageId,
-      })
+      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
+      const payload = { prompt:attachmentPrompt, files, settings:{ llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
-      if (sourceMessageID) setMessages(xs => {
-        if (!isActiveSession(id)) return xs
-        const cutIdx = xs.findIndex(m => String(m.id) === sourceMessageID)
-        if (cutIdx < 0) return xs
-        return [...xs.slice(0, cutIdx), optimistic, pending]
-      })
       await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
@@ -3200,9 +2820,6 @@ export default function ChatApp() {
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
         </button>
-        <button className={`oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={()=>setWorldlineOpen(v=>!v)} disabled={!sid} title="对话分支导航">
-          <GitBranch size={16}/>对话分支<span>{visibleWorldline.data?.nodes?.length || 0}</span>
-        </button>
       </header>
 
       {contextOpen && <aside className="oa-context-drawer" aria-label="模型上下文">
@@ -3213,18 +2830,6 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
-      {worldlineOpen && <WorldlineNavigator
-        state={visibleWorldline}
-        disabled={busy}
-        onRefresh={() => loadWorldline(sid)}
-        onSwitch={handleSwitchVersion}
-        onClose={() => setWorldlineOpen(false)}
-      />}
-
-      <div className="oa-banner-slot" aria-live="polite">
-        {(err || notice) && <div className={`oa-banner ${err ? 'error' : ''}`}>{err || notice}</div>}
-      </div>
-
       <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
         {messages.length === 0 && <div className="oa-empty">
           <h1>今天想让 GenericAgent 做什么？</h1>
@@ -3235,9 +2840,6 @@ export default function ChatApp() {
           isCurrentRunning={isCurrentRunning}
           onAskReply={fillAskReply}
           clockNow={streamClock}
-          worldline={visibleWorldline}
-          onSwitchVersion={handleSwitchVersion}
-          onEditResend={handleEditResend}
         />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
