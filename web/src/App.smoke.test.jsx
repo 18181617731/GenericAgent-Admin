@@ -202,6 +202,34 @@ describe('chat response identity and time', () => {
     expect(time?.textContent).toBe(new Date(createdAt).toLocaleString())
     expect(time?.getAttribute('datetime')).toBe(createdAt)
   })
+
+  test('continues live elapsed time from the persisted backend start after refresh', () => {
+    const startedAt = Date.parse('2026-07-17T08:00:00.000Z')
+    const refreshedAt = startedAt + 60_000
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'pending', role: 'assistant', content: '', created_at: refreshedAt, run_started_at_ms: startedAt }}
+        pending
+        clockNow={startedAt + 90_000}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m 30s')
+  })
+
+  test('uses the persisted terminal elapsed duration instead of continuing the live clock', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'done', role: 'assistant', content: 'Finished', elapsed_ms: 4_200, run_started_at_ms: 1 }}
+        pending={false}
+        clockNow={100_000}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('4s')
+  })
 })
 
 

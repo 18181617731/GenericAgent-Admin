@@ -1477,7 +1477,7 @@ export const ChatMessage = memo(function ChatMessage({
   const turnUsages = Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : [])
   const hasUsage = turnUsages.some(u => u && (u.input_tokens > 0 || u.cached_tokens > 0 || u.output_tokens > 0))
   const usageTotal = hasUsage ? sumUsages(turnUsages) : null
-  const elapsedMs = m.elapsed_ms || (pending && m.created_at ? Math.max(0, clockNow - timestampMs(m.created_at)) : 0)
+  const elapsedMs = getElapsedMs(m, clockNow)
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0)
 
   const resetDraft = () => { setDraft(userText); setEditing(false) }

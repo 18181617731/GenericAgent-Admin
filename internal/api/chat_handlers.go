@@ -624,7 +624,12 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		uid = newChatID()
 	}
 	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
+	runStartedAtMS := time.Now().UnixMilli()
+	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
 	cs.Messages = append(cs.Messages, userMsg)
+	if strings.TrimSpace(req.SourceUserMessageID) == "" {
+		cs.Messages = append(cs.Messages, pendingMsg)
+	}
 	updateChatTitle(&cs)
 	var saveErr error
 	if strings.TrimSpace(req.SourceUserMessageID) != "" {
@@ -638,20 +643,28 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		return
 	}
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
-	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
+	workerHistory := append([]chatMessage(nil), cs.Messages...)
+	for i := len(workerHistory) - 1; i >= 0; i-- {
+		if workerHistory[i].ID == userMsg.ID {
+			workerHistory = workerHistory[:i]
+			break
+		}
+	}
 	cmdReq := map[string]interface{}{
-		"prompt":               display,
-		"history":              workerHistory,
-		"raw_history":          cs.RawHistory,
-		"history_info":         cs.HistoryInfo,
-		"working":              cs.Working,
-		"workspace":            cs.Workspace,
-		"project_mode":         cs.ProjectMode,
-		"extra_sys_prompts":    cs.ExtraSysPrompts,
-		"llm_no":               cs.Settings.LLMNo,
-		"reasoning_effort":     cs.Settings.ReasoningEffort,
-		"ga_root":              s.CfgStore.Cfg.GARoot,
-		"_ga_worldline_resend": strings.TrimSpace(req.SourceUserMessageID) != "",
+		"prompt":                   display,
+		"history":                  workerHistory,
+		"raw_history":              cs.RawHistory,
+		"history_info":             cs.HistoryInfo,
+		"working":                  cs.Working,
+		"workspace":                cs.Workspace,
+		"project_mode":             cs.ProjectMode,
+		"extra_sys_prompts":        cs.ExtraSysPrompts,
+		"llm_no":                   cs.Settings.LLMNo,
+		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"ga_root":                  s.CfgStore.Cfg.GARoot,
+		"_ga_worldline_resend":     strings.TrimSpace(req.SourceUserMessageID) != "",
+		"_ga_pending_assistant_id": pendingMsg.ID,
+		"_ga_run_started_at_ms":    runStartedAtMS,
 	}
 	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
 	s.streamChatRun(w, r, sid, 0)
