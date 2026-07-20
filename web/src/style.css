@@ -1087,7 +1087,7 @@ pre, code { background:var(--surface-muted); color: var(--text); }
 .oa-title .oa-project-badge{display:inline-flex;align-items:center;max-width:min(420px,calc(100vw - 360px));margin-top:4px;padding:2px 8px;border-radius:999px;background:#f1ebff;color:#6f42c1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .oa-model { font-size:18px; font-weight:600; letter-spacing:0; border-radius:10px; padding:6px 10px; }
 .oa-model:hover { background:#f3f3f3; }
-.oa-thread { background:var(--surface-strong); padding:0 0 16px; overflow-y:auto; min-height:0; scroll-behavior:auto; }
+.oa-thread { background:var(--surface-strong); padding:0 0 16px; overflow-y:auto; min-height:0; scroll-behavior:auto; scrollbar-gutter:stable; }
 .oa-timeline{
   width:min(100% - 48px, 768px);
   margin:8px auto 4px;
@@ -2797,7 +2797,8 @@ pre, code { font-variant-ligatures: none; }
 
 /* Chat composer queue final override: queued rows above input box */
 .oa-composer-wrap{
-  width:min(860px, calc(100% - 34px)) !important;
+  width:min(var(--oa-chat-measure), calc(100% - 60px)) !important;
+  margin-right:8px !important;
   padding:10px 0 14px !important;
   background:linear-gradient(to top, #fff 76%, rgba(255,255,255,0)) !important;
 }
@@ -4199,8 +4200,8 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
     overflow-x: hidden !important;
   }
   .oa-composer-wrap {
-    width: calc(100% - 18px) !important;
-    max-width: calc(100% - 18px) !important;
+    width: calc(100% - 26px) !important;
+    max-width: calc(100% - 26px) !important;
     min-width: 0 !important;
     justify-self: center !important;
     box-sizing: border-box !important;
@@ -4439,7 +4440,9 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 @media (max-width: 900px) {
   .oa-message { width:min(100% - 28px, var(--oa-chat-measure)); grid-template-columns:28px minmax(0,1fr); gap:10px; }
   .oa-message.user .oa-bubble { max-width:86%; }
-  .oa-composer-wrap { width:calc(100% - 24px); }
+}
+@media (min-width: 561px) and (max-width: 900px) {
+  .oa-composer-wrap { width:min(100% - 36px, var(--oa-chat-measure)) !important; }
 }
 @media (max-width: 520px) {
   .oa-content,
