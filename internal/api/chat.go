@@ -276,6 +276,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var finalRawHistory []map[string]interface{}
 	var finalHistoryInfo []interface{}
 	var finalWorking map[string]interface{}
+	var rawHistorySeen, historyInfoSeen, workingSeen bool
 	var finalUltraPlanState map[string]interface{}
 	var finalReasoningEffort string
 	var finalModelID string
@@ -320,6 +321,29 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 					}
 				}
 			}
+		}
+		structuredChanged := false
+		if _, ok := ev["raw_history"]; ok {
+			rawHistorySeen = true
+			finalRawHistory = chatRawHistoryFromEvent(ev)
+			cs.RawHistory = finalRawHistory
+			structuredChanged = true
+		}
+		if _, ok := ev["history_info"]; ok {
+			historyInfoSeen = true
+			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
+			cs.HistoryInfo = finalHistoryInfo
+			structuredChanged = true
+		}
+		if _, ok := ev["working"]; ok {
+			workingSeen = true
+			finalWorking = chatWorkingFromEvent(ev)
+			cs.Working = finalWorking
+			structuredChanged = true
+		}
+		isTerminalEvent := ev["type"] == "done" || ev["type"] == "error"
+		if structuredChanged && !isTerminalEvent && (token == nil || s.ownsChatRun(sid, token)) {
+			_ = saveTerminal(cs)
 		}
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
@@ -376,9 +400,6 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			if final.UltraPlanState != nil {
 				msg["ultraplan_state"] = final.UltraPlanState
 			}
-			finalRawHistory = chatRawHistoryFromEvent(ev)
-			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
-			finalWorking = chatWorkingFromEvent(ev)
 			if v, ok := ev["reasoning_effort"].(string); ok {
 				finalReasoningEffort = v
 			}
@@ -452,15 +473,15 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 		}
 	}
-	if len(finalRawHistory) > 0 {
+	if rawHistorySeen {
 		cs.RawHistory = finalRawHistory
 	} else {
 		cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallbackMessages...)
 	}
-	if finalHistoryInfo != nil {
+	if historyInfoSeen {
 		cs.HistoryInfo = finalHistoryInfo
 	}
-	if finalWorking != nil {
+	if workingSeen {
 		cs.Working = finalWorking
 	}
 	if strings.TrimSpace(finalReasoningEffort) != "" {
