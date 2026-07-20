@@ -379,7 +379,13 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 				{"role": "assistant", "content": []map[string]interface{}{{"type": "text", "text": "ok"}}},
 			}
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "model", "model_id": "vendor/model-real"})
-			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "done", "message": done, "raw_history": rawHistory})
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
+				"type":         "done",
+				"message":      done,
+				"raw_history":  rawHistory,
+				"history_info": []interface{}{map[string]interface{}{"turn": "final"}},
+				"working":      map[string]interface{}{"phase": "complete"},
+			})
 		}()
 		return &chatWorker{SID: "session-hist", Stdin: stdinW, Stdout: stdoutR}, nil
 	}
@@ -393,6 +399,7 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	seed := chatSession{
 		ID: "session-hist", Title: "History", UpdatedAt: time.Now().Unix(), Settings: chatSettings{LLMNo: 2}, ProjectMode: "alpha", ExtraSysPrompts: []string{"be concise", "cite sources"}, RawHistory: seedRawHistory,
+		HistoryInfo: []interface{}{map[string]interface{}{"turn": "seed"}}, Working: map[string]interface{}{"phase": "draft"},
 		Messages: []chatMessage{
 			{ID: "u0", Role: "user", Content: "first question", CreatedAt: 1},
 			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
@@ -443,6 +450,14 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if rawSecondContent["type"] != "tool_result" || rawSecondContent["content"] != "tool data" {
 		t.Fatalf("raw_history missing tool result: %#v", rawHistory)
 	}
+	historyInfo, ok := captured["history_info"].([]interface{})
+	if !ok || len(historyInfo) != 1 || historyInfo[0].(map[string]interface{})["turn"] != "seed" {
+		t.Fatalf("history_info=%#v want persisted structured context", captured["history_info"])
+	}
+	working, ok := captured["working"].(map[string]interface{})
+	if !ok || working["phase"] != "draft" {
+		t.Fatalf("working=%#v want persisted working state", captured["working"])
+	}
 	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") || strings.Contains(rr.Body.String(), "raw_history") || strings.Contains(rr.Body.String(), "tool_result") {
 		t.Fatalf("stream unexpectedly leaked prior/raw history: %s", rr.Body.String())
 	}
@@ -476,6 +491,15 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	storedContent := stored.RawHistory[1]["content"].([]interface{})[0].(map[string]interface{})
 	if storedContent["type"] != "tool_result" || storedContent["content"] != "42" {
 		t.Fatalf("stored raw_history not updated from worker: %#v", stored.RawHistory)
+	}
+	if len(stored.HistoryInfo) != 1 || stored.HistoryInfo[0].(map[string]interface{})["turn"] != "final" {
+		t.Fatalf("stored history_info not updated from worker: %#v", stored.HistoryInfo)
+	}
+	if stored.Working["phase"] != "complete" {
+		t.Fatalf("stored working not updated from worker: %#v", stored.Working)
+	}
+	if len(reloaded.HistoryInfo) != 1 || reloaded.HistoryInfo[0].(map[string]interface{})["turn"] != "final" || reloaded.Working["phase"] != "complete" {
+		t.Fatalf("reloaded structured context mismatch: history_info=%#v working=%#v", reloaded.HistoryInfo, reloaded.Working)
 	}
 }
 

@@ -36,6 +36,7 @@ type chatMessage struct {
 	Usage          map[string]int           `json:"usage,omitempty"`
 	Usages         []map[string]int         `json:"usages,omitempty"`
 	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
+	RunStartedAtMS int64                    `json:"run_started_at_ms,omitempty"`
 	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
 	TaskOutputs    map[string][]string      `json:"task_outputs,omitempty"`
 }
@@ -137,12 +138,15 @@ const (
 type chatUpload struct{ Name, Type, DataURL string }
 
 type chatRun struct {
-	SID         string
-	Events      [][]byte
-	Done        bool
-	Canceled    bool
-	Cmd         *exec.Cmd
-	Subscribers map[chan []byte]bool
+	SID                string
+	Events             [][]byte
+	Done               bool
+	Canceled           bool
+	CancelReady        bool
+	PendingAssistantID string
+	RunStartedAtMS     int64
+	Cmd                *exec.Cmd
+	Subscribers        map[chan []byte]bool
 }
 
 const chatRunSubscriberBuffer = 4096
@@ -230,13 +234,21 @@ func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]int
 func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, cmdReq map[string]interface{}) {
 	worldlineResend, _ := cmdReq["_ga_worldline_resend"].(bool)
 	delete(cmdReq, "_ga_worldline_resend")
+	pendingID, _ := cmdReq["_ga_pending_assistant_id"].(string)
+	delete(cmdReq, "_ga_pending_assistant_id")
+	startedAtMS, _ := cmdReq["_ga_run_started_at_ms"].(int64)
+	delete(cmdReq, "_ga_run_started_at_ms")
 	saveTerminal := func(session chatSession) error {
 		if worldlineResend {
 			return s.saveChatSessionExact(session)
 		}
 		return s.saveChatSessionMerged(session)
 	}
-	startedAt := time.Now()
+	startedAt := time.UnixMilli(startedAtMS)
+	if startedAtMS <= 0 {
+		startedAt = time.Now()
+		startedAtMS = startedAt.UnixMilli()
+	}
 	elapsedMillis := func() int64 {
 		ms := time.Since(startedAt).Milliseconds()
 		if ms < 1 {
@@ -246,20 +258,29 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	}
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
-		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
-		cs.Messages = append(cs.Messages, msg)
+		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
+		cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, msg)
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
 		s.endChatRunOwned(sid, token)
 		return
 	}
 	s.setChatRunCmd(sid, worker.Cmd)
+	if token != nil && !s.ownsChatRun(sid, token) {
+		s.dropChatWorker(sid, worker)
+		s.endChatRunOwned(sid, token)
+		return
+	}
 	worker.Mu.Lock()
 	defer worker.Mu.Unlock()
+	if token != nil && !s.ownsChatRun(sid, token) {
+		s.endChatRunOwned(sid, token)
+		return
+	}
 	if err := json.NewEncoder(worker.Stdin).Encode(cmdReq); err != nil {
 		s.dropChatWorker(sid, worker)
-		msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
-		cs.Messages = append(cs.Messages, msg)
+		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
+		cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, msg)
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
 		s.endChatRunOwned(sid, token)
@@ -277,6 +298,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var finalRawHistory []map[string]interface{}
 	var finalHistoryInfo []interface{}
 	var finalWorking map[string]interface{}
+	var rawHistorySeen, historyInfoSeen, workingSeen bool
 	var finalUltraPlanState map[string]interface{}
 	var finalReasoningEffort string
 	var finalModelID string
@@ -322,9 +344,35 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				}
 			}
 		}
+		structuredChanged := false
+		if _, ok := ev["raw_history"]; ok {
+			rawHistorySeen = true
+			finalRawHistory = chatRawHistoryFromEvent(ev)
+			cs.RawHistory = finalRawHistory
+			structuredChanged = true
+		}
+		if _, ok := ev["history_info"]; ok {
+			historyInfoSeen = true
+			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
+			cs.HistoryInfo = finalHistoryInfo
+			structuredChanged = true
+		}
+		if _, ok := ev["working"]; ok {
+			workingSeen = true
+			finalWorking = chatWorkingFromEvent(ev)
+			cs.Working = finalWorking
+			structuredChanged = true
+		}
+		isTerminalEvent := ev["type"] == "done" || ev["type"] == "error"
+		if structuredChanged && !isTerminalEvent && (token == nil || s.ownsChatRun(sid, token)) {
+			_ = saveTerminal(cs)
+		}
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
+			if pendingID != "" {
+				final.ID = pendingID
+			}
 			final.ModelID = strings.TrimSpace(final.ModelID)
 			if final.ModelID != "" {
 				finalModelID = final.ModelID
@@ -337,32 +385,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			msg["elapsed_ms"] = final.ElapsedMS
 			ev["message"] = msg
-			// Extract usage from event if present
-			if usage, ok := ev["usage"].(map[string]interface{}); ok && len(usage) > 0 {
-				final.Usage = make(map[string]int)
-				for k, v := range usage {
-					if val, ok := v.(float64); ok {
-						final.Usage[k] = int(val)
-					}
-				}
-			}
-			// Extract per-internal-turn usages array if present
-			if usages, ok := ev["usages"].([]interface{}); ok && len(usages) > 0 {
-				final.Usages = make([]map[string]int, 0, len(usages))
-				for _, u := range usages {
-					um, ok := u.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					turn := make(map[string]int)
-					for k, v := range um {
-						if val, ok := v.(float64); ok {
-							turn[k] = int(val)
-						}
-					}
-					final.Usages = append(final.Usages, turn)
-				}
-			}
+			final.Usage, final.Usages = chatUsageFromEvent(ev)
 			if finalUltraPlanState != nil {
 				final.UltraPlanState = mergeChatMaps(mergeChatMaps(nil, finalUltraPlanState), final.UltraPlanState)
 			}
@@ -377,9 +400,6 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			if final.UltraPlanState != nil {
 				msg["ultraplan_state"] = final.UltraPlanState
 			}
-			finalRawHistory = chatRawHistoryFromEvent(ev)
-			finalHistoryInfo = chatHistoryInfoFromEvent(ev)
-			finalWorking = chatWorkingFromEvent(ev)
 			if v, ok := ev["reasoning_effort"].(string); ok {
 				finalReasoningEffort = v
 			}
@@ -408,7 +428,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			} else {
 				content = "已停止生成"
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
+			final = chatMessage{ID: pendingID, Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
 			err := readErr
@@ -422,16 +442,19 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			} else {
 				content = fmt.Sprintf("生成失败：%v", err)
 			}
-			final = chatMessage{ID: newChatID(), Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
+			final = chatMessage{ID: pendingID, Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}
 	var fallbackMessages []chatMessage
-	if len(cs.Messages) > 0 {
-		fallbackMessages = append(fallbackMessages, cs.Messages[len(cs.Messages)-1])
+	for i := len(cs.Messages) - 1; i >= 0; i-- {
+		if cs.Messages[i].Role == "user" {
+			fallbackMessages = append(fallbackMessages, cs.Messages[i])
+			break
+		}
 	}
 	fallbackMessages = append(fallbackMessages, final)
-	cs.Messages = append(cs.Messages, final)
+	cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, final)
 	if !final.Error && s.ownsChatRun(sid, token) && len(cs.Messages) >= 2 {
 		userMsg := cs.Messages[len(cs.Messages)-2]
 		if userMsg.Role == "user" {
@@ -453,15 +476,15 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 		}
 	}
-	if len(finalRawHistory) > 0 {
+	if rawHistorySeen {
 		cs.RawHistory = finalRawHistory
 	} else {
 		cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallbackMessages...)
 	}
-	if finalHistoryInfo != nil {
+	if historyInfoSeen {
 		cs.HistoryInfo = finalHistoryInfo
 	}
-	if finalWorking != nil {
+	if workingSeen {
 		cs.Working = finalWorking
 	}
 	if strings.TrimSpace(finalReasoningEffort) != "" {
@@ -610,6 +633,22 @@ func (s *Server) beginChatRun(sid string) *chatRun {
 	return token
 }
 
+func (s *Server) saveChatRunPending(sid string, token *chatRun, pendingID string, startedAtMS int64, save func() error) (bool, error) {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	r := s.ChatRuns[sid]
+	if token == nil || r != token || r.Done || r.Canceled {
+		return false, nil
+	}
+	if err := save(); err != nil {
+		return true, err
+	}
+	r.PendingAssistantID = pendingID
+	r.RunStartedAtMS = startedAtMS
+	return true, nil
+}
+
 func (s *Server) ownsChatRun(sid string, token *chatRun) bool {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
@@ -632,14 +671,90 @@ func (s *Server) chatRunCanceled(sid string) bool {
 	return r != nil && r.Canceled
 }
 
-func (s *Server) chatRunPartialContent(sid string) string {
-	s.ChatMu.Lock()
-	r := s.ChatRuns[safeChatID(sid)]
-	var events [][]byte
-	if r != nil {
-		events = append(events, r.Events...)
+func chatUsageFromEvent(ev map[string]interface{}) (map[string]int, []map[string]int) {
+	var usage map[string]int
+	if raw, ok := ev["usage"].(map[string]interface{}); ok && len(raw) > 0 {
+		parsed := make(map[string]int)
+		for key, value := range raw {
+			if number, ok := value.(float64); ok {
+				parsed[key] = int(number)
+			}
+		}
+		if len(parsed) > 0 {
+			usage = parsed
+		}
 	}
-	s.ChatMu.Unlock()
+
+	var usages []map[string]int
+	if raw, ok := ev["usages"].([]interface{}); ok && len(raw) > 0 {
+		parsed := make([]map[string]int, 0, len(raw))
+		for _, item := range raw {
+			values, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			turn := make(map[string]int)
+			for key, value := range values {
+				if number, ok := value.(float64); ok {
+					turn[key] = int(number)
+				}
+			}
+			if len(turn) > 0 {
+				parsed = append(parsed, turn)
+			}
+		}
+		if len(parsed) > 0 {
+			usages = parsed
+		}
+	}
+	return usage, usages
+}
+
+func chatUsageFromEvents(events [][]byte) (map[string]int, []map[string]int) {
+	var usage map[string]int
+	var usages []map[string]int
+	for _, line := range events {
+		var ev map[string]interface{}
+		if json.Unmarshal(line, &ev) != nil {
+			continue
+		}
+		nextUsage, nextUsages := chatUsageFromEvent(ev)
+		if ev["type"] == "turn_usage" {
+			if len(nextUsage) == 0 {
+				continue
+			}
+			indexNumber, ok := ev["index"].(float64)
+			if !ok || indexNumber < 0 || indexNumber > float64(len(usages)) {
+				continue
+			}
+			index := int(indexNumber)
+			if indexNumber != float64(index) {
+				continue
+			}
+			if index == len(usages) {
+				usages = append(usages, nextUsage)
+			} else {
+				usages[index] = nextUsage
+			}
+			usage = make(map[string]int)
+			for _, turn := range usages {
+				for key, value := range turn {
+					usage[key] += value
+				}
+			}
+			continue
+		}
+		if len(nextUsage) > 0 {
+			usage = nextUsage
+		}
+		if len(nextUsages) > 0 {
+			usages = nextUsages
+		}
+	}
+	return usage, usages
+}
+
+func chatPartialContentFromEvents(events [][]byte) string {
 	var b strings.Builder
 	for _, line := range events {
 		var ev map[string]interface{}
@@ -653,6 +768,84 @@ func (s *Server) chatRunPartialContent(sid string) string {
 	return b.String()
 }
 
+func (s *Server) chatRunPartialContent(sid string) string {
+	s.ChatMu.Lock()
+	r := s.ChatRuns[safeChatID(sid)]
+	var events [][]byte
+	if r != nil {
+		events = append(events, r.Events...)
+	}
+	s.ChatMu.Unlock()
+	return chatPartialContentFromEvents(events)
+}
+
+func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64, events [][]byte) error {
+	if strings.TrimSpace(pendingID) == "" {
+		return nil
+	}
+	now := time.Now()
+	elapsedMS := int64(1)
+	if startedAtMS > 0 {
+		elapsedMS = now.UnixMilli() - startedAtMS
+		if elapsedMS < 1 {
+			elapsedMS = 1
+		}
+	}
+	content := strings.TrimSpace(chatPartialContentFromEvents(events))
+	if content != "" {
+		content += "\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]"
+	} else {
+		content = "\u5df2\u505c\u6b62\u751f\u6210"
+	}
+	usage, usages := chatUsageFromEvents(events)
+	final := chatMessage{
+		ID:             pendingID,
+		Role:           "assistant",
+		Content:        content,
+		CreatedAt:      now.Unix(),
+		Error:          true,
+		ElapsedMS:      elapsedMS,
+		RunStartedAtMS: startedAtMS,
+		Usage:          usage,
+		Usages:         usages,
+	}
+
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		return err
+	}
+	target := -1
+	for i := range cs.Messages {
+		if cs.Messages[i].ID == pendingID {
+			target = i
+			break
+		}
+	}
+	if target >= 0 {
+		existing := cs.Messages[target]
+		if strings.TrimSpace(existing.Content) != "" || existing.Error || existing.ElapsedMS > 0 || existing.ModelID != "" || len(existing.Usage) > 0 || len(existing.Usages) > 0 {
+			return nil
+		}
+		cs.Messages[target] = final
+	} else {
+		target = len(cs.Messages)
+		cs.Messages = append(cs.Messages, final)
+	}
+	fallback := make([]chatMessage, 0, 2)
+	for i := target - 1; i >= 0; i-- {
+		if cs.Messages[i].Role == "user" {
+			fallback = append(fallback, cs.Messages[i])
+			break
+		}
+	}
+	fallback = append(fallback, final)
+	cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallback...)
+	cs.UpdatedAt = now.Unix()
+	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+}
+
 func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {
 	b, _ := json.Marshal(ev)
 	s.publishChatLine(sid, b)
@@ -662,7 +855,7 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[sid]
-	if r == nil {
+	if r == nil || r.Canceled {
 		return
 	}
 	b := append([]byte(nil), line...)
@@ -688,6 +881,10 @@ func (s *Server) endChatRunOwned(sid string, token *chatRun) {
 	s.ChatMu.Lock()
 	r := s.ChatRuns[sid]
 	if token != nil && r != token {
+		s.ChatMu.Unlock()
+		return
+	}
+	if r != nil && r.Canceled && !r.CancelReady {
 		s.ChatMu.Unlock()
 		return
 	}
@@ -1306,22 +1503,41 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	return cs, nil
 }
 func mergeChatMessageLists(first, second []chatMessage) []chatMessage {
-	out := make([]chatMessage, 0, len(first)+len(second))
-	seen := make(map[string]bool, len(first)+len(second))
-	appendUnique := func(items []chatMessage) {
-		for _, msg := range items {
-			if msg.ID != "" && seen[msg.ID] {
-				continue
-			}
-			if msg.ID != "" {
-				seen[msg.ID] = true
-			}
-			out = append(out, msg)
+	out := append([]chatMessage(nil), first...)
+	positions := make(map[string]int, len(out))
+	for i, msg := range out {
+		if msg.ID != "" {
+			positions[msg.ID] = i
 		}
 	}
-	appendUnique(first)
-	appendUnique(second)
+	for _, msg := range second {
+		if i, ok := positions[msg.ID]; msg.ID != "" && ok {
+			out[i] = msg
+			continue
+		}
+		if msg.ID != "" {
+			positions[msg.ID] = len(out)
+		}
+		out = append(out, msg)
+	}
 	return out
+}
+
+func replacePendingChatMessage(messages []chatMessage, pendingID string, final chatMessage) []chatMessage {
+	if pendingID == "" {
+		if final.ID == "" {
+			final.ID = newChatID()
+		}
+		return append(messages, final)
+	}
+	final.ID = pendingID
+	for i := range messages {
+		if messages[i].ID == pendingID {
+			messages[i] = final
+			return messages
+		}
+	}
+	return append(messages, final)
 }
 
 func (s *Server) saveChatSessionMerged(cs chatSession) error {
