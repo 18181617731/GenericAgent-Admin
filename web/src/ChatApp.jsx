@@ -11,7 +11,6 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
-import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
@@ -1666,8 +1665,6 @@ export default function ChatApp() {
   const [historyInfo, setHistoryInfo] = useState([])
   const [workingState, setWorkingState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
-  const [worldline, setWorldline] = useState(() => initWorldline(''))
-  const [worldlineOpen, setWorldlineOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
@@ -1771,7 +1768,6 @@ export default function ChatApp() {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
-  const visibleWorldline = worldlineForSession(worldline, sid)
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
   const officialSlashKeys = useMemo(() => new Set(effectiveSlashCommands.map(c => builtinSlashCommandKey(c))), [effectiveSlashCommands])
@@ -1886,7 +1882,6 @@ export default function ChatApp() {
     saveSlashCmds(newCmds)
   }
   useEffect(() => { activeSidRef.current = sid }, [sid])
-  useEffect(() => { if (sid) loadWorldline(sid) }, [sid])
 
   const isActiveSession = (sessionId) => !sessionId || activeSidRef.current === sessionId
 
@@ -2065,56 +2060,6 @@ export default function ChatApp() {
     }
   }
 
-  const loadWorldline = async (id) => {
-    if (!id) return
-    setWorldline(prev => worldlineLoadStarted(prev, id))
-    try {
-      const data = await api(`/api/chat/worldline/${id}`)
-      setWorldline(prev => worldlineLoaded(prev, data, id))
-    } catch (e) {
-      setWorldline(prev => worldlineErrored(prev, e, id))
-    }
-  }
-
-  const handleSwitchVersion = async (nodeId) => {
-    const targetSid = String(sid || '')
-    const targetNodeId = String(nodeId || '')
-    if (
-      !targetSid ||
-      activeSidRef.current !== targetSid ||
-      !worldlineOwnsMappedNode(worldline, targetSid, targetNodeId)
-    ) return
-    setWorldline(prev => worldlineOwnsMappedNode(prev, targetSid, targetNodeId)
-      ? { ...prev, switchingNodeId: targetNodeId }
-      : prev)
-    try {
-      await api(`/api/chat/worldline/${targetSid}/switch`, { method: 'POST', body: JSON.stringify({ node_id: targetNodeId }) })
-      if (!isActiveSession(targetSid)) return
-      await openSession(targetSid, false)
-      if (!isActiveSession(targetSid)) return
-      await loadWorldline(targetSid)
-    } catch (e) {
-      if (isActiveSession(targetSid)) setErr(e.message || String(e))
-    } finally {
-      setWorldline(prev => (
-        prev.sid === targetSid && String(prev.switchingNodeId || '') === targetNodeId
-          ? { ...prev, switchingNodeId: '' }
-          : prev
-      ))
-    }
-  }
-
-  const handleEditResend = async ({ text, sourceUserMessageId }) => {
-    const item = buildEditResendItem({
-      sessionId: sid,
-      messageId: sourceUserMessageId,
-      text,
-      busy,
-      streamingSid,
-    })
-    await runSend(item)
-  }
-
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
@@ -2142,7 +2087,6 @@ export default function ChatApp() {
   const openSession = async (id, refreshList = true) => {
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
-    setWorldline(prev => worldlineLoadStarted(prev, id))
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
@@ -2154,7 +2098,6 @@ export default function ChatApp() {
     const d = await api(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
-    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
     setSid(d.id)
     setMessages(d.messages || [])
@@ -2201,7 +2144,6 @@ export default function ChatApp() {
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
-    setWorldline(prev => worldlineLoadStarted(prev, d.id))
     scrollModeRef.current = 'auto'
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
     await loadChatState(d.id, openToken)
@@ -2216,7 +2158,6 @@ export default function ChatApp() {
     if (id === sid) {
       ++openSeqRef.current
       activeSidRef.current = ''
-      setWorldline(prev => worldlineLoadStarted(prev, ''))
       streamAbortRef.current?.abort?.()
       streamAbortRef.current = null
       scrollModeRef.current = 'auto'
@@ -2273,7 +2214,6 @@ export default function ChatApp() {
       if (activeDeleted) {
         ++openSeqRef.current
         activeSidRef.current = ''
-        setWorldline(prev => worldlineLoadStarted(prev, ''))
         streamAbortRef.current?.abort?.()
         streamAbortRef.current = null
         scrollModeRef.current = 'auto'
@@ -2578,7 +2518,6 @@ export default function ChatApp() {
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
         activeSidRef.current = id
-        setWorldline(prev => worldlineLoadStarted(prev, id))
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
@@ -2592,26 +2531,13 @@ export default function ChatApp() {
       const attachmentPrompt = text || '请处理这些附件'
       const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
-      const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
-      if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const payload = buildChatRunPayload({
-        prompt: attachmentPrompt,
-        files,
-        settings: { llm_no: item.llmNo ?? llmNo, reasoning_effort: item.reasoningEffort || reasoningEffort },
-        clientUserID,
-        sourceUserMessageId: item.sourceUserMessageId,
-      })
+      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
+      const payload = { prompt:attachmentPrompt, files, settings:{ llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
-      if (sourceMessageID) setMessages(xs => {
-        if (!isActiveSession(id)) return xs
-        const cutIdx = xs.findIndex(m => String(m.id) === sourceMessageID)
-        if (cutIdx < 0) return xs
-        return [...xs.slice(0, cutIdx), optimistic, pending]
-      })
       await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
@@ -2940,9 +2866,6 @@ export default function ChatApp() {
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span>
         </button>
-        <button className={`oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={()=>setWorldlineOpen(v=>!v)} disabled={!sid} title="对话分支导航">
-          <GitBranch size={16}/>对话分支<span>{visibleWorldline.data?.nodes?.length || 0}</span>
-        </button>
       </header>
 
       {contextOpen && <aside className="oa-context-drawer" aria-label="模型上下文">
@@ -2953,18 +2876,6 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
-      {worldlineOpen && <WorldlineNavigator
-        state={visibleWorldline}
-        disabled={busy}
-        onRefresh={() => loadWorldline(sid)}
-        onSwitch={handleSwitchVersion}
-        onClose={() => setWorldlineOpen(false)}
-      />}
-
-      <div className="oa-banner-slot" aria-live="polite">
-        {(err || notice) && <div className={`oa-banner ${err ? 'error' : ''}`}>{err || notice}</div>}
-      </div>
-
       <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
         {messages.length === 0 && <div className="oa-empty">
           <h1>今天想让 GenericAgent 做什么？</h1>

@@ -635,13 +635,23 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		uid = newChatID()
 	}
 	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
+	runStartedAtMS := time.Now().UnixMilli()
+	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
 	cs.Messages = append(cs.Messages, userMsg)
+	if strings.TrimSpace(req.SourceUserMessageID) == "" {
+		cs.Messages = append(cs.Messages, pendingMsg)
+	}
 	updateChatTitle(&cs)
-	var saveErr error
-	if strings.TrimSpace(req.SourceUserMessageID) != "" {
-		saveErr = s.saveChatSessionExact(cs)
-	} else {
-		saveErr = s.saveChatSessionMerged(cs)
+	owned, saveErr := s.saveChatRunPending(sid, token, pendingMsg.ID, runStartedAtMS, func() error {
+		if strings.TrimSpace(req.SourceUserMessageID) != "" {
+			return s.saveChatSessionExact(cs)
+		}
+		return s.saveChatSessionMerged(cs)
+	})
+	if !owned {
+		s.endChatRunOwned(sid, token)
+		bad(w, http.StatusConflict, "chat run was canceled")
+		return
 	}
 	if saveErr != nil {
 		s.endChatRunOwned(sid, token)
@@ -652,20 +662,28 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		s.resetChatWorker(sid)
 	}
 	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
-	workerHistory := append([]chatMessage(nil), cs.Messages[:len(cs.Messages)-1]...)
+	workerHistory := append([]chatMessage(nil), cs.Messages...)
+	for i := len(workerHistory) - 1; i >= 0; i-- {
+		if workerHistory[i].ID == userMsg.ID {
+			workerHistory = workerHistory[:i]
+			break
+		}
+	}
 	cmdReq := map[string]interface{}{
-		"prompt":               display,
-		"history":              workerHistory,
-		"raw_history":          cs.RawHistory,
-		"history_info":         cs.HistoryInfo,
-		"working":              cs.Working,
-		"workspace":            cs.Workspace,
-		"project_mode":         cs.ProjectMode,
-		"extra_sys_prompts":    cs.ExtraSysPrompts,
-		"llm_no":               cs.Settings.LLMNo,
-		"reasoning_effort":     cs.Settings.ReasoningEffort,
-		"ga_root":              s.CfgStore.Cfg.GARoot,
-		"_ga_worldline_resend": strings.TrimSpace(req.SourceUserMessageID) != "",
+		"prompt":                   display,
+		"history":                  workerHistory,
+		"raw_history":              cs.RawHistory,
+		"history_info":             cs.HistoryInfo,
+		"working":                  cs.Working,
+		"workspace":                cs.Workspace,
+		"project_mode":             cs.ProjectMode,
+		"extra_sys_prompts":        cs.ExtraSysPrompts,
+		"llm_no":                   cs.Settings.LLMNo,
+		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"ga_root":                  s.CfgStore.Cfg.GARoot,
+		"_ga_worldline_resend":     strings.TrimSpace(req.SourceUserMessageID) != "",
+		"_ga_pending_assistant_id": pendingMsg.ID,
+		"_ga_run_started_at_ms":    runStartedAtMS,
 	}
 	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
 	s.streamChatRun(w, r, sid, 0)
@@ -684,6 +702,9 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	var cmd *exec.Cmd
 	var worker *chatWorker
 	var token *chatRun
+	var events [][]byte
+	var pendingID string
+	var startedAtMS int64
 	s.ChatMu.Lock()
 	run := s.ChatRuns[sid]
 	if run == nil || run.Done {
@@ -695,14 +716,28 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	token = run
 	cmd = run.Cmd
 	worker = s.ChatWorkers[sid]
+	events = append(events, run.Events...)
+	pendingID = run.PendingAssistantID
+	startedAtMS = run.RunStartedAtMS
 	s.ChatMu.Unlock()
-	// Immediate commands do not have a worker process to kill. End their run here
-	// so cancellation always releases SSE subscribers and the session reservation.
-	s.endChatRunOwned(sid, token)
+
 	if worker != nil {
 		s.dropChatWorker(sid, worker)
+		worker.Mu.Lock()
+		worker.Mu.Unlock()
 	} else if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
+	}
+	persistErr := s.persistCanceledChatRun(sid, pendingID, startedAtMS, events)
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current == token {
+		current.CancelReady = true
+	}
+	s.ChatMu.Unlock()
+	s.endChatRunOwned(sid, token)
+	if persistErr != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", persistErr))
+		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
 }
