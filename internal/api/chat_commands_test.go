@@ -242,6 +242,22 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	s.ChatMu.Unlock()
 	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "partial "})
 	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "answer"})
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":  "turn_usage",
+		"index": float64(0),
+		"usage": map[string]interface{}{"input_tokens": float64(3000), "output_tokens": float64(80), "cached_tokens": float64(10)},
+	})
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":  "turn_usage",
+		"index": float64(1),
+		"usage": map[string]interface{}{"input_tokens": float64(1290), "output_tokens": float64(38), "cached_tokens": float64(7)},
+	})
+	// A sparse index must neither allocate nor contaminate the aggregate.
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":  "turn_usage",
+		"index": float64(1_000_000),
+		"usage": map[string]interface{}{"input_tokens": float64(999_999), "output_tokens": float64(999_999)},
+	})
 
 	rr := httptest.NewRecorder()
 	s.chatCancel(rr, httptest.NewRequest(http.MethodPost, "/api/chat/cancel/"+sid, nil), sid)
@@ -261,6 +277,12 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	}
 	if !got.Error || got.ElapsedMS <= 0 || got.RunStartedAtMS != startedAtMS {
 		t.Fatalf("missing interruption metadata: %#v", got)
+	}
+	if got.Usage["input_tokens"] != 4290 || got.Usage["output_tokens"] != 118 || got.Usage["cached_tokens"] != 17 {
+		t.Fatalf("usage not persisted after cancel: %#v", got.Usage)
+	}
+	if len(got.Usages) != 2 || got.Usages[0]["input_tokens"] != 3000 || got.Usages[1]["output_tokens"] != 38 {
+		t.Fatalf("per-turn usages not persisted after cancel: %#v", got.Usages)
 	}
 	raw, err := json.Marshal(stored.RawHistory)
 	if err != nil {

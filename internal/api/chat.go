@@ -384,32 +384,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			msg["elapsed_ms"] = final.ElapsedMS
 			ev["message"] = msg
-			// Extract usage from event if present
-			if usage, ok := ev["usage"].(map[string]interface{}); ok && len(usage) > 0 {
-				final.Usage = make(map[string]int)
-				for k, v := range usage {
-					if val, ok := v.(float64); ok {
-						final.Usage[k] = int(val)
-					}
-				}
-			}
-			// Extract per-internal-turn usages array if present
-			if usages, ok := ev["usages"].([]interface{}); ok && len(usages) > 0 {
-				final.Usages = make([]map[string]int, 0, len(usages))
-				for _, u := range usages {
-					um, ok := u.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					turn := make(map[string]int)
-					for k, v := range um {
-						if val, ok := v.(float64); ok {
-							turn[k] = int(val)
-						}
-					}
-					final.Usages = append(final.Usages, turn)
-				}
-			}
+			final.Usage, final.Usages = chatUsageFromEvent(ev)
 			if finalUltraPlanState != nil {
 				final.UltraPlanState = mergeChatMaps(mergeChatMaps(nil, finalUltraPlanState), final.UltraPlanState)
 			}
@@ -695,6 +670,89 @@ func (s *Server) chatRunCanceled(sid string) bool {
 	return r != nil && r.Canceled
 }
 
+func chatUsageFromEvent(ev map[string]interface{}) (map[string]int, []map[string]int) {
+	var usage map[string]int
+	if raw, ok := ev["usage"].(map[string]interface{}); ok && len(raw) > 0 {
+		parsed := make(map[string]int)
+		for key, value := range raw {
+			if number, ok := value.(float64); ok {
+				parsed[key] = int(number)
+			}
+		}
+		if len(parsed) > 0 {
+			usage = parsed
+		}
+	}
+
+	var usages []map[string]int
+	if raw, ok := ev["usages"].([]interface{}); ok && len(raw) > 0 {
+		parsed := make([]map[string]int, 0, len(raw))
+		for _, item := range raw {
+			values, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			turn := make(map[string]int)
+			for key, value := range values {
+				if number, ok := value.(float64); ok {
+					turn[key] = int(number)
+				}
+			}
+			if len(turn) > 0 {
+				parsed = append(parsed, turn)
+			}
+		}
+		if len(parsed) > 0 {
+			usages = parsed
+		}
+	}
+	return usage, usages
+}
+
+func chatUsageFromEvents(events [][]byte) (map[string]int, []map[string]int) {
+	var usage map[string]int
+	var usages []map[string]int
+	for _, line := range events {
+		var ev map[string]interface{}
+		if json.Unmarshal(line, &ev) != nil {
+			continue
+		}
+		nextUsage, nextUsages := chatUsageFromEvent(ev)
+		if ev["type"] == "turn_usage" {
+			if len(nextUsage) == 0 {
+				continue
+			}
+			indexNumber, ok := ev["index"].(float64)
+			if !ok || indexNumber < 0 || indexNumber > float64(len(usages)) {
+				continue
+			}
+			index := int(indexNumber)
+			if indexNumber != float64(index) {
+				continue
+			}
+			if index == len(usages) {
+				usages = append(usages, nextUsage)
+			} else {
+				usages[index] = nextUsage
+			}
+			usage = make(map[string]int)
+			for _, turn := range usages {
+				for key, value := range turn {
+					usage[key] += value
+				}
+			}
+			continue
+		}
+		if len(nextUsage) > 0 {
+			usage = nextUsage
+		}
+		if len(nextUsages) > 0 {
+			usages = nextUsages
+		}
+	}
+	return usage, usages
+}
+
 func chatPartialContentFromEvents(events [][]byte) string {
 	var b strings.Builder
 	for _, line := range events {
@@ -738,6 +796,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	} else {
 		content = "\u5df2\u505c\u6b62\u751f\u6210"
 	}
+	usage, usages := chatUsageFromEvents(events)
 	final := chatMessage{
 		ID:             pendingID,
 		Role:           "assistant",
@@ -746,6 +805,8 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 		Error:          true,
 		ElapsedMS:      elapsedMS,
 		RunStartedAtMS: startedAtMS,
+		Usage:          usage,
+		Usages:         usages,
 	}
 
 	s.SessionMu.Lock()
