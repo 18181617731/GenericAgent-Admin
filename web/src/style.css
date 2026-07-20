@@ -7954,3 +7954,72 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
 @media (prefers-reduced-motion:reduce) {
   .oa-message.user .oa-msg-meta { transition:none; }
 }
+
+
+/* Worldline restore-point chooser */
+.oa-worldline-backdrop {
+  position: fixed; inset: 0; z-index: 270; display: grid; place-items: center;
+  padding: 20px; background: rgba(18,18,18,.46);
+}
+.oa-worldline-dialog {
+  width: min(620px, 100%); max-height: min(760px, calc(100dvh - 40px));
+  display: grid; grid-template-rows: auto minmax(0,1fr) auto auto; overflow: hidden;
+  border: 1px solid rgba(20,20,20,.16); border-radius: 12px;
+  background: var(--surface-strong, #fff); box-shadow: 0 22px 64px rgba(0,0,0,.22);
+}
+.oa-worldline-dialog-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+  padding: 20px 20px 16px; border-bottom: 1px solid rgba(20,20,20,.09);
+}
+.oa-worldline-dialog-head small {
+  display: block; margin-bottom: 6px; color: var(--accent, #0a8066);
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .16em;
+}
+.oa-worldline-dialog-head h2 { margin: 0; color: var(--text); font-size: 20px; line-height: 1.25; }
+.oa-worldline-dialog-head p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.oa-worldline-dialog-head > button {
+  flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center;
+  border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.oa-worldline-dialog-head > button:hover { background: rgba(20,20,20,.06); color: var(--text); }
+.oa-worldline-node-list { min-height: 0; overflow: auto; padding: 6px 0; }
+.oa-worldline-node {
+  width: 100%; min-height: 64px; display: grid;
+  grid-template-columns: 44px minmax(0,1fr) auto; align-items: center; gap: 12px;
+  padding: 10px 20px; border: 0; border-bottom: 1px solid rgba(20,20,20,.07);
+  background: transparent; color: var(--text); text-align: left; cursor: pointer;
+}
+.oa-worldline-node:last-child { border-bottom: 0; }
+.oa-worldline-node:hover { background: rgba(16,163,127,.065); }
+.oa-worldline-node:focus-visible { outline: 2px solid rgba(16,163,127,.48); outline-offset: -2px; }
+.oa-worldline-node:disabled { cursor: not-allowed; opacity: .45; }
+.oa-worldline-node-no { color: var(--accent, #0a8066); font: 700 15px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.oa-worldline-node-copy { min-width: 0; display: grid; gap: 5px; }
+.oa-worldline-node-copy b { overflow: hidden; color: var(--text); font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.oa-worldline-node-copy code { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.oa-worldline-node-action { color: var(--accent, #0a8066); font-size: 12px; font-weight: 650; }
+.oa-worldline-node.is-selected { border-color: color-mix(in srgb, var(--accent, #0a8066) 48%, transparent); background: color-mix(in srgb, var(--accent, #0a8066) 8%, transparent); }
+.oa-worldline-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 20px; border-top: 1px solid rgba(20,20,20,.09); }
+.oa-worldline-options fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.oa-worldline-options legend { margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.oa-worldline-options fieldset > div { display: flex; gap: 6px; }
+.oa-worldline-options button { flex: 1 1 auto; min-height: 34px; padding: 6px 9px; border: 1px solid rgba(20,20,20,.13); border-radius: 7px; background: transparent; color: var(--text); font-size: 12px; cursor: pointer; }
+.oa-worldline-options button:hover { background: rgba(20,20,20,.04); }
+.oa-worldline-options button.is-selected { border-color: var(--accent, #0a8066); background: color-mix(in srgb, var(--accent, #0a8066) 10%, transparent); color: var(--accent, #0a8066); font-weight: 650; }
+.oa-worldline-dialog > footer {
+  min-height: 56px; display: flex; align-items: center; gap: 6px; padding: 8px 20px;
+  border-top: 1px solid rgba(20,20,20,.09); color: var(--muted); font-size: 11px;
+}
+.oa-worldline-dialog > footer > span:first-child { margin-right: auto; }
+.oa-worldline-confirm { min-height: 36px; margin-left: 10px; padding: 7px 14px; border: 0; border-radius: 7px; background: var(--accent, #0a8066); color: #fff; font-size: 12px; font-weight: 650; cursor: pointer; }
+.oa-worldline-confirm:disabled { opacity: .42; cursor: not-allowed; }
+.oa-worldline-dialog kbd { padding: 2px 5px; border: 1px solid rgba(20,20,20,.16); border-radius: 4px; background: rgba(20,20,20,.035); font: inherit; }
+@media (max-width: 560px) {
+  .oa-worldline-backdrop { align-items: end; padding: 0; }
+  .oa-worldline-dialog { width: 100%; max-height: min(88dvh, 760px); border-width: 1px 0 0; border-radius: 14px 14px 0 0; }
+  .oa-worldline-dialog-head { padding: 18px 16px 14px; }
+  .oa-worldline-node { grid-template-columns: 34px minmax(0,1fr) auto; gap: 9px; padding: 10px 16px; }
+  .oa-worldline-options { grid-template-columns: 1fr; gap: 12px; padding: 14px 16px; }
+  .oa-worldline-dialog > footer { flex-wrap: wrap; padding: 10px 16px max(10px, env(safe-area-inset-bottom)); }
+  .oa-worldline-confirm { flex: 1 0 100%; margin: 4px 0 0; }
+}

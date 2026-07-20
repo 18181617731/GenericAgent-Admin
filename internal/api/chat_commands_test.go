@@ -443,6 +443,9 @@ func TestWorldlineRestorePersistsRestoredSession(t *testing.T) {
 			defer stdoutW.Close()
 			var req map[string]interface{}
 			if json.NewDecoder(stdinR).Decode(&req) == nil {
+				if active, ok := req["activate"].(bool); !ok || !active {
+					t.Errorf("worldline request activate = %#v, want true", req["activate"])
+				}
 				requests <- req
 			}
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{

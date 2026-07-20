@@ -12,6 +12,7 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
+import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 
 gsap.registerPlugin(useGSAP)
 
@@ -1387,6 +1388,127 @@ const sumUsages = (usages) => {
   }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
 }
 
+export const CommandResultCard = memo(function CommandResultCard({ result = {} }) {
+  const command = `/${String(result.command || '').replace(/^\//, '')}`
+  const summary = commandResultSummary(result)
+  const treeNodes = Array.isArray(result.tree?.nodes) ? result.tree.nodes : []
+  const services = Array.isArray(result.services) ? result.services : []
+  const commands = Array.isArray(result.commands) ? result.commands : []
+  const records = Array.isArray(result.records) ? result.records : []
+  const status = result.session && typeof result.session === 'object' ? result.session : null
+
+  return (
+    <section className="oa-command-result" aria-label={`${command} \u547d\u4ee4\u7ed3\u679c`}>
+      <header><Check size={17}/><div><b>{summary}</b><span>{command}</span></div></header>
+      {command === '/worldline' && result.action !== 'restore' && (
+        treeNodes.length > 0
+          ? <div className="oa-command-list" aria-label="\u4e16\u754c\u7ebf\u8282\u70b9">
+              {treeNodes.map((node, index) => {
+                const id = String(node?.id || node?.node_id || node?.key || '')
+                const title = String(node?.title || node?.label || node?.summary || node?.content_preview || '')
+                return <div key={id || index}><code>{id || `#${index + 1}`}</code><span>{title || '\u672a\u547d\u540d\u8282\u70b9'}</span></div>
+              })}
+            </div>
+          : <div className="oa-command-empty">{'\u6682\u65e0\u4e16\u754c\u7ebf\u8282\u70b9'}</div>
+      )}
+      {services.length > 0 && <div className="oa-command-services">
+        {services.map((service, index) => <div key={service?.name || index}>
+          <i className={`oa-command-dot ${service?.running ? 'is-running' : ''}`}/>
+          <b>{service?.name || `service-${index + 1}`}</b>
+          <span>{service?.running ? '\u8fd0\u884c\u4e2d' : '\u672a\u8fd0\u884c'}</span>
+          <em>{service?.status || service?.message || ''}</em>
+        </div>)}
+      </div>}
+      {commands.length > 0 && <div className="oa-command-list">
+        {commands.map((item, index) => {
+          const name = typeof item === 'string' ? item : (item?.command || item?.name || '')
+          const description = typeof item === 'string' ? '' : (item?.description || item?.usage || '')
+          return <div key={name || index}><code>{name || `#${index + 1}`}</code><span>{description}</span></div>
+        })}
+      </div>}
+      {status && command === '/status' && <dl className="oa-command-kv">
+        <div><dt>Session</dt><dd>{status.id || '-'}</dd></div>
+        <div><dt>Messages</dt><dd>{Number(status.message_count || 0)}</dd></div>
+      </dl>}
+      {records.length > 0 && <details className="oa-command-records"><summary>{records.length} \u6761\u5de5\u5177\u5ba1\u8ba1\u8bb0\u5f55</summary><pre>{JSON.stringify(records, null, 2)}</pre></details>}
+      {command === '/export' && result.filename && <div className="oa-command-download"><FileOutput size={15}/><span>{result.filename}</span><b>{'\u5df2\u4e0b\u8f7d'}</b></div>}
+    </section>
+  )
+})
+
+export const worldlineRestoreCommand = (nodeID, mode = 'both', target = 'at') => {
+  const id = String(nodeID || '').trim()
+  const restoreMode = ['both', 'conversation', 'code'].includes(mode) ? mode : 'both'
+  const restoreTarget = ['at', 'before'].includes(target) ? target : 'at'
+  return id ? `/worldline restore ${id} ${restoreMode} ${restoreTarget}` : ''
+}
+
+export const isWorldlinePickerResult = (result) => {
+  const commandName = String(result?.command || '').replace(/^\//, '').toLowerCase()
+  const nodes = result?.tree?.nodes
+  return commandName === 'worldline' && result?.action !== 'restore' && Array.isArray(nodes) && nodes.length > 0
+}
+
+export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nodes = [], onClose, onSelect }) {
+  const [selectedNodeID, setSelectedNodeID] = useState('')
+  const [restoreMode, setRestoreMode] = useState('both')
+  const [restoreTarget, setRestoreTarget] = useState('at')
+
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose?.() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return (
+    <div className="oa-worldline-backdrop" onMouseDown={(event)=>{ if (event.target === event.currentTarget) onClose?.() }}>
+      <section className="oa-worldline-dialog" role="dialog" aria-modal="true" aria-labelledby="oa-worldline-title">
+        <header className="oa-worldline-dialog-head">
+          <div>
+            <small>WORLDLINE</small>
+            <h2 id="oa-worldline-title">选择回退点</h2>
+            <p>配置恢复范围与位置后填入命令，由你确认后发送。</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="关闭回退点选择"><X size={17}/></button>
+        </header>
+        <div className="oa-worldline-node-list">
+          {nodes.map((node, index) => {
+            const nodeID = String(node?.id || '').trim()
+            const ordinal = node?.ordinal ?? index + 1
+            const title = node?.title || node?.summary || node?.name || `回退点 ${ordinal}`
+            const selected = !!nodeID && nodeID === selectedNodeID
+            return <button key={nodeID || index} className={`oa-worldline-node${selected ? ' is-selected' : ''}`} type="button" disabled={!nodeID} aria-pressed={selected} onClick={()=>setSelectedNodeID(nodeID)}>
+              <span className="oa-worldline-node-no">{ordinal}</span>
+              <span className="oa-worldline-node-copy"><b>{title}</b><code>{nodeID || '缺少节点 ID'}</code></span>
+              <span className="oa-worldline-node-action">{selected ? '已选择' : '选择'}</span>
+            </button>
+          })}
+        </div>
+        <div className="oa-worldline-options">
+          <fieldset>
+            <legend>恢复范围</legend>
+            <div>
+              {[['both', '对话与代码'], ['conversation', '仅对话'], ['code', '仅代码']].map(([value, label]) =>
+                <button key={value} type="button" className={restoreMode === value ? 'is-selected' : ''} aria-pressed={restoreMode === value} onClick={()=>setRestoreMode(value)}>{label}</button>)}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>恢复位置</legend>
+            <div>
+              {[['at', '定位到节点'], ['before', '节点之前']].map(([value, label]) =>
+                <button key={value} type="button" className={restoreTarget === value ? 'is-selected' : ''} aria-pressed={restoreTarget === value} onClick={()=>setRestoreTarget(value)}>{label}</button>)}
+            </div>
+          </fieldset>
+        </div>
+        <footer>
+          <span>{nodes.length} 个可用回退点</span><kbd>Esc</kbd><span>关闭</span>
+          <button className="oa-worldline-confirm" type="button" disabled={!selectedNodeID} onClick={()=>onSelect?.(selectedNodeID, restoreMode, restoreTarget)}>确认并填入命令</button>
+        </footer>
+      </section>
+    </div>
+  )
+})
+
 export const ChatMessage = memo(function ChatMessage({
   message: m, pending, onAskReply, clockNow = 0,
 }) {
@@ -1430,7 +1552,9 @@ export const ChatMessage = memo(function ChatMessage({
                   )}
                 </div>
               )}
-              <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />
+              {m.commandResult
+                ? <CommandResultCard result={m.commandResult} />
+                : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -1670,6 +1794,7 @@ export default function ChatApp() {
   const [showFollow, setShowFollow] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
+  const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
   const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
   const [cfg, setCfg] = useState(null)
   const [cmdEditIdx, setCmdEditIdx] = useState(-1)
@@ -1958,6 +2083,11 @@ export default function ChatApp() {
   const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
     const batcher = createStreamBatcher(pendingId, sessionId)
+    let commandPatch = null
+    const applyEvent = (ev) => {
+      if (ev?.type === 'command_result') commandPatch = reduceCommandResult(ev)
+      applyStreamEvent(ev, pendingId, clientUserID, sessionId)
+    }
     try {
       while (true) {
         const { value, done } = await reader.read()
@@ -1972,18 +2102,19 @@ export default function ChatApp() {
             batcher.push(ev.delta)
           } else {
             batcher.flushNow()
-            applyStreamEvent(ev, pendingId, clientUserID, sessionId)
+            applyEvent(ev)
           }
         }
       }
       if (buf.trim() && isActiveSession(sessionId)) {
         const ev = JSON.parse(buf)
         if (ev.type === 'delta' && typeof ev.delta === 'string') batcher.push(ev.delta)
-        else { batcher.flushNow(); applyStreamEvent(ev, pendingId, clientUserID, sessionId) }
+        else { batcher.flushNow(); applyEvent(ev) }
       }
     } finally {
       batcher.flushNow()
     }
+    return commandPatch
   }
 
   const cancelRun = async (id = sid) => {
@@ -2054,6 +2185,7 @@ export default function ChatApp() {
   }
 
   const openSession = async (id, refreshList = true) => {
+    setWorldlineRestorePicker(null)
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
     streamAbortRef.current?.abort?.()
@@ -2098,6 +2230,7 @@ export default function ChatApp() {
   }
 
   const newSession = async () => {
+    setWorldlineRestorePicker(null)
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
     const openToken = ++openSeqRef.current
@@ -2463,6 +2596,9 @@ export default function ChatApp() {
     const targetSessionID = item.sessionId || sid
     setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
     let id = targetSessionID
+    let commandPatch = null
+    let optimistic = null
+    let pending = null
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -2480,8 +2616,8 @@ export default function ChatApp() {
       setAutoFollow(true); setShowFollow(false)
       const fileNote = files.length ? `\n\n[附件]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
       const attachmentPrompt = text || '请处理这些附件'
-      const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
-      const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
+      pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
@@ -2489,7 +2625,7 @@ export default function ChatApp() {
       const payload = { prompt:attachmentPrompt, files, settings:{ llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
-      await readStream(res, pending.id, clientUserID, id)
+      commandPatch = await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
@@ -2498,6 +2634,33 @@ export default function ChatApp() {
       if (id) {
         await loadSessions(id).catch(()=>{})
         await openSession(id, false).catch(()=>{})
+        if (commandPatch?.commandResult && optimistic && pending && isActiveSession(id)) {
+          const showWorldlinePicker = isWorldlinePickerResult(commandPatch.commandResult)
+          const resultMessage = {
+            ...pending,
+            content: commandResultSummary(commandPatch.commandResult),
+            commandResult: commandPatch.commandResult,
+            run_started_at_ms: undefined,
+          }
+          setMessages(xs => {
+            if (!isActiveSession(id)) return xs
+            const baseMessages = showWorldlinePicker ? xs.filter(m => m.id !== pending.id) : xs
+            const hasUser = baseMessages.some(m => m.id === optimistic.id)
+            return [...baseMessages, ...(hasUser ? [] : [optimistic]), ...(showWorldlinePicker ? [] : [resultMessage])]
+          })
+          if (Object.prototype.hasOwnProperty.call(commandPatch, 'prefill')) setPrompt(commandPatch.prefill)
+          if (showWorldlinePicker) {
+            setWorldlineRestorePicker({ nodes:commandPatch.commandResult.tree.nodes, sessionID:id })
+          }
+          if (commandPatch.download) {
+            const blob = new Blob([commandPatch.download.content], { type:commandPatch.download.mime })
+            const url = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = url; link.download = commandPatch.download.filename
+            document.body.appendChild(link); link.click(); link.remove()
+            URL.revokeObjectURL(url)
+          }
+        }
       }
       const next = popQueued()
       if (next) {
@@ -2509,6 +2672,20 @@ export default function ChatApp() {
       }
     }
   }
+
+  const selectWorldlineRestoreNode = useCallback((nodeID, mode, target) => {
+    const command = worldlineRestoreCommand(nodeID, mode, target)
+    if (!command) return
+    setPrompt(command)
+    setWorldlineRestorePicker(null)
+    setNotice('已填入恢复命令，确认后发送')
+    window.setTimeout(() => {
+      const input = promptRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange?.(command.length, command.length)
+    }, 0)
+  }, [])
 
   const expandCustomSlashCommand = useCallback((value) => {
     const raw = String(value || '').trim()
@@ -3014,6 +3191,7 @@ export default function ChatApp() {
       </footer>
     </main>
 
+    {worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
         <header className="oa-session-manager-dialog-head">

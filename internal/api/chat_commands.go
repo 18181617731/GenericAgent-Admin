@@ -334,7 +334,7 @@ func (s *Server) worldlineCommand(cs *chatSession, c immediateChatCommand, out m
 	if err != nil {
 		return fmt.Errorf("worldline worker: %w", err)
 	}
-	req := map[string]interface{}{"op": "worldline", "action": c.Mode, "sid": safeChatID(cs.ID), "ga_root": s.CfgStore.Cfg.GARoot, "workspace": cs.Workspace}
+	req := map[string]interface{}{"op": "worldline", "activate": true, "action": c.Mode, "sid": safeChatID(cs.ID), "ga_root": s.CfgStore.Cfg.GARoot, "workspace": cs.Workspace}
 	if c.Mode == "restore" {
 		req["node_id"], req["mode"], req["to"] = c.Arg, c.RestoreMode, c.To
 	}

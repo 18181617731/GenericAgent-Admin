@@ -230,6 +230,31 @@ describe('chat response identity and time', () => {
 
     expect(container.querySelector('.oa-usage-time')?.textContent).toContain('4s')
   })
+
+  test('renders an explicit empty result for a worldline command', () => {
+    render(
+      <ChatMessage
+        message={{ id: 'worldline-empty', role: 'assistant', commandResult: { command:'worldline', action:'list', tree:{ nodes:[] } } }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('0 个世界线节点')).toBeTruthy()
+  })
+
+  test('renders worldline node IDs so a restore command can reference them', () => {
+    render(
+      <ChatMessage
+        message={{ id: 'worldline-nodes', role: 'assistant', commandResult: { command:'worldline', action:'list', tree:{ nodes:[{ id:'node-42', title:'Checkpoint' }] } } }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('node-42')).toBeTruthy()
+    expect(screen.getByText('Checkpoint')).toBeTruthy()
+  })
 })
 
 
