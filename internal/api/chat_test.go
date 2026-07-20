@@ -99,6 +99,41 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 	}
 }
 
+func TestAnnotateChatLLMProvidersMatchesDuplicateModelsByRuntimeEndpoint(t *testing.T) {
+	first, second := 0, 1
+	profiles := []modelconfig.Profile{
+		{
+			Type:    "native_oai",
+			Name:    "First provider",
+			APIBase: "https://first.example/v1",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "shared-model", SortOrder: &first},
+			},
+		},
+		{
+			Type:    "native_oai",
+			Name:    "Paid provider",
+			APIBase: "https://paid.example/v1/",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "shared-model", SortOrder: &second},
+			},
+		},
+	}
+	llms := []map[string]interface{}{
+		{"index": 24, "model": "shared-model", "provider": "NativeOAISession", "apibase": "https://paid.example/v1"},
+		{"index": 26, "model": "shared-model", "provider": "NativeOAISession", "apibase": "https://first.example/v1"},
+	}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	if got := llms[0]["provider"]; got != "Paid provider" {
+		t.Fatalf("llms[0].provider=%v want Paid provider: %#v", got, llms)
+	}
+	if got := llms[1]["provider"]; got != "First provider" {
+		t.Fatalf("llms[1].provider=%v want First provider: %#v", got, llms)
+	}
+}
+
 func TestChatProviderDisplayNamePrefersConfiguredNameAndFallsBackToVariable(t *testing.T) {
 	cases := []struct {
 		profile modelconfig.Profile

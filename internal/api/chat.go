@@ -997,7 +997,18 @@ for idx, label, active in agent.list_llms():
     name = str(getattr(backend, 'name', '') or '')
     model = str(getattr(backend, 'model', '') or '')
     provider = type(backend).__name__
-    items.append({'index': int(idx), 'label': text, 'name': name, 'provider': provider, 'model': model, 'active': bool(active)})
+    backend_config = getattr(backend, 'config', {})
+    if not isinstance(backend_config, dict):
+        backend_config = {}
+    apibase = (
+        getattr(backend, 'apibase', '') or
+        getattr(backend, 'api_base', '') or
+        getattr(backend, 'base_url', '') or
+        backend_config.get('apibase', '') or
+        backend_config.get('api_base', '') or
+        backend_config.get('base_url', '')
+    )
+    items.append({'index': int(idx), 'label': text, 'name': name, 'provider': provider, 'model': model, 'apibase': str(apibase or ''), 'active': bool(active)})
 print(json.dumps(items, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", code, root)
 	cmd.Dir = root
@@ -1015,12 +1026,17 @@ print(json.dumps(items, ensure_ascii=False))`
 	if draft, importErr := s.loadModelsFromOfficialMyKey(false); importErr == nil {
 		annotateChatLLMProviders(llms, draft.Profiles)
 	}
+	for _, item := range llms {
+		delete(item, "apibase")
+	}
 	return llms, nil
 }
 
 type chatProviderModel struct {
 	provider string
 	model    string
+	apiBase  string
+	protocol string
 	order    int
 	sequence int
 }
@@ -1049,7 +1065,14 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 			if config.SortOrder != nil {
 				order = *config.SortOrder
 			}
-			configured = append(configured, chatProviderModel{provider: provider, model: model, order: order, sequence: sequence})
+			configured = append(configured, chatProviderModel{
+				provider: provider,
+				model:    model,
+				apiBase:  normalizeChatAPIBase(profile.APIBase),
+				protocol: strings.ToLower(strings.TrimSpace(profile.Type)),
+				order:    order,
+				sequence: sequence,
+			})
 			sequence++
 		}
 	}
@@ -1064,7 +1087,20 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 	unresolved := make([]int, 0)
 	for i, item := range llms {
 		model := chatLLMModel(item)
-		if i < len(configured) && (model == "" || configured[i].model == model) {
+		matched := false
+		for configuredIndex, candidate := range configured {
+			if used[configuredIndex] || candidate.model != model || !chatProviderMatchesRuntime(candidate, item) {
+				continue
+			}
+			applyChatProviderModel(item, candidate)
+			used[configuredIndex] = true
+			matched = true
+			break
+		}
+		if matched {
+			continue
+		}
+		if i < len(configured) && (model == "" || configured[i].model == model) && !used[i] {
 			applyChatProviderModel(item, configured[i])
 			used[i] = true
 			continue
@@ -1090,6 +1126,26 @@ func applyChatProviderModel(item map[string]interface{}, configured chatProvider
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
 	}
+}
+
+func chatProviderMatchesRuntime(configured chatProviderModel, item map[string]interface{}) bool {
+	runtimeBase := normalizeChatAPIBase(fmt.Sprint(item["apibase"]))
+	if configured.apiBase == "" || runtimeBase == "" || configured.apiBase != runtimeBase {
+		return false
+	}
+	backend := strings.ToLower(strings.TrimSpace(fmt.Sprint(item["provider"])))
+	switch configured.protocol {
+	case "native_claude", "claude":
+		return backend == "" || strings.Contains(backend, "claude")
+	case "native_oai", "oai", "openai", "openai-compatible", "chatgpt":
+		return backend == "" || strings.Contains(backend, "oai")
+	default:
+		return true
+	}
+}
+
+func normalizeChatAPIBase(value string) string {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(value)), "/")
 }
 
 func chatLLMModel(item map[string]interface{}) string {
