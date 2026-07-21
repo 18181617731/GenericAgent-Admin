@@ -1758,8 +1758,10 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
   )
 }
 
-function PlanTodoCard({ plan }) {
+export function PlanTodoCard({ plan }) {
   const listRef = useRef(null)
+  const [expanded, setExpanded] = useState(true)
+  const panelId = React.useId()
   const active = Boolean(plan?.active)
   const items = Array.isArray(plan?.items) ? plan.items : []
   const done = Number.isFinite(Number(plan?.done)) ? Number(plan.done) : items.filter(item => item?.status === 'done').length
@@ -1769,7 +1771,7 @@ function PlanTodoCard({ plan }) {
   const complete = Boolean(plan?.complete)
   const placeholder = Boolean(plan?.placeholder)
   useLayoutEffect(() => {
-    if (!active || placeholder || currentIndex < 0) return
+    if (!active || !expanded || placeholder || currentIndex < 0) return
     const list = listRef.current
     const current = list?.querySelector('[aria-current="step"]')
     if (!list || !current) return
@@ -1788,7 +1790,7 @@ function PlanTodoCard({ plan }) {
       resizeObserver?.disconnect()
       window.removeEventListener('resize', revealCurrent)
     }
-  }, [active, currentIndex, placeholder, total])
+  }, [active, currentIndex, expanded, placeholder, total])
   if (!active) return null
   const stateLabel = complete ? '已完成' : placeholder ? '规划中' : total > 0 ? '执行中' : '准备中'
   const detailLabel = complete
@@ -1800,36 +1802,41 @@ function PlanTodoCard({ plan }) {
         : '等待任务步骤'
   return (
     <section className={`oa-plan-card${complete ? ' is-complete' : ''}`} aria-label="任务执行计划">
-      <header className="oa-plan-head">
-        <div className="oa-plan-identity">
+      <button type="button" className="oa-plan-head" onClick={() => setExpanded(value => !value)}
+        aria-expanded={expanded} aria-controls={panelId}
+        aria-label={expanded ? '\u6536\u8d77\u6267\u884c\u8ba1\u5212' : '\u5c55\u5f00\u6267\u884c\u8ba1\u5212'}>
+        <span className="oa-plan-identity">
           <span className="oa-plan-mark" aria-hidden="true">{complete ? <Check size={15}/> : <Clock3 size={14}/>}</span>
           <span className="oa-plan-heading">
             <span className="oa-plan-title">执行计划</span>
             <span className="oa-plan-detail">{detailLabel}</span>
           </span>
-        </div>
-        <div className="oa-plan-summary">
+        </span>
+        <span className="oa-plan-summary">
           <span className="oa-plan-state"><i aria-hidden="true"/>{stateLabel}</span>
           <span className="oa-plan-count" aria-label={`已完成 ${done} 项，共 ${total} 项`}><strong>{done}</strong><span>/ {total}</span></span>
+          <span className="oa-plan-chevron" aria-hidden="true">{expanded ? <ChevronDown size={15}/> : <ChevronLeft size={15}/>}</span>
+        </span>
+      </button>
+      <div id={panelId} className="oa-plan-body" hidden={!expanded}>
+        <div className="oa-plan-progress" role="progressbar" aria-label="任务完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}>
+          <span style={{ width: `${percent}%` }}/>
         </div>
-      </header>
-      <div className="oa-plan-progress" role="progressbar" aria-label="任务完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}>
-        <span style={{ width: `${percent}%` }}/>
+        {placeholder ? <div className="oa-plan-placeholder"><span aria-hidden="true"/><span>正在整理步骤</span><code title={plan.pathHint || 'plan.md'}>{plan.pathHint || 'plan.md'}</code></div> : (
+          <ol ref={listRef} className="oa-plan-list">
+            {items.map((item, index) => {
+              const itemComplete = item?.status === 'done'
+              const current = !itemComplete && index === currentIndex
+              return <li key={`${index}-${item?.content || ''}`} className={`${itemComplete ? 'is-done' : 'is-open'}${current ? ' is-current' : ''}`} aria-current={current ? 'step' : undefined}>
+                <span className="oa-plan-status" aria-hidden="true">{itemComplete ? <Check size={11}/> : current ? <Clock3 size={10}/> : <span>{index + 1}</span>}</span>
+                <span className="oa-plan-copy">{item?.content || `步骤 ${index + 1}`}</span>
+                {current && <span className="oa-plan-now">当前</span>}
+              </li>
+            })}
+          </ol>
+        )}
+        {plan.step && <div className="oa-plan-step"><span>当前动作</span><p>{plan.step}</p></div>}
       </div>
-      {placeholder ? <div className="oa-plan-placeholder"><span aria-hidden="true"/><span>正在整理步骤</span><code title={plan.pathHint || 'plan.md'}>{plan.pathHint || 'plan.md'}</code></div> : (
-        <ol ref={listRef} className="oa-plan-list">
-          {items.map((item, index) => {
-            const itemComplete = item?.status === 'done'
-            const current = !itemComplete && index === currentIndex
-            return <li key={`${index}-${item?.content || ''}`} className={`${itemComplete ? 'is-done' : 'is-open'}${current ? ' is-current' : ''}`} aria-current={current ? 'step' : undefined}>
-              <span className="oa-plan-status" aria-hidden="true">{itemComplete ? <Check size={11}/> : current ? <Clock3 size={10}/> : <span>{index + 1}</span>}</span>
-              <span className="oa-plan-copy">{item?.content || `步骤 ${index + 1}`}</span>
-              {current && <span className="oa-plan-now">当前</span>}
-            </li>
-          })}
-        </ol>
-      )}
-      {plan.step && <div className="oa-plan-step"><span>当前动作</span><p>{plan.step}</p></div>}
     </section>
   )
 }

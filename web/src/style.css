@@ -8654,9 +8654,24 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   display:flex;
   align-items:center;
   justify-content:space-between;
+  width:100%;
   gap:14px;
   min-height:52px;
   padding:10px 13px 9px 14px;
+  appearance:none;
+  border:0;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+}
+.oa-plan-head:hover {
+  background:color-mix(in srgb, var(--surface-muted, #f6f6f6) 68%, transparent);
+}
+.oa-plan-head:focus-visible {
+  outline:2px solid color-mix(in srgb, var(--oa-plan-accent) 72%, transparent);
+  outline-offset:-2px;
 }
 .oa-plan-identity, .oa-plan-summary { display:flex; align-items:center; min-width:0; }
 .oa-plan-identity { gap:9px; }
@@ -8721,6 +8736,14 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   line-height:1;
 }
 .oa-plan-count strong { color:var(--text, #171717); font-size:13px; font-weight:680; }
+.oa-plan-chevron {
+  display:grid;
+  flex:0 0 18px;
+  width:18px;
+  height:18px;
+  place-items:center;
+  color:var(--muted, #6b6b6b);
+}
 .oa-plan-progress {
   height:3px;
   overflow:hidden;

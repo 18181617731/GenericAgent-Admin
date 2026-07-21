@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage } from './ChatApp.jsx'
+import { ChatMessage, PlanTodoCard } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 
@@ -277,6 +277,43 @@ describe('Models provider editor', () => {
     expect(screen.getByText('disk is read-only')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '重试保存' }))
     expect(saveModelProfile).toHaveBeenCalledWith(0, 'profile-key')
+  })
+})
+
+
+describe('plan todo card disclosure', () => {
+  test('starts expanded and toggles the plan body with matching chevrons', () => {
+    const { container } = render(
+      <PlanTodoCard plan={{
+        active: true,
+        done: 1,
+        total: 2,
+        items: [
+          { status: 'done', content: 'Inspect the task' },
+          { status: 'in_progress', content: 'Implement collapse' },
+        ],
+        step: 'Editing the plan card',
+      }}/>,
+    )
+
+    const collapseButton = screen.getByRole('button', { name: '\u6536\u8d77\u6267\u884c\u8ba1\u5212' })
+    const body = container.querySelector('.oa-plan-body')
+    expect(collapseButton.getAttribute('aria-expanded')).toBe('true')
+    expect(collapseButton.getAttribute('aria-controls')).toBe(body?.id)
+    expect(body?.hidden).toBe(false)
+    expect(collapseButton.querySelector('.lucide-chevron-down')).toBeTruthy()
+
+    fireEvent.click(collapseButton)
+
+    const expandButton = screen.getByRole('button', { name: '\u5c55\u5f00\u6267\u884c\u8ba1\u5212' })
+    expect(expandButton.getAttribute('aria-expanded')).toBe('false')
+    expect(body?.hidden).toBe(true)
+    expect(expandButton.querySelector('.lucide-chevron-left')).toBeTruthy()
+
+    fireEvent.click(expandButton)
+
+    expect(screen.getByRole('button', { name: '\u6536\u8d77\u6267\u884c\u8ba1\u5212' }).getAttribute('aria-expanded')).toBe('true')
+    expect(body?.hidden).toBe(false)
   })
 })
 
