@@ -326,6 +326,77 @@ def _snapshot_ga_state(agent):
     return state
 
 
+_PLAN_DONE_MARKERS = frozenset("xX\u2713\u2714\u221a\u2611")
+_PLAN_KIND_MARKERS = frozenset(("D", "P"))
+_PLAN_LEADING_MARKER_RE = re.compile(r"^\s*\[([^\]]*)\]")
+_PLAN_MARKER_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\s*"
+)
+
+
+def _adapt_plan_payload(payload):
+    """Normalize spaced GA plan marker chains without parsing assistant prose.
+
+    GA's canonical extractor accepts adjacent ``[D][P]`` groups.  Some plans
+    write the equally valid-looking ``[D] [done]`` form; the first marker is
+    consumed upstream while the status marker leaks into item content.  Keep
+    semantic tags such as ``[VERIFY]``, but consume only known control markers
+    and repair aggregate status fields.
+    """
+    if not isinstance(payload, dict):
+        return {'active': False}
+    adapted = dict(payload)
+    raw_items = payload.get('items')
+    if not isinstance(raw_items, list):
+        return adapted
+
+    items = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            items.append(raw_item)
+            continue
+        item = dict(raw_item)
+        content = item.get('content')
+        if not isinstance(content, str):
+            items.append(item)
+            continue
+
+        rest = content
+        inline_titles = []
+        marker_done = False
+        consumed = False
+        while True:
+            match = _PLAN_LEADING_MARKER_RE.match(rest)
+            if not match:
+                break
+            marker = match.group(1).strip()
+            if marker.upper() in _PLAN_KIND_MARKERS or not marker:
+                pass
+            elif marker[:1] in _PLAN_DONE_MARKERS:
+                marker_done = True
+                inline = _PLAN_MARKER_TIMESTAMP_RE.sub('', marker[1:].strip(), count=1).strip()
+                if inline:
+                    inline_titles.append(inline)
+            else:
+                break
+            consumed = True
+            rest = rest[match.end():].lstrip()
+
+        if consumed:
+            normalized_content = ' '.join(part for part in (*inline_titles, rest.strip()) if part)
+            if normalized_content:
+                item['content'] = normalized_content
+            if marker_done:
+                item['status'] = 'done'
+        items.append(item)
+
+    adapted['items'] = items
+    adapted['done'] = sum(1 for item in items if isinstance(item, dict) and item.get('status') == 'done')
+    adapted['total'] = len(items)
+    adapted['complete'] = bool(items) and adapted['done'] == adapted['total']
+    return adapted
+
+
 def _snapshot_plan(agent, ga_root, partial=''):
     """Build the Admin plan card through GA's canonical plan-state module."""
     try:
@@ -343,7 +414,7 @@ def _snapshot_plan(agent, ga_root, partial=''):
             status='running',
             partial={'content': partial or ''},
         )
-        return desktop_plan_payload_from_session(sess, str(ga_root or ''))
+        return _adapt_plan_payload(desktop_plan_payload_from_session(sess, str(ga_root or '')))
     except Exception:
         return {'active': False}
 

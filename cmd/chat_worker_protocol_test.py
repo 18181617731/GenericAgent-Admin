@@ -5,7 +5,7 @@ import sys
 import unittest
 from unittest import mock
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 
 # Import production worker code without rewriting its pre-existing tracked cache.
@@ -124,6 +124,73 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(error["reasoning_effort"], "high")
         self.assertIn("usage", error)
         self.assertIn("usages", error)
+
+
+class PlanPayloadAdapterTests(unittest.TestCase):
+    def test_spaced_delegate_and_done_markers_are_consumed(self):
+        payload = {
+            "active": True,
+            "placeholder": False,
+            "done": 0,
+            "total": 1,
+            "complete": False,
+            "items": [{
+                # GA already consumed the first [D] from
+                # `- [D] [\u2713] [VERIFY] ...`; this is its canonical output.
+                "content": "[\u2713] [VERIFY] \u4e3bagent\u6267\u884c\u9a8c\u6536",
+                "status": "open",
+            }],
+        }
+
+        adapted = chat_worker._adapt_plan_payload(payload)
+
+        self.assertEqual(adapted["items"], [{
+            "content": "[VERIFY] \u4e3bagent\u6267\u884c\u9a8c\u6536",
+            "status": "done",
+        }])
+        self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
+        self.assertEqual(payload["items"][0]["content"], "[\u2713] [VERIFY] \u4e3bagent\u6267\u884c\u9a8c\u6536")
+
+    def test_semantic_bracket_tag_is_preserved(self):
+        payload = {
+            "active": True,
+            "done": 0,
+            "total": 1,
+            "complete": False,
+            "items": [{"content": "[VERIFY] smoke test", "status": "open"}],
+        }
+
+        adapted = chat_worker._adapt_plan_payload(payload)
+
+        self.assertEqual(adapted["items"], payload["items"])
+        self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (0, 1, False))
+
+    def test_snapshot_plan_adapts_canonical_payload(self):
+        payload = {
+            "active": True,
+            "placeholder": False,
+            "done": 0,
+            "total": 1,
+            "complete": False,
+            "items": [{"content": "[\u2713] [VERIFY] wired", "status": "open"}],
+        }
+        plan_state = ModuleType("frontends.plan_state")
+        plan_state.desktop_plan_payload_from_session = lambda sess, root: payload
+        frontends = ModuleType("frontends")
+        frontends.__path__ = []
+        frontends.plan_state = plan_state
+
+        with mock.patch.dict(sys.modules, {
+            "frontends": frontends,
+            "frontends.plan_state": plan_state,
+        }), mock.patch.object(chat_worker, "_snapshot_ga_state", return_value={"working": {}}):
+            adapted = chat_worker._snapshot_plan(FakeAgent(), "C:/ga")
+
+        self.assertEqual(adapted["items"], [{
+            "content": "[VERIFY] wired",
+            "status": "done",
+        }])
+        self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
 
 
 if __name__ == "__main__":
