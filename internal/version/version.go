@@ -619,15 +619,10 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 
 	var content string
 	var script string
-	var launcher string
 	if runtime.GOOS == "windows" {
 		script = filepath.Join(work, "apply-update.ps1")
 		restartScript := filepath.Join(work, "restart-update.ps1")
-		launcher = filepath.Join(work, "launch-update.ps1")
 		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript(exe, newExe, backup, worker, workerBackup, worldline, worldlineBackup)), 0600); err != nil {
-			return ApplyResult{}, err
-		}
-		if err := writeFileAtomic(launcher, []byte(windowsUpdateBootstrapScript(script)), 0600); err != nil {
 			return ApplyResult{}, err
 		}
 		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript)
@@ -640,21 +635,14 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	}
 	emit("restarting", "升级包已就绪，正在重启服务", 95, &check)
 	cmd := updateScriptCommand(runtime.GOOS, script)
-	if runtime.GOOS == "windows" {
-		// CIM creates the apply process outside the service's Windows Job.
-		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", launcher)
-	}
 	cmd.Dir = work
 	if runtime.GOOS == "windows" {
 		hideChildWindow(cmd)
-		if err := cmd.Run(); err != nil {
-			return ApplyResult{}, fmt.Errorf("start detached update process: %w", err)
-		}
 	} else {
 		detachChildProcess(cmd)
-		if err := cmd.Start(); err != nil {
-			return ApplyResult{}, fmt.Errorf("start update script failed: %w", err)
-		}
+	}
+	if err := cmd.Start(); err != nil {
+		return ApplyResult{}, fmt.Errorf("start detached update process: %w", err)
 	}
 	go func() { time.Sleep(500 * time.Millisecond); exitProcess(0) }()
 	return ApplyResult{OK: true, Message: "升级包已就绪，正在重启服务", Script: script, Restarting: true}, nil
@@ -662,7 +650,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 
 func updateScriptCommand(goos, script string) *exec.Cmd {
 	if goos == "windows" {
-		return exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script)
+		return exec.Command("cmd.exe", "/D", "/Q", "/C", "start", "", "/B", "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script)
 	}
 	return exec.Command("bash", script)
 }
@@ -852,15 +840,6 @@ exit 1
 		powerShellSingleQuoted(worldline),
 		powerShellSingleQuoted(worldlineBackup),
 	)
-}
-
-func windowsUpdateBootstrapScript(script string) string {
-	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$quote = [char]34
-$command = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + $quote + %s + $quote
-$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $command }
-if ($result.ReturnValue -ne 0) { exit ([int]$result.ReturnValue) }
-`, powerShellSingleQuoted(script))
 }
 
 func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup string) string {

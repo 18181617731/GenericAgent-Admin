@@ -312,7 +312,7 @@ func TestWindowsUpdateScriptReplacesRuntimeAndInvokesRestart(t *testing.T) {
 	if err := os.WriteFile(applyScript, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := updateScriptCommand("windows", applyScript)
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", applyScript)
 	cmd.Dir = root
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("apply script failed: %v output=%s\nscript:\n%s", err, output, content)
@@ -433,30 +433,11 @@ func TestWindowsDirectRestartScriptRunsQuotedPathAndReturnsExitCode(t *testing.T
 	}
 }
 
-func TestWindowsUpdateCommandRunsScriptDirectlyWithoutVisibleStartShell(t *testing.T) {
+func TestWindowsUpdateCommandUsesBackgroundCmdLauncher(t *testing.T) {
 	cmd := updateScriptCommand("windows", `C:\Temp\ga-admin-update\apply-update.ps1`)
-	want := []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", `C:\Temp\ga-admin-update\apply-update.ps1`}
+	want := []string{"cmd.exe", "/D", "/Q", "/C", "start", "", "/B", "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", `C:\Temp\ga-admin-update\apply-update.ps1`}
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Fatalf("update command args = %#v, want %#v", cmd.Args, want)
-	}
-	for _, arg := range cmd.Args {
-		if strings.EqualFold(arg, "start") {
-			t.Fatalf("update command must not spawn a visible start shell: %#v", cmd.Args)
-		}
-	}
-}
-
-func TestWindowsUpdateBootstrapUsesCIMAndQuotedApplyScript(t *testing.T) {
-	script := windowsUpdateBootstrapScript(`C:\Program Files\GA Admin\update files\apply-update.ps1`)
-	for _, want := range []string{
-		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
-		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File`,
-		`C:\Program Files\GA Admin\update files\apply-update.ps1`,
-		`if ($result.ReturnValue -ne 0)`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("bootstrap script missing %q in:\n%s", want, script)
-		}
 	}
 }
 
@@ -474,13 +455,10 @@ func TestWindowsDetachedUpdateScriptSurvivesLauncherExit(t *testing.T) {
 	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := filepath.Join(dir, "launch update.ps1")
-	if err := os.WriteFile(bootstrap, []byte(windowsUpdateBootstrapScript(script)), 0600); err != nil {
-		t.Fatal(err)
-	}
-	launcher := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", bootstrap)
-	if output, err := launcher.CombinedOutput(); err != nil {
-		t.Fatalf("CIM update launcher failed: %v output=%s", err, output)
+	launcher := updateScriptCommand("windows", script)
+	hideChildWindow(launcher)
+	if err := launcher.Start(); err != nil {
+		t.Fatalf("detached update launcher failed: %v", err)
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
