@@ -112,6 +112,7 @@ type chatSession struct {
 	RawHistory             []map[string]interface{} `json:"raw_history,omitempty"`
 	HistoryInfo            []interface{}            `json:"history_info,omitempty"`
 	Working                map[string]interface{}   `json:"working,omitempty"`
+	Plan                   map[string]interface{}   `json:"plan,omitempty"`
 	WorldlineHead          string                   `json:"worldline_head,omitempty"`
 	Workspace              string                   `json:"workspace,omitempty"`
 	ProjectMode            string                   `json:"project_mode,omitempty"`
@@ -362,6 +363,10 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			cs.Working = finalWorking
 			structuredChanged = true
 		}
+		if _, ok := ev["plan"]; ok {
+			cs.Plan = chatPlanFromEvent(ev)
+			structuredChanged = true
+		}
 		isTerminalEvent := ev["type"] == "done" || ev["type"] == "error"
 		if structuredChanged && !isTerminalEvent && (token == nil || s.ownsChatRun(sid, token)) {
 			_ = saveTerminal(cs)
@@ -547,6 +552,14 @@ func chatWorkingFromEvent(ev map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func chatPlanFromEvent(ev map[string]interface{}) map[string]interface{} {
+	m, ok := ev["plan"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return mergeChatMaps(nil, m)
 }
 
 func chatUltraPlanStateFromEvent(ev map[string]interface{}) map[string]interface{} {

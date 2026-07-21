@@ -325,6 +325,29 @@ def _snapshot_ga_state(agent):
         pass
     return state
 
+
+def _snapshot_plan(agent, ga_root, partial=''):
+    """Build the Admin plan card through GA's canonical plan-state module."""
+    try:
+        from types import SimpleNamespace
+        from frontends.plan_state import desktop_plan_payload_from_session
+        state = _snapshot_ga_state(agent)
+        working = state.get('working') or {}
+        plan_path = working.get('in_plan_mode') if isinstance(working, dict) else ''
+        sess = SimpleNamespace(
+            agent=agent,
+            messages=_snapshot_backend_history(agent),
+            plan_path=plan_path if isinstance(plan_path, str) else '',
+            plan_scan_baseline=0,
+            cwd=str(ga_root or ''),
+            status='running',
+            partial={'content': partial or ''},
+        )
+        return desktop_plan_payload_from_session(sess, str(ga_root or ''))
+    except Exception:
+        return {'active': False}
+
+
 def _restore_ga_state(agent, history_info=None, working=None):
     """Restore GA's own WORKING MEMORY inputs so Admin matches official long-running GA."""
     try:
@@ -1701,12 +1724,24 @@ def handle_request(agent, worker, req):
     _up_state = {'objective': _ultraplan_ctx[0]} if _ultraplan_ctx[0] else {}
     _up_buf = ['']
     _UP_MARKERS = ('[phase]', '[done]', '[fail]', '[subagent]', '[ultraplan]', '[next]')
+    _last_plan = ['']
+
+    def emit_plan_update(partial=''):
+        plan = _snapshot_plan(agent, root_for_req, partial)
+        encoded = json.dumps(plan, ensure_ascii=False, sort_keys=True)
+        if encoded != _last_plan[0]:
+            _last_plan[0] = encoded
+            emit({'type': 'plan_update', 'plan': plan})
+        return plan
+
     try:
         display_queue = agent.put_task(prompt, source='admin_chat')
+        emit_plan_update()
         while True:
             try:
                 item = display_queue.get(timeout=1.0)
             except queue.Empty:
+                emit_plan_update(''.join(chunks))
                 if not worker.is_alive():
                     raise RuntimeError('GA core worker exited unexpectedly')
                 continue
@@ -1725,6 +1760,7 @@ def handle_request(agent, worker, req):
                                 emit({'type': 'delta', 'delta': line + '\n'})
                     else:
                         emit({'type': 'delta', 'delta': delta})
+                emit_plan_update(''.join(chunks))
             if 'done' in item:
                 if _ultraplan_ctx[0] and _up_buf[0].strip():
                     stripped = _up_buf[0].strip()
@@ -1742,13 +1778,14 @@ def handle_request(agent, worker, req):
                 usage = _snapshot_usage()
                 usages = _snapshot_turn_usages()
                 _commit_worldline(agent, prompt)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+                plan = emit_plan_update(text)
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
-        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
 
 
 def main():

@@ -8629,3 +8629,34 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   .settings-proxy-grid .settings-field:nth-child(even) { border-left: 0; }
   .settings-proxy-grid .settings-field + .settings-field { border-top: 1px solid var(--settings-line); }
 }
+
+/* Live GA plan / todo snapshot */
+.oa-plan-card {
+  margin:0 0 8px;
+  padding:10px 12px 9px;
+  border:1px solid color-mix(in srgb, var(--oa-border) 82%, var(--oa-green));
+  border-radius:14px;
+  background:color-mix(in srgb, var(--oa-panel) 94%, var(--oa-green) 6%);
+  box-shadow:0 8px 24px rgba(28, 35, 31, .06);
+}
+.oa-plan-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.oa-plan-title { color:var(--oa-text); font-size:12px; font-weight:680; letter-spacing:.02em; }
+.oa-plan-count { color:var(--oa-muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.oa-plan-progress { height:2px; margin:7px 0 6px; overflow:hidden; border-radius:99px; background:color-mix(in srgb, var(--oa-border) 75%, transparent); }
+.oa-plan-progress > span { display:block; height:100%; border-radius:inherit; background:var(--oa-green); transition:width .28s ease; }
+.oa-plan-list { display:grid; gap:3px; max-height:132px; margin:0; padding:0; overflow:auto; list-style:none; }
+.oa-plan-list li { display:grid; grid-template-columns:18px minmax(0, 1fr); align-items:start; min-width:0; padding:3px 5px; border-radius:7px; color:var(--oa-muted); font-size:12px; line-height:1.35; }
+.oa-plan-list li.is-current { color:var(--oa-text); background:color-mix(in srgb, var(--oa-green) 9%, transparent); }
+.oa-plan-list li.is-done > span:last-child { text-decoration:line-through; text-decoration-color:color-mix(in srgb, var(--oa-muted) 58%, transparent); opacity:.72; }
+.oa-plan-status { display:grid; width:15px; height:15px; place-items:center; color:var(--oa-green); }
+.oa-plan-status > span { width:7px; height:7px; border:1px solid color-mix(in srgb, var(--oa-muted) 70%, transparent); border-radius:50%; }
+.oa-plan-placeholder, .oa-plan-step { overflow:hidden; color:var(--oa-muted); font-size:11px; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
+.oa-plan-step { margin-top:5px; padding-top:5px; border-top:1px solid color-mix(in srgb, var(--oa-border) 68%, transparent); }
+.oa-plan-card.is-complete .oa-plan-progress > span { background:color-mix(in srgb, var(--oa-green) 78%, #4b9b6c); }
+@media (max-width:560px) {
+  .oa-plan-card { margin-bottom:6px; padding:9px 10px 8px; border-radius:12px; }
+  .oa-plan-list { max-height:105px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .oa-plan-progress > span { transition:none; }
+}

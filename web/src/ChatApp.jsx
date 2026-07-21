@@ -1758,6 +1758,37 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
   )
 }
 
+function PlanTodoCard({ plan }) {
+  if (!plan?.active) return null
+  const items = Array.isArray(plan.items) ? plan.items : []
+  const done = Number.isFinite(Number(plan.done)) ? Number(plan.done) : items.filter(item => item?.status === 'done').length
+  const total = Number.isFinite(Number(plan.total)) ? Number(plan.total) : items.length
+  const currentIndex = items.findIndex(item => item?.status !== 'done')
+  const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0
+  return (
+    <section className={`oa-plan-card${plan.complete ? ' is-complete' : ''}`} aria-label="任务清单">
+      <header className="oa-plan-head">
+        <span className="oa-plan-title">任务清单</span>
+        <span className="oa-plan-count">{total > 0 ? `${done} / ${total}` : '准备中'}</span>
+      </header>
+      <div className="oa-plan-progress" aria-hidden="true"><span style={{ width: `${percent}%` }}/></div>
+      {plan.placeholder ? <div className="oa-plan-placeholder">正在整理步骤 · {plan.pathHint || 'plan.md'}</div> : (
+        <ol className="oa-plan-list">
+          {items.map((item, index) => {
+            const complete = item?.status === 'done'
+            const current = !complete && index === currentIndex
+            return <li key={`${index}-${item?.content || ''}`} className={`${complete ? 'is-done' : 'is-open'}${current ? ' is-current' : ''}`}>
+              <span className="oa-plan-status" aria-hidden="true">{complete ? <Check size={13}/> : current ? <Clock3 size={12}/> : <span/>}</span>
+              <span>{item?.content || `步骤 ${index + 1}`}</span>
+            </li>
+          })}
+        </ol>
+      )}
+      {plan.step && <div className="oa-plan-step">当前：{plan.step}</div>}
+    </section>
+  )
+}
+
 function CustomSelect({ value, onChange, options, disabled }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()
@@ -1819,6 +1850,7 @@ export default function ChatApp() {
   const [rawHistory, setRawHistory] = useState([])
   const [historyInfo, setHistoryInfo] = useState([])
   const [workingState, setWorkingState] = useState(null)
+  const [planState, setPlanState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
@@ -2042,6 +2074,7 @@ export default function ChatApp() {
 
   const applyStreamEvent = (ev, pendingId, clientUserID = '', sessionId = '') => {
     if (!isActiveSession(sessionId)) return
+    if (Object.prototype.hasOwnProperty.call(ev, 'plan')) setPlanState(ev.plan || null)
     if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
       setSessions(xs => xs.map(x => x.id === sessionId ? {
         ...x,
@@ -2338,6 +2371,7 @@ export default function ChatApp() {
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
+    setPlanState(d.plan || null)
     setLlmNo(d.settings?.llm_no || 0)
     setErr('')
     setNotice('')
@@ -2373,7 +2407,7 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
     await loadChatState(d.id, openToken)
   }
 
@@ -2450,6 +2484,7 @@ export default function ChatApp() {
         setRawHistory([])
         setHistoryInfo([])
         setWorkingState(null)
+        setPlanState(null)
         setContextOpen(false)
         setBusy(false)
         setStreamingSid('')
@@ -2783,7 +2818,7 @@ export default function ChatApp() {
       optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
       const sourceMessageID = String(item.sourceUserMessageId || '').trim()
-      setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
+      setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
       if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
@@ -3205,6 +3240,7 @@ export default function ChatApp() {
       </section>
 
       <footer className="oa-composer-wrap">
+        <PlanTodoCard plan={planState}/>
         {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
