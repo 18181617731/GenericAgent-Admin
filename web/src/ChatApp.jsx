@@ -1759,32 +1759,77 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
 }
 
 function PlanTodoCard({ plan }) {
-  if (!plan?.active) return null
-  const items = Array.isArray(plan.items) ? plan.items : []
-  const done = Number.isFinite(Number(plan.done)) ? Number(plan.done) : items.filter(item => item?.status === 'done').length
-  const total = Number.isFinite(Number(plan.total)) ? Number(plan.total) : items.length
+  const listRef = useRef(null)
+  const active = Boolean(plan?.active)
+  const items = Array.isArray(plan?.items) ? plan.items : []
+  const done = Number.isFinite(Number(plan?.done)) ? Number(plan.done) : items.filter(item => item?.status === 'done').length
+  const total = Number.isFinite(Number(plan?.total)) ? Number(plan.total) : items.length
   const currentIndex = items.findIndex(item => item?.status !== 'done')
   const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0
+  const complete = Boolean(plan?.complete)
+  const placeholder = Boolean(plan?.placeholder)
+  useLayoutEffect(() => {
+    if (!active || placeholder || currentIndex < 0) return
+    const list = listRef.current
+    const current = list?.querySelector('[aria-current="step"]')
+    if (!list || !current) return
+    const revealCurrent = () => {
+      const listRect = list.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
+      if (currentRect.top < listRect.top) list.scrollTop -= listRect.top - currentRect.top + 6
+      else if (currentRect.bottom > listRect.bottom) list.scrollTop += currentRect.bottom - listRect.bottom + 6
+    }
+    revealCurrent()
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(revealCurrent)
+    resizeObserver?.observe(list)
+    resizeObserver?.observe(current)
+    window.addEventListener('resize', revealCurrent)
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', revealCurrent)
+    }
+  }, [active, currentIndex, placeholder, total])
+  if (!active) return null
+  const stateLabel = complete ? '已完成' : placeholder ? '规划中' : total > 0 ? '执行中' : '准备中'
+  const detailLabel = complete
+    ? '所有步骤均已完成'
+    : placeholder
+      ? '正在生成可执行步骤'
+      : currentIndex >= 0 && total > 0
+        ? `正在处理第 ${currentIndex + 1} 步`
+        : '等待任务步骤'
   return (
-    <section className={`oa-plan-card${plan.complete ? ' is-complete' : ''}`} aria-label="任务清单">
+    <section className={`oa-plan-card${complete ? ' is-complete' : ''}`} aria-label="任务执行计划">
       <header className="oa-plan-head">
-        <span className="oa-plan-title">任务清单</span>
-        <span className="oa-plan-count">{total > 0 ? `${done} / ${total}` : '准备中'}</span>
+        <div className="oa-plan-identity">
+          <span className="oa-plan-mark" aria-hidden="true">{complete ? <Check size={15}/> : <Clock3 size={14}/>}</span>
+          <span className="oa-plan-heading">
+            <span className="oa-plan-title">执行计划</span>
+            <span className="oa-plan-detail">{detailLabel}</span>
+          </span>
+        </div>
+        <div className="oa-plan-summary">
+          <span className="oa-plan-state"><i aria-hidden="true"/>{stateLabel}</span>
+          <span className="oa-plan-count" aria-label={`已完成 ${done} 项，共 ${total} 项`}><strong>{done}</strong><span>/ {total}</span></span>
+        </div>
       </header>
-      <div className="oa-plan-progress" aria-hidden="true"><span style={{ width: `${percent}%` }}/></div>
-      {plan.placeholder ? <div className="oa-plan-placeholder">正在整理步骤 · {plan.pathHint || 'plan.md'}</div> : (
-        <ol className="oa-plan-list">
+      <div className="oa-plan-progress" role="progressbar" aria-label="任务完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}>
+        <span style={{ width: `${percent}%` }}/>
+      </div>
+      {placeholder ? <div className="oa-plan-placeholder"><span aria-hidden="true"/><span>正在整理步骤</span><code title={plan.pathHint || 'plan.md'}>{plan.pathHint || 'plan.md'}</code></div> : (
+        <ol ref={listRef} className="oa-plan-list">
           {items.map((item, index) => {
-            const complete = item?.status === 'done'
-            const current = !complete && index === currentIndex
-            return <li key={`${index}-${item?.content || ''}`} className={`${complete ? 'is-done' : 'is-open'}${current ? ' is-current' : ''}`}>
-              <span className="oa-plan-status" aria-hidden="true">{complete ? <Check size={13}/> : current ? <Clock3 size={12}/> : <span/>}</span>
-              <span>{item?.content || `步骤 ${index + 1}`}</span>
+            const itemComplete = item?.status === 'done'
+            const current = !itemComplete && index === currentIndex
+            return <li key={`${index}-${item?.content || ''}`} className={`${itemComplete ? 'is-done' : 'is-open'}${current ? ' is-current' : ''}`} aria-current={current ? 'step' : undefined}>
+              <span className="oa-plan-status" aria-hidden="true">{itemComplete ? <Check size={11}/> : current ? <Clock3 size={10}/> : <span>{index + 1}</span>}</span>
+              <span className="oa-plan-copy">{item?.content || `步骤 ${index + 1}`}</span>
+              {current && <span className="oa-plan-now">当前</span>}
             </li>
           })}
         </ol>
       )}
-      {plan.step && <div className="oa-plan-step">当前：{plan.step}</div>}
+      {plan.step && <div className="oa-plan-step"><span>当前动作</span><p>{plan.step}</p></div>}
     </section>
   )
 }
