@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { isBTWCommand, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -2081,8 +2081,7 @@ export default function ChatApp() {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
         if (m.id !== pendingId) return m
         const elapsedMs = getElapsedMs(m)
-        const finalMsg = { ...ev.message }
-        if ((!finalMsg.model_id || !String(finalMsg.model_id).trim()) && m.model_id) finalMsg.model_id = m.model_id
+        const finalMsg = mergeFinalStreamMessage(m, ev.message)
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         return finalMsg
