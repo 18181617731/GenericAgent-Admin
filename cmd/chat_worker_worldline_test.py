@@ -196,6 +196,27 @@ class WorldlineSidecarTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             worker._bind_worldline_head(self.store, self.root, 'sid-1', req)
 
+    def test_worldline_store_is_initialized_only_by_an_activating_request(self):
+        emitted = []
+        with mock.patch.object(worker, '_resolve_request_root', return_value=self.root), \
+             mock.patch.object(worker, '_apply_workspace', return_value=None), \
+             mock.patch.object(worker, '_ensure_worldline_store', return_value=self.store) as ensure, \
+             mock.patch.object(worker, '_worldline_nodes', return_value={'nodes': []}), \
+             mock.patch.object(worker, '_snapshot_backend_history', return_value=[]), \
+             mock.patch.object(worker, '_snapshot_ga_state', return_value={}), \
+             mock.patch.object(worker, 'emit', side_effect=emitted.append):
+            worker.handle_worldline_request(object(), {
+                'action': 'bind', 'sid': 'sid-1',
+            })
+            ensure.assert_not_called()
+            self.assertEqual(emitted[-1]['tree']['sidecar_status'], 'inactive')
+
+            worker.handle_worldline_request(object(), {
+                'activate': True, 'action': 'list', 'sid': 'sid-1',
+            })
+            ensure.assert_called_once_with(mock.ANY, self.root, None)
+            self.assertEqual(emitted[-1]['tree'], {'nodes': []})
+
     def test_mapped_restore_uses_core_conv_mode_and_returns_display_mapping(self):
         worker._bind_worldline_head(self.store, self.root, 'sid-1', {
             'node_id': 'b', 'turn_status': 'completed', 'has_final_answer': True,
@@ -214,7 +235,7 @@ class WorldlineSidecarTests(unittest.TestCase):
              mock.patch.object(worker, 'emit', side_effect=emitted.append), \
              mock.patch('frontends.worldline.restore_plan', return_value=restore_result) as restore:
             worker.handle_worldline_request(object(), {
-                'action': 'restore_mapped', 'sid': 'sid-1', 'node_id': 'b'
+                'activate': True, 'action': 'restore_mapped', 'sid': 'sid-1', 'node_id': 'b'
             })
         restore.assert_called_once_with(self.store, 'b', mode='conv', to='at')
         apply_restore.assert_called_once()
@@ -238,7 +259,7 @@ class WorldlineSidecarTests(unittest.TestCase):
              mock.patch.object(worker, 'emit', side_effect=emitted.append), \
              mock.patch('frontends.worldline.restore_plan', return_value=restore_result) as restore:
             worker.handle_worldline_request(object(), {
-                'action': 'restore', 'sid': 'sid-1', 'node_id': 'b',
+                'activate': True, 'action': 'restore', 'sid': 'sid-1', 'node_id': 'b',
                 'mode': 'conversation', 'to': 'before',
             })
         restore.assert_called_once_with(self.store, 'b', mode='conv', to='before')
@@ -286,7 +307,7 @@ class WorldlineSidecarTests(unittest.TestCase):
                  mock.patch.object(worker, '_snapshot_backend_history', return_value=[]), \
                  mock.patch.object(worker, '_snapshot_ga_state', return_value={}), \
                  mock.patch.object(worker, 'emit', side_effect=emitted.append):
-                worker.handle_worldline_request(object(), payload)
+                worker.handle_worldline_request(object(), dict(payload, activate=True))
             self.assertEqual(len(emitted), 1)
             return emitted[0]
 

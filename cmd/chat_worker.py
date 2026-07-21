@@ -1582,13 +1582,32 @@ def _apply_worldline_restore(agent, result):
 
 
 def handle_worldline_request(agent, req):
-    from frontends.worldline import restore_plan
     req = _normalize_request(req)
     root_for_req = _resolve_request_root(req.get('ga_root'), Path.cwd())
     workspace = _apply_workspace(agent, root_for_req, req.get('workspace'))
-    store = _ensure_worldline_store(agent, root_for_req, workspace)
     action = str(req.get('action') or 'state').lower()
     sid = _worldline_sid(req.get('sid'))
+    store = getattr(agent, '_admin_worldline_store', None)
+    if store is None and req.get('activate') is True:
+        store = _ensure_worldline_store(agent, root_for_req, workspace)
+    elif store is not None:
+        cwd = os.path.realpath(str(workspace or root_for_req))
+        if os.path.realpath(store.cwd) != cwd:
+            raise RuntimeError('worldline workspace changed within this chat session')
+    if store is None:
+        emit({
+            'type': 'worldline', 'action': action,
+            'tree': {
+                'schema_version': _WORLDLINE_PUBLIC_SCHEMA,
+                'root_id': None, 'head': None, 'current_path': [],
+                'sidecar_status': 'inactive', 'truncated': False, 'nodes': [],
+            },
+            'result': None, 'raw_history': _snapshot_backend_history(agent),
+            'history_info': _snapshot_ga_state(agent).get('history_info') or [],
+            'working': _snapshot_ga_state(agent).get('working') or {},
+        })
+        return
+    from frontends.worldline import restore_plan
     result = None
     if action == 'bind':
         result = _bind_worldline_head(store, root_for_req, sid, req)
@@ -1688,7 +1707,6 @@ def handle_request(agent, worker, req):
         _apply_reasoning_effort_setting(agent, reasoning_effort)
     _restore_ga_state(agent, history_info, working)
     applied_workspace = _apply_workspace(agent, root_for_req, req.get('workspace'))
-    _ensure_worldline_store(agent, root_for_req, applied_workspace)
     if applied_workspace and isinstance(working, dict):
         working['workspace'] = applied_workspace
         working['project_root'] = applied_workspace

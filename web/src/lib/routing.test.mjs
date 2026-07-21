@@ -10,7 +10,7 @@ test('parseRoute maps aliases and task sub tabs', () => {
   setLocation('http://localhost/goals')
   assert.deepEqual(parseRoute(), { tab: 'tasks', taskSubTab: 'runs' })
   setLocation('http://localhost/tmwd')
-  assert.deepEqual(parseRoute(), { tab: 'control', taskSubTab: 'services' })
+  assert.deepEqual(parseRoute(), { tab: 'overview', taskSubTab: 'services' })
 })
 
 test('parseRoute prefers hash routes', () => {

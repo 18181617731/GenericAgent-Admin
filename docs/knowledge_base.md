@@ -42,8 +42,7 @@ GenericAgent-Admin/
 │   │   └── config.go            # AppConfig struct, Store (JSON读写+验证)
 │   │
 │   ├── ga/               # GA 工作空间操作
-│   │   ├── control.go           # ControlPlane, BuildControlPlane (聚合平面)
-│   │   ├── inventory.go         # 库存扫描 (core/files/frontend/plugins/memory)
+│   │   ├── inventory.go         # 工作空间库存扫描 (core/files/frontend/plugins/memory)
 │   │   ├── health.go            # 健康检查
 │   │   ├── schedule.go          # 定时任务发现
 │   │   ├── log.go / report.go   # 日志/报告收集
@@ -123,7 +122,7 @@ main()
 | 类别 | 路由前缀 | 数量 | 说明 |
 |------|---------|------|------|
 | 健康/版本 | `/api/health`, `/api/version/*` | 5 | 健康检查 + 版本信息 + 自更新 |
-| GA 工作空间 | `/api/ga/*` | 8 | inventory, health, control, llms, git, processes |
+| GA 工作空间 | `/api/ga/*` | 7 | inventory, health, llms, git, processes |
 | 文件管理 | `/api/files/*` | 8 | list, read, write, delete, download, tail, search, open, image |
 | 服务管理 | `/api/services/*` | 5 | list, summary, start, stop, autostart |
 | 定时任务 | `/api/schedule/*` | 6 | tasks, task CRUD, toggle, artifact |
@@ -170,25 +169,16 @@ const api = async (url, { dangerous = false, ... } = {}) => {
 
 ## 四、关键设计模式
 
-### 4.1 控制平面模式 (ControlPlane)
+### 4.1 工作空间库存与健康聚合
 
-`internal/ga/control.go` 实现了一个聚合"控制平面"：
+`internal/ga/inventory.go` 和 `internal/ga/health.go` 分别提供工作空间扫描与健康检查：
 
 ```go
-type ControlPlane struct {
-    OK           bool
-    Workspace    WorkspaceSummary   // GA 根目录 + Python/内存/计划状态
-    Models       ModelSummary       // 模型配置文件状态
-    Logs         LogSummary         // 最近日志收集
-    Capabilities []Capability       // 已发现的能力清单
-    Risks        []RiskItem         // 风险提示
-    Reports      []ReportItem       // 报告文件列表
-    Readiness    []RiskItem         // 就绪状态
-    Metrics      map[string]int     // 统计指标
-}
+inventory := ga.BuildInventory(root)
+health := ga.BuildHealth(root)
 ```
 
-**用途**: 前端 Dashboard 一次 API 调用获取全部状态信息。
+**用途**: 总览按需读取稳定的库存与健康数据；两条能力链彼此独立，避免为单个页面引入额外的聚合状态对象。
 
 ### 4.2 服务管理 (进程生命周期)
 
@@ -264,8 +254,8 @@ JS 端 (`web/src/lib/dangerous_api_contract.test.mjs`):
 
 ### 5.1 命名约定
 - **包名**: 全小写，简短 (api, config, ga, service, version)
-- **导出类型**: PascalCase (Server, AppConfig, ControlPlane, ServiceInfo)
-- **未导出函数**: camelCase (buildWorkspaceSummary, readStatusLocked)
+- **导出类型**: PascalCase (`Server`, `AppConfig`, `Inventory`, `Health`, `ServiceInfo`)
+- **未导出函数**: camelCase (`buildMemory`, `readStatusLocked`)
 - **JSON 标签**: snake_case (`json:"ga_root"`)
 - **测试函数**: `Test` + PascalCase (TestDangerousConfirmWrapperRejectsMissingHeader)
 

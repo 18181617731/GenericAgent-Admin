@@ -291,6 +291,89 @@ describe('chat response model identity', () => {
 
     expect(container.querySelector('.oa-usage-time')?.textContent).toContain('4s')
   })
+
+  test('renders an explicit empty result for a worldline command', () => {
+    render(
+      <ChatMessage
+        message={{ id: 'worldline-empty', role: 'assistant', commandResult: { command:'worldline', action:'list', tree:{ nodes:[] } } }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('0 个世界线节点')).toBeTruthy()
+  })
+
+  test('edits and resends a terminal user message, then closes the editor on success', async () => {
+    const onEditResend = vi.fn().mockResolvedValue(undefined)
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'user-edit-ok', role: 'user', content: 'original text' }}
+        pending={false}
+        onAskReply={vi.fn()}
+        onEditResend={onEditResend}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '\u7f16\u8f91\u5e76\u91cd\u65b0\u53d1\u9001' }))
+    const editor = screen.getByRole('textbox', { name: '\u7f16\u8f91\u5df2\u53d1\u9001\u6d88\u606f' })
+    fireEvent.change(editor, { target: { value: '  revised text  ' } })
+    fireEvent.click(screen.getByRole('button', { name: '\u53d1\u9001' }))
+
+    await waitFor(() => expect(onEditResend).toHaveBeenCalledWith('user-edit-ok', 'revised text'))
+    await waitFor(() => expect(container.querySelector('.oa-message-editor')).toBeNull())
+  })
+
+  test('keeps the edited draft and exposes the error when resend fails', async () => {
+    const onEditResend = vi.fn().mockRejectedValue(new Error('resend failed'))
+    render(
+      <ChatMessage
+        message={{ id: 'user-edit-fail', role: 'user', content: 'original text' }}
+        pending={false}
+        onAskReply={vi.fn()}
+        onEditResend={onEditResend}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '\u7f16\u8f91\u5e76\u91cd\u65b0\u53d1\u9001' }))
+    const editor = screen.getByRole('textbox', { name: '\u7f16\u8f91\u5df2\u53d1\u9001\u6d88\u606f' })
+    fireEvent.change(editor, { target: { value: 'draft survives' } })
+    fireEvent.click(screen.getByRole('button', { name: '\u53d1\u9001' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('resend failed')
+    expect(screen.getByRole('textbox', { name: '\u7f16\u8f91\u5df2\u53d1\u9001\u6d88\u606f' }).value).toBe('draft survives')
+  })
+
+  test('disables edit-resend while the current conversation is running', () => {
+    render(
+      <ChatMessage
+        message={{ id: 'user-edit-busy', role: 'user', content: 'cannot edit yet' }}
+        pending={false}
+        onAskReply={vi.fn()}
+        onEditResend={vi.fn()}
+        editDisabled
+      />,
+    )
+
+    const editButton = screen.getByRole('button', { name: '\u7f16\u8f91\u5e76\u91cd\u65b0\u53d1\u9001' })
+    expect(editButton.disabled).toBe(true)
+    fireEvent.click(editButton)
+    expect(screen.queryByRole('textbox', { name: '\u7f16\u8f91\u5df2\u53d1\u9001\u6d88\u606f' })).toBeNull()
+  })
+
+  test('renders worldline node IDs so a restore command can reference them', () => {
+    render(
+      <ChatMessage
+        message={{ id: 'worldline-nodes', role: 'assistant', commandResult: { command:'worldline', action:'list', tree:{ nodes:[{ id:'node-42', title:'Checkpoint' }] } } }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('node-42')).toBeTruthy()
+    expect(screen.getByText('Checkpoint')).toBeTruthy()
+  })
 })
 
 

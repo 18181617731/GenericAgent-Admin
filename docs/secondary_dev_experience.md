@@ -58,14 +58,14 @@ gitnexus context main  # 找到 main.go:main → 追踪启动链路
 
 ### 3.1 从符号名出发
 ```bash
-# 追踪一个 handler 的完整调用链
-gitnexus context gaControl --repo GenericAgent-Admin
+# 追踪一个工作空间 handler 的完整调用链
+gitnexus context gaInventory --repo GenericAgent-Admin-Go
 ```
 输出：
 ```
-gaControl (api.go:271)
+gaInventory (api.go:242)
   incoming: Routes → Server
-  outgoing calls: writeJSON, bad, BuildControlPlane
+  outgoing calls: writeJSON, bad, BuildInventory
   outgoing accesses: CfgStore
 ```
 
@@ -97,8 +97,8 @@ gitnexus query "route handler pattern" --repo GenericAgent-Admin
 | 维度 | GA-Admin 规范 | 提取方式 |
 |------|-------------|---------|
 | 包名 | `api`, `ga`, `version` (全小写简短) | `ls internal/` |
-| 导出类型 | `Server`, `ControlPlane`, `ServiceInfo` | `grep "type [A-Z]" internal/` |
-| 未导出函数 | `buildWorkspaceSummary`, `readStatusLocked` | `grep "func [a-z]" internal/` |
+| 导出类型 | `Server`, `Inventory`, `Health`, `ServiceInfo` | `grep "type [A-Z]" internal/` |
+| 未导出函数 | `buildMemory`, `readStatusLocked` | `grep "func [a-z]" internal/` |
 | JSON 标签 | `json:"ga_root"`, `json:"log_tail_lines"` | 扫 struct 定义 |
 | 测试函数 | `TestDangerousConfirmWrapperRejectsMissingHeader` | `grep "func Test" internal/` |
 

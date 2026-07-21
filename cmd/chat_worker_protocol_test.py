@@ -3,6 +3,7 @@ import os
 import queue
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -93,6 +94,12 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(done["reasoning_effort"], "high")
         self.assertIn("usage", done)
         self.assertIn("usages", done)
+
+    def test_ordinary_request_does_not_initialize_worldline(self):
+        agent = FakeAgent()
+        with mock.patch.object(chat_worker, "_ensure_worldline_store") as ensure:
+            chat_worker.handle_request(agent, FakeWorker(), self.request("ordinary prompt"))
+        ensure.assert_not_called()
 
     def test_extra_system_prompts_are_replaced_and_cleared_each_turn(self):
         agent = FakeAgent()

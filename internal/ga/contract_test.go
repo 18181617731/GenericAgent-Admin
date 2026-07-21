@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -285,25 +284,5 @@ func TestToggleTaskReportsBackupWriteError(t *testing.T) {
 	}
 	if _, err := ToggleTask(root, "toggle-backup", false); err == nil {
 		t.Fatal("expected toggle backup write error")
-	}
-}
-
-func TestReadProjectVersionSkipsOversizedLinesAndCapsScan(t *testing.T) {
-	root := t.TempDir()
-	pyproject := filepath.Join(root, "pyproject.toml")
-	content := "[project]\n" + strings.Repeat("x", maxProjectVersionLineBytes+4096) + "\nversion = \"1.2.3\"\n"
-	if err := os.WriteFile(pyproject, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if got := readProjectVersion(pyproject); got != "1.2.3" {
-		t.Fatalf("version after oversized line = %q, want 1.2.3", got)
-	}
-
-	huge := "[project]\n" + strings.Repeat("x", maxProjectVersionScanBytes+1) + "\nversion = \"9.9.9\"\n"
-	if err := os.WriteFile(pyproject, []byte(huge), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if got := readProjectVersion(pyproject); got != "" {
-		t.Fatalf("version beyond scan cap = %q, want empty", got)
 	}
 }

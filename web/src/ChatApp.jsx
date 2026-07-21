@@ -1700,6 +1700,7 @@ export default function ChatApp() {
   const [showFollow, setShowFollow] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
+  const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
   const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
   const [cfg, setCfg] = useState(null)
   const [cmdEditIdx, setCmdEditIdx] = useState(-1)
@@ -1989,6 +1990,11 @@ export default function ChatApp() {
   const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
     const batcher = createStreamBatcher(pendingId, sessionId)
+    let commandPatch = null
+    const applyEvent = (ev) => {
+      if (ev?.type === 'command_result') commandPatch = reduceCommandResult(ev)
+      applyStreamEvent(ev, pendingId, clientUserID, sessionId)
+    }
     try {
       while (true) {
         const { value, done } = await reader.read()
@@ -2003,18 +2009,19 @@ export default function ChatApp() {
             batcher.push(ev.delta)
           } else {
             batcher.flushNow()
-            applyStreamEvent(ev, pendingId, clientUserID, sessionId)
+            applyEvent(ev)
           }
         }
       }
       if (buf.trim() && isActiveSession(sessionId)) {
         const ev = JSON.parse(buf)
         if (ev.type === 'delta' && typeof ev.delta === 'string') batcher.push(ev.delta)
-        else { batcher.flushNow(); applyStreamEvent(ev, pendingId, clientUserID, sessionId) }
+        else { batcher.flushNow(); applyEvent(ev) }
       }
     } finally {
       batcher.flushNow()
     }
+    return commandPatch
   }
 
   const cancelRun = async (id = sid) => {
@@ -2085,6 +2092,7 @@ export default function ChatApp() {
   }
 
   const openSession = async (id, refreshList = true) => {
+    setWorldlineRestorePicker(null)
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
     streamAbortRef.current?.abort?.()
@@ -2500,6 +2508,17 @@ export default function ChatApp() {
     setTimeout(focusPrompt, 0)
   }, [])
 
+  const editAndResend = async (messageId, text) => {
+    const item = buildEditResendItem({
+      sessionId: activeSidRef.current,
+      messageId,
+      text,
+      busy,
+      streamingSid,
+    })
+    await runSend(item)
+  }
+
   const runSend = async (item = {}) => {
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
@@ -2512,6 +2531,9 @@ export default function ChatApp() {
     const targetSessionID = item.sessionId || sid
     setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
     let id = targetSessionID
+    let commandPatch = null
+    let optimistic = null
+    let pending = null
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -2529,16 +2551,29 @@ export default function ChatApp() {
       setAutoFollow(true); setShowFollow(false)
       const fileNote = files.length ? `\n\n[附件]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
       const attachmentPrompt = text || '请处理这些附件'
-      const optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
-      const pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
+      pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
-      setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
-      const payload = { prompt:attachmentPrompt, files, settings:{ llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort }, client_user_id:clientUserID }
+      if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
+      const payload = buildChatRunPayload({
+        prompt: attachmentPrompt,
+        files,
+        settings: { llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort },
+        clientUserID,
+        sourceUserMessageId: sourceMessageID,
+      })
       const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
-      await readStream(res, pending.id, clientUserID, id)
+      if (sourceMessageID) setMessages(xs => {
+        if (!isActiveSession(id)) return xs
+        const cutIdx = xs.findIndex(message => String(message.id) === sourceMessageID)
+        if (cutIdx < 0) return xs
+        return [...xs.slice(0, cutIdx), optimistic, pending]
+      })
+      commandPatch = await readStream(res, pending.id, clientUserID, id)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
@@ -2547,6 +2582,33 @@ export default function ChatApp() {
       if (id) {
         await loadSessions(id).catch(()=>{})
         await openSession(id, false).catch(()=>{})
+        if (commandPatch?.commandResult && optimistic && pending && isActiveSession(id)) {
+          const showWorldlinePicker = isWorldlinePickerResult(commandPatch.commandResult)
+          const resultMessage = {
+            ...pending,
+            content: commandResultSummary(commandPatch.commandResult),
+            commandResult: commandPatch.commandResult,
+            run_started_at_ms: undefined,
+          }
+          setMessages(xs => {
+            if (!isActiveSession(id)) return xs
+            const baseMessages = showWorldlinePicker ? xs.filter(m => m.id !== pending.id) : xs
+            const hasUser = baseMessages.some(m => m.id === optimistic.id)
+            return [...baseMessages, ...(hasUser ? [] : [optimistic]), ...(showWorldlinePicker ? [] : [resultMessage])]
+          })
+          if (Object.prototype.hasOwnProperty.call(commandPatch, 'prefill')) setPrompt(commandPatch.prefill)
+          if (showWorldlinePicker) {
+            setWorldlineRestorePicker({ nodes:commandPatch.commandResult.tree.nodes, sessionID:id })
+          }
+          if (commandPatch.download) {
+            const blob = new Blob([commandPatch.download.content], { type:commandPatch.download.mime })
+            const url = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = url; link.download = commandPatch.download.filename
+            document.body.appendChild(link); link.click(); link.remove()
+            URL.revokeObjectURL(url)
+          }
+        }
       }
       const next = popQueued()
       if (next) {
@@ -2558,6 +2620,20 @@ export default function ChatApp() {
       }
     }
   }
+
+  const selectWorldlineRestoreNode = useCallback((nodeID, mode, target) => {
+    const command = worldlineRestoreCommand(nodeID, mode, target)
+    if (!command) return
+    setPrompt(command)
+    setWorldlineRestorePicker(null)
+    setNotice('已填入恢复命令，确认后发送')
+    window.setTimeout(() => {
+      const input = promptRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange?.(command.length, command.length)
+    }, 0)
+  }, [])
 
   const expandCustomSlashCommand = useCallback((value) => {
     const raw = String(value || '').trim()
@@ -3056,6 +3132,7 @@ export default function ChatApp() {
       </footer>
     </main>
 
+    {worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
         <header className="oa-session-manager-dialog-head">

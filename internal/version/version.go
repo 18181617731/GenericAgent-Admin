@@ -604,7 +604,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if runtime.GOOS == "windows" {
 		binName = "ga-admin.exe"
 	}
-	newExe, err := findFile(dir, binName)
+	newExe, newWorker, err := updatePayload(dir, check.Asset.Name, binName)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -1342,22 +1342,43 @@ func unzip(src, dest string) error {
 	return nil
 }
 
-func findFile(dir, name string) (string, error) {
-	var hits []string
-	if err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.EqualFold(d.Name(), name) {
-			hits = append(hits, p)
-		}
-		return nil
-	}); err != nil {
-		return "", fmt.Errorf("walk package for %s: %w", name, err)
+func updatePayload(dir, assetName, binName string) (string, string, error) {
+	assetBase := filepath.Base(assetName)
+	if assetBase != assetName || !strings.HasSuffix(assetBase, ".zip") {
+		return "", "", fmt.Errorf("invalid update asset name %q", assetName)
 	}
-	sort.Strings(hits)
-	if len(hits) == 0 {
-		return "", fmt.Errorf("%s not found in package", name)
+	rootName := strings.TrimSuffix(assetBase, ".zip")
+	if rootName == "" {
+		return "", "", fmt.Errorf("invalid update asset name %q", assetName)
 	}
-	return hits[0], nil
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", "", fmt.Errorf("read extracted update package: %w", err)
+	}
+	if len(entries) != 1 || !entries[0].IsDir() || entries[0].Name() != rootName {
+		return "", "", fmt.Errorf("update package must contain exactly one top-level directory named %q", rootName)
+	}
+
+	root := filepath.Join(dir, rootName)
+	newExe := filepath.Join(root, binName)
+	if err := requireRegularFile(newExe, binName); err != nil {
+		return "", "", err
+	}
+	newWorker := filepath.Join(root, "cmd", "chat_worker.py")
+	if err := requireRegularFile(newWorker, "cmd/chat_worker.py"); err != nil {
+		return "", "", err
+	}
+	return newExe, newWorker, nil
+}
+
+func requireRegularFile(path, label string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%s missing from update package: %w", label, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s in update package is not a regular file", label)
+	}
+	return nil
 }

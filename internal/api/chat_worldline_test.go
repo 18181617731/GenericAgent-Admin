@@ -393,6 +393,14 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	installWorldlineTestWorker(t, s, sid)
+	var stateActivations []bool
+	s.chatWorldlineRPCHook = func(_ string, req map[string]interface{}) error {
+		if req["action"] == "state" {
+			active, _ := req["activate"].(bool)
+			stateActivations = append(stateActivations, active)
+		}
+		return nil
+	}
 
 	switchBranch := func(server *Server, node string) {
 		t.Helper()
@@ -438,10 +446,16 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	switchBranch(s, "right")
 	resend(s, "u-right", "edited right")
 	assertExact("edited-u-right", "edited right")
+	if len(stateActivations) != 1 || !stateActivations[0] {
+		t.Fatalf("resend state activation after first edit = %#v, want [true]", stateActivations)
+	}
 
 	switchBranch(s, "left")
 	resend(s, "u-left", "edited left")
 	assertExact("edited-u-left", "edited left")
+	if len(stateActivations) != 2 || !stateActivations[1] {
+		t.Fatalf("resend state activation after second edit = %#v, want [true true]", stateActivations)
+	}
 
 	// A fresh server must observe the same exact terminal branch, with no stale sibling messages merged back in.
 	s2 := New(s.CfgStore, s.Svc, s.Models, s.Static)

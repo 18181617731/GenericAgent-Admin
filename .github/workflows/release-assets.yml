@@ -175,7 +175,7 @@ jobs:
           GenericAgent services still require your local GenericAgent Python environment.
           EOF
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            powershell -NoProfile -Command "Compress-Archive -Path '$name/*' -DestinationPath 'package/$name.zip' -Force"
+            powershell -NoProfile -Command "Compress-Archive -Path '$name' -DestinationPath 'package/$name.zip' -Force"
           else
             zip -r "package/$name.zip" "$name"
           fi
