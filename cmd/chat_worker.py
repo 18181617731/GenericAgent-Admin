@@ -776,18 +776,18 @@ def _maybe_handle_ultraplan_command(root, prompt):
     not synthesize or execute an orchestration script on the agent's behalf.
     """
     s = (prompt or '').strip()
-    command = None
-    for candidate in ('/ultraplan', '/ultralplan'):
-        if s == candidate or s.startswith(candidate + ' ') or s.startswith(candidate + '\t'):
-            command = candidate
-            break
-    if command is None:
+    command = '/ultraplan'
+    if not (
+        s == command
+        or s.startswith(command + ' ')
+        or s.startswith(command + '\t')
+    ):
         return None, prompt, None
     objective = s[len(command):].strip()
     if not objective:
         return None, None, (
             'UltraPlan mode is explicit opt-in only.\n\n'
-            'Usage: `/ultraplan <objective>` (alias: `/ultralplan <objective>`)\n\n'
+            'Usage: `/ultraplan <objective>`\n\n'
             'Normal chat is unchanged; this command opts the current ordinary Agent '
             'into the official `memory/ultraplan_sop.md` protocol.'
         )

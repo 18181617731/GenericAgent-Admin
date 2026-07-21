@@ -124,32 +124,49 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(error["reasoning_effort"], "high")
         self.assertIn("usage", error)
         self.assertIn("usages", error)
-    def test_ultraplan_alias_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
-        for command in ("/ultraplan ship feature", "/ultralplan ship feature"):
-            with self.subTest(command=command):
-                self.events.clear()
-                agent = FakeAgent()
-                with mock.patch.object(
-                    chat_worker, "_capture_ultraplan_dashboard_baseline", return_value={}
-                ) as capture, mock.patch.object(
-                    chat_worker, "_observe_ultraplan_daemon", return_value=None
-                ) as observe:
-                    chat_worker.handle_request(agent, FakeWorker(), self.request(command))
 
-                self.assertEqual(len(agent.prompts), 1)
-                rendered, source = agent.prompts[0]
-                self.assertEqual(source, "admin_chat")
-                self.assertIn("Objective: ship feature", rendered)
-                self.assertIn("memory", rendered)
-                self.assertIn("ultraplan_sop.md", rendered)
-                self.assertNotIn("admin_chat_ultraplan.py", rendered)
-                self.assertNotIn("/exec", rendered)
-                self.assertEqual(
-                    [event["delta"] for event in self.events if event.get("type") == "delta"],
-                    ["res"],
-                )
-                capture.assert_called_once_with()
-                observe.assert_called_once()
+    def test_ultraplan_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
+        agent = FakeAgent()
+        with mock.patch.object(
+            chat_worker, "_capture_ultraplan_dashboard_baseline", return_value={}
+        ) as capture, mock.patch.object(
+            chat_worker, "_observe_ultraplan_daemon", return_value=None
+        ) as observe:
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("/ultraplan ship feature")
+            )
+
+        self.assertEqual(len(agent.prompts), 1)
+        rendered, source = agent.prompts[0]
+        self.assertEqual(source, "admin_chat")
+        self.assertIn("Objective: ship feature", rendered)
+        self.assertIn("memory", rendered)
+        self.assertIn("ultraplan_sop.md", rendered)
+        self.assertNotIn("admin_chat_ultraplan.py", rendered)
+        self.assertNotIn("/exec", rendered)
+        self.assertEqual(
+            [event["delta"] for event in self.events if event.get("type") == "delta"],
+            ["res"],
+        )
+        capture.assert_called_once_with()
+        observe.assert_called_once()
+
+    def test_ultralplan_typo_is_not_treated_as_ultraplan(self):
+        agent = FakeAgent()
+        with mock.patch.object(
+            chat_worker, "_capture_ultraplan_dashboard_baseline"
+        ) as capture, mock.patch.object(
+            chat_worker, "_observe_ultraplan_daemon"
+        ) as observe:
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("/ultralplan ship feature")
+            )
+
+        self.assertEqual(
+            agent.prompts, [("/ultralplan ship feature", "admin_chat")]
+        )
+        capture.assert_not_called()
+        observe.assert_not_called()
 
 
 class UltraPlanReadOnlyObserverTests(unittest.TestCase):
