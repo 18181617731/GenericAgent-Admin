@@ -1293,6 +1293,112 @@ func TestChatWorkerEnvironmentInjectsOnlyCurrentSessionID(t *testing.T) {
 	}
 }
 
+func TestChatPlanNormalizationRepairsLegacyMarkersWithoutMutatingSource(t *testing.T) {
+	plan := map[string]interface{}{
+		"active":      true,
+		"placeholder": "working",
+		"done":        float64(0),
+		"total":       float64(99),
+		"complete":    false,
+		"items": []interface{}{
+			map[string]interface{}{"content": "[D] [\u2713] [VERIFY] wired", "status": "open"},
+			map[string]interface{}{"content": "[P] pending", "status": "open"},
+			map[string]interface{}{"content": "[\u2714 2026-07-21 09:30 shipped]", "status": "open"},
+			map[string]interface{}{"content": "[VERIFY] keep semantic tag", "status": "done"},
+		},
+	}
+
+	got := normalizeChatPlan(plan)
+	items, ok := got["items"].([]interface{})
+	if !ok || len(items) != 4 {
+		t.Fatalf("normalized items=%#v", got["items"])
+	}
+	wantContent := []string{"[VERIFY] wired", "pending", "shipped", "[VERIFY] keep semantic tag"}
+	wantStatus := []string{"done", "open", "done", "done"}
+	for i := range items {
+		item, ok := items[i].(map[string]interface{})
+		if !ok || item["content"] != wantContent[i] || item["status"] != wantStatus[i] {
+			t.Fatalf("item[%d]=%#v want content=%q status=%q", i, items[i], wantContent[i], wantStatus[i])
+		}
+	}
+	if got["done"] != float64(3) || got["total"] != float64(4) || got["complete"] != false {
+		t.Fatalf("aggregates done=%#v total=%#v complete=%#v", got["done"], got["total"], got["complete"])
+	}
+
+	sourceItems := plan["items"].([]interface{})
+	firstSource := sourceItems[0].(map[string]interface{})
+	if firstSource["content"] != "[D] [\u2713] [VERIFY] wired" || firstSource["status"] != "open" {
+		t.Fatalf("source plan mutated: %#v", firstSource)
+	}
+	items[0].(map[string]interface{})["content"] = "changed"
+	if firstSource["content"] != "[D] [\u2713] [VERIFY] wired" {
+		t.Fatalf("normalized plan aliases source: %#v", firstSource)
+	}
+}
+
+func TestChatPlanNormalizationPersistsAndReloads(t *testing.T) {
+	cfg := config.AppConfig{ChatDataDir: t.TempDir()}
+	cs := chatSession{
+		ID: "legacy-plan",
+		Plan: map[string]interface{}{
+			"done":     float64(0),
+			"total":    float64(1),
+			"complete": false,
+			"items": []interface{}{
+				map[string]interface{}{"content": "[\u2713] [VERIFY] persisted", "status": "open"},
+			},
+		},
+	}
+	if err := saveChatSession(cfg, cs); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadChatSession(cfg, cs.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, ok := loaded.Plan["items"].([]interface{})
+	if !ok || len(items) != 1 {
+		t.Fatalf("loaded plan items=%#v", loaded.Plan["items"])
+	}
+	item := items[0].(map[string]interface{})
+	if item["content"] != "[VERIFY] persisted" || item["status"] != "done" {
+		t.Fatalf("loaded item=%#v", item)
+	}
+	if loaded.Plan["done"] != float64(1) || loaded.Plan["total"] != float64(1) || loaded.Plan["complete"] != true {
+		t.Fatalf("loaded aggregates=%#v", loaded.Plan)
+	}
+
+	raw, err := os.ReadFile(chatSessionPath(cfg, cs.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("[\\u2713]")) || bytes.Contains(raw, []byte("[\u2713]")) {
+		t.Fatalf("legacy marker remained on disk: %s", raw)
+	}
+	if !bytes.Contains(raw, []byte("[VERIFY] persisted")) {
+		t.Fatalf("semantic tag missing on disk: %s", raw)
+	}
+}
+
+func TestChatPlanFromEventNormalizesPlanOnly(t *testing.T) {
+	ev := map[string]interface{}{
+		"message": map[string]interface{}{"content": "assistant keeps [\u2713] verbatim"},
+		"plan": map[string]interface{}{
+			"items": []interface{}{map[string]interface{}{"content": "[\u2713] task", "status": "open"}},
+		},
+	}
+	got := chatPlanFromEvent(ev)
+	item := got["items"].([]interface{})[0].(map[string]interface{})
+	if item["content"] != "task" || item["status"] != "done" {
+		t.Fatalf("event plan not normalized: %#v", got)
+	}
+	message := ev["message"].(map[string]interface{})
+	if message["content"] != "assistant keeps [\u2713] verbatim" {
+		t.Fatalf("assistant prose was changed: %#v", message)
+	}
+}
+
 func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
