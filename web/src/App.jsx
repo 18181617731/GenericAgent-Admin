@@ -113,6 +113,17 @@ export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ga-admin-theme', theme) }, [theme])
   const t = I18N[lang] || I18N.en
+  const settingsText = lang === 'zh' ? {
+    title: '运行环境', summary: '集中管理 GA Admin 的本地路径与 Chat Python 网络环境。', configured: '配置已载入', unsavedHint: '修改后统一保存，写入前仍会二次确认。',
+    paths: '基础路径', pathsDesc: '确定 GenericAgent 与 Chat 运行时从哪里读取程序和会话数据。', rootHelp: 'GenericAgent 项目根目录，保存后会重新载入工作区。', pythonHelp: '留空时自动检测；仅在需要固定解释器时填写。', dataHelp: '留空时使用默认目录；可指定独立的 Chat 会话存储位置。',
+    network: '网络代理', networkDesc: '仅影响 Chat Python 子进程，不会更改系统全局代理。', proxyMode: '代理模式', proxyOff: '关闭', proxySystem: '跟随系统', proxyCustom: '自定义', proxyOffHelp: 'Chat Python 直接连接网络。', proxySystemHelp: '继承当前系统与进程环境中的代理配置。', proxyCustomHelp: '使用下方环境变量启动 Chat Python。',
+    commands: '斜杠命令参考', commandsDesc: '只读展示已配置命令；新增与管理请前往独立 Chat 页面。', commandCount: '条命令', noCommands: '暂无配置命令', saveAll: '保存全部配置'
+  } : {
+    title: 'Runtime environment', summary: 'Manage local paths and the Chat Python network environment in one place.', configured: 'Configuration loaded', unsavedHint: 'Save all changes together. A confirmation is still required before writing.',
+    paths: 'Base paths', pathsDesc: 'Define where GenericAgent and Chat load programs and conversation data.', rootHelp: 'GenericAgent project root. The workspace reloads after saving.', pythonHelp: 'Leave blank for automatic detection; set only when pinning an interpreter.', dataHelp: 'Leave blank for the default location, or use a dedicated Chat data directory.',
+    network: 'Network proxy', networkDesc: 'Applies only to Chat Python subprocesses and does not change the system-wide proxy.', proxyMode: 'Proxy mode', proxyOff: 'Off', proxySystem: 'Use system', proxyCustom: 'Custom', proxyOffHelp: 'Chat Python connects directly.', proxySystemHelp: 'Inherit proxy settings from the current system and process environment.', proxyCustomHelp: 'Launch Chat Python with the environment variables below.',
+    commands: 'Slash command reference', commandsDesc: 'Read-only list of configured commands. Add or manage them from the standalone Chat page.', commandCount: 'commands', noCommands: 'No commands configured', saveAll: 'Save all settings'
+  }
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
   const [cfg, setCfg] = useState(null), [health, setHealth] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
@@ -916,7 +927,77 @@ export default function App() {
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
       {tab==='autonomous' && <section><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={serviceActionStates[s.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
-      {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><div className="settings-block"><label>斜杠命令列表</label><p className="muted">在独立的 Chat 页面可管理命令。此处仅展示已配置的命令列表。</p>{(cfg?.slash_commands||[]).length > 0 ? (cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span className="muted">{item.desc}</span></div>)) : <p className="muted">暂无配置命令</p>}</div></Panel></section>}
+      {tab==='settings' && <section className="settings-page">
+        <div className="settings-console">
+          <div className="settings-intro">
+            <div className="settings-intro-copy">
+              <span className="settings-eyebrow"><SlidersHorizontal size={14}/>{t.nav.settings}</span>
+              <h2>{settingsText.title}</h2>
+              <p>{settingsText.summary}</p>
+            </div>
+            <div className="settings-save-area">
+              <span className={`settings-config-status${cfg ? ' ready' : ''}`}><CheckCircle2 size={14}/>{cfg ? settingsText.configured : t.busy}</span>
+              <button className="primary settings-save" type="button" onClick={saveConfig} disabled={busy || !cfg}><Save size={15}/>{busy ? t.busy : settingsText.saveAll}</button>
+            </div>
+          </div>
+          <div className="settings-save-note"><ShieldAlert size={14}/><span>{settingsText.unsavedHint}</span></div>
+
+          <div className="settings-section-grid">
+            <section className="settings-card settings-card-paths">
+              <header className="settings-card-head">
+                <span className="settings-card-icon"><FolderCog size={18}/></span>
+                <span><strong>{settingsText.paths}</strong><small>{settingsText.pathsDesc}</small></span>
+              </header>
+              <div className="settings-fields">
+                <label className="settings-field" htmlFor="settings-ga-root">
+                  <span>{t.root}</span><small>{settingsText.rootHelp}</small>
+                  <input id="settings-ga-root" value={root} onChange={e=>setRoot(e.target.value)}/>
+                </label>
+                <label className="settings-field" htmlFor="settings-python-path">
+                  <span>{t.fields.pythonPath}</span><small>{settingsText.pythonHelp}</small>
+                  <input id="settings-python-path" value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/>
+                </label>
+                <label className="settings-field" htmlFor="settings-chat-data">
+                  <span>{t.fields.chatDataDir}</span><small>{settingsText.dataHelp}</small>
+                  <input id="settings-chat-data" value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/>
+                </label>
+              </div>
+            </section>
+
+            <section className="settings-card settings-card-network">
+              <header className="settings-card-head">
+                <span className="settings-card-icon"><Globe2 size={18}/></span>
+                <span><strong>{settingsText.network}</strong><small>{settingsText.networkDesc}</small></span>
+              </header>
+              <div className="settings-fields">
+                <label className="settings-field" htmlFor="settings-proxy-mode">
+                  <span>{settingsText.proxyMode}</span>
+                  <select id="settings-proxy-mode" value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}>
+                    <option value="off">{settingsText.proxyOff}</option>
+                    <option value="system">{settingsText.proxySystem}</option>
+                    <option value="custom">{settingsText.proxyCustom}</option>
+                  </select>
+                  <small className="settings-mode-help">{(cfg?.proxy_mode || 'off') === 'custom' ? settingsText.proxyCustomHelp : (cfg?.proxy_mode || 'off') === 'system' ? settingsText.proxySystemHelp : settingsText.proxyOffHelp}</small>
+                </label>
+                {(cfg?.proxy_mode || 'off') === 'custom' && <div className="settings-proxy-grid">
+                  <label className="settings-field" htmlFor="settings-http-proxy"><span>HTTP_PROXY</span><input id="settings-http-proxy" value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></label>
+                  <label className="settings-field" htmlFor="settings-https-proxy"><span>HTTPS_PROXY</span><input id="settings-https-proxy" value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></label>
+                  <label className="settings-field" htmlFor="settings-all-proxy"><span>ALL_PROXY</span><input id="settings-all-proxy" value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></label>
+                  <label className="settings-field" htmlFor="settings-no-proxy"><span>NO_PROXY</span><input id="settings-no-proxy" value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></label>
+                </div>}
+              </div>
+            </section>
+          </div>
+
+          <details className="settings-commands">
+            <summary>
+              <span className="settings-command-summary"><span className="settings-card-icon"><Code2 size={18}/></span><span><strong>{settingsText.commands}</strong><small>{settingsText.commandsDesc}</small></span></span>
+              <span className="settings-command-count">{(cfg?.slash_commands || []).length} {settingsText.commandCount}</span>
+            </summary>
+            <div className="settings-command-list">{(cfg?.slash_commands||[]).length > 0 ? cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span>{item.desc}</span></div>) : <p className="settings-command-empty">{settingsText.noCommands}</p>}</div>
+          </details>
+        </div>
+      </section>}
       {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page">
         <div className="logs-layout">
