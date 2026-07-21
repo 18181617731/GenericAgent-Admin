@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { isBTWCommand } from './lib/chatStream.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -2654,6 +2655,26 @@ export default function ChatApp() {
     await runSend(item)
   }
 
+  const sendBTW = async (text, sessionId = activeSidRef.current || sid) => {
+    if (!sessionId) {
+      setNotice('请先打开一个对话再使用 /btw')
+      return
+    }
+    if (String(text || '').trim() === '/btw') {
+      setNotice('请在 /btw 后输入问题')
+      return
+    }
+    setErr(''); setNotice('')
+    try {
+      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:text }) })
+      if (!isActiveSession(sessionId)) return
+      if (data?.message) setMessages(xs => xs.some(m => m.id === data.message.id) ? xs : [...xs, data.message])
+      await loadSessions(sessionId)
+    } catch (e) {
+      if (isActiveSession(sessionId)) setErr(e.message || String(e))
+    }
+  }
+
   const runSend = async (item = {}) => {
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
@@ -2809,6 +2830,10 @@ export default function ChatApp() {
     setPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
+    if (isBTWCommand(text) && !files.length) {
+      await sendBTW(text)
+      return
+    }
     if (busy) {
       enqueueMessage(item)
       return
