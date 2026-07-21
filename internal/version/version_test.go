@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -237,35 +236,33 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`C:\Temp\cmd\frontends\worldline.py`,
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
 		`C:\Temp\restart-update.ps1`,
-		`C:\Temp\restart-update-launch.cmd`,
 	)
 	want := []string{
-		`set "OLD=C:\Program Files\GA Admin\ga-admin.exe"`,
-		`set "NEW=C:\Temp\new ga-admin.exe"`,
-		`set "BAK=C:\Program Files\GA Admin\ga-admin.exe.bak"`,
-		`set "WORKER=C:\Program Files\GA Admin\cmd\chat_worker.py"`,
-		`set "NEW_WORKER=C:\Temp\cmd\chat_worker.py"`,
-		`set "WORKER_BAK=C:\Program Files\GA Admin\cmd\chat_worker.py.bak"`,
-		`set "WORLDLINE=C:\Program Files\GA Admin\cmd\frontends\worldline.py"`,
-		`set "NEW_WORLDLINE=C:\Temp\cmd\frontends\worldline.py"`,
-		`set "WORLDLINE_BAK=C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak"`,
-		`set "RESTART_SCRIPT=C:\Temp\restart-update.ps1"`,
-		`set "RESTART_LAUNCHER=C:\Temp\restart-update-launch.cmd"`,
-		`move /Y "%OLD%" "%BAK%"`,
-		`move /Y "%NEW%" "%OLD%"`,
-		`move /Y "%NEW_WORKER%" "%WORKER%"`,
-		`move /Y "%NEW_WORLDLINE%" "%WORLDLINE%"`,
-		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
-		`/TR ^"^"%RESTART_LAUNCHER%^"^"`,
-		`if errorlevel 1 goto launch_failed`,
-		`:launch_failed`,
+		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
+		`$New = 'C:\Temp\new ga-admin.exe'`,
+		`$Backup = 'C:\Program Files\GA Admin\ga-admin.exe.bak'`,
+		`$Worker = 'C:\Program Files\GA Admin\cmd\chat_worker.py'`,
+		`$NewWorker = 'C:\Temp\cmd\chat_worker.py'`,
+		`$WorkerBackup = 'C:\Program Files\GA Admin\cmd\chat_worker.py.bak'`,
+		`$Worldline = 'C:\Program Files\GA Admin\cmd\frontends\worldline.py'`,
+		`$NewWorldline = 'C:\Temp\cmd\frontends\worldline.py'`,
+		`$WorldlineBackup = 'C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak'`,
+		`$RestartScript = 'C:\Temp\restart-update.ps1'`,
+		`$LogFile = Join-Path $PSScriptRoot 'apply-update.log'`,
+		`Move-Item -LiteralPath $Old -Destination $Backup`,
+		`Move-Item -LiteralPath $New -Destination $Old`,
+		`Move-Item -LiteralPath $NewWorker -Destination $Worker`,
+		`Move-Item -LiteralPath $NewWorldline -Destination $Worldline`,
+		`& $RestartScript`,
+		`$RestartExit = $LASTEXITCODE`,
+		`exit $RestartExit`,
 	}
 	for _, w := range want {
 		if !strings.Contains(script, w) {
 			t.Fatalf("script missing %q in:\n%s", w, script)
 		}
 	}
-	bad := []string{`set OLD=`, `set NEW=`, `set BAK=`, `set WORKER=`, `""C:\`, `%~dpWORKER%`}
+	bad := []string{`cmd.exe /D /Q /C`, `schtasks.exe`, `""C:\`, `%~dpWORKER%`}
 	for _, b := range bad {
 		if strings.Contains(script, b) {
 			t.Fatalf("script contains unsafe quoting %q in:\n%s", b, script)
@@ -273,17 +270,82 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 	}
 }
 
+func TestWindowsUpdateScriptReplacesRuntimeAndInvokesRestart(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows update script contract")
+	}
+	root := filepath.Join(t.TempDir(), "update files")
+	installed := filepath.Join(root, "installed")
+	staged := filepath.Join(root, "staged")
+	if err := os.MkdirAll(filepath.Join(installed, "cmd", "frontends"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(staged, "cmd", "frontends"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldExe := filepath.Join(installed, "ga-admin.exe")
+	newExe := filepath.Join(staged, "ga-admin.exe")
+	worker := filepath.Join(installed, "cmd", "chat_worker.py")
+	newWorker := filepath.Join(staged, "cmd", "chat_worker.py")
+	worldline := filepath.Join(installed, "cmd", "frontends", "worldline.py")
+	newWorldline := filepath.Join(staged, "cmd", "frontends", "worldline.py")
+	for path, content := range map[string]string{
+		oldExe:       "old-exe",
+		newExe:       "new-exe",
+		worker:       "old-worker",
+		newWorker:    "new-worker",
+		worldline:    "old-worldline",
+		newWorldline: "new-worldline",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restartScript := filepath.Join(root, "restart update.ps1")
+	restartLog := filepath.Join(root, "restart-update.log")
+	restartContent := fmt.Sprintf("Set-Content -LiteralPath %s -Value 'started' -Encoding UTF8\nexit 0\n", powerShellSingleQuoted(restartLog))
+	if err := os.WriteFile(restartScript, []byte(restartContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	applyScript := filepath.Join(root, "apply update.ps1")
+	content := windowsUpdateScript(oldExe, newExe, oldExe+".bak", worker, newWorker, worker+".bak", worldline, newWorldline, worldline+".bak", restartScript)
+	if err := os.WriteFile(applyScript, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := updateScriptCommand("windows", applyScript)
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("apply script failed: %v output=%s\nscript:\n%s", err, output, content)
+	}
+	for path, want := range map[string]string{
+		oldExe:    "new-exe",
+		worker:    "new-worker",
+		worldline: "new-worldline",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("updated file %s = %q, want %q (err=%v)", path, got, want, err)
+		}
+	}
+	applyLog, err := os.ReadFile(filepath.Join(root, "apply-update.log"))
+	if err != nil || !strings.Contains(string(applyLog), "runtime files ready") {
+		t.Fatalf("apply log missing success marker: %q err=%v", applyLog, err)
+	}
+	if _, err := os.Stat(restartLog); err != nil {
+		t.Fatalf("restart script was not invoked: %v", err)
+	}
+}
+
 func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1", "restart-update-launch.cmd")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
 	want := []string{
-		`for %%D in ("%WORKER%") do if not exist "%%~dpD" mkdir "%%~dpD"`,
-		`if exist "%WORKER%" (`,
-		`move /Y "%WORKER%" "%WORKER_BAK%"`,
-		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
-		`move /Y "%OLD%" "%NEW%"`,
-		`move /Y "%BAK%" "%OLD%"`,
-		`:runtime_files_failed`,
-		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
+		`$WorkerHadOriginal = Test-Path -LiteralPath $Worker`,
+		`Move-Item -LiteralPath $Worker -Destination $WorkerBackup`,
+		`Restore-File $Worker $WorkerBackup $WorkerHadOriginal`,
+		`Restore-File $Worldline $WorldlineBackup $WorldlineHadOriginal`,
+		`Move-Item -LiteralPath $Old -Destination $New`,
+		`Move-Item -LiteralPath $Backup -Destination $Old`,
+		`Restore-OldVersion`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
@@ -293,18 +355,14 @@ func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/cmd/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1", "restart-update-launch.cmd")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/cmd/chat_worker.py", "cmd/chat_worker.py.bak", "cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak", "restart-update.ps1")
 	want := []string{
-		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
-		`schtasks.exe /Run /TN "GenericAgent-Admin-Restart"`,
-		`if errorlevel 1 goto launch_failed`,
-		`if exist "%WORKER_BAK%" move /Y "%WORKER_BAK%" "%WORKER%"`,
-		`if exist "%WORLDLINE_BAK%" move /Y "%WORLDLINE_BAK%" "%WORLDLINE%"`,
-		`move /Y "%OLD%" "%NEW%"`,
-		`move /Y "%BAK%" "%OLD%"`,
-		`schtasks.exe /Create /TN "GenericAgent-Admin-Restart"`,
-		`schtasks.exe /Run /TN "GenericAgent-Admin-Restart"`,
-		`exit /b 1`,
+		`& $RestartScript`,
+		`$RestartExit = $LASTEXITCODE`,
+		`Write-ApplyLog "restart script exit=$RestartExit"`,
+		`Restore-OldVersion`,
+		`-ArgumentList '--headless','--no-browser'`,
+		`exit 1`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
@@ -324,32 +382,34 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
 	)
 	want := []string{
-		`$TaskName = 'GenericAgent-Admin-Restart'`,
-		`function Remove-RestartTask`,
-		`Remove-RestartTask`,
 		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
 		`$OldDir = 'C:\Program Files\GA Admin'`,
 		`$LogFile = Join-Path $PSScriptRoot 'restart-update.log'`,
 		`Write-RestartLog "launcher started old=$Old"`,
 		`Start-Sleep -Seconds 3`,
 		`for ($attempt = 1; $attempt -le 10; $attempt++)`,
+		`for ($probe = 1; $probe -le 30; $probe++)`,
+		`-ArgumentList '--headless','--no-browser'`,
 		`Get-NetTCPConnection -State Listen -OwningProcess $process.Id`,
-		`if (-not $process.HasExited -and $listener) {`,
-		`listener=$($listener.LocalPort) verified`,
+		`if ($process.HasExited) { break }`,
+		`probe=$probe pid=$($process.Id) listener=$($listener.LocalPort) verified`,
 		`Stop-Process -Id $process.Id -Force`,
 		`if (Test-Path -LiteralPath $WorldlineBackup)`,
 		`if (Test-Path -LiteralPath $WorkerBackup)`,
 		`Move-Item -LiteralPath $Backup -Destination $Old`,
-		`Start-Process -FilePath $Old -WorkingDirectory $OldDir`,
+		`Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
 			t.Fatalf("restart script missing %q in:\n%s", sub, script)
 		}
 	}
+	if strings.Contains(script, "schtasks.exe") || strings.Contains(script, "Remove-RestartTask") {
+		t.Fatalf("restart script must not depend on Task Scheduler:\n%s", script)
+	}
 }
 
-func TestWindowsDetachedRestartCommandLaunchesQuotedScript(t *testing.T) {
+func TestWindowsDirectRestartScriptRunsQuotedPathAndReturnsExitCode(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows process launch contract")
 	}
@@ -358,39 +418,24 @@ func TestWindowsDetachedRestartCommandLaunchesQuotedScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(dir, "restart probe.ps1")
-	launcher := filepath.Join(dir, "launch probe.cmd")
 	marker := filepath.Join(dir, "restart marker.txt")
 	content := fmt.Sprintf("$Marker = %s\nStart-Sleep -Seconds 2\nSet-Content -LiteralPath $Marker -Value 'detached' -Encoding UTF8\n", powerShellSingleQuoted(marker))
 	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	launcherContent := "@echo off\r\npowershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%~dp0restart probe.ps1\"\r\n"
-	if err := os.WriteFile(launcher, []byte(launcherContent), 0600); err != nil {
-		t.Fatal(err)
-	}
-	taskName := "GenericAgent-Detached-Test-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	defer exec.Command("schtasks.exe", "/Delete", "/TN", taskName, "/F").Run()
-	create := exec.Command("schtasks.exe", "/Create", "/TN", taskName, "/SC", "DAILY", "/ST", "00:00", "/TR", fmt.Sprintf("\"%s\"", launcher), "/F")
-	if output, err := create.CombinedOutput(); err != nil {
-		t.Fatalf("scheduled restart task creation failed: %v output=%s", err, output)
-	}
-	run := exec.Command("schtasks.exe", "/Run", "/TN", taskName)
+	run := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script)
 	if output, err := run.CombinedOutput(); err != nil {
-		t.Fatalf("scheduled restart task launch failed: %v output=%s", err, output)
+		t.Fatalf("direct restart script failed: %v output=%s", err, output)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(marker); err == nil && strings.Contains(string(data), "detached") {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
+	data, err := os.ReadFile(marker)
+	if err != nil || !strings.Contains(string(data), "detached") {
+		t.Fatalf("direct restart command did not run quoted script %s: data=%q err=%v", script, data, err)
 	}
-	t.Fatalf("detached restart command did not run quoted script %s", script)
 }
 
 func TestWindowsUpdateCommandRunsScriptDirectlyWithoutVisibleStartShell(t *testing.T) {
-	cmd := updateScriptCommand("windows", `C:\Temp\ga-admin-update\apply-update.cmd`)
-	want := []string{"cmd", "/D", "/Q", "/C", `C:\Temp\ga-admin-update\apply-update.cmd`}
+	cmd := updateScriptCommand("windows", `C:\Temp\ga-admin-update\apply-update.ps1`)
+	want := []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", `C:\Temp\ga-admin-update\apply-update.ps1`}
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Fatalf("update command args = %#v, want %#v", cmd.Args, want)
 	}
@@ -402,11 +447,11 @@ func TestWindowsUpdateCommandRunsScriptDirectlyWithoutVisibleStartShell(t *testi
 }
 
 func TestWindowsUpdateBootstrapUsesCIMAndQuotedApplyScript(t *testing.T) {
-	script := windowsUpdateBootstrapScript(`C:\Program Files\GA Admin\update files\apply-update.cmd`)
+	script := windowsUpdateBootstrapScript(`C:\Program Files\GA Admin\update files\apply-update.ps1`)
 	for _, want := range []string{
 		`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`,
-		`cmd.exe /D /Q /C`,
-		`C:\Program Files\GA Admin\update files\apply-update.cmd`,
+		`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File`,
+		`C:\Program Files\GA Admin\update files\apply-update.ps1`,
 		`if ($result.ReturnValue -ne 0)`,
 	} {
 		if !strings.Contains(script, want) {
@@ -419,36 +464,25 @@ func TestWindowsDetachedUpdateScriptSurvivesLauncherExit(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows detached process contract")
 	}
-	if os.Getenv("GA_TEST_DETACHED_UPDATE_HELPER") == "1" {
-		script := os.Getenv("GA_TEST_DETACHED_UPDATE_SCRIPT")
-		cmd := updateScriptCommand("windows", script)
-		cmd.Dir = filepath.Dir(script)
-		detachChildProcess(cmd)
-		if err := cmd.Start(); err != nil {
-			os.Exit(2)
-		}
-		os.Exit(0)
-	}
-
 	dir := filepath.Join(t.TempDir(), "detached update")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(dir, "detached marker.txt")
-	script := filepath.Join(dir, "delayed update.cmd")
-	content := fmt.Sprintf("@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 2\"\r\n> \"%s\" echo detached\r\n", marker)
+	script := filepath.Join(dir, "delayed update.ps1")
+	content := fmt.Sprintf("Start-Sleep -Seconds 2\nSet-Content -LiteralPath %s -Value 'detached' -Encoding UTF8\n", powerShellSingleQuoted(marker))
 	if err := os.WriteFile(script, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	helper := exec.Command(os.Args[0], "-test.run=^TestWindowsDetachedUpdateScriptSurvivesLauncherExit$")
-	helper.Env = append(os.Environ(),
-		"GA_TEST_DETACHED_UPDATE_HELPER=1",
-		"GA_TEST_DETACHED_UPDATE_SCRIPT="+script,
-	)
-	if output, err := helper.CombinedOutput(); err != nil {
-		t.Fatalf("detached update helper failed: %v output=%s", err, output)
+	bootstrap := filepath.Join(dir, "launch update.ps1")
+	if err := os.WriteFile(bootstrap, []byte(windowsUpdateBootstrapScript(script)), 0600); err != nil {
+		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	launcher := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", bootstrap)
+	if output, err := launcher.CombinedOutput(); err != nil {
+		t.Fatalf("CIM update launcher failed: %v output=%s", err, output)
+	}
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if data, err := os.ReadFile(marker); err == nil && strings.Contains(string(data), "detached") {
 			return
@@ -1250,7 +1284,7 @@ func makeUpdateZip(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	_, _ = w.Write([]byte("new worker"))
-	w, err = zw.Create("cmd/frontends/worldline.py")
+	w, err = zw.Create(rootName + "/cmd/frontends/worldline.py")
 	if err != nil {
 		t.Fatal(err)
 	}

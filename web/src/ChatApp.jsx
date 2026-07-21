@@ -12,6 +12,8 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
+import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
+import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
 
@@ -1534,6 +1536,127 @@ export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClo
   </aside>
 }
 
+export const CommandResultCard = memo(function CommandResultCard({ result = {} }) {
+  const command = `/${String(result.command || '').replace(/^\//, '')}`
+  const summary = commandResultSummary(result)
+  const treeNodes = Array.isArray(result.tree?.nodes) ? result.tree.nodes : []
+  const services = Array.isArray(result.services) ? result.services : []
+  const commands = Array.isArray(result.commands) ? result.commands : []
+  const records = Array.isArray(result.records) ? result.records : []
+  const status = result.session && typeof result.session === 'object' ? result.session : null
+
+  return (
+    <section className="oa-command-result" aria-label={`${command} 命令结果`}>
+      <header><Check size={17}/><div><b>{summary}</b><span>{command}</span></div></header>
+      {command === '/worldline' && result.action !== 'restore' && (
+        treeNodes.length > 0
+          ? <div className="oa-command-list" aria-label="世界线节点">
+              {treeNodes.map((node, index) => {
+                const id = String(node?.id || node?.node_id || node?.key || '')
+                const title = String(node?.title || node?.label || node?.summary || node?.content_preview || '')
+                return <div key={id || index}><code>{id || `#${index + 1}`}</code><span>{title || '未命名节点'}</span></div>
+              })}
+            </div>
+          : <div className="oa-command-empty">暂无世界线节点</div>
+      )}
+      {services.length > 0 && <div className="oa-command-services">
+        {services.map((service, index) => <div key={service?.name || index}>
+          <i className={`oa-command-dot ${service?.running ? 'is-running' : ''}`}/>
+          <b>{service?.name || `service-${index + 1}`}</b>
+          <span>{service?.running ? '运行中' : '未运行'}</span>
+          <em>{service?.status || service?.message || ''}</em>
+        </div>)}
+      </div>}
+      {commands.length > 0 && <div className="oa-command-list">
+        {commands.map((item, index) => {
+          const name = typeof item === 'string' ? item : (item?.command || item?.name || '')
+          const description = typeof item === 'string' ? '' : (item?.description || item?.usage || '')
+          return <div key={name || index}><code>{name || `#${index + 1}`}</code><span>{description}</span></div>
+        })}
+      </div>}
+      {status && command === '/status' && <dl className="oa-command-kv">
+        <div><dt>Session</dt><dd>{status.id || '-'}</dd></div>
+        <div><dt>Messages</dt><dd>{Number(status.message_count || 0)}</dd></div>
+      </dl>}
+      {records.length > 0 && <details className="oa-command-records"><summary>{records.length} 条工具审计记录</summary><pre>{JSON.stringify(records, null, 2)}</pre></details>}
+      {command === '/export' && result.filename && <div className="oa-command-download"><FileOutput size={15}/><span>{result.filename}</span><b>已下载</b></div>}
+    </section>
+  )
+})
+
+export const worldlineRestoreCommand = (nodeID, mode = 'both', target = 'at') => {
+  const id = String(nodeID || '').trim()
+  const restoreMode = ['both', 'conversation', 'code'].includes(mode) ? mode : 'both'
+  const restoreTarget = ['at', 'before'].includes(target) ? target : 'at'
+  return id ? `/worldline restore ${id} ${restoreMode} ${restoreTarget}` : ''
+}
+
+export const isWorldlinePickerResult = (result) => {
+  const commandName = String(result?.command || '').replace(/^\//, '').toLowerCase()
+  const nodes = result?.tree?.nodes
+  return commandName === 'worldline' && result?.action !== 'restore' && Array.isArray(nodes) && nodes.length > 0
+}
+
+export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nodes = [], onClose, onSelect }) {
+  const [selectedNodeID, setSelectedNodeID] = useState('')
+  const [restoreMode, setRestoreMode] = useState('both')
+  const [restoreTarget, setRestoreTarget] = useState('at')
+
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose?.() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return (
+    <div className="oa-worldline-backdrop" onMouseDown={(event)=>{ if (event.target === event.currentTarget) onClose?.() }}>
+      <section className="oa-worldline-dialog" role="dialog" aria-modal="true" aria-labelledby="oa-worldline-title">
+        <header className="oa-worldline-dialog-head">
+          <div>
+            <small>WORLDLINE</small>
+            <h2 id="oa-worldline-title">选择回退点</h2>
+            <p>配置恢复范围与位置后填入命令，由你确认后发送。</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="关闭回退点选择"><X size={17}/></button>
+        </header>
+        <div className="oa-worldline-node-list">
+          {nodes.map((node, index) => {
+            const nodeID = String(node?.id || '').trim()
+            const ordinal = node?.ordinal ?? index + 1
+            const title = node?.title || node?.summary || node?.name || `回退点 ${ordinal}`
+            const selected = !!nodeID && nodeID === selectedNodeID
+            return <button key={nodeID || index} className={`oa-worldline-node${selected ? ' is-selected' : ''}`} type="button" disabled={!nodeID} aria-pressed={selected} onClick={()=>setSelectedNodeID(nodeID)}>
+              <span className="oa-worldline-node-no">{ordinal}</span>
+              <span className="oa-worldline-node-copy"><b>{title}</b><code>{nodeID || '缺少节点 ID'}</code></span>
+              <span className="oa-worldline-node-action">{selected ? '已选择' : '选择'}</span>
+            </button>
+          })}
+        </div>
+        <div className="oa-worldline-options">
+          <fieldset>
+            <legend>恢复范围</legend>
+            <div>
+              {[['both', '对话与代码'], ['conversation', '仅对话'], ['code', '仅代码']].map(([value, label]) =>
+                <button key={value} type="button" className={restoreMode === value ? 'is-selected' : ''} aria-pressed={restoreMode === value} onClick={()=>setRestoreMode(value)}>{label}</button>)}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>恢复位置</legend>
+            <div>
+              {[['at', '定位到节点'], ['before', '节点之前']].map(([value, label]) =>
+                <button key={value} type="button" className={restoreTarget === value ? 'is-selected' : ''} aria-pressed={restoreTarget === value} onClick={()=>setRestoreTarget(value)}>{label}</button>)}
+            </div>
+          </fieldset>
+        </div>
+        <footer>
+          <span>{nodes.length} 个可用回退点</span><kbd>Esc</kbd><span>关闭</span>
+          <button className="oa-worldline-confirm" type="button" disabled={!selectedNodeID} onClick={()=>onSelect?.(selectedNodeID, restoreMode, restoreTarget)}>确认并填入命令</button>
+        </footer>
+      </section>
+    </div>
+  )
+})
+
 export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
@@ -1549,15 +1672,17 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const usageLabel = m.role === 'assistant' ? '总计' : null
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(userText)
+  const [editError, setEditError] = useState('')
   const [copied, setCopied] = useState(false)
-  const resetDraft = () => { setDraft(userText); setEditing(false) }
+  const resetDraft = () => { setDraft(userText); setEditError(''); setEditing(false) }
   const submitEdit = async () => {
     if (!draft.trim() || draft.trim() === String(userText || '').trim()) { setEditing(false); return }
+    setEditError('')
     try {
-      await onEditResend?.({ text: draft.trim(), files: messageFiles, sourceUserMessageId: m.id })
+      await onEditResend?.(m.id, draft.trim())
       setEditing(false)
-    } catch {
-      // Keep the editor open so the user can retry after a failed resend.
+    } catch (error) {
+      setEditError(error?.message || String(error))
     }
   }
   const copyContent = () => {
@@ -1569,7 +1694,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
-      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重发"><Edit3 size={13}/></button>}</div>
+      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
       {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
@@ -1580,7 +1705,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <><AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} /><GeneratedImageGallery content={m.content}/></> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/><div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>重发</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}<GeneratedImageGallery content={m.content}/></> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
     </div>
@@ -2957,7 +3082,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} clockNow={streamClock} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} clockNow={streamClock} />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
