@@ -6,7 +6,12 @@ const source = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
 
 test('routes btw independently before the busy queue', () => {
   assert.match(source, /api\(`\/api\/chat\/btw\/\$\{sessionId\}`/)
-  assert.ok(source.indexOf('if (isBTWCommand(text)') < source.indexOf('if (busy) {\n      enqueueMessage(item)'))
+  const btwBranch = source.indexOf('if (isBTWCommand(text)')
+  const enqueueCall = source.indexOf('enqueueMessage(item)', btwBranch)
+  const busyBranch = source.lastIndexOf('if (busy)', enqueueCall)
+  assert.ok(btwBranch >= 0)
+  assert.ok(enqueueCall > btwBranch)
+  assert.ok(busyBranch > btwBranch && busyBranch < enqueueCall)
 })
 
 test('follows interrupted streams with an event cursor', () => {
