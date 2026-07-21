@@ -124,6 +124,153 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(error["reasoning_effort"], "high")
         self.assertIn("usage", error)
         self.assertIn("usages", error)
+    def test_ultraplan_alias_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
+        for command in ("/ultraplan ship feature", "/ultralplan ship feature"):
+            with self.subTest(command=command):
+                self.events.clear()
+                agent = FakeAgent()
+                with mock.patch.object(
+                    chat_worker, "_capture_ultraplan_dashboard_baseline", return_value={}
+                ) as capture, mock.patch.object(
+                    chat_worker, "_observe_ultraplan_daemon", return_value=None
+                ) as observe:
+                    chat_worker.handle_request(agent, FakeWorker(), self.request(command))
+
+                self.assertEqual(len(agent.prompts), 1)
+                rendered, source = agent.prompts[0]
+                self.assertEqual(source, "admin_chat")
+                self.assertIn("Objective: ship feature", rendered)
+                self.assertIn("memory", rendered)
+                self.assertIn("ultraplan_sop.md", rendered)
+                self.assertNotIn("admin_chat_ultraplan.py", rendered)
+                self.assertNotIn("/exec", rendered)
+                self.assertEqual(
+                    [event["delta"] for event in self.events if event.get("type") == "delta"],
+                    ["res"],
+                )
+                capture.assert_called_once_with()
+                observe.assert_called_once()
+
+
+class UltraPlanReadOnlyObserverTests(unittest.TestCase):
+    class _Response:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self.body
+
+    def test_dashboard_fetch_uses_default_daemon_get_without_request_body(self):
+        body = b"<html><pre>rundir: C:/temp/official-run\n</pre></html>"
+        with mock.patch(
+            "urllib.request.urlopen", return_value=self._Response(body)
+        ) as urlopen:
+            sessions = chat_worker._fetch_ultraplan_dashboard_sessions(timeout=0.42)
+
+        urlopen.assert_called_once_with(
+            "http://127.0.0.1:47831/", timeout=0.42
+        )
+        self.assertIsInstance(sessions, dict)
+
+    def test_session_selection_detects_new_and_changed_official_runs(self):
+        old = {"current": "phase-a", "phases": [], "tasks": [], "events": []}
+        changed = {"current": "phase-b", "phases": [], "tasks": [], "events": []}
+        baseline = {"C:/runs/existing": chat_worker._ultraplan_session_signature(old)}
+
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": old, "C:/runs/new-objective": changed},
+                baseline,
+                objective="new objective",
+            ),
+            "C:/runs/new-objective",
+        )
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": changed}, baseline
+            ),
+            "C:/runs/existing",
+        )
+        self.assertIsNone(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": old}, baseline
+            )
+        )
+
+    def test_observer_projects_official_session_without_starting_it(self):
+        parsed = {
+            "current": "phase-b",
+            "phases": [{"name": "phase-b", "status": "running"}],
+            "tasks": [{"desc": "lens", "status": "running"}],
+            "events": [{"time": 0.2, "msg": "started"}],
+            "done": False,
+        }
+        stop = chat_worker.threading.Event()
+        events = []
+        state = {"objective": "ship feature"}
+
+        def fetch_once():
+            stop.set()
+            return {"C:/runs/official": parsed}
+
+        with mock.patch.object(
+            chat_worker, "_fetch_ultraplan_dashboard_sessions", side_effect=fetch_once
+        ) as fetch, mock.patch.object(chat_worker, "_tail_ultraplan_outputs") as tail:
+            chat_worker._observe_ultraplan_daemon(
+                "ship feature", {}, state, events.append, stop
+            )
+
+        fetch.assert_called_once_with()
+        tail.assert_called_once()
+        self.assertEqual(state["run_dir"], "C:/runs/official")
+        self.assertEqual(state["dashboard_port"], 47831)
+        self.assertEqual(state["dashboard_url"], "http://127.0.0.1:47831/")
+        self.assertEqual(state["phases"], parsed["phases"])
+        self.assertEqual([event["type"] for event in events], ["ultraplan_event"])
+
+    def test_output_tail_emits_file_lines_unchanged_and_only_once(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "001_lens.out.txt"
+            output.write_bytes(b"alpha\nbeta\n")
+            state = {}
+            events = []
+            tail_state = {}
+
+            chat_worker._tail_ultraplan_outputs(
+                tmp, state, events.append, tail_state
+            )
+            with output.open("ab") as stream:
+                stream.write(b"gamma\n")
+            chat_worker._tail_ultraplan_outputs(
+                tmp, state, events.append, tail_state
+            )
+
+        self.assertEqual(
+            events,
+            [
+                {
+                    "type": "ultraplan_output",
+                    "task_id": "001_lens",
+                    "lines": ["alpha", "beta"],
+                },
+                {
+                    "type": "ultraplan_output",
+                    "task_id": "001_lens",
+                    "lines": ["gamma"],
+                },
+            ],
+        )
+        self.assertEqual(
+            state["task_outputs"]["001_lens"], ["alpha", "beta", "gamma"]
+        )
 
 
 class PlanPayloadAdapterTests(unittest.TestCase):
