@@ -40,6 +40,9 @@ export function FilesPage({
   downloadFile,
   runSearch,
   clearSearch,
+  discardChanges,
+  fileStatus = {},
+  dismissFileStatus,
   busy = false,
 }) {
   const [mobileView, setMobileView] = useState('browse')
@@ -58,6 +61,7 @@ export function FilesPage({
         : ''
   const fileListEmpty = !fileList?.length
   const searchEmpty = !searchHits?.length
+  const searchAttempted = fileStatus?.action === 'search' && fileStatus?.kind === 'success'
   const hasBrowsePath = Boolean(String(browsePath || '').trim())
   const hasFilePath = Boolean(String(filePath || '').trim())
   const parent = parentPath(browsePath)
@@ -109,6 +113,13 @@ export function FilesPage({
 
   return (
     <section className="files-page">
+      <StatusNotice
+        kind={fileStatus?.kind}
+        message={fileStatus?.message}
+        onRetry={fileStatus?.onRetry}
+        onDismiss={dismissFileStatus}
+        retryLabel="Retry file action"
+      />
       <div className="files-mobile-tabs" ref={mobileTabsRef} role="tablist" aria-label="文件视图">
         <button type="button" role="tab" aria-selected={mobileView === 'browse'} className={mobileView === 'browse' ? 'active' : ''} onClick={() => setMobileView('browse')}><FolderOpen size={16}/>文件</button>
         <button type="button" role="tab" aria-selected={mobileView === 'preview'} className={mobileView === 'preview' ? 'active' : ''} onClick={() => setMobileView('preview')}><FileText size={16}/>预览{dirty ? ' *' : ''}</button>
@@ -137,7 +148,9 @@ export function FilesPage({
           </div>
           {(fileSearch || searchHits.length > 0) && <div className="files-search-results">
             <div className="files-search-results-head"><h4>{t.lists.searchResults} <span>{searchHits.length}</span></h4><button type="button" onClick={() => clearSearch?.()} aria-label="清空文件搜索"><X size={14}/>清空</button></div>
-            {searchEmpty && <p className="muted">{t.hints?.searchEmpty || searchHint}</p>}
+            {searchEmpty && searchAttempted
+              ? <div className="empty-card" role="status"><b>No matches found</b><span>Check the path filter or try a broader term.</span></div>
+              : searchEmpty && <p className="muted">{t.hints?.searchEmpty || searchHint}</p>}
             {searchHits.map(hit => <button type="button" className="hit" key={`${hit.path}:${hit.line}`} onClick={() => openSearchHit(hit.path)} title={`${hit.path}:${hit.line} · ${hit.preview}`}><b>{pathName(hit.path)}:{hit.line}</b><span>{hit.preview}</span></button>)}
           </div>}
         </Panel>
@@ -156,12 +169,14 @@ export function FilesPage({
             <button type="button" onClick={() => tailFile(filePath)} disabled={!hasFilePath || busy}>{t.tail || 'Tail'}</button>
             <button type="button" onClick={() => downloadFile(filePath)} disabled={!hasFilePath || busy} title="下载当前文件"><Download size={15}/><span>{t.download || 'Download'}</span></button>
             <button type="button" className="danger-subtle" onClick={() => deleteFile(filePath)} disabled={!hasFilePath || busy} title="删除当前文件，需要再次确认"><Trash2 size={15}/><span>{t.delete || 'Delete'}</span></button>
-            <button type="button" className="primary" onClick={saveFile} disabled={saveDisabled || busy} title={saveReview}><Save size={15}/><span>{t.save}</span></button>
+            {dirty && <button type="button" onClick={discardChanges} disabled={busy || !discardChanges}><Undo2 size={15}/><span>Discard changes</span></button>}
+            <button type="button" className="primary" onClick={saveFile} disabled={saveDisabled || busy} title={saveReview} aria-describedby={saveDisabledReason ? 'file-save-reason' : undefined}><Save size={15}/><span>{t.save}</span></button>
           </div>
+          {saveDisabledReason && <p id="file-save-reason" className="muted">{saveDisabledReason}</p>}
           <div className={`file-save-review ${retargeted ? 'bad' : dirty ? 'warn' : 'ok'}`} role="status" aria-live="polite">
             {saveReview}
           </div>
-          {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>尚未选择文件</b><span>从文件列表选择一个文件，或输入文件路径后读取。</span></div>}
+          {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>尚未加载文件</b><span>从文件列表选择一个文件，或输入文件路径后读取。</span></div>}
           {(hasFilePath || fileContent) && <textarea aria-label="文件内容编辑器" className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>}
         </Panel>
       </div>

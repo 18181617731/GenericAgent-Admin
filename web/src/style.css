@@ -2629,6 +2629,16 @@ pre, code { font-variant-ligatures: none; }
 .task-subtabs { width: fit-content; max-width: 100%; flex-wrap: wrap; }
 .single-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .clean-list { display: grid; gap: 10px; }
+.scheduler-service-row { display: grid; gap: 14px; min-width: 0; }
+.scheduler-service-head, .scheduler-service-controls, .scheduler-service-facts { display: flex; align-items: center; gap: 12px; }
+.scheduler-service-head { justify-content: space-between; align-items: flex-start; }
+.scheduler-service-head > div { min-width: 0; }
+.scheduler-service-head b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduler-service-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.scheduler-service-controls { justify-content: space-between; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border); }
+.scheduler-service-facts { flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+.scheduler-service-facts > span { padding: 6px 9px; border-radius: 7px; background: var(--surface-muted); }
+.scheduler-service-facts b { color: var(--text); }
 .tasks-workspace { align-items: start; }
 .compact-editor { min-height: 420px; }
 .tasks-page .panel { min-width: 0; }
@@ -2638,6 +2648,11 @@ pre, code { font-variant-ligatures: none; }
 @media (max-width: 980px) {
   .tasks-workspace { grid-template-columns: 1fr; }
   .subtabs { display: flex; }
+}
+@media (max-width: 560px) {
+  .scheduler-service-head, .scheduler-service-controls { align-items: stretch; flex-direction: column; }
+  .scheduler-service-controls .svc-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .scheduler-service-controls .svc-actions button { width: 100%; }
 }
 
 /* Channels */

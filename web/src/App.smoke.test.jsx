@@ -9,6 +9,7 @@ import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
+import { SchedulerServiceRow } from './components/schedule.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -155,6 +156,38 @@ describe('channel frontend gates', () => {
   })
 })
 
+describe('scheduled-task service controls', () => {
+  test('blocks duplicate actions while pending and retries a failed scheduler start', () => {
+    const service = { name: 'reflect/scheduler.py', kind: 'reflect', running: false, autostart: false }
+    const onStart = vi.fn()
+    const schedulerT = { ...t, nav: { logs: 'Logs' }, retry: 'Retry', serviceDesc: { scheduler: 'Scheduled task runner' } }
+    const view = render(<SchedulerServiceRow
+      service={service}
+      t={schedulerT}
+      actionState={{ action: 'start', status: 'pending', message: 'Start: Busy' }}
+      onStart={onStart}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+    />)
+
+    expect(screen.getByRole('button', { name: 'Start' }).disabled).toBe(true)
+    expect(screen.getByRole('status').textContent).toMatch(/Start: Busy/i)
+
+    view.rerender(<SchedulerServiceRow
+      service={service}
+      t={schedulerT}
+      actionState={{ action: 'start', status: 'error', message: 'Start: Error · port in use' }}
+      onStart={onStart}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onStart).toHaveBeenCalledWith(service.name)
+  })
+})
+
 describe('overview observability', () => {
   test('explains system state and important counts without raw internal labels', () => {
     const onRefresh = vi.fn()
@@ -177,6 +210,46 @@ describe('overview observability', () => {
     expect(onRefresh).toHaveBeenCalledOnce()
   })
 })
+
+const validModelProfile = {
+  var_name: 'native_oai_config_demo',
+  type: 'native_oai',
+  apibase: 'https://api.example.com/v1',
+  apikey: 'masked',
+  model: 'demo-model',
+  models: ['demo-model'],
+}
+
+function ModelsHarness({
+  initialProfile = validModelProfile,
+  discoverModels = vi.fn(async () => ({ models: [] })),
+  saveModelProfile,
+  modelSaveStatus = {},
+}) {
+  const [profiles, setProfiles] = React.useState([{ ...initialProfile }])
+  const patchProfile = (idx, patch) => {
+    setProfiles(current => current.map((profile, index) => (
+      index === idx ? { ...profile, ...patch } : profile
+    )))
+  }
+
+  return (
+    <Models
+      t={{}}
+      profiles={profiles}
+      persistedProfiles={[{ ...initialProfile }]}
+      setProfiles={setProfiles}
+      patchProfile={patchProfile}
+      importModels={vi.fn()}
+      previewModels={vi.fn()}
+      discoverModels={discoverModels}
+      saveModelProfile={saveModelProfile}
+      modelSaveStatus={modelSaveStatus}
+      riskCatalog={[]}
+      getProfileKey={() => 'profile-key'}
+    />
+  )
+}
 
 describe('Models provider editor', () => {
   test('keeps focus in the provider name while its controlled value changes', () => {

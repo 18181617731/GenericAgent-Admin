@@ -101,17 +101,18 @@ export function MessageBanner({ message, tone = 'auto', title = '', details = ''
   </div>
 }
 
-export function GlobalFeedback({ message, onDismiss, placement = 'bottom', successTimeout = 4500 }) {
-  const tone = feedbackTone(message)
+export function GlobalFeedback({ message, tone = 'auto', onDismiss, onRetry, retryLabel = '重试', placement = 'bottom', successTimeout = 4500 }) {
+  const resolvedTone = feedbackTone(message, tone)
   useEffect(() => {
-    if (!message || tone !== 'success' || !successTimeout) return undefined
+    if (!message || resolvedTone !== 'success' || !successTimeout) return undefined
     const timer = window.setTimeout(onDismiss, successTimeout)
     return () => window.clearTimeout(timer)
-  }, [message, onDismiss, successTimeout, tone])
+  }, [message, onDismiss, resolvedTone, successTimeout])
   if (!message) return null
-  return <div className={`global-feedback global-feedback-${tone} is-${placement}`} role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'}>
+  return <div className={`global-feedback global-feedback-${resolvedTone} is-${placement}`} role={resolvedTone === 'error' ? 'alert' : 'status'} aria-live={resolvedTone === 'error' ? 'assertive' : 'polite'}>
     <span className="global-feedback-mark" aria-hidden="true"/>
     <p>{message}</p>
+    {onRetry && <button type="button" onClick={onRetry}>{retryLabel}</button>}
     <button type="button" onClick={onDismiss} aria-label="关闭提示"><X size={16}/></button>
   </div>
 }

@@ -237,7 +237,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
   )
 }
 
-function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, busy, checking, disabled, availabilityResult }) {
+function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, busy, checking, disabled, availabilityResult, discoveryError = '' }) {
   const [draft, setDraft] = useState('')
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const configs = profileModelConfigs(profile)
