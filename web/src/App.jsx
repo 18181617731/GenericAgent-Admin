@@ -117,12 +117,12 @@ export default function App() {
     title: '运行环境', summary: '集中管理 GA Admin 的本地路径与 Chat Python 网络环境。', configured: '配置已载入', unsavedHint: '修改后统一保存，写入前仍会二次确认。',
     paths: '基础路径', pathsDesc: '确定 GenericAgent 与 Chat 运行时从哪里读取程序和会话数据。', rootHelp: 'GenericAgent 项目根目录，保存后会重新载入工作区。', pythonHelp: '留空时自动检测；仅在需要固定解释器时填写。', dataHelp: '留空时使用默认目录；可指定独立的 Chat 会话存储位置。',
     network: '网络代理', networkDesc: '仅影响 Chat Python 子进程，不会更改系统全局代理。', proxyMode: '代理模式', proxyOff: '关闭', proxySystem: '跟随系统', proxyCustom: '自定义', proxyOffHelp: 'Chat Python 直接连接网络。', proxySystemHelp: '继承当前系统与进程环境中的代理配置。', proxyCustomHelp: '使用下方环境变量启动 Chat Python。',
-    commands: '斜杠命令参考', commandsDesc: '只读展示已配置命令；新增与管理请前往独立 Chat 页面。', commandCount: '条命令', noCommands: '暂无配置命令', saveAll: '保存全部配置'
+    saveAll: '保存全部配置'
   } : {
     title: 'Runtime environment', summary: 'Manage local paths and the Chat Python network environment in one place.', configured: 'Configuration loaded', unsavedHint: 'Save all changes together. A confirmation is still required before writing.',
     paths: 'Base paths', pathsDesc: 'Define where GenericAgent and Chat load programs and conversation data.', rootHelp: 'GenericAgent project root. The workspace reloads after saving.', pythonHelp: 'Leave blank for automatic detection; set only when pinning an interpreter.', dataHelp: 'Leave blank for the default location, or use a dedicated Chat data directory.',
     network: 'Network proxy', networkDesc: 'Applies only to Chat Python subprocesses and does not change the system-wide proxy.', proxyMode: 'Proxy mode', proxyOff: 'Off', proxySystem: 'Use system', proxyCustom: 'Custom', proxyOffHelp: 'Chat Python connects directly.', proxySystemHelp: 'Inherit proxy settings from the current system and process environment.', proxyCustomHelp: 'Launch Chat Python with the environment variables below.',
-    commands: 'Slash command reference', commandsDesc: 'Read-only list of configured commands. Add or manage them from the standalone Chat page.', commandCount: 'commands', noCommands: 'No commands configured', saveAll: 'Save all settings'
+    saveAll: 'Save all settings'
   }
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
@@ -989,13 +989,6 @@ export default function App() {
             </section>
           </div>
 
-          <details className="settings-commands">
-            <summary>
-              <span className="settings-command-summary"><span className="settings-card-icon"><Code2 size={18}/></span><span><strong>{settingsText.commands}</strong><small>{settingsText.commandsDesc}</small></span></span>
-              <span className="settings-command-count">{(cfg?.slash_commands || []).length} {settingsText.commandCount}</span>
-            </summary>
-            <div className="settings-command-list">{(cfg?.slash_commands||[]).length > 0 ? cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span>{item.desc}</span></div>) : <p className="settings-command-empty">{settingsText.noCommands}</p>}</div>
-          </details>
         </div>
       </section>}
       {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}

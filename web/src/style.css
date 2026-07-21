@@ -8501,8 +8501,7 @@ html[data-theme="dark"] .overview-page .overview-panel .autostart-head svg {
   gap: 14px;
   align-items: start;
 }
-.settings-card,
-.settings-commands {
+.settings-card {
   border: 1px solid var(--settings-line);
   border-radius: 18px;
   color: var(--text);
@@ -8519,10 +8518,8 @@ html[data-theme="dark"] .overview-page .overview-panel .autostart-head svg {
   background: var(--settings-soft);
 }
 .settings-card-head > span:last-child { min-width: 0; }
-.settings-card-head strong,
-.settings-command-summary strong { display: block; color: var(--text); font-size: 13px; line-height: 1.4; }
-.settings-card-head small,
-.settings-command-summary small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.settings-card-head strong { display: block; color: var(--text); font-size: 13px; line-height: 1.4; }
+.settings-card-head small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .settings-card-icon {
   display: grid;
   place-items: center;
@@ -8603,44 +8600,6 @@ html[data-theme="dark"] .overview-page .overview-panel .autostart-head svg {
   grid-column: 1;
   grid-row: auto;
 }
-.settings-commands { overflow: hidden; }
-.settings-commands > summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 16px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-.settings-commands > summary::-webkit-details-marker { display: none; }
-.settings-commands > summary::after {
-  content: "";
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg);
-  transition: transform .18s ease;
-}
-.settings-commands[open] > summary::after { transform: rotate(45deg); }
-.settings-command-summary { display: flex; align-items: center; gap: 11px; min-width: 0; flex: 1; }
-.settings-command-summary > span:last-child { min-width: 0; }
-.settings-command-count { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-weight: 650; white-space: nowrap; }
-.settings-command-list { padding: 0 16px 9px; border-top: 1px solid var(--settings-line); }
-.settings-commands:not([open]) > .settings-command-list { display: none; }
-.settings-command-list .cfg-slash-row {
-  display: grid;
-  grid-template-columns: minmax(110px, .3fr) minmax(0, 1fr);
-  gap: 16px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--settings-line);
-}
-.settings-command-list .cfg-slash-row:last-child { border-bottom: 0; }
-.settings-command-list .cfg-slash-row code { min-width: 0; color: var(--green); font-family: var(--mono); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
-.settings-command-list .cfg-slash-row span { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.settings-command-empty { margin: 12px 0 2px; color: var(--muted); font-size: 12px; }
 html[data-theme="dark"] .settings-page {
   --settings-line: rgba(255, 255, 255, .09);
   --settings-soft: rgba(255, 255, 255, .025);
@@ -8663,14 +8622,10 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   .settings-save-area { align-items: stretch; flex-direction: column; }
   .settings-config-status { min-height: 24px; }
   .settings-save { width: 100%; }
-  .settings-card, .settings-commands { border-radius: 14px; }
+  .settings-card { border-radius: 14px; }
   .settings-card-head { padding: 14px; }
   .settings-field { padding: 14px; }
   .settings-proxy-grid { grid-template-columns: minmax(0, 1fr); }
   .settings-proxy-grid .settings-field:nth-child(even) { border-left: 0; }
   .settings-proxy-grid .settings-field + .settings-field { border-top: 1px solid var(--settings-line); }
-  .settings-commands > summary { align-items: center; gap: 9px; padding: 12px 14px; }
-  .settings-command-summary small { display: none; }
-  .settings-command-list { padding: 0 14px 8px; }
-  .settings-command-list .cfg-slash-row { grid-template-columns: 1fr; gap: 3px; }
 }
