@@ -486,3 +486,35 @@ func TestWorldlineRestorePersistsRestoredSession(t *testing.T) {
 		t.Fatalf("restored state was not persisted: history_info=%#v working=%#v", got.HistoryInfo, got.Working)
 	}
 }
+
+func TestPublishChatLineDisconnectsOverflowedSubscriberWithoutSkippingCursor(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	sid := "slow-subscriber"
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("missing run")
+	}
+	ch := make(chan []byte, 1)
+	s.ChatMu.Lock()
+	token.Subscribers[ch] = true
+	s.ChatMu.Unlock()
+
+	s.publishChatLine(sid, []byte(`{"type":"delta","delta":"a"}`))
+	s.publishChatLine(sid, []byte(`{"type":"delta","delta":"b"}`))
+
+	if got := len(token.Events); got != 2 {
+		t.Fatalf("events=%d, want 2", got)
+	}
+	if got := string(<-ch); got != `{"type":"delta","delta":"a"}` {
+		t.Fatalf("buffered event=%q", got)
+	}
+	if _, ok := <-ch; ok {
+		t.Fatal("overflowed subscriber was not disconnected")
+	}
+	s.ChatMu.Lock()
+	_, subscribed := token.Subscribers[ch]
+	s.ChatMu.Unlock()
+	if subscribed {
+		t.Fatal("overflowed subscriber remains registered")
+	}
+}

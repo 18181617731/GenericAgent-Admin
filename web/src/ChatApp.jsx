@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -2116,9 +2117,21 @@ export default function ChatApp() {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
     const batcher = createStreamBatcher(pendingId, sessionId)
     let commandPatch = null
+    let eventCount = 0
+    let terminal = false
     const applyEvent = (ev) => {
       if (ev?.type === 'command_result') commandPatch = reduceCommandResult(ev)
       applyStreamEvent(ev, pendingId, clientUserID, sessionId)
+    }
+    const consumeEvent = (ev) => {
+      if (ev.type === 'delta' && typeof ev.delta === 'string') {
+        batcher.push(ev.delta)
+      } else {
+        batcher.flushNow()
+        applyEvent(ev)
+      }
+      eventCount += 1
+      if (ev.type === 'done' || ev.type === 'error') terminal = true
     }
     try {
       while (true) {
@@ -2128,23 +2141,85 @@ export default function ChatApp() {
         const lines = buf.split('\n'); buf = lines.pop() || ''
         for (const line of lines) {
           if (!line.trim()) continue
-          if (!isActiveSession(sessionId)) return
-          const ev = JSON.parse(line)
-          if (ev.type === 'delta' && typeof ev.delta === 'string') {
-            batcher.push(ev.delta)
-          } else {
-            batcher.flushNow()
-            applyEvent(ev)
-          }
+          if (!isActiveSession(sessionId)) return { commandPatch, eventCount, terminal }
+          consumeEvent(JSON.parse(line))
         }
       }
-      if (buf.trim() && isActiveSession(sessionId)) {
-        const ev = JSON.parse(buf)
-        if (ev.type === 'delta' && typeof ev.delta === 'string') batcher.push(ev.delta)
-        else { batcher.flushNow(); applyEvent(ev) }
-      }
+      if (buf.trim() && isActiveSession(sessionId)) consumeEvent(JSON.parse(buf))
+    } catch (error) {
+      error.chatStreamOutcome = { commandPatch, eventCount, terminal }
+      throw error
     } finally {
       batcher.flushNow()
+    }
+    return { commandPatch, eventCount, terminal }
+  }
+
+  const waitForStreamRetry = (signal, delay = 250) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const err = new Error('aborted'); err.name = 'AbortError'; reject(err); return
+    }
+    const done = () => { signal?.removeEventListener('abort', aborted); resolve() }
+    const aborted = () => {
+      clearTimeout(timer)
+      const err = new Error('aborted'); err.name = 'AbortError'; reject(err)
+    }
+    const timer = setTimeout(done, delay)
+    signal?.addEventListener('abort', aborted, { once:true })
+  })
+
+  const followChatStream = async (initialRes, pendingId, clientUserID, sessionId, signal) => {
+    let res = initialRes
+    let cursor = 0
+    let replay = false
+    let commandPatch = null
+    while (isActiveSession(sessionId)) {
+      let completed = false
+      let eventCount = 0
+      try {
+        const outcome = await readStream(res, pendingId, clientUserID, sessionId)
+        eventCount = outcome.eventCount
+        cursor += eventCount
+        if (outcome.commandPatch) commandPatch = outcome.commandPatch
+        completed = true
+        if (outcome.terminal) return commandPatch
+      } catch (e) {
+        const partial = e?.chatStreamOutcome
+        if (partial) {
+          eventCount = partial.eventCount
+          cursor += eventCount
+          if (partial.commandPatch) commandPatch = partial.commandPatch
+          if (partial.terminal) return commandPatch
+        }
+        if (e?.name === 'AbortError' || signal?.aborted) throw e
+      }
+      if (!isActiveSession(sessionId)) return commandPatch
+
+      let state = null
+      while (!state && isActiveSession(sessionId)) {
+        try {
+          state = await api(`/api/chat/state/${sessionId}`, { signal })
+        } catch (e) {
+          if (e?.name === 'AbortError' || signal?.aborted) throw e
+          await waitForStreamRetry(signal)
+        }
+      }
+      if (!state || !isActiveSession(sessionId)) return commandPatch
+      if (shouldFinishStreamFollow({ running:state.running, replay, completed, eventCount })) return commandPatch
+      if (state.running) await waitForStreamRetry(signal, 120)
+
+      while (isActiveSession(sessionId)) {
+        try {
+          res = await fetch(`/api/chat/stream/${sessionId}?from=${cursor}`, { signal })
+          if (res.status === 204) return commandPatch
+          if (!res.ok) throw new Error(await res.text())
+          replay = true
+          break
+        } catch (e) {
+          if (e?.name === 'AbortError' || signal?.aborted) throw e
+          await waitForStreamRetry(signal)
+        }
+      }
     }
     return commandPatch
   }
@@ -2180,7 +2255,7 @@ export default function ChatApp() {
       const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
-      await readStream(res, pendingId, '', id)
+      await followChatStream(res, pendingId, '', id, ctrl.signal)
       if (isActiveSession(id)) await loadSessions(id)
     } catch (e) {
       if (e.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
@@ -2644,6 +2719,26 @@ export default function ChatApp() {
     await runSend(item)
   }
 
+  const sendBTW = async (text, sessionId = activeSidRef.current || sid) => {
+    if (!sessionId) {
+      setNotice('请先打开一个对话再使用 /btw')
+      return
+    }
+    if (String(text || '').trim() === '/btw') {
+      setNotice('请在 /btw 后输入问题')
+      return
+    }
+    setErr(''); setNotice('')
+    try {
+      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:text }) })
+      if (!isActiveSession(sessionId)) return
+      if (data?.message) setMessages(xs => xs.some(m => m.id === data.message.id) ? xs : [...xs, data.message])
+      await loadSessions(sessionId)
+    } catch (e) {
+      if (isActiveSession(sessionId)) setErr(e.message || String(e))
+    }
+  }
+
   const runSend = async (item = {}) => {
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
@@ -2698,7 +2793,7 @@ export default function ChatApp() {
         if (cutIdx < 0) return xs
         return [...xs.slice(0, cutIdx), optimistic, pending]
       })
-      commandPatch = await readStream(res, pending.id, clientUserID, id)
+      commandPatch = await followChatStream(res, pending.id, clientUserID, id, ctrl.signal)
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
@@ -2803,6 +2898,10 @@ export default function ChatApp() {
     setPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
+    if (isBTWCommand(text) && !files.length) {
+      await sendBTW(text)
+      return
+    }
     if (busy) {
       enqueueMessage(item)
       return

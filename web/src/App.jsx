@@ -125,6 +125,7 @@ export default function App() {
   const [cfg, setCfg] = useState(null), [persistedCfg, setPersistedCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
   const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
   const [logStreamState, setLogStreamState] = useState('idle'), [logStreamNonce, setLogStreamNonce] = useState(0), [followLogs, setFollowLogs] = useState(true)
+  const [serviceActionStates, setServiceActionStates] = useState({})
   const logViewRef = useRef(null)
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
@@ -236,6 +237,7 @@ export default function App() {
 
   const load = async () => {
     setBooting(true)
+    setNotice({ kind: 'pending', message: '正在刷新运行状态…' })
     try {
       const [c, h, auto, ver, vstat] = await Promise.all([
         api('/api/config'),
@@ -253,7 +255,7 @@ export default function App() {
       const svc = await api('/api/services')
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
       setServices(serviceList)
-      const first = serviceList[0]?.name; if (!selected && first) setSelected(first)
+      if (selected && !serviceList.some(service => service.name === selected)) setSelected('')
       if (tab === 'goals') {
         const goalData = await api('/api/goals/list').catch(() => ({ goals: [] }))
         const goalItems = goalData.goals || []
@@ -264,7 +266,10 @@ export default function App() {
       if (tab === 'files') loadFiles(browsePath).catch(e => setMsg(e.message))
       if (tab === 'tasks') loadScheduleTasks({ quiet:true }).catch(e => setScheduleError(e.message))
       if (tab === 'setup') refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
-    } catch (e) { setMsg(e.message) } finally { setBooting(false) }
+      setNotice({ kind: 'success', message: '运行状态已刷新' })
+    } catch (e) {
+      setNotice({ kind: 'error', message: `刷新失败：${e.message}` })
+    } finally { setBooting(false) }
   }
   useEffect(() => { load() }, [])
   useEffect(() => {
@@ -304,7 +309,21 @@ export default function App() {
     setPendingServiceName('')
   }
 
-  const serviceAction = async (name, action, params = null) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { const body = { name }; if (params) body.params = params; await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) }); await load(); if (selected === name) setLogStreamNonce(value => value + 1) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const serviceAction = async (name, action, params = null) => {
+    if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return
+    const pendingMessage = action === 'start' ? `正在启动 ${name}` : `正在停止 ${name}`
+    setServiceActionStates(current => ({ ...current, [name]: { status: 'pending', action, message: pendingMessage } }))
+    try {
+      const body = { name }
+      if (params) body.params = params
+      await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) })
+      await load()
+      setServiceActionStates(current => ({ ...current, [name]: { status: 'success', action, message: action === 'start' ? `${name} 已启动` : `${name} 已停止` } }))
+      if (selected === name) setLogStreamNonce(value => value + 1)
+    } catch (e) {
+      setServiceActionStates(current => ({ ...current, [name]: { status: 'error', action, message: `${action === 'start' ? '启动' : '停止'} ${name} 失败：${e.message}` } }))
+    }
+  }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', `${enabled ? '启用' : '禁用'}服务 ${name} 自启动？`)) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const setServiceModel = async (name, llm_no) => { setBusy(true); try { const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) }); setServices(d.services || []); setMsg(t.saved || '已保存') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = (name = selected) => {
@@ -472,7 +491,12 @@ export default function App() {
   }
 
   const setTailLines = (value) => setTailLinesRaw(clampTailLines(value))
-  const loadFiles = async (path = '') => {
+  const loadFiles = async (path = '', { quiet = false } = {}) => {
+    const target = path || ''
+    if (!quiet) {
+      setBusy(true)
+      setFileStatus({ kind: 'pending', action: 'browse', message: `Loading files from ${target || 'GA root'}...` })
+    }
     try {
       const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`)
       setFileList(d.items || d.entries || [])
@@ -480,7 +504,10 @@ export default function App() {
     } catch (e) {
       setFileList([])
       setMsg(e.message)
+      if (!quiet) setFileStatus({ kind: 'error', action: 'browse', message: `Could not load files: ${e.message}`, onRetry: () => loadFiles(target) })
       throw e
+    } finally {
+      if (!quiet) setBusy(false)
     }
   }
   const confirmFileReplacement = path => !fileDirty || window.confirm(`文件 ${loadedFilePath || filePath || '-'} 有未保存更改。读取 ${path} 将覆盖当前编辑内容，是否继续？`)
@@ -489,6 +516,7 @@ export default function App() {
   const saveFile = async () => { if (!filePath || !fileEditorDirty(fileContent, loadedFileContent)) return; if (loadedFilePath && filePath !== loadedFilePath && !confirmDanger('files-retarget', `Editor content was loaded from ${loadedFilePath}, but will be saved to ${filePath}. Continue?`)) return; if (!confirmDanger('files-write', `Write file ${filePath}? This overwrites content and the backend will create a backup.`)) return; setBusy(true); try { const d = await api('/api/files/write', { dangerous:true, method:'POST', body: JSON.stringify({ path:filePath, content:fileContent }) }); const savedContent = d.content || fileContent; setFileContent(savedContent); setLoadedFileContent(savedContent); setLoadedFilePath(filePath); setMsg(t.hints.fileSaved || t.saved || 'Saved'); await loadFiles(dirnameForPath(filePath)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const deleteFile = async (path = filePath) => { if (!path) return; if (!confirmDanger('files-delete', `Delete ${path}? This removes the file or directory under GA root.`)) return; setBusy(true); try { await api('/api/files/delete', { dangerous:true, method:'POST', body: JSON.stringify({ path }) }); if (path === loadedFilePath) { setFileContent(''); setLoadedFileContent(''); setLoadedFilePath('') } setMsg(t.deleted || 'Deleted'); await loadFiles(dirnameForPath(path)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const downloadFile = (path = filePath) => { if (!path) return; window.open(`/api/files/download?path=${encodeURIComponent(path)}`, '_blank', 'noopener,noreferrer') }
+
 
 
   const refreshVersionStatus = async () => {
@@ -864,7 +892,7 @@ export default function App() {
             <p className="muted">{t.desc.tasks}</p>
             <div className="service-list clean-list">
               {taskSvcs.length
-                ? taskSvcs.map(svc => <ServiceRow key={svc.name} svc={svc} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
+                ? taskSvcs.map(svc => <ServiceRow key={svc.name} svc={svc} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
                 : <p className="muted">{t.hints.noTasks}</p>}
             </div>
           </Panel>
@@ -958,7 +986,7 @@ export default function App() {
 
 
 
-export function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
+export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1043,7 +1071,7 @@ export function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutos
       </Panel>
       <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
         <p className="muted">{t.desc.channels}</p>
-        <ChannelServiceTable services={frontendSvcs} t={t} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
+        <ChannelServiceTable services={frontendSvcs} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
       </Panel>
     </div>
   </section>

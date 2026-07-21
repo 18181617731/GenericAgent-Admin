@@ -50,11 +50,13 @@ export function Stat({ label, value, detail = '', tone = '', icon }) {
 }
 export function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
 export function EntryList({ items = [], empty }) { return <div className="entry-list">{items.length ? items.map((e, i) => <div className="entry" key={`${e.path || e.name}-${i}`}><b>{e.name || e.path}</b><span>{e.path}{e.kind ? ` - ${e.kind}` : ''}{e.size ? ` - ${e.size} B` : ''}</span></div>) : <p className="muted">{empty}</p>}</div> }
-export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel, llms = [], t }) {
+export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel, llms = [], t, actionState = null }) {
   const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
   const descKey = String(svc?.name || '').includes('scheduler') ? 'scheduler' : (String(svc?.name || '').includes('autonomous') ? 'autonomous' : null)
   const desc = isReflect && descKey ? t?.serviceDesc?.[descKey] : null
-  return <article className={`service-card ${svc.running ? 'is-running' : 'is-stopped'}`}>
+  const isPending = actionState?.status === 'pending'
+  const retryAction = actionState?.action === 'stop' ? onStop : onStart
+  return <article className={`service-card ${svc.running ? 'is-running' : 'is-stopped'}`} aria-busy={isPending || undefined}>
     <div className="service-card-head">
       <div className="service-title"><b>{svc.name}</b><span>{svc.kind}</span></div>
       <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
@@ -62,17 +64,26 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel,
     {desc && <p className="service-desc">{desc}</p>}
     <ServiceMeta svc={svc} llms={llms} onModel={onModel} t={t}/>
     <div className="svc-actions service-actions-row">
-      <button disabled={svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button>
-      <button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
+      <button disabled={isPending || svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button>
+      <button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
       <button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label>
     </div>
+    {actionState?.message && <div className={`service-action-status ${actionState.status || ''}`} role={actionState.status === 'error' ? 'alert' : 'status'} aria-live="polite">
+      <span>{actionState.message}</span>
+      {actionState.status === 'error' && <button type="button" onClick={() => retryAction?.(svc.name)}>{t.retry || 'Retry'}</button>}
+    </div>}
   </article>
 }
-export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, onReflectStart, t }) {
+export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, onReflectStart, t, actionState = null }) {
   if (!services.length) return <div className="channel-service-empty">{t.hints.noFrontend}</div>
   const isReflectService = (svc) => svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
-  return <div className="channel-service-list">{services.map(svc => <article className={`channel-service-card ${svc.running ? 'is-running' : 'is-stopped'}`} key={svc.name}>
+  return <div className="channel-service-list">{services.map(svc => {
+    const state = actionState?.name === svc.name ? actionState : actionState?.[svc.name]
+    const isPending = state?.status === 'pending'
+    const startAction = isReflectService(svc) && onReflectStart ? onReflectStart : onStart
+    const retryAction = state?.action === 'stop' ? onStop : startAction
+    return <article className={`channel-service-card ${svc.running ? 'is-running' : 'is-stopped'}`} key={svc.name} aria-busy={isPending || undefined}>
     <div className="channel-service-main">
       <div><b>{svc.name}</b><small>{svc.kind}</small></div>
       <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
@@ -80,9 +91,14 @@ export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, on
     <ServiceMeta svc={svc} compact/>
     <div className="channel-service-actions">
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label>
-      <div className="svc-actions"><button disabled={svc.running} onClick={() => isReflectService(svc) && onReflectStart ? onReflectStart(svc.name) : onStart(svc.name)}><Play size={14}/>{t.start}</button><button disabled={!svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
+      <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
     </div>
-  </article>)}</div>
+    {state?.message && <div className={`service-action-status ${state.status || ''}`} role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
+      <span>{state.message}</span>
+      {state.status === 'error' && <button type="button" onClick={() => retryAction?.(svc.name)}>{t.retry || 'Retry'}</button>}
+    </div>}
+  </article>
+  })}</div>
 }
 
 const count = (items) => Array.isArray(items) ? items.length : 0

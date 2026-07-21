@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronRight, Download, FileText, Folder, FolderOpen, Save, Search, Trash2, Undo2, X } from 'lucide-react'
 import { Panel } from '../components/common'
+import { StatusNotice } from '../components/feedback'
 import { fileEditorDirty, saveReviewText } from '../lib/filesSafety'
 import { shouldConfirmFileReplacement } from '../lib/ux'
 
@@ -46,7 +47,15 @@ export function FilesPage({
   const dirty = fileEditorDirty(fileContent, loadedFileContent)
   const retargeted = Boolean(loadedFilePath && filePath && loadedFilePath !== filePath)
   const saveReview = saveReviewText({ path: filePath, loadedPath: loadedFilePath, dirty })
-  const saveDisabled = !filePath || !dirty
+  const hasLoadedTarget = Boolean(String(loadedFilePath || '').trim())
+  const saveDisabled = !hasLoadedTarget || !filePath || !dirty
+  const saveDisabledReason = !hasLoadedTarget
+    ? 'Read a file before saving. The editor has no loaded target.'
+    : !filePath
+      ? 'Choose a save target before saving.'
+      : !dirty
+        ? `Save is disabled because ${loadedFilePath} has no unsaved changes.`
+        : ''
   const fileListEmpty = !fileList?.length
   const searchEmpty = !searchHits?.length
   const hasBrowsePath = Boolean(String(browsePath || '').trim())

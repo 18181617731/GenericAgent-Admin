@@ -864,14 +864,10 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 		select {
 		case ch <- b:
 		default:
-			select {
-			case <-ch:
-			default:
-			}
-			select {
-			case ch <- b:
-			default:
-			}
+			// Preserve the global event cursor: a slow subscriber must reconnect
+			// with ?from=N rather than silently skip an event in this stream.
+			close(ch)
+			delete(r.Subscribers, ch)
 		}
 	}
 }

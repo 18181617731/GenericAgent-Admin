@@ -325,24 +325,35 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
         destroyOnHidden
       >
         <div className="model-discover-modal-head">
-          <span>{busy ? '正在从服务商接口获取模型…' : `发现 ${candidates.length} 个未添加模型`}</span>
-          <Button size="small" type="primary" onClick={() => addCandidates(candidates)} disabled={busy || !candidates.length}>
+          <span>{busy ? '正在从服务商接口获取模型…' : discoveryError ? '获取模型失败' : `发现 ${candidates.length} 个未添加模型`}</span>
+          <Button size="small" type="primary" onClick={() => addCandidates(candidates)} disabled={busy || !!discoveryError || !candidates.length}>
             全部添加
           </Button>
         </div>
         {busy ? (
-          <div className="model-discover-modal-state"><RefreshCw size={18} className="is-spinning" />正在获取模型</div>
+          <div className="model-discover-modal-state" role="status"><RefreshCw size={18} className="is-spinning" />正在获取模型</div>
+        ) : discoveryError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="无法获取候选模型"
+            description={discoveryError}
+            action={<Button size="small" onClick={onDiscover}>重试</Button>}
+          />
         ) : candidates.length > 0 ? (
           <div className="model-candidate-list">
             {candidates.map(model => (
-              <button key={model} type="button" className="model-candidate-item" onClick={() => addCandidates([model])}>
+              <button key={model} type="button" className="model-candidate-item" onClick={() => addCandidates([model])} aria-label={`添加模型 ${model}`}>
                 <span title={model}>{model}</span>
                 <Plus size={14} />
               </button>
             ))}
           </div>
         ) : (
-          <div className="model-discover-modal-state">没有发现新的模型</div>
+          <div className="model-discover-modal-state" role="status">
+            <span>没有发现新的模型，可重试或直接填写模型 ID。</span>
+            <Button size="small" onClick={onDiscover}>重新获取</Button>
+          </div>
         )}
       </Modal>
     </section>
@@ -506,6 +517,10 @@ function ProfileCard({
       </header>
 
       <div className="model-source-body">
+        <div className="model-workflow-heading model-workflow-heading--fields">
+          <strong><span>1</span> 连接服务商</strong>
+          <small>确认名称、官方协议和 BaseURL；API Key 可保留已保存值。</small>
+        </div>
         <div className="model-primary-grid">
           <label className="model-field">
             <span className="model-field-label">显示名称</span>
@@ -570,7 +585,7 @@ function ProfileCard({
               addonAfter={revealed ? (
                 <Space size={2}>
                   <Button size="small" type="text" icon={<EyeOff size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>隐藏</Button>
-                  <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)} title="重新读取" />
+                  <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)} title="重新读取" aria-label="重新读取 API Key" />
                 </Space>
               ) : (
                 <Button size="small" type="text" icon={<Eye size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>显示</Button>
@@ -589,10 +604,25 @@ function ProfileCard({
           checking={availabilityBusy}
           availabilityResult={availabilityResult}
           disabled={discoverBusy || !p.apibase || !supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)}
+          discoveryError={discoverError}
         />
 
-        {discoverError && <Alert type="error" showIcon message={discoverError} className="model-inline-alert" />}
-        {saveError && <Alert type="error" showIcon message={`保存失败：${saveState?.error || '未知错误'}`} className="model-inline-alert" />}
+        <div className="model-workflow-heading model-workflow-heading--save">
+          <strong><span>3</span> 检查并保存</strong>
+          <small>{result?.errors?.length ? '先修复下方阻断项，再保存此服务商。' : dirty ? '当前修改尚未保存；确认提醒后保存。' : '配置修改后，使用卡片右上角的保存按钮单独保存。'}</small>
+        </div>
+        {saveBusy && <Alert type="info" showIcon message="正在保存此服务商" description="请稍候，完成前不会重复提交。" className="model-inline-alert" />}
+        {saveOk && !dirty && <Alert type="success" showIcon message="已保存到 mykey.py" description="此服务商配置已保存，可继续配置其他服务商。" className="model-inline-alert" />}
+        {saveError && (
+          <Alert
+            type="error"
+            showIcon
+            message="此服务商保存失败"
+            description={saveState?.error || '未知错误'}
+            action={<Button size="small" onClick={save} disabled={!!result?.errors?.length} loading={saveBusy}>重试保存</Button>}
+            className="model-inline-alert"
+          />
+        )}
         {result?.errors?.length > 0 && (
           <Alert
             type="error"

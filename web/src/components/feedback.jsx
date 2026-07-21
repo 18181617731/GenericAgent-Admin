@@ -4,6 +4,26 @@ import { Check, Copy, RefreshCw, X } from 'lucide-react'
 // 统一的加载/错误反馈组件：路由级 Suspense fallback、行内 spinner、骨架屏、错误边界。
 // 设计：沿用暖白磨砂 + 绿色强调色，尊重 prefers-reduced-motion。
 
+export function StatusNotice({ kind = 'success', message, onRetry, onDismiss, retryLabel = '刷新状态' }) {
+  if (!message) return null
+  const isError = kind === 'error'
+  return (
+    <div
+      className={`ga-status-notice ga-status-${kind}`}
+      role={isError ? 'alert' : 'status'}
+      aria-live={isError ? 'assertive' : 'polite'}
+      aria-busy={kind === 'pending' ? 'true' : undefined}
+    >
+      <span className="ga-status-mark" aria-hidden="true" />
+      <span className="ga-status-message">{message}</span>
+      <span className="ga-status-actions">
+        {isError && onRetry ? <button type="button" onClick={onRetry}>{retryLabel}</button> : null}
+        {kind !== 'pending' && onDismiss ? <button type="button" className="ga-status-dismiss" onClick={onDismiss}>关闭</button> : null}
+      </span>
+    </div>
+  )
+}
+
 export function Spinner({ label }) {
   return (
     <div className="ga-loading" role="status" aria-live="polite">
