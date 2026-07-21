@@ -1,5 +1,6 @@
-import { Download, Save, Search, Trash2 } from 'lucide-react'
+import { Download, RotateCcw, Save, Search, Trash2 } from 'lucide-react'
 import { Panel } from '../components/common'
+import { StatusNotice } from '../components/feedback'
 import { fileEditorDirty, saveReviewText } from '../lib/filesSafety'
 
 export function FilesPage({
@@ -23,21 +24,47 @@ export function FilesPage({
   deleteFile,
   downloadFile,
   runSearch,
+  discardChanges,
+  fileStatus = {},
+  dismissFileStatus,
   busy = false,
 }) {
   const dirty = fileEditorDirty(fileContent, loadedFileContent)
   const retargeted = Boolean(loadedFilePath && filePath && loadedFilePath !== filePath)
   const saveReview = saveReviewText({ path: filePath, loadedPath: loadedFilePath, dirty })
-  const saveDisabled = !filePath || !dirty
+  const hasLoadedTarget = Boolean(String(loadedFilePath || '').trim())
+  const saveDisabled = !hasLoadedTarget || !filePath || !dirty
+  const saveDisabledReason = !hasLoadedTarget
+    ? 'Read a file before saving. The editor has no loaded target.'
+    : !filePath
+      ? 'Choose a save target before saving.'
+      : !dirty
+        ? `Save is disabled because ${loadedFilePath} has no unsaved changes.`
+        : ''
   const fileListEmpty = !fileList?.length
   const searchEmpty = !searchHits?.length
   const hasFilePath = Boolean(String(filePath || '').trim())
-  const searchHint = fileSearch ? 'No matches found. Check the path filter or try a broader term.' : 'Enter search text, then run search.'
+  const searchAttempted = fileStatus?.action === 'search' && fileStatus?.kind === 'success'
+  const searchHint = fileSearch ? 'Run search to find matching text in the selected path.' : 'Enter search text, then run search.'
   const fileListHint = hasFilePath
     ? 'No files returned for this path. Confirm the GA root or choose a folder and read again.'
     : 'No GA root selected yet. Paste the project root or a folder path, then click Read.'
   return (
-    <section>
+    <section className="file-workflow-page">
+      <ol className="file-workflow-steps" aria-label="File workflow">
+        <li><b>1</b><span>Choose a file</span></li>
+        <li><b>2</b><span>Read it</span></li>
+        <li><b>3</b><span>Edit content</span></li>
+        <li><b>4</b><span>Review target</span></li>
+        <li><b>5</b><span>Save or discard</span></li>
+      </ol>
+      <StatusNotice
+        kind={fileStatus?.kind}
+        message={fileStatus?.message}
+        onRetry={fileStatus?.onRetry}
+        onDismiss={dismissFileStatus}
+        retryLabel="Retry file action"
+      />
       <div className="workspace">
         <Panel title={t.lists.fileList}>
           <div className="inline-form">
@@ -46,15 +73,14 @@ export function FilesPage({
           </div>
           <div className="inline-form">
             <input value={fileSearch} onChange={e => setFileSearch(e.target.value)} placeholder={t.hints.searchText}/>
-            <button onClick={runSearch}><Search size={14}/>{t.search}</button>
+            <button onClick={runSearch} disabled={busy || !String(fileSearch || '').trim()}><Search size={14} aria-hidden="true"/>{t.search}</button>
           </div>
           <div className="inline-form">
             <input type="number" value={tailLines} onChange={e => setTailLines(Number(e.target.value))}/>
             <span>{t.hints.tailLines}</span>
             <button onClick={() => tailFile(filePath)} disabled={!filePath || busy}>{t.tail || 'Tail'}</button>
-            <button onClick={() => downloadFile(filePath)} disabled={!filePath || busy} title="Read-only: downloads the selected file without changing it."><Download size={14}/>{t.download || 'Download'}</button>
-            <button onClick={() => deleteFile(filePath)} disabled={!filePath || busy} title="Destructive: removes the selected file after confirmation."><Trash2 size={14}/>{t.delete || 'Delete'}</button>
-            <button onClick={saveFile} disabled={saveDisabled || busy} title={saveReview}><Save size={14}/>{t.save}</button>
+            <button onClick={() => downloadFile(filePath)} disabled={!filePath || busy} title="Read-only: downloads the selected file without changing it."><Download size={14} aria-hidden="true"/>{t.download || 'Download'}</button>
+            <button onClick={() => deleteFile(filePath)} disabled={!filePath || busy} title="Destructive: removes the selected file after confirmation."><Trash2 size={14} aria-hidden="true"/>{t.delete || 'Delete'}</button>
           </div>
           <p className="operation-note" role="note">读取、尾读、搜索和下载都是安全的只读操作。保存会把当前编辑器文本写入目标路径；删除是破坏性操作，只能在确认选中路径后使用。</p>
           <div className="file-list">
@@ -62,7 +88,9 @@ export function FilesPage({
             {fileList.map(e => <button key={e.path} onClick={() => e.kind === 'dir' ? loadFiles(e.path) : readFile(e.path)}>{e.kind === 'dir' ? '📁' : '📄'} {e.path}</button>)}
           </div>
           <h4>{t.lists.searchResults}</h4>
-          {searchEmpty && <p className="muted">{t.hints?.searchEmpty || searchHint}</p>}
+          {searchEmpty && (searchAttempted
+            ? <div className="empty-card file-search-empty" role="status"><b>No matches found</b><span>Check the selected path or try a broader search term.</span></div>
+            : <p className="muted">{t.hints?.searchEmpty || searchHint}</p>)}
           {searchHits.map(h => <button className="hit" key={`${h.path}:${h.line}`} onClick={() => readFile(h.path)}>{h.path}:{h.line} · {h.preview}</button>)}
         </Panel>
         <Panel title={t.lists.filePreview} className="log-panel">
@@ -74,8 +102,19 @@ export function FilesPage({
           <div className={`file-save-review ${retargeted ? 'bad' : dirty ? 'warn' : 'ok'}`} role="status" aria-live="polite">
             {saveReview}
           </div>
+          <div className="file-editor-actions">
+            <button type="button" className="primary-action" onClick={saveFile} disabled={saveDisabled || busy} aria-describedby="file-save-reason">
+              <Save size={14} aria-hidden="true"/>{t.save}
+            </button>
+            <button type="button" onClick={discardChanges} disabled={!hasLoadedTarget || !dirty || busy}>
+              <RotateCcw size={14} aria-hidden="true"/>Discard changes
+            </button>
+            <span id="file-save-reason" className="file-save-reason" role="note">
+              {saveDisabledReason || `Ready to save editor content to ${filePath}.`}
+            </span>
+          </div>
           {!loadedFilePath && !fileContent && <div className="empty-card" role="status"><b>尚未加载文件</b><span>请先从列表选择文件、尾读日志，或输入路径并读取后再编辑。</span></div>}
-          <textarea className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>
+          <textarea className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty} aria-label="File content editor"/>
         </Panel>
       </div>
     </section>

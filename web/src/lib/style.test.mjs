@@ -26,3 +26,47 @@ test('log-view keeps a readable foreground over its forced dark background', () 
   assert.ok(logViewRule, 'missing forced dark log-view background rule')
   assert.match(logViewRule, /color\s*:\s*#d7e1ea\s*!important/i)
 })
+
+test('shared status feedback stays keyboard-visible and readable at narrow widths', () => {
+  const focusRule = ruleBodies('.ga-status-actions button:focus-visible').join('\n')
+  assert.match(focusRule, /outline\s*:\s*2px\s+solid/i)
+  assert.match(focusRule, /outline-offset\s*:\s*2px/i)
+
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*620px\)[\s\S]*?\.ga-status-notice\s*\{[^}]*max-width\s*:\s*100%[^}]*\}/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*620px\)[\s\S]*?\.ga-status-message\s*\{[^}]*white-space\s*:\s*normal[^}]*overflow-wrap\s*:\s*anywhere[^}]*\}/i,
+  )
+})
+
+test('sent-message editor exposes keyboard focus and a narrow action layout', () => {
+  const focusRule = ruleBodies('.oa-message-editor-actions button:focus-visible').join('\n')
+  assert.match(focusRule, /outline\s*:\s*2px\s+solid/i)
+  assert.match(focusRule, /outline-offset\s*:\s*2px/i)
+
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*520px\)[^{]*\{[\s\S]*?\.oa-message-editor-hint\s*\{[^}]*white-space\s*:\s*normal[^}]*\}/i,
+  )
+})
+
+test('model discovery keeps focus, responsive controls, and reduced-motion meaning', () => {
+  const focusRule = ruleBodies('.model-discover-modal .model-candidate-item:focus-visible').join('\n')
+  assert.match(focusRule, /outline\s*:\s*2px\s+solid/i)
+
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*620px\)[\s\S]*?\.models-page \.model-discover-row\s*\{[^}]*flex-direction\s*:\s*column[^}]*\}/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.model-discover-modal \.is-spinning\s*\{[^}]*animation\s*:\s*none[^}]*\}/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.ga-status-pending \.ga-status-mark\s*\{[^}]*animation\s*:\s*none[^}]*\}/i,
+  )
+})

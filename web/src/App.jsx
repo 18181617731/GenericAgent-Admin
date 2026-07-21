@@ -14,7 +14,7 @@ import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, model
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
-import { ErrorBoundary, RouteFallback } from './components/feedback'
+import { ErrorBoundary, RouteFallback, StatusNotice } from './components/feedback'
 import { ProcessGuard } from './components/ProcessGuard'
 import SetupWizard from './components/SetupWizard.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
@@ -116,8 +116,15 @@ export default function App() {
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
   const [cfg, setCfg] = useState(null), [health, setHealth] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
-  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [msg, setMsg] = useState(''), [selected, setSelected] = useState('')
+  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [notice, setNotice] = useState(null), [selected, setSelected] = useState('')
+  const msg = notice?.message || ''
+  const setMsg = (message, kind) => {
+    const value = String(message || '')
+    const inferredKind = /(?:失败|错误|无效|error|failed|invalid)/i.test(value) ? 'error' : (/^(?:正在|加载|保存中|启动中)/.test(value) ? 'pending' : 'success')
+    setNotice(value ? { message: value, kind: kind || inferredKind } : null)
+  }
   const [logStreamState, setLogStreamState] = useState('idle'), [logStreamNonce, setLogStreamNonce] = useState(0), [followLogs, setFollowLogs] = useState(true)
+  const [serviceActionStates, setServiceActionStates] = useState({})
   const logViewRef = useRef(null)
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
@@ -130,6 +137,7 @@ export default function App() {
   const [modelImportLoading, setModelImportLoading] = useState(false)
   const [modelRevealedKeys, setModelRevealedKeys] = useState({}), [modelKeyBusy, setModelKeyBusy] = useState({})
   const [filePath, setFilePath] = useState('memory'), [loadedFilePath, setLoadedFilePath] = useState(''), [fileList, setFileList] = useState([]), [fileContent, setFileContent] = useState(''), [loadedFileContent, setLoadedFileContent] = useState(''), [fileSearch, setFileSearch] = useState(''), [searchHits, setSearchHits] = useState([]), [tailLines, setTailLinesRaw] = useState(200)
+  const [fileStatus, setFileStatus] = useState({})
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [editorMode, setEditorMode] = useState('form')
   const [scheduleData, setScheduleData] = useState(null), [scheduleLoading, setScheduleLoading] = useState(false), [scheduleError, setScheduleError] = useState('')
@@ -221,6 +229,7 @@ export default function App() {
 
   const load = async () => {
     setBooting(true)
+    setNotice({ kind: 'pending', message: '正在刷新运行状态…' })
     try {
       const [c, h, auto, ver, vstat] = await Promise.all([
         api('/api/config'),
@@ -238,7 +247,7 @@ export default function App() {
       const svc = await api('/api/services')
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
       setServices(serviceList)
-      const first = serviceList[0]?.name; if (!selected && first) setSelected(first)
+      if (selected && !serviceList.some(service => service.name === selected)) setSelected('')
       if (tab === 'goals') {
         const goalData = await api('/api/goals/list').catch(() => ({ goals: [] }))
         const goalItems = goalData.goals || []
@@ -249,7 +258,10 @@ export default function App() {
       if (tab === 'files') loadFiles(filePath).catch(e => setMsg(e.message))
       if (tab === 'tasks') loadScheduleTasks({ quiet:true }).catch(e => setScheduleError(e.message))
       if (tab === 'setup') refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
-    } catch (e) { setMsg(e.message) } finally { setBooting(false) }
+      setNotice({ kind: 'success', message: '运行状态已刷新' })
+    } catch (e) {
+      setNotice({ kind: 'error', message: `刷新失败：${e.message}` })
+    } finally { setBooting(false) }
   }
   useEffect(() => { load() }, [])
   useEffect(() => {
@@ -283,7 +295,21 @@ export default function App() {
     setPendingServiceName('')
   }
 
-  const serviceAction = async (name, action, params = null) => { if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return; setBusy(true); try { const body = { name }; if (params) body.params = params; await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) }); await load(); if (selected === name) setLogStreamNonce(value => value + 1) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const serviceAction = async (name, action, params = null) => {
+    if (!confirmDanger(`service-${action}`, `${action === 'start' ? '启动' : '停止'}服务 ${name}？`)) return
+    const pendingMessage = action === 'start' ? `正在启动 ${name}` : `正在停止 ${name}`
+    setServiceActionStates(current => ({ ...current, [name]: { status: 'pending', action, message: pendingMessage } }))
+    try {
+      const body = { name }
+      if (params) body.params = params
+      await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) })
+      await load()
+      setServiceActionStates(current => ({ ...current, [name]: { status: 'success', action, message: action === 'start' ? `${name} 已启动` : `${name} 已停止` } }))
+      if (selected === name) setLogStreamNonce(value => value + 1)
+    } catch (e) {
+      setServiceActionStates(current => ({ ...current, [name]: { status: 'error', action, message: `${action === 'start' ? '启动' : '停止'} ${name} 失败：${e.message}` } }))
+    }
+  }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', `${enabled ? '启用' : '禁用'}服务 ${name} 自启动？`)) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const setServiceModel = async (name, llm_no) => { setBusy(true); try { const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) }); setServices(d.services || []); setMsg(t.saved || '已保存') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = (name = selected) => {
@@ -451,22 +477,105 @@ export default function App() {
   }
 
   const setTailLines = (value) => setTailLinesRaw(clampTailLines(value))
-  const loadFiles = async (path = '') => {
+  const loadFiles = async (path = '', { quiet = false } = {}) => {
+    const target = path || ''
+    if (!quiet) {
+      setBusy(true)
+      setFileStatus({ kind: 'pending', action: 'browse', message: `Loading files from ${target || 'GA root'}...` })
+    }
     try {
-      const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`)
-      setFileList(d.items || d.entries || [])
-      setFilePath(path || '')
+      const d = await api(`/api/files/list?path=${encodeURIComponent(target)}`)
+      const items = d.items || d.entries || []
+      setFileList(items)
+      setFilePath(target)
+      if (!quiet) setFileStatus({ kind: 'success', action: 'browse', message: `Loaded ${items.length} file entries from ${target || 'GA root'}.` })
+      return d
     } catch (e) {
       setFileList([])
       setMsg(e.message)
+      if (!quiet) setFileStatus({ kind: 'error', action: 'browse', message: `Could not load files: ${e.message}`, onRetry: () => loadFiles(target) })
       throw e
+    } finally {
+      if (!quiet) setBusy(false)
     }
   }
-  const readFile = async (path = filePath) => { if (!path) return; setBusy(true); try { const d = await api(`/api/files/read?path=${encodeURIComponent(path)}`); const content = d.content || ''; setFileContent(content); setLoadedFileContent(content); setLoadedFilePath(path); setFilePath(path); setTab('files') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const tailFile = async (path = filePath) => { if (!path) return; setBusy(true); try { const safeLines = clampTailLines(tailLines); const d = await api(`/api/files/tail?path=${encodeURIComponent(path)}&lines=${safeLines}`); const content = d.content || ''; setFileContent(content); setLoadedFileContent(content); setLoadedFilePath(path); setTailLinesRaw(safeLines); setFilePath(path); setTab('files') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const saveFile = async () => { if (!filePath || !fileEditorDirty(fileContent, loadedFileContent)) return; if (loadedFilePath && filePath !== loadedFilePath && !confirmDanger('files-retarget', `Editor content was loaded from ${loadedFilePath}, but will be saved to ${filePath}. Continue?`)) return; if (!confirmDanger('files-write', `Write file ${filePath}? This overwrites content and the backend will create a backup.`)) return; setBusy(true); try { const d = await api('/api/files/write', { dangerous:true, method:'POST', body: JSON.stringify({ path:filePath, content:fileContent }) }); const savedContent = d.content || fileContent; setFileContent(savedContent); setLoadedFileContent(savedContent); setLoadedFilePath(filePath); setMsg(t.hints.fileSaved || t.saved || 'Saved'); await loadFiles(dirnameForPath(filePath)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const deleteFile = async (path = filePath) => { if (!path) return; if (!confirmDanger('files-delete', `Delete ${path}? This removes the file or directory under GA root.`)) return; setBusy(true); try { await api('/api/files/delete', { dangerous:true, method:'POST', body: JSON.stringify({ path }) }); if (path === loadedFilePath) { setFileContent(''); setLoadedFileContent(''); setLoadedFilePath('') } setMsg(t.deleted || 'Deleted'); await loadFiles(dirnameForPath(path)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const readFile = async (path = filePath) => {
+    if (!path) return
+    setBusy(true)
+    setFileStatus({ kind: 'pending', action: 'read', message: `Reading ${path}...` })
+    try {
+      const d = await api(`/api/files/read?path=${encodeURIComponent(path)}`)
+      const content = d.content || ''
+      setFileContent(content)
+      setLoadedFileContent(content)
+      setLoadedFilePath(path)
+      setFilePath(path)
+      setTab('files')
+      setFileStatus({ kind: 'success', action: 'read', message: `Loaded ${path}. You can now edit, review, and save it.` })
+    } catch (e) {
+      setMsg(e.message)
+      setFileStatus({ kind: 'error', action: 'read', message: `Could not read ${path}: ${e.message}`, onRetry: () => readFile(path) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const tailFile = async (path = filePath) => {
+    if (!path) return
+    const safeLines = clampTailLines(tailLines)
+    setBusy(true)
+    setFileStatus({ kind: 'pending', action: 'tail', message: `Reading the last ${safeLines} lines of ${path}...` })
+    try {
+      const d = await api(`/api/files/tail?path=${encodeURIComponent(path)}&lines=${safeLines}`)
+      const content = d.content || ''
+      setFileContent(content)
+      setLoadedFileContent(content)
+      setLoadedFilePath(path)
+      setTailLinesRaw(safeLines)
+      setFilePath(path)
+      setTab('files')
+      setFileStatus({ kind: 'success', action: 'tail', message: `Loaded the last ${safeLines} lines of ${path}.` })
+    } catch (e) {
+      setMsg(e.message)
+      setFileStatus({ kind: 'error', action: 'tail', message: `Could not tail ${path}: ${e.message}`, onRetry: () => tailFile(path) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const saveFile = async () => {
+    if (!loadedFilePath || !filePath || !fileEditorDirty(fileContent, loadedFileContent)) return
+    if (filePath !== loadedFilePath && !confirmDanger('files-retarget', `Editor content was loaded from ${loadedFilePath}, but will be saved to ${filePath}. Continue?`)) return
+    if (!confirmDanger('files-write', `Write file ${filePath}? This overwrites content and the backend will create a backup.`)) return
+    setBusy(true)
+    setFileStatus({ kind: 'pending', action: 'save', message: `Saving ${filePath}...` })
+    try {
+      const d = await api('/api/files/write', { dangerous:true, method:'POST', body: JSON.stringify({ path:filePath, content:fileContent }) })
+      const savedContent = d.content || fileContent
+      const savedPath = filePath
+      setFileContent(savedContent)
+      setLoadedFileContent(savedContent)
+      setLoadedFilePath(savedPath)
+      setMsg(t.hints.fileSaved || t.saved || 'Saved')
+      let refreshWarning = ''
+      try { await loadFiles(dirnameForPath(savedPath), { quiet: true }) }
+      catch (e) { refreshWarning = ` The file was saved, but the folder list could not refresh: ${e.message}` }
+      setFilePath(savedPath)
+      setFileStatus({ kind: 'success', action: 'save', message: `Saved ${savedPath}.${refreshWarning}` })
+    } catch (e) {
+      setMsg(e.message)
+      setFileStatus({ kind: 'error', action: 'save', message: `Could not save ${filePath}: ${e.message}. Your editor changes are still available.`, onRetry: saveFile })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const discardFileChanges = () => {
+    if (!loadedFilePath) return
+    setFileContent(loadedFileContent)
+    setFilePath(loadedFilePath)
+    setFileStatus({ kind: 'success', action: 'discard', message: `Discarded unsaved editor changes. ${loadedFilePath} was not modified.` })
+  }
+  const deleteFile = async (path = filePath) => { if (!path) return; if (!confirmDanger('files-delete', `Delete ${path}? This removes the file or directory under GA root.`)) return; setBusy(true); try { await api('/api/files/delete', { dangerous:true, method:'POST', body: JSON.stringify({ path }) }); if (path === loadedFilePath) { setFileContent(''); setLoadedFileContent(''); setLoadedFilePath('') } setMsg(t.deleted || 'Deleted'); await loadFiles(dirnameForPath(path), { quiet: true }); setFileStatus({ kind: 'success', action: 'delete', message: `Deleted ${path}.` }) } catch(e){ setMsg(e.message); setFileStatus({ kind: 'error', action: 'delete', message: `Could not delete ${path}: ${e.message}`, onRetry: () => deleteFile(path) }) } finally{ setBusy(false) } }
   const downloadFile = (path = filePath) => { if (!path) return; window.open(`/api/files/download?path=${encodeURIComponent(path)}`, '_blank', 'noopener,noreferrer') }
+
 
 
   const refreshVersionStatus = async () => {
@@ -518,7 +627,24 @@ export default function App() {
     catch(e){ setMsg(e.message) }
     finally{ setGitBusy(false) }
   }
-  const runSearch = async () => { setBusy(true); try { const d = await api(`/api/files/search?path=${encodeURIComponent(filePath)}&q=${encodeURIComponent(fileSearch)}&limit=80`); setSearchHits(d.hits || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const runSearch = async () => {
+    const path = filePath
+    const query = String(fileSearch || '').trim()
+    if (!query) return
+    setBusy(true)
+    setFileStatus({ kind: 'pending', action: 'search', message: `Searching for "${query}"...` })
+    try {
+      const d = await api(`/api/files/search?path=${encodeURIComponent(path)}&q=${encodeURIComponent(query)}&limit=80`)
+      const hits = d.hits || []
+      setSearchHits(hits)
+      setFileStatus({ kind: 'success', action: 'search', message: hits.length ? `Found ${hits.length} matches for "${query}".` : `No matches found for "${query}".` })
+    } catch (e) {
+      setMsg(e.message)
+      setFileStatus({ kind: 'error', action: 'search', message: `Search failed: ${e.message}`, onRetry: runSearch })
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const loadTask = async (id) => { setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); setTaskId(d.id || id); setTaskEditor(safeJson(d.raw)); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const saveTask = async () => { const id = taskId || newTaskId; if (!confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); setMsg(t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -685,13 +811,13 @@ export default function App() {
       </div>
     </div>}
     <div ref={appScope} className={`app app-tab-${tab}`}>
-    <aside className="sidebar"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button></div><nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav><button type="button" className="refresh" onClick={load} disabled={busy}><RefreshCw size={15} aria-hidden="true"/>{busy ? t.busy : t.refresh}</button>{msg && <div className="message" role="status" aria-live="polite">{msg}</div>}</aside>
+    <aside className="sidebar"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button></div><nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav><button type="button" className="refresh" onClick={load} disabled={booting}><RefreshCw size={15} aria-hidden="true"/>{booting ? t.busy : t.refresh}</button><StatusNotice kind={notice?.kind} message={notice?.message} onRetry={notice?.kind === 'error' ? load : undefined} onDismiss={notice?.kind === 'success' ? ()=>setNotice(null) : undefined}/></aside>
     <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label="正在加载页面…" />}>
       {tab==='overview' && <section><div className="stats"><Stat label={t.cards.processes} value={services.length} icon={<Server/>}/><Stat label={t.cards.running} value={services.filter(s=>s.running).length} icon={<Activity/>}/><Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/><Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/></div><ObservabilityCard snapshot={observability} error={observabilityError} onRefresh={() => readObservability().catch(e => { setObservability(null); setObservabilityError(e.message) })}/><div className="grid2"><Panel title={t.cards.version}><div className="version-card"><div className="autostart-head"><Download size={18}/><strong>GA Admin {versionInfo?.version || 'dev'}</strong><span className={versionCheck?.update ? 'err' : 'ok'}>{versionCheck ? (versionCheck.update ? '有更新' : '已是最新') : (versionInfo?.goos ? `${versionInfo.goos}/${versionInfo.goarch}` : t.empty)}</span></div><p className="muted">提交 {versionInfo?.commit || '未知'} · {versionInfo?.date || '未知'}</p><p className="muted">运行时 {versionInfo?.runtime || '-'} · 程序 {versionInfo?.exe || '-'}</p>{versionInfo && !versionInfo.update_supported && <p className="warn">一键升级不可用：{versionInfo.update_unsupported_reason || '当前平台暂不支持'}</p>}{versionCheck?.latest && <p>最新版本：<a href={versionCheck.latest.html_url} target="_blank" rel="noreferrer">{versionCheck.latest.tag_name}</a></p>}{versionCheck?.asset && <code>{versionCheck.asset.name}</code>}{versionStatus?.stage && <div className="update-progress"><div className="update-progress-head"><span>{versionStatus.running ? '升级中' : (versionStatus.error ? '升级失败' : '升级状态')}</span><b>{versionStatus.progress || 0}%</b></div><div className="progress-bar"><span style={{width:`${Math.max(0, Math.min(100, versionStatus.progress || 0))}%`}}/></div><p className={versionStatus.error ? 'err' : 'muted'}>{versionStatus.message || versionStatus.stage}</p>{versionStatus.stage && <code>{versionStatus.stage}</code>}</div>}<div className="actions"><button onClick={checkVersion} disabled={versionBusy || versionStatus?.running}>{versionBusy ? t.busy : '检查更新'}</button><button onClick={updateVersion} disabled={versionBusy || versionStatus?.running || !versionCheck?.update}>{versionStatus?.running ? '升级中…' : '一键升级'}</button><button className="secondary" onClick={()=>refreshVersionStatus().catch(e=>setMsg(e.message))}>刷新进度</button></div></div></Panel><Panel title="GA 源代码更新"><div className="version-card"><div className="version-head"><GitPullRequest size={18}/><strong>Git 更新</strong><span className={gitStatus?.error ? 'err' : (gitStatus?.latest ? 'ok' : 'warn')}>{gitStatus?.error ? '检查失败' : (gitStatus ? (gitStatus.latest ? '已是最新' : `落后 ${gitStatus.behind || 0} 个提交`) : '未检查')}</span></div><p className="muted">自动 fetch 后对比上游分支；更新只执行 git pull --ff-only。</p>{gitStatus?.root && <code>{gitStatus.root}</code>}<p>分支: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>{gitStatus?.upstream && <p>上游: {gitStatus.upstream}　领先 {gitStatus.ahead || 0} / 落后 {gitStatus.behind || 0}</p>}{gitStatus?.dirty && <p className="warn">工作区有未提交修改</p>}{gitStatus?.error && <p className="err">{gitStatus.error}</p>}{gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}{gitResult?.pull && <pre className="mini-log">{gitResult.pull}</pre>}<div className="actions"><button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : '检查是否最新'}</button><button onClick={updateGASource} disabled={gitBusy || busy || gitStatus?.latest}>{gitBusy ? t.busy : '更新 GA 源代码'}</button></div></div></Panel><Panel title={t.lists.autostart}><div className="autostart-card"><div className="autostart-head"><Power size={18}/><strong>{t.autostart}</strong><span className={autostart?.enabled ? 'ok' : 'muted'}>{autostart?.supported ? (autostart?.enabled ? t.enabled : t.disabled) : t.unsupported}</span></div><p>{!autostart?.supported ? t.hints.autostartUnsupported : (autostart?.enabled ? t.hints.autostartEnabled : t.hints.autostartDisabled)}</p>{autostart?.path && <code>{autostart.path}</code>}<button onClick={toggleAutostart} disabled={busy || !autostart?.supported}>{autostart?.enabled ? t.disableAutostart : t.enableAutostart}</button></div></Panel><Panel title={t.lists.riskHints}><ul className="risk"><li>{t.root}: {root}</li><li>sche_tasks JSON: {t.backup}</li><li>mykey.py: {t.backup}</li></ul></Panel></div></section>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands}/>}
-      {tab==='files' && <FilesPage t={t} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} busy={busy}/>}
+      {tab==='files' && <FilesPage t={t} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} discardChanges={discardFileChanges} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>}
 
       {tab==='tasks' && <section className="tasks-page">
         <div className="stats schedule-stats">
@@ -702,11 +828,11 @@ export default function App() {
           <div className="stat"><ShieldAlert/><span>{t.error}</span><b>{schedule.errors || 0}</b></div>
         </div>
 
-        <div className="subtabs task-subtabs">
-          <button className={taskSubTab==='services' ? 'active' : ''} onClick={()=>setTaskSubTab('services')}><Server size={14}/>{t.lists.taskServices}</button>
-          <button className={taskSubTab==='scheduled' ? 'active' : ''} onClick={()=>setTaskSubTab('scheduled')}><CalendarClock size={14}/>{t.lists.scheduledTasks}</button>
-          <button className={taskSubTab==='runs' ? 'active' : ''} onClick={()=>setTaskSubTab('runs')}><Target size={14}/>{t.nav.goals} / {t.nav.autonomous}</button>
-          <button className={taskSubTab==='reports' ? 'active' : ''} onClick={()=>setTaskSubTab('reports')}><FolderCog size={14}/>{t.lists.recentReports}</button>
+        <div className="subtabs task-subtabs" role="navigation" aria-label={lang === 'zh' ? '任务分类' : 'Task sections'}>
+          <button type="button" aria-current={taskSubTab==='services' ? 'page' : undefined} className={taskSubTab==='services' ? 'active' : ''} onClick={()=>setTaskSubTab('services')}><Server size={14}/>{t.lists.taskServices}</button>
+          <button type="button" aria-current={taskSubTab==='scheduled' ? 'page' : undefined} className={taskSubTab==='scheduled' ? 'active' : ''} onClick={()=>setTaskSubTab('scheduled')}><CalendarClock size={14}/>{t.lists.scheduledTasks}</button>
+          <button type="button" aria-current={taskSubTab==='runs' ? 'page' : undefined} className={taskSubTab==='runs' ? 'active' : ''} onClick={()=>setTaskSubTab('runs')}><Target size={14}/>{t.nav.goals} / {t.nav.autonomous}</button>
+          <button type="button" aria-current={taskSubTab==='reports' ? 'page' : undefined} className={taskSubTab==='reports' ? 'active' : ''} onClick={()=>setTaskSubTab('reports')}><FolderCog size={14}/>{t.lists.recentReports}</button>
         </div>
 
         {taskSubTab==='services' && <div className="single-panel">
@@ -714,7 +840,7 @@ export default function App() {
             <p className="muted">{t.desc.tasks}</p>
             <div className="service-list clean-list">
               {taskSvcs.length
-                ? taskSvcs.map(svc => <ServiceRow key={svc.name} svc={svc} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
+                ? taskSvcs.map(svc => <ServiceRow key={svc.name} svc={svc} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
                 : <p className="muted">{t.hints.noTasks}</p>}
             </div>
           </Panel>
@@ -787,8 +913,8 @@ export default function App() {
         </div>}
       </section>}
       {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
-      {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
-      {tab==='autonomous' && <section><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
+      {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
+      {tab==='autonomous' && <section><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={serviceActionStates[s.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <section className="settings-page"><Panel title={t.nav.settings} className="settings-panel"><div className="root-box settings-root-box"><label>{t.root}</label><div><input value={root} onChange={e=>setRoot(e.target.value)}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.pythonPath}</label><div><input value={cfg?.python_path || ''} onChange={e=>setCfg({...cfg, python_path:e.target.value})} placeholder={t.fields.pythonAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>{t.fields.chatDataDir}</label><div><input value={cfg?.chat_data_dir || ''} onChange={e=>setCfg({...cfg, chat_data_dir:e.target.value})} placeholder={t.fields.chatDataAuto}/><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div><label>Chat Python 代理</label><div><select value={cfg?.proxy_mode || 'off'} onChange={e=>setCfg({...cfg, proxy_mode:e.target.value})}><option value="off">关闭</option><option value="system">系统</option><option value="custom">自定义</option></select><button onClick={saveConfig}><Save size={14}/>{t.save}</button></div>{(cfg?.proxy_mode || 'off') === 'custom' && <><label>HTTP_PROXY</label><div><input value={cfg?.http_proxy || ''} onChange={e=>setCfg({...cfg, http_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>HTTPS_PROXY</label><div><input value={cfg?.https_proxy || ''} onChange={e=>setCfg({...cfg, https_proxy:e.target.value})} placeholder="http://127.0.0.1:7890"/></div><label>ALL_PROXY</label><div><input value={cfg?.all_proxy || ''} onChange={e=>setCfg({...cfg, all_proxy:e.target.value})} placeholder="socks5://127.0.0.1:7890"/></div><label>NO_PROXY</label><div><input value={cfg?.no_proxy || ''} onChange={e=>setCfg({...cfg, no_proxy:e.target.value})} placeholder="localhost,127.0.0.1"/></div></>}</div><div className="settings-block"><label>斜杠命令列表</label><p className="muted">在独立的 Chat 页面可管理命令。此处仅展示已配置的命令列表。</p>{(cfg?.slash_commands||[]).length > 0 ? (cfg.slash_commands.map((item,i)=><div key={i} className="cfg-slash-row"><code>{item.cmd}</code><span className="muted">{item.desc}</span></div>)) : <p className="muted">暂无配置命令</p>}</div></Panel></section>}
       {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
@@ -814,13 +940,29 @@ export default function App() {
                 {selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}
               </div>
               <div className="actions log-actions">
-                <button className={followLogs ? 'active' : ''} disabled={!selected} onClick={()=>setFollowLogs(value=>!value)}><Activity size={14}/>{lang === 'zh' ? '跟随' : 'Follow'}</button>
+                <button className={followLogs ? 'active' : ''} disabled={!selected} aria-pressed={followLogs} onClick={()=>setFollowLogs(value=>!value)}><Activity size={14}/>{lang === 'zh' ? '跟随' : 'Follow'}</button>
                 <button disabled={!logs.length} onClick={()=>setLogs([])}><Trash2 size={14}/>{t.clear}</button>
                 <button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button>
                 <button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button>
               </div>
             </div>
-            <pre ref={logViewRef} onScroll={handleLogScroll} className="log-view">{logs.join('\n') || t.hints.noLogs}</pre>
+            {!selected ? <div className="log-selection-empty">{lang === 'zh' ? '选择一个服务以查看日志' : 'Select a service to view logs'}</div> : <>
+              <div className="log-stream-controls">
+                <span className={`stream-state ${logStreamState}`} role="status">
+                  {logStreamState === 'connecting' ? (lang === 'zh' ? '正在连接日志流' : 'Connecting to log stream') :
+                    logStreamState === 'live' ? (lang === 'zh' ? '日志流已连接' : 'Log stream live') :
+                    logStreamState === 'reconnecting' ? (lang === 'zh' ? '日志流连接中断' : 'Log stream interrupted') :
+                    (lang === 'zh' ? '日志流空闲' : 'Log stream idle')}
+                </span>
+                <span className={`log-follow-status ${followLogs ? 'following' : 'paused'}`}>{followLogs ? (lang === 'zh' ? '自动跟随' : 'Following') : (lang === 'zh' ? '已暂停跟随' : 'Follow paused')}</span>
+              </div>
+              {logStreamState === 'reconnecting' && <div className="log-stream-error" role="alert">
+                <span>{lang === 'zh' ? '日志流连接已中断，可重试。' : 'The log stream was interrupted. You can retry.'}</span>
+                <button type="button" onClick={() => setLogStreamNonce(value => value + 1)}>{t.retry || (lang === 'zh' ? '重试' : 'Retry')}</button>
+              </div>}
+              {!logs.length && logStreamState === 'live' && <p className="log-output-empty">{lang === 'zh' ? '当前没有日志输出' : 'No log output yet'}</p>}
+              <pre ref={logViewRef} onScroll={handleLogScroll} className="log-view">{logs.join('\n')}</pre>
+            </>}
           </Panel>
         </div>
       </section>}        </Suspense>
@@ -831,7 +973,7 @@ export default function App() {
 
 
 
-export function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
+export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -916,7 +1058,7 @@ export function ChannelsPage({ frontendSvcs, t, onStart, onStop, onLogs, onAutos
       </Panel>
       <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
         <p className="muted">{t.desc.channels}</p>
-        <ChannelServiceTable services={frontendSvcs} t={t} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
+        <ChannelServiceTable services={frontendSvcs} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
       </Panel>
     </div>
   </section>
