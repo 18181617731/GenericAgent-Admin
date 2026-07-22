@@ -57,6 +57,20 @@ const timelineKey = (v) => {
   return d ? `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}` : 'unknown'
 }
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
+const parseBTWDisplay = (value) => {
+  const raw = String(value || '')
+  const match = raw.match(/^\s*(?:>\s*)?(?:🟡\s*)?\/btw(?:[ \t]+([\s\S]*))?\s*$/i)
+  if (!match) return null
+  return { prompt: String(match[1] || '').trim() }
+}
+const stripBTWEcho = (value) => {
+  const lines = String(value || '').split(/\r?\n/)
+  const firstContent = lines.findIndex(line => line.trim())
+  if (firstContent < 0 || !parseBTWDisplay(lines[firstContent])) return String(value || '')
+  lines.splice(firstContent, 1)
+  while (firstContent < lines.length && !lines[firstContent].trim()) lines.splice(firstContent, 1)
+  return lines.join('\n').trimStart()
+}
 const shortTitle = (s) => s?.title || '新会话'
 const fmtDate = (ts) => {
   const d = dateFromTimestamp(ts)
@@ -1853,6 +1867,7 @@ export const ChatMessage = memo(function ChatMessage({
   const elapsedMs = getElapsedMs(m, clockNow)
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0)
   const isBTW = m.kind === 'btw'
+  const btwDisplay = m.role === 'user' ? parseBTWDisplay(userText) : null
 
   const copyContent = () => {
     const txt = m.role === 'user' ? userText : (m.content || '')
@@ -1912,7 +1927,7 @@ export const ChatMessage = memo(function ChatMessage({
                 ? <CommandResultCard result={m.commandResult} />
                 : m.btw_status === 'error'
                   ? <div className="oa-btw-error" role="alert"><span>{m.content || '侧问失败，请重试'}</span><button type="button" onClick={() => onRetryBTW?.(m)}>重试</button></div>
-                  : <AssistantContent content={m.content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
+                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -1944,8 +1959,10 @@ export const ChatMessage = memo(function ChatMessage({
                         disabled={editSubmitting || !editDraft.trim()}>{editSubmitting ? '发送中…' : '发送'}</button>
                     </div>
                   </div>)
-                : (<div className="oa-msg-text">
-                    {userText}
+                : (<div className={`oa-msg-text${btwDisplay ? ' oa-user-btw' : ''}`}>
+                    {btwDisplay
+                      ? <><span className="oa-user-btw-command"><i aria-hidden="true"/>/btw</span><span className="oa-user-btw-prompt">{btwDisplay.prompt || '侧问'}</span></>
+                      : userText}
                     {savedFilePaths.length > 0 && (
                       <div className="oa-msg-saved-paths">
                         {savedFilePaths.map((p, i) => (
@@ -2236,6 +2253,7 @@ export default function ChatApp() {
   const [workingState, setWorkingState] = useState(null)
   const [planState, setPlanState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
+  const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
@@ -3627,7 +3645,7 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
-      <div className={`oa-workspace ${btwMessages.length ? 'has-btw' : ''}`}>
+      <div className={`oa-workspace ${btwMessages.length && btwRailOpen ? 'has-btw' : ''}`}>
         <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
           {messages.length === 0 && <div className="oa-empty">
             <h1>今天想让 GenericAgent 做什么？</h1>
@@ -3644,9 +3662,12 @@ export default function ChatApp() {
           {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
           <div ref={endRef}/>
         </section>
-        {btwMessages.length > 0 && <aside className="oa-btw-rail" aria-label="侧问">
-          <header><span>BTW</span><b>侧问</b><em>{btwMessages.length}</em></header>
-          <div className="oa-btw-rail-list">
+        {btwMessages.length > 0 && btwRailOpen && <aside className="oa-btw-rail" aria-label="侧问">
+          <header>
+            <div className="oa-btw-title"><span>BTW</span><b>侧问</b><em>{btwMessages.length}</em></div>
+            <button type="button" className="oa-btw-toggle" onClick={()=>setBtwRailOpen(false)} aria-expanded="true" aria-controls="oa-btw-rail-list" title="收起侧问栏"><ChevronRight size={15}/><span>收起</span></button>
+          </header>
+          <div className="oa-btw-rail-list" id="oa-btw-rail-list">
             {btwMessages.map(message => <ChatMessage
               key={message.id}
               message={message}
@@ -3656,6 +3677,7 @@ export default function ChatApp() {
             />)}
           </div>
         </aside>}
+        {btwMessages.length > 0 && !btwRailOpen && <button type="button" className="oa-btw-collapsed" onClick={()=>setBtwRailOpen(true)} aria-expanded="false" aria-controls="oa-btw-rail-list" title="展开侧问栏"><ChevronLeft size={15}/><span>BTW</span><b>{btwMessages.length}</b></button>}
       </div>
 
       <footer className="oa-composer-wrap">

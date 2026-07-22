@@ -9867,6 +9867,7 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 
 /* BTW lives outside the transcript so side answers never cover or displace the main output. */
 .oa-workspace {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -9887,14 +9888,64 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   flex: 0 0 auto;
   min-height: 48px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding: 15px 18px 10px;
+  padding: 12px 14px 10px 18px;
   border-bottom: 1px solid var(--border);
 }
+.oa-btw-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .oa-btw-rail > header span { color: var(--muted-2); font-size: 10px; font-weight: 750; letter-spacing: .14em; }
 .oa-btw-rail > header b { font-size: 13px; font-weight: 650; }
-.oa-btw-rail > header em { margin-left: auto; color: var(--muted-2); font-size: 11px; font-style: normal; }
+.oa-btw-rail > header em { color: var(--muted-2); font-size: 11px; font-style: normal; }
+.oa-btw-toggle,
+.oa-btw-collapsed {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-2);
+  cursor: pointer;
+}
+.oa-btw-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+.oa-btw-toggle:hover { color: var(--text); background: var(--surface-hover); }
+.oa-btw-collapsed {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  right: 0;
+  width: 42px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 4px;
+  border-radius: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-right: 0;
+  writing-mode: vertical-rl;
+  letter-spacing: .12em;
+}
+.oa-btw-collapsed:hover { color: var(--text); background: var(--surface-muted); }
+.oa-btw-collapsed b { writing-mode: horizontal-tb; font-size: 10px; letter-spacing: 0; }
+.oa-user-btw { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.oa-user-btw-command {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
+  font: 700 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .02em;
+}
+.oa-user-btw-command i { width: 7px; height: 7px; border-radius: 50%; background: #eab308; box-shadow: 0 0 0 3px color-mix(in srgb, #eab308 18%, transparent); }
+.oa-user-btw-prompt { min-width: 0; color: inherit; }
 .oa-btw-rail-list { min-height: 0; overflow: auto; padding: 6px 16px 24px; }
 .oa-btw-rail .oa-message.assistant.oa-message-btw {
   width: 100%;
@@ -9929,6 +9980,21 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
     padding: 4px 16px 12px;
   }
   .oa-btw-rail .oa-message.assistant.oa-message-btw { flex: 0 0 min(82vw, 440px); }
+  .oa-btw-collapsed {
+    top: 8px;
+    right: 10px;
+    width: auto;
+    flex-direction: row;
+    gap: 5px;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    writing-mode: horizontal-tb;
+    letter-spacing: .08em;
+    background: var(--surface);
+  }
+  .oa-btw-collapsed b { writing-mode: horizontal-tb; }
+  .oa-workspace:not(.has-btw):has(.oa-btw-collapsed) > .oa-thread { padding-top: 42px; }
 }
 
 /* /btw reads like an editor's margin note, not another message card. */
