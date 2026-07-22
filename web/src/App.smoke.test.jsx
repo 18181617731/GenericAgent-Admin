@@ -316,16 +316,16 @@ describe('plan todo card disclosure', () => {
     expect(body?.hidden).toBe(false)
   })
 
-  test('starts expanded and toggles the assistant-message UltraPlan dashboard closed, open, then closed', () => {
+  test('auto-opens the message-owned UltraPlan inspector and supports close, reopen, and Escape', async () => {
     const { container } = render(
       <ChatMessage
         message={{
-          id: 'ultraplan-collapse',
+          id: 'ultraplan-inspector',
           role: 'assistant',
           content: '',
           ultraplan_state: {
             objective: 'Ship the dashboard',
-            current: 'Implementing collapse',
+            current: 'Implementing inspector',
             phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
           },
         }}
@@ -334,30 +334,84 @@ describe('plan todo card disclosure', () => {
       />,
     )
 
-    const body = container.querySelector('.oa-up-body')
-    const collapse = () => screen.getByRole('button', { name: '收起 UltraPlan 执行面板' })
-    const expand = () => screen.getByRole('button', { name: '展开 UltraPlan 执行面板' })
+    const entry = container.querySelector('.oa-up-entry')
+    expect(entry).toBeTruthy()
+    await waitFor(() => expect(entry.getAttribute('aria-expanded')).toBe('true'))
 
-    expect(container.querySelector('.oa-message.assistant .oa-message-ultraplan > .oa-up-dash')).toBeTruthy()
+    const inspector = screen.getByRole('region', { name: 'UltraPlan' })
+    const drawerLayer = inspector.closest('.oa-up-drawer-layer')
+    expect(entry.getAttribute('aria-controls')).toBe(inspector.id)
+    expect(drawerLayer?.parentElement).toBe(document.body)
+    expect(container.contains(drawerLayer)).toBe(false)
+    expect(container.querySelector('.oa-message.assistant .oa-message-ultraplan > .oa-up-entry')).toBe(entry)
     expect(container.querySelector('.oa-session-ultraplan')).toBeNull()
-    expect(collapse().getAttribute('aria-controls')).toBe(body?.id)
-    expect(collapse().getAttribute('aria-expanded')).toBe('true')
-    expect(body?.hidden).toBe(false)
-    expect(collapse().querySelector('.lucide-chevron-down')).toBeTruthy()
-    expect(screen.getByText('Implementing collapse')).toBeTruthy()
+    expect(container.querySelector('.oa-up-drawer-backdrop')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('Implementing inspector')).toBeTruthy()
 
-    fireEvent.click(collapse())
-    expect(expand().getAttribute('aria-expanded')).toBe('false')
-    expect(body?.hidden).toBe(true)
-    expect(expand().querySelector('.lucide-chevron-left')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '\u5173\u95ed UltraPlan \u8be6\u60c5' }))
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('region', { name: 'UltraPlan' })).toBeNull()
 
-    fireEvent.click(expand())
-    expect(collapse().getAttribute('aria-expanded')).toBe('true')
-    expect(body?.hidden).toBe(false)
+    fireEvent.click(entry)
+    expect(entry.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('region', { name: 'UltraPlan' })).toBeTruthy()
 
-    fireEvent.click(collapse())
-    expect(expand().getAttribute('aria-expanded')).toBe('false')
-    expect(body?.hidden).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('region', { name: 'UltraPlan' })).toBeNull()
+  })
+
+  test('resizes the UltraPlan inspector from its left edge with pointer and keyboard controls', async () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'ultraplan-resize',
+          role: 'assistant',
+          content: '',
+          ultraplan_state: {
+            objective: 'Resize the inspector',
+            current: 'Checking width controls',
+            phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
+          },
+        }}
+        pending={true}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByRole('region', { name: 'UltraPlan' })).toBeTruthy())
+    const inspector = screen.getByRole('region', { name: 'UltraPlan' })
+    const separator = screen.getByRole('separator', { name: '\u8c03\u6574 UltraPlan \u4fa7\u680f\u5bbd\u5ea6' })
+
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('440px')
+    expect(separator.getAttribute('aria-controls')).toBe(inspector.id)
+    expect(separator.getAttribute('aria-orientation')).toBe('vertical')
+    expect(separator.getAttribute('aria-valuemin')).toBe('360')
+    expect(separator.getAttribute('aria-valuemax')).toBe('960')
+    expect(separator.getAttribute('aria-valuenow')).toBe('440')
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('472px')
+    expect(separator.getAttribute('aria-valuenow')).toBe('472')
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight', shiftKey: true })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('408px')
+
+    fireEvent.keyDown(separator, { key: 'Home' })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('360px')
+
+    fireEvent.pointerDown(separator, { button: 0, clientX: 700, pointerId: 7 })
+    expect(inspector.classList.contains('is-resizing')).toBe(true)
+    fireEvent.pointerMove(separator, { clientX: 500, pointerId: 7 })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('560px')
+    expect(separator.getAttribute('aria-valuenow')).toBe('560')
+    fireEvent.pointerUp(separator, { clientX: 500, pointerId: 7 })
+    expect(inspector.classList.contains('is-resizing')).toBe(false)
+
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('960px')
+    expect(separator.getAttribute('aria-valuenow')).toBe('960')
   })
 
   test('follows the latest streamed subagent turn, then collapses turns when the task finishes', async () => {
@@ -397,7 +451,10 @@ describe('plan todo card disclosure', () => {
     const { container, rerender } = render(
       <ChatMessage message={message('running', turnOne)} pending={true} onAskReply={vi.fn()} />,
     )
-    const taskRow = container.querySelector('.oa-up-task')
+    const drawerLayer = document.body.querySelector('.oa-up-drawer-layer')
+    const taskRow = drawerLayer?.querySelector('.oa-up-task')
+    expect(drawerLayer?.parentElement).toBe(document.body)
+    expect(container.contains(drawerLayer)).toBe(false)
     const turnButton = (n) => screen.getByRole('button', { name: new RegExp(`Turn ${n}`) })
     const turnIsOpen = (n) => turnButton(n).closest('.ant-collapse-item')
       ?.classList.contains('ant-collapse-item-active')
@@ -467,14 +524,43 @@ describe('plan todo card disclosure', () => {
     const assistantMessages = [...container.querySelectorAll('.oa-message.assistant')]
     expect(assistantMessages).toHaveLength(2)
     expect(container.querySelector('.oa-session-ultraplan')).toBeNull()
-    expect(assistantMessages[0].querySelectorAll('.oa-message-ultraplan > .oa-up-dash')).toHaveLength(1)
-    expect(assistantMessages[1].querySelectorAll('.oa-message-ultraplan > .oa-up-dash')).toHaveLength(1)
+    const olderEntry = assistantMessages[0].querySelector('.oa-message-ultraplan > .oa-up-entry')
+    const latestEntry = assistantMessages[1].querySelector('.oa-message-ultraplan > .oa-up-entry')
+    expect(olderEntry).toBeTruthy()
+    expect(latestEntry).toBeTruthy()
+    expect(olderEntry.getAttribute('aria-expanded')).toBe('false')
+    expect(latestEntry.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.oa-up-drawer-backdrop')).toBeNull()
     expect(assistantMessages[0].textContent).toContain('Older objective')
     expect(assistantMessages[0].textContent).not.toContain('Find active state-owned jobs')
     expect(assistantMessages[1].textContent).toContain('Find active state-owned jobs')
     expect(assistantMessages[1].textContent).not.toContain('Older objective')
-    expect(assistantMessages[1].textContent).toContain('verified final result')
-    expect(assistantMessages[1].textContent).not.toContain('Research is complete')
+    const finalProse = assistantMessages[1].querySelector('.oa-ultraplan-prose')
+    expect(finalProse).toBeTruthy()
+    expect(finalProse.closest('.oa-message-ultraplan')).toBeNull()
+    expect(finalProse.textContent).toContain('verified final result')
+    expect(finalProse.textContent).not.toContain('Research is complete')
+    expect(assistantMessages[1].textContent.match(/verified final result/g)).toHaveLength(1)
+
+    fireEvent.click(latestEntry)
+    const drawerLayer = document.body.querySelector('.oa-up-drawer-layer')
+    const inspector = drawerLayer?.querySelector('.oa-up-drawer')
+    expect(drawerLayer).toBeTruthy()
+    expect(drawerLayer.parentElement).toBe(document.body)
+    expect(assistantMessages[1].contains(drawerLayer)).toBe(false)
+    expect(inspector).toBeTruthy()
+    expect(inspector.getAttribute('role')).toBe('region')
+    expect(inspector.hasAttribute('aria-modal')).toBe(false)
+    expect(drawerLayer.querySelector('.oa-up-drawer-backdrop')).toBeNull()
+    expect(latestEntry.getAttribute('aria-expanded')).toBe('true')
+    expect(inspector.textContent).toContain('Find active state-owned jobs')
+    expect(inspector.textContent).not.toContain('Older objective')
+    expect(finalProse.closest('[hidden]')).toBeNull()
+
+    fireEvent.click(inspector.querySelector('.oa-up-drawer-close'))
+    expect(document.body.querySelector('.oa-up-drawer-layer')).toBeNull()
+    expect(latestEntry.getAttribute('aria-expanded')).toBe('false')
+    expect(finalProse.textContent).toContain('verified final result')
   })
 })
 

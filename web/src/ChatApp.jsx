@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
@@ -710,16 +711,16 @@ const hasUltraPlanDashboardState = (state) => !!(state && (
 const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
   const parsedState = parseUltraPlanText(text)
   const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
+  const cleanText = stripUltraPlanProgressText(text)
   if (hasUltraPlanDashboardState(upState)) {
-    return (
-      <section className="oa-message-ultraplan" aria-label="UltraPlan 执行计划">
-        <UltraPlanDashboard state={upState} text={text} onAskReply={onAskReply} />
-      </section>
-    )
+    return cleanText ? (
+      <div className="oa-ultraplan-prose">
+        <MarkdownBlock text={cleanText} onAskReply={onAskReply} />
+      </div>
+    ) : null
   }
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
-  const cleanText = stripUltraPlanProgressText(text)
   return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
 }
 
@@ -1005,7 +1006,7 @@ function UltraPlanTaskRow({ task, onAskReply }) {
   )
 }
 
-function UltraPlanDashboard({ state, text, onAskReply }) {
+function UltraPlanDashboard({ state, onAskReply }) {
   const [expanded, setExpanded] = useState(true)
   const panelId = React.useId()
   const { objective, phases = [], recentTasks = [], complete, events = [], resultFiles = [], current, taskOutputs = {}, task_outputs = {} } = state
@@ -1169,16 +1170,6 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
             </div>
           </details>
         )}
-        {complete && (() => {
-          // Only show text that is NOT ultraplan log lines (e.g. extra agent commentary after the block)
-          const resultText = (text || '').split('\n').filter(ln => {
-            const t = ln.trim()
-            return t && !t.match(/^\[(ultraplan|phase|subagent|result|done|next|summary)\]/)
-          }).join('\n').trim()
-          return resultText
-            ? <div className="oa-up-result"><MarkdownBlock text={resultText} onAskReply={onAskReply} /></div>
-            : null
-        })()}
       </div>
     </div>
   )
@@ -1392,6 +1383,207 @@ function TextMarkdown({ text = '', onAskReply }) {
   }
   if (hiddenBlocks > 0) nodes.push(<div key="__hidden_blocks" className="oa-md-truncated">… 已隐藏 {hiddenBlocks.toLocaleString()} 个内容块，可复制消息查看完整内容。</div>)
   return <>{nodes}</>
+}
+
+const ULTRAPLAN_DRAWER_DEFAULT_WIDTH = 440
+const ULTRAPLAN_DRAWER_MIN_WIDTH = 360
+const ULTRAPLAN_DRAWER_MAX_WIDTH = 960
+const ULTRAPLAN_DRAWER_VIEWPORT_GUTTER = 24
+
+function getUltraPlanDrawerMaxWidth() {
+  if (typeof window === 'undefined') return ULTRAPLAN_DRAWER_MAX_WIDTH
+  return Math.max(
+    ULTRAPLAN_DRAWER_MIN_WIDTH,
+    Math.min(ULTRAPLAN_DRAWER_MAX_WIDTH, Math.floor(window.innerWidth - ULTRAPLAN_DRAWER_VIEWPORT_GUTTER)),
+  )
+}
+
+function clampUltraPlanDrawerWidth(width, maxWidth = getUltraPlanDrawerMaxWidth()) {
+  return Math.min(maxWidth, Math.max(ULTRAPLAN_DRAWER_MIN_WIDTH, Math.round(Number(width) || ULTRAPLAN_DRAWER_DEFAULT_WIDTH)))
+}
+
+function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskReply }) {
+  const mergedState = useMemo(
+    () => mergeUltraPlanStates(state, parseUltraPlanText(content)),
+    [state, content],
+  )
+  const available = hasUltraPlanDashboardState(mergedState)
+  const [open, setOpen] = useState(false)
+  const [drawerWidth, setDrawerWidth] = useState(() => clampUltraPlanDrawerWidth(ULTRAPLAN_DRAWER_DEFAULT_WIDTH))
+  const [drawerMaxWidth, setDrawerMaxWidth] = useState(() => getUltraPlanDrawerMaxWidth())
+  const [resizing, setResizing] = useState(false)
+  const entryRef = useRef(null)
+  const drawerWidthRef = useRef(drawerWidth)
+  const resizeSessionRef = useRef(null)
+  const autoOpenedRef = useRef(false)
+  const userDismissedRef = useRef(false)
+  const drawerId = React.useId()
+  const titleId = `${drawerId}-title`
+
+  const applyDrawerWidth = useCallback((nextWidth) => {
+    const maxWidth = getUltraPlanDrawerMaxWidth()
+    const width = clampUltraPlanDrawerWidth(nextWidth, maxWidth)
+    drawerWidthRef.current = width
+    setDrawerMaxWidth(maxWidth)
+    setDrawerWidth(width)
+  }, [])
+
+  const beginDrawerResize = useCallback((event) => {
+    if (event.button != null && event.button !== 0) return
+    const startX = Number.isFinite(event.clientX) ? event.clientX : 0
+    resizeSessionRef.current = {
+      pointerId: event.pointerId,
+      startX,
+      startWidth: drawerWidthRef.current,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setResizing(true)
+    event.preventDefault()
+  }, [])
+
+  const moveDrawerResize = useCallback((event) => {
+    const session = resizeSessionRef.current
+    if (!session || (session.pointerId != null && event.pointerId !== session.pointerId)) return
+    const clientX = Number.isFinite(event.clientX) ? event.clientX : session.startX
+    applyDrawerWidth(session.startWidth + session.startX - clientX)
+    event.preventDefault()
+  }, [applyDrawerWidth])
+
+  const finishDrawerResize = useCallback((event) => {
+    const session = resizeSessionRef.current
+    if (!session || (session.pointerId != null && event.pointerId !== session.pointerId)) return
+    resizeSessionRef.current = null
+    setResizing(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
+
+  const resizeDrawerFromKeyboard = useCallback((event) => {
+    const step = event.shiftKey ? 64 : 32
+    let nextWidth = null
+    if (event.key === 'ArrowLeft') nextWidth = drawerWidthRef.current + step
+    else if (event.key === 'ArrowRight') nextWidth = drawerWidthRef.current - step
+    else if (event.key === 'Home') nextWidth = ULTRAPLAN_DRAWER_MIN_WIDTH
+    else if (event.key === 'End') nextWidth = getUltraPlanDrawerMaxWidth()
+    if (nextWidth == null) return
+    event.preventDefault()
+    applyDrawerWidth(nextWidth)
+  }, [applyDrawerWidth])
+
+  const closeDrawer = useCallback(() => {
+    userDismissedRef.current = true
+    setOpen(false)
+    const restoreFocus = () => entryRef.current?.focus()
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restoreFocus)
+    else setTimeout(restoreFocus, 0)
+  }, [])
+
+  useEffect(() => {
+    const syncWidthToViewport = () => applyDrawerWidth(drawerWidthRef.current)
+    syncWidthToViewport()
+    window.addEventListener('resize', syncWidthToViewport)
+    return () => window.removeEventListener('resize', syncWidthToViewport)
+  }, [applyDrawerWidth])
+
+  useEffect(() => {
+    if (!available || !pending || mergedState?.complete || autoOpenedRef.current || userDismissedRef.current) return
+    autoOpenedRef.current = true
+    setOpen(true)
+  }, [available, pending, mergedState?.complete])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeDrawer()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [open, closeDrawer])
+
+  if (!available) return null
+
+  const phases = Array.isArray(mergedState.phases) ? mergedState.phases : []
+  const recentTasks = Array.isArray(mergedState.recentTasks) ? mergedState.recentTasks : []
+  const phaseTasks = phases.flatMap(phase => Array.isArray(phase.tasks) ? phase.tasks : [])
+  const total = phaseTasks.length || recentTasks.length || phases.length
+  const done = mergedState.complete
+    ? total
+    : (phaseTasks.length ? phaseTasks : (recentTasks.length ? recentTasks : phases))
+      .filter(item => String(item?.status || '').toLowerCase() === 'done').length
+  const statusText = mergedState.complete
+    ? '\u5df2\u5b8c\u6210'
+    : (pending ? '\u6267\u884c\u4e2d' : '\u53ef\u67e5\u770b')
+  const objective = String(mergedState.objective || mergedState.current || '\u67e5\u770b\u8ba1\u5212\u4e0e\u5b50\u4efb\u52a1\u8fdb\u5c55')
+
+  return (
+    <div className="oa-message-ultraplan">
+      <button
+        ref={entryRef}
+        type="button"
+        className="oa-up-entry"
+        aria-expanded={open}
+        aria-controls={drawerId}
+        onClick={() => setOpen(true)}
+      >
+        <span className="oa-up-entry-mark" aria-hidden="true"><Sparkles size={15} /></span>
+        <span className="oa-up-entry-copy">
+          <b>UltraPlan</b>
+          <small>{objective}</small>
+        </span>
+        <span className={`oa-up-entry-status ${mergedState.complete ? 'is-done' : 'is-running'}`}>
+          {statusText}{total > 0 ? ` \u00b7 ${done}/${total}` : ''}
+        </span>
+        <PanelRightOpen size={16} aria-hidden="true" />
+      </button>
+
+      {open && createPortal(
+        <div className="oa-message-ultraplan oa-up-drawer-layer" data-ultraplan-drawer-owner="message">
+          <aside
+            id={drawerId}
+            className={`oa-up-drawer ${resizing ? 'is-resizing' : ''}`}
+            role="region"
+            aria-labelledby={titleId}
+            style={{ '--oa-up-drawer-width': `${drawerWidth}px` }}
+          >
+            <div
+              className="oa-up-drawer-resize"
+              role="separator"
+              aria-label={'\u8c03\u6574 UltraPlan \u4fa7\u680f\u5bbd\u5ea6'}
+              aria-orientation="vertical"
+              aria-controls={drawerId}
+              aria-valuemin={ULTRAPLAN_DRAWER_MIN_WIDTH}
+              aria-valuemax={drawerMaxWidth}
+              aria-valuenow={drawerWidth}
+              aria-valuetext={`${drawerWidth} px`}
+              tabIndex={0}
+              onPointerDown={beginDrawerResize}
+              onPointerMove={moveDrawerResize}
+              onPointerUp={finishDrawerResize}
+              onPointerCancel={finishDrawerResize}
+              onKeyDown={resizeDrawerFromKeyboard}
+            />
+            <header className="oa-up-drawer-head">
+              <span className="oa-up-drawer-kicker">MESSAGE-LINKED PLAN</span>
+              <div>
+                <h2 id={titleId}>UltraPlan</h2>
+                <p>{objective}</p>
+              </div>
+              <button type="button" className="oa-up-drawer-close" aria-label={'\u5173\u95ed UltraPlan \u8be6\u60c5'} onClick={closeDrawer}>
+                <X size={18} />
+              </button>
+            </header>
+            <div className="oa-up-drawer-scroll">
+              <UltraPlanDashboard state={mergedState} onAskReply={onAskReply} />
+            </div>
+          </aside>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
 }
 
 const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages, ultraplan_state }) {
@@ -1763,6 +1955,10 @@ export const ChatMessage = memo(function ChatMessage({
         }
         {showUsageRow && <UsageRow u={usageTotal} elapsedMs={elapsedMs} live={pending} label="总计" className="oa-usage-total" />}
       </div>
+
+      {m.role === 'assistant' && (
+        <UltraPlanMessageDrawer content={m.content || ''} state={m.ultraplan_state} pending={pending} onAskReply={onAskReply} />
+      )}
 
       <div className="oa-msg-meta">
         {ageText && <span className="oa-msg-age" title={ageText}><Clock3 size={11}/>{ageText}</span>}

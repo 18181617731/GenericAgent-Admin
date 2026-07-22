@@ -9482,3 +9482,382 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   .oa-plan-list li.is-current .oa-plan-status::before,
   .oa-plan-placeholder > span:first-child { animation:none; }
 }
+
+/* Message-linked UltraPlan entry and fixed non-modal inspector */
+.oa-message-ultraplan {
+  --up-line: var(--border, #dedede);
+  --up-bg: var(--surface, #fff);
+  --up-soft: var(--surface-muted, #f6f6f6);
+  --up-text: var(--text, #171717);
+  --up-muted: var(--muted, #6b6b6b);
+  --up-green: var(--oa-green, var(--green, #16835f));
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+.oa-message-ultraplan .oa-up-entry {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  grid-template-columns: 22px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 1px solid var(--up-line);
+  border-radius: 8px;
+  background: var(--up-bg);
+  box-shadow: none;
+  color: var(--up-text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s ease, background .15s ease;
+}
+.oa-message-ultraplan .oa-up-entry:hover {
+  border-color: color-mix(in srgb, var(--up-line) 60%, var(--up-text));
+  background: var(--up-soft);
+}
+.oa-message-ultraplan .oa-up-entry:focus-visible,
+.oa-message-ultraplan .oa-up-drawer-close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--blue, #2563eb) 70%, white);
+  outline-offset: 2px;
+}
+.oa-message-ultraplan .oa-up-entry-mark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--up-muted);
+}
+.oa-message-ultraplan .oa-up-entry-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+.oa-message-ultraplan .oa-up-entry-copy b {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.oa-message-ultraplan .oa-up-entry-copy small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--up-muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-message-ultraplan .oa-up-entry-status {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--up-muted);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.oa-message-ultraplan .oa-up-entry-status.is-running { color: #9a6427; }
+.oa-message-ultraplan .oa-up-entry-status.is-done { color: var(--up-green); }
+
+/* The fixed layer only positions the inspector. Empty space remains interactive. */
+.oa-message-ultraplan.oa-up-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: block;
+  pointer-events: none;
+  isolation: isolate;
+}
+.oa-message-ultraplan .oa-up-drawer {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  width: min(var(--oa-up-drawer-width, 440px), calc(100vw - 24px));
+  min-width: 0;
+  height: auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--up-line);
+  border-radius: 10px;
+  background: var(--up-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .09);
+  color: var(--up-text);
+  pointer-events: auto;
+}
+.oa-message-ultraplan .oa-up-drawer-resize {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: -7px;
+  width: 14px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.oa-message-ultraplan .oa-up-drawer-resize::before {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 2px;
+  height: 42px;
+  border-radius: 2px;
+  background: var(--up-line);
+  content: '';
+  transform: translateY(-50%);
+  transition: height .15s ease, background-color .15s ease;
+}
+.oa-message-ultraplan .oa-up-drawer-resize:hover::before,
+.oa-message-ultraplan .oa-up-drawer-resize:focus-visible::before,
+.oa-message-ultraplan .oa-up-drawer.is-resizing .oa-up-drawer-resize::before {
+  height: 58px;
+  background: var(--up-accent);
+}
+.oa-message-ultraplan .oa-up-drawer-resize:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--up-accent) 56%, transparent);
+  outline-offset: -3px;
+}
+.oa-message-ultraplan .oa-up-drawer.is-resizing,
+.oa-message-ultraplan .oa-up-drawer.is-resizing * {
+  cursor: ew-resize;
+  user-select: none;
+}
+.oa-message-ultraplan .oa-up-drawer-head {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 2px 10px;
+  align-items: start;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--up-line);
+  background: var(--up-bg);
+}
+.oa-message-ultraplan .oa-up-drawer-kicker { display: none; }
+.oa-message-ultraplan .oa-up-drawer-head h2 {
+  margin: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+.oa-message-ultraplan .oa-up-drawer-head p {
+  display: -webkit-box;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--up-muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+.oa-message-ultraplan .oa-up-drawer-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--up-muted);
+  cursor: pointer;
+}
+.oa-message-ultraplan .oa-up-drawer-close:hover {
+  background: var(--up-soft);
+  color: var(--up-text);
+}
+.oa-message-ultraplan .oa-up-drawer-scroll {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--up-bg);
+  scrollbar-width: thin;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-dash {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: var(--up-bg);
+  box-shadow: none;
+  animation: none;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-head { display: none; }
+.oa-message-ultraplan .oa-up-drawer .oa-up-body {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  max-height: none;
+  gap: 12px;
+  padding: 12px;
+  overflow: visible;
+  background: var(--up-bg);
+  animation: none;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-overview {
+  gap: 8px;
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--up-line);
+  border-radius: 0;
+  background: transparent;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-progress-value { font-size: 18px; }
+.oa-message-ultraplan .oa-up-drawer .oa-up-progress-track {
+  height: 3px;
+  background: var(--up-soft);
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-stats {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-current {
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: var(--up-soft);
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-section,
+.oa-message-ultraplan .oa-up-drawer .oa-up-files {
+  min-width: 0;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-section-head {
+  min-height: 28px;
+  padding: 0;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-phase {
+  min-width: 0;
+  border-color: var(--up-line);
+  border-radius: 7px;
+  background: var(--up-bg);
+  box-shadow: none;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-events {
+  min-width: 0;
+  border-color: var(--up-line);
+  border-radius: 7px;
+  background: var(--up-bg);
+}
+
+/* Keep long file names and rendered output inside the inspector width. */
+.oa-message-ultraplan .oa-up-drawer :is(
+  .oa-up-phases,
+  .oa-up-phase-body,
+  .oa-up-tasks,
+  .oa-up-task-wrap,
+  .oa-up-task,
+  .oa-up-task-output,
+  .oa-up-task-output .oa-md
+) {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-wrap { width: 100%; }
+.oa-message-ultraplan .oa-up-drawer .oa-up-task {
+  width: 100%;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 34%) 16px;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-desc {
+  grid-column: 2;
+  min-width: 0;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-file {
+  grid-column: 3;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-chevron-wrap { grid-column: 4; }
+.oa-message-ultraplan .oa-up-drawer .oa-up-task:not(:has(.oa-up-task-file)) {
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task:not(:has(.oa-up-task-file)) .oa-up-task-chevron-wrap {
+  grid-column: 3;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-output {
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 10px 8px;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-output :is(.oa-md, pre, code, table, img) {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-output :is(pre, table) { overflow-x: auto; }
+.oa-message-ultraplan .oa-up-drawer .oa-up-task-output :is(p, li, a, code) { overflow-wrap: anywhere; }
+.oa-message-ultraplan .oa-up-drawer .oa-up-file-body { min-width: 0; }
+
+/* Keep the response/Turn header full-width and put the launcher on its own row. */
+.oa-message.assistant:has(> .oa-message-ultraplan) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  align-items: start;
+}
+.oa-message.assistant:has(> .oa-message-ultraplan) > .oa-msg-body {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  min-width: 0;
+}
+.oa-message.assistant:has(> .oa-message-ultraplan) > .oa-msg-meta {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+}
+.oa-message.assistant:has(> .oa-message-ultraplan) > .oa-message-ultraplan {
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+@media (max-width: 620px) {
+  .oa-message-ultraplan .oa-up-entry {
+    grid-template-columns: 22px minmax(0, 1fr) 16px;
+  }
+  .oa-message-ultraplan .oa-up-entry-status { display: none; }
+  .oa-message-ultraplan .oa-up-drawer {
+    inset: 8px;
+    width: auto;
+  }
+  .oa-message-ultraplan .oa-up-drawer-resize { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oa-message-ultraplan .oa-up-entry { transition: none; }
+}
