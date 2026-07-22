@@ -34,6 +34,8 @@ type chatMessage struct {
 	Files          []map[string]interface{} `json:"files,omitempty"`
 	CreatedAt      int64                    `json:"created_at"`
 	Error          bool                     `json:"error,omitempty"`
+	Kind           string                   `json:"kind,omitempty"`
+	SideQuestion   string                   `json:"side_question,omitempty"`
 	Usage          map[string]int           `json:"usage,omitempty"`
 	Usages         []map[string]int         `json:"usages,omitempty"`
 	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`

@@ -1828,7 +1828,7 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
 })
 
 export const ChatMessage = memo(function ChatMessage({
-  message: m, pending, onAskReply, onEditResend,
+  message: m, pending, onAskReply, onEditResend, onRetryBTW,
   editDisabled = false, clockNow = 0,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
@@ -1852,6 +1852,7 @@ export const ChatMessage = memo(function ChatMessage({
   const usageTotal = hasUsage ? sumUsages(turnUsages) : null
   const elapsedMs = getElapsedMs(m, clockNow)
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0)
+  const isBTW = m.kind === 'btw'
 
   const copyContent = () => {
     const txt = m.role === 'user' ? userText : (m.content || '')
@@ -1887,7 +1888,7 @@ export const ChatMessage = memo(function ChatMessage({
   }
 
   return (
-    <article className={`oa-message ${m.role} ${pending ? 'pending' : ''} ${editing ? 'oa-message-editing' : ''}`} data-id={m.id}>
+    <article className={`oa-message ${m.role} ${pending ? 'pending' : ''} ${editing ? 'oa-message-editing' : ''} ${isBTW ? 'oa-message-btw' : ''}`} data-id={m.id}>
       <div className="oa-msg-body">
         {m.role === 'assistant'
           ? (<>
@@ -1902,9 +1903,16 @@ export const ChatMessage = memo(function ChatMessage({
                   )}
                 </div>
               )}
+              {isBTW && <div className="oa-btw-head">
+                <span className="oa-btw-mark" aria-hidden="true">↗</span>
+                <div><span>顺便问</span><strong>{m.side_question || '侧问'}</strong></div>
+                <em>{m.btw_status === 'pending' ? '思考中' : m.btw_status === 'error' ? '未完成' : '不影响主任务'}</em>
+              </div>}
               {m.commandResult
                 ? <CommandResultCard result={m.commandResult} />
-                : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
+                : m.btw_status === 'error'
+                  ? <div className="oa-btw-error" role="alert"><span>{m.content || '侧问失败，请重试'}</span><button type="button" onClick={() => onRetryBTW?.(m)}>重试</button></div>
+                  : <AssistantContent content={m.content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -1987,7 +1995,7 @@ export const ChatMessage = memo(function ChatMessage({
 })
 
 const MessageList = memo(function MessageList({
-  messages, isCurrentRunning, onAskReply, onEditResend, clockNow,
+  messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow,
 }) {
   return (
     <>
@@ -2006,9 +2014,10 @@ const MessageList = memo(function MessageList({
           <ChatMessage
             key={m.id}
             message={m}
-            pending={isCurrentRunning && i === messages.length - 1}
+            pending={!m.kind && isCurrentRunning && i === messages.length - 1}
             onAskReply={onAskReply}
             onEditResend={onEditResend}
+            onRetryBTW={onRetryBTW}
             editDisabled={isCurrentRunning}
             clockNow={clockNow}
           />
@@ -3136,23 +3145,42 @@ export default function ChatApp() {
     await runSend(item)
   }
 
-  const sendBTW = async (text, sessionId = activeSidRef.current || sid) => {
+  const sendBTW = async (text, sessionId = activeSidRef.current || sid, retryId = '') => {
     if (!sessionId) {
       setNotice('请先打开一个对话再使用 /btw')
       return
     }
-    if (String(text || '').trim() === '/btw') {
+    const prompt = String(text || '').trim()
+    const question = prompt.replace(/^\/btw(?:\s+|$)/i, '').trim()
+    if (!question) {
       setNotice('请在 /btw 后输入问题')
       return
     }
+    const placeholderId = retryId || `btw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const placeholder = {
+      id: placeholderId,
+      role: 'assistant',
+      kind: 'btw',
+      side_question: question,
+      btw_status: 'pending',
+      content: '',
+      created_at: Math.floor(Date.now() / 1000),
+    }
     setErr(''); setNotice('')
+    if (isActiveSession(sessionId)) setMessages(xs => retryId
+      ? xs.map(m => m.id === retryId ? placeholder : m)
+      : [...xs, placeholder])
     try {
-      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:text }) })
+      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:`/btw ${question}` }) })
       if (!isActiveSession(sessionId)) return
-      if (data?.message) setMessages(xs => xs.some(m => m.id === data.message.id) ? xs : [...xs, data.message])
+      if (data?.message) setMessages(xs => xs.map(m => m.id === placeholderId ? { ...data.message, btw_status:'done' } : m))
       await loadSessions(sessionId)
     } catch (e) {
-      if (isActiveSession(sessionId)) setErr(e.message || String(e))
+      if (!isActiveSession(sessionId)) return
+      const detail = e?.message || String(e)
+      setMessages(xs => xs.map(m => m.id === placeholderId
+        ? { ...m, btw_status:'error', content:detail }
+        : m))
     }
   }
 
@@ -3606,6 +3634,7 @@ export default function ChatApp() {
           isCurrentRunning={isCurrentRunning}
           onAskReply={fillAskReply}
           onEditResend={editAndResend}
+          onRetryBTW={(message)=>sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)}
           clockNow={streamClock}
         />
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}

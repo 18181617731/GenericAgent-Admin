@@ -532,6 +532,8 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	msg.Kind = "btw"
+	msg.SideQuestion = strings.TrimSpace(strings.TrimPrefix(prompt, "/btw"))
 	s.SessionMu.Lock()
 	latest, loadErr := loadChatSession(s.CfgStore.Cfg, sid)
 	if loadErr == nil {
