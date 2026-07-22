@@ -9848,6 +9848,9 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 }
 
 @media (max-width: 620px) {
+  .oa-message.assistant:has(> .oa-message-ultraplan) {
+    grid-template-columns: minmax(0, 1fr) 30px !important;
+  }
   .oa-message-ultraplan .oa-up-entry {
     grid-template-columns: 22px minmax(0, 1fr) 16px;
   }

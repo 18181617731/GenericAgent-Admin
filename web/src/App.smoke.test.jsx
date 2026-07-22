@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -6,6 +7,8 @@ import App, { ChannelsPage } from './App.jsx'
 import { ChatMessage, PlanTodoCard } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
+
+const appStyles = readFileSync('src/style.css', 'utf8')
 
 globalThis.React = React
 
@@ -314,6 +317,12 @@ describe('plan todo card disclosure', () => {
 
     expect(screen.getByRole('button', { name: '\u6536\u8d77\u6267\u884c\u8ba1\u5212' }).getAttribute('aria-expanded')).toBe('true')
     expect(body?.hidden).toBe(false)
+  })
+
+  test('keeps UltraPlan message content in the primary mobile grid column', () => {
+    expect(appStyles).toMatch(
+      /@media \(max-width: 620px\)\s*\{\s*\.oa-message\.assistant:has\(> \.oa-message-ultraplan\)\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\) 30px !important;/,
+    )
   })
 
   test('auto-opens the message-owned UltraPlan inspector and supports close, reopen, and Escape', async () => {
