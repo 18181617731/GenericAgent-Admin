@@ -24,7 +24,7 @@ test('preview folds long runs of blank lines', () => {
 })
 
 
-test('lightweight assistant output strips leading transport summary', () => {
+test('lightweight assistant output extracts leading transport summary', () => {
   const text = [
     '<summary>\u5f53\u524d\u65e0\u6cd5\u67e5\u770b\u684c\u9762</summary>',
     '',
@@ -32,6 +32,7 @@ test('lightweight assistant output strips leading transport summary', () => {
   ].join('\n')
   const parsed = parseAssistantContent(text)
   assert.equal(parsed.runs.length, 0)
+  assert.equal(parsed.summary, '\u5f53\u524d\u65e0\u6cd5\u67e5\u770b\u684c\u9762')
   assert.equal(parsed.body, '\u4f60\u597d\uff0c\u6211\u6b63\u5728\u56de\u590d\u4f60\u7684\u4e34\u65f6\u63d0\u95ee\u3002')
 })
 
@@ -43,7 +44,7 @@ test('assistant output preserves summary tags outside the transport prefix', () 
   assert.equal(parseAssistantContent(text).body, text)
 })
 
-test('leading transport summary is stripped after the final marker too', () => {
+test('leading transport summary is extracted after the final marker too', () => {
   const text = [
     'LLM Running (Turn 1)',
     '<summary>work</summary>',
@@ -56,6 +57,7 @@ test('leading transport summary is stripped after the final marker too', () => {
   ].join('\n')
   const parsed = parseAssistantContent(text)
   assert.equal(parsed.runs.length, 1)
+  assert.equal(parsed.summary, 'transport only')
   assert.equal(parsed.body, 'final answer')
 })
 

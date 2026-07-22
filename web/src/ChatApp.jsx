@@ -1653,9 +1653,10 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
           : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
-    {(parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
+    {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
       {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
-      {renderAssistantBody(parsed.body || content || '', onAskReply, liveUltraPlanState || ultraplan_state)}
+      {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
+      {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state)}
     </div>}
   </div>
 })
