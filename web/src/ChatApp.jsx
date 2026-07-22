@@ -2477,6 +2477,15 @@ export default function ChatApp() {
 
   const applyStreamEvent = (ev, pendingId, clientUserID = '', sessionId = '') => {
     if (!isActiveSession(sessionId)) return
+    if (Object.prototype.hasOwnProperty.call(ev, 'raw_history')) {
+      setRawHistory(Array.isArray(ev.raw_history) ? ev.raw_history : [])
+    }
+    if (Object.prototype.hasOwnProperty.call(ev, 'history_info')) {
+      setHistoryInfo(Array.isArray(ev.history_info) ? ev.history_info : [])
+    }
+    if (Object.prototype.hasOwnProperty.call(ev, 'working')) {
+      setWorkingState(ev.working && typeof ev.working === 'object' ? ev.working : null)
+    }
     if (Object.prototype.hasOwnProperty.call(ev, 'plan')) setPlanState(ev.plan || null)
     if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
       setSessions(xs => xs.map(x => x.id === sessionId ? {
