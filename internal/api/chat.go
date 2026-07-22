@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -259,9 +260,11 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		}
 		return ms
 	}
+	selectedLLMNo := cs.Settings.LLMNo
+	finalLLMNo := &selectedLLMNo
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
-		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
+		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), LLMNo: finalLLMNo, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 		cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, msg)
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
@@ -282,7 +285,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	}
 	if err := json.NewEncoder(worker.Stdin).Encode(cmdReq); err != nil {
 		s.dropChatWorker(sid, worker)
-		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
+		msg := chatMessage{ID: pendingID, Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), LLMNo: finalLLMNo, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis()}
 		cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, msg)
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
@@ -329,6 +332,10 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if ev["type"] == "model" {
 			if modelID, ok := ev["model_id"].(string); ok {
 				finalModelID = strings.TrimSpace(modelID)
+			}
+			if modelNo, ok := ev["llm_no"].(float64); ok && modelNo >= 0 && modelNo == math.Trunc(modelNo) {
+				value := int(modelNo)
+				finalLLMNo = &value
 			}
 		}
 		if ev["type"] == "ultraplan_event" {
@@ -388,6 +395,10 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				final.ModelID = finalModelID
 				msg["model_id"] = finalModelID
 			}
+			if final.LLMNo == nil {
+				final.LLMNo = finalLLMNo
+				msg["llm_no"] = *finalLLMNo
+			}
 			if final.ElapsedMS <= 0 {
 				final.ElapsedMS = elapsedMillis()
 			}
@@ -436,7 +447,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			} else {
 				content = "已停止生成"
 			}
-			final = chatMessage{ID: pendingID, Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
+			final = chatMessage{ID: pendingID, Role: "assistant", Content: content, ModelID: finalModelID, LLMNo: finalLLMNo, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		} else {
 			err := readErr
@@ -450,7 +461,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			} else {
 				content = fmt.Sprintf("生成失败：%v", err)
 			}
-			final = chatMessage{ID: pendingID, Role: "assistant", Content: content, ModelID: finalModelID, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
+			final = chatMessage{ID: pendingID, Role: "assistant", Content: content, ModelID: finalModelID, LLMNo: finalLLMNo, CreatedAt: time.Now().Unix(), Error: true, ElapsedMS: elapsedMillis(), UltraPlanState: mergeChatMaps(nil, finalUltraPlanState)}
 			s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": final})
 		}
 	}

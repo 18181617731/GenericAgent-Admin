@@ -431,6 +431,21 @@ describe('chat response model identity', () => {
     expect(badge?.getAttribute('title')).toBe('模型：retired-model；内部编号：#18')
   })
 
+  test('shows the selected provider and model while the assistant response is pending', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'pending-model', role: 'assistant', content: '', llm_no: 7, created_at: 0 }}
+        models={[{ index: 7, provider: '服务商 A', model: 'model-v1' }]}
+        pending
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    const badge = container.querySelector('.oa-model-id')
+    expect(badge?.textContent).toBe('服务商 A · model-v1')
+    expect(badge?.textContent).not.toBe('未知模型')
+  })
+
   test('matches the recorded model ID instead of a stale internal index after reordering', () => {
     const { container } = render(
       <ChatMessage

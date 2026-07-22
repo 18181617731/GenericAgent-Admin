@@ -285,6 +285,9 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 	if len(cs.Messages) != 2 || cs.Messages[1].Role != "assistant" || !cs.Messages[1].Error || !strings.Contains(cs.Messages[1].Content, "boom") {
 		t.Fatalf("unexpected messages: %#v", cs.Messages)
 	}
+	if cs.Messages[1].LLMNo == nil || *cs.Messages[1].LLMNo != 0 {
+		t.Fatalf("assistant llm_no=%v want 0: %#v", cs.Messages[1].LLMNo, cs.Messages)
+	}
 }
 
 func TestChatProjectModeCommandLifecycleAndPreservesMemory(t *testing.T) {
@@ -413,7 +416,7 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 				{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "calc", "content": "42"}}},
 				{"role": "assistant", "content": []map[string]interface{}{{"type": "text", "text": "ok"}}},
 			}
-			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "model", "model_id": "vendor/model-real"})
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "model", "model_id": "vendor/model-real", "llm_no": 2})
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
 				"type":         "done",
 				"message":      done,
@@ -506,6 +509,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if len(stored.Messages) == 0 || stored.Messages[len(stored.Messages)-1].ModelID != "vendor/model-real" {
 		t.Fatalf("stored assistant model_id=%q want vendor/model-real: %#v", stored.Messages[len(stored.Messages)-1].ModelID, stored.Messages)
 	}
+	if stored.Messages[len(stored.Messages)-1].LLMNo == nil || *stored.Messages[len(stored.Messages)-1].LLMNo != 2 {
+		t.Fatalf("stored assistant llm_no=%v want 2: %#v", stored.Messages[len(stored.Messages)-1].LLMNo, stored.Messages)
+	}
 
 	reloadReq := httptest.NewRequest(http.MethodGet, "/api/chat/session/session-hist", nil)
 	reloadRR := httptest.NewRecorder()
@@ -519,6 +525,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if len(reloaded.Messages) == 0 || reloaded.Messages[len(reloaded.Messages)-1].ModelID != "vendor/model-real" {
 		t.Fatalf("reloaded assistant model_id=%q want vendor/model-real: %#v", reloaded.Messages[len(reloaded.Messages)-1].ModelID, reloaded.Messages)
+	}
+	if reloaded.Messages[len(reloaded.Messages)-1].LLMNo == nil || *reloaded.Messages[len(reloaded.Messages)-1].LLMNo != 2 {
+		t.Fatalf("reloaded assistant llm_no=%v want 2: %#v", reloaded.Messages[len(reloaded.Messages)-1].LLMNo, reloaded.Messages)
 	}
 	if len(stored.RawHistory) != 3 {
 		t.Fatalf("stored raw_history len=%d want 3: %#v", len(stored.RawHistory), stored.RawHistory)

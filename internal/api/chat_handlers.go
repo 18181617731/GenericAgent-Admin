@@ -636,7 +636,8 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 	}
 	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
 	runStartedAtMS := time.Now().UnixMilli()
-	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
+	selectedLLMNo := cs.Settings.LLMNo
+	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", LLMNo: &selectedLLMNo, CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
 	cs.Messages = append(cs.Messages, userMsg)
 	if strings.TrimSpace(req.SourceUserMessageID) == "" {
 		cs.Messages = append(cs.Messages, pendingMsg)

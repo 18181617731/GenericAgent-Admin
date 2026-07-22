@@ -3171,7 +3171,8 @@ export default function ChatApp() {
       const fileNote = files.length ? `\n\n[附件]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
       const attachmentPrompt = text || '请处理这些附件'
       optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
-      pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
+      const selectedLLMNo = item.llmNo ?? llmNo
+      pending = { id:`a-${Date.now()}`, role:'assistant', content:'', llm_no:selectedLLMNo, created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
       const sourceMessageID = String(item.sourceUserMessageId || '').trim()
       setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null)
       if (!isActiveSession(id)) return
@@ -3180,7 +3181,7 @@ export default function ChatApp() {
       const payload = buildChatRunPayload({
         prompt: attachmentPrompt,
         files,
-        settings: { llm_no:item.llmNo ?? llmNo, reasoning_effort:item.reasoningEffort || reasoningEffort },
+        settings: { llm_no:selectedLLMNo, reasoning_effort:item.reasoningEffort || reasoningEffort },
         clientUserID,
         sourceUserMessageId: sourceMessageID,
       })
