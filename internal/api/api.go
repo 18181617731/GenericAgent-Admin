@@ -59,6 +59,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
+	mux.HandleFunc("/api/ga/runtime/repair", s.requireDangerousConfirm(s.gaRuntimeRepair))
 	mux.HandleFunc("/api/ga/git-update", s.requireDangerousConfirm(s.gaGitUpdate))
 	mux.HandleFunc("/api/ga/git-status", s.gaGitStatus)
 	mux.HandleFunc("/api/ga/git-mirror", s.requireDangerousConfirm(s.gitMirrorConfig))
@@ -171,6 +172,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/setup/venv/create", Level: "dangerous", Action: "create_venv", Reason: "creates or updates a Python virtual environment under the configured GA root"},
 	{Path: "/api/setup/deps/install", Level: "dangerous", Action: "install_dependencies", Reason: "executes pip install in the configured GA root and streams process output"},
 	{Path: "/api/setup/smoke", Level: "dangerous", Action: "run_setup_smoke", Reason: "executes Python in the configured GA root to verify bootstrap readiness"},
+	{Path: "/api/ga/runtime/repair", Level: "dangerous", Action: "repair_ga_runtime", Reason: "installs only detected missing GA dependencies and migrates generated UltraPlan scripts, then rechecks runtime health"},
 	{Path: "/api/setup/complete", Level: "reversible", Action: "complete_bootstrap", Reason: "marks first-run bootstrap complete and persists GA root/Python settings"},
 	{Path: "/api/ga/git-update", Level: "dangerous", Action: "git_sync", Reason: "runs daily_git_pull_merge_push to merge, commit, and push the GA repository"},
 	{Path: "/api/version/update", Level: "dangerous", Action: "self_update", Reason: "downloads and applies Admin-Go release"},
@@ -237,7 +239,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	h := ga.BuildHealth(s.CfgStore.Cfg.GARoot)
+	h := s.buildGARuntimeHealth()
 	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Cfg, "services": s.Svc.Summary(), "health": h})
 }
 
@@ -254,7 +256,13 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, ga.BuildHealth(s.CfgStore.Cfg.GARoot))
+	writeJSON(w, s.buildGARuntimeHealth())
+}
+
+func (s *Server) buildGARuntimeHealth() ga.Health {
+	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	python := resolvePythonForRoot(root, s.CfgStore.Cfg.EffectivePython)
+	return ga.BuildRuntimeHealth(root, python)
 }
 
 type tmwebdriverCheck struct {

@@ -2042,6 +2042,85 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
   </>
 })
 
+export function PlanTodoCard({ plan }) {
+  const listRef = useRef(null)
+  const [expanded, setExpanded] = useState(true)
+  const panelId = React.useId()
+  const active = Boolean(plan?.active)
+  const items = Array.isArray(plan?.items) ? plan.items : []
+  const done = Number.isFinite(Number(plan?.done)) ? Number(plan.done) : items.filter(item => item?.status === 'done').length
+  const total = Number.isFinite(Number(plan?.total)) ? Number(plan.total) : items.length
+  const currentIndex = items.findIndex(item => item?.status !== 'done')
+  const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0
+  const complete = Boolean(plan?.complete)
+  const placeholder = Boolean(plan?.placeholder)
+
+  useLayoutEffect(() => {
+    if (!active || !expanded || placeholder || currentIndex < 0) return undefined
+    const list = listRef.current
+    const current = list?.querySelector('[aria-current="step"]')
+    if (!list || !current) return undefined
+    const revealCurrent = () => {
+      const listRect = list.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
+      if (currentRect.top < listRect.top) list.scrollTop -= listRect.top - currentRect.top + 6
+      else if (currentRect.bottom > listRect.bottom) list.scrollTop += currentRect.bottom - listRect.bottom + 6
+    }
+    revealCurrent()
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(revealCurrent)
+    resizeObserver?.observe(list)
+    resizeObserver?.observe(current)
+    window.addEventListener('resize', revealCurrent)
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', revealCurrent)
+    }
+  }, [active, currentIndex, expanded, placeholder, total])
+
+  if (!active) return null
+  const stateLabel = complete ? '已完成' : placeholder ? '规划中' : total > 0 ? '执行中' : '准备中'
+  const detailLabel = complete
+    ? '所有步骤均已完成'
+    : placeholder
+      ? '正在生成可执行步骤'
+      : currentIndex >= 0 && total > 0
+        ? `正在处理第 ${currentIndex + 1} 步`
+        : '等待任务步骤'
+
+  return <section className={`oa-plan-card${complete ? ' is-complete' : ''}`} aria-label="任务执行计划">
+    <button type="button" className="oa-plan-head" onClick={() => setExpanded(value => !value)}
+      aria-expanded={expanded} aria-controls={panelId} aria-label={expanded ? '收起执行计划' : '展开执行计划'}>
+      <span className="oa-plan-identity">
+        <span className="oa-plan-mark" aria-hidden="true">{complete ? <Check size={15}/> : <Clock3 size={14}/>}</span>
+        <span className="oa-plan-heading"><span className="oa-plan-title">执行计划</span><span className="oa-plan-detail">{detailLabel}</span></span>
+      </span>
+      <span className="oa-plan-summary">
+        <span className="oa-plan-state"><i aria-hidden="true"/>{stateLabel}</span>
+        <span className="oa-plan-count" aria-label={`已完成 ${done} 项，共 ${total} 项`}><strong>{done}</strong><span>/ {total}</span></span>
+        <span className="oa-plan-chevron" aria-hidden="true">{expanded ? <ChevronDown size={15}/> : <ChevronLeft size={15}/>}</span>
+      </span>
+    </button>
+    <div id={panelId} className="oa-plan-body" hidden={!expanded}>
+      <div className="oa-plan-progress" role="progressbar" aria-label="任务完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}>
+        <span style={{ width: `${percent}%` }}/>
+      </div>
+      {placeholder ? <div className="oa-plan-placeholder"><span aria-hidden="true"/><span>正在整理步骤</span><code title={plan.pathHint || 'plan.md'}>{plan.pathHint || 'plan.md'}</code></div> :
+        <ol ref={listRef} className="oa-plan-list">
+          {items.map((item, index) => {
+            const itemComplete = item?.status === 'done'
+            const current = !itemComplete && index === currentIndex
+            return <li key={`${index}-${item?.content || ''}`} className={`${itemComplete ? 'is-done' : 'is-open'}${current ? ' is-current' : ''}`} aria-current={current ? 'step' : undefined}>
+              <span className="oa-plan-status" aria-hidden="true">{itemComplete ? <Check size={11}/> : current ? <Clock3 size={10}/> : <span>{index + 1}</span>}</span>
+              <span className="oa-plan-copy">{item?.content || `步骤 ${index + 1}`}</span>
+              {current && <span className="oa-plan-now">当前</span>}
+            </li>
+          })}
+        </ol>}
+      {plan.step && <div className="oa-plan-step"><span>当前动作</span><p>{plan.step}</p></div>}
+    </div>
+  </section>
+}
+
 function CustomSelect({ value, onChange, options, disabled, native = false, ariaLabel = '选择选项' }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()

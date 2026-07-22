@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { BookOpenCheck, CircleCheckBig, Eye, FileCheck2, Play, RefreshCw, ShieldCheck, Square, TriangleAlert } from 'lucide-react'
+import { Activity, CircleCheckBig, Eye, PackageCheck, Play, RefreshCw, Square, Terminal, TriangleAlert, Wrench } from 'lucide-react'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
 import { observabilitySummary } from '../lib/observability.js'
 
@@ -124,15 +124,20 @@ export function DangerRecoveryNotice({
   </aside>
 }
 
-export function ObservabilityCard({ snapshot, error = '', onRefresh }) {
+export function ObservabilityCard({ snapshot, error = '', onRefresh, onRepair, repairing = false, repairResult = null }) {
   const summary = observabilitySummary(snapshot)
-  const icons = { status: CircleCheckBig, core: FileCheck2, knowledge: BookOpenCheck, protection: ShieldCheck }
+  const icons = { status: CircleCheckBig, python: Terminal, dependencies: PackageCheck, runtime: Activity }
   const missing = snapshot?.missingCore || []
+  const issues = snapshot?.errors || []
+  const runtime = snapshot?.runtime
   const checkedAt = snapshot?.generatedAt ? new Date(snapshot.generatedAt).toLocaleString() : ''
   return <section className="observability-card" aria-label="运行概览">
     <div className="observability-head">
       <div><b>运行概览</b><span>{summary.detail}</span></div>
-      <button type="button" onClick={onRefresh} title="重新读取运行概览"><RefreshCw size={14}/>刷新</button>
+      <div className="observability-actions">
+        {runtime?.repairable && <button type="button" onClick={onRepair} disabled={repairing} title="安装缺失依赖并修复旧 UltraPlan 脚本"><Wrench size={14}/>{repairing ? '修复并复检中…' : '一键修复'}</button>}
+        <button type="button" className="secondary" onClick={onRefresh} disabled={repairing} title="重新读取运行概览"><RefreshCw size={14}/>刷新</button>
+      </div>
     </div>
     {error ? <p className="err-text">{error}</p> : <>
       {summary.stats.length > 0
@@ -148,6 +153,12 @@ export function ObservabilityCard({ snapshot, error = '', onRefresh }) {
         {checkedAt && <p className="muted">上次检查：{checkedAt}</p>}
         {missing.length > 0 && <p className="warn">核心文件缺失：{missing.map(x => x.path || x.name).join(', ')}</p>}
       </div>
+      {issues.length > 0 && <div className="observability-issues" role="alert"><b>发现以下运行问题</b><ul>{issues.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></div>}
+      {repairResult && <div className={repairResult.ok ? 'observability-repair is-ok' : 'observability-repair is-failed'} role="status">
+        <b>{repairResult.ok ? '修复完成，复检通过' : '修复已执行，但仍有问题'}</b>
+        {(repairResult.operations || []).map(item => <p key={item}>{item}</p>)}
+        {(repairResult.errors || []).map(item => <p className="err-text" key={item}>{item}</p>)}
+      </div>}
     </>}
   </section>
 }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, Download, FileText, Folder, FolderOpen, Save, Search, Trash2, Undo2, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ChevronRight, Download, Eye, FileText, Folder, FolderOpen, Pencil, Save, Search, Trash2, Undo2, X } from 'lucide-react'
 import { Panel } from '../components/common'
 import { StatusNotice } from '../components/feedback'
 import { fileEditorDirty, saveReviewText } from '../lib/filesSafety'
@@ -14,6 +16,19 @@ const parentPath = (path) => {
 const pathName = (path) => {
   const normalized = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
   return normalized.slice(normalized.lastIndexOf('/') + 1) || normalized || '/'
+}
+
+const isMarkdownPath = (path) => /\.(?:md|markdown)$/i.test(String(path || '').trim())
+
+function MarkdownPreview({ content }) {
+  return <article className="file-markdown-preview" aria-label="Markdown 格式化预览">
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ children, href, title }) => <a href={href} title={title} target="_blank" rel="noreferrer">{children}</a>,
+      }}
+    >{content}</ReactMarkdown>
+  </article>
 }
 
 export function FilesPage({
@@ -46,6 +61,7 @@ export function FilesPage({
   busy = false,
 }) {
   const [mobileView, setMobileView] = useState('browse')
+  const [contentMode, setContentMode] = useState('edit')
   const mobileTabsRef = useRef(null)
   const dirty = fileEditorDirty(fileContent, loadedFileContent)
   const retargeted = Boolean(loadedFilePath && filePath && loadedFilePath !== filePath)
@@ -64,6 +80,7 @@ export function FilesPage({
   const searchAttempted = fileStatus?.action === 'search' && fileStatus?.kind === 'success'
   const hasBrowsePath = Boolean(String(browsePath || '').trim())
   const hasFilePath = Boolean(String(filePath || '').trim())
+  const markdownFile = isMarkdownPath(loadedFilePath || filePath)
   const parent = parentPath(browsePath)
   const searchHint = fileSearch ? 'No matches found. Check the path filter or try a broader term.' : 'Enter search text, then run search.'
   const fileListHint = hasBrowsePath
@@ -73,6 +90,7 @@ export function FilesPage({
   useEffect(() => {
     if (!loadedFilePath) return
     setMobileView('preview')
+    setContentMode(isMarkdownPath(loadedFilePath) ? 'preview' : 'edit')
     if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 680px)')?.matches) {
       window.requestAnimationFrame(() => {
         mobileTabsRef.current?.scrollIntoView({ block: 'start' })
@@ -82,7 +100,7 @@ export function FilesPage({
         })
       })
     }
-  }, [loadedFilePath])
+  }, [loadedFileContent, loadedFilePath])
 
   useEffect(() => {
     if (!dirty) return undefined
@@ -159,7 +177,14 @@ export function FilesPage({
             <span className={dirty ? 'status-pill warn' : 'status-pill ok'}>{dirty ? '有未保存更改' : '已保存/干净'}</span>
             {loadedFilePath && <span className="muted" title={loadedFilePath}>已加载：{loadedFilePath}</span>}
             {retargeted && <span className="status-pill bad">Save target changed</span>}
+            {markdownFile && hasLoadedTarget && <div className="file-content-mode" role="group" aria-label="Markdown 查看模式">
+              <button type="button" className={contentMode === 'preview' ? 'active' : ''} aria-pressed={contentMode === 'preview'} onClick={() => setContentMode('preview')}><Eye size={14}/>预览</button>
+              <button type="button" className={contentMode === 'edit' ? 'active' : ''} aria-pressed={contentMode === 'edit'} onClick={() => setContentMode('edit')}><Pencil size={14}/>编辑</button>
+            </div>}
           </div>
+          {(hasFilePath || fileContent) && markdownFile && contentMode === 'preview' &&
+            <MarkdownPreview content={fileContent}/>
+          }
           <div className="files-target-row">
             <input aria-label="当前文件路径" value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="输入要读取或保存的文件路径"/>
             <button type="button" onClick={() => guardedReadFile(filePath)} disabled={!hasFilePath || busy}><FileText size={15}/>{t.read}</button>
@@ -177,7 +202,7 @@ export function FilesPage({
             {saveReview}
           </div>
           {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>尚未加载文件</b><span>从文件列表选择一个文件，或输入文件路径后读取。</span></div>}
-          {(hasFilePath || fileContent) && <textarea aria-label="文件内容编辑器" className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>}
+          {(hasFilePath || fileContent) && (!markdownFile || contentMode === 'edit') && <textarea aria-label="文件内容编辑器" className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>}
         </Panel>
       </div>
     </section>

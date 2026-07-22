@@ -34,6 +34,35 @@ test('buildObservabilitySnapshot merges health inventory and risk catalog', () =
   assert.deepEqual(observabilityStats(snapshot).map(x => x.value), [2, 1, 1, 2])
 })
 
+test('buildObservabilitySnapshot reads nested API health and runtime failures', () => {
+  const snapshot = buildObservabilitySnapshot({
+    health: { ok: false, health: {
+      ok: false,
+      root: '/ga',
+      errors: ["核心依赖缺失: requests"],
+      runtime: {
+        ok: false,
+        python_ok: true,
+        python_path: '/venv/python',
+        python_version: '3.12.1',
+        dependencies: [{ module: 'requests', package: 'requests', ok: false }],
+        missing_modules: ['requests'],
+        agentmain_ok: false,
+        ultraplan_ok: true,
+        repairable: true,
+      },
+    } },
+    inventory: { core_files: [{ path: 'agentmain.py', exists: true }] },
+  })
+
+  assert.equal(snapshot.ok, false)
+  assert.deepEqual(snapshot.errors, ['核心依赖缺失: requests'])
+  assert.equal(snapshot.runtime.pythonPath, '/venv/python')
+  assert.deepEqual(snapshot.runtime.missingModules, ['requests'])
+  assert.equal(snapshot.runtime.repairable, true)
+  assert.equal(observabilitySummary(snapshot).status, '需处理')
+})
+
 test('observabilityRequest rejects non-observability endpoints', () => {
   assert.throws(() => observabilityRequest('/api/files/write'), /unsupported observability endpoint/)
 })
@@ -78,6 +107,7 @@ test('observability summary explains healthy state instead of exposing raw count
   const summary = observabilitySummary({
     ok: true,
     coreFiles: [{ exists: true }, { exists: true }],
+    runtime: { ok: true, pythonOK: true, pythonPath: '/venv/python', pythonVersion: '3.12.1', dependencies: [{ ok: true }], missingModules: [], agentmainOK: true, ultraplanOK: true },
     memory: { sops: [{}, {}, {}] },
     riskItems: [{}, {}],
     warnings: [],
@@ -85,19 +115,25 @@ test('observability summary explains healthy state instead of exposing raw count
   })
   assert.equal(summary.status, '正常')
   assert.deepEqual(summary.stats.map(item => [item.label, item.value]), [
-    ['系统状态', '正常'], ['核心文件', '2/2'], ['知识与 SOP', '3 项'], ['操作保护', '2 项'],
+    ['系统状态', '正常'], ['实际 Python', '3.12.1'], ['核心依赖', '1/1'], ['GA 运行检查', '通过'],
   ])
-  assert.match(summary.stats[3].detail, /需确认/)
+  assert.match(summary.stats[3].detail, /主程序 正常/)
 })
 
 test('observability summary calls missing core files out as actionable', () => {
-  const summary = observabilitySummary({ ok: true, coreFiles: [{ exists: true }, { exists: false }], memory: {}, riskItems: [] })
+  const summary = observabilitySummary({ ok: true, coreFiles: [{ exists: true }, { exists: false }], runtime: { ok: true }, memory: {}, riskItems: [] })
   assert.equal(summary.status, '需处理')
-  assert.equal(summary.stats[1].detail, '1 项缺失')
+  assert.match(summary.detail, /需要处理/)
 })
 
 test('observability summary avoids claiming healthy when core file data is missing', () => {
   const summary = observabilitySummary({ ok: true, coreFiles: [], memory: {}, riskItems: [] })
   assert.equal(summary.status, '待检查')
   assert.match(summary.detail, /尚未取得核心文件清单/)
+})
+
+test('observability summary never claims healthy without a runtime probe', () => {
+  const summary = observabilitySummary({ ok: true, coreFiles: [{ exists: true }], memory: {}, riskItems: [] })
+  assert.equal(summary.status, '待检查')
+  assert.equal(summary.stats[1].value, '未检查')
 })

@@ -81,6 +81,7 @@ type Health struct {
 	Checks    map[string]string `json:"checks"`
 	Errors    []string          `json:"errors,omitempty"`
 	Warnings  []string          `json:"warnings,omitempty"`
+	Runtime   *RuntimeHealth    `json:"runtime,omitempty"`
 	Inventory Inventory         `json:"inventory"`
 	Generated time.Time         `json:"generated_at"`
 }

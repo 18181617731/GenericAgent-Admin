@@ -24,6 +24,7 @@ func TestJSONErrorResponsesUseDetailField(t *testing.T) {
 		{name: "health rejects non-get", method: http.MethodPost, path: "/api/health", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
 		{name: "ga inventory rejects non-get", method: http.MethodPost, path: "/api/ga/inventory", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
 		{name: "ga health rejects non-get", method: http.MethodPost, path: "/api/ga/health", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
+		{name: "runtime repair rejects get", method: http.MethodGet, path: "/api/ga/runtime/repair", wantStatus: http.StatusMethodNotAllowed, wantDetail: "method not allowed"},
 		{name: "removed control route", method: http.MethodGet, path: "/api/ga/control", wantStatus: http.StatusNotFound, wantDetail: "api route not found"},
 		{name: "bad json", method: http.MethodPost, path: "/api/files/write", body: `not-json`, wantStatus: http.StatusPreconditionRequired, wantDetail: "dangerous operation requires X-GA-Confirm"},
 		{name: "bad query", method: http.MethodGet, path: "/api/files/tail?path=sample.log&lines=0", wantStatus: http.StatusBadRequest, wantDetail: "lines must be a positive integer"},

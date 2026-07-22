@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import ChatApp, { ChatMessage, ProviderModelCascade } from './ChatApp.jsx'
+import ChatApp, { ChatMessage, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
@@ -89,6 +89,39 @@ const reflectService = {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+})
+
+describe('plan todo card disclosure', () => {
+  test('starts expanded and toggles the plan body with matching chevrons', () => {
+    const { container } = render(<PlanTodoCard plan={{
+      active: true,
+      done: 1,
+      total: 2,
+      items: [
+        { status: 'done', content: 'Inspect the task' },
+        { status: 'in_progress', content: 'Implement collapse' },
+      ],
+      step: 'Editing the plan card',
+    }}/>)
+
+    const collapseButton = screen.getByRole('button', { name: '收起执行计划' })
+    const body = container.querySelector('.oa-plan-body')
+    expect(collapseButton.getAttribute('aria-expanded')).toBe('true')
+    expect(collapseButton.getAttribute('aria-controls')).toBe(body?.id)
+    expect(body?.hidden).toBe(false)
+    expect(collapseButton.querySelector('.lucide-chevron-down')).toBeTruthy()
+
+    fireEvent.click(collapseButton)
+
+    const expandButton = screen.getByRole('button', { name: '展开执行计划' })
+    expect(expandButton.getAttribute('aria-expanded')).toBe('false')
+    expect(body?.hidden).toBe(true)
+    expect(expandButton.querySelector('.lucide-chevron-left')).toBeTruthy()
+
+    fireEvent.click(expandButton)
+    expect(screen.getByRole('button', { name: '收起执行计划' }).getAttribute('aria-expanded')).toBe('true')
+    expect(body?.hidden).toBe(false)
+  })
 })
 
 describe('channel frontend gates', () => {
@@ -197,6 +230,7 @@ describe('overview observability', () => {
     render(<ObservabilityCard snapshot={{
       ok: true,
       coreFiles: [{ exists: true }, { exists: true }],
+      runtime: { ok: true, pythonOK: true, pythonPath: 'C:\\Python\\python.exe', pythonVersion: '3.12.1', dependencies: [{ ok: true }, { ok: true }], missingModules: [], agentmainOK: true, ultraplanOK: true },
       memory: { sops: [{}, {}] },
       riskItems: [{}, {}, {}],
       warnings: [],
@@ -205,12 +239,25 @@ describe('overview observability', () => {
     }} onRefresh={onRefresh}/>)
     expect(screen.getByText('运行概览')).toBeTruthy()
     expect(screen.getByText('系统状态')).toBeTruthy()
-    expect(screen.getByText('核心文件')).toBeTruthy()
-    expect(screen.getByText('知识与 SOP')).toBeTruthy()
-    expect(screen.getByText('操作保护')).toBeTruthy()
+    expect(screen.getByText('实际 Python')).toBeTruthy()
+    expect(screen.getByText('核心依赖')).toBeTruthy()
+    expect(screen.getByText('GA 运行检查')).toBeTruthy()
     expect(screen.queryByText('Health checks')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
     expect(onRefresh).toHaveBeenCalledOnce()
+  })
+
+  test('shows actionable runtime errors and invokes one-click repair', () => {
+    const onRepair = vi.fn()
+    render(<ObservabilityCard snapshot={{
+      ok: false,
+      coreFiles: [{ exists: true }],
+      runtime: { ok: false, pythonOK: true, pythonPath: 'python.exe', dependencies: [{ module: 'requests', ok: false }], missingModules: ['requests'], agentmainOK: false, ultraplanOK: true, repairable: true },
+      errors: ["核心依赖缺失: requests"],
+    }} onRepair={onRepair} onRefresh={vi.fn()}/>)
+    expect(screen.getByText('核心依赖缺失: requests')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '一键修复' }))
+    expect(onRepair).toHaveBeenCalledOnce()
   })
 })
 
@@ -1273,7 +1320,33 @@ describe('mobile file workflow', () => {
 
     rerender(<FilesPage {...props} filePath="memory/notes.md" loadedFilePath="memory/notes.md" fileContent="hello" loadedFileContent="hello"/>)
     expect(screen.getByRole('tab', { name: '预览' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('article', { name: 'Markdown 格式化预览' }).textContent).toContain('hello')
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     expect(screen.getByRole('textbox', { name: '文件内容编辑器' }).value).toBe('hello')
+  })
+
+  test('formats Markdown by default and switches back to preview after editing', () => {
+    const props = fileProps()
+    Object.assign(props, {
+      filePath: 'memory/guide.md',
+      loadedFilePath: 'memory/guide.md',
+      loadedFileContent: '# Guide\n\n- one\n- two\n\n| Name | State |\n| --- | --- |\n| GA | Ready |',
+      fileContent: '# Guide\n\n- one\n- two\n\n| Name | State |\n| --- | --- |\n| GA | Ready |',
+    })
+    const { rerender } = render(<FilesPage {...props}/>)
+
+    expect(screen.getByRole('heading', { name: 'Guide' })).toBeTruthy()
+    expect(screen.getByRole('table')).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '文件内容编辑器' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    const editor = screen.getByRole('textbox', { name: '文件内容编辑器' })
+    const updated = `${props.fileContent}\n\n追加内容`
+    fireEvent.change(editor, { target: { value: updated } })
+    expect(props.setFileContent).toHaveBeenCalledWith(updated)
+    rerender(<FilesPage {...props} fileContent={updated}/>)
+    fireEvent.click(screen.getByRole('button', { name: '预览' }))
+    expect(screen.getByText('追加内容')).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '文件内容编辑器' })).toBeNull()
   })
 
   test('protects dirty content before opening another file and exposes search result counts', () => {
