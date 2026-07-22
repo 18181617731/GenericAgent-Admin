@@ -965,6 +965,8 @@ function UltraPlanTaskRow({ task, onAskReply }) {
 }
 
 function UltraPlanDashboard({ state, text, onAskReply }) {
+  const [expanded, setExpanded] = useState(true)
+  const panelId = React.useId()
   const { objective, phases = [], recentTasks = [], complete, events = [], resultFiles = [], current, taskOutputs = {}, task_outputs = {} } = state
   const outputsMap = (taskOutputs && Object.keys(taskOutputs).length) ? taskOutputs : (task_outputs || {})
   const openFile = (fp) => {
@@ -973,15 +975,19 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
     window.open(u, '_blank', 'noopener')
   }
   return (
-    <div className="oa-up-dash">
-      <div className="oa-up-head">
+    <div className={`oa-up-dash${expanded ? '' : ' is-collapsed'}`}>
+      <button type="button" className="oa-up-head" onClick={() => setExpanded(value => !value)}
+        aria-expanded={expanded} aria-controls={panelId}
+        aria-label={expanded ? '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' : '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f'}>
         <span className="oa-up-icon">{'⚡'}</span>
         <span className="oa-up-title">UltraPlan</span>
         {objective && <span className="oa-up-obj">{objective}</span>}
         {complete
           ? <span className="oa-up-badge oa-up-done">{'完成'}</span>
           : (phases.length > 0 || recentTasks.length > 0) && <span className="oa-up-badge oa-up-run">{'执行中…'}</span>}
-      </div>
+        <span className="oa-up-chevron" aria-hidden="true">{expanded ? <ChevronDown size={15}/> : <ChevronLeft size={15}/>}</span>
+      </button>
+      <div id={panelId} className="oa-up-body" hidden={!expanded}>
       {!complete && current && (
         <div className="oa-up-current"><span className="oa-up-current-dot"></span>{current}</div>
       )}
@@ -1064,6 +1070,7 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
           ? <div className="oa-up-result"><MarkdownBlock text={resultText} onAskReply={onAskReply} /></div>
           : null
       })()}
+      </div>
     </div>
   )
 }
@@ -1292,6 +1299,12 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
   if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
+  // A persisted UltraPlan state belongs to the final user-visible branch. When a
+  // response has turn markers but no explicit final marker, that branch is the
+  // latest run rather than parsed.body.
+  const ultraPlanStateForLastRun = !parsed.body && hasLiveUltraPlan
+    ? (liveUltraPlanState || ultraplan_state)
+    : undefined
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
   const toggleTurn = (r, i) => setOpenTurns(xs => ({ ...xs, [`${r.turn}-${i}`]: !isTurnOpen(r, i) }))
   return <div className={`oa-content ${parsed.runs.length ? 'oa-agent-output' : ''}`}>
@@ -1320,7 +1333,9 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
         <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">步骤 {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
-        {lastRun.body ? renderAssistantBody(lastRun.body, onAskReply) : <p className="oa-turn-empty">正在等待该轮输出…</p>}
+        {lastRun.body || ultraPlanStateForLastRun
+          ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun)
+          : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
     {(parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>

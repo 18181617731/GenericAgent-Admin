@@ -5671,11 +5671,22 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 10px 14px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   background: linear-gradient(90deg, rgba(15,118,110,.07) 0%, transparent 55%);
+  border: 0;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
+.oa-up-head:hover { background: linear-gradient(90deg, rgba(15,118,110,.11) 0%, rgba(15,118,110,.025) 65%, transparent 100%); }
+.oa-up-head:focus-visible { outline: 2px solid color-mix(in srgb, var(--cyan) 58%, transparent); outline-offset: -2px; }
+.oa-up-dash.is-collapsed .oa-up-head { border-bottom-color: transparent; }
+.oa-up-chevron { display: grid; width: 18px; height: 18px; flex: 0 0 18px; place-items: center; color: var(--muted); }
+.oa-up-body[hidden] { display: none; }
 .oa-up-icon { font-size: 14px; flex-shrink: 0; }
 .oa-up-title { font-weight: 700; color: var(--cyan); font-size: 13px; flex-shrink: 0; letter-spacing: .01em; }
 .oa-up-obj { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

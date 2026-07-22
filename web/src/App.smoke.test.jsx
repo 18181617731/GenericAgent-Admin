@@ -315,6 +315,72 @@ describe('plan todo card disclosure', () => {
     expect(screen.getByRole('button', { name: '\u6536\u8d77\u6267\u884c\u8ba1\u5212' }).getAttribute('aria-expanded')).toBe('true')
     expect(body?.hidden).toBe(false)
   })
+
+  test('starts expanded and toggles the UltraPlan dashboard with matching chevrons', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'ultraplan-collapse',
+          role: 'assistant',
+          content: '',
+          ultraplan_state: {
+            objective: 'Ship the dashboard',
+            current: 'Implementing collapse',
+            phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
+          },
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    const collapseButton = screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' })
+    const body = container.querySelector('.oa-up-body')
+    expect(collapseButton.getAttribute('aria-expanded')).toBe('true')
+    expect(collapseButton.getAttribute('aria-controls')).toBe(body?.id)
+    expect(body?.hidden).toBe(false)
+    expect(collapseButton.querySelector('.lucide-chevron-down')).toBeTruthy()
+    expect(screen.getByText('Implementing collapse')).toBeTruthy()
+
+    fireEvent.click(collapseButton)
+
+    const expandButton = screen.getByRole('button', { name: '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f' })
+    expect(expandButton.getAttribute('aria-expanded')).toBe('false')
+    expect(body?.hidden).toBe(true)
+    expect(expandButton.querySelector('.lucide-chevron-left')).toBeTruthy()
+
+    fireEvent.click(expandButton)
+
+    expect(screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' }).getAttribute('aria-expanded')).toBe('true')
+    expect(body?.hidden).toBe(false)
+  })
+
+  test('renders persisted UltraPlan state in the latest run when no final marker exists', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'ultraplan-latest-run',
+          role: 'assistant',
+          content: [
+            'LLM Running (Turn 1)',
+            '<summary>research complete</summary>',
+            'verified final result',
+          ].join('\n'),
+          ultraplan_state: {
+            objective: 'Find active state-owned jobs',
+            complete: true,
+            phases: [{ id: 'phase-1', name: 'Research', status: 'done' }],
+          },
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelectorAll('.oa-up-dash')).toHaveLength(1)
+    expect(screen.getByText('Find active state-owned jobs')).toBeTruthy()
+    expect(screen.getByText('verified final result')).toBeTruthy()
+  })
 })
 
 
