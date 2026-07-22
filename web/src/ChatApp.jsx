@@ -804,8 +804,27 @@ function ToolCallCollapse({ name, args }) {
   )
 }
 
-function SubagentOutputBlock({ text, onAskReply }) {
+function SubagentOutputBlock({ text, onAskReply, isRunning }) {
   const { prefix, turns } = useMemo(() => parseSubagentOutput(text), [text])
+  const latestKey = turns.length > 0 ? String(turns[turns.length - 1].n) : ''
+  const [activeKeys, setActiveKeys] = useState(() => isRunning && latestKey ? [latestKey] : [])
+  const previousLatestKeyRef = useRef(latestKey)
+  const previousRunningRef = useRef(isRunning)
+
+  // Follow a newly streamed turn while work is running, collapsing older turns.
+  // A running -> terminal transition collapses everything once; subsequent
+  // terminal renders preserve any turn the user manually reopens.
+  useEffect(() => {
+    const wasRunning = previousRunningRef.current
+    const previousLatestKey = previousLatestKeyRef.current
+    if (wasRunning && !isRunning) {
+      setActiveKeys([])
+    } else if (isRunning && latestKey && (!wasRunning || latestKey !== previousLatestKey)) {
+      setActiveKeys([latestKey])
+    }
+    previousRunningRef.current = isRunning
+    previousLatestKeyRef.current = latestKey
+  }, [isRunning, latestKey])
 
   const renderSeg = (seg, i) => {
     if (seg.type === 'summary') return (
@@ -841,9 +860,6 @@ function SubagentOutputBlock({ text, onAskReply }) {
     return null
   }
 
-  // last turn open by default, others collapsed
-  const defaultOpen = turns.length > 0 ? [String(turns[turns.length - 1].n)] : []
-
   const turnItems = turns.map(t => {
     const summaryText = t.children.find(s => s.type === 'summary')?.text || ''
     const toolCount = t.children.filter(s => s.type === 'tool').length
@@ -872,7 +888,8 @@ function SubagentOutputBlock({ text, onAskReply }) {
         <Collapse
           size="small"
           className="sa-turn-collapse"
-          defaultActiveKey={defaultOpen}
+          activeKey={activeKeys}
+          onChange={(keys) => setActiveKeys(Array.isArray(keys) ? keys : (keys ? [keys] : []))}
           items={turnItems}
         />
       )}
@@ -972,7 +989,7 @@ function UltraPlanTaskRow({ task, onAskReply }) {
         <div className="oa-up-task-output">
           {loading && <div className="oa-up-task-output-meta">Loading output…</div>}
           {error && <div className="oa-up-task-output-error">{error}</div>}
-          {!loading && !error && content && <SubagentOutputBlock text={content} onAskReply={onAskReply} />}
+          {!loading && !error && content && <SubagentOutputBlock text={content} onAskReply={onAskReply} isRunning={isRunning} />}
           {!loading && !error && !content && status === 'running' && (
             <div className="oa-up-task-output-waiting">
               <span className="oa-up-task-output-waiting-dot" /><span className="oa-up-task-output-waiting-dot" /><span className="oa-up-task-output-waiting-dot" />

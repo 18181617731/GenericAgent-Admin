@@ -360,6 +360,77 @@ describe('plan todo card disclosure', () => {
     expect(body?.hidden).toBe(true)
   })
 
+  test('follows the latest streamed subagent turn, then collapses turns when the task finishes', async () => {
+    const task = (status, output) => ({
+      id: 'streamed-subagent',
+      desc: 'Run delegated work',
+      status,
+      output,
+    })
+    const message = (status, output) => ({
+      id: 'ultraplan-turn-stream',
+      role: 'assistant',
+      content: '',
+      ultraplan_state: {
+        objective: 'Track delegated work',
+        recentTasks: [task(status, output)],
+      },
+    })
+    const turnOne = [
+      'LLM Running (Turn 1)',
+      '<summary>first turn</summary>',
+      'first body',
+    ].join('\n')
+    const turnOneUpdated = [
+      'LLM Running (Turn 1)',
+      '<summary>first turn updated</summary>',
+      'first body',
+      'still first turn',
+    ].join('\n')
+    const turnTwo = [
+      turnOneUpdated,
+      'LLM Running (Turn 2)',
+      '<summary>second turn</summary>',
+      'second body',
+    ].join('\n')
+
+    const { container, rerender } = render(
+      <ChatMessage message={message('running', turnOne)} pending={true} onAskReply={vi.fn()} />,
+    )
+    const taskRow = container.querySelector('.oa-up-task')
+    const turnButton = (n) => screen.getByRole('button', { name: new RegExp(`Turn ${n}`) })
+    const turnIsOpen = (n) => turnButton(n).closest('.ant-collapse-item')
+      ?.classList.contains('ant-collapse-item-active')
+
+    await waitFor(() => expect(turnButton(1).getAttribute('aria-expanded')).toBe('true'))
+    expect(turnIsOpen(1)).toBe(true)
+
+    fireEvent.click(turnButton(1))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('false')
+    expect(turnIsOpen(1)).toBe(false)
+
+    rerender(<ChatMessage message={message('running', turnOneUpdated)} pending={true} onAskReply={vi.fn()} />)
+    await waitFor(() => expect(turnButton(1).textContent).toContain('first turn updated'))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('false')
+    expect(turnIsOpen(1)).toBe(false)
+
+    rerender(<ChatMessage message={message('running', turnTwo)} pending={true} onAskReply={vi.fn()} />)
+    await waitFor(() => expect(turnButton(2).getAttribute('aria-expanded')).toBe('true'))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('false')
+    expect(turnIsOpen(1)).toBe(false)
+    expect(turnIsOpen(2)).toBe(true)
+
+    rerender(<ChatMessage message={message('done', turnTwo)} pending={false} onAskReply={vi.fn()} />)
+    await waitFor(() => expect(turnButton(2).getAttribute('aria-expanded')).toBe('false'))
+    expect(turnIsOpen(1)).toBe(false)
+    expect(turnIsOpen(2)).toBe(false)
+
+    fireEvent.click(turnButton(1))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('true')
+    expect(turnIsOpen(1)).toBe(true)
+    expect(taskRow).toBeTruthy()
+  })
+
   test('keeps every UltraPlan dashboard in its owning assistant output and preserves final prose', () => {
     const messages = [
       {
