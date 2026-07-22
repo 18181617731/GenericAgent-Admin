@@ -1648,6 +1648,7 @@ html[data-theme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255,255,.0
 }
 .oa-file-card:hover .oa-file-actions,
 .oa-file-card:focus-within .oa-file-actions{opacity:1}
+.oa-file-actions > a,
 .oa-file-actions > button,
 .oa-file-card .oa-mini-copy{
   width:29px;
@@ -1665,11 +1666,13 @@ html[data-theme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255,255,.0
   color:var(--muted);
   cursor:pointer;
 }
+.oa-file-actions > a:hover,
 .oa-file-actions > button:hover,
 .oa-file-card .oa-mini-copy:hover{
   background:var(--file-tint);
   color:var(--file-accent);
 }
+.oa-file-actions > a:focus-visible,
 .oa-file-actions > button:focus-visible,
 .oa-file-card .oa-mini-copy:focus-visible,
 .oa-file-leading:focus-visible{
@@ -1688,6 +1691,7 @@ html[data-theme="dark"] .oa-file-card:focus-within{
 }
 html[data-theme="dark"] .oa-file-leading,
 html[data-theme="dark"] .oa-file-name-row small,
+html[data-theme="dark"] .oa-file-actions > a:hover,
 html[data-theme="dark"] .oa-file-actions > button:hover,
 html[data-theme="dark"] .oa-file-card .oa-mini-copy:hover{
   background:color-mix(in srgb,var(--file-accent) 18%,var(--surface-strong));
@@ -1695,7 +1699,7 @@ html[data-theme="dark"] .oa-file-card .oa-mini-copy:hover{
 @media (max-width:620px){
   .oa-file-card{width:100%;min-width:0;margin:5px 0;gap:8px}
   .oa-file-actions{gap:0;opacity:1}
-  .oa-file-actions > button,.oa-file-card .oa-mini-copy{width:28px;min-width:28px;flex-basis:28px}
+  .oa-file-actions > a,.oa-file-actions > button,.oa-file-card .oa-mini-copy{width:28px;min-width:28px;flex-basis:28px}
 }
 
 /* Chat image input: picker, paste, drag and thumbnail previews */
