@@ -46,6 +46,14 @@ export const cleanAssistantRunBody = (s = '') => String(s || '')
   .replace(/\n{3,}/g, '\n\n')
   .trim()
 
+// A summary at the very start is transport metadata even when a lightweight
+// response (for example /btw) has no "LLM Running" marker. Keep later tags so
+// genuine Markdown/HTML examples in the answer are not silently removed.
+export const cleanAssistantFinalBody = (s = '') => String(s || '')
+  .replace(/^\s*<summary>[\s\S]*?<\/summary>\s*/i, '')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
 const findTopLevelAssistantMarkers = (full = '') => {
   const markers = []
   const lines = String(full || '').split('\n')
@@ -111,10 +119,10 @@ export const parseAssistantContent = (raw = '') => {
       const title = summary?.[1]?.trim() || `Turn ${m.turn}`
       runs.push({ turn: m.turn, title, body: cleanAssistantRunBody(chunk) })
     })
-    return { runs, body: (finalText || '').replace(/\n{3,}/g, '\n\n').trim() }
+    return { runs, body: cleanAssistantFinalBody(finalText || '') }
   }
 
-  return { runs: [], body: full.replace(/^```+\s*\n?\[Info\]\s*Final response to user\.\s*\n?```+\s*$/gim, '').replace(/\n{3,}/g, '\n\n').trim() }
+  return { runs: [], body: cleanAssistantFinalBody(full.replace(/^```+\s*\n?\[Info\]\s*Final response to user\.\s*\n?```+\s*$/gim, '')) }
 }
 
 const isBlankLine = (line = '') => /^[\t\f\v ]*$/.test(line)

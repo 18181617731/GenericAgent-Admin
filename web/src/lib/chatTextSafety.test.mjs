@@ -24,6 +24,41 @@ test('preview folds long runs of blank lines', () => {
 })
 
 
+test('lightweight assistant output strips leading transport summary', () => {
+  const text = [
+    '<summary>\u5f53\u524d\u65e0\u6cd5\u67e5\u770b\u684c\u9762</summary>',
+    '',
+    '\u4f60\u597d\uff0c\u6211\u6b63\u5728\u56de\u590d\u4f60\u7684\u4e34\u65f6\u63d0\u95ee\u3002',
+  ].join('\n')
+  const parsed = parseAssistantContent(text)
+  assert.equal(parsed.runs.length, 0)
+  assert.equal(parsed.body, '\u4f60\u597d\uff0c\u6211\u6b63\u5728\u56de\u590d\u4f60\u7684\u4e34\u65f6\u63d0\u95ee\u3002')
+})
+
+test('assistant output preserves summary tags outside the transport prefix', () => {
+  const text = [
+    'Use this HTML:',
+    '<summary>Visible disclosure label</summary>',
+  ].join('\n')
+  assert.equal(parseAssistantContent(text).body, text)
+})
+
+test('leading transport summary is stripped after the final marker too', () => {
+  const text = [
+    'LLM Running (Turn 1)',
+    '<summary>work</summary>',
+    'working',
+    '```',
+    '[Info] Final response to user.',
+    '```',
+    '<summary>transport only</summary>',
+    'final answer',
+  ].join('\n')
+  const parsed = parseAssistantContent(text)
+  assert.equal(parsed.runs.length, 1)
+  assert.equal(parsed.body, 'final answer')
+})
+
 test('assistant content is split into turns before large-text fallback', () => {
   const turnBody = 'x'.repeat(Math.floor(MARKDOWN_CHAR_LIMIT / 2))
   const text = [
