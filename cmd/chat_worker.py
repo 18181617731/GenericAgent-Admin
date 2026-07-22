@@ -1005,16 +1005,20 @@ def _tail_ultraplan_outputs(run_dir_str, state, emit_event, tail_state):
             continue
 
 
-def _observe_ultraplan_daemon(objective, baseline, state, emit_event, stop_event):
+def _observe_ultraplan_daemon(
+        objective, baseline, state, emit_event, stop_event, observer_state=None):
     """Observe the Agent-owned official daemon without creating or executing work."""
-    selected = None
-    last_signature = None
-    tail_state = {}
+    if not isinstance(observer_state, dict):
+        observer_state = {}
+    selected = observer_state.get('selected')
+    last_signature = observer_state.get('last_signature')
+    tail_state = observer_state.setdefault('tail_state', {})
     while True:
         try:
             sessions = _fetch_ultraplan_dashboard_sessions()
             selected = _select_ultraplan_session(
                 sessions, baseline, selected=selected, objective=objective)
+            observer_state['selected'] = selected
             parsed = sessions.get(selected) if selected else None
             if parsed:
                 next_state = {
@@ -1034,6 +1038,7 @@ def _observe_ultraplan_daemon(objective, baseline, state, emit_event, stop_event
                 signature = _ultraplan_session_signature(parsed)
                 if signature != last_signature:
                     last_signature = signature
+                    observer_state['last_signature'] = last_signature
                     emit_event({'type': 'ultraplan_event', 'state': dict(state)})
                 _tail_ultraplan_outputs(selected, state, emit_event, tail_state)
         except Exception:
@@ -1597,10 +1602,24 @@ def handle_request(agent, worker, req):
         return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
     chunks = []
-    _up_state = {'objective': ultraplan_objective} if ultraplan_objective else {}
-    _up_baseline = (_capture_ultraplan_dashboard_baseline()
-                    if ultraplan_objective else {})
-    _up_stop = threading.Event() if ultraplan_objective else None
+    _up_context = None
+    if ultraplan_objective:
+        _up_context = {
+            'objective': ultraplan_objective,
+            'baseline': _capture_ultraplan_dashboard_baseline(),
+            'state': {'objective': ultraplan_objective},
+            'observer_state': {},
+        }
+        setattr(agent, '_ga_admin_ultraplan_context', _up_context)
+    else:
+        candidate = getattr(agent, '_ga_admin_ultraplan_context', None)
+        if isinstance(candidate, dict) and not candidate.get('state', {}).get('complete'):
+            _up_context = candidate
+    _up_objective = (_up_context or {}).get('objective', '')
+    _up_state = (_up_context or {}).get('state', {})
+    _up_baseline = (_up_context or {}).get('baseline', {})
+    _up_observer_state = (_up_context or {}).get('observer_state', {})
+    _up_stop = threading.Event() if _up_context else None
     _up_thread = None
     _last_plan = ['']
 
@@ -1609,6 +1628,10 @@ def handle_request(agent, worker, req):
             _up_stop.set()
         if _up_thread is not None:
             _up_thread.join(timeout=1.5)
+        if _up_state.get('complete'):
+            current = getattr(agent, '_ga_admin_ultraplan_context', None)
+            if current is _up_context:
+                delattr(agent, '_ga_admin_ultraplan_context')
 
     def emit_plan_update(partial=''):
         plan = _snapshot_plan(agent, root_for_req, partial)
@@ -1619,10 +1642,17 @@ def handle_request(agent, worker, req):
         return plan
 
     try:
-        if ultraplan_objective:
+        if _up_context:
             _up_thread = threading.Thread(
                 target=_observe_ultraplan_daemon,
-                args=(ultraplan_objective, _up_baseline, _up_state, emit, _up_stop),
+                args=(
+                    _up_objective,
+                    _up_baseline,
+                    _up_state,
+                    emit,
+                    _up_stop,
+                    _up_observer_state,
+                ),
                 name='ga-admin-ultraplan-observer',
                 daemon=True,
             )

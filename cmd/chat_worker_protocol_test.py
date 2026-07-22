@@ -151,6 +151,50 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         capture.assert_called_once_with()
         observe.assert_called_once()
 
+    def test_ultraplan_observer_continues_after_a_clarification_reply(self):
+        agent = FakeAgent()
+        baseline = {"existing-run": "before"}
+        observed = []
+
+        def observe(objective, baseline_arg, state, emit_event, stop_event, observer_state):
+            observed.append((objective, baseline_arg, state, observer_state))
+            if len(observed) == 2:
+                state.update({
+                    "objective": objective,
+                    "run_dir": "official-run",
+                    "dashboard_url": "http://127.0.0.1:47831",
+                    "complete": False,
+                })
+
+        with mock.patch.object(
+            chat_worker, "_capture_ultraplan_dashboard_baseline", return_value=baseline
+        ) as capture, mock.patch.object(
+            chat_worker, "_observe_ultraplan_daemon", side_effect=observe
+        ) as observer:
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("/ultraplan ship feature")
+            )
+            second_event_start = len(self.events)
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("use postgres")
+            )
+
+        capture.assert_called_once_with()
+        self.assertEqual(observer.call_count, 2)
+        self.assertEqual([entry[0] for entry in observed], ["ship feature", "ship feature"])
+        self.assertIs(observed[0][1], observed[1][1])
+        self.assertIs(observed[0][2], observed[1][2])
+        self.assertIs(observed[0][3], observed[1][3])
+        self.assertEqual(agent.prompts[-1], ("use postgres", "admin_chat"))
+        second_done = next(
+            event for event in self.events[second_event_start:]
+            if event.get("type") == "done"
+        )
+        self.assertEqual(
+            second_done["message"]["ultraplan_state"]["run_dir"],
+            "official-run",
+        )
+
     def test_ultralplan_typo_is_not_treated_as_ultraplan(self):
         agent = FakeAgent()
         with mock.patch.object(
