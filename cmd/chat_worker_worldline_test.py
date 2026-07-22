@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -37,6 +37,30 @@ class WorldlineSidecarTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_worldline_hook_guard_is_defined_and_installs_once(self):
+        registrations = []
+        plugins = ModuleType('plugins')
+        hooks = ModuleType('plugins.hooks')
+
+        def register(event):
+            self.assertEqual(event, 'tool_before')
+
+            def decorator(callback):
+                registrations.append(callback)
+                return callback
+
+            return decorator
+
+        hooks.register = register
+        plugins.hooks = hooks
+        with mock.patch.object(worker, '_WORLDLINE_HOOK_INSTALLED', False), \
+             mock.patch.dict(sys.modules, {'plugins': plugins, 'plugins.hooks': hooks}):
+            worker._install_worldline_hook()
+            worker._install_worldline_hook()
+            self.assertTrue(worker._WORLDLINE_HOOK_INSTALLED)
+
+        self.assertEqual(len(registrations), 1)
 
     def test_worldline_title_strips_project_mode_without_store_private_helper(self):
         store = SimpleNamespace(

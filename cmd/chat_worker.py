@@ -1049,6 +1049,8 @@ def _observe_ultraplan_daemon(
         # If stop is signalled during the wait, loop once more for a final snapshot.
         stop_event.wait(0.5)
 
+_WORLDLINE_HOOK_INSTALLED = False
+
 
 def _safe_session_id(value):
     value = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value or 'session')).strip('._')
