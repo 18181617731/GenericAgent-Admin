@@ -5,7 +5,7 @@ import sys
 import unittest
 from unittest import mock
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 
 # Import production worker code without rewriting its pre-existing tracked cache.
@@ -126,6 +126,281 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(error["reasoning_effort"], "high")
         self.assertIn("usage", error)
         self.assertIn("usages", error)
+
+    def test_ultraplan_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
+        agent = FakeAgent()
+        with mock.patch.object(
+            chat_worker, "_capture_ultraplan_dashboard_baseline", return_value={}
+        ) as capture, mock.patch.object(
+            chat_worker, "_observe_ultraplan_daemon", return_value=None
+        ) as observe:
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("/ultraplan ship feature")
+            )
+
+        self.assertEqual(len(agent.prompts), 1)
+        rendered, source = agent.prompts[0]
+        self.assertEqual(source, "admin_chat")
+        self.assertIn("Objective: ship feature", rendered)
+        self.assertIn("memory", rendered)
+        self.assertIn("ultraplan_sop.md", rendered)
+        self.assertNotIn("admin_chat_ultraplan.py", rendered)
+        self.assertNotIn("/exec", rendered)
+        self.assertEqual(
+            [event["delta"] for event in self.events if event.get("type") == "delta"],
+            ["res"],
+        )
+        capture.assert_called_once_with()
+        observe.assert_called_once()
+
+    def test_ultraplan_observer_continues_after_a_clarification_reply(self):
+        agent = FakeAgent()
+        baseline = {"existing-run": "before"}
+        observed = []
+
+        def observe(objective, baseline_arg, state, emit_event, stop_event, observer_state):
+            observed.append((objective, baseline_arg, state, observer_state))
+            if len(observed) == 2:
+                state.update({
+                    "objective": objective,
+                    "run_dir": "official-run",
+                    "dashboard_url": "http://127.0.0.1:47831",
+                    "complete": False,
+                })
+
+        with mock.patch.object(
+            chat_worker, "_capture_ultraplan_dashboard_baseline", return_value=baseline
+        ) as capture, mock.patch.object(
+            chat_worker, "_observe_ultraplan_daemon", side_effect=observe
+        ) as observer:
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("/ultraplan ship feature")
+            )
+            second_event_start = len(self.events)
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("use postgres")
+            )
+
+        capture.assert_called_once_with()
+        self.assertEqual(observer.call_count, 2)
+        self.assertEqual([entry[0] for entry in observed], ["ship feature", "ship feature"])
+        self.assertIs(observed[0][1], observed[1][1])
+        self.assertIs(observed[0][2], observed[1][2])
+        self.assertIs(observed[0][3], observed[1][3])
+        self.assertEqual(agent.prompts[-1], ("use postgres", "admin_chat"))
+        second_done = next(
+            event for event in self.events[second_event_start:]
+            if event.get("type") == "done"
+        )
+        self.assertEqual(
+            second_done["message"]["ultraplan_state"]["run_dir"],
+            "official-run",
+        )
+
+    def test_ultralplan_typo_is_not_treated_as_ultraplan(self):
+        agent = FakeAgent()
+        with mock.patch.object(
+            chat_worker, "_capture_ultraplan_dashboard_baseline"
+        ) as capture, mock.patch.object(
+            chat_worker, "_observe_ultraplan_daemon"
+        ) as observe:
+            chat_worker.handle_request(
+                agent, FakeWorker(), self.request("/ultralplan ship feature")
+            )
+
+        self.assertEqual(
+            agent.prompts, [("/ultralplan ship feature", "admin_chat")]
+        )
+        capture.assert_not_called()
+        observe.assert_not_called()
+
+
+class UltraPlanReadOnlyObserverTests(unittest.TestCase):
+    class _Response:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self.body
+
+    def test_dashboard_fetch_uses_default_daemon_get_without_request_body(self):
+        body = b"<html><pre>rundir: C:/temp/official-run\n</pre></html>"
+        with mock.patch(
+            "urllib.request.urlopen", return_value=self._Response(body)
+        ) as urlopen:
+            sessions = chat_worker._fetch_ultraplan_dashboard_sessions(timeout=0.42)
+
+        urlopen.assert_called_once_with(
+            "http://127.0.0.1:47831/", timeout=0.42
+        )
+        self.assertIsInstance(sessions, dict)
+
+    def test_session_selection_detects_new_and_changed_official_runs(self):
+        old = {"current": "phase-a", "phases": [], "tasks": [], "events": []}
+        changed = {"current": "phase-b", "phases": [], "tasks": [], "events": []}
+        baseline = {"C:/runs/existing": chat_worker._ultraplan_session_signature(old)}
+
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": old, "C:/runs/new-objective": changed},
+                baseline,
+                objective="new objective",
+            ),
+            "C:/runs/new-objective",
+        )
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": changed}, baseline
+            ),
+            "C:/runs/existing",
+        )
+        self.assertIsNone(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": old}, baseline
+            )
+        )
+
+    def test_observer_projects_official_session_without_starting_it(self):
+        parsed = {
+            "current": "phase-b",
+            "phases": [{"name": "phase-b", "status": "running"}],
+            "tasks": [{"desc": "lens", "status": "running"}],
+            "events": [{"time": 0.2, "msg": "started"}],
+            "done": False,
+        }
+        stop = chat_worker.threading.Event()
+        events = []
+        state = {"objective": "ship feature"}
+
+        def fetch_once():
+            stop.set()
+            return {"C:/runs/official": parsed}
+
+        with mock.patch.object(
+            chat_worker, "_fetch_ultraplan_dashboard_sessions", side_effect=fetch_once
+        ) as fetch, mock.patch.object(chat_worker, "_tail_ultraplan_outputs") as tail:
+            chat_worker._observe_ultraplan_daemon(
+                "ship feature", {}, state, events.append, stop
+            )
+
+        fetch.assert_called_once_with()
+        tail.assert_called_once()
+        self.assertEqual(state["run_dir"], "C:/runs/official")
+        self.assertEqual(state["dashboard_port"], 47831)
+        self.assertEqual(state["dashboard_url"], "http://127.0.0.1:47831/")
+        self.assertEqual(state["phases"], parsed["phases"])
+        self.assertEqual([event["type"] for event in events], ["ultraplan_event"])
+
+    def test_output_tail_emits_file_lines_unchanged_and_only_once(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "001_lens.out.txt"
+            output.write_bytes(b"alpha\nbeta\n")
+            state = {}
+            events = []
+            tail_state = {}
+
+            chat_worker._tail_ultraplan_outputs(
+                tmp, state, events.append, tail_state
+            )
+            with output.open("ab") as stream:
+                stream.write(b"gamma\n")
+            chat_worker._tail_ultraplan_outputs(
+                tmp, state, events.append, tail_state
+            )
+
+        self.assertEqual(
+            events,
+            [
+                {
+                    "type": "ultraplan_output",
+                    "task_id": "001_lens",
+                    "lines": ["alpha", "beta"],
+                },
+                {
+                    "type": "ultraplan_output",
+                    "task_id": "001_lens",
+                    "lines": ["gamma"],
+                },
+            ],
+        )
+        self.assertEqual(
+            state["task_outputs"]["001_lens"], ["alpha", "beta", "gamma"]
+        )
+
+
+class PlanPayloadAdapterTests(unittest.TestCase):
+    def test_spaced_delegate_and_done_markers_are_consumed(self):
+        payload = {
+            "active": True,
+            "placeholder": False,
+            "done": 0,
+            "total": 1,
+            "complete": False,
+            "items": [{
+                # GA already consumed the first [D] from
+                # `- [D] [\u2713] [VERIFY] ...`; this is its canonical output.
+                "content": "[\u2713] [VERIFY] \u4e3bagent\u6267\u884c\u9a8c\u6536",
+                "status": "open",
+            }],
+        }
+
+        adapted = chat_worker._adapt_plan_payload(payload)
+
+        self.assertEqual(adapted["items"], [{
+            "content": "[VERIFY] \u4e3bagent\u6267\u884c\u9a8c\u6536",
+            "status": "done",
+        }])
+        self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
+        self.assertEqual(payload["items"][0]["content"], "[\u2713] [VERIFY] \u4e3bagent\u6267\u884c\u9a8c\u6536")
+
+    def test_semantic_bracket_tag_is_preserved(self):
+        payload = {
+            "active": True,
+            "done": 0,
+            "total": 1,
+            "complete": False,
+            "items": [{"content": "[VERIFY] smoke test", "status": "open"}],
+        }
+
+        adapted = chat_worker._adapt_plan_payload(payload)
+
+        self.assertEqual(adapted["items"], payload["items"])
+        self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (0, 1, False))
+
+    def test_snapshot_plan_adapts_canonical_payload(self):
+        payload = {
+            "active": True,
+            "placeholder": False,
+            "done": 0,
+            "total": 1,
+            "complete": False,
+            "items": [{"content": "[\u2713] [VERIFY] wired", "status": "open"}],
+        }
+        plan_state = ModuleType("frontends.plan_state")
+        plan_state.desktop_plan_payload_from_session = lambda sess, root: payload
+        frontends = ModuleType("frontends")
+        frontends.__path__ = []
+        frontends.plan_state = plan_state
+
+        with mock.patch.dict(sys.modules, {
+            "frontends": frontends,
+            "frontends.plan_state": plan_state,
+        }), mock.patch.object(chat_worker, "_snapshot_ga_state", return_value={"working": {}}):
+            adapted = chat_worker._snapshot_plan(FakeAgent(), "C:/ga")
+
+        self.assertEqual(adapted["items"], [{
+            "content": "[VERIFY] wired",
+            "status": "done",
+        }])
+        self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
@@ -684,15 +685,35 @@ function UltraPlanResultCard({ text = '' }) {
   </div>
 }
 
+export const stripUltraPlanProgressText = (text = '') => String(text || '')
+  .split(/\r?\n/)
+  .filter(line => !/^\s*\[(?:ultraplan|phase|subagent|result|done|next|summary)\]\s*/i.test(line))
+  .join('\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
+const hasUltraPlanDashboardState = (state) => !!(state && (
+  state.objective
+  || state.phases?.length > 0
+  || state.recentTasks?.length > 0
+  || state.resultFiles?.length > 0
+  || state.complete
+))
+
 const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
   const parsedState = parseUltraPlanText(text)
   const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
-  if (upState && (upState.phases?.length > 0 || upState.recentTasks?.length > 0 || upState.objective)) {
-    return <UltraPlanDashboard state={upState} text={text} onAskReply={onAskReply} />
+  const cleanText = stripUltraPlanProgressText(text)
+  if (hasUltraPlanDashboardState(upState)) {
+    return cleanText ? (
+      <div className="oa-ultraplan-prose">
+        <MarkdownBlock text={cleanText} onAskReply={onAskReply} />
+      </div>
+    ) : null
   }
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
-  return <MarkdownBlock text={text} onAskReply={onAskReply} />
+  return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
 }
 
 const taskFileName = (fp = '') => String(fp || '').split(/[\\/]/).filter(Boolean).pop() || ''
@@ -776,8 +797,27 @@ function ToolCallCollapse({ name, args }) {
   )
 }
 
-function SubagentOutputBlock({ text, onAskReply }) {
+function SubagentOutputBlock({ text, onAskReply, isRunning }) {
   const { prefix, turns } = useMemo(() => parseSubagentOutput(text), [text])
+  const latestKey = turns.length > 0 ? String(turns[turns.length - 1].n) : ''
+  const [activeKeys, setActiveKeys] = useState(() => isRunning && latestKey ? [latestKey] : [])
+  const previousLatestKeyRef = useRef(latestKey)
+  const previousRunningRef = useRef(isRunning)
+
+  // Follow a newly streamed turn while work is running, collapsing older turns.
+  // A running -> terminal transition collapses everything once; subsequent
+  // terminal renders preserve any turn the user manually reopens.
+  useEffect(() => {
+    const wasRunning = previousRunningRef.current
+    const previousLatestKey = previousLatestKeyRef.current
+    if (wasRunning && !isRunning) {
+      setActiveKeys([])
+    } else if (isRunning && latestKey && (!wasRunning || latestKey !== previousLatestKey)) {
+      setActiveKeys([latestKey])
+    }
+    previousRunningRef.current = isRunning
+    previousLatestKeyRef.current = latestKey
+  }, [isRunning, latestKey])
 
   const renderSeg = (seg, i) => {
     if (seg.type === 'summary') return (
@@ -813,9 +853,6 @@ function SubagentOutputBlock({ text, onAskReply }) {
     return null
   }
 
-  // last turn open by default, others collapsed
-  const defaultOpen = turns.length > 0 ? [String(turns[turns.length - 1].n)] : []
-
   const turnItems = turns.map(t => {
     const summaryText = t.children.find(s => s.type === 'summary')?.text || ''
     const toolCount = t.children.filter(s => s.type === 'tool').length
@@ -844,7 +881,8 @@ function SubagentOutputBlock({ text, onAskReply }) {
         <Collapse
           size="small"
           className="sa-turn-collapse"
-          defaultActiveKey={defaultOpen}
+          activeKey={activeKeys}
+          onChange={(keys) => setActiveKeys(Array.isArray(keys) ? keys : (keys ? [keys] : []))}
           items={turnItems}
         />
       )}
@@ -858,6 +896,7 @@ function UltraPlanTaskRow({ task, onAskReply }) {
   const outputFile = preferredUltraPlanOutputFile(task)
   const status = task.status || 'running'
   const isRunning = status === 'running'
+  const isFailed = status === 'fail' || status === 'failed'
   const [open, setOpen] = useState(() => isRunning)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -924,10 +963,13 @@ function UltraPlanTaskRow({ task, onAskReply }) {
         onClick={hasOutput ? toggle : undefined}
         role={hasOutput ? 'button' : undefined}
         tabIndex={hasOutput ? 0 : undefined}
+        aria-expanded={hasOutput ? open : undefined}
         onKeyDown={hasOutput ? (e) => (e.key === 'Enter' || e.key === ' ') && toggle() : undefined}
         title={outputFile || task.desc || ''}
       >
-        <span className={`oa-up-task-dot oa-up-task-dot-${status}`} />
+        <span className={`oa-up-task-dot oa-up-task-dot-${status}`} aria-hidden="true">
+          {status === 'done' ? <Check size={12} /> : isFailed ? <X size={12} /> : <Clock3 size={12} />}
+        </span>
         <span className="oa-up-task-desc">{task.desc}</span>
         {outputFile && <span className="oa-up-task-file">{taskFileName(outputFile)}</span>}
         {hasOutput && (
@@ -940,7 +982,7 @@ function UltraPlanTaskRow({ task, onAskReply }) {
         <div className="oa-up-task-output">
           {loading && <div className="oa-up-task-output-meta">Loading output…</div>}
           {error && <div className="oa-up-task-output-error">{error}</div>}
-          {!loading && !error && content && <SubagentOutputBlock text={content} onAskReply={onAskReply} />}
+          {!loading && !error && content && <SubagentOutputBlock text={content} onAskReply={onAskReply} isRunning={isRunning} />}
           {!loading && !error && !content && status === 'running' && (
             <div className="oa-up-task-output-waiting">
               <span className="oa-up-task-output-waiting-dot" /><span className="oa-up-task-output-waiting-dot" /><span className="oa-up-task-output-waiting-dot" />
@@ -956,106 +998,171 @@ function UltraPlanTaskRow({ task, onAskReply }) {
   )
 }
 
-function UltraPlanDashboard({ state, text, onAskReply }) {
+function UltraPlanDashboard({ state, onAskReply }) {
+  const [expanded, setExpanded] = useState(true)
+  const panelId = React.useId()
   const { objective, phases = [], recentTasks = [], complete, events = [], resultFiles = [], current, taskOutputs = {}, task_outputs = {} } = state
   const outputsMap = (taskOutputs && Object.keys(taskOutputs).length) ? taskOutputs : (task_outputs || {})
+  const phaseTasks = phases.flatMap((phase) => Array.isArray(phase.tasks) ? phase.tasks : [])
+  const trackedItems = phases.length ? phases : recentTasks
+  const completedItems = complete ? trackedItems.length : trackedItems.filter((item) => item?.status === 'done').length
+  const progressPercent = complete ? 100 : (trackedItems.length ? Math.round((completedItems / trackedItems.length) * 100) : 0)
+  const taskCount = phaseTasks.length || recentTasks.length
+  const hasFailure = [...phases, ...phaseTasks, ...recentTasks].some((item) => item?.status === 'fail' || item?.status === 'failed')
+  const hasWork = Boolean(current || phases.length || recentTasks.length)
+  const statusTone = complete ? 'done' : hasFailure ? 'failed' : hasWork ? 'run' : 'pending'
+  const statusLabel = complete ? '\u5df2\u5b8c\u6210' : hasFailure ? '\u9700\u5173\u6ce8' : hasWork ? '\u6267\u884c\u4e2d' : '\u51c6\u5907\u4e2d'
+  const progressLabel = phases.length
+    ? `${completedItems} / ${phases.length} \u9636\u6bb5\u5b8c\u6210`
+    : recentTasks.length
+      ? `${completedItems} / ${recentTasks.length} \u4efb\u52a1\u5b8c\u6210`
+      : complete ? '\u6267\u884c\u5df2\u5b8c\u6210' : '\u7b49\u5f85\u6267\u884c\u6b65\u9aa4'
+  const isEmpty = !current && phases.length === 0 && recentTasks.length === 0 && resultFiles.length === 0
   const openFile = (fp) => {
     if (!fp) return
     const u = `/api/files/read?path=${encodeURIComponent(fp)}`
     window.open(u, '_blank', 'noopener')
   }
   return (
-    <div className="oa-up-dash">
-      <div className="oa-up-head">
-        <span className="oa-up-icon">{'⚡'}</span>
-        <span className="oa-up-title">UltraPlan</span>
-        {objective && <span className="oa-up-obj">{objective}</span>}
-        {complete
-          ? <span className="oa-up-badge oa-up-done">{'完成'}</span>
-          : (phases.length > 0 || recentTasks.length > 0) && <span className="oa-up-badge oa-up-run">{'执行中…'}</span>}
-      </div>
-      {!complete && current && (
-        <div className="oa-up-current"><span className="oa-up-current-dot"></span>{current}</div>
-      )}
-      {recentTasks.length > 0 && (
-        <div className="oa-up-recent">
-          <div className="oa-up-recent-head">Subagents / 最近任务</div>
-          <div className="oa-up-tasks">
-            {recentTasks.map((t, j) => {
-              const lines = (t && t.id && outputsMap?.[t.id]) ? outputsMap[t.id] : null
-              const injected = lines && lines.length ? { ...t, output_lines: lines } : t
-              return <UltraPlanTaskRow key={j} task={injected} onAskReply={onAskReply} />
-            })}
-          </div>
-        </div>
-      )}
-      {phases.length > 0 && (
-        <div className="oa-up-phases">
-          {phases.map((ph, i) => (
-            <div key={i} className={`oa-up-phase ${ph.status || 'running'}`}>
-              <span className="oa-up-phase-icon">
-                {ph.status === 'done' ? '✓' : ph.status === 'fail' ? '✗' : '◌'}
-              </span>
-              <div className="oa-up-phase-body">
-                <div className="oa-up-phase-info">
-                  <span className="oa-up-phase-name">{ph.name}</span>
-                  {ph.desc && <span className="oa-up-phase-desc">{ph.desc}</span>}
-                  {ph.elapsed && <span className="oa-up-phase-time">{ph.elapsed}</span>}
-                </div>
-                {ph.tasks && ph.tasks.length > 0 && (
-                  <div className="oa-up-tasks">
-                    {ph.tasks.map((t, j) => {
-                      const lines = (t && t.id && outputsMap && outputsMap[t.id]) ? outputsMap[t.id] : null
-                      const injected = lines && lines.length ? { ...t, output_lines: lines } : t
-                      return <UltraPlanTaskRow key={j} task={injected} onAskReply={onAskReply} />
-                    })}
-                  </div>
-                )}
-              </div>
+    <div className={`oa-up-dash oa-up-${statusTone}${expanded ? '' : ' is-collapsed'}`}>
+      <button type="button" className="oa-up-head" onClick={() => setExpanded(value => !value)}
+        aria-expanded={expanded} aria-controls={panelId}
+        aria-label={expanded ? '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' : '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f'}>
+        <span className="oa-up-icon oa-up-mark" aria-hidden="true"><Sparkles size={15} strokeWidth={2.1} /></span>
+        <span className="oa-up-heading">
+          <span className="oa-up-title-row">
+            <span className="oa-up-title">UltraPlan</span>
+            <span className="oa-up-kicker">{'\u4efb\u52a1\u7f16\u6392'}</span>
+          </span>
+          <span className="oa-up-obj">{objective || '\u7b49\u5f85\u4efb\u52a1\u76ee\u6807'}</span>
+        </span>
+        <span className={`oa-up-badge oa-up-${statusTone}`}>{statusLabel}</span>
+        <span className="oa-up-chevron" aria-hidden="true">
+          {expanded ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
+        </span>
+      </button>
+      <div id={panelId} className="oa-up-body" hidden={!expanded}>
+        <section className="oa-up-overview" aria-label="UltraPlan \u6267\u884c\u6458\u8981">
+          <div className="oa-up-progress-head">
+            <div>
+              <span className="oa-up-section-label">{'\u6267\u884c\u8fdb\u5ea6'}</span>
+              <strong className="oa-up-progress-copy">{progressLabel}</strong>
             </div>
-          ))}
-        </div>
-      )}
-      {resultFiles.length > 0 && (
-        <div className="oa-up-files">
-          <div className="oa-up-files-head">{'产出文件'} ({resultFiles.length})</div>
-          <div className="oa-up-files-list">
-            {resultFiles.map((r, i) => (
-              <div key={i} className="oa-up-file-item" onClick={() => openFile(r.file)} title={r.file}>
-                <span className="oa-up-file-icon">{'📄'}</span>
-                <div className="oa-up-file-body">
-                  <div className="oa-up-file-desc">{r.desc}</div>
-                  <div className="oa-up-file-path">{r.file}</div>
+            <span className="oa-up-progress-value">{progressPercent}<small>%</small></span>
+          </div>
+          <div className="oa-up-progress-track" role="progressbar" aria-label="UltraPlan \u6267\u884c\u8fdb\u5ea6"
+            aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent}>
+            <span style={{ '--oa-up-progress': progressPercent / 100 }} />
+          </div>
+          <div className="oa-up-stats" aria-label="\u6267\u884c\u7edf\u8ba1">
+            <span><strong>{phases.length}</strong>{' \u9636\u6bb5'}</span>
+            <span><strong>{taskCount}</strong>{' \u4efb\u52a1'}</span>
+            <span><strong>{resultFiles.length}</strong>{' \u4ea7\u7269'}</span>
+          </div>
+          {!complete && current && (
+            <div className="oa-up-current">
+              <span className="oa-up-current-dot" aria-hidden="true" />
+              <span className="oa-up-current-label">{'\u5f53\u524d'}</span>
+              <span>{current}</span>
+            </div>
+          )}
+        </section>
+
+        {isEmpty && (
+          <div className="oa-up-empty">
+            <Clock3 size={16} aria-hidden="true" />
+            <div><strong>{'\u7b49\u5f85 UltraPlan \u53d1\u5e03\u6b65\u9aa4'}</strong><span>{'\u8ba1\u5212\u5f00\u59cb\u540e\uff0c\u9636\u6bb5\u548c\u4efb\u52a1\u4f1a\u5728\u8fd9\u91cc\u5b9e\u65f6\u66f4\u65b0\u3002'}</span></div>
+          </div>
+        )}
+
+        {recentTasks.length > 0 && phases.length === 0 && (
+          <section className="oa-up-section oa-up-recent">
+            <div className="oa-up-section-head">
+              <span className="oa-up-section-label">{'\u6267\u884c\u4efb\u52a1'}</span>
+              <span>{recentTasks.length}</span>
+            </div>
+            <div className="oa-up-tasks">
+              {recentTasks.map((task, i) => {
+                const lines = (task && task.id && outputsMap && outputsMap[task.id]) ? outputsMap[task.id] : null
+                const injected = lines && lines.length ? { ...task, output_lines: lines } : task
+                return <UltraPlanTaskRow key={task?.id || i} task={injected} onAskReply={onAskReply} />
+              })}
+            </div>
+          </section>
+        )}
+
+        {phases.length > 0 && (
+          <section className="oa-up-section oa-up-phase-section">
+            <div className="oa-up-section-head">
+              <span className="oa-up-section-label">{'\u6267\u884c\u9636\u6bb5'}</span>
+              <span>{completedItems}/{phases.length}</span>
+            </div>
+            <div className="oa-up-phases">
+              {phases.map((ph, i) => {
+                const phaseFailed = ph.status === 'fail' || ph.status === 'failed'
+                return (
+                  <div key={ph.id || ph.name || i} className={`oa-up-phase ${ph.status || 'running'}`}>
+                    <span className="oa-up-phase-icon" aria-hidden="true">
+                      {ph.status === 'done' ? <Check size={13} /> : phaseFailed ? <X size={13} /> : <Clock3 size={13} />}
+                    </span>
+                    <div className="oa-up-phase-body">
+                      <div className="oa-up-phase-info">
+                        <span className="oa-up-phase-name">{ph.name}</span>
+                        {ph.desc && <span className="oa-up-phase-desc">{ph.desc}</span>}
+                        {ph.elapsed && <span className="oa-up-phase-time">{ph.elapsed}</span>}
+                      </div>
+                      {ph.tasks && ph.tasks.length > 0 && (
+                        <div className="oa-up-tasks">
+                          {ph.tasks.map((task, j) => {
+                            const lines = (task && task.id && outputsMap && outputsMap[task.id]) ? outputsMap[task.id] : null
+                            const injected = lines && lines.length ? { ...task, output_lines: lines } : task
+                            return <UltraPlanTaskRow key={task?.id || j} task={injected} onAskReply={onAskReply} />
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {resultFiles.length > 0 && (
+          <section className="oa-up-files">
+            <div className="oa-up-files-head">
+              <span className="oa-up-section-label">{'\u4ea7\u51fa\u6587\u4ef6'}</span>
+              <span>{resultFiles.length}</span>
+            </div>
+            <div className="oa-up-files-list">
+              {resultFiles.map((result, i) => (
+                <button type="button" key={result.file || i} className="oa-up-file-item" onClick={() => openFile(result.file)} title={result.file}>
+                  <span className="oa-up-file-icon" aria-hidden="true"><FileOutput size={15} /></span>
+                  <span className="oa-up-file-body">
+                    <span className="oa-up-file-desc">{result.desc || taskFileName(result.file)}</span>
+                    <span className="oa-up-file-path">{result.file}</span>
+                  </span>
+                  <ExternalLink size={13} className="oa-up-file-open" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {events.length > 0 && (
+          <details className="oa-up-events">
+            <summary><span>{'\u8fd0\u884c\u65e5\u5fd7'}</span><span className="oa-up-events-count">{events.length}</span></summary>
+            <div className="oa-up-events-body">
+              {events.map((event, i) => (
+                <div key={i} className={`oa-up-event oa-up-event-${event.tag}`}>
+                  <span className="oa-up-event-tag">[{event.tag}]</span>
+                  <span className="oa-up-event-body">{event.body}</span>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {events.length > 0 && (
-        <details className="oa-up-events">
-          <summary>{'日志'} ({events.length})</summary>
-          <div className="oa-up-events-body">
-            {events.map((e, i) => (
-              <div key={i} className={`oa-up-event oa-up-event-${e.tag}`}>
-                <span className="oa-up-event-tag">[{e.tag}]</span>
-                {e.elapsed !== undefined && <span className="oa-up-event-time">{e.elapsed}s</span>}
-                <span className="oa-up-event-body">{e.body}</span>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-      {complete && (() => {
-        // Only show text that is NOT ultraplan log lines (e.g. extra agent commentary after the block)
-        const resultText = (text || '').split('\n').filter(ln => {
-          const t = ln.trim()
-          return t && !t.match(/^\[(ultraplan|phase|subagent|result|done|next|summary)\]/)
-        }).join('\n').trim()
-        return resultText
-          ? <div className="oa-up-result"><MarkdownBlock text={resultText} onAskReply={onAskReply} /></div>
-          : null
-      })()}
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
     </div>
   )
 }
@@ -1270,6 +1377,207 @@ function TextMarkdown({ text = '', onAskReply }) {
   return <>{nodes}</>
 }
 
+const ULTRAPLAN_DRAWER_DEFAULT_WIDTH = 440
+const ULTRAPLAN_DRAWER_MIN_WIDTH = 360
+const ULTRAPLAN_DRAWER_MAX_WIDTH = 960
+const ULTRAPLAN_DRAWER_VIEWPORT_GUTTER = 24
+
+function getUltraPlanDrawerMaxWidth() {
+  if (typeof window === 'undefined') return ULTRAPLAN_DRAWER_MAX_WIDTH
+  return Math.max(
+    ULTRAPLAN_DRAWER_MIN_WIDTH,
+    Math.min(ULTRAPLAN_DRAWER_MAX_WIDTH, Math.floor(window.innerWidth - ULTRAPLAN_DRAWER_VIEWPORT_GUTTER)),
+  )
+}
+
+function clampUltraPlanDrawerWidth(width, maxWidth = getUltraPlanDrawerMaxWidth()) {
+  return Math.min(maxWidth, Math.max(ULTRAPLAN_DRAWER_MIN_WIDTH, Math.round(Number(width) || ULTRAPLAN_DRAWER_DEFAULT_WIDTH)))
+}
+
+function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskReply }) {
+  const mergedState = useMemo(
+    () => mergeUltraPlanStates(state, parseUltraPlanText(content)),
+    [state, content],
+  )
+  const available = hasUltraPlanDashboardState(mergedState)
+  const [open, setOpen] = useState(false)
+  const [drawerWidth, setDrawerWidth] = useState(() => clampUltraPlanDrawerWidth(ULTRAPLAN_DRAWER_DEFAULT_WIDTH))
+  const [drawerMaxWidth, setDrawerMaxWidth] = useState(() => getUltraPlanDrawerMaxWidth())
+  const [resizing, setResizing] = useState(false)
+  const entryRef = useRef(null)
+  const drawerWidthRef = useRef(drawerWidth)
+  const resizeSessionRef = useRef(null)
+  const autoOpenedRef = useRef(false)
+  const userDismissedRef = useRef(false)
+  const drawerId = React.useId()
+  const titleId = `${drawerId}-title`
+
+  const applyDrawerWidth = useCallback((nextWidth) => {
+    const maxWidth = getUltraPlanDrawerMaxWidth()
+    const width = clampUltraPlanDrawerWidth(nextWidth, maxWidth)
+    drawerWidthRef.current = width
+    setDrawerMaxWidth(maxWidth)
+    setDrawerWidth(width)
+  }, [])
+
+  const beginDrawerResize = useCallback((event) => {
+    if (event.button != null && event.button !== 0) return
+    const startX = Number.isFinite(event.clientX) ? event.clientX : 0
+    resizeSessionRef.current = {
+      pointerId: event.pointerId,
+      startX,
+      startWidth: drawerWidthRef.current,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setResizing(true)
+    event.preventDefault()
+  }, [])
+
+  const moveDrawerResize = useCallback((event) => {
+    const session = resizeSessionRef.current
+    if (!session || (session.pointerId != null && event.pointerId !== session.pointerId)) return
+    const clientX = Number.isFinite(event.clientX) ? event.clientX : session.startX
+    applyDrawerWidth(session.startWidth + session.startX - clientX)
+    event.preventDefault()
+  }, [applyDrawerWidth])
+
+  const finishDrawerResize = useCallback((event) => {
+    const session = resizeSessionRef.current
+    if (!session || (session.pointerId != null && event.pointerId !== session.pointerId)) return
+    resizeSessionRef.current = null
+    setResizing(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
+
+  const resizeDrawerFromKeyboard = useCallback((event) => {
+    const step = event.shiftKey ? 64 : 32
+    let nextWidth = null
+    if (event.key === 'ArrowLeft') nextWidth = drawerWidthRef.current + step
+    else if (event.key === 'ArrowRight') nextWidth = drawerWidthRef.current - step
+    else if (event.key === 'Home') nextWidth = ULTRAPLAN_DRAWER_MIN_WIDTH
+    else if (event.key === 'End') nextWidth = getUltraPlanDrawerMaxWidth()
+    if (nextWidth == null) return
+    event.preventDefault()
+    applyDrawerWidth(nextWidth)
+  }, [applyDrawerWidth])
+
+  const closeDrawer = useCallback(() => {
+    userDismissedRef.current = true
+    setOpen(false)
+    const restoreFocus = () => entryRef.current?.focus()
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restoreFocus)
+    else setTimeout(restoreFocus, 0)
+  }, [])
+
+  useEffect(() => {
+    const syncWidthToViewport = () => applyDrawerWidth(drawerWidthRef.current)
+    syncWidthToViewport()
+    window.addEventListener('resize', syncWidthToViewport)
+    return () => window.removeEventListener('resize', syncWidthToViewport)
+  }, [applyDrawerWidth])
+
+  useEffect(() => {
+    if (!available || !pending || mergedState?.complete || autoOpenedRef.current || userDismissedRef.current) return
+    autoOpenedRef.current = true
+    setOpen(true)
+  }, [available, pending, mergedState?.complete])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeDrawer()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [open, closeDrawer])
+
+  if (!available) return null
+
+  const phases = Array.isArray(mergedState.phases) ? mergedState.phases : []
+  const recentTasks = Array.isArray(mergedState.recentTasks) ? mergedState.recentTasks : []
+  const phaseTasks = phases.flatMap(phase => Array.isArray(phase.tasks) ? phase.tasks : [])
+  const total = phaseTasks.length || recentTasks.length || phases.length
+  const done = mergedState.complete
+    ? total
+    : (phaseTasks.length ? phaseTasks : (recentTasks.length ? recentTasks : phases))
+      .filter(item => String(item?.status || '').toLowerCase() === 'done').length
+  const statusText = mergedState.complete
+    ? '\u5df2\u5b8c\u6210'
+    : (pending ? '\u6267\u884c\u4e2d' : '\u53ef\u67e5\u770b')
+  const objective = String(mergedState.objective || mergedState.current || '\u67e5\u770b\u8ba1\u5212\u4e0e\u5b50\u4efb\u52a1\u8fdb\u5c55')
+
+  return (
+    <div className="oa-message-ultraplan">
+      <button
+        ref={entryRef}
+        type="button"
+        className="oa-up-entry"
+        aria-expanded={open}
+        aria-controls={drawerId}
+        onClick={() => setOpen(true)}
+      >
+        <span className="oa-up-entry-mark" aria-hidden="true"><Sparkles size={15} /></span>
+        <span className="oa-up-entry-copy">
+          <b>UltraPlan</b>
+          <small>{objective}</small>
+        </span>
+        <span className={`oa-up-entry-status ${mergedState.complete ? 'is-done' : 'is-running'}`}>
+          {statusText}{total > 0 ? ` \u00b7 ${done}/${total}` : ''}
+        </span>
+        <PanelRightOpen size={16} aria-hidden="true" />
+      </button>
+
+      {open && createPortal(
+        <div className="oa-message-ultraplan oa-up-drawer-layer" data-ultraplan-drawer-owner="message">
+          <aside
+            id={drawerId}
+            className={`oa-up-drawer ${resizing ? 'is-resizing' : ''}`}
+            role="region"
+            aria-labelledby={titleId}
+            style={{ '--oa-up-drawer-width': `${drawerWidth}px` }}
+          >
+            <div
+              className="oa-up-drawer-resize"
+              role="separator"
+              aria-label={'\u8c03\u6574 UltraPlan \u4fa7\u680f\u5bbd\u5ea6'}
+              aria-orientation="vertical"
+              aria-controls={drawerId}
+              aria-valuemin={ULTRAPLAN_DRAWER_MIN_WIDTH}
+              aria-valuemax={drawerMaxWidth}
+              aria-valuenow={drawerWidth}
+              aria-valuetext={`${drawerWidth} px`}
+              tabIndex={0}
+              onPointerDown={beginDrawerResize}
+              onPointerMove={moveDrawerResize}
+              onPointerUp={finishDrawerResize}
+              onPointerCancel={finishDrawerResize}
+              onKeyDown={resizeDrawerFromKeyboard}
+            />
+            <header className="oa-up-drawer-head">
+              <span className="oa-up-drawer-kicker">MESSAGE-LINKED PLAN</span>
+              <div>
+                <h2 id={titleId}>UltraPlan</h2>
+                <p>{objective}</p>
+              </div>
+              <button type="button" className="oa-up-drawer-close" aria-label={'\u5173\u95ed UltraPlan \u8be6\u60c5'} onClick={closeDrawer}>
+                <X size={18} />
+              </button>
+            </header>
+            <div className="oa-up-drawer-scroll">
+              <UltraPlanDashboard state={mergedState} onAskReply={onAskReply} />
+            </div>
+          </aside>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages, ultraplan_state }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
@@ -1284,6 +1592,12 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
   if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
+  // A persisted UltraPlan state belongs to the final user-visible branch. When a
+  // response has turn markers but no explicit final marker, that branch is the
+  // latest run rather than parsed.body.
+  const ultraPlanStateForLastRun = !parsed.body && hasLiveUltraPlan
+    ? (liveUltraPlanState || ultraplan_state)
+    : undefined
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
   const toggleTurn = (r, i) => setOpenTurns(xs => ({ ...xs, [`${r.turn}-${i}`]: !isTurnOpen(r, i) }))
   return <div className={`oa-content ${parsed.runs.length ? 'oa-agent-output' : ''}`}>
@@ -1312,7 +1626,9 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
         <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">步骤 {lastRun.turn}</span><b>{lastRun.title || '正在执行'}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? '实时输出中' : '最新一轮'}</em></div>
-        {lastRun.body ? renderAssistantBody(lastRun.body, onAskReply) : <p className="oa-turn-empty">正在等待该轮输出…</p>}
+        {lastRun.body || ultraPlanStateForLastRun
+          ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun)
+          : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
     {(parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
@@ -1790,6 +2106,7 @@ export default function ChatApp() {
   const [rawHistory, setRawHistory] = useState([])
   const [historyInfo, setHistoryInfo] = useState([])
   const [workingState, setWorkingState] = useState(null)
+  const [planState, setPlanState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
@@ -2014,6 +2331,7 @@ export default function ChatApp() {
 
   const applyStreamEvent = (ev, pendingId, clientUserID = '', sessionId = '') => {
     if (!isActiveSession(sessionId)) return
+    if (Object.prototype.hasOwnProperty.call(ev, 'plan')) setPlanState(ev.plan || null)
     if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
       setSessions(xs => xs.map(x => x.id === sessionId ? {
         ...x,
@@ -2312,6 +2630,7 @@ export default function ChatApp() {
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
+    setPlanState(d.plan || null)
     setLlmNo(d.settings?.llm_no || 0)
     setErr('')
     setNotice('')
@@ -2353,7 +2672,7 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice('已创建新对话'); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no || 0)
     await loadChatState(d.id, openToken)
   }
 
@@ -2430,6 +2749,7 @@ export default function ChatApp() {
         setRawHistory([])
         setHistoryInfo([])
         setWorkingState(null)
+        setPlanState(null)
         setContextOpen(false)
         setBusy(false)
         setStreamingSid('')
@@ -2774,7 +3094,7 @@ export default function ChatApp() {
       optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       pending = { id:`a-${Date.now()}`, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
       const sourceMessageID = String(item.sourceUserMessageId || '').trim()
-      setRawHistory([]); setHistoryInfo([]); setWorkingState(null)
+      setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null)
       if (!isActiveSession(id)) return
       activeSidRef.current = id
       if (!sourceMessageID) setMessages(xs => isActiveSession(id) ? [...xs, optimistic, pending] : xs)
@@ -3187,6 +3507,7 @@ export default function ChatApp() {
       </section>
 
       <footer className="oa-composer-wrap">
+        <PlanTodoCard plan={planState}/>
         {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id

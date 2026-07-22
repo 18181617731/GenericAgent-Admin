@@ -13,12 +13,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/modelconfig"
@@ -113,6 +115,7 @@ type chatSession struct {
 	RawHistory             []map[string]interface{} `json:"raw_history,omitempty"`
 	HistoryInfo            []interface{}            `json:"history_info,omitempty"`
 	Working                map[string]interface{}   `json:"working,omitempty"`
+	Plan                   map[string]interface{}   `json:"plan,omitempty"`
 	WorldlineHead          string                   `json:"worldline_head,omitempty"`
 	Workspace              string                   `json:"workspace,omitempty"`
 	ProjectMode            string                   `json:"project_mode,omitempty"`
@@ -363,6 +366,11 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			cs.Working = finalWorking
 			structuredChanged = true
 		}
+		if _, ok := ev["plan"]; ok {
+			cs.Plan = chatPlanFromEvent(ev)
+			ev["plan"] = cloneChatValue(cs.Plan)
+			structuredChanged = true
+		}
 		isTerminalEvent := ev["type"] == "done" || ev["type"] == "error"
 		if structuredChanged && !isTerminalEvent && (token == nil || s.ownsChatRun(sid, token)) {
 			_ = saveTerminal(cs)
@@ -548,6 +556,120 @@ func chatWorkingFromEvent(ev map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+var chatPlanMarkerTimestampRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\s*`)
+
+func cloneChatValue(v interface{}) interface{} {
+	switch value := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(value))
+		for k, child := range value {
+			out[k] = cloneChatValue(child)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(value))
+		for i, child := range value {
+			out[i] = cloneChatValue(child)
+		}
+		return out
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, len(value))
+		for i, child := range value {
+			out[i] = cloneChatValue(child).(map[string]interface{})
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func normalizeChatPlan(plan map[string]interface{}) map[string]interface{} {
+	if plan == nil {
+		return nil
+	}
+	adapted := cloneChatValue(plan).(map[string]interface{})
+	rawItems, ok := adapted["items"].([]interface{})
+	if !ok {
+		return adapted
+	}
+
+	items := make([]interface{}, 0, len(rawItems))
+	done := 0
+	for _, rawItem := range rawItems {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			items = append(items, rawItem)
+			continue
+		}
+		content, ok := item["content"].(string)
+		if ok {
+			rest := content
+			inlineTitles := make([]string, 0, 1)
+			markerDone := false
+			consumed := false
+			for {
+				trimmedLeft := strings.TrimLeftFunc(rest, unicode.IsSpace)
+				if !strings.HasPrefix(trimmedLeft, "[") {
+					break
+				}
+				end := strings.IndexByte(trimmedLeft, ']')
+				if end < 0 {
+					break
+				}
+				marker := strings.TrimSpace(trimmedLeft[1:end])
+				runes := []rune(marker)
+				known := marker == "" || strings.EqualFold(marker, "D") || strings.EqualFold(marker, "P")
+				if !known && len(runes) > 0 && strings.ContainsRune("xX\u2713\u2714\u221a\u2611", runes[0]) {
+					known = true
+					markerDone = true
+					inline := strings.TrimSpace(string(runes[1:]))
+					inline = strings.TrimSpace(chatPlanMarkerTimestampRE.ReplaceAllString(inline, ""))
+					if inline != "" {
+						inlineTitles = append(inlineTitles, inline)
+					}
+				}
+				if !known {
+					break
+				}
+				consumed = true
+				rest = strings.TrimLeftFunc(trimmedLeft[end+1:], unicode.IsSpace)
+			}
+			if consumed {
+				parts := append(inlineTitles, strings.TrimSpace(rest))
+				nonEmpty := parts[:0]
+				for _, part := range parts {
+					if part != "" {
+						nonEmpty = append(nonEmpty, part)
+					}
+				}
+				if len(nonEmpty) > 0 {
+					item["content"] = strings.Join(nonEmpty, " ")
+				}
+				if markerDone {
+					item["status"] = "done"
+				}
+			}
+		}
+		if item["status"] == "done" {
+			done++
+		}
+		items = append(items, item)
+	}
+	adapted["items"] = items
+	adapted["done"] = float64(done)
+	adapted["total"] = float64(len(items))
+	adapted["complete"] = len(items) > 0 && done == len(items)
+	return adapted
+}
+
+func chatPlanFromEvent(ev map[string]interface{}) map[string]interface{} {
+	m, ok := ev["plan"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return normalizeChatPlan(m)
 }
 
 func chatUltraPlanStateFromEvent(ev map[string]interface{}) map[string]interface{} {
@@ -1551,6 +1673,7 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 	if cs.RawHistory == nil {
 		cs.RawHistory = []map[string]interface{}{}
 	}
+	cs.Plan = normalizeChatPlan(cs.Plan)
 	cs.Settings = normalizeChatSettings(cs.Settings)
 	return cs, nil
 }
@@ -1639,6 +1762,7 @@ func saveChatSessionLocked(cfg config.AppConfig, cs chatSession) error {
 		return err
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
+	cs.Plan = normalizeChatPlan(cs.Plan)
 	cs.UpdatedAt = time.Now().Unix()
 	b, _ := json.MarshalIndent(cs, "", "  ")
 	return writeChatFileAtomic(chatSessionPath(cfg, cs.ID), b, 0644)
