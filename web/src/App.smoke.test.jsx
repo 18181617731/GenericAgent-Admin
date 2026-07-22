@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage, PlanTodoCard, SessionUltraPlanPanel } from './ChatApp.jsx'
+import { ChatMessage, PlanTodoCard } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 
@@ -316,10 +316,10 @@ describe('plan todo card disclosure', () => {
     expect(body?.hidden).toBe(false)
   })
 
-  test('starts expanded and toggles the session UltraPlan dashboard closed, open, then closed', () => {
+  test('starts expanded and toggles the assistant-message UltraPlan dashboard closed, open, then closed', () => {
     const { container } = render(
-      <SessionUltraPlanPanel
-        messages={[{
+      <ChatMessage
+        message={{
           id: 'ultraplan-collapse',
           role: 'assistant',
           content: '',
@@ -328,16 +328,18 @@ describe('plan todo card disclosure', () => {
             current: 'Implementing collapse',
             phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
           },
-        }]}
+        }}
+        pending={true}
         onAskReply={vi.fn()}
       />,
     )
 
     const body = container.querySelector('.oa-up-body')
-    const collapse = () => screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' })
-    const expand = () => screen.getByRole('button', { name: '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f' })
+    const collapse = () => screen.getByRole('button', { name: '收起 UltraPlan 执行面板' })
+    const expand = () => screen.getByRole('button', { name: '展开 UltraPlan 执行面板' })
 
-    expect(container.querySelector('.oa-session-ultraplan > .oa-up-dash')).toBeTruthy()
+    expect(container.querySelector('.oa-message.assistant .oa-message-ultraplan > .oa-up-dash')).toBeTruthy()
+    expect(container.querySelector('.oa-session-ultraplan')).toBeNull()
     expect(collapse().getAttribute('aria-controls')).toBe(body?.id)
     expect(collapse().getAttribute('aria-expanded')).toBe('true')
     expect(body?.hidden).toBe(false)
@@ -358,7 +360,7 @@ describe('plan todo card disclosure', () => {
     expect(body?.hidden).toBe(true)
   })
 
-  test('uses the latest persisted UltraPlan state while keeping final prose in the conversation', () => {
+  test('keeps every UltraPlan dashboard in its owning assistant output and preserves final prose', () => {
     const messages = [
       {
         id: 'ultraplan-older-run',
@@ -385,19 +387,23 @@ describe('plan todo card disclosure', () => {
     ]
     const { container } = render(
       <>
-        <SessionUltraPlanPanel messages={messages} onAskReply={vi.fn()} />
-        <ChatMessage message={messages[1]} pending={false} onAskReply={vi.fn()} />
+        {messages.map(message => (
+          <ChatMessage key={message.id} message={message} pending={false} onAskReply={vi.fn()} />
+        ))}
       </>,
     )
 
-    const sessionPanel = container.querySelector('.oa-session-ultraplan')
-    const assistantMessage = container.querySelector('.oa-message')
-    expect(sessionPanel?.querySelectorAll('.oa-up-dash')).toHaveLength(1)
-    expect(assistantMessage?.querySelector('.oa-up-dash')).toBeNull()
-    expect(sessionPanel?.textContent).toContain('Find active state-owned jobs')
-    expect(sessionPanel?.textContent).not.toContain('Older objective')
-    expect(assistantMessage?.textContent).toContain('verified final result')
-    expect(assistantMessage?.textContent).not.toContain('Research is complete')
+    const assistantMessages = [...container.querySelectorAll('.oa-message.assistant')]
+    expect(assistantMessages).toHaveLength(2)
+    expect(container.querySelector('.oa-session-ultraplan')).toBeNull()
+    expect(assistantMessages[0].querySelectorAll('.oa-message-ultraplan > .oa-up-dash')).toHaveLength(1)
+    expect(assistantMessages[1].querySelectorAll('.oa-message-ultraplan > .oa-up-dash')).toHaveLength(1)
+    expect(assistantMessages[0].textContent).toContain('Older objective')
+    expect(assistantMessages[0].textContent).not.toContain('Find active state-owned jobs')
+    expect(assistantMessages[1].textContent).toContain('Find active state-owned jobs')
+    expect(assistantMessages[1].textContent).not.toContain('Older objective')
+    expect(assistantMessages[1].textContent).toContain('verified final result')
+    expect(assistantMessages[1].textContent).not.toContain('Research is complete')
   })
 })
 

@@ -707,20 +707,16 @@ const hasUltraPlanDashboardState = (state) => !!(state && (
   || state.complete
 ))
 
-export const latestUltraPlanPanelState = (messages = []) => {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i]
-    if (!message || message.role !== 'assistant') continue
-    const state = mergeUltraPlanStates(
-      message.ultraplan_state,
-      parseUltraPlanText(message.content || ''),
+const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
+  const parsedState = parseUltraPlanText(text)
+  const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
+  if (hasUltraPlanDashboardState(upState)) {
+    return (
+      <section className="oa-message-ultraplan" aria-label="UltraPlan 执行计划">
+        <UltraPlanDashboard state={upState} text={text} onAskReply={onAskReply} />
+      </section>
     )
-    if (hasUltraPlanDashboardState(state)) return state
   }
-  return null
-}
-
-const renderAssistantBody = (text = '', onAskReply) => {
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
   const cleanText = stripUltraPlanProgressText(text)
@@ -1810,16 +1806,6 @@ const MessageList = memo(function MessageList({
   )
 })
 
-
-export const SessionUltraPlanPanel = memo(function SessionUltraPlanPanel({ messages, onAskReply }) {
-  const state = useMemo(() => latestUltraPlanPanelState(messages), [messages])
-  if (!state) return null
-  return (
-    <section className="oa-session-ultraplan" aria-label="UltraPlan 执行计划">
-      <UltraPlanDashboard state={state} text="" onAskReply={onAskReply} />
-    </section>
-  )
-})
 
 function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
   const [open, setOpen] = useState(false)
@@ -3414,7 +3400,6 @@ export default function ChatApp() {
       </section>
 
       <footer className="oa-composer-wrap">
-        <SessionUltraPlanPanel messages={messages} onAskReply={fillAskReply} />
         <PlanTodoCard plan={planState}/>
         {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
           {queuedMessages.map((q, i) => {
