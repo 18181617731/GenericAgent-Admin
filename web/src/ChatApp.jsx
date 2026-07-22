@@ -1904,9 +1904,9 @@ export const ChatMessage = memo(function ChatMessage({
                 </div>
               )}
               {isBTW && <div className="oa-btw-head">
-                <span className="oa-btw-mark" aria-hidden="true">↗</span>
-                <div><span>顺便问</span><strong>{m.side_question || '侧问'}</strong></div>
-                <em>{m.btw_status === 'pending' ? '思考中' : m.btw_status === 'error' ? '未完成' : '不影响主任务'}</em>
+                <span className="oa-btw-mark" aria-hidden="true" />
+                <div><span>侧问</span><strong>{m.side_question || '未记录问题'}</strong></div>
+                {m.btw_status !== 'done' && <em>{m.btw_status === 'pending' ? '思考中…' : '未完成'}</em>}
               </div>}
               {m.commandResult
                 ? <CommandResultCard result={m.commandResult} />

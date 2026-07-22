@@ -9865,60 +9865,95 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   .oa-message-ultraplan .oa-up-entry { transition: none; }
 }
 
-/* /btw is a quiet side thread: visually distinct without competing with the main run. */
+/* /btw reads like an editor's margin note, not another message card. */
 .oa-message.assistant.oa-message-btw {
   position: relative;
-  margin: 10px 0 16px;
-  padding: 14px 16px 14px 18px;
-  border: 1px solid color-mix(in srgb, var(--violet) 24%, var(--border));
-  border-left: 3px solid color-mix(in srgb, var(--violet) 72%, #7c3aed);
-  border-radius: 4px 12px 12px 4px;
-  background: color-mix(in srgb, var(--surface-strong) 94%, var(--violet) 6%);
+  display: block;
+  width: min(calc(100% - 96px), 720px);
+  margin: 4px auto 12px;
+  padding: 8px 0 8px 18px;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
 }
 .oa-message-btw > .oa-msg-body { width: 100%; min-width: 0; }
 .oa-message-btw > .oa-msg-meta { align-self: flex-start; }
 .oa-btw-head {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
-  margin: 0 0 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  margin: 0 0 7px;
 }
 .oa-btw-mark {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+  position: absolute;
+  top: 14px;
+  left: -3px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  color: var(--violet);
-  background: color-mix(in srgb, var(--violet) 12%, transparent);
-  font-size: 17px;
-  font-weight: 700;
+  background: var(--muted-2);
+  box-shadow: 0 0 0 4px var(--bg);
 }
-.oa-btw-head > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-.oa-btw-head span:not(.oa-btw-mark) { flex: 0 0 auto; color: var(--violet); font-size: 11px; font-weight: 750; letter-spacing: .08em; }
-.oa-btw-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13px; }
-.oa-btw-head em { color: var(--muted); font-size: 11px; font-style: normal; white-space: nowrap; }
-.oa-btw-error { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--danger, #dc2626); font-size: 13px; }
+.oa-btw-head > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.oa-btw-head span:not(.oa-btw-mark) {
+  flex: 0 0 auto;
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.oa-btw-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 540;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-btw-head em {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.oa-message-btw .oa-content,
+.oa-message-btw .oa-md,
+.oa-message-btw .oa-answer-text { color: color-mix(in srgb, var(--text) 88%, var(--muted)); }
+.oa-btw-error { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--red); font-size: 13px; }
 .oa-btw-error span { min-width: 0; overflow-wrap: anywhere; }
 .oa-btw-error button {
   flex: 0 0 auto;
-  border: 1px solid currentColor;
-  border-radius: 7px;
-  padding: 5px 10px;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  padding: 2px 0;
   color: inherit;
   background: transparent;
   font: inherit;
   font-weight: 650;
   cursor: pointer;
 }
-.oa-btw-error button:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.oa-btw-error button:hover { color: color-mix(in srgb, var(--red) 76%, var(--text)); }
+.oa-btw-error button:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
 @media (max-width: 620px) {
-  .oa-message.assistant.oa-message-btw { padding: 12px 12px 12px 14px; }
-  .oa-btw-head { grid-template-columns: 26px minmax(0, 1fr); }
-  .oa-btw-head em { display: none; }
+  .oa-message.assistant.oa-message-btw {
+    width: calc(100% - 40px);
+    margin-bottom: 8px;
+    padding: 6px 0 6px 14px;
+  }
+  .oa-btw-mark { top: 12px; }
+  .oa-btw-head { align-items: flex-start; gap: 6px; }
   .oa-btw-head > div { display: block; }
-  .oa-btw-head span:not(.oa-btw-mark) { display: block; margin-bottom: 2px; }
+  .oa-btw-head span:not(.oa-btw-mark) { display: block; margin-bottom: 1px; }
+  .oa-btw-head strong { display: block; white-space: normal; }
+  .oa-btw-head em { padding-top: 1px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oa-btw-error button { transition: none; }
 }
