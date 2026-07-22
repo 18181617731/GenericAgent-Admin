@@ -890,6 +890,7 @@ function UltraPlanTaskRow({ task, onAskReply }) {
   const outputFile = preferredUltraPlanOutputFile(task)
   const status = task.status || 'running'
   const isRunning = status === 'running'
+  const isFailed = status === 'fail' || status === 'failed'
   const [open, setOpen] = useState(() => isRunning)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -956,10 +957,13 @@ function UltraPlanTaskRow({ task, onAskReply }) {
         onClick={hasOutput ? toggle : undefined}
         role={hasOutput ? 'button' : undefined}
         tabIndex={hasOutput ? 0 : undefined}
+        aria-expanded={hasOutput ? open : undefined}
         onKeyDown={hasOutput ? (e) => (e.key === 'Enter' || e.key === ' ') && toggle() : undefined}
         title={outputFile || task.desc || ''}
       >
-        <span className={`oa-up-task-dot oa-up-task-dot-${status}`} />
+        <span className={`oa-up-task-dot oa-up-task-dot-${status}`} aria-hidden="true">
+          {status === 'done' ? <Check size={12} /> : isFailed ? <X size={12} /> : <Clock3 size={12} />}
+        </span>
         <span className="oa-up-task-desc">{task.desc}</span>
         {outputFile && <span className="oa-up-task-file">{taskFileName(outputFile)}</span>}
         {hasOutput && (
@@ -993,107 +997,175 @@ function UltraPlanDashboard({ state, text, onAskReply }) {
   const panelId = React.useId()
   const { objective, phases = [], recentTasks = [], complete, events = [], resultFiles = [], current, taskOutputs = {}, task_outputs = {} } = state
   const outputsMap = (taskOutputs && Object.keys(taskOutputs).length) ? taskOutputs : (task_outputs || {})
+  const phaseTasks = phases.flatMap((phase) => Array.isArray(phase.tasks) ? phase.tasks : [])
+  const trackedItems = phases.length ? phases : recentTasks
+  const completedItems = complete ? trackedItems.length : trackedItems.filter((item) => item?.status === 'done').length
+  const progressPercent = complete ? 100 : (trackedItems.length ? Math.round((completedItems / trackedItems.length) * 100) : 0)
+  const taskCount = phaseTasks.length || recentTasks.length
+  const hasFailure = [...phases, ...phaseTasks, ...recentTasks].some((item) => item?.status === 'fail' || item?.status === 'failed')
+  const hasWork = Boolean(current || phases.length || recentTasks.length)
+  const statusTone = complete ? 'done' : hasFailure ? 'failed' : hasWork ? 'run' : 'pending'
+  const statusLabel = complete ? '\u5df2\u5b8c\u6210' : hasFailure ? '\u9700\u5173\u6ce8' : hasWork ? '\u6267\u884c\u4e2d' : '\u51c6\u5907\u4e2d'
+  const progressLabel = phases.length
+    ? `${completedItems} / ${phases.length} \u9636\u6bb5\u5b8c\u6210`
+    : recentTasks.length
+      ? `${completedItems} / ${recentTasks.length} \u4efb\u52a1\u5b8c\u6210`
+      : complete ? '\u6267\u884c\u5df2\u5b8c\u6210' : '\u7b49\u5f85\u6267\u884c\u6b65\u9aa4'
+  const isEmpty = !current && phases.length === 0 && recentTasks.length === 0 && resultFiles.length === 0
   const openFile = (fp) => {
     if (!fp) return
     const u = `/api/files/read?path=${encodeURIComponent(fp)}`
     window.open(u, '_blank', 'noopener')
   }
   return (
-    <div className={`oa-up-dash${expanded ? '' : ' is-collapsed'}`}>
+    <div className={`oa-up-dash oa-up-${statusTone}${expanded ? '' : ' is-collapsed'}`}>
       <button type="button" className="oa-up-head" onClick={() => setExpanded(value => !value)}
         aria-expanded={expanded} aria-controls={panelId}
         aria-label={expanded ? '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' : '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f'}>
-        <span className="oa-up-icon">{'⚡'}</span>
-        <span className="oa-up-title">UltraPlan</span>
-        {objective && <span className="oa-up-obj">{objective}</span>}
-        {complete
-          ? <span className="oa-up-badge oa-up-done">{'完成'}</span>
-          : (phases.length > 0 || recentTasks.length > 0) && <span className="oa-up-badge oa-up-run">{'执行中…'}</span>}
-        <span className="oa-up-chevron" aria-hidden="true">{expanded ? <ChevronDown size={15}/> : <ChevronLeft size={15}/>}</span>
+        <span className="oa-up-icon oa-up-mark" aria-hidden="true"><Sparkles size={15} strokeWidth={2.1} /></span>
+        <span className="oa-up-heading">
+          <span className="oa-up-title-row">
+            <span className="oa-up-title">UltraPlan</span>
+            <span className="oa-up-kicker">{'\u4efb\u52a1\u7f16\u6392'}</span>
+          </span>
+          <span className="oa-up-obj">{objective || '\u7b49\u5f85\u4efb\u52a1\u76ee\u6807'}</span>
+        </span>
+        <span className={`oa-up-badge oa-up-${statusTone}`}>{statusLabel}</span>
+        <span className="oa-up-chevron" aria-hidden="true">
+          {expanded ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
+        </span>
       </button>
       <div id={panelId} className="oa-up-body" hidden={!expanded}>
-      {!complete && current && (
-        <div className="oa-up-current"><span className="oa-up-current-dot"></span>{current}</div>
-      )}
-      {recentTasks.length > 0 && (
-        <div className="oa-up-recent">
-          <div className="oa-up-recent-head">Subagents / 最近任务</div>
-          <div className="oa-up-tasks">
-            {recentTasks.map((t, j) => {
-              const lines = (t && t.id && outputsMap?.[t.id]) ? outputsMap[t.id] : null
-              const injected = lines && lines.length ? { ...t, output_lines: lines } : t
-              return <UltraPlanTaskRow key={j} task={injected} onAskReply={onAskReply} />
-            })}
-          </div>
-        </div>
-      )}
-      {phases.length > 0 && (
-        <div className="oa-up-phases">
-          {phases.map((ph, i) => (
-            <div key={i} className={`oa-up-phase ${ph.status || 'running'}`}>
-              <span className="oa-up-phase-icon">
-                {ph.status === 'done' ? '✓' : ph.status === 'fail' ? '✗' : '◌'}
-              </span>
-              <div className="oa-up-phase-body">
-                <div className="oa-up-phase-info">
-                  <span className="oa-up-phase-name">{ph.name}</span>
-                  {ph.desc && <span className="oa-up-phase-desc">{ph.desc}</span>}
-                  {ph.elapsed && <span className="oa-up-phase-time">{ph.elapsed}</span>}
-                </div>
-                {ph.tasks && ph.tasks.length > 0 && (
-                  <div className="oa-up-tasks">
-                    {ph.tasks.map((t, j) => {
-                      const lines = (t && t.id && outputsMap && outputsMap[t.id]) ? outputsMap[t.id] : null
-                      const injected = lines && lines.length ? { ...t, output_lines: lines } : t
-                      return <UltraPlanTaskRow key={j} task={injected} onAskReply={onAskReply} />
-                    })}
-                  </div>
-                )}
-              </div>
+        <section className="oa-up-overview" aria-label="UltraPlan \u6267\u884c\u6458\u8981">
+          <div className="oa-up-progress-head">
+            <div>
+              <span className="oa-up-section-label">{'\u6267\u884c\u8fdb\u5ea6'}</span>
+              <strong className="oa-up-progress-copy">{progressLabel}</strong>
             </div>
-          ))}
-        </div>
-      )}
-      {resultFiles.length > 0 && (
-        <div className="oa-up-files">
-          <div className="oa-up-files-head">{'产出文件'} ({resultFiles.length})</div>
-          <div className="oa-up-files-list">
-            {resultFiles.map((r, i) => (
-              <div key={i} className="oa-up-file-item" onClick={() => openFile(r.file)} title={r.file}>
-                <span className="oa-up-file-icon">{'📄'}</span>
-                <div className="oa-up-file-body">
-                  <div className="oa-up-file-desc">{r.desc}</div>
-                  <div className="oa-up-file-path">{r.file}</div>
+            <span className="oa-up-progress-value">{progressPercent}<small>%</small></span>
+          </div>
+          <div className="oa-up-progress-track" role="progressbar" aria-label="UltraPlan \u6267\u884c\u8fdb\u5ea6"
+            aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent}>
+            <span style={{ '--oa-up-progress': progressPercent / 100 }} />
+          </div>
+          <div className="oa-up-stats" aria-label="\u6267\u884c\u7edf\u8ba1">
+            <span><strong>{phases.length}</strong>{' \u9636\u6bb5'}</span>
+            <span><strong>{taskCount}</strong>{' \u4efb\u52a1'}</span>
+            <span><strong>{resultFiles.length}</strong>{' \u4ea7\u7269'}</span>
+          </div>
+          {!complete && current && (
+            <div className="oa-up-current">
+              <span className="oa-up-current-dot" aria-hidden="true" />
+              <span className="oa-up-current-label">{'\u5f53\u524d'}</span>
+              <span>{current}</span>
+            </div>
+          )}
+        </section>
+
+        {isEmpty && (
+          <div className="oa-up-empty">
+            <Clock3 size={16} aria-hidden="true" />
+            <div><strong>{'\u7b49\u5f85 UltraPlan \u53d1\u5e03\u6b65\u9aa4'}</strong><span>{'\u8ba1\u5212\u5f00\u59cb\u540e\uff0c\u9636\u6bb5\u548c\u4efb\u52a1\u4f1a\u5728\u8fd9\u91cc\u5b9e\u65f6\u66f4\u65b0\u3002'}</span></div>
+          </div>
+        )}
+
+        {recentTasks.length > 0 && phases.length === 0 && (
+          <section className="oa-up-section oa-up-recent">
+            <div className="oa-up-section-head">
+              <span className="oa-up-section-label">{'\u6267\u884c\u4efb\u52a1'}</span>
+              <span>{recentTasks.length}</span>
+            </div>
+            <div className="oa-up-tasks">
+              {recentTasks.map((task, i) => {
+                const lines = (task && task.id && outputsMap && outputsMap[task.id]) ? outputsMap[task.id] : null
+                const injected = lines && lines.length ? { ...task, output_lines: lines } : task
+                return <UltraPlanTaskRow key={task?.id || i} task={injected} onAskReply={onAskReply} />
+              })}
+            </div>
+          </section>
+        )}
+
+        {phases.length > 0 && (
+          <section className="oa-up-section oa-up-phase-section">
+            <div className="oa-up-section-head">
+              <span className="oa-up-section-label">{'\u6267\u884c\u9636\u6bb5'}</span>
+              <span>{completedItems}/{phases.length}</span>
+            </div>
+            <div className="oa-up-phases">
+              {phases.map((ph, i) => {
+                const phaseFailed = ph.status === 'fail' || ph.status === 'failed'
+                return (
+                  <div key={ph.id || ph.name || i} className={`oa-up-phase ${ph.status || 'running'}`}>
+                    <span className="oa-up-phase-icon" aria-hidden="true">
+                      {ph.status === 'done' ? <Check size={13} /> : phaseFailed ? <X size={13} /> : <Clock3 size={13} />}
+                    </span>
+                    <div className="oa-up-phase-body">
+                      <div className="oa-up-phase-info">
+                        <span className="oa-up-phase-name">{ph.name}</span>
+                        {ph.desc && <span className="oa-up-phase-desc">{ph.desc}</span>}
+                        {ph.elapsed && <span className="oa-up-phase-time">{ph.elapsed}</span>}
+                      </div>
+                      {ph.tasks && ph.tasks.length > 0 && (
+                        <div className="oa-up-tasks">
+                          {ph.tasks.map((task, j) => {
+                            const lines = (task && task.id && outputsMap && outputsMap[task.id]) ? outputsMap[task.id] : null
+                            const injected = lines && lines.length ? { ...task, output_lines: lines } : task
+                            return <UltraPlanTaskRow key={task?.id || j} task={injected} onAskReply={onAskReply} />
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {resultFiles.length > 0 && (
+          <section className="oa-up-files">
+            <div className="oa-up-files-head">
+              <span className="oa-up-section-label">{'\u4ea7\u51fa\u6587\u4ef6'}</span>
+              <span>{resultFiles.length}</span>
+            </div>
+            <div className="oa-up-files-list">
+              {resultFiles.map((result, i) => (
+                <button type="button" key={result.file || i} className="oa-up-file-item" onClick={() => openFile(result.file)} title={result.file}>
+                  <span className="oa-up-file-icon" aria-hidden="true"><FileOutput size={15} /></span>
+                  <span className="oa-up-file-body">
+                    <span className="oa-up-file-desc">{result.desc || taskFileName(result.file)}</span>
+                    <span className="oa-up-file-path">{result.file}</span>
+                  </span>
+                  <ExternalLink size={13} className="oa-up-file-open" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {events.length > 0 && (
+          <details className="oa-up-events">
+            <summary><span>{'\u8fd0\u884c\u65e5\u5fd7'}</span><span className="oa-up-events-count">{events.length}</span></summary>
+            <div className="oa-up-events-body">
+              {events.map((event, i) => (
+                <div key={i} className={`oa-up-event oa-up-event-${event.tag}`}>
+                  <span className="oa-up-event-tag">[{event.tag}]</span>
+                  <span className="oa-up-event-body">{event.body}</span>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {events.length > 0 && (
-        <details className="oa-up-events">
-          <summary>{'日志'} ({events.length})</summary>
-          <div className="oa-up-events-body">
-            {events.map((e, i) => (
-              <div key={i} className={`oa-up-event oa-up-event-${e.tag}`}>
-                <span className="oa-up-event-tag">[{e.tag}]</span>
-                {e.elapsed !== undefined && <span className="oa-up-event-time">{e.elapsed}s</span>}
-                <span className="oa-up-event-body">{e.body}</span>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-      {complete && (() => {
-        // Only show text that is NOT ultraplan log lines (e.g. extra agent commentary after the block)
-        const resultText = (text || '').split('\n').filter(ln => {
-          const t = ln.trim()
-          return t && !t.match(/^\[(ultraplan|phase|subagent|result|done|next|summary)\]/)
-        }).join('\n').trim()
-        return resultText
-          ? <div className="oa-up-result"><MarkdownBlock text={resultText} onAskReply={onAskReply} /></div>
-          : null
-      })()}
+              ))}
+            </div>
+          </details>
+        )}
+        {complete && (() => {
+          // Only show text that is NOT ultraplan log lines (e.g. extra agent commentary after the block)
+          const resultText = (text || '').split('\n').filter(ln => {
+            const t = ln.trim()
+            return t && !t.match(/^\[(ultraplan|phase|subagent|result|done|next|summary)\]/)
+          }).join('\n').trim()
+          return resultText
+            ? <div className="oa-up-result"><MarkdownBlock text={resultText} onAskReply={onAskReply} /></div>
+            : null
+        })()}
       </div>
     </div>
   )
