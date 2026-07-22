@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage, PlanTodoCard } from './ChatApp.jsx'
+import { ChatMessage, PlanTodoCard, SessionUltraPlanPanel } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 
@@ -316,10 +316,10 @@ describe('plan todo card disclosure', () => {
     expect(body?.hidden).toBe(false)
   })
 
-  test('starts expanded and toggles the UltraPlan dashboard with matching chevrons', () => {
+  test('starts expanded and toggles the session UltraPlan dashboard closed, open, then closed', () => {
     const { container } = render(
-      <ChatMessage
-        message={{
+      <SessionUltraPlanPanel
+        messages={[{
           id: 'ultraplan-collapse',
           role: 'assistant',
           content: '',
@@ -328,58 +328,76 @@ describe('plan todo card disclosure', () => {
             current: 'Implementing collapse',
             phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
           },
-        }}
-        pending={false}
+        }]}
         onAskReply={vi.fn()}
       />,
     )
 
-    const collapseButton = screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' })
     const body = container.querySelector('.oa-up-body')
-    expect(collapseButton.getAttribute('aria-expanded')).toBe('true')
-    expect(collapseButton.getAttribute('aria-controls')).toBe(body?.id)
+    const collapse = () => screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' })
+    const expand = () => screen.getByRole('button', { name: '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f' })
+
+    expect(container.querySelector('.oa-session-ultraplan > .oa-up-dash')).toBeTruthy()
+    expect(collapse().getAttribute('aria-controls')).toBe(body?.id)
+    expect(collapse().getAttribute('aria-expanded')).toBe('true')
     expect(body?.hidden).toBe(false)
-    expect(collapseButton.querySelector('.lucide-chevron-down')).toBeTruthy()
+    expect(collapse().querySelector('.lucide-chevron-down')).toBeTruthy()
     expect(screen.getByText('Implementing collapse')).toBeTruthy()
 
-    fireEvent.click(collapseButton)
-
-    const expandButton = screen.getByRole('button', { name: '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f' })
-    expect(expandButton.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(collapse())
+    expect(expand().getAttribute('aria-expanded')).toBe('false')
     expect(body?.hidden).toBe(true)
-    expect(expandButton.querySelector('.lucide-chevron-left')).toBeTruthy()
+    expect(expand().querySelector('.lucide-chevron-left')).toBeTruthy()
 
-    fireEvent.click(expandButton)
-
-    expect(screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' }).getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(expand())
+    expect(collapse().getAttribute('aria-expanded')).toBe('true')
     expect(body?.hidden).toBe(false)
+
+    fireEvent.click(collapse())
+    expect(expand().getAttribute('aria-expanded')).toBe('false')
+    expect(body?.hidden).toBe(true)
   })
 
-  test('renders persisted UltraPlan state in the latest run when no final marker exists', () => {
+  test('uses the latest persisted UltraPlan state while keeping final prose in the conversation', () => {
+    const messages = [
+      {
+        id: 'ultraplan-older-run',
+        role: 'assistant',
+        content: '[phase] old progress',
+        ultraplan_state: {
+          objective: 'Older objective',
+          phases: [{ id: 'old-phase', name: 'Old phase', status: 'done' }],
+        },
+      },
+      {
+        id: 'ultraplan-latest-run',
+        role: 'assistant',
+        content: [
+          '[phase] Research is complete',
+          'verified final result',
+        ].join('\n'),
+        ultraplan_state: {
+          objective: 'Find active state-owned jobs',
+          complete: true,
+          phases: [{ id: 'phase-1', name: 'Research', status: 'done' }],
+        },
+      },
+    ]
     const { container } = render(
-      <ChatMessage
-        message={{
-          id: 'ultraplan-latest-run',
-          role: 'assistant',
-          content: [
-            'LLM Running (Turn 1)',
-            '<summary>research complete</summary>',
-            'verified final result',
-          ].join('\n'),
-          ultraplan_state: {
-            objective: 'Find active state-owned jobs',
-            complete: true,
-            phases: [{ id: 'phase-1', name: 'Research', status: 'done' }],
-          },
-        }}
-        pending={false}
-        onAskReply={vi.fn()}
-      />,
+      <>
+        <SessionUltraPlanPanel messages={messages} onAskReply={vi.fn()} />
+        <ChatMessage message={messages[1]} pending={false} onAskReply={vi.fn()} />
+      </>,
     )
 
-    expect(container.querySelectorAll('.oa-up-dash')).toHaveLength(1)
-    expect(screen.getByText('Find active state-owned jobs')).toBeTruthy()
-    expect(screen.getByText('verified final result')).toBeTruthy()
+    const sessionPanel = container.querySelector('.oa-session-ultraplan')
+    const assistantMessage = container.querySelector('.oa-message')
+    expect(sessionPanel?.querySelectorAll('.oa-up-dash')).toHaveLength(1)
+    expect(assistantMessage?.querySelector('.oa-up-dash')).toBeNull()
+    expect(sessionPanel?.textContent).toContain('Find active state-owned jobs')
+    expect(sessionPanel?.textContent).not.toContain('Older objective')
+    expect(assistantMessage?.textContent).toContain('verified final result')
+    expect(assistantMessage?.textContent).not.toContain('Research is complete')
   })
 })
 

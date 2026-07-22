@@ -8642,6 +8642,15 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 }
 
 /* Live GA plan / todo snapshot */
+.oa-session-ultraplan {
+  width: 100%;
+  min-width: 0;
+}
+.oa-session-ultraplan .oa-up-dash {
+  width: 100%;
+  margin: 0;
+}
+
 .oa-plan-card {
   --oa-plan-accent:var(--oa-green, #0f9f7a);
   position:relative;
