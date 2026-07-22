@@ -1997,11 +1997,13 @@ export const ChatMessage = memo(function ChatMessage({
 const MessageList = memo(function MessageList({
   messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow,
 }) {
+  const threadMessages = messages.filter(message => message.kind !== 'btw')
+  const lastMessageId = threadMessages.at(-1)?.id
   return (
     <>
-      {messages.flatMap((m, i) => {
+      {threadMessages.flatMap((m, i) => {
         const dateKey  = fmtDate(m.created_at)
-        const prevDate = i > 0 ? fmtDate(messages[i - 1]?.created_at) : ''
+        const prevDate = i > 0 ? fmtDate(threadMessages[i - 1]?.created_at) : ''
         const nodes = []
         if (i === 0 || dateKey !== prevDate) {
           nodes.push(
@@ -2014,7 +2016,7 @@ const MessageList = memo(function MessageList({
           <ChatMessage
             key={m.id}
             message={m}
-            pending={!m.kind && isCurrentRunning && i === messages.length - 1}
+            pending={!m.kind && isCurrentRunning && m.id === lastMessageId}
             onAskReply={onAskReply}
             onEditResend={onEditResend}
             onRetryBTW={onRetryBTW}
@@ -3551,6 +3553,7 @@ export default function ChatApp() {
   const isCurrentRunning = busy && streamingSid === sid
   const activePromptPreset = selectedPromptPresetView({ presets: promptPresets, selectedID: extraSysPromptPresetID, snapshot: extraSysPrompts })
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
+  const btwMessages = useMemo(() => messages.filter(message => message.kind === 'btw'), [messages])
   const copyContext = async () => {
     try {
       await navigator.clipboard.writeText(contextJson)
@@ -3624,22 +3627,36 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
-      <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
-        {messages.length === 0 && <div className="oa-empty">
-          <h1>今天想让 GenericAgent 做什么？</h1>
-          <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
-        </div>}
-        <MessageList
-          messages={messages}
-          isCurrentRunning={isCurrentRunning}
-          onAskReply={fillAskReply}
-          onEditResend={editAndResend}
-          onRetryBTW={(message)=>sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)}
-          clockNow={streamClock}
-        />
-        {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
-        <div ref={endRef}/>
-      </section>
+      <div className={`oa-workspace ${btwMessages.length ? 'has-btw' : ''}`}>
+        <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
+          {messages.length === 0 && <div className="oa-empty">
+            <h1>今天想让 GenericAgent 做什么？</h1>
+            <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
+          </div>}
+          <MessageList
+            messages={messages}
+            isCurrentRunning={isCurrentRunning}
+            onAskReply={fillAskReply}
+            onEditResend={editAndResend}
+            onRetryBTW={(message)=>sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)}
+            clockNow={streamClock}
+          />
+          {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
+          <div ref={endRef}/>
+        </section>
+        {btwMessages.length > 0 && <aside className="oa-btw-rail" aria-label="侧问">
+          <header><span>BTW</span><b>侧问</b><em>{btwMessages.length}</em></header>
+          <div className="oa-btw-rail-list">
+            {btwMessages.map(message => <ChatMessage
+              key={message.id}
+              message={message}
+              pending={false}
+              onRetryBTW={()=>sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)}
+              clockNow={streamClock}
+            />)}
+          </div>
+        </aside>}
+      </div>
 
       <footer className="oa-composer-wrap">
         <PlanTodoCard plan={planState}/>

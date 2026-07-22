@@ -9865,6 +9865,72 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   .oa-message-ultraplan .oa-up-entry { transition: none; }
 }
 
+/* BTW lives outside the transcript so side answers never cover or displace the main output. */
+.oa-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+.oa-workspace.has-btw { grid-template-columns: minmax(0, 1fr) 300px; }
+.oa-workspace > .oa-thread { min-width: 0; min-height: 0; }
+.oa-btw-rail {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 38%, var(--surface-strong));
+}
+.oa-btw-rail > header {
+  flex: 0 0 auto;
+  min-height: 48px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 15px 18px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.oa-btw-rail > header span { color: var(--muted-2); font-size: 10px; font-weight: 750; letter-spacing: .14em; }
+.oa-btw-rail > header b { font-size: 13px; font-weight: 650; }
+.oa-btw-rail > header em { margin-left: auto; color: var(--muted-2); font-size: 11px; font-style: normal; }
+.oa-btw-rail-list { min-height: 0; overflow: auto; padding: 6px 16px 24px; }
+.oa-btw-rail .oa-message.assistant.oa-message-btw {
+  width: 100%;
+  margin: 0;
+  padding: 12px 0 12px 14px;
+}
+.oa-btw-rail .oa-btw-mark { top: 18px; }
+.oa-btw-rail .oa-btw-head { align-items: flex-start; gap: 5px; }
+.oa-btw-rail .oa-btw-head > div { display: block; }
+.oa-btw-rail .oa-btw-head span:not(.oa-btw-mark) { display: block; margin-bottom: 2px; }
+.oa-btw-rail .oa-btw-head strong { display: block; white-space: normal; }
+.oa-btw-rail .oa-btw-head em { padding-top: 1px; }
+
+@media (max-width: 920px) {
+  .oa-workspace.has-btw {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .oa-workspace.has-btw > .oa-btw-rail { grid-row: 1; }
+  .oa-workspace.has-btw > .oa-thread { grid-row: 2; }
+  .oa-btw-rail {
+    max-height: 172px;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+  .oa-btw-rail > header { min-height: 38px; padding: 9px 16px 7px; }
+  .oa-btw-rail-list {
+    display: flex;
+    gap: 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 16px 12px;
+  }
+  .oa-btw-rail .oa-message.assistant.oa-message-btw { flex: 0 0 min(82vw, 440px); }
+}
+
 /* /btw reads like an editor's margin note, not another message card. */
 .oa-message.assistant.oa-message-btw {
   position: relative;
