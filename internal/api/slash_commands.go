@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -17,6 +18,7 @@ type slashCommandItem struct {
 }
 
 var adminSlashCommands = []slashCommandItem{
+	{Cmd: "/project", Key: "/project", Insert: "/project", Desc: "列出项目并查看或切换 Project Mode", BuiltIn: true, Source: "admin"},
 	{Cmd: "/continue", Key: "/continue", Insert: "/continue", Desc: "列出可恢复的官方 GA 会话", BuiltIn: true, Source: "admin"},
 	{Cmd: "/continue <编号>", Key: "/continue", Insert: "/continue ", Desc: "恢复第 N 个官方 GA 会话，可继续对话", BuiltIn: true, Source: "admin"},
 	{Cmd: "/review <自然语言请求>", Key: "/review", Insert: "/review ", Desc: "审阅当前改动；可继续输入范围或关注点", BuiltIn: true, Source: "admin"},
@@ -52,7 +54,7 @@ func (s *Server) slashCommands(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	items := mergeSlashCommands(adminSlashCommands, discoverGASlashCommands(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython))
+	items := mergeSlashCommands(adminSlashCommands, discoverProjectSlashCommands(s.CfgStore.Cfg.GARoot), discoverGASlashCommands(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython))
 	writeJSON(w, map[string]interface{}{"commands": items})
 }
 
@@ -83,6 +85,45 @@ func mergeSlashCommands(groups ...[]slashCommandItem) []slashCommandItem {
 		}
 	}
 	return out
+}
+
+func discoverProjectSlashCommands(gaRoot string) []slashCommandItem {
+	names := discoverProjectNames(gaRoot)
+	out := make([]slashCommandItem, 0, len(names))
+	for _, name := range names {
+		out = append(out, slashCommandItem{
+			Cmd:     "/project " + name,
+			Key:     "/project " + name,
+			Insert:  "/project " + name,
+			Desc:    "进入或切换到项目 " + name,
+			BuiltIn: true,
+			Source:  "admin",
+		})
+	}
+	return out
+}
+
+func discoverProjectNames(gaRoot string) []string {
+	root := strings.TrimSpace(gaRoot)
+	if root == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "temp", "projects"))
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		name := strings.TrimSpace(entry.Name())
+		if _, ok := validProjectModeName(name); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func slashInsertFor(cmd string) string {

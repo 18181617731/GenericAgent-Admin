@@ -434,12 +434,14 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "/project"))
 	reply := ""
 	switch {
-	case arg == "" || strings.EqualFold(arg, "status"):
-		if strings.TrimSpace(cs.ProjectMode) == "" {
-			reply = "Project Mode 未启用。用法：`/project <项目名>`，关闭：`/project off`。"
+	case arg == "":
+		names := discoverProjectNames(s.CfgStore.Cfg.GARoot)
+		if len(names) == 0 {
+			reply = "当前没有已创建的项目。用法：`/project <项目名>`，关闭：`/project off`。"
 		} else {
-			reply = fmt.Sprintf("当前 Project Mode：`%s`\n\n项目记忆：`%s`\n\n关闭：`/project off`。", cs.ProjectMode, filepath.Join(s.CfgStore.Cfg.GARoot, "temp", "projects", cs.ProjectMode, "project_memory.md"))
+			reply = "可用项目：\n\n" + strings.Join(names, "\n") + "\n\n切换项目：`/project <项目名>`；关闭：`/project off`。"
 		}
+	case strings.EqualFold(arg, "status"):
 	case strings.EqualFold(arg, "off") || strings.EqualFold(arg, "disable") || strings.EqualFold(arg, "none"):
 		cs.ProjectMode = ""
 		reply = "已关闭当前会话的 Project Mode。项目文件和记忆均已保留。"

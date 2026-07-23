@@ -107,6 +107,7 @@ const runtimeModelLabel = (m) => {
 }
 
 const BUILTIN_SLASH_COMMANDS = [
+	{ cmd: '/project', key: '/project', insert: '/project', desc: '列出项目并查看或切换 Project Mode', builtIn: true },
   { cmd: '/continue', key: '/continue', insert: '/continue', desc: '列出可恢复的官方 GA 会话', builtIn: true },
   { cmd: '/continue <编号>', key: '/continue', insert: '/continue ', desc: '恢复第 N 个官方 GA 会话，可继续对话', builtIn: true },
   { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '审阅当前改动；可继续输入范围或关注点', builtIn: true },
@@ -2378,6 +2379,7 @@ export default function ChatApp() {
       const rest = slashFilter.slice(childRoot.length).trimStart()
       return rest.length > 0 && 'help'.startsWith(rest)
     }
+    const inProjectScope = slashFilter === '/project' || slashFilter.startsWith('/project ')
     const inContinueScope = slashFilter === '/continue' || slashFilter.startsWith('/continue ')
     const inReviewScope = slashFilter === '/review' || slashFilter.startsWith('/review ')
     const inImproveScope = slashFilter === '/improve' || slashFilter.startsWith('/improve ')
@@ -2404,6 +2406,7 @@ export default function ChatApp() {
         if (slashFilter === '/ultraplan' || fuzzyMatch('/ultraplan', rawFilter) || fuzzyMatch('/ultraplan', slashFilter)) return true
         if (slashFilter.startsWith('/ultraplan ')) return false
       }
+      if (inProjectScope && !cmd.startsWith('/project')) return false
       if (inContinueScope && cmd !== '/continue <编号>') return false
       if (inReviewScope && cmd !== '/review <自然语言请求>') return false
       if (inImproveScope && cmd !== '/improve') return false
