@@ -3719,12 +3719,17 @@ export default function ChatApp() {
 
       <footer className="oa-composer-wrap">
         <PlanTodoCard plan={planState}/>
-        {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
-          <div className="oa-queue-guide-hint"><Sparkles size={14}/><span><b>待发送消息</b><small>{isCurrentRunning ? '回复进行中，可接管任意一条立即发送' : '回复结束后将按顺序发送'}</small></span></div>
+        {queuedMessages.length > 0 && <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label="待发送队列">
+          <div className="oa-queue-guide-hint">
+            <Sparkles className="oa-queue-guide-icon" size={14} aria-hidden="true"/>
+            <span className="oa-queue-guide-copy"><b>待发送</b><small>{isCurrentRunning ? '回复进行中，可接管任意一条立即发送' : '回复结束后将按顺序发送'}</small></span>
+            <span className="oa-queue-count" aria-label={`${queuedMessages.length} 条待发送消息`}>{queuedMessages.length} 条</span>
+          </div>
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
             const isGuidingQueue = guidingQueueId === q.id
             return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''} ${isGuidingQueue ? 'is-guiding' : ''}`}>
+              <span className="oa-queue-index" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
               <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '请处理这些附件')}>
                 {isEditingQueue ? <textarea className="oa-queue-edit-input" value={queueDraft} autoFocus rows={2} onChange={e=>setQueueDraft(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) saveQueueEdit(q.id); if(e.key==='Escape') cancelQueueEdit() }} /> : <>
                   <b>{q.text || '请处理这些附件'}</b>
@@ -3732,13 +3737,12 @@ export default function ChatApp() {
                 </>}
               </div>
               <div className="oa-queue-actions">
-                <span className="oa-queue-index">消息{i + 1}</span>
                 {isEditingQueue ? <>
-                  <button className="oa-queue-action" type="button" onClick={()=>saveQueueEdit(q.id)} title="保存队列消息" aria-label="保存队列消息"><Check size={14}/></button>
+                  <button className="oa-queue-action is-confirm" type="button" onClick={()=>saveQueueEdit(q.id)} title="保存队列消息" aria-label="保存队列消息"><Check size={14}/></button>
                   <button className="oa-queue-action" type="button" onClick={cancelQueueEdit} title="取消编辑" aria-label="取消编辑"><X size={14}/></button>
                 </> : <>
                   <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning || Boolean(guidingQueueId)} title={isGuidingQueue ? '正在中止当前回复并发送这条消息' : (isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : '回复结束后会自动发送')}><Sparkles size={14}/>{isGuidingQueue ? '接管中…' : '引导发送'}</button>
-                  <button className="oa-queue-action" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息" aria-label="删除这条队列消息"><Trash2 size={14}/></button>
+                  <button className="oa-queue-action is-danger" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息" aria-label="删除这条队列消息"><Trash2 size={14}/></button>
                   <button className="oa-queue-action" type="button" onClick={()=>editQueued(q.id)} title="编辑这条队列消息" aria-label="编辑这条队列消息"><Edit3 size={14}/></button>
                 </>}
               </div>
