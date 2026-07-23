@@ -2387,9 +2387,17 @@ export default function ChatApp() {
     const isReviewNaturalLanguage = /^\/review\s+\S/.test(slashFilter) && !childAllowed('/review')
     const isContinueNumber = /^\/continue\s+\d+$/.test(slashFilter)
     const isUltraPlanObjective = /^\/ultraplan\s+\S/.test(slashFilter)
+    const exactRootCandidates = slashFilter.includes(' ')
+      ? []
+      : allSlashCommands.filter(c => {
+          const cmd = String(c.cmd || '')
+          const root = cmd.split(/\s+/, 1)[0]
+          return root === slashFilter
+        })
+    const exactRootPrimary = exactRootCandidates.find(c => String(c.cmd || '') === slashFilter) || exactRootCandidates[0]
     return allSlashCommands.filter(c => {
       const cmd = String(c.cmd || '')
-      if (slashFilter === '/project' && cmd !== '/project') return false
+      if (exactRootPrimary) return c === exactRootPrimary
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/review <自然语言请求>') {
         if (isReviewNaturalLanguage) return true
