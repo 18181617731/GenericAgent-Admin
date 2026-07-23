@@ -2858,6 +2858,7 @@ pre, code { font-variant-ligatures: none; }
 /* Chat composer queue final override: queued rows above input box */
 .oa-composer-wrap{
   width:min(var(--oa-chat-measure), calc(100% - 60px)) !important;
+  min-width:0 !important;
   margin-right:8px !important;
   padding:10px 0 14px !important;
   background:linear-gradient(to top, #fff 76%, rgba(255,255,255,0)) !important;
