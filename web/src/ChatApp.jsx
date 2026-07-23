@@ -2389,6 +2389,7 @@ export default function ChatApp() {
     const isUltraPlanObjective = /^\/ultraplan\s+\S/.test(slashFilter)
     return allSlashCommands.filter(c => {
       const cmd = String(c.cmd || '')
+      if (slashFilter === '/project' && cmd !== '/project') return false
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/review <自然语言请求>') {
         if (isReviewNaturalLanguage) return true
