@@ -129,6 +129,10 @@ const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
 const slashCommandInsertText = (c, current = '') => {
   if (!c) return current || ''
+  if (c.cmd === '/project') {
+    const text = String(current || '')
+    return /^\s*\/project\s+/.test(text) ? text : (c.insert ?? '/project')
+  }
   if (c.cmd === '/review <自然语言请求>') {
     const text = String(current || '')
     return /^\s*\/review\s+/.test(text) ? text : (c.insert ?? '/review ')
@@ -2415,6 +2419,7 @@ export default function ChatApp() {
         if (slashFilter === '/ultraplan' || fuzzyMatch('/ultraplan', rawFilter) || fuzzyMatch('/ultraplan', slashFilter)) return true
         if (slashFilter.startsWith('/ultraplan ')) return false
       }
+      if (cmd === '/project' && slashFilter.startsWith('/project ')) return true
       if (inProjectScope && !cmd.startsWith('/project')) return false
       if (inContinueScope && cmd !== '/continue <编号>') return false
       if (inReviewScope && cmd !== '/review <自然语言请求>') return false
