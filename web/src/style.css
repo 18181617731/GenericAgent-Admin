@@ -2884,6 +2884,26 @@ pre, code { font-variant-ligatures: none; }
 .oa-queue-panel{display:none !important}
 .oa-queue-head{display:none !important}
 .oa-queued-list{display:contents !important}
+.oa-queue-guide-hint{
+  display:flex !important;
+  align-items:flex-start !important;
+  gap:7px !important;
+  padding:2px 7px 3px !important;
+  color:#08735d !important;
+  font-size:12px !important;
+  line-height:1.25 !important;
+}
+.oa-queue-guide-hint > svg{flex:0 0 auto !important;margin-top:1px !important}
+.oa-queue-guide-hint span{display:grid !important;gap:2px !important;min-width:0 !important}
+.oa-queue-guide-hint b{font-weight:760 !important}
+.oa-queue-guide-hint small{color:var(--muted) !important;font-size:11px !important;font-weight:500 !important}
+.oa-queued-item.is-guiding{
+  border-color:rgba(16,163,127,.34) !important;
+  background:linear-gradient(180deg, #f0fdf8, #ffffff) !important;
+  box-shadow:0 0 0 2px rgba(16,163,127,.08), 0 6px 18px rgba(16,163,127,.10) !important;
+}
+.oa-queued-item.is-guiding .oa-guide-btn{color:#08735d !important;background:#dff8ef !important}
+
 .oa-queue-dock{
   display:grid !important;
   gap:7px !important;

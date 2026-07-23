@@ -2277,6 +2277,7 @@ export default function ChatApp() {
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
   const [queueDraft, setQueueDraft] = useState('')
+  const [guidingQueueId, setGuidingQueueId] = useState('')
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
@@ -2299,6 +2300,7 @@ export default function ChatApp() {
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
   const runSeqRef = useRef(0)
+  const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
   const messagesRef = useRef([])
@@ -3144,9 +3146,11 @@ export default function ChatApp() {
     setNotice('队列消息已更新')
   }
   const guideQueuedItem = (id) => {
+    if (guidingQueueRef.current) return
     const item = queuedRef.current.find(x => x.id === id)
     if (!item) return
-    syncQueue(queuedRef.current.filter(x => x.id !== id))
+    guidingQueueRef.current = id
+    setGuidingQueueId(id)
     guideQueued(item)
   }
   const onPaste = (e) => {
@@ -3228,6 +3232,12 @@ export default function ChatApp() {
   }
 
   const runSend = async (item = {}) => {
+    const guidedQueueId = guidingQueueRef.current
+    if (guidedQueueId) {
+      syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId))
+      guidingQueueRef.current = ''
+      setGuidingQueueId('')
+    }
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
@@ -3468,7 +3478,11 @@ export default function ChatApp() {
 
   const guideQueued = async (item = null) => {
     const next = item || popQueued()
-    if (!next) return
+    if (!next) {
+      guidingQueueRef.current = ''
+      setGuidingQueueId('')
+      return
+    }
     const id = sid
     const wasRunning = busy && streamingSid === sid
     ++runSeqRef.current
@@ -3706,9 +3720,11 @@ export default function ChatApp() {
       <footer className="oa-composer-wrap">
         <PlanTodoCard plan={planState}/>
         {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
+          <div className="oa-queue-guide-hint"><Sparkles size={14}/><span><b>待发送消息</b><small>{isCurrentRunning ? '回复进行中，可接管任意一条立即发送' : '回复结束后将按顺序发送'}</small></span></div>
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
-            return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''}`}>
+            const isGuidingQueue = guidingQueueId === q.id
+            return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''} ${isGuidingQueue ? 'is-guiding' : ''}`}>
               <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '请处理这些附件')}>
                 {isEditingQueue ? <textarea className="oa-queue-edit-input" value={queueDraft} autoFocus rows={2} onChange={e=>setQueueDraft(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) saveQueueEdit(q.id); if(e.key==='Escape') cancelQueueEdit() }} /> : <>
                   <b>{q.text || '请处理这些附件'}</b>
@@ -3721,7 +3737,7 @@ export default function ChatApp() {
                   <button className="oa-queue-action" type="button" onClick={()=>saveQueueEdit(q.id)} title="保存队列消息" aria-label="保存队列消息"><Check size={14}/></button>
                   <button className="oa-queue-action" type="button" onClick={cancelQueueEdit} title="取消编辑" aria-label="取消编辑"><X size={14}/></button>
                 </> : <>
-                  <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning} title={isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : 'AI 回复时可引导'}><Sparkles size={14}/>引导</button>
+                  <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning || Boolean(guidingQueueId)} title={isGuidingQueue ? '正在中止当前回复并发送这条消息' : (isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : '回复结束后会自动发送')}><Sparkles size={14}/>{isGuidingQueue ? '接管中…' : '引导发送'}</button>
                   <button className="oa-queue-action" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息" aria-label="删除这条队列消息"><Trash2 size={14}/></button>
                   <button className="oa-queue-action" type="button" onClick={()=>editQueued(q.id)} title="编辑这条队列消息" aria-label="编辑这条队列消息"><Edit3 size={14}/></button>
                 </>}
