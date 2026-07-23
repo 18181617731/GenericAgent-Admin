@@ -129,25 +129,12 @@ const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
 const slashCommandInsertText = (c, current = '') => {
   if (!c) return current || ''
-  if (c.cmd === '/project') {
-    const text = String(current || '')
-    return /^\s*\/project\s+/.test(text) ? text : (c.insert ?? '/project')
-  }
-  if (c.cmd === '/review <自然语言请求>') {
-    const text = String(current || '')
-    return /^\s*\/review\s+/.test(text) ? text : (c.insert ?? '/review ')
-  }
-  if (c.cmd === '/continue <编号>') {
-    const text = String(current || '')
-    return /^\s*\/continue\s+/.test(text) ? text : (c.insert ?? '/continue ')
-  }
-  if (c.cmd === '/workspace <路径>') {
-    const text = String(current || '')
-    return /^\s*\/workspace\s+/.test(text) ? text : (c.insert ?? '/workspace ')
-  }
-  if (c.cmd === '/ultraplan <目标>') {
-    const text = String(current || '')
-    return /^\s*\/ultraplan\s+/.test(text) ? text : (c.insert ?? '/ultraplan ')
+  const text = String(current || '')
+  const cmd = String(c.cmd || '')
+  const root = cmd.split(/\s+/, 1)[0]
+  const isArgumentFallback = cmd === root || /\s<[^>]+>$/.test(cmd)
+  if (isArgumentFallback && new RegExp(`^\\s*${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+`).test(text)) {
+    return text
   }
   return c?.insert ?? `${c?.cmd || ''} `
 }
@@ -2399,9 +2386,17 @@ export default function ChatApp() {
           return root === slashFilter
         })
     const exactRootPrimary = exactRootCandidates.find(c => String(c.cmd || '') === slashFilter) || exactRootCandidates[0]
+    const argumentRoot = slashFilter.includes(' ') ? slashFilter.split(/\s+/, 1)[0] : ''
+    const argumentRootCandidates = argumentRoot
+      ? allSlashCommands.filter(c => String(c.cmd || '').split(/\s+/, 1)[0] === argumentRoot)
+      : []
+    const argumentFallback = argumentRootCandidates.find(c => /\s<[^>]+>$/.test(String(c.cmd || '')))
+      || argumentRootCandidates.find(c => String(c.cmd || '') === argumentRoot)
+      || argumentRootCandidates[0]
     return allSlashCommands.filter(c => {
       const cmd = String(c.cmd || '')
       if (exactRootPrimary) return c === exactRootPrimary
+      if (argumentFallback && c === argumentFallback) return true
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/review <自然语言请求>') {
         if (isReviewNaturalLanguage) return true
