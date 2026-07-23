@@ -314,7 +314,21 @@ func (s *Server) prepareChatWorldlineResend(sid string, token *chatRun, cs *chat
 		}
 	}
 	if sourceNodeID == "" {
-		return fmt.Errorf("source user message is not on the selected mapped worldline path")
+		// Sessions created before worldline bindings have no node to restore.
+		// Keep resend safe by falling back to the persisted chat boundary rather
+		// than pretending that an unrelated worldline node represents this turn.
+		rawHistory, err := rawHistoryBeforeMessage(*cs, messageIndex)
+		if err != nil {
+			return err
+		}
+		if !s.ownsChatRun(sid, token) {
+			return fmt.Errorf("worldline edit/resend lost ownership")
+		}
+		cs.Messages = append([]chatMessage(nil), cs.Messages[:messageIndex]...)
+		cs.RawHistory = rawHistory
+		cs.HistoryInfo = []interface{}{}
+		cs.Working = nil
+		return nil
 	}
 	restored, err := s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), map[string]interface{}{
 		"action": "restore", "node_id": sourceNodeID, "mode": "conversation", "to": "before",

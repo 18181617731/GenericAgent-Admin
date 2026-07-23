@@ -564,3 +564,44 @@ func TestWorldlineDeleteIsNarrowAndRejectsBusySession(t *testing.T) {
 		}
 	}
 }
+
+func TestWorldlineEditResendFallsBackForLegacyUnmappedMessage(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "legacy-edit-resend"
+	cs := chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "first-user", Role: "user", Content: "first question"},
+			{ID: "first-assistant", Role: "assistant", Content: "first answer"},
+			{ID: "legacy-user", Role: "user", Content: "legacy question"},
+			{ID: "legacy-assistant", Role: "assistant", Content: "legacy answer"},
+		},
+		RawHistory: []map[string]interface{}{
+			{"role": "user", "content": "first question"},
+			{"role": "assistant", "content": "first answer"},
+			{"role": "user", "content": "legacy question"},
+			{"role": "assistant", "content": "legacy answer"},
+		},
+		HistoryInfo: []interface{}{map[string]interface{}{"stale": true}},
+		Working:     map[string]interface{}{"stale": true},
+	}
+	installWorldlineTestWorker(t, s, sid)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("failed to acquire chat run")
+	}
+	defer s.endChatRunOwned(sid, token)
+
+	if err := s.prepareChatWorldlineResend(sid, token, &cs, "legacy-user"); err != nil {
+		t.Fatalf("legacy unmapped resend fallback failed: %v", err)
+	}
+	if len(cs.Messages) != 2 || cs.Messages[0].ID != "first-user" || cs.Messages[1].ID != "first-assistant" {
+		t.Fatalf("messages were not truncated before legacy source: %+v", cs.Messages)
+	}
+	if len(cs.RawHistory) != 2 || cs.RawHistory[0]["content"] != "first question" || cs.RawHistory[1]["content"] != "first answer" {
+		t.Fatalf("raw history was not truncated before legacy source: %+v", cs.RawHistory)
+	}
+	if len(cs.HistoryInfo) != 0 || cs.Working != nil {
+		t.Fatalf("unsafe legacy GA state survived: info=%+v working=%+v", cs.HistoryInfo, cs.Working)
+	}
+}
