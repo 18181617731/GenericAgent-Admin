@@ -2300,6 +2300,7 @@ export default function ChatApp() {
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
   const runSeqRef = useRef(0)
+  const activeRunRef = useRef(false)
   const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
@@ -2828,6 +2829,7 @@ export default function ChatApp() {
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
     const openToken = ++openSeqRef.current
+    activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -3244,6 +3246,7 @@ export default function ChatApp() {
     const runToken = ++runSeqRef.current
     const openToken = openSeqRef.current
     const ctrl = new AbortController()
+    activeRunRef.current = true
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
     const targetSessionID = item.sessionId || sid
@@ -3296,7 +3299,11 @@ export default function ChatApp() {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
     } finally {
-      if (runToken !== runSeqRef.current || openToken !== openSeqRef.current || !isActiveSession(id)) return
+      if (runToken !== runSeqRef.current) return
+      if (openToken !== openSeqRef.current || !isActiveSession(id)) {
+        activeRunRef.current = false
+        return
+      }
       if (id) {
         await loadSessions(id).catch(()=>{})
         await openSession(id, false).catch(()=>{})
@@ -3333,6 +3340,7 @@ export default function ChatApp() {
         setNotice(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`)
         setTimeout(() => runSend(next), 0)
       } else {
+        activeRunRef.current = false
         setBusy(false)
         setStreamingSid('')
       }
@@ -3380,7 +3388,7 @@ export default function ChatApp() {
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
       setPrompt('')
-      if (busy) {
+      if (busy || activeRunRef.current) {
         setNotice('当前正在执行，完成后可使用 /new 创建新对话')
         return
       }
@@ -3396,7 +3404,7 @@ export default function ChatApp() {
       await sendBTW(text)
       return
     }
-    if (busy) {
+    if (busy || activeRunRef.current) {
       enqueueMessage(item)
       return
     }
