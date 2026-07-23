@@ -149,6 +149,30 @@ class WorldlineSidecarTests(unittest.TestCase):
         self.assertEqual(projection['head'], child_ids[-1])
         self.assertTrue(all(set(node['children']) <= ids for node in projection['nodes']))
 
+    def test_state_source_nodes_keep_folded_physical_ancestors_private(self):
+        store = SimpleNamespace(
+            head='leaf',
+            nodes={
+                'root': {'parent': None, 'children': ['folded']},
+                'folded': {'parent': 'root', 'children': ['leaf']},
+                'leaf': {'parent': 'folded', 'children': []},
+            },
+        )
+        sidecar = {'status': 'ok', 'bindings': {
+            'folded': {'user_message_id': 'u-folded'},
+            'leaf': {'user_message_id': 'u-leaf'},
+            'sibling': {'user_message_id': 'u-sibling'},
+        }}
+        self.assertEqual(worker._worldline_source_nodes(store, sidecar), {
+            'u-folded': 'folded',
+            'u-leaf': 'leaf',
+        })
+        self.assertEqual(
+            worker._worldline_rpc_result(store, sidecar, 'ok', 'state', None),
+            {'source_nodes': {'u-folded': 'folded', 'u-leaf': 'leaf'}},
+        )
+        self.assertIsNone(worker._worldline_rpc_result(store, sidecar, 'ok', 'list', None))
+
     def test_completed_head_binding_is_atomic_and_persists_across_reload(self):
         req = {
             'node_id': 'b', 'turn_status': 'completed', 'has_final_answer': True,

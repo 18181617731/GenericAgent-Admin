@@ -1439,6 +1439,39 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
     }
 
 
+def _worldline_source_nodes(store, sidecar):
+    """Private RPC-only mapping; unlike the public projection, retain folded nodes."""
+    if not isinstance(sidecar, dict) or sidecar.get('status') == 'malformed':
+        return {}
+    bindings = sidecar.get('bindings') or {}
+    nodes = getattr(store, 'nodes', {})
+    node_id = str(getattr(store, 'head', '') or '')
+    path = []
+    seen = set()
+    while node_id and node_id not in seen and node_id in nodes:
+        seen.add(node_id)
+        path.append(node_id)
+        node = nodes[node_id]
+        node_id = str((node.get('parent') if isinstance(node, dict) else getattr(node, 'parent_id', None)) or '')
+    path.reverse()
+    out = {}
+    for node_id in path:
+        binding = bindings.get(node_id)
+        if not isinstance(binding, dict):
+            continue
+        user_id = str(binding.get('user_message_id') or '').strip()
+        if user_id:
+            out[user_id] = node_id
+    return out
+
+
+def _worldline_rpc_result(store, sidecar, sidecar_status, action, result):
+    if action == 'state':
+        private = _worldline_source_nodes(store, sidecar)
+        return {'source_nodes': private} if private else None
+    return result
+
+
 def _apply_worldline_restore(agent, result):
     history = result.get('history')
     if isinstance(history, list):
@@ -1527,7 +1560,8 @@ def handle_worldline_request(agent, req):
     emit({
         'type': 'worldline', 'action': action,
         'tree': _worldline_nodes(store, sidecar, sidecar_status),
-        'result': result, 'raw_history': _snapshot_backend_history(agent),
+        'result': _worldline_rpc_result(store, sidecar, sidecar_status, action, result),
+        'raw_history': _snapshot_backend_history(agent),
         'history_info': _snapshot_ga_state(agent).get('history_info') or [],
         'working': _snapshot_ga_state(agent).get('working') or {},
     })

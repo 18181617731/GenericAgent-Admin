@@ -298,10 +298,19 @@ func (s *Server) prepareChatWorldlineResend(sid string, token *chatRun, cs *chat
 		path[nodeID] = true
 	}
 	sourceNodeID := ""
-	for _, node := range state.Tree.Nodes {
-		if node.MappingStatus == "mapped" && node.UserMessageID != nil && *node.UserMessageID == sourceUserMessageID && path[node.ID] {
-			sourceNodeID = node.ID
-			break
+	if state.Result != nil {
+		if rawSourceNodes, ok := state.Result["source_nodes"].(map[string]interface{}); ok {
+			if nodeID, ok := rawSourceNodes[sourceUserMessageID].(string); ok {
+				sourceNodeID = strings.TrimSpace(nodeID)
+			}
+		}
+	}
+	if sourceNodeID == "" {
+		for _, node := range state.Tree.Nodes {
+			if node.MappingStatus == "mapped" && node.UserMessageID != nil && *node.UserMessageID == sourceUserMessageID && path[node.ID] {
+				sourceNodeID = node.ID
+				break
+			}
 		}
 	}
 	if sourceNodeID == "" {

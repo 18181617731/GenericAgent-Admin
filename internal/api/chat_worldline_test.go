@@ -176,10 +176,13 @@ func TestWorldlineWorkerHelper(t *testing.T) {
 					{"id": other, "parent_id": "root", "children": []string{}, "depth": 1, "ordinal": 1, "title": other, "created_at": 3, "ago": 9, "mapping_status": "mapped", "user_message_id": "u-" + other, "assistant_message_id": "a-" + other},
 				},
 			},
-			"result": map[string]interface{}{"display_path": []map[string]interface{}{
-				{"id": userID, "role": "user", "content": "question " + node, "created_at": 10},
-				{"id": assistantID, "role": "assistant", "content": "answer " + node, "created_at": 11},
-			}},
+			"result": map[string]interface{}{
+				"display_path": []map[string]interface{}{
+					{"id": userID, "role": "user", "content": "question " + node, "created_at": 10},
+					{"id": assistantID, "role": "assistant", "content": "answer " + node, "created_at": 11},
+				},
+				"source_nodes": map[string]interface{}{"u-left": "left", "u-right": "right", "u-folded": "folded"},
+			},
 			"raw_history":  []map[string]interface{}{{"role": "assistant", "content": "raw " + node}},
 			"history_info": []interface{}{map[string]interface{}{"branch": node}},
 			"working":      map[string]interface{}{"branch": node},
@@ -465,6 +468,34 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	}
 	if len(got.Messages) != 2 || got.Messages[0].ID != "edited-u-left" || got.Messages[1].Content != "answer edited left" {
 		t.Fatalf("reloaded exact branch = %+v", got.Messages)
+	}
+}
+
+func TestWorldlineEditResendAcceptsFoldedSourceOnSelectedPhysicalPath(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "edit-resend-folded"
+	initial := chatSession{
+		ID: sid, Title: sid,
+		Messages: []chatMessage{{ID: "u-folded", Role: "user", Content: "old prompt", CreatedAt: 1}},
+		Settings: normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	installWorldlineTestWorker(t, s, sid)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("failed to acquire chat run")
+	}
+	defer s.endChatRunOwned(sid, token)
+	if err := s.prepareChatWorldlineResend(sid, token, &initial, "u-folded"); err != nil {
+		t.Fatalf("folded source rejected despite private selected-path mapping: %v", err)
+	}
+	if len(initial.Messages) != 0 {
+		t.Fatalf("folded resend did not trim through source message: %+v", initial.Messages)
+	}
+	if initial.WorldlineHead != "folded" || len(initial.RawHistory) != 1 || initial.RawHistory[0]["content"] != "raw folded" {
+		t.Fatalf("folded restore state = head=%q raw=%+v", initial.WorldlineHead, initial.RawHistory)
 	}
 }
 
