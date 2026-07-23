@@ -264,14 +264,15 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 	if len([]rune(title)) > 80 {
 		title = string([]rune(title)[:80])
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
-	if err != nil {
-		bad(w, 500, err.Error())
-		return
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err == nil {
+		cs.Title = title
+		err = saveChatSessionLocked(s.CfgStore.Cfg, cs)
 	}
-	cs.Title = title
-	cs.UpdatedAt = time.Now().Unix()
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+	s.SessionMu.Unlock()
+	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}

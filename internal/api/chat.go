@@ -1734,6 +1734,9 @@ func (s *Server) saveChatSessionMerged(cs chatSession) error {
 		return err
 	}
 	cs.Messages = mergeChatMessageLists(latest.Messages, cs.Messages)
+	if latest.Title != "" && latest.Title != "新会话" {
+		cs.Title = latest.Title
+	}
 	return saveChatSession(s.CfgStore.Cfg, cs)
 }
 

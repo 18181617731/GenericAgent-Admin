@@ -1362,6 +1362,69 @@ func TestSaveChatSessionMergedPreservesBTWThatFinishesFirst(t *testing.T) {
 	}
 }
 
+func TestSaveChatSessionMergedPreservesRenameMadeDuringRun(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	initial := chatSession{
+		ID:    "rename-during-run",
+		Title: "automatic title",
+		Messages: []chatMessage{
+			{ID: "user", Role: "user", Content: "automatic title"},
+			{ID: "pending", Role: "assistant"},
+		},
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	staleRun, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renameReq := httptest.NewRequest(http.MethodPatch, "/api/chat/session/"+initial.ID, strings.NewReader(`{"title":"固定会话名称"}`))
+	renameReq.Header.Set("Content-Type", "application/json")
+	renameRR := httptest.NewRecorder()
+	s.Routes().ServeHTTP(renameRR, renameReq)
+	if renameRR.Code != http.StatusOK {
+		t.Fatalf("rename status=%d body=%s", renameRR.Code, renameRR.Body.String())
+	}
+
+	staleRun.Messages[1] = chatMessage{ID: "pending", Role: "assistant", Content: "completed"}
+	if err := s.saveChatSessionMerged(staleRun); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "固定会话名称" {
+		t.Fatalf("title=%q want fixed rename", stored.Title)
+	}
+	if len(stored.Messages) != 2 || stored.Messages[1].Content != "completed" {
+		t.Fatalf("messages=%#v want completed run", stored.Messages)
+	}
+}
+
+func TestSaveChatSessionMergedKeepsAutomaticTitleForNewSession(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cs := chatSession{
+		ID:       "new-session-auto-title",
+		Title:    "北京时间几点了",
+		Messages: []chatMessage{{ID: "user", Role: "user", Content: "北京时间几点了"}},
+	}
+	if err := s.saveChatSessionMerged(cs); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != cs.Title {
+		t.Fatalf("title=%q want automatic title %q", stored.Title, cs.Title)
+	}
+}
+
 func TestChatBTWRejectsEmptyQuestionWithoutStartingWorker(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
