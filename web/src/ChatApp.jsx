@@ -2304,6 +2304,7 @@ export default function ChatApp() {
   const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
+  const extraPromptSelectionSeqRef = useRef(0)
   const messagesRef = useRef([])
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
@@ -2981,13 +2982,17 @@ export default function ChatApp() {
     setPromptPresets(next)
     return next
   }
+  const selectExtraPromptPreset = (value) => {
+    extraPromptSelectionSeqRef.current += 1
+    setExtraPromptSelection(value)
+  }
   const openExtraPromptEditor = () => {
     const targetSid = activeSidRef.current
     const targetOpenToken = openSeqRef.current
-    const initialSelection = extraSysPromptPresetID
+    const initialSelectionSeq = extraPromptSelectionSeqRef.current
     setPromptPresetManagerOpen(false)
     setExtraPromptTargetSid(targetSid)
-    setExtraPromptSelection(initialSelection)
+    setExtraPromptSelection(extraSysPromptPresetID)
     setExtraPromptOpen(true)
 
     Promise.all([
@@ -2995,7 +3000,9 @@ export default function ChatApp() {
       loadPromptPresets(),
     ]).then(([freshState]) => {
       if (!freshState || targetOpenToken !== openSeqRef.current || activeSidRef.current !== targetSid) return
-      setExtraPromptSelection(current => current === initialSelection ? freshState.extraSysPromptPresetID : current)
+      if (extraPromptSelectionSeqRef.current === initialSelectionSeq) {
+        setExtraPromptSelection(freshState.extraSysPromptPresetID)
+      }
     }).catch(e => {
       if (targetOpenToken === openSeqRef.current && activeSidRef.current === targetSid) {
         setErr(e.message || String(e))
@@ -3840,18 +3847,18 @@ export default function ChatApp() {
               </div>
               <div className="oa-cmd-manager-list oa-prompt-preset-picker" role="radiogroup" aria-label="当前会话系统提示预设">
                 <label className={`oa-prompt-preset-option ${extraPromptSelection === '' ? 'is-selected' : ''}`}>
-                  <input type="radio" name="extra-system-prompt-preset" value="" checked={extraPromptSelection === ''} onChange={()=>setExtraPromptSelection('')}/>
+                  <input type="radio" name="extra-system-prompt-preset" value="" checked={extraPromptSelection === ''} onChange={()=>selectExtraPromptPreset('')}/>
                   <span className="oa-prompt-preset-radio"><Check size={13}/></span>
                   <span className="oa-prompt-preset-copy"><b>不使用预设</b><small>仅使用 Agent 默认系统提示</small></span>
                 </label>
                 {activePromptPreset.orphaned && <label className={`oa-prompt-preset-option is-orphaned ${extraPromptSelection === activePromptPreset.id ? 'is-selected' : ''}`}>
-                  <input type="radio" name="extra-system-prompt-preset" value={activePromptPreset.id} checked={extraPromptSelection === activePromptPreset.id} onChange={()=>setExtraPromptSelection(activePromptPreset.id)}/>
+                  <input type="radio" name="extra-system-prompt-preset" value={activePromptPreset.id} checked={extraPromptSelection === activePromptPreset.id} onChange={()=>selectExtraPromptPreset(activePromptPreset.id)}/>
                   <span className="oa-prompt-preset-radio"><Check size={13}/></span>
                   <span className="oa-prompt-preset-copy"><b>已删除的预设</b><small>{activePromptPreset.content || '当前会话仍保留原内容快照'}</small></span>
                   <em>快照</em>
                 </label>}
                 {promptPresets.map(item => <label className={`oa-prompt-preset-option ${extraPromptSelection === item.id ? 'is-selected' : ''}`} key={item.id}>
-                  <input type="radio" name="extra-system-prompt-preset" value={item.id} checked={extraPromptSelection === item.id} onChange={()=>setExtraPromptSelection(item.id)}/>
+                  <input type="radio" name="extra-system-prompt-preset" value={item.id} checked={extraPromptSelection === item.id} onChange={()=>selectExtraPromptPreset(item.id)}/>
                   <span className="oa-prompt-preset-radio"><Check size={13}/></span>
                   <span className="oa-prompt-preset-copy"><b>{item.name}</b><small>{item.content}</small></span>
                 </label>)}
