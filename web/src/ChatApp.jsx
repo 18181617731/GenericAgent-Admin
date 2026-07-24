@@ -2042,18 +2042,40 @@ const MessageList = memo(function MessageList({
 })
 
 
-function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
+export function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
   const [open, setOpen] = useState(false)
   const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
   const ref = useRef()
+  const triggerRef = useRef(null)
+  const modelListRef = useRef(null)
+  const menuId = React.useId()
+  const resetPreview = () => {
+    if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
+    else setPreviewProvider(groups[0]?.value || '')
+  }
+  const toggleMenu = () => {
+    if (!open) resetPreview()
+    setOpen(value => !value)
+  }
   useEffect(() => {
     if (!open) return
     const close = () => setOpen(false)
     const h = e => { if (!ref.current?.contains(e.target)) close() }
     const onScroll = e => { if (!ref.current?.contains(e.target)) close() }
+    const onKeyDown = e => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      close()
+      triggerRef.current?.focus()
+    }
     document.addEventListener('mousedown', h)
+    document.addEventListener('keydown', onKeyDown)
     window.addEventListener('scroll', onScroll, true)
-    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true) }
+    return () => {
+      document.removeEventListener('mousedown', h)
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('scroll', onScroll, true)
+    }
   }, [open])
   useEffect(() => {
     if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
@@ -2065,19 +2087,33 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
   const previewGroup = groups.find(group => group.value === previewProvider) || activeGroup || groups[0]
   const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
   const displayModel = activeModel?.label || '未发现模型'
+  useLayoutEffect(() => {
+    if (!open || previewGroup?.value !== selectedProvider) return
+    const list = modelListRef.current
+    const current = list?.querySelector('[aria-current="true"]')
+    if (!list || !current) return
+    const listRect = list.getBoundingClientRect()
+    const currentRect = current.getBoundingClientRect()
+    if (currentRect.top < listRect.top) list.scrollTop -= listRect.top - currentRect.top + 2
+    else if (currentRect.bottom > listRect.bottom) list.scrollTop += currentRect.bottom - listRect.bottom + 2
+  }, [open, previewGroup?.value, selectedProvider, value])
 
   return (
     <div className="oa-model-select oa-composer-cascade" ref={ref}>
       <span>模型</span>
-      <button type="button" disabled={disabled} title={displayModel} aria-label={displayModel} onClick={() => setOpen(o => !o)}>
+      <button ref={triggerRef} type="button" disabled={disabled} title={displayModel}
+        aria-label={`模型：${displayModel}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={menuId}
+        onClick={toggleMenu}>
         <span className="oa-cascade-current-model">{displayModel}</span>
         <ChevronDown size={13} />
       </button>
-      {open && <div className="oa-cascade-menu" role="dialog" aria-label="服务商和模型">
-        <div className="oa-cascade-providers">
+      {open && <div id={menuId} className="oa-cascade-menu" role="dialog" aria-label="服务商和模型">
+        <div className="oa-cascade-providers" aria-label="服务商">
           {groups.map(group => (
             <button key={group.value} type="button"
-              className={group.value === selectedProvider ? 'active' : ''}
+              className={group.value === previewGroup?.value ? 'active' : ''}
+              aria-pressed={group.value === previewGroup?.value}
+              aria-current={group.value === selectedProvider ? 'true' : undefined}
               onMouseEnter={() => setPreviewProvider(group.value)}
               onFocus={() => setPreviewProvider(group.value)}
               onClick={() => setPreviewProvider(group.value)}>
@@ -2085,16 +2121,18 @@ function ProviderModelCascade({ groups, selectedProvider, value, onChange, disab
             </button>
           ))}
         </div>
-        <div className="oa-cascade-models">
+        <div className="oa-cascade-models" ref={modelListRef} aria-label={previewGroup ? `${previewGroup.label} 模型` : '模型'}>
           <div className="oa-cascade-heading">{previewGroup?.label || '模型'}</div>
-          {previewGroup?.models.length ? previewGroup.models.map(model => (
-            <button key={model.value} type="button"
-              className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
+          {previewGroup?.models.length ? previewGroup.models.map(model => {
+            const isCurrent = previewGroup.value === selectedProvider && String(model.value) === String(value)
+            return <button key={model.value} type="button"
+              className={isCurrent ? 'active' : ''}
+              aria-current={isCurrent ? 'true' : undefined}
               onClick={() => { onChange(model.value); setOpen(false) }}>
-              {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12} />}
+              {isCurrent && <Check size={12} />}
               <span>{model.label}</span>
             </button>
-          )) : <div className="oa-cascade-empty">{ '未发现模型' }</div>}
+          }) : <div className="oa-cascade-empty">{ '未发现模型' }</div>}
         </div>
       </div>}
     </div>

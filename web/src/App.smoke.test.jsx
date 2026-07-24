@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage, PlanTodoCard } from './ChatApp.jsx'
+import { ChatMessage, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 
@@ -710,6 +710,64 @@ describe('chat response identity and time', () => {
   })
 })
 
+describe('chat model cascade', () => {
+  const groups = [
+    { value: 'alpha', label: 'Alpha', models: [{ value: 'a-1', label: 'Alpha One' }] },
+    { value: 'beta', label: 'Beta', models: [{ value: 'b-1', label: 'Beta One' }] },
+  ]
+
+  test('exposes menu state, resets previews on reopen, and returns focus on Escape', () => {
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' })
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' }).id).toBe(trigger.getAttribute('aria-controls'))
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Alpha' }).nextElementSibling)
+    expect(screen.getByText('Beta One')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger)
+    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })
+    expect(reopenedMenu.textContent).toContain('Alpha One')
+    expect(reopenedMenu.textContent).not.toContain('Beta One')
+  })
+
+  test('selects a previewed provider model and closes the menu', () => {
+    const onChange = vi.fn()
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
+
+    expect(onChange).toHaveBeenCalledWith('b-1')
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+  })
+
+  test('scrolls only the model column when the current model is below its viewport', () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.classList?.contains('oa-cascade-models')) return { top: 100, bottom: 200 }
+      if (this.getAttribute?.('aria-current') === 'true' && this.closest('.oa-cascade-models')) return { top: 250, bottom: 280 }
+      return { top: 0, bottom: 0 }
+    })
+
+    try {
+      render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+
+      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+})
 
 
 

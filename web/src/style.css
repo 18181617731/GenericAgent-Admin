@@ -4837,6 +4837,12 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 .oa-cascade-providers button svg { flex: 0 0 auto; margin-left: auto; color: var(--muted); opacity: .7; }
 .oa-cascade-providers button:hover,
 .oa-cascade-models button:hover { background: rgba(0,0,0,.055); }
+.oa-composer-cascade > button:focus-visible,
+.oa-cascade-providers button:focus-visible,
+.oa-cascade-models button:focus-visible {
+  outline: 2px solid rgba(16,163,127,.72);
+  outline-offset: -2px;
+}
 .oa-cascade-providers button.active { background: rgba(16,163,127,.1); color: #08785f; font-weight: 650; }
 .oa-cascade-models button { gap: 6px; }
 .oa-cascade-models button.active { background: rgba(16,163,127,.1); color: #08785f; font-weight: 650; }
