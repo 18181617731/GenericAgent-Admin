@@ -8,7 +8,7 @@ import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
 import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
-import { applyModelOrder, mergePersistedModelOrder } from './lib/modelsEditor'
+import { applyModelOrder, applyProviderOrder, mergePersistedModelOrder, orderedProviderProfiles } from './lib/modelsEditor'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
@@ -668,7 +668,7 @@ export default function App() {
     setModelImportLoading(true)
     try {
       const d = await api('/api/models/import-mykey', { method:'POST', body: JSON.stringify({ reveal:false, save:false }) })
-      const nextProfiles = d.profiles || []
+      const nextProfiles = orderedProviderProfiles(d.profiles || [])
       setProfiles(nextProfiles)
       setPersistedModelProfiles(nextProfiles)
       setModelSaveStatus({})
@@ -774,6 +774,14 @@ export default function App() {
     const ok = await persistModelProfiles(nextPersisted, { confirm: false })
     if (!ok) return false
     setProfiles(current => mergePersistedModelOrder(current, nextPersisted))
+    return true
+  }
+
+  const saveProviderOrder = async (orderedProfiles) => {
+    const nextProfiles = applyProviderOrder(orderedProfiles)
+    const ok = await persistModelProfiles(nextProfiles, { confirm: false })
+    if (!ok) return false
+    setProfiles(nextProfiles)
     return true
   }
 
@@ -991,7 +999,7 @@ export default function App() {
 
         </div>
       </section>}
-      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
+      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} onSaveProviderOrder={saveProviderOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page">
         <div className="logs-layout">
           <Panel title={t.lists.processes} className="logs-side">

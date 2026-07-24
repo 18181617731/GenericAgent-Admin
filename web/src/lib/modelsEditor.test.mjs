@@ -9,11 +9,25 @@ import {
   profileModelConfigs,
   orderedModelRows,
   applyModelOrder,
+  applyProviderOrder,
+  orderedProviderProfiles,
   mergePersistedModelOrder,
   moveOrderedItem,
   reasoningEffortOptions,
   withModelConfigs,
 } from './modelsEditor.js'
+
+test('provider ordering respects persisted order and normalizes moved rows', () => {
+  const profiles = [
+    { var_name: 'first', provider_sort_order: 2 },
+    { var_name: 'second', provider_sort_order: 0 },
+    { var_name: 'third', provider_sort_order: 1 },
+  ]
+  assert.deepEqual(orderedProviderProfiles(profiles).map(profile => profile.var_name), ['second', 'third', 'first'])
+  assert.deepEqual(applyProviderOrder(orderedProviderProfiles(profiles)).map(profile => profile.provider_sort_order), [0, 1, 2])
+  assert.deepEqual(moveOrderedItem(profiles, 0, 2).map(profile => profile.var_name), ['second', 'third', 'first'])
+})
+
 
 test('profileModelConfigs migrates legacy provider settings into independent rows', () => {
   const profile = {

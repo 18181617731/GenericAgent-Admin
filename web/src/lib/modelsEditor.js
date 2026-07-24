@@ -121,6 +121,16 @@ export const removeModelConfig = (profile = {}, index) => withModelConfigs(
   profileModelConfigs(profile).filter((_, rowIndex) => rowIndex !== index),
 )
 
+export const orderedProviderProfiles = (profiles = []) => profiles
+  .map((profile, index) => ({ profile, index, order: Number.isInteger(profile?.provider_sort_order) ? profile.provider_sort_order : index }))
+  .sort((left, right) => left.order - right.order || left.index - right.index)
+  .map(item => item.profile)
+
+export const applyProviderOrder = (profiles = []) => profiles.map((profile, index) => ({
+  ...profile,
+  provider_sort_order: index,
+}))
+
 export const orderedModelRows = (profiles = []) => {
   let defaultOrder = 0
   const rows = profiles.flatMap((profile, profileIndex) => (

@@ -70,6 +70,7 @@ type ModelConfig struct {
 type Profile struct {
 	VarName            string                 `json:"var_name"`
 	SourceVarName      string                 `json:"source_var_name,omitempty"`
+	ProviderSortOrder  *int                   `json:"provider_sort_order,omitempty"`
 	Type               string                 `json:"type"`
 	Name               string                 `json:"name"`
 	APIBase            string                 `json:"apibase"`
@@ -540,6 +541,9 @@ if isinstance(groups, dict):
                     configs.append(config)
         models=[config['model'] for config in configs]
         base['var_name']=provider
+        provider_sort_order=meta.get('provider_sort_order') if meta else None
+        if isinstance(provider_sort_order, int) and not isinstance(provider_sort_order, bool):
+            base['provider_sort_order']=provider_sort_order
         if children:
             base['source_var_name']=children[0].get('source_var_name', '')
         if meta:
@@ -687,13 +691,17 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 			})
 			defaultOrder++
 		}
-		providerGroups[p.VarName] = map[string]interface{}{
+		groupMeta := map[string]interface{}{
 			"children": childVars,
 			"type":     p.Type,
 			"name":     p.Name,
 			"apibase":  p.APIBase,
 			"apikey":   p.APIKey,
 		}
+		if p.ProviderSortOrder != nil {
+			groupMeta["provider_sort_order"] = *p.ProviderSortOrder
+		}
+		providerGroups[p.VarName] = groupMeta
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		left := entries[i].defaultOrder
