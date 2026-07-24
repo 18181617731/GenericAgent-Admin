@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -2569,37 +2569,13 @@ export default function ChatApp() {
     }
   }
 
-  const createStreamBatcher = (pendingId, sessionId = '') => {
-    let pendingDelta = ''
-    let raf = 0
-    const flush = () => {
-      raf = 0
-      if (!pendingDelta) return
-      if (!isActiveSession(sessionId)) { pendingDelta = ''; return }
-      const chunk = pendingDelta
-      pendingDelta = ''
-      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m) : xs)
-    }
-    const schedule = () => {
-      if (raf) return
-      raf = window.requestAnimationFrame ? window.requestAnimationFrame(flush) : window.setTimeout(flush, 16)
-    }
-    return {
-      push(delta) {
-        if (!delta) return
-        pendingDelta += delta
-        schedule()
-      },
-      flushNow() {
-        if (raf) {
-          if (window.cancelAnimationFrame) window.cancelAnimationFrame(raf)
-          else window.clearTimeout(raf)
-          raf = 0
-        }
-        flush()
-      },
-    }
-  }
+  const createStreamBatcher = (pendingId, sessionId = '') => createStreamDeltaBatcher({
+    onFlush: chunk => setMessages(xs => isActiveSession(sessionId) ? xs.map(m => (
+      m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m
+    )) : xs),
+    schedule: callback => window.requestAnimationFrame ? window.requestAnimationFrame(callback) : window.setTimeout(callback, 16),
+    cancel: handle => window.cancelAnimationFrame ? window.cancelAnimationFrame(handle) : window.clearTimeout(handle),
+  })
 
   const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
@@ -2607,6 +2583,7 @@ export default function ChatApp() {
     let commandPatch = null
     let eventCount = 0
     let terminal = false
+    let terminalEvent = null
     const applyEvent = (ev) => {
       if (ev?.type === 'command_result') commandPatch = reduceCommandResult(ev)
       applyStreamEvent(ev, pendingId, clientUserID, sessionId)
@@ -2614,12 +2591,13 @@ export default function ChatApp() {
     const consumeEvent = (ev) => {
       if (ev.type === 'delta' && typeof ev.delta === 'string') {
         batcher.push(ev.delta)
+      } else if (ev.type === 'done' || ev.type === 'error') {
+        terminal = true
+        terminalEvent = ev
       } else {
-        batcher.flushNow()
         applyEvent(ev)
       }
       eventCount += 1
-      if (ev.type === 'done' || ev.type === 'error') terminal = true
     }
     try {
       while (true) {
@@ -2633,12 +2611,14 @@ export default function ChatApp() {
           consumeEvent(JSON.parse(line))
         }
       }
+      buf += dec.decode()
       if (buf.trim() && isActiveSession(sessionId)) consumeEvent(JSON.parse(buf))
+      await batcher.drain()
+      if (terminalEvent && isActiveSession(sessionId)) applyEvent(terminalEvent)
     } catch (error) {
+      batcher.flushNow()
       error.chatStreamOutcome = { commandPatch, eventCount, terminal }
       throw error
-    } finally {
-      batcher.flushNow()
     }
     return { commandPatch, eventCount, terminal }
   }

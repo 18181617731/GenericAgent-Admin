@@ -135,11 +135,11 @@ export function ChatPage({ t, slashCommands }) {
         schedule: callback => supportsAnimationFrame ? window.requestAnimationFrame(callback) : window.setTimeout(callback, 16),
         cancel: handle => supportsAnimationFrame ? window.cancelAnimationFrame(handle) : window.clearTimeout(handle),
       })
+      let terminalEvent = null
       const consumeEvent = (ev) => {
         if (ev.type === 'delta') deltaBatcher.push(ev.delta || '')
-        if (ev.type === 'ultraplan_event') { deltaBatcher.flushNow(); setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, ultraplan: ev.state} : m)) }
+        if (ev.type === 'ultraplan_event') { setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, ultraplan: ev.state} : m)) }
         if (ev.type === 'ultraplan_output') {
-          deltaBatcher.flushNow()
           setMessages(ms => ms.map(m => {
             if (m.id !== assistant.id) return m
             const taskOutputs = m.task_outputs || {}
@@ -147,16 +147,8 @@ export function ChatPage({ t, slashCommands }) {
             return {...m, task_outputs: {...taskOutputs, [ev.task_id]: [...existing, ...(ev.lines || [])]}}
           }))
         }
-        if (ev.type === 'notice') { deltaBatcher.flushNow(); setErr(ev.message?.message || ev.message || 'notice') }
-        if (ev.type === 'done' || ev.type === 'error') {
-          deltaBatcher.flushNow()
-          setMessages(ms => ms.map(m => {
-            if (m.id !== assistant.id) return m
-            const nextUltraPlan = ev.message?.ultraplan || ev.message?.ultraplan_state || ev.message?.ultraPlanState || m.ultraplan
-            return {...m, ...ev.message, ultraplan: nextUltraPlan}
-          }))
-          if (ev.type === 'error') setErr(ev.message?.content || 'error')
-        }
+        if (ev.type === 'notice') setErr(ev.message?.message || ev.message || 'notice')
+        if (ev.type === 'done' || ev.type === 'error') terminalEvent = ev
       }
       try {
         while (true) {
@@ -170,8 +162,18 @@ export function ChatPage({ t, slashCommands }) {
         }
         buf += dec.decode()
         if (buf.trim()) consumeEvent(JSON.parse(buf.trim()))
-      } finally {
+        await deltaBatcher.drain()
+        if (terminalEvent) {
+          setMessages(ms => ms.map(m => {
+            if (m.id !== assistant.id) return m
+            const nextUltraPlan = terminalEvent.message?.ultraplan || terminalEvent.message?.ultraplan_state || terminalEvent.message?.ultraPlanState || m.ultraplan
+            return {...m, ...terminalEvent.message, ultraplan: nextUltraPlan}
+          }))
+          if (terminalEvent.type === 'error') setErr(terminalEvent.message?.content || 'error')
+        }
+      } catch (error) {
         deltaBatcher.flushNow()
+        throw error
       }
       await loadSessions()
     } catch(e) {

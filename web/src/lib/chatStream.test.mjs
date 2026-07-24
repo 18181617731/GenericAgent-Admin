@@ -69,3 +69,45 @@ test('stream delta batcher flushes pending text before terminal events', () => {
   scheduled()
   assert.deepEqual(flushed, ['final'])
 })
+
+
+test('stream delta batcher paces a network burst across animation frames', () => {
+  const callbacks = []
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: callback => { callbacks.push(callback); return callbacks.length },
+    cancel: () => {},
+  })
+  const burst = 'x'.repeat(160)
+  batcher.push(burst)
+  callbacks.shift()()
+  assert.equal(flushed[0].length, 20)
+  assert.equal(callbacks.length, 1)
+  callbacks.shift()()
+  assert.equal(flushed.join('').length, 38)
+  assert.equal(callbacks.length, 1)
+})
+
+test('stream delta batcher resolves drain only after all paced frames render', async () => {
+  const callbacks = []
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: callback => { callbacks.push(callback); return callbacks.length },
+    cancel: () => {},
+  })
+  batcher.push('smooth '.repeat(20))
+  let drained = false
+  const done = batcher.drain().then(() => { drained = true })
+  await Promise.resolve()
+  assert.equal(drained, false)
+  while (callbacks.length) {
+    callbacks.shift()()
+    await Promise.resolve()
+  }
+  await done
+  assert.equal(drained, true)
+  assert.equal(flushed.join(''), 'smooth '.repeat(20))
+  assert.ok(flushed.length > 1)
+})
