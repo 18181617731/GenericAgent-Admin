@@ -10175,13 +10175,13 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 }
 
 .models-page .model-workbench {
-  grid-template-columns: minmax(214px, 24%) minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
   min-height: 620px;
   overflow: hidden;
   border: 1px solid var(--model-line-strong);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--model-paper);
-  box-shadow: 0 10px 28px rgba(26, 44, 58, .055);
+  box-shadow: none;
 }
 
 .models-page .model-provider-rail {
@@ -10240,15 +10240,20 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 .models-page .model-provider-item {
   position: relative;
   width: 100%;
-  min-height: 70px;
-  padding: 11px 11px 10px;
+  min-height: 68px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  align-items: stretch;
+  justify-content: stretch;
+  justify-items: stretch;
+  padding: 10px 11px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 7px;
   background: transparent;
   cursor: grab;
   touch-action: none;
   user-select: none;
-  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease, transform .16s ease;
+  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
 }
 
 .models-page .model-provider-item::before {
@@ -10261,14 +10266,12 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 
 .models-page .model-provider-item:hover {
   border-color: var(--model-line);
-  background: color-mix(in srgb, var(--model-wash) 62%, transparent);
-  transform: translateX(1px);
+  background: color-mix(in srgb, var(--model-wash) 52%, transparent);
 }
 
 .models-page .model-provider-item.is-holding {
   border-color: color-mix(in srgb, var(--model-ink) 34%, var(--model-line));
-  background: color-mix(in srgb, var(--model-wash) 78%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--model-ink) 6%, transparent);
+  background: color-mix(in srgb, var(--model-wash) 70%, transparent);
   cursor: grabbing;
 }
 
@@ -10276,18 +10279,18 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   position: fixed;
   z-index: 1200;
   margin: 0;
-  border-color: color-mix(in srgb, var(--model-ink) 48%, var(--model-line));
+  border-color: color-mix(in srgb, var(--model-ink) 42%, var(--model-line));
   background: var(--model-paper);
-  box-shadow: 0 16px 38px color-mix(in srgb, var(--model-ink) 21%, transparent), 0 3px 10px color-mix(in srgb, var(--model-ink) 10%, transparent);
+  box-shadow: 0 8px 22px rgba(26, 44, 58, .16);
   cursor: grabbing;
   pointer-events: none;
-  transform: scale(1.018) rotate(.2deg);
+  transform: scale(1.01);
   transition: box-shadow .18s ease, transform .18s cubic-bezier(.2,.8,.2,1);
   will-change: left, top, transform;
 }
 
 .models-page .model-provider-item.is-dragging:hover {
-  transform: scale(1.018) rotate(.2deg);
+  transform: scale(1.01);
 }
 
 .models-page .model-provider-order-alert {
@@ -10664,7 +10667,7 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 }
 
 [data-theme="dark"] .models-page .model-workbench {
-  box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
+  box-shadow: none;
 }
 
 @media (max-width: 980px) {
