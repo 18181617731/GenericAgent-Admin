@@ -16,7 +16,7 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Collapse, Drawer, Input, Modal, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import {
@@ -688,6 +688,18 @@ export function Models({
   const providerProfilesRef = useRef(profiles)
   const saveProviderOrderRef = useRef(onSaveProviderOrder)
   const suppressProviderClickUntilRef = useRef(0)
+  const providerMotionKeysRef = useRef(new WeakMap())
+  const providerMotionKeySeedRef = useRef(0)
+  const providerFlipRectsRef = useRef(null)
+  const providerMotionKey = profile => {
+    if (profile?.client_id) return `client:${profile.client_id}`
+    if (!profile || typeof profile !== 'object') return `provider:${String(profile)}`
+    if (!providerMotionKeysRef.current.has(profile)) {
+      providerMotionKeySeedRef.current += 1
+      providerMotionKeysRef.current.set(profile, `local:${providerMotionKeySeedRef.current}`)
+    }
+    return providerMotionKeysRef.current.get(profile)
+  }
   providerProfilesRef.current = profiles
   saveProviderOrderRef.current = onSaveProviderOrder
   const validation = validateModelProfiles(profiles)
@@ -702,6 +714,31 @@ export function Models({
   useEffect(() => {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(profiles.length - 1, 0)))
   }, [profiles.length])
+
+  useLayoutEffect(() => {
+    const previousRects = providerFlipRectsRef.current
+    providerFlipRectsRef.current = null
+    if (!previousRects || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    const entries = Array.from(providerNavRef.current?.querySelectorAll('[data-provider-motion-key]') || [])
+    entries.forEach(entry => {
+      const key = entry.dataset.providerMotionKey
+      if (key === providerInteractionRef.current?.dragKey) return
+      const previous = previousRects.get(key)
+      if (!previous) return
+      const current = entry.getBoundingClientRect()
+      const deltaX = previous.left - current.left
+      const deltaY = previous.top - current.top
+      if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return
+      entry.getAnimations?.().forEach(animation => animation.cancel())
+      entry.animate(
+        [
+          { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
+          { transform: 'translate3d(0, 0, 0)' },
+        ],
+        { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      )
+    })
+  }, [profiles])
 
   const removeProfile = async idx => {
     const profile = profiles[idx]
@@ -782,6 +819,10 @@ export function Models({
     })
     const previousIndex = interaction.currentIndex
     if (overIndex < 0 || overIndex === previousIndex) return
+    providerFlipRectsRef.current = new Map(items.map(item => [
+      item.dataset.providerMotionKey,
+      item.getBoundingClientRect(),
+    ]))
     interaction.currentIndex = overIndex
     setProfiles(current => {
       const next = moveOrderedItem(current, previousIndex, overIndex)
@@ -795,7 +836,7 @@ export function Models({
       if (previousIndex > overIndex && current >= overIndex && current < previousIndex) return current + 1
       return current
     })
-    setProviderDrag({ index: overIndex })
+    setProviderDrag(current => ({ ...current, index: overIndex }))
     setProviderOrderError('')
   }
 
@@ -823,8 +864,21 @@ export function Models({
       const interaction = providerInteractionRef.current
       if (!interaction || interaction.fromIndex !== idx) return
       interaction.active = true
+      const rect = interaction.captureTarget.getBoundingClientRect()
+      interaction.dragKey = providerMotionKey(providerProfilesRef.current[interaction.currentIndex])
+      interaction.grabX = interaction.startX - rect.left
+      interaction.grabY = interaction.startY - rect.top
+      interaction.width = rect.width
+      interaction.height = rect.height
       setProviderHoldIndex(null)
-      setProviderDrag({ index: interaction.currentIndex })
+      setProviderDrag({
+        index: interaction.currentIndex,
+        key: interaction.dragKey,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      })
       setProviderOrderError('')
     }, 350)
   }
@@ -840,6 +894,11 @@ export function Models({
     }
     if (!interaction.active) return
     event.preventDefault?.()
+    setProviderDrag(current => ({
+      ...current,
+      left: event.clientX - interaction.grabX,
+      top: event.clientY - interaction.grabY,
+    }))
     moveProviderPreview(event.clientY, interaction)
   }
 
@@ -973,11 +1032,25 @@ export function Models({
               const count = profileModels(profile).length
               const meta = protocolMeta(profile.type || DEFAULT_PROTOCOL)
               const state = result?.errors?.length ? 'error' : result?.warnings?.length ? 'warning' : 'ready'
+              const motionKey = providerMotionKey(profile)
+              const isProviderDragging = providerDrag?.key === motionKey
               return (
-                <div className="model-provider-entry" key={profile.client_id || `provider-${idx}`} data-provider-index={idx}>
+                <div
+                  className={`model-provider-entry${isProviderDragging ? ' is-drag-placeholder' : ''}`}
+                  key={motionKey}
+                  data-provider-index={idx}
+                  data-provider-motion-key={motionKey}
+                  style={isProviderDragging ? { height: providerDrag.height } : undefined}
+                >
                   <button
                     type="button"
-                    className={`model-provider-item${!addOpen && activeIndex === idx ? ' is-active' : ''}${providerHoldIndex === idx ? ' is-holding' : ''}${providerDrag?.index === idx ? ' is-dragging' : ''}`}
+                    className={`model-provider-item${!addOpen && activeIndex === idx ? ' is-active' : ''}${providerHoldIndex === idx ? ' is-holding' : ''}${isProviderDragging ? ' is-dragging' : ''}`}
+                    style={isProviderDragging ? {
+                      left: providerDrag.left,
+                      top: providerDrag.top,
+                      width: providerDrag.width,
+                      height: providerDrag.height,
+                    } : undefined}
                     onClick={() => {
                       if (Date.now() < suppressProviderClickUntilRef.current) return
                       openProfile(idx)
