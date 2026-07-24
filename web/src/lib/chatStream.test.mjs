@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './chatStream.js'
 
 test('recognizes only the dedicated btw command boundary', () => {
   assert.equal(isBTWCommand('/btw question'), true)
@@ -34,4 +34,38 @@ test('authoritative final usage wins when present', () => {
   )
   assert.equal(merged.usage.input_tokens, 2)
   assert.equal(merged.usages[0].input_tokens, 2)
+})
+
+
+test('stream delta batcher combines chunks into one scheduled render', () => {
+  const callbacks = []
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: callback => { callbacks.push(callback); return callbacks.length - 1 },
+    cancel: () => {},
+  })
+  batcher.push('hel')
+  batcher.push('lo')
+  assert.equal(callbacks.length, 1)
+  assert.deepEqual(flushed, [])
+  callbacks[0]()
+  assert.deepEqual(flushed, ['hello'])
+})
+
+test('stream delta batcher flushes pending text before terminal events', () => {
+  let scheduled
+  const canceled = []
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: callback => { scheduled = callback; return 7 },
+    cancel: handle => canceled.push(handle),
+  })
+  batcher.push('final')
+  batcher.flushNow()
+  assert.deepEqual(canceled, [7])
+  assert.deepEqual(flushed, ['final'])
+  scheduled()
+  assert.deepEqual(flushed, ['final'])
 })

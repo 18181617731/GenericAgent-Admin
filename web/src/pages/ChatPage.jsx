@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Paperclip, Play, RefreshCw, Square, X } from 'lucide-react'
 import { api, apiStream } from '../lib/api'
 import { fuzzyMatch } from '../lib/format'
+import { createStreamDeltaBatcher } from '../lib/chatStream.js'
 import { TurnList } from '../components/turns'
 
 const readFileDataURL = (file) => new Promise((resolve, reject) => {
@@ -128,34 +129,49 @@ export function ChatPage({ t, slashCommands }) {
         body: JSON.stringify({ prompt: text, files: sendFiles, settings, client_user_id: user.id })
       })
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
-      while (true) {
-        const {value, done} = await reader.read(); if (done) break
-        buf += dec.decode(value, {stream:true})
-        let idx
-        while ((idx = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, idx).trim(); buf = buf.slice(idx+1)
-          if (!line) continue
-          const ev = JSON.parse(line)
-          if (ev.type === 'delta') setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content:(m.content||'') + (ev.delta||'')} : m))
-          if (ev.type === 'ultraplan_event') setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, ultraplan: ev.state} : m))
-          if (ev.type === 'ultraplan_output') {
-            setMessages(ms => ms.map(m => {
-              if (m.id !== assistant.id) return m
-              const taskOutputs = m.task_outputs || {}
-              const existing = taskOutputs[ev.task_id] || []
-              return {...m, task_outputs: {...taskOutputs, [ev.task_id]: [...existing, ...(ev.lines || [])]}}
-            }))
-          }
-          if (ev.type === 'notice') setErr(ev.message?.message || ev.message || 'notice')
-          if (ev.type === 'done' || ev.type === 'error') {
-            setMessages(ms => ms.map(m => {
-              if (m.id !== assistant.id) return m
-              const nextUltraPlan = ev.message?.ultraplan || ev.message?.ultraplan_state || ev.message?.ultraPlanState || m.ultraplan
-              return {...m, ...ev.message, ultraplan: nextUltraPlan}
-            }))
-            if (ev.type === 'error') setErr(ev.message?.content || 'error')
+      const supportsAnimationFrame = typeof window.requestAnimationFrame === 'function'
+      const deltaBatcher = createStreamDeltaBatcher({
+        onFlush: chunk => setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content:(m.content || '') + chunk} : m)),
+        schedule: callback => supportsAnimationFrame ? window.requestAnimationFrame(callback) : window.setTimeout(callback, 16),
+        cancel: handle => supportsAnimationFrame ? window.cancelAnimationFrame(handle) : window.clearTimeout(handle),
+      })
+      const consumeEvent = (ev) => {
+        if (ev.type === 'delta') deltaBatcher.push(ev.delta || '')
+        if (ev.type === 'ultraplan_event') { deltaBatcher.flushNow(); setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, ultraplan: ev.state} : m)) }
+        if (ev.type === 'ultraplan_output') {
+          deltaBatcher.flushNow()
+          setMessages(ms => ms.map(m => {
+            if (m.id !== assistant.id) return m
+            const taskOutputs = m.task_outputs || {}
+            const existing = taskOutputs[ev.task_id] || []
+            return {...m, task_outputs: {...taskOutputs, [ev.task_id]: [...existing, ...(ev.lines || [])]}}
+          }))
+        }
+        if (ev.type === 'notice') { deltaBatcher.flushNow(); setErr(ev.message?.message || ev.message || 'notice') }
+        if (ev.type === 'done' || ev.type === 'error') {
+          deltaBatcher.flushNow()
+          setMessages(ms => ms.map(m => {
+            if (m.id !== assistant.id) return m
+            const nextUltraPlan = ev.message?.ultraplan || ev.message?.ultraplan_state || ev.message?.ultraPlanState || m.ultraplan
+            return {...m, ...ev.message, ultraplan: nextUltraPlan}
+          }))
+          if (ev.type === 'error') setErr(ev.message?.content || 'error')
+        }
+      }
+      try {
+        while (true) {
+          const {value, done} = await reader.read(); if (done) break
+          buf += dec.decode(value, {stream:true})
+          let idx
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).trim(); buf = buf.slice(idx+1)
+            if (line) consumeEvent(JSON.parse(line))
           }
         }
+        buf += dec.decode()
+        if (buf.trim()) consumeEvent(JSON.parse(buf.trim()))
+      } finally {
+        deltaBatcher.flushNow()
       }
       await loadSessions()
     } catch(e) {

@@ -13,3 +13,29 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   }
   return merged
 }
+
+
+export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel }) => {
+  let pending = ''
+  let scheduled = null
+
+  const flush = () => {
+    scheduled = null
+    if (!pending) return
+    const chunk = pending
+    pending = ''
+    onFlush(chunk)
+  }
+
+  return {
+    push(delta) {
+      if (!delta) return
+      pending += delta
+      if (scheduled == null) scheduled = schedule(flush)
+    },
+    flushNow() {
+      if (scheduled != null) cancel(scheduled)
+      flush()
+    },
+  }
+}
