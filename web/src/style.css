@@ -4786,7 +4786,7 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
   bottom: calc(100% + 8px);
   width: 390px;
   max-width: min(390px, calc(100vw - 24px));
-  min-height: 190px;
+  height: clamp(190px, 32vh, 292px);
   display: grid;
   grid-template-columns: minmax(126px, 38%) minmax(0, 1fr);
   padding: 6px;
@@ -4863,7 +4863,7 @@ html[data-theme="dark"] .oa-cascade-models button:hover { background: rgba(255,2
     margin-left: 0;
   }
   .oa-cascade-menu {
-    right: -4px;
+    right: -16px;
     width: min(390px, calc(100vw - 24px));
   }
 }
