@@ -36,6 +36,7 @@ type Server struct {
 	ReactApp                *reactAppBridge
 	ChatMu                  sync.Mutex
 	SessionMu               sync.Mutex
+	UsageMu                 sync.Mutex
 	ConfigMu                sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker

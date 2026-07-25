@@ -516,6 +516,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		s.endChatRunOwned(sid, token)
 		return
 	}
+	if usageErr := s.recordSessionUsage(cs); usageErr != nil {
+		s.publishChatRun(sid, map[string]interface{}{"type": "usage_error", "error": usageErr.Error()})
+	}
 	if len(terminalLine) > 0 {
 		s.publishChatLine(sid, terminalLine)
 	}

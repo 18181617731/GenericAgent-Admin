@@ -121,6 +121,63 @@ func TestUsageOverviewOmitsUnknownModelBreakdown(t *testing.T) {
 	}
 }
 
+func TestUsageLedgerSurvivesSessionDeletion(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	cs := chatSession{ID: "deleted-later", Title: "Deleted later", Messages: []chatMessage{{
+		ID: "reply-1", Role: "assistant", ModelID: "model-x", CreatedAt: 123,
+		Usage: map[string]int{"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+	}}}
+	if err := saveChatSession(cfg, cs); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if _, _, err := s.loadOrMigrateUsageLedger(); err != nil {
+		t.Fatalf("migrate usage: %v", err)
+	}
+	if err := os.Remove(chatSessionPath(cfg, cs.ID)); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	s.usageOverview(rr, httptest.NewRequest(http.MethodGet, "/api/usage/overview", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got usageOverviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.AssistantReplies != 1 || got.Totals.TotalTokens != 10 || len(got.Sessions) != 1 {
+		t.Fatalf("usage changed after session deletion: %+v", got)
+	}
+}
+
+func TestRecordSessionUsageMigratesExistingSessionsFirst(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	old := chatSession{ID: "old", Messages: []chatMessage{{
+		ID: "old-reply", Role: "assistant", Usage: map[string]int{"total_tokens": 10},
+	}}}
+	if err := saveChatSession(cfg, old); err != nil {
+		t.Fatalf("save old session: %v", err)
+	}
+	fresh := chatSession{ID: "fresh", Messages: []chatMessage{{
+		ID: "fresh-reply", Role: "assistant", Usage: map[string]int{"total_tokens": 20},
+	}}}
+	if err := s.recordSessionUsage(fresh); err != nil {
+		t.Fatalf("record fresh usage: %v", err)
+	}
+	ledger, err := readUsageLedger(cfg)
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if len(ledger.Entries) != 2 {
+		t.Fatalf("ledger entries=%d, want 2: %+v", len(ledger.Entries), ledger.Entries)
+	}
+}
+
 func TestUsageOverviewMissingDirectoryIsEmptyAndReadOnly(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()

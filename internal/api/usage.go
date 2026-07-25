@@ -1,10 +1,7 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -98,86 +95,73 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	dir := chatSessionDir(s.CfgStore.Cfg)
-	entries, err := os.ReadDir(dir)
+	ledger, skipped, err := s.loadOrMigrateUsageLedger()
 	if err != nil {
-		if os.IsNotExist(err) {
-			writeJSON(w, usageOverviewResponse{Models: []usageBreakdown{}, Sessions: []usageBreakdown{}, Daily: []usageDaily{}})
-			return
-		}
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	response := usageOverviewResponse{Models: []usageBreakdown{}, Sessions: []usageBreakdown{}, Daily: []usageDaily{}}
+	response := usageOverviewResponse{
+		Models:          []usageBreakdown{},
+		Sessions:        []usageBreakdown{},
+		Daily:           []usageDaily{},
+		SkippedSessions: skipped,
+	}
 	models := map[string]*usageBreakdown{}
+	sessions := map[string]*usageBreakdown{}
 	daily := map[string]*usageDaily{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		sid := strings.TrimSuffix(entry.Name(), ".json")
-		cs := chatSession{}
-		contents, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err == nil {
-			err = json.Unmarshal(contents, &cs)
-		}
-		if err != nil {
-			response.SkippedSessions++
-			continue
-		}
-		if strings.TrimSpace(cs.ID) == "" {
-			cs.ID = sid
-		}
-		response.SessionCount++
-		session := usageBreakdown{ID: cs.ID, Name: cs.Title, UpdatedAt: cs.UpdatedAt}
-		if strings.TrimSpace(session.Name) == "" {
-			session.Name = cs.ID
-		}
-		for _, message := range cs.Messages {
-			if message.Role != "assistant" {
-				continue
+	for _, entry := range ledger.Entries {
+		response.AssistantReplies++
+		mergeUsageTotals(&response.Totals, entry.Totals)
+
+		session := sessions[entry.SessionID]
+		if session == nil {
+			name := strings.TrimSpace(entry.Title)
+			if name == "" {
+				name = entry.SessionID
 			}
-			totals, ok := normalizedMessageUsage(message)
-			if !ok {
-				continue
-			}
-			response.AssistantReplies++
-			session.AssistantReplies++
-			mergeUsageTotals(&response.Totals, totals)
-			mergeUsageTotals(&session.Totals, totals)
-			if message.CreatedAt > 0 {
-				createdAt := message.CreatedAt
-				if createdAt > 1_000_000_000_000 {
-					createdAt /= 1000
-				}
-				date := time.Unix(createdAt, 0).In(time.Local).Format("2006-01-02")
-				day := daily[date]
-				if day == nil {
-					day = &usageDaily{Date: date}
-					daily[date] = day
-				}
-				day.AssistantReplies++
-				mergeUsageTotals(&day.Totals, totals)
-			}
-			modelID := strings.TrimSpace(message.ModelID)
-			if modelID != "" {
-				model := models[modelID]
-				if model == nil {
-					model = &usageBreakdown{ID: modelID, Name: modelID}
-					models[modelID] = model
-				}
-				model.AssistantReplies++
-				mergeUsageTotals(&model.Totals, totals)
-			}
+			session = &usageBreakdown{ID: entry.SessionID, Name: name}
+			sessions[entry.SessionID] = session
 		}
-		if session.AssistantReplies > 0 {
-			response.SessionsWithUsage++
-			response.Sessions = append(response.Sessions, session)
+		session.AssistantReplies++
+		mergeUsageTotals(&session.Totals, entry.Totals)
+		if entry.CreatedAt > session.UpdatedAt {
+			session.UpdatedAt = entry.CreatedAt
+		}
+
+		if entry.CreatedAt > 0 {
+			createdAt := entry.CreatedAt
+			if createdAt > 1_000_000_000_000 {
+				createdAt /= 1000
+			}
+			date := time.Unix(createdAt, 0).In(time.Local).Format("2006-01-02")
+			day := daily[date]
+			if day == nil {
+				day = &usageDaily{Date: date}
+				daily[date] = day
+			}
+			day.AssistantReplies++
+			mergeUsageTotals(&day.Totals, entry.Totals)
+		}
+
+		modelID := strings.TrimSpace(entry.ModelID)
+		if modelID != "" {
+			model := models[modelID]
+			if model == nil {
+				model = &usageBreakdown{ID: modelID, Name: modelID}
+				models[modelID] = model
+			}
+			model.AssistantReplies++
+			mergeUsageTotals(&model.Totals, entry.Totals)
 		}
 	}
+	response.SessionCount = len(sessions)
+	response.SessionsWithUsage = len(sessions)
 	for _, model := range models {
 		response.Models = append(response.Models, *model)
+	}
+	for _, session := range sessions {
+		response.Sessions = append(response.Sessions, *session)
 	}
 	for _, day := range daily {
 		response.Daily = append(response.Daily, *day)
