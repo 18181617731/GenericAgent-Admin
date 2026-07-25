@@ -7,6 +7,7 @@ import App, { ChannelsPage } from './App.jsx'
 import { ChatMessage, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
+import { UsagePage } from './pages/UsagePage.jsx'
 
 const appStyles = readFileSync('src/style.css', 'utf8')
 
@@ -871,6 +872,43 @@ describe('file workflow confidence', () => {
   })
 })
 
+describe('usage overview page', () => {
+  const payload = {
+    totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 },
+    session_count: 2,
+    sessions_with_usage: 1,
+    assistant_replies: 3,
+    skipped_sessions: 0,
+    models: [{ id: 'gpt-5', name: 'gpt-5', assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+    sessions: [{ id: 'session-1', name: 'Alpha', updated_at: 1700000000000, assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+  }
+
+  test('renders aggregate and breakdown data', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(payload))
+    render(<UsagePage lang="en" />)
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
+    expect(screen.getByText('Alpha')).toBeTruthy()
+  })
+
+  test('renders an explicit empty state', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse({ ...payload, totals: {}, session_count: 0, sessions_with_usage: 0, assistant_replies: 0, models: [], sessions: [] }))
+    render(<UsagePage lang="en" />)
+    expect(await screen.findByText('No token usage has been recorded yet.')).toBeTruthy()
+  })
+
+  test('recovers from a request error', async () => {
+    globalThis.fetch = vi.fn()
+      .mockRejectedValueOnce(new Error('network offline'))
+      .mockResolvedValueOnce(jsonResponse(payload))
+    render(<UsagePage lang="en" />)
+    expect((await screen.findByRole('alert')).textContent).toMatch(/network offline/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('operator shell feedback', () => {
   const shellPayload = (url) => {
     const path = new URL(url, 'http://localhost').pathname
@@ -893,8 +931,11 @@ describe('operator shell feedback', () => {
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
     render(<App />)
     const files = await screen.findByRole('button', { name: /文件|Files/i })
-    const overview = screen.getByRole('button', { name: /总览|Overview/i })
+    const usage = screen.getByRole('button', { name: /用量总览|Usage/i })
+    const overview = screen.getByRole('button', { name: /^(总览|Overview)$/i })
     expect(overview.getAttribute('aria-current')).toBe('page')
+    expect(usage.tagName).toBe('BUTTON')
+    expect(usage.disabled).toBe(false)
     files.focus()
     expect(document.activeElement).toBe(files)
     expect(files.tagName).toBe('BUTTON')
