@@ -158,6 +158,10 @@ func (s *Server) recordSessionUsage(cs chatSession) error {
 				ledger.Entries[index].Title = entry.Title
 				changed = true
 			}
+			// Always refresh Totals and ModelID so stale zero-values get corrected.
+			ledger.Entries[index].Totals = entry.Totals
+			ledger.Entries[index].ModelID = entry.ModelID
+			changed = true
 			continue
 		}
 		byKey[entry.Key] = len(ledger.Entries)

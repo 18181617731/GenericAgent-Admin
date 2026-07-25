@@ -59,14 +59,18 @@ func addUsageValue(dst *usageTotals, key string, value int) {
 }
 
 func normalizedMessageUsage(message chatMessage) (usageTotals, bool) {
-	values := message.Usage
-	if len(values) == 0 && len(message.Usages) > 0 {
+	// Prefer usages (per-turn breakdown) when available; it is authoritative because
+	// the legacy usage field can be overwritten by a terminal SSE event with all-zero values.
+	var values map[string]int
+	if len(message.Usages) > 0 {
 		values = map[string]int{}
 		for _, turn := range message.Usages {
 			for key, value := range turn {
 				values[key] += value
 			}
 		}
+	} else {
+		values = message.Usage
 	}
 	var totals usageTotals
 	for key, value := range values {

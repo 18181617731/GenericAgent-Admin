@@ -221,3 +221,91 @@ func containsAny(value string, needles ...string) bool {
 	}
 	return false
 }
+
+func TestNormalizedMessageUsagePrefersUsagesOverZeroUsage(t *testing.T) {
+	// A terminal SSE event can overwrite the aggregated usage map with all-zero
+	// values while the per-turn usages array keeps the real numbers.
+	message := chatMessage{
+		Role:    "assistant",
+		ModelID: "model-z",
+		Usage:   map[string]int{"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0},
+		Usages: []map[string]int{
+			{"input_tokens": 120, "output_tokens": 30},
+			{"input_tokens": 80, "output_tokens": 20, "cached_tokens": 7},
+		},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 200 || totals.OutputTokens != 50 || totals.TotalTokens != 250 {
+		t.Fatalf("totals=%+v want input=200 output=50 total=250", totals)
+	}
+	if totals.Other["cached_tokens"] != 7 {
+		t.Fatalf("other=%+v want cached_tokens=7", totals.Other)
+	}
+}
+
+func TestNormalizedMessageUsageFallsBackToLegacyUsage(t *testing.T) {
+	message := chatMessage{
+		Role:    "assistant",
+		ModelID: "legacy",
+		Usage:   map[string]int{"input_tokens": 11, "output_tokens": 5},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 11 || totals.OutputTokens != 5 || totals.TotalTokens != 16 {
+		t.Fatalf("totals=%+v want input=11 output=5 total=16", totals)
+	}
+}
+
+func TestRecordSessionUsageRefreshesStaleZeroTotals(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	created := time.Date(2026, time.July, 25, 9, 0, 0, 0, time.Local).Unix()
+
+	session := chatSession{
+		ID:    "gamma",
+		Title: "Gamma session",
+		Messages: []chatMessage{{
+			ID:        "m1",
+			Role:      "assistant",
+			ModelID:   "model-c",
+			CreatedAt: created,
+			Usages:    []map[string]int{{"input_tokens": 40, "output_tokens": 9}},
+		}},
+	}
+
+	// Seed the ledger with a stale all-zero entry for the same key.
+	stale := usageEntriesFromSession(session)
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(stale))
+	}
+	stale[0].Totals = usageTotals{}
+	stale[0].ModelID = ""
+	if err := writeUsageLedger(cfg, usageLedger{Entries: stale}); err != nil {
+		t.Fatalf("seed ledger: %v", err)
+	}
+
+	if err := s.recordSessionUsage(session); err != nil {
+		t.Fatalf("record session usage: %v", err)
+	}
+
+	ledger, err := readUsageLedger(cfg)
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if len(ledger.Entries) != 1 {
+		t.Fatalf("entries=%+v want exactly 1", ledger.Entries)
+	}
+	entry := ledger.Entries[0]
+	if entry.Totals.InputTokens != 40 || entry.Totals.OutputTokens != 9 {
+		t.Fatalf("totals=%+v want input=40 output=9", entry.Totals)
+	}
+	if entry.ModelID != "model-c" {
+		t.Fatalf("model_id=%q want model-c", entry.ModelID)
+	}
+}
