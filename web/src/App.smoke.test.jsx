@@ -881,6 +881,7 @@ describe('usage overview page', () => {
     skipped_sessions: 0,
     models: [{ id: 'gpt-5', name: 'gpt-5', assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
     sessions: [{ id: 'session-1', name: 'Alpha', updated_at: 1700000000000, assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+    daily: [{ date: new Date().toISOString().slice(0, 10), assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
   }
 
   test('renders aggregate and breakdown data', async () => {
@@ -889,6 +890,11 @@ describe('usage overview page', () => {
     expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
     expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
     expect(screen.getByText('Alpha')).toBeTruthy()
+    expect(screen.getByText('Daily activity')).toBeTruthy()
+    const heatCells = document.querySelectorAll('.usage-heat-cell')
+    expect(heatCells.length).toBeGreaterThanOrEqual(358)
+    expect(heatCells.length).toBeLessThanOrEqual(364)
+    expect(document.querySelector('.usage-heat-cell:not([data-level="0"])')).toBeTruthy()
   })
 
   test('renders an explicit empty state', async () => {

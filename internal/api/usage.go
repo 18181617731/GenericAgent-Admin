@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type usageTotals struct {
@@ -24,6 +25,12 @@ type usageBreakdown struct {
 	Totals           usageTotals `json:"totals"`
 }
 
+type usageDaily struct {
+	Date             string      `json:"date"`
+	AssistantReplies int         `json:"assistant_replies"`
+	Totals           usageTotals `json:"totals"`
+}
+
 type usageOverviewResponse struct {
 	Totals            usageTotals      `json:"totals"`
 	SessionCount      int              `json:"session_count"`
@@ -31,6 +38,7 @@ type usageOverviewResponse struct {
 	AssistantReplies  int              `json:"assistant_replies"`
 	Models            []usageBreakdown `json:"models"`
 	Sessions          []usageBreakdown `json:"sessions"`
+	Daily             []usageDaily     `json:"daily"`
 	SkippedSessions   int              `json:"skipped_sessions"`
 }
 
@@ -94,15 +102,16 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			writeJSON(w, usageOverviewResponse{Models: []usageBreakdown{}, Sessions: []usageBreakdown{}})
+			writeJSON(w, usageOverviewResponse{Models: []usageBreakdown{}, Sessions: []usageBreakdown{}, Daily: []usageDaily{}})
 			return
 		}
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	response := usageOverviewResponse{Models: []usageBreakdown{}, Sessions: []usageBreakdown{}}
+	response := usageOverviewResponse{Models: []usageBreakdown{}, Sessions: []usageBreakdown{}, Daily: []usageDaily{}}
 	models := map[string]*usageBreakdown{}
+	daily := map[string]*usageDaily{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -137,6 +146,20 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 			session.AssistantReplies++
 			mergeUsageTotals(&response.Totals, totals)
 			mergeUsageTotals(&session.Totals, totals)
+			if message.CreatedAt > 0 {
+				createdAt := message.CreatedAt
+				if createdAt > 1_000_000_000_000 {
+					createdAt /= 1000
+				}
+				date := time.Unix(createdAt, 0).In(time.Local).Format("2006-01-02")
+				day := daily[date]
+				if day == nil {
+					day = &usageDaily{Date: date}
+					daily[date] = day
+				}
+				day.AssistantReplies++
+				mergeUsageTotals(&day.Totals, totals)
+			}
 			modelID := strings.TrimSpace(message.ModelID)
 			if modelID == "" {
 				modelID = "unknown"
@@ -157,6 +180,9 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 	for _, model := range models {
 		response.Models = append(response.Models, *model)
 	}
+	for _, day := range daily {
+		response.Daily = append(response.Daily, *day)
+	}
 	sort.Slice(response.Models, func(i, j int) bool {
 		if response.Models[i].Totals.TotalTokens == response.Models[j].Totals.TotalTokens {
 			return response.Models[i].Name < response.Models[j].Name
@@ -165,6 +191,9 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 	})
 	sort.Slice(response.Sessions, func(i, j int) bool {
 		return response.Sessions[i].UpdatedAt > response.Sessions[j].UpdatedAt
+	})
+	sort.Slice(response.Daily, func(i, j int) bool {
+		return response.Daily[i].Date < response.Daily[j].Date
 	})
 	writeJSON(w, response)
 }

@@ -7,12 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
 	cfg := s.CfgStore.Cfg
+	firstDay := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.Local).Unix()
+	secondDay := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.Local).UnixMilli()
 
 	first := chatSession{
 		ID:    "alpha",
@@ -20,10 +23,11 @@ func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 		Messages: []chatMessage{
 			{Role: "user", Content: "secret prompt", Usage: map[string]int{"input_tokens": 999}},
 			{
-				Role:    "assistant",
-				ModelID: "model-a",
-				Content: "secret response",
-				Usage:   map[string]int{"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+				Role:      "assistant",
+				ModelID:   "model-a",
+				Content:   "secret response",
+				CreatedAt: firstDay,
+				Usage:     map[string]int{"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
 				Usages: []map[string]int{
 					{"input_tokens": 6, "output_tokens": 2},
 					{"input_tokens": 4, "output_tokens": 2},
@@ -35,8 +39,9 @@ func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 		ID:    "beta",
 		Title: "Beta session",
 		Messages: []chatMessage{{
-			Role:    "assistant",
-			ModelID: "model-b",
+			Role:      "assistant",
+			ModelID:   "model-b",
+			CreatedAt: secondDay,
 			Usages: []map[string]int{
 				{"prompt_tokens": 3, "completion_tokens": 2, "cached_tokens": 1},
 				{"input_tokens": 2, "output_tokens": 1},
@@ -75,6 +80,9 @@ func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 	}
 	if len(got.Sessions) != 2 {
 		t.Fatalf("sessions=%+v", got.Sessions)
+	}
+	if len(got.Daily) != 2 || got.Daily[0].Date != "2026-07-23" || got.Daily[0].Totals.TotalTokens != 14 || got.Daily[1].Date != "2026-07-24" || got.Daily[1].Totals.TotalTokens != 8 {
+		t.Fatalf("daily=%+v", got.Daily)
 	}
 	body := rr.Body.String()
 	if containsAny(body, "secret prompt", "secret response") {

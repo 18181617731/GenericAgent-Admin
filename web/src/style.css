@@ -10824,6 +10824,20 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
 .usage-error { color:#8c2f2f; background:rgba(255,244,242,.72); }
 .usage-warning { display:flex; align-items:center; gap:9px; padding:11px 14px; border:1px solid rgba(151,104,20,.22); border-radius:13px; background:#fff8e8; color:#76510f; font-size:12px; }
 .usage-page .spin { animation:usage-spin .8s linear infinite; }
+.usage-heatmap-card { padding:18px 20px 14px; border:1px solid var(--border); border-radius:18px; background:rgba(255,255,255,.74); }
+.usage-section-head { margin-bottom:14px; }
+.usage-section-head h2 { margin:0 0 4px; font-size:15px; }
+.usage-section-head p { margin:0; color:var(--muted); font-size:11px; }
+.usage-heatmap-scroll { overflow-x:auto; padding:2px 0 8px; scrollbar-width:thin; }
+.usage-heatmap { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,11px); grid-auto-columns:11px; gap:4px; min-width:max-content; }
+.usage-heat-cell,.usage-heat-legend i { display:block; width:11px; height:11px; border:1px solid rgba(32,48,44,.05); border-radius:3px; background:rgba(32,48,44,.06); }
+.usage-heat-cell { transition:transform .15s ease,filter .15s ease; }
+.usage-heat-cell:hover { filter:brightness(1.08); transform:scale(1.3); }
+.usage-heat-cell[data-level="1"],.usage-heat-legend i[data-level="1"] { background:#cce9df; border-color:#b5ddcf; }
+.usage-heat-cell[data-level="2"],.usage-heat-legend i[data-level="2"] { background:#83c7b2; border-color:#6dbaa3; }
+.usage-heat-cell[data-level="3"],.usage-heat-legend i[data-level="3"] { background:#38977e; border-color:#2d886f; }
+.usage-heat-cell[data-level="4"],.usage-heat-legend i[data-level="4"] { background:#116b58; border-color:#0d5c4c; box-shadow:0 0 7px rgba(17,107,88,.14); }
+.usage-heat-legend { display:flex; align-items:center; justify-content:flex-end; gap:4px; margin-top:3px; color:var(--muted); font-size:10px; }
 @keyframes usage-spin { to { transform:rotate(360deg); } }
 @media (max-width:980px) { .usage-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .usage-metric:first-child { grid-column:1 / -1; } .usage-grid { grid-template-columns:1fr; } }
 @media (max-width:620px) { .usage-intro { align-items:stretch; flex-direction:column; padding:17px; } .usage-intro button { justify-content:center; } .usage-metrics { grid-template-columns:1fr; } .usage-metric:first-child { grid-column:auto; } }
