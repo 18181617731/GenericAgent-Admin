@@ -11396,6 +11396,85 @@ html[data-theme="dark"] {
   --d-on: #191c21;
 }
 
+/* ---- /chat (.oa-*) dark theme ----
+   .oa-chat 有自己的一套局部令牌(两处定义,后者生效),不消费全局令牌,
+   因此 admin 的暗色覆盖到不了这里,必须单独翻。 */
+html[data-theme="dark"] .oa-chat {
+  --oa-bg: #191c21;
+  --oa-panel: #20242a;
+  --oa-sidebar: #15181c;
+  --oa-sidebar-2: #15181c;
+  --oa-text: #ececf1;
+  --oa-muted: #9ba1ab;
+  --oa-faint: #6f7681;
+  --oa-line: rgba(255, 255, 255, .09);
+  --oa-line-strong: rgba(255, 255, 255, .16);
+  --oa-hover: rgba(255, 255, 255, .06);
+  /* 全局 --d-* 是"深色实心块"令牌,暗色下被翻成近白(#ececf1)供 admin 使用。
+     但 /chat 里它们描述的是主按钮/头像/发送键这类本就深色的实心面,
+     翻完会变成大白块。在 .oa-chat 作用域内翻回深色面 + 亮字即可一次修好
+     全部 20 处引用(含 !important 声明,因为 var() 仍按此作用域解析)。 */
+  --d-000000: #33383f;
+  --d-0d0d0d: #2a2e35;
+  --d-111111: #2f333a;
+  --d-171717: #2a2e35;
+  --d-2f2f2f: #33383f;
+  --d-303030: #383d45;
+  --d-on: #ececf1;
+  --oa-active: #2a2e35;
+  --oa-user: #2a2e35;
+  background: var(--oa-bg);
+  color: var(--oa-text);
+}
+/* 顶部/侧栏的白色高光叠层在暗底上会发灰,压掉 */
+html[data-theme="dark"] .oa-sidebar { border-right-color: var(--oa-line); box-shadow: none; }
+html[data-theme="dark"] .oa-sidebar::before,
+html[data-theme="dark"] .oa-main::before { background: none; }
+html[data-theme="dark"] .oa-topbar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .04), transparent);
+  border-bottom-color: var(--oa-line);
+}
+html[data-theme="dark"] .oa-sidebar-foot { border-top-color: var(--oa-line); }
+/* --d-171717 的翻转规则(深底→浅底)对这几个"本就深色"的元素是反向的:
+   翻完变近白色,而 color:white 没跟着翻 → 白块。这里改回深色面 + 亮字。 */
+html[data-theme="dark"] .oa-new-chat {
+  background: var(--oa-active);
+  color: var(--oa-text);
+  border: 1px solid var(--oa-line-strong);
+  box-shadow: none;
+}
+html[data-theme="dark"] .oa-new-chat:hover { background: #33383f; }
+html[data-theme="dark"] .oa-brand-mark {
+  background: var(--oa-green);
+  color: #0b0d10;
+  box-shadow: none;
+}
+html[data-theme="dark"] .oa-session.active {
+  border-color: var(--oa-line-strong);
+  box-shadow: none;
+}
+html[data-theme="dark"] .oa-session-check { border-color: var(--oa-line-strong); }
+/* 提示条:浅绿/浅红底在暗色下过亮 */
+html[data-theme="dark"] .oa-banner {
+  background: rgba(16, 163, 127, .12);
+  border-color: rgba(16, 163, 127, .30);
+  color: #5fd7b8;
+  box-shadow: none;
+}
+html[data-theme="dark"] .oa-banner.error {
+  background: rgba(180, 35, 24, .14);
+  border-color: rgba(180, 35, 24, .34);
+  color: #f4a8a0;
+  box-shadow: none;
+}
+html[data-theme="dark"] .oa-session-dialog-delete:disabled {
+  background: #4a2b28;
+  border-color: #5c3733;
+}
+html[data-theme="dark"] .oa-send:disabled { background: #2a2d33; color: var(--oa-muted); }
+html[data-theme="dark"] .oa-error .oa-bubble { border-color: rgba(180,35,24,.35); }
+html[data-theme="dark"] .oa-composer:focus-within { border-color: var(--oa-line-strong); }
+
 /*  ============================================================
     Ant Design surfaces in dark mode.
     antd emits its own CSS-in-JS with hardcoded rgba(0,0,0,.88)
