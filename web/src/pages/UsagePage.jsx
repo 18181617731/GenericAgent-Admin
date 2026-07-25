@@ -43,12 +43,32 @@ function UsageHeatmap({ daily = [], lang, copy }) {
     return Math.max(1, Math.min(4, Math.ceil(((rank + 1) / active.length) * 4)))
   }
   const dateFormat = new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : 'en-US', { dateStyle: 'medium' })
+  const monthFormat = new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : 'en-US', { month: 'short' })
+  const months = []
+  const seenMonths = new Set()
+  cells.forEach((day, index) => {
+    const date = new Date(`${day.date}T00:00:00`)
+    const monthKey = `${date.getFullYear()}-${date.getMonth()}`
+    if (date.getDate() <= 7 && !seenMonths.has(monthKey)) {
+      seenMonths.add(monthKey)
+      months.push({ key: monthKey, column: Math.floor(index / 7) + 1, label: monthFormat.format(date) })
+    }
+  })
+  const weekdays = lang === 'zh' ? ['一', '三', '五'] : ['Mon', 'Wed', 'Fri']
   return <section className="usage-card usage-heatmap-card" aria-labelledby="usage-heatmap-title">
     <div className="usage-section-head"><div><h2 id="usage-heatmap-title">{copy.heatmap}</h2><p>{copy.heatmapHint}</p></div></div>
-    <div className="usage-heatmap-scroll"><div className="usage-heatmap" role="img" aria-label={copy.heatmapHint}>
-      {cells.map(day => { const tokens = Number(day.totals?.total_tokens) || 0; const label = `${dateFormat.format(new Date(`${day.date}T00:00:00`))}: ${formatNumber(tokens, lang)} Token, ${formatNumber(day.assistant_replies, lang)} ${copy.replies}`; return <span key={day.date} className="usage-heat-cell" data-level={level(tokens)} title={label} aria-label={label} /> })}
-    </div></div>
-    <div className="usage-heat-legend"><span>{copy.less}</span>{[0, 1, 2, 3, 4].map(item => <i key={item} data-level={item} />)}<span>{copy.more}</span></div>
+    <div className="usage-heatmap-scroll">
+      <div className="usage-heatmap-frame">
+        <div className="usage-months" aria-hidden="true">{months.map(month => <span key={month.key} style={{ gridColumn: month.column }}>{month.label}</span>)}</div>
+        <div className="usage-heatmap-body">
+          <div className="usage-weekdays" aria-hidden="true"><span>{weekdays[0]}</span><span>{weekdays[1]}</span><span>{weekdays[2]}</span></div>
+          <div className="usage-heatmap" role="img" aria-label={copy.heatmapHint}>
+            {cells.map(day => { const tokens = Number(day.totals?.total_tokens) || 0; const label = `${dateFormat.format(new Date(`${day.date}T00:00:00`))}: ${formatNumber(tokens, lang)} Token, ${formatNumber(day.assistant_replies, lang)} ${copy.replies}`; return <span key={day.date} className="usage-heat-cell" data-level={level(tokens)} title={label} aria-label={label} /> })}
+          </div>
+        </div>
+        <div className="usage-heat-legend"><span>{copy.less}</span>{[0, 1, 2, 3, 4].map(item => <i key={item} data-level={item} />)}<span>{copy.more}</span></div>
+      </div>
+    </div>
   </section>
 }
 
