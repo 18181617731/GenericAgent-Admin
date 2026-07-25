@@ -90,6 +90,37 @@ func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 	}
 }
 
+func TestUsageOverviewOmitsUnknownModelBreakdown(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	if err := saveChatSession(cfg, chatSession{
+		ID: "legacy",
+		Messages: []chatMessage{{
+			Role:  "assistant",
+			Usage: map[string]int{"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+		}},
+	}); err != nil {
+		t.Fatalf("save legacy session: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	s.usageOverview(rr, httptest.NewRequest(http.MethodGet, "/api/usage/overview", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got usageOverviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.AssistantReplies != 1 || got.Totals.TotalTokens != 10 {
+		t.Fatalf("legacy usage omitted from totals: %+v", got)
+	}
+	if len(got.Models) != 0 {
+		t.Fatalf("legacy usage created unknown model breakdown: %+v", got.Models)
+	}
+}
+
 func TestUsageOverviewMissingDirectoryIsEmptyAndReadOnly(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()

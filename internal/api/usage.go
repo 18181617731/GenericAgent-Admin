@@ -161,16 +161,15 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 				mergeUsageTotals(&day.Totals, totals)
 			}
 			modelID := strings.TrimSpace(message.ModelID)
-			if modelID == "" {
-				modelID = "unknown"
+			if modelID != "" {
+				model := models[modelID]
+				if model == nil {
+					model = &usageBreakdown{ID: modelID, Name: modelID}
+					models[modelID] = model
+				}
+				model.AssistantReplies++
+				mergeUsageTotals(&model.Totals, totals)
 			}
-			model := models[modelID]
-			if model == nil {
-				model = &usageBreakdown{ID: modelID, Name: modelID}
-				models[modelID] = model
-			}
-			model.AssistantReplies++
-			mergeUsageTotals(&model.Totals, totals)
 		}
 		if session.AssistantReplies > 0 {
 			response.SessionsWithUsage++
