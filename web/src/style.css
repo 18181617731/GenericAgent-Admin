@@ -3393,8 +3393,8 @@ html[data-theme="dark"] {
   --surface: #1b1e22;
   --surface-strong: #20242a;
   --surface-muted: #24282e;
-  --border: rgba(255, 255, 255, .10);
-  --border-strong: rgba(255, 255, 255, .18);
+  --border: rgba(255, 255, 255, .15);
+  --border-strong: rgba(255, 255, 255, .28);
   --text: #ececec;
   --muted: #a6abb2;
   --muted-2: #777d85;
@@ -3406,8 +3406,8 @@ html[data-theme="dark"] {
   --ga-danger: #f0616d;
   --ga-card: #20242a;
   --ga-card-soft: #24282e;
-  --ga-line: rgba(255, 255, 255, .10);
-  --ga-line-strong: rgba(255, 255, 255, .18);
+  --ga-line: rgba(255, 255, 255, .15);
+  --ga-line-strong: rgba(255, 255, 255, .28);
   --ga-text: #ececec;
   --ga-sub: #a6abb2;
   --ga-subtle: #777d85;
@@ -11094,7 +11094,7 @@ html[data-theme="dark"] .app:not(.app-tab-chat) {
 }
 html[data-theme="dark"] {
   --q-ffffffa72: rgba(32, 36, 42, .72);
-  --q-hairline: rgba(255,255,255,.10);
+  --q-hairline: rgba(255,255,255,.15);
   --q-inset-hi: rgba(255,255,255,.05);
 }
 html[data-theme="dark"] .lang-options button:hover { background:rgba(255,255,255,.07); }
@@ -11407,8 +11407,8 @@ html[data-theme="dark"] .oa-chat {
   --oa-text: #ececf1;
   --oa-muted: #9ba1ab;
   --oa-faint: #6f7681;
-  --oa-line: rgba(255, 255, 255, .09);
-  --oa-line-strong: rgba(255, 255, 255, .16);
+  --oa-line: rgba(255, 255, 255, .14);
+  --oa-line-strong: rgba(255, 255, 255, .26);
   --oa-hover: rgba(255, 255, 255, .06);
   /* 全局 --d-* 是"深色实心块"令牌,暗色下被翻成近白(#ececf1)供 admin 使用。
      但 /chat 里它们描述的是主按钮/头像/发送键这类本就深色的实心面,
@@ -11475,6 +11475,45 @@ html[data-theme="dark"] .oa-send:disabled { background: #2a2d33; color: var(--oa
 html[data-theme="dark"] .oa-error .oa-bubble { border-color: rgba(180,35,24,.35); }
 html[data-theme="dark"] .oa-composer:focus-within { border-color: var(--oa-line-strong); }
 
+/* ---- /chat 暗色边界可辨性 ----
+   两类病灶(运行时实测对比度):
+   1) 硬编码深色墨水边框 rgba(0,0,0,.1)/rgba(16,24,40,.1) 打在深底上 → 对比度 1.01~1.05,
+      肉眼等于没有边框。必须换成亮色描边,不能只调透明度。
+   2) 走 --n-* 中性令牌的卡片(turn-card/code-card/tool-call/table)在暗色下解析到
+      rgb(43,48,55),与面色 #20242a 只差 1.17 → 边界糊成一片。
+   统一口径:普通分隔线 --oa-line(≈1.5:1,足够分面不抢眼),
+   可交互控件描边 --oa-line-strong(≈2.2:1),聚焦态再上浮。 */
+/* 注意:这些基础规则(如 L2746 .oa-composer)自带 !important,
+   不加 !important 的覆盖会被静默压掉(实测 cr 仍 1.01)。 */
+html[data-theme="dark"] .oa-chat .oa-composer { border-color: var(--oa-line-strong) !important; }
+html[data-theme="dark"] .oa-chat .oa-context-btn,
+html[data-theme="dark"] .oa-chat .oa-attach-btn,
+html[data-theme="dark"] .oa-chat .oa-model-select { border-color: var(--oa-line-strong) !important; }
+html[data-theme="dark"] .oa-chat .oa-context-btn:hover,
+html[data-theme="dark"] .oa-chat .oa-attach-btn:hover,
+html[data-theme="dark"] .oa-chat .oa-model-select:hover {
+  border-color: rgba(255, 255, 255, .36) !important;
+  background: var(--oa-hover);
+}
+/* 卡片/代码块/工具调用/表格:面与面之间的分隔 */
+html[data-theme="dark"] .oa-chat .oa-turn-card,
+html[data-theme="dark"] .oa-chat .oa-msg-body,
+html[data-theme="dark"] .oa-chat .oa-code-card,
+html[data-theme="dark"] .oa-chat .oa-tool-call,
+html[data-theme="dark"] .oa-chat .oa-table-wrap,
+html[data-theme="dark"] .oa-chat .oa-long-text-preview,
+html[data-theme="dark"] .oa-chat .oa-md code:not(pre code) { border-color: var(--oa-line); }
+html[data-theme="dark"] .oa-chat .oa-md-table th,
+html[data-theme="dark"] .oa-chat .oa-md-table td { border-color: var(--oa-line); }
+html[data-theme="dark"] .oa-chat .oa-code-head,
+html[data-theme="dark"] .oa-chat .oa-long-text-head,
+html[data-theme="dark"] .oa-chat .oa-tool-result,
+html[data-theme="dark"] .oa-chat .oa-final-answer,
+html[data-theme="dark"] .oa-chat .oa-usage.oa-usage-total { border-color: var(--oa-line); }
+html[data-theme="dark"] .oa-chat .oa-md-truncated { border-color: var(--oa-line-strong); }
+html[data-theme="dark"] .oa-chat .oa-timeline span,
+html[data-theme="dark"] .oa-chat .oa-session-menu { border-color: var(--oa-line-strong); }
+
 /*  ============================================================
     Ant Design surfaces in dark mode.
     antd emits its own CSS-in-JS with hardcoded rgba(0,0,0,.88)
@@ -11486,7 +11525,7 @@ html[data-theme="dark"] .oa-composer:focus-within { border-color: var(--oa-line-
     ============================================================ */
 html[data-theme="dark"] {
   --n-c9c9c9: #4a4f56;
-  --mp-line: rgba(255,255,255,.10);
+  --mp-line: rgba(255,255,255,.15);
   --mp-muted: rgba(255,255,255,.48);
   --mp-accent-soft: rgba(129,140,248,.14);
 }
