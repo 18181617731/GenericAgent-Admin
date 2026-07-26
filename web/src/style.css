@@ -3804,6 +3804,8 @@ html[data-theme="dark"] .oa-tools-act:hover:not(:disabled) { background: rgba(52
 .oa-worldline-info b { display:block; font-size:13px; color:var(--i-111111); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .oa-worldline-info span { display:block; margin-top:2px; font-size:11px; color:var(--oa-muted); }
 .oa-worldline-current { flex:0 0 auto; font-style:normal; font-size:11px; color:var(--i-555555); padding:2px 8px; border-radius:999px; background:var(--n-f4f4f4); }
+.oa-worldline-untracked { display:inline-block; padding:1px 6px; border-radius:999px; background:rgba(217,119,6,.13); color:#b45309; font-style:normal; font-size:10px; font-weight:650; cursor:help; }
+html[data-theme="dark"] .oa-worldline-untracked { background:rgba(251,191,36,.14); color:#fbbf24; }
 .oa-worldline-switch { flex:0 0 auto; height:26px; padding:0 10px; border-radius:9px; border:1px solid rgba(0,0,0,.10); background:var(--g-ffffffa72); font-size:12px; color:var(--i-222222); }
 .oa-worldline-empty { padding:18px 12px; border:1px dashed rgba(0,0,0,.14); border-radius:14px; color:var(--oa-muted); font-size:12px; text-align:center; }
 .oa-msg-versions { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin:2px 0 6px; }

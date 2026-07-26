@@ -1107,6 +1107,7 @@ def _ensure_worldline_store(agent, ga_root, workspace):
         return store
     store = RewindStore(str(_worldline_root(ga_root)), cwd)
     agent._admin_worldline_store = store
+    agent._admin_worldline_baseline = _worldline_git_fingerprint(cwd)
     _install_worldline_hook()
     return store
 
@@ -1118,6 +1119,124 @@ _WORLDLINE_PROJECT_MODE_BLOCK_RE = re.compile(
 
 def _strip_worldline_project_mode(text):
     return _WORLDLINE_PROJECT_MODE_BLOCK_RE.sub('', text or '')
+
+
+def _worldline_git_fingerprint(cwd):
+    """Best-effort `git status --porcelain` snapshot: {abs_posix_path: status}.
+
+    Returns None when cwd is not inside a git repo (detection disabled)."""
+    try:
+        import subprocess
+        top = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--show-toplevel'],
+                             capture_output=True, timeout=5)
+        if top.returncode != 0:
+            return None
+        repo_root = top.stdout.decode('utf-8', 'replace').strip()
+        if not repo_root:
+            return None
+        st = subprocess.run(['git', '-C', str(cwd), 'status', '--porcelain'],
+                            capture_output=True, timeout=10)
+        if st.returncode != 0:
+            return None
+        snapshot = {}
+        for line in st.stdout.decode('utf-8', 'replace').splitlines():
+            if len(line) < 4:
+                continue
+            status, path = line[:2], line[3:]
+            if ' -> ' in path:
+                path = path.split(' -> ', 1)[1]
+            path = path.strip()
+            if len(path) >= 2 and path[0] == '"' and path[-1] == '"':
+                path = path[1:-1]
+            if not path or '__pycache__' in path or path.endswith('.pyc'):
+                continue
+            ap = os.path.realpath(os.path.join(repo_root, path))
+            snapshot[ap.replace(os.sep, '/')] = status
+        return snapshot
+    except Exception:
+        return None
+
+
+_WORLDLINE_DIRTY_NODE_LIMIT = 500
+_WORLDLINE_DIRTY_FILE_LIMIT = 50
+
+
+def _worldline_dirty_path(store):
+    return os.path.join(str(store.root), 'admin_dirty.json')
+
+
+def _load_worldline_dirty(store):
+    try:
+        with open(_worldline_dirty_path(store), 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    clean = {}
+    for node_id, files in data.items():
+        if not isinstance(node_id, str) or not node_id or not isinstance(files, list):
+            continue
+        keep = [str(f)[:512] for f in files if isinstance(f, str) and f][:_WORLDLINE_DIRTY_FILE_LIMIT]
+        if keep:
+            clean[node_id] = keep
+    return clean
+
+
+def _record_worldline_dirty(store, node_id, files):
+    if not node_id or not files:
+        return
+    data = _load_worldline_dirty(store)
+    data[str(node_id)] = sorted(set(str(f)[:512] for f in files))[:_WORLDLINE_DIRTY_FILE_LIMIT]
+    while len(data) > _WORLDLINE_DIRTY_NODE_LIMIT:
+        data.pop(next(iter(data)))
+    path = _worldline_dirty_path(store)
+    tmp = path + '.tmp'
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _update_worldline_dirty_after_commit(agent, store, node_id, touched):
+    """Flag snapshot-bypassing edits (code_run / external tools) on the new node.
+
+    Compares git working-tree fingerprints taken at consecutive commits; any
+    file that changed but was never routed through the RewindStore is recorded
+    so the UI can warn that restoring this worldline will not revert it."""
+    try:
+        baseline = getattr(agent, '_admin_worldline_baseline', None)
+        current = _worldline_git_fingerprint(store.cwd)
+        agent._admin_worldline_baseline = current
+        if node_id is None or current is None or baseline is None:
+            return
+        changed = set()
+        for path, status in current.items():
+            if baseline.get(path) != status:
+                changed.add(path)
+        for path in baseline:
+            if path not in current:
+                changed.add(path)
+        if not changed:
+            return
+        touched_abs = set()
+        for rel in touched:
+            try:
+                touched_abs.add(os.path.realpath(store._abs(rel)).replace(os.sep, '/'))
+            except Exception:
+                continue
+        bypass = sorted(changed - touched_abs)
+        if not bypass:
+            return
+        cwd_posix = os.path.realpath(store.cwd).replace(os.sep, '/')
+        prefix = cwd_posix.lower() + '/'
+        display = [p[len(prefix):] if p.lower().startswith(prefix) else p for p in bypass]
+        _record_worldline_dirty(store, node_id, display)
+    except Exception:
+        pass
 
 
 def _worldline_title(store, history, fallback):
@@ -1145,11 +1264,14 @@ def _commit_worldline(agent, prompt):
     state = _snapshot_ga_state(agent)
     working = state.get('working') if isinstance(state, dict) else {}
     key_info = working.get('key_info') if isinstance(working, dict) else None
-    return store.commit(
+    touched = set(store._touched)  # commit() clears it; keep a copy for dirty detection
+    node_id = store.commit(
         _worldline_title(store, history, prompt), history=history,
         hist_info=state.get('history_info') if isinstance(state, dict) else None,
         key_info=key_info if isinstance(key_info, str) else None,
     )
+    _update_worldline_dirty_after_commit(agent, store, node_id, touched)
+    return node_id
 
 
 _WORLDLINE_SID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
@@ -1385,6 +1507,16 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
         if parent_id in public_children and node_id not in public_children[parent_id]:
             public_children[parent_id].append(node_id)
 
+    dirty = {}
+    for physical_id, files in _load_worldline_dirty(store).items():
+        target = folded.get(physical_id, physical_id)
+        if target not in tree.nodes:
+            continue
+        bucket = dirty.setdefault(target, [])
+        for name in files:
+            if name not in bucket and len(bucket) < _WORLDLINE_DIRTY_FILE_LIMIT:
+                bucket.append(name)
+
     logical_head = folded.get(store.head, store.head)
 
     def public_path(node_id):
@@ -1439,6 +1571,8 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
             'mapping_status': 'mapped' if binding is not None else 'unmapped',
             'user_message_id': binding.get('user_message_id') if binding else None,
             'assistant_message_id': binding.get('assistant_message_id') if binding else None,
+            'untracked_changes': bool(dirty.get(node_id)),
+            'untracked_files': list(dirty.get(node_id) or []),
         })
     return {
         'schema_version': _WORLDLINE_PUBLIC_SCHEMA,

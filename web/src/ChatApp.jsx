@@ -2301,7 +2301,7 @@ export const ChatMessage = memo(function ChatMessage({
   )
 })
 
-function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefresh, onSwitch }) {
+export function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefresh, onSwitch }) {
   const rows = useMemo(() => buildWorldlineRows(state?.nodes, state?.current_path), [state])
   const branchCount = rows.filter(row => !row.onPath).length
   const unavailable = !state || state.available === false
@@ -2322,7 +2322,10 @@ function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefr
             <span className="oa-worldline-dot" aria-hidden="true"/>
             <div className="oa-worldline-info">
               <b title={row.node.title || row.node.id}>{row.node.title || `节点 ${String(row.node.id).slice(0, 8)}`}</b>
-              <span>{row.node.mapping_status && row.node.mapping_status !== 'mapped' ? '无消息映射 · ' : ''}{row.node.created_at ? fmtDate(row.node.created_at) : ''}</span>
+              <span>
+                {row.node.untracked_changes && <em className="oa-worldline-untracked" title={`存在世界线外的文件改动，切换分支不会还原这些文件：\n${(row.node.untracked_files || []).join('\n') || '未知文件'}`}>外部改动</em>}
+                {row.node.untracked_changes ? ' · ' : ''}{row.node.mapping_status && row.node.mapping_status !== 'mapped' ? '无消息映射 · ' : ''}{row.node.created_at ? fmtDate(row.node.created_at) : ''}
+              </span>
             </div>
             {row.isCurrent
               ? <em className="oa-worldline-current">当前</em>

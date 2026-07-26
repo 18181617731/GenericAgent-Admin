@@ -25,6 +25,8 @@ type chatWorldlineNode struct {
 	MappingStatus      string   `json:"mapping_status"`
 	UserMessageID      *string  `json:"user_message_id"`
 	AssistantMessageID *string  `json:"assistant_message_id"`
+	UntrackedChanges   bool     `json:"untracked_changes"`
+	UntrackedFiles     []string `json:"untracked_files"`
 }
 
 type chatWorldlineTree struct {
@@ -59,6 +61,8 @@ type chatWorldlinePublicNode struct {
 	MappingStatus      string   `json:"mapping_status"`
 	UserMessageID      *string  `json:"user_message_id"`
 	AssistantMessageID *string  `json:"assistant_message_id"`
+	UntrackedChanges   bool     `json:"untracked_changes"`
+	UntrackedFiles     []string `json:"untracked_files"`
 }
 
 type chatWorldlineVersionGroup struct {
@@ -131,7 +135,9 @@ func publicWorldline(resp chatWorldlineResponse) chatWorldlinePublic {
 		out.Nodes = append(out.Nodes, chatWorldlinePublicNode{ID: node.ID, ParentID: node.ParentID,
 			Children: append([]string{}, node.Children...), Depth: node.Depth, Ordinal: node.Ordinal,
 			Title: node.Title, CreatedAt: node.CreatedAt, MappingStatus: node.MappingStatus,
-			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID})
+			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID,
+			UntrackedChanges: node.UntrackedChanges,
+			UntrackedFiles:   append([]string{}, node.UntrackedFiles...)})
 		if node.MappingStatus == "mapped" && node.UserMessageID != nil && node.AssistantMessageID != nil {
 			parent := ""
 			if node.ParentID != nil {
