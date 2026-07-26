@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -8,9 +9,31 @@ from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
-GA_ROOT = Path(__file__).resolve().parents[4]
-if str(GA_ROOT) not in sys.path:
+
+
+def _find_ga_root():
+    """Locate the GA repo (contains frontends/worldline.py).
+
+    Order: GA_ROOT env var -> ancestors of this file (nested checkout layout).
+    Returns None when not found; tests then rely on PYTHONPATH already
+    exposing `frontends`.
+    """
+    env = os.environ.get('GA_ROOT')
+    if env and (Path(env) / 'frontends' / 'worldline.py').is_file():
+        return Path(env)
+    for parent in Path(__file__).resolve().parents:
+        if (parent / 'frontends' / 'worldline.py').is_file():
+            return parent
+    return None
+
+
+GA_ROOT = _find_ga_root()
+if GA_ROOT and str(GA_ROOT) not in sys.path:
     sys.path.insert(0, str(GA_ROOT))
+if importlib.util.find_spec('frontends') is None:
+    raise unittest.SkipTest(
+        'frontends package not importable; set GA_ROOT env var to the GenericAgent repo root'
+    )
 WORKER_PATH = Path(__file__).with_name('chat_worker.py')
 SPEC = importlib.util.spec_from_file_location('ga_admin_chat_worker_worldline_tested', WORKER_PATH)
 worker = importlib.util.module_from_spec(SPEC)
