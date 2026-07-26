@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -1218,23 +1219,316 @@ function AskUserPanel({ call, onReply }) {
   </div>
 }
 
+// Re-escape literal control chars inside JSON strings (backend sometimes pretty-prints with real newlines)
+function reescapeControlChars(text) {
+  const MAP = { '\n': '\\n', '\r': '\\r', '\t': '\\t' }
+  const out = []
+  let inStr = false, esc = false
+  for (const ch of text) {
+    if (!inStr) {
+      if (ch === '"') inStr = true
+      out.push(ch)
+      continue
+    }
+    if (esc) {
+      out.push(MAP[ch] || ch)
+      esc = false
+      continue
+    }
+    if (ch === '\\') {
+      out.push(ch)
+      esc = true
+      continue
+    }
+    if (ch === '"') {
+      out.push(ch)
+      inStr = false
+      continue
+    }
+    out.push(MAP[ch] || ch)
+  }
+  return out.join('')
+}
+
+// Parse file_write/file_patch tool arguments
+function parseFileToolArgs(toolName, argsText) {
+  const isFileWrite = /file_write$/i.test(toolName)
+  const isFilePatch = /file_patch$/i.test(toolName)
+  if (!isFileWrite && !isFilePatch) return null
+  
+  let parsed = null
+  try {
+    parsed = JSON.parse(argsText || '{}')
+  } catch (e) {
+    // Retry with control-char escaping for malformed pretty-printed JSON
+    try {
+      parsed = JSON.parse(reescapeControlChars(argsText || '{}'))
+    } catch (e2) {
+      // Final fallback: XML-style parameter tags
+      const pathMatch = argsText?.match(/<parameter name="path">([^<]+)<\/antml:parameter>/i)
+      const contentMatch = argsText?.match(/<parameter name="content">([^]*?)<\/antml:parameter>/i)
+      const oldMatch = argsText?.match(/<parameter name="old_content">([^]*?)<\/antml:parameter>/i)
+      const newMatch = argsText?.match(/<parameter name="new_content">([^]*?)<\/antml:parameter>/i)
+      const modeMatch = argsText?.match(/<parameter name="mode">([^<]+)<\/antml:parameter>/i)
+      
+      if (isFileWrite && pathMatch) {
+        return {
+          type: 'file_write',
+          path: pathMatch[1],
+          content: contentMatch?.[1] || '',
+          mode: modeMatch?.[1] || 'overwrite'
+        }
+      }
+      if (isFilePatch && pathMatch) {
+        return {
+          type: 'file_patch',
+          path: pathMatch[1],
+          old_content: oldMatch?.[1] || '',
+          new_content: newMatch?.[1] || ''
+        }
+      }
+      return null
+    }
+  }
+  
+  if (isFileWrite && parsed?.path) {
+    return {
+      type: 'file_write',
+      path: parsed.path,
+      content: parsed.content || '',
+      mode: parsed.mode || 'overwrite'
+    }
+  }
+  if (isFilePatch && parsed?.path) {
+    return {
+      type: 'file_patch',
+      path: parsed.path,
+      old_content: parsed.old_content || '',
+      new_content: parsed.new_content || ''
+    }
+  }
+  return null
+}
+
+// Unified diff rows: line numbers + -/+ gutter, collapsed context
+function DiffRows({ rows }) {
+  return <div className="oa-diff" role="table" aria-label="文件改动逐行对照">
+    {rows.map((row, i) => {
+      if (row.type === 'gap') {
+        return <div className="oa-diff-row oa-diff-gap" key={`g${i}`} role="row">
+          <span className="oa-diff-no" aria-hidden="true">⋯</span>
+          <span className="oa-diff-sign" aria-hidden="true" />
+          <span className="oa-diff-text">{`未改动 ${row.count} 行`}</span>
+        </div>
+      }
+      const sign = row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '
+      return <div className={`oa-diff-row oa-diff-${row.type}`} key={i} role="row">
+        <span className="oa-diff-no">{row.type === 'add' ? row.newNo : row.oldNo}</span>
+        <span className="oa-diff-sign" aria-hidden="true">{sign}</span>
+        <span className="oa-diff-text">{row.text === '' ? '\u00a0' : row.text}</span>
+      </div>
+    })}
+  </div>
+}
+
+// Render file tool arguments in a structured way
+function FileToolArgsPanel({ toolName, args }) {
+  const fileArgs = parseFileToolArgs(toolName, args)
+  const [showContent, setShowContent] = useState(false)
+
+  const { type, path, content, old_content, new_content, mode } = fileArgs || {}
+  const diff = useMemo(() => {
+    if (!fileArgs) return null
+    return type === 'file_patch'
+      ? computeLineDiff(old_content, new_content, { context: 3 })
+      : computeWriteRows(content)
+  }, [fileArgs, type, old_content, new_content, content])
+
+  if (!fileArgs) {
+    return <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{args}</pre></div>
+  }
+
+  const { rows, added, removed, truncated } = diff
+  const changedTotal = added + removed
+
+  return <div className="oa-tool-args oa-file-tool-args">
+    <div className="oa-file-tool-header">
+      <span className="oa-file-tool-badge">
+        {type === 'file_write' ? '📝 写入文件' : '✏️ 修改文件'}
+      </span>
+      {mode && mode !== 'overwrite' && <span className="oa-file-tool-mode">{mode}</span>}
+      {changedTotal > 0 && (
+        <span className="oa-diff-stats">
+          {added > 0 && <span className="oa-diff-stats-add">{`+${added}`}</span>}
+          {removed > 0 && <span className="oa-diff-stats-del">{`-${removed}`}</span>}
+        </span>
+      )}
+    </div>
+
+    <FileAttachment path={path} />
+
+    {changedTotal === 0 && <div className="oa-file-tool-empty">无行级改动</div>}
+
+    {changedTotal > 0 && rows.length > 0 && (
+      <div className="oa-file-tool-content">
+        <button
+          type="button"
+          className="oa-file-tool-toggle"
+          onClick={() => setShowContent(v => !v)}
+          aria-expanded={showContent}
+        >
+          {showContent ? '收起改动' : `查看改动 (+${added} / -${removed})`}
+          <ChevronDown size={14} style={{ transform: showContent ? 'rotate(180deg)' : 'none' }} />
+        </button>
+        {showContent && (
+          <div className="oa-file-tool-preview">
+            {truncated && <div className="oa-diff-note">改动过大，已按块粗粒度对比</div>}
+            <DiffRows rows={rows} />
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+}
+
+const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
+  const fileOps = useMemo(() => {
+    const parts = normalizeToolParts(splitMarkdownParts(content))
+    const ops = []
+    for (const part of parts) {
+      if (part.type !== 'tool') continue
+      const call = part.call || {}
+      const parsed = parseFileToolArgs(call.name, call.args)
+      if (parsed && parsed.path) {
+        // 计算改动统计
+        let added = 0, removed = 0, summary = ''
+        
+        if (parsed.type === 'file_patch') {
+          const oldLines = (parsed.old_content || '').split('\n')
+          const newLines = (parsed.new_content || '').split('\n')
+          added = newLines.length
+          removed = oldLines.length
+          // 取 new_content 前30个字符作为摘要
+          summary = (parsed.new_content || '').trim().slice(0, 50).replace(/\n/g, ' ')
+        } else if (parsed.type === 'file_write') {
+          const lines = (parsed.content || '').split('\n')
+          added = lines.length
+          // 取 content 前30个字符作为摘要
+          summary = (parsed.content || '').trim().slice(0, 50).replace(/\n/g, ' ')
+        }
+        
+        ops.push({ 
+          type: parsed.type, 
+          path: parsed.path,
+          added,
+          removed,
+          summary: summary ? summary + (summary.length >= 50 ? '...' : '') : '',
+          // Store full content for expandable diff
+          old_content: parsed.old_content || '',
+          new_content: parsed.new_content || '',
+          content: parsed.content || ''
+        })
+      }
+    }
+    // 去重（同一文件多次操作只保留最后一次）
+    const pathMap = new Map()
+    for (const op of ops) {
+      pathMap.set(op.path, op)
+    }
+    return Array.from(pathMap.values())
+  }, [content])
+
+  const [expandedPaths, setExpandedPaths] = useState(new Set())
+
+  const toggleExpand = useCallback((fp) => {
+    setExpandedPaths(prev => {
+      const next = new Set(prev)
+      if (next.has(fp)) next.delete(fp)
+      else next.add(fp)
+      return next
+    })
+  }, [])
+
+  if (fileOps.length === 0) return null
+
+  return (
+    <div className="oa-file-summary">
+      <div className="oa-file-summary-header">
+        <FileText size={13} />
+        <span>文件改动 · {fileOps.length}</span>
+      </div>
+      <div className="oa-file-summary-list">
+        {fileOps.map((op, i) => {
+          const filename = op.path.split(/[/\\]/).pop() || op.path
+          const isPatch = op.type === 'file_patch'
+          const expanded = expandedPaths.has(op.path)
+          // Compute diff rows on demand
+          const diffResult = expanded
+            ? (isPatch
+                ? computeLineDiff(op.old_content, op.new_content, { context: 3 })
+                : computeWriteRows(op.content))
+            : null
+          return (
+            <div key={i}>
+              <div
+                className={'oa-file-summary-item' + (expanded ? ' expanded' : '')}
+                onClick={() => toggleExpand(op.path)}
+                title={op.path}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => { if (e.key === 'Enter') toggleExpand(op.path) }}
+              >
+                <ChevronDown size={11} className={'oa-file-chevron' + (expanded ? ' open' : '')} />
+                <span className="oa-file-name">{filename}</span>
+                <span className="oa-file-stats">
+                  {isPatch && op.removed > 0 && <span className="stat-removed">-{op.removed}</span>}
+                  {op.added > 0 && <span className="stat-added">+{op.added}</span>}
+                </span>
+                {op.summary && !expanded && <span className="oa-file-preview">{op.summary}</span>}
+              </div>
+              {expanded && diffResult && (
+                <div className="oa-file-summary-diff">
+                  <DiffRows rows={diffResult.rows} />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+})
+
 function ToolCallBlock({ call, onAskReply }) {
   const toolName = String(call.name || 'unknown').trim()
   const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
+  const isFileTool = /file_(write|patch)$/i.test(toolName)
   const [open, setOpen] = useState(isAskUser)
   const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
   const askPayload = isAskUser ? getAskUserPayload(call) : null
   const askSummary = askPayload?.question || '等待用户确认'
-  return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${open ? 'open' : 'collapsed'}`}>
+  
+  // Extract file path for file tools to show in header
+  const fileArgs = isFileTool ? parseFileToolArgs(toolName, call.args) : null
+  const fileName = fileArgs?.path?.split(/[\\/]/).filter(Boolean).pop()
+  
+  return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${isFileTool ? 'oa-tool-file' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-      <span className="oa-tool-icon">{isAskUser ? '❓' : '🛠️'}</span><span>{isAskUser ? 'Ask user' : 'Tool'}</span><b>{toolName}</b>
+      <span className="oa-tool-icon">{isAskUser ? '❓' : isFileTool ? '📁' : '🛠️'}</span>
+      <span>{isAskUser ? 'Ask user' : 'Tool'}</span>
+      <b>{toolName}</b>
+      {fileName && <em className="oa-tool-file-name">{fileName}</em>}
       {isAskUser && <strong className="oa-ask-headline">{askSummary}</strong>}
       {resultStatus && <em>{resultStatus}</em>}
       {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? `${askPayload.candidates.length} 个选项` : '等待回复'}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
     </button>
     {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} /> : <>
-      {call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>}
+      {isFileTool ? (
+        <FileToolArgsPanel toolName={toolName} args={call.args} />
+      ) : (
+        call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>
+      )}
       {call.result && <div className="oa-tool-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
     </>)}
   </div>
@@ -1651,6 +1945,7 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
       {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
       {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state)}
     </div>}
+    <FileSummaryCard content={content} />
   </div>
 })
 
