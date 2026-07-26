@@ -12,6 +12,7 @@ import {
   ListOrdered,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
   UploadCloud,
   X,
@@ -662,6 +663,9 @@ export function Models({
   modelPreview,
   modelSaveStatus = {},
   importLoading = false,
+  titleModel = null,
+  titleModelSaving = false,
+  onSaveTitleModel,
   riskCatalog,
   riskCatalogError,
   revealedKeys = {},
@@ -681,6 +685,7 @@ export function Models({
   const [providerHoldIndex, setProviderHoldIndex] = useState(null)
   const [providerDrag, setProviderDrag] = useState(null)
   const [providerOrderError, setProviderOrderError] = useState('')
+  const [titleModelDraft, setTitleModelDraft] = useState('')
   const providerNavRef = useRef(null)
   const providerInteractionRef = useRef(null)
   const providerHoldTimerRef = useRef(null)
@@ -917,6 +922,33 @@ export function Models({
   }, [])
 
   const persistedOrderCount = orderedModelRows(persistedProfiles).length
+  const titleModelRows = orderedModelRows(persistedProfiles)
+  const titleModelKey = value => value
+    ? JSON.stringify([String(value.provider_var_name || ''), String(value.model || '')])
+    : ''
+  const titleModelOptions = [
+    { value: '', label: t.titleModelFollowConversation },
+    ...titleModelRows.map((row, llmNo) => ({
+      value: titleModelKey({ provider_var_name: row.providerVarName, model: row.model }),
+      label: `${row.model} · ${providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
+    })),
+  ]
+  useEffect(() => {
+    setTitleModelDraft(titleModelKey(titleModel))
+  }, [titleModel?.provider_var_name, titleModel?.model])
+  const saveTitleModel = async () => {
+    if (!onSaveTitleModel) return
+    const rowIndex = titleModelRows.findIndex(row => titleModelKey({
+      provider_var_name: row.providerVarName,
+      model: row.model,
+    }) === titleModelDraft)
+    const selected = rowIndex < 0 ? null : {
+      provider_var_name: titleModelRows[rowIndex].providerVarName,
+      model: titleModelRows[rowIndex].model,
+      llm_no: rowIndex,
+    }
+    await onSaveTitleModel(selected)
+  }
   const openModelOrder = () => {
     setOrderRows(orderedModelRows(persistedProfiles))
     setOrderError('')
@@ -1016,6 +1048,35 @@ export function Models({
         </div>
         <div className="model-summary-source"><FileCode2 size={13} /><span>配置来源</span><code>mykey.py</code></div>
       </div>
+
+      <section className="model-title-routing" aria-labelledby="model-title-routing-title">
+        <div className="model-title-routing-copy">
+          <span className="model-title-routing-icon"><Sparkles size={17} /></span>
+          <span>
+            <strong id="model-title-routing-title">{t.titleModel}</strong>
+            <small>{t.titleModelHelp}</small>
+          </span>
+        </div>
+        <div className="model-title-routing-control">
+          <Select
+            aria-label={t.titleModel}
+            value={titleModelDraft}
+            onChange={setTitleModelDraft}
+            options={titleModelOptions}
+            disabled={titleModelSaving}
+            popupMatchSelectWidth={false}
+          />
+          <Button
+            type="primary"
+            icon={<Sparkles size={14} />}
+            onClick={saveTitleModel}
+            loading={titleModelSaving}
+            disabled={!onSaveTitleModel || titleModelSaving || titleModelDraft === titleModelKey(titleModel)}
+          >
+            {t.saveTitleModel}
+          </Button>
+        </div>
+      </section>
 
       {hasErrors && <Alert type="error" showIcon message="存在不能保存的服务商，请在目录中选择异常项并修复。" className="model-page-alert" />}
 

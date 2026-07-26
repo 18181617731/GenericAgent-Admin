@@ -1603,12 +1603,23 @@ Return only the title with no quotes, punctuation, markdown, prefix, or explanat
 def _chat_title_prompt(conversation):
     if not isinstance(conversation, dict):
         conversation = {}
-    payload = {
-        'user': str(conversation.get('user') or '')[:8000],
-        'assistant': str(conversation.get('assistant') or '')[:16000],
-    }
+    messages = []
+    for message in conversation.get('messages') or []:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get('role') or '').strip()
+        content = str(message.get('content') or '').strip()
+        if role not in ('user', 'assistant') or not content:
+            continue
+        messages.append({'role': role, 'content': content[:16000]})
+    if not messages:
+        for role in ('user', 'assistant'):
+            content = str(conversation.get(role) or '').strip()
+            if content:
+                messages.append({'role': role, 'content': content[:16000]})
+    payload = {'messages': messages[:6]}
     return (
-        "Create a title for this completed first conversation turn.\n"
+        "Create a title that summarizes this conversation.\n"
         "<conversation_json>\n"
         + json.dumps(payload, ensure_ascii=False)
         + "\n</conversation_json>"

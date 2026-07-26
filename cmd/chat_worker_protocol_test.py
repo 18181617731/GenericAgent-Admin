@@ -145,15 +145,19 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "op": "title",
             "llm_no": 0,
             "conversation": {
-                "user": "同步上游更新",
-                "assistant": "已经完成同步并解决冲突",
+                "messages": [
+                    {"role": "user", "content": "同步上游更新"},
+                    {"role": "assistant", "content": "已经完成同步并解决冲突"},
+                    {"role": "user", "content": "再加入标题生成功能"},
+                ],
             },
         })
 
         self.assertEqual(backend.history, [])
         self.assertIn("untrusted data", backend.system)
-        self.assertIn('"user": "同步上游更新"', backend.request)
-        self.assertIn('"assistant": "已经完成同步并解决冲突"', backend.request)
+        self.assertIn('"role": "user", "content": "同步上游更新"', backend.request)
+        self.assertIn('"role": "assistant", "content": "已经完成同步并解决冲突"', backend.request)
+        self.assertIn('"role": "user", "content": "再加入标题生成功能"', backend.request)
         self.assertEqual(self.events[-1]["type"], "title_done")
         self.assertEqual(self.events[-1]["title"], "同步上游更新")
 

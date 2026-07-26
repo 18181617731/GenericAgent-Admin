@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -155,6 +156,24 @@ type chatTitleExchange struct {
 	UserMessageID      string `json:"-"`
 	AssistantMessageID string `json:"-"`
 }
+
+type chatTitleContextMessage struct {
+	Role        string `json:"role"`
+	Content     string `json:"content"`
+	SourceIndex int    `json:"-"`
+}
+
+type chatTitleContext struct {
+	Messages []chatTitleContextMessage `json:"messages"`
+}
+
+var (
+	errChatTitleBusy      = errors.New("chat title generation is already running")
+	errChatTitleNoContext = errors.New("chat has no usable messages for title generation")
+	errChatTitleChanged   = errors.New("chat changed while the title was being generated")
+	errChatTitleEmpty     = errors.New("title model returned an empty title")
+	errChatTitleRunActive = errors.New("cannot generate a title while the chat is running")
+)
 
 type chatRun struct {
 	SID                string
@@ -1961,33 +1980,103 @@ func chatTitleExchangeStillExists(cs chatSession, exchange chatTitleExchange) bo
 	return userFound && assistantFound
 }
 
+func chatTitleContextForSession(cs chatSession) (chatTitleContext, bool) {
+	messages := make([]chatTitleContextMessage, 0, 6)
+	hasUser := false
+	for index, msg := range cs.Messages {
+		if msg.Kind == "btw" || msg.Error || (msg.Role != "user" && msg.Role != "assistant") {
+			continue
+		}
+		content := chatTitleVisibleContent(msg.Content)
+		if msg.Role == "user" {
+			content = chatTitleUserContent(msg)
+			hasUser = hasUser || content != ""
+		}
+		if content == "" {
+			continue
+		}
+		limit := 4000
+		if msg.Role == "user" {
+			limit = 2000
+		}
+		messages = append(messages, chatTitleContextMessage{
+			Role:        msg.Role,
+			Content:     truncateChatRunes(content, limit),
+			SourceIndex: index,
+		})
+	}
+	if !hasUser || len(messages) == 0 {
+		return chatTitleContext{}, false
+	}
+	if len(messages) > 6 {
+		messages = append([]chatTitleContextMessage{messages[0]}, messages[len(messages)-5:]...)
+	}
+	return chatTitleContext{Messages: messages}, true
+}
+
+func chatTitleContextStillExists(cs chatSession, context chatTitleContext) bool {
+	for _, expected := range context.Messages {
+		if expected.SourceIndex < 0 || expected.SourceIndex >= len(cs.Messages) {
+			return false
+		}
+		msg := cs.Messages[expected.SourceIndex]
+		content := chatTitleVisibleContent(msg.Content)
+		if expected.Role == "user" {
+			content = chatTitleUserContent(msg)
+		}
+		limit := 4000
+		if expected.Role == "user" {
+			limit = 2000
+		}
+		if msg.Role != expected.Role || msg.Error || truncateChatRunes(content, limit) != expected.Content {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) chatTitleLLMNo(fallback int) int {
+	if selected := s.CfgStore.Cfg.ChatTitleModel; selected != nil && selected.LLMNo >= 0 {
+		return selected.LLMNo
+	}
+	return fallback
+}
+
+func (s *Server) beginChatTitleJob(sid string) bool {
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	if s.ChatTitleJobs == nil {
+		s.ChatTitleJobs = map[string]bool{}
+	}
+	if s.ChatTitleJobs[sid] {
+		return false
+	}
+	s.ChatTitleJobs[sid] = true
+	return true
+}
+
+func (s *Server) finishChatTitleJob(sid string) {
+	s.ChatMu.Lock()
+	delete(s.ChatTitleJobs, sid)
+	s.ChatMu.Unlock()
+}
+
 func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 	exchange, ok := chatTitleExchangeForGeneration(cs)
 	if !ok {
 		return
 	}
 	sid = safeChatID(sid)
-	s.ChatMu.Lock()
-	if s.ChatTitleJobs == nil {
-		s.ChatTitleJobs = map[string]bool{}
-	}
-	if s.ChatTitleJobs[sid] {
-		s.ChatMu.Unlock()
+	if !s.beginChatTitleJob(sid) {
 		return
 	}
-	s.ChatTitleJobs[sid] = true
-	s.ChatMu.Unlock()
 
 	go func() {
-		defer func() {
-			s.ChatMu.Lock()
-			delete(s.ChatTitleJobs, sid)
-			s.ChatMu.Unlock()
-		}()
+		defer s.finishChatTitleJob(sid)
 		title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
 			"op":           "title",
 			"conversation": exchange,
-			"llm_no":       cs.Settings.LLMNo,
+			"llm_no":       s.chatTitleLLMNo(cs.Settings.LLMNo),
 			"ga_root":      s.CfgStore.Cfg.GARoot,
 		})
 		if err != nil {
@@ -2018,6 +2107,60 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 			fmt.Fprintf(os.Stderr, "chat title persistence failed for %s: %v\n", sid, err)
 		}
 	}()
+}
+
+func (s *Server) generateChatTitle(sid string) (chatSession, error) {
+	sid = safeChatID(sid)
+	if s.chatRunActive(sid) {
+		return chatSession{}, errChatTitleRunActive
+	}
+	if !s.beginChatTitleJob(sid) {
+		return chatSession{}, errChatTitleBusy
+	}
+	defer s.finishChatTitleJob(sid)
+
+	s.SessionMu.Lock()
+	start, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		s.SessionMu.Unlock()
+		return chatSession{}, err
+	}
+	context, ok := chatTitleContextForSession(start)
+	startTitle, startTitleSource := start.Title, start.TitleSource
+	s.SessionMu.Unlock()
+	if !ok {
+		return chatSession{}, errChatTitleNoContext
+	}
+
+	title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
+		"op":           "title",
+		"conversation": context,
+		"llm_no":       s.chatTitleLLMNo(start.Settings.LLMNo),
+		"ga_root":      s.CfgStore.Cfg.GARoot,
+	})
+	if err != nil {
+		return chatSession{}, err
+	}
+	title = sanitizeGeneratedChatTitle(title)
+	if title == "" {
+		return chatSession{}, errChatTitleEmpty
+	}
+
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	latest, err := loadChatSession(s.CfgStore.Cfg, sid)
+	if err != nil {
+		return chatSession{}, err
+	}
+	if latest.Title != startTitle || latest.TitleSource != startTitleSource || !chatTitleContextStillExists(latest, context) {
+		return chatSession{}, errChatTitleChanged
+	}
+	latest.Title = title
+	latest.TitleSource = chatTitleSourceGenerated
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, latest); err != nil {
+		return chatSession{}, err
+	}
+	return latest, nil
 }
 
 func saveChatUploads(cfg config.AppConfig, files []chatUpload) (saved []map[string]interface{}, refs []string, err error) {

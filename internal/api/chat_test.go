@@ -81,6 +81,58 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 	}
 }
 
+func TestChatGenerateTitleForExistingSessionUsesConfiguredModel(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{
+		ProviderVarName: "native_oai_config2",
+		Model:           "title-model",
+		LLMNo:           7,
+	}
+	cs := chatSession{
+		ID:       "legacy-title",
+		Title:    "完全根据第一句话生成的旧标题",
+		Settings: chatSettings{LLMNo: 2},
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "同步上游更新", CreatedAt: 1},
+			{ID: "a1", Role: "assistant", Content: "已经解决冲突", CreatedAt: 2},
+			{ID: "u2", Role: "user", Content: "再添加对话标题功能", CreatedAt: 3},
+			{ID: "a2", Role: "assistant", Content: "会使用独立模型生成", CreatedAt: 4},
+		},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
+		t.Fatal(err)
+	}
+
+	old := runOneShotChatTitleWorkerFunc
+	defer func() { runOneShotChatTitleWorkerFunc = old }()
+	runOneShotChatTitleWorkerFunc = func(_ config.AppConfig, sid string, req map[string]interface{}) (string, error) {
+		if sid != cs.ID || req["llm_no"] != 7 {
+			t.Fatalf("unexpected title request sid=%q req=%#v", sid, req)
+		}
+		context, ok := req["conversation"].(chatTitleContext)
+		if !ok || len(context.Messages) != 4 {
+			t.Fatalf("conversation=%#v, want four-message title context", req["conversation"])
+		}
+		return "上游同步与独立标题模型", nil
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/title/"+cs.ID, strings.NewReader(`{}`))
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got chatSession
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "上游同步与独立标题模型" || got.TitleSource != chatTitleSourceGenerated {
+		t.Fatalf("generated legacy title not persisted: %#v", got)
+	}
+}
+
 func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)

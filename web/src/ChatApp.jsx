@@ -12,7 +12,7 @@ import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TE
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
-import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { deleteChatSessions, generateChatSessionTitles, normalizeSessionIds } from './lib/chatSessionManagement'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -2316,6 +2316,7 @@ export default function ChatApp() {
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
   const [selectedSessionIds, setSelectedSessionIds] = useState([])
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [batchGeneratingTitles, setBatchGeneratingTitles] = useState(false)
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
@@ -2897,24 +2898,68 @@ export default function ChatApp() {
   }
 
   const closeSessionManager = () => {
-    if (batchDeleting) return
+    if (batchDeleting || batchGeneratingTitles) return
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
   }
 
   const toggleSessionSelection = (id) => {
-    if (!id || batchDeleting) return
+    if (!id || batchDeleting || batchGeneratingTitles) return
     setSelectedSessionIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id])
   }
 
   const toggleAllSessions = () => {
-    if (batchDeleting) return
+    if (batchDeleting || batchGeneratingTitles) return
     setSelectedSessionIds(ids => {
       const selected = new Set(ids)
       return sessions.length > 0 && sessions.every(session => selected.has(session.id))
         ? []
         : sessions.map(session => session.id)
     })
+  }
+
+  const selectLegacyTitleSessions = () => {
+    if (batchDeleting || batchGeneratingTitles) return
+    setSelectedSessionIds(sessions
+      .filter(session => !session.running && !['generated', 'manual'].includes(session.title_source))
+      .map(session => session.id))
+  }
+
+  const generateSelectedSessionTitles = async () => {
+    if (batchDeleting || batchGeneratingTitles) return
+    const available = new Set(sessions.filter(session => !session.running).map(session => session.id))
+    const ids = normalizeSessionIds(selectedSessionIds).filter(id => available.has(id))
+    if (!ids.length) return
+
+    setBatchGeneratingTitles(true)
+    setErr('')
+    setNotice('')
+    try {
+      const result = await generateChatSessionTitles(
+        ids,
+        id => api(`/api/chat/title/${encodeURIComponent(id)}`, { method: 'POST', body: '{}' }),
+        2,
+      )
+      const generatedByID = new Map(result.generated.map(item => [item.id, item.session]))
+      setSessions(current => current.map(session => {
+        const generated = generatedByID.get(session.id)
+        return generated ? { ...session, title: generated.title, title_source: generated.title_source } : session
+      }))
+      setSelectedSessionIds(result.failedIds)
+      if (result.failedIds.length) {
+        setErr(ct(
+          `已生成 ${result.generatedIds.length} 个标题，${result.failedIds.length} 个失败`,
+          `${result.generatedIds.length} title(s) generated; ${result.failedIds.length} failed`,
+        ))
+      } else {
+        setNotice(ct(`已生成 ${result.generatedIds.length} 个对话标题`, `${result.generatedIds.length} chat title(s) generated`))
+      }
+      await loadSessions('', { open: true })
+    } catch (error) {
+      setErr(error.message)
+    } finally {
+      setBatchGeneratingTitles(false)
+    }
   }
 
   const deleteSelectedSessions = async () => {
@@ -3585,7 +3630,7 @@ export default function ChatApp() {
     if (!sessionManagerOpen) return
     const previousOverflow = document.body.style.overflow
     const onKey = (e) => {
-      if (e.key !== 'Escape' || batchDeleting) return
+      if (e.key !== 'Escape' || batchDeleting || batchGeneratingTitles) return
       setSessionManagerOpen(false)
       setSelectedSessionIds([])
     }
@@ -3595,7 +3640,7 @@ export default function ChatApp() {
       document.body.style.overflow = previousOverflow
       document.removeEventListener('keydown', onKey)
     }
-  }, [sessionManagerOpen, batchDeleting])
+  }, [sessionManagerOpen, batchDeleting, batchGeneratingTitles])
 
   const scrollToThreadEnd = (behavior = 'auto') => endRef.current?.scrollIntoView({ behavior, block:'end' })
   const resumeFollow = () => {
@@ -3945,27 +3990,31 @@ export default function ChatApp() {
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
         <header className="oa-session-manager-dialog-head">
-          <div>
-            <h2 id="oa-session-manager-dialog-title">管理历史会话</h2>
-            <p>选择不再需要的会话并批量删除</p>
+          <div className="oa-session-manager-dialog-heading">
+            <h2 id="oa-session-manager-dialog-title">{ct('管理历史会话', 'Manage session history')}</h2>
+            <p>{ct('为旧会话生成标题，或批量删除不再需要的会话', 'Generate titles for existing chats or batch-delete sessions you no longer need')}</p>
           </div>
-          <button className="oa-icon-btn" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label="关闭会话管理" autoFocus><X size={17}/></button>
+          <button className="oa-icon-btn oa-session-manager-dialog-close" type="button" onClick={closeSessionManager} disabled={batchDeleting || batchGeneratingTitles} aria-label={ct('关闭会话管理', 'Close session manager')} autoFocus><X size={17}/></button>
         </header>
-        <div className="oa-session-manager-toolbar">
-          <button className="oa-session-dialog-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting}>
+        <div className="oa-session-manager-dialog-tools">
+          <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting || batchGeneratingTitles}>
             <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && selectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
             <span>{allSessionsSelected ? '取消全选' : '全选'}</span>
           </button>
-          <span className="oa-session-dialog-count">已选 {selectedSessionCount} / {sessions.length}</span>
+          <button className="oa-session-dialog-select-legacy" type="button" onClick={selectLegacyTitleSessions} disabled={batchDeleting || batchGeneratingTitles || !sessions.some(session => !session.running && !['generated', 'manual'].includes(session.title_source))}>
+            <Sparkles size={13}/><span>{ct('选择旧标题', 'Select legacy titles')}</span>
+          </button>
+          <span className="oa-session-selected-count">{ct(`已选 ${selectedSessionCount} / ${sessions.length}`, `${selectedSessionCount} / ${sessions.length} selected`)}</span>
         </div>
         <div className="oa-session-manager-dialog-list">
           {sessions.map(s => {
             const selected = selectedSessionIdSet.has(s.id)
-            return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
+            const sourceLabel = s.title_source === 'generated' ? ct('AI', 'AI') : s.title_source === 'manual' ? ct('手动', 'Manual') : ct('旧标题', 'Legacy')
+            return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting || batchGeneratingTitles}>
               <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
               <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>当前</em>}</span>
-                <small><Clock3 size={12}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
+                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>{ct('当前', 'Current')}</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <span>{ct('运行中', 'Running')}</span>}</small>
               </span>
             </button>
           })}
@@ -3974,9 +4023,12 @@ export default function ChatApp() {
         <footer className="oa-session-manager-dialog-foot">
           <small>删除后无法恢复</small>
           <div>
-            <button className="oa-session-dialog-cancel" type="button" onClick={closeSessionManager} disabled={batchDeleting}>取消</button>
-            <button className="oa-session-dialog-delete" type="button" onClick={deleteSelectedSessions} disabled={!selectedSessionCount || batchDeleting}>
-              <Trash2 size={15}/><span>{batchDeleting ? '正在删除…' : `删除所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`}</span>
+            <button className="oa-session-dialog-cancel" type="button" onClick={closeSessionManager} disabled={batchDeleting || batchGeneratingTitles}>{ct('取消', 'Cancel')}</button>
+            <button className="oa-session-dialog-generate" type="button" onClick={generateSelectedSessionTitles} disabled={!selectedSessionCount || batchDeleting || batchGeneratingTitles}>
+              <Sparkles size={15}/><span>{batchGeneratingTitles ? ct('正在生成…', 'Generating…') : ct(`生成标题${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Generate titles${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span>
+            </button>
+            <button className="oa-session-dialog-delete" type="button" onClick={deleteSelectedSessions} disabled={!selectedSessionCount || batchDeleting || batchGeneratingTitles}>
+              <Trash2 size={15}/><span>{batchDeleting ? ct('正在删除…', 'Deleting…') : ct(`删除所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Delete selected${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span>
             </button>
           </div>
         </footer>
