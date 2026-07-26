@@ -2137,11 +2137,7 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 	}()
 }
 
-func (s *Server) generateChatTitle(sid string) (chatSession, error) {
-	return s.generateChatTitleWithMode(sid, false)
-}
-
-func (s *Server) generateChatTitleWithMode(sid string, automaticBackfill bool) (chatSession, error) {
+func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 	sid = safeChatID(sid)
 	if s.chatRunActive(sid) {
 		return chatSession{}, errChatTitleRunActive
@@ -2157,7 +2153,7 @@ func (s *Server) generateChatTitleWithMode(sid string, automaticBackfill bool) (
 		s.SessionMu.Unlock()
 		return chatSession{}, err
 	}
-	if automaticBackfill && !chatTitleNeedsAutomaticBackfill(start) {
+	if !chatTitleNeedsAutomaticBackfill(start) {
 		s.SessionMu.Unlock()
 		return chatSession{}, errChatTitleNotLegacy
 	}
@@ -2259,7 +2255,7 @@ func (s *Server) StartAutomaticChatTitleBackfill() bool {
 			go func() {
 				defer workers.Done()
 				for sid := range jobs {
-					if _, err := s.generateChatTitleWithMode(sid, true); err != nil &&
+					if _, err := s.generateLegacyChatTitle(sid); err != nil &&
 						!errors.Is(err, errChatTitleBusy) &&
 						!errors.Is(err, errChatTitleRunActive) &&
 						!errors.Is(err, errChatTitleNotLegacy) &&

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -78,11 +77,6 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatSaveSettings(w, r, parts[1])
 			return
 		}
-	case "title":
-		if len(parts) == 2 && r.Method == http.MethodPost {
-			s.chatGenerateTitle(w, r, parts[1])
-			return
-		}
 	case "fork":
 		if len(parts) == 2 && r.Method == http.MethodPost {
 			s.chatForkSession(w, r, parts[1])
@@ -133,24 +127,6 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	bad(w, 404, "not found")
-}
-
-func (s *Server) chatGenerateTitle(w http.ResponseWriter, _ *http.Request, sid string) {
-	cs, err := s.generateChatTitle(sid)
-	if err == nil {
-		writeJSON(w, chatSessionForClient(cs))
-		return
-	}
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		bad(w, http.StatusNotFound, "chat session not found")
-	case errors.Is(err, errChatTitleBusy), errors.Is(err, errChatTitleChanged), errors.Is(err, errChatTitleRunActive):
-		bad(w, http.StatusConflict, err.Error())
-	case errors.Is(err, errChatTitleNoContext), errors.Is(err, errChatTitleEmpty):
-		bad(w, http.StatusBadRequest, err.Error())
-	default:
-		bad(w, http.StatusBadGateway, err.Error())
-	}
 }
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {

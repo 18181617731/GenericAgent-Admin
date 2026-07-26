@@ -81,7 +81,7 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 	}
 }
 
-func TestChatGenerateTitleForExistingSessionUsesConfiguredModel(t *testing.T) {
+func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
 	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
@@ -92,7 +92,7 @@ func TestChatGenerateTitleForExistingSessionUsesConfiguredModel(t *testing.T) {
 	}
 	cs := chatSession{
 		ID:       "legacy-title",
-		Title:    "完全根据第一句话生成的旧标题",
+		Title:    "同步上游更新",
 		Settings: chatSettings{LLMNo: 2},
 		Messages: []chatMessage{
 			{ID: "u1", Role: "user", Content: "同步上游更新", CreatedAt: 1},
@@ -118,18 +118,22 @@ func TestChatGenerateTitleForExistingSessionUsesConfiguredModel(t *testing.T) {
 		return "上游同步与独立标题模型", nil
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/chat/title/"+cs.ID, strings.NewReader(`{}`))
-	s.Routes().ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
-	}
-	var got chatSession
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+	got, err := s.generateLegacyChatTitle(cs.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Title != "上游同步与独立标题模型" || got.TitleSource != chatTitleSourceGenerated {
 		t.Fatalf("generated legacy title not persisted: %#v", got)
+	}
+}
+
+func TestManualChatTitleGenerationEndpointIsNotExposed(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/title/legacy-title", strings.NewReader(`{}`))
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s, want 404", rr.Code, rr.Body.String())
 	}
 }
 
