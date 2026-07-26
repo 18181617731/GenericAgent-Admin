@@ -1441,6 +1441,7 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
   }, [content])
 
   const [expandedPaths, setExpandedPaths] = useState(new Set())
+  const [collapsed, setCollapsed] = useState(false)
 
   const toggleExpand = useCallback((fp) => {
     setExpandedPaths(prev => {
@@ -1455,10 +1456,18 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
 
   return (
     <div className="oa-file-summary">
-      <div className="oa-file-summary-header">
+      <div
+        className={'oa-file-summary-header clickable' + (collapsed ? ' collapsed' : '')}
+        onClick={() => setCollapsed(v => !v)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter') setCollapsed(v => !v) }}
+      >
         <FileText size={13} />
         <span>文件改动 · {fileOps.length}</span>
+        <ChevronDown size={12} className={'oa-file-summary-toggle' + (collapsed ? '' : ' open')} />
       </div>
+      {!collapsed && (
       <div className="oa-file-summary-list">
         {fileOps.map((op, i) => {
           const filename = op.path.split(/[/\\]/).pop() || op.path
@@ -1497,6 +1506,7 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
           )
         })}
       </div>
+      )}
     </div>
   )
 })

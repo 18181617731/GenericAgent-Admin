@@ -1562,6 +1562,11 @@ html[data-theme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255,255,.0
 .oa-file-summary{margin-top:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
 .oa-file-summary-header{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;font-weight:600;color:var(--muted)}
 .oa-file-summary-header svg{flex-shrink:0;opacity:.7}
+.oa-file-summary-header.clickable{cursor:pointer;user-select:none}
+.oa-file-summary-header.clickable:hover{color:var(--text)}
+.oa-file-summary-header.collapsed{margin-bottom:0}
+.oa-file-summary-toggle{margin-left:auto;transition:transform .2s ease}
+.oa-file-summary-toggle.open{transform:rotate(180deg)}
 .oa-file-summary-list{display:flex;flex-direction:column;gap:4px}
 .oa-file-summary-item{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border);transition:background .12s ease;cursor:pointer;user-select:none}
 .oa-file-summary-item:last-child{border-bottom:none}
