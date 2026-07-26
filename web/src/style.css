@@ -11466,6 +11466,36 @@ html[data-theme="dark"] {
   --d-on: #191c21;
 }
 
+/* ---- file_write/file_patch tool-call UI dark tokens ----
+   The .oa-file-tool and .oa-diff blocks consume these --n- / --i- literal
+   tokens as background/border/accent. They lack dark overrides above, so
+   without this block they stay light in dark mode (light bg + flipped --text
+   = unreadable). All 18 are used ONLY by the file-tool UI, so overriding them
+   is side-effect free. */
+html[data-theme="dark"] {
+  /* backgrounds */
+  --n-f8fbfd: #20242a;
+  --n-f6f9fc: #1a1d22;
+  --n-f0f7fd: #20242a;
+  --n-e8f3fb: #263241;
+  --n-eaf7ef: #17301f;
+  --n-fff0f1: #331d20;
+  /* borders */
+  --i-9fc5e8: #37506b;
+  --i-b8d9f2: #33495f;
+  --i-dce8f4: #2b3846;
+  --i-9ad9b4: #2b5540;
+  --i-f4b6ba: #5a3438;
+  --i-f4d47c: #5b4a24;
+  /* accent text (brightened for dark bg) */
+  --i-1e4976: #8fbcec;
+  --i-2563a8: #8fbcec;
+  --i-7ab2ed: #9cc7f2;
+  --i-18864b: #5dd39b;
+  --i-c43b43: #f0908c;
+  --i-e8f3fb: #26323e;
+}
+
 /* ---- /chat (.oa-*) dark theme ----
    .oa-chat 有自己的一套局部令牌(两处定义,后者生效),不消费全局令牌,
    因此 admin 的暗色覆盖到不了这里,必须单独翻。 */
