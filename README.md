@@ -13,7 +13,7 @@ GenericAgent Admin Go 是 GenericAgent 的桌面级管理面板：Go 后端负�
 ### 日常用户能力
 
 - **一键管理 GA 服务**：发现并启动 `reflect/*.py`、`frontends/*app.py`、任务型服务与 Streamlit 前端，查看 stdout/stderr，支持停止单个服务或停止全部服务。
-- **原生 Chat 面板**：复用 GenericAgent 的模型配置与 `cmd/chat_worker.py`，支持流式回复、会话导航、文件/图片上传、复制与多轮对话。
+- **原生 Chat 面板**：复用 GenericAgent 的模型配置与 `cmd/chat_worker.py`，支持流式回复、会话导航、文件/图片上传、复制与多轮对话；聊天流内提供文件改动汇总卡（可整卡折叠、逐文件展开 diff）、子代理运行状态卡与会话世界线（worldline）视图。
 
 ### 管理员 / 维护者能力
 
@@ -58,6 +58,10 @@ GenericAgent-Admin-Go/
 ```
 
 ## 快速开始
+
+### 0. 直接下载发布包（推荐）
+
+不想本地构建时，直接从 [GitHub Releases](https://github.com/Fwind43/GenericAgent-Admin/releases/latest) 下载对应平台的 `ga-admin-<tag>-<goos>-<goarch>.zip`（含同名 `.sha256` 校验文件），解压后运行 `ga-admin.exe` / `ga-admin` 即可，随后按下节配置 GA 根目录。后续可用管理端内置的自更新能力升级。
 
 ### 1. 准备 GenericAgent
 
@@ -143,12 +147,7 @@ dist\cmd\chat_worker.py
 - `internal/version.Commit`：来自 `git rev-parse --short HEAD`，失败时为 `unknown`。
 - `internal/version.Date`：UTC 构建时间，如 `2026-06-01T12:00:00Z`。
 
-### v0.1.0-alpha release target
-
-- Target tag: `v0.1.0-alpha`. This alpha release is approved for the current commit, branch push, tag creation, and GitHub Release asset publication; formal `v0.1.0`, GitCode publication, live-service restart, and existing-asset overwrite remain separate approvals.
-- Version source: backend defaults still fall back to `dev`; local `build.bat` injects `git describe --tags --dirty --always`, commit, and UTC build date with Go `-ldflags`; the release workflow injects the triggering tag as `internal/version.Version`.
-- Scope baseline: start from `v0.0.30-fix1` and include the later local commit `2202eb6 feat(admin): harden files and model configuration UX`, plus the v0.1.0-alpha documentation/release-note updates from this pass.
-- Frontend display: the UI should continue reading version fields from the backend version API instead of hard-coding `v0.1.0-alpha` in React assets.
+发布构建由 GitHub Actions 完成：推送 `v*` tag 后 workflow 会以触发 tag 注入 `internal/version.Version` 并构建 6 平台资产；本地 `build.bat` 构建则回退到 `git describe`。前端界面从后端版本 API 读取版本字段，不在 React 资产中硬编码版本号。
 
 ## 发布包约定
 
@@ -254,14 +253,7 @@ git diff --check
 6. GitHub Actions 根据 tag 构建并上传 Release assets。
 7. 在管理端“版本/更新”能力中验证新版本可发现、可下载且 sha256 校验通过。
 
-### v0.1.0-alpha release gates
-
-Current v0.1.0-alpha status: approved for the current release commit, `main` push, `v0.1.0-alpha` tag creation, and GitHub Release asset publication. Formal `v0.1.0`, GitCode publication, live-service restart, and existing-asset overwrite remain separate approvals. Before tagging, verify:
-
-- `git diff --check`、`go test -count=1 ./internal/api`、`go test ./...`、`go build ./...`、`npm.cmd --prefix web test`、`npm.cmd --prefix web run build` 的最终门禁证据。
-- `build.bat` 或等效 workflow 输出不包含 `config.local.json`、`model_profiles.json`、`mykey.py`、`.env`、`*.key` 等本地/私密文件。
-- The release commit should include only user-facing source, build scripts, documentation, workflow updates, tests, and required assets; local review notes, temporary backups, and troubleshooting artifacts are excluded by default.
-- The approved target branch is `main`; the approved target tag is `v0.1.0-alpha`.
+发布提交只应包含面向用户的源码、构建脚本、文档、workflow、测试和必要资产；本地评审笔记、临时备份、运行日志与排障产物默认不入库。`build.bat` 或 workflow 输出不得包含 `config.local.json`、`model_profiles.json`、`mykey.py`、`.env`、`*.key` 等本地/私密文件。
 
 ## 故障排查
 
