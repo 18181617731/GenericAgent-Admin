@@ -16,6 +16,7 @@ import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManage
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
+import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling'
 
 gsap.registerPlugin(useGSAP)
 
@@ -2766,7 +2767,13 @@ export default function ChatApp() {
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
       await followChatStream(res, pendingId, '', id, ctrl.signal)
-      if (isActiveSession(id)) await loadSessions(id)
+      if (isActiveSession(id)) {
+        const list = await loadSessions(id)
+        const currentSession = list.find(session => session.id === id)
+        if (shouldPollGeneratedTitle(currentSession)) {
+          void pollGeneratedChatTitle({ sessionId:id, loadSessions, isActive:isActiveSession }).catch(()=>{})
+        }
+      }
     } catch (e) {
       if (e.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
     } finally {
@@ -3334,8 +3341,12 @@ export default function ChatApp() {
         return
       }
       if (id) {
-        await loadSessions(id).catch(()=>{})
+        const refreshedSessions = await loadSessions(id).catch(()=>[])
         await openSession(id, false).catch(()=>{})
+        const refreshedSession = refreshedSessions.find(session => session.id === id)
+        if (shouldPollGeneratedTitle(refreshedSession)) {
+          void pollGeneratedChatTitle({ sessionId:id, loadSessions, isActive:isActiveSession }).catch(()=>{})
+        }
         if (commandPatch?.commandResult && optimistic && pending && isActiveSession(id)) {
           const showWorldlinePicker = isWorldlinePickerResult(commandPatch.commandResult)
           const resultMessage = {

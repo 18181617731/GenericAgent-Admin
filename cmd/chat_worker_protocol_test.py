@@ -125,6 +125,56 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", error)
         self.assertIn("usages", error)
 
+    def test_title_request_uses_isolated_backend_and_structured_conversation(self):
+        class FakeTitleBackend:
+            def __init__(self):
+                self.history = [{"role": "user", "content": "stale"}]
+                self.system = ""
+                self.model = "title-model"
+                self.request = None
+
+            def ask(self, request):
+                self.request = request
+                return iter(["同步", "上游更新"])
+
+        agent = FakeAgent()
+        backend = FakeTitleBackend()
+        agent.llmclient.backend = backend
+
+        chat_worker.handle_title_request(agent, {
+            "op": "title",
+            "llm_no": 0,
+            "conversation": {
+                "user": "同步上游更新",
+                "assistant": "已经完成同步并解决冲突",
+            },
+        })
+
+        self.assertEqual(backend.history, [])
+        self.assertIn("untrusted data", backend.system)
+        self.assertIn('"user": "同步上游更新"', backend.request)
+        self.assertIn('"assistant": "已经完成同步并解决冲突"', backend.request)
+        self.assertEqual(self.events[-1]["type"], "title_done")
+        self.assertEqual(self.events[-1]["title"], "同步上游更新")
+
+    def test_title_request_rejects_transport_error_text(self):
+        class ErrorBackend:
+            history = []
+            system = ""
+            model = "broken-model"
+
+            def ask(self, request):
+                return iter(["!!!Error: HTTP 401"])
+
+        agent = FakeAgent()
+        agent.llmclient.backend = ErrorBackend()
+
+        with self.assertRaisesRegex(RuntimeError, "title model request failed"):
+            chat_worker.handle_title_request(agent, {
+                "op": "title",
+                "conversation": {"user": "hello", "assistant": "world"},
+            })
+
     def test_ultraplan_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
         agent = FakeAgent()
         with mock.patch.object(

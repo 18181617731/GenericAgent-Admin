@@ -40,13 +40,14 @@ type Server struct {
 	ConfigMu                sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
+	ChatTitleJobs           map[string]bool
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}}
+	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
 }
 
 func (s *Server) Routes() http.Handler {

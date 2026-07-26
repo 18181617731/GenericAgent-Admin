@@ -32,6 +32,187 @@ func TestNormalizeChatSettingsPreservesOfficialReasoningEffortLevels(t *testing.
 	}
 }
 
+func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	cs := chatSession{
+		ID:          "title-success",
+		Title:       "请帮我同步上游并解决冲突",
+		TitleSource: chatTitleSourceTemporary,
+		Settings:    chatSettings{LLMNo: 2},
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "请帮我同步上游并解决冲突", CreatedAt: 1},
+			{ID: "a1", Role: "assistant", Content: "已完成同步并保留本地修改", CreatedAt: 2},
+		},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
+		t.Fatal(err)
+	}
+
+	old := runOneShotChatTitleWorkerFunc
+	defer func() { runOneShotChatTitleWorkerFunc = old }()
+	called := make(chan struct{})
+	runOneShotChatTitleWorkerFunc = func(_ config.AppConfig, sid string, req map[string]interface{}) (string, error) {
+		if sid != cs.ID || req["llm_no"] != 2 {
+			t.Errorf("unexpected title request sid=%q req=%#v", sid, req)
+		}
+		close(called)
+		return "\"上游同步与冲突解决！\"", nil
+	}
+
+	s.scheduleChatTitleGeneration(cs.ID, cs)
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("title worker was not called")
+	}
+	var stored chatSession
+	deadline := time.Now().Add(time.Second)
+	for {
+		stored, _ = loadChatSession(s.CfgStore.Cfg, cs.ID)
+		if stored.TitleSource == chatTitleSourceGenerated || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if stored.Title != "上游同步与冲突解决" || stored.TitleSource != chatTitleSourceGenerated {
+		t.Fatalf("generated title was not persisted: %+v", stored)
+	}
+}
+
+func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	cs := chatSession{
+		ID:          "title-manual-race",
+		Title:       "第一句话",
+		TitleSource: chatTitleSourceTemporary,
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "第一句话", CreatedAt: 1},
+			{ID: "a1", Role: "assistant", Content: "第一轮回答", CreatedAt: 2},
+		},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
+		t.Fatal(err)
+	}
+
+	old := runOneShotChatTitleWorkerFunc
+	defer func() { runOneShotChatTitleWorkerFunc = old }()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	runOneShotChatTitleWorkerFunc = func(config.AppConfig, string, map[string]interface{}) (string, error) {
+		close(started)
+		<-release
+		return "模型生成标题", nil
+	}
+
+	s.scheduleChatTitleGeneration(cs.ID, cs)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("title worker was not called")
+	}
+	s.SessionMu.Lock()
+	latest, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	if err == nil {
+		latest.Title = "我自己的标题"
+		latest.TitleSource = chatTitleSourceManual
+		err = saveChatSessionLocked(s.CfgStore.Cfg, latest)
+	}
+	s.SessionMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.ChatMu.Lock()
+		running := s.ChatTitleJobs[cs.ID]
+		s.ChatMu.Unlock()
+		if !running || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "我自己的标题" || stored.TitleSource != chatTitleSourceManual {
+		t.Fatalf("manual title was overwritten: %+v", stored)
+	}
+}
+
+func TestChatTerminalSavePreservesManualRename(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	latest := chatSession{
+		ID:          "title-terminal-race",
+		Title:       "手动标题",
+		TitleSource: chatTitleSourceManual,
+		Messages:    []chatMessage{{ID: "u1", Role: "user", Content: "第一句话"}},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, latest); err != nil {
+		t.Fatal(err)
+	}
+	staleWorkerCopy := latest
+	staleWorkerCopy.Title = "第一句话"
+	staleWorkerCopy.TitleSource = chatTitleSourceTemporary
+	staleWorkerCopy.Messages = append(staleWorkerCopy.Messages, chatMessage{ID: "a1", Role: "assistant", Content: "回答"})
+
+	if err := s.saveChatSessionMerged(staleWorkerCopy); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, latest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "手动标题" || stored.TitleSource != chatTitleSourceManual {
+		t.Fatalf("terminal save overwrote manual title: %+v", stored)
+	}
+}
+
+func TestChatTitleGenerationOnlyUsesFirstCompletedTurn(t *testing.T) {
+	cs := chatSession{
+		Title:       "第一条消息",
+		TitleSource: chatTitleSourceTemporary,
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "第一条消息"},
+			{ID: "a1", Role: "assistant", Content: "第一轮回答"},
+		},
+	}
+	exchange, ok := chatTitleExchangeForGeneration(cs)
+	if !ok || exchange.User != "第一条消息" || exchange.Assistant != "第一轮回答" {
+		t.Fatalf("first exchange not accepted: ok=%v exchange=%+v", ok, exchange)
+	}
+	cs.Messages = append(cs.Messages,
+		chatMessage{ID: "u2", Role: "user", Content: "第二条消息"},
+		chatMessage{ID: "a2", Role: "assistant", Content: "第二轮回答"},
+	)
+	if _, ok := chatTitleExchangeForGeneration(cs); ok {
+		t.Fatal("multi-turn session unexpectedly scheduled title generation")
+	}
+	if title := sanitizeGeneratedChatTitle("!!!Error: HTTP 401"); title != "" {
+		t.Fatalf("transport error was accepted as a title: %q", title)
+	}
+	attachmentSession := chatSession{
+		Title:       "附件会话",
+		TitleSource: chatTitleSourceTemporary,
+		Messages: []chatMessage{
+			{ID: "u-file", Role: "user", Content: "\n\n[附件已保存]\n/tmp/report.pdf", Files: []map[string]interface{}{{"name": "report.pdf"}}},
+			{ID: "a-file", Role: "assistant", Content: "这是一份季度报告"},
+		},
+	}
+	attachmentExchange, ok := chatTitleExchangeForGeneration(attachmentSession)
+	if !ok || attachmentExchange.User != "用户上传了附件" {
+		t.Fatalf("attachment-only exchange was not normalized: ok=%v exchange=%+v", ok, attachmentExchange)
+	}
+}
+
 func TestParseLLMJSONArrayFromMixedOutputIgnoresGAStartupLogs(t *testing.T) {
 	out := []byte("[ContextGuard] installed\r\n[MemoryLauncher] native\r\n[Info] Load mykeys from E:\\AITools\\GenericAgent\\mykey.py\r\n" +
 		`[{"index":0,"label":"NativeOAISession/gpt-5.5/cpa","name":"gpt-5.5/cpa","model":"cpa","active":true},{"index":1,"label":"NativeOAISession/deepseek-v4-pro/newapi","name":"deepseek-v4-pro/newapi","model":"newapi","active":false}]` +

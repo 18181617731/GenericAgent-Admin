@@ -110,6 +110,7 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 type chatSession struct {
 	ID                     string                   `json:"id"`
 	Title                  string                   `json:"title"`
+	TitleSource            string                   `json:"title_source,omitempty"`
 	UpdatedAt              int64                    `json:"updated_at"`
 	Messages               []chatMessage            `json:"messages"`
 	Settings               chatSettings             `json:"settings"`
@@ -128,6 +129,7 @@ const (
 	maxChatUploadFiles        = 8
 	maxChatUploadBytesPerFile = 20 << 20
 	maxChatUploadBytesTotal   = 40 << 20
+	maxChatTitleRunes         = 80
 	// maxChatPostBodyBytes must accommodate base64-encoded uploads (which inflate
 	// raw bytes by ~4/3) plus prompt text and per-file metadata, so it is set well
 	// above maxChatUploadBytesTotal. The decoded raw size is still capped by
@@ -139,7 +141,20 @@ const (
 	maxChatWorkerLineBytes = 128 << 20
 )
 
+const (
+	chatTitleSourceTemporary = "temporary"
+	chatTitleSourceGenerated = "generated"
+	chatTitleSourceManual    = "manual"
+)
+
 type chatUpload struct{ Name, Type, DataURL string }
+
+type chatTitleExchange struct {
+	User               string `json:"user"`
+	Assistant          string `json:"assistant"`
+	UserMessageID      string `json:"-"`
+	AssistantMessageID string `json:"-"`
+}
 
 type chatRun struct {
 	SID                string
@@ -230,6 +245,72 @@ func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interf
 }
 
 var runOneShotBTWWorkerFunc = runOneShotBTWWorker
+
+func runOneShotChatTitleWorker(cfg config.AppConfig, sid string, req map[string]interface{}) (string, error) {
+	worker, err := startChatWorker(cfg, sid+"-title")
+	if err != nil {
+		return "", err
+	}
+	waited := false
+	timeout := time.AfterFunc(2*time.Minute, func() {
+		if worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+		}
+	})
+	defer func() {
+		timeout.Stop()
+		_ = worker.Stdin.Close()
+		if !waited && worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+			_, _ = worker.Cmd.Process.Wait()
+		}
+	}()
+	if err := json.NewEncoder(worker.Stdin).Encode(req); err != nil {
+		return "", err
+	}
+	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
+	for {
+		line, readErr := readChatWorkerLine(reader)
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			var ev map[string]interface{}
+			if err := json.Unmarshal(line, &ev); err == nil {
+				typ, _ := ev["type"].(string)
+				if typ == "title_done" {
+					title, _ := ev["title"].(string)
+					title = sanitizeGeneratedChatTitle(title)
+					if title == "" {
+						return "", fmt.Errorf("title worker returned empty response")
+					}
+					_ = worker.Stdin.Close()
+					waitErr := worker.Cmd.Wait()
+					waited = true
+					if waitErr != nil {
+						return "", waitErr
+					}
+					return title, nil
+				}
+				if typ == "error" {
+					data, _ := json.Marshal(ev["message"])
+					var msg chatMessage
+					_ = json.Unmarshal(data, &msg)
+					if strings.TrimSpace(msg.Content) != "" {
+						return "", fmt.Errorf("%s", msg.Content)
+					}
+					return "", fmt.Errorf("title worker failed")
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return "", fmt.Errorf("title worker exited before response")
+			}
+			return "", readErr
+		}
+	}
+}
+
+var runOneShotChatTitleWorkerFunc = runOneShotChatTitleWorker
 
 func (s *Server) runChatWorker(sid string, cs chatSession, cmdReq map[string]interface{}) {
 	s.runChatWorkerOwned(sid, nil, cs, cmdReq)
@@ -521,6 +602,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	}
 	if len(terminalLine) > 0 {
 		s.publishChatLine(sid, terminalLine)
+	}
+	if !final.Error {
+		s.scheduleChatTitleGeneration(sid, cs)
 	}
 	s.endChatRunOwned(sid, token)
 }
@@ -1653,6 +1737,7 @@ func (s *Server) saveChatSessionMerged(cs chatSession) error {
 		return err
 	}
 	cs.Messages = mergeChatMessageLists(latest.Messages, cs.Messages)
+	preserveLatestChatTitle(&cs, latest)
 	return saveChatSession(s.CfgStore.Cfg, cs)
 }
 
@@ -1664,7 +1749,18 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 	}
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
+	if latest, err := loadChatSession(s.CfgStore.Cfg, cs.ID); err == nil {
+		preserveLatestChatTitle(&cs, latest)
+	}
 	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+}
+
+func preserveLatestChatTitle(candidate *chatSession, latest chatSession) {
+	if latest.TitleSource == chatTitleSourceManual ||
+		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
+		candidate.Title = latest.Title
+		candidate.TitleSource = latest.TitleSource
+	}
 }
 
 func (s *Server) persistChatSessionIfMissing(cs chatSession) error {
@@ -1745,20 +1841,183 @@ func readChatWorkerLine(r *bufio.Reader) ([]byte, error) {
 	}
 }
 
+func truncateChatRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
+func chatTitleVisibleContent(content string) string {
+	content = strings.TrimSpace(content)
+	if i := strings.Index(content, "[附件已保存]"); i >= 0 {
+		content = content[:i]
+	}
+	return strings.Join(strings.Fields(content), " ")
+}
+
+func chatTitleUserContent(msg chatMessage) string {
+	content := chatTitleVisibleContent(msg.Content)
+	if content == "" && len(msg.Files) > 0 {
+		return "用户上传了附件"
+	}
+	return content
+}
+
+func temporaryChatTitle(messages []chatMessage) string {
+	for _, msg := range messages {
+		if msg.Role != "user" {
+			continue
+		}
+		title := chatTitleVisibleContent(msg.Content)
+		if title == "" && len(msg.Files) > 0 {
+			title = "附件会话"
+		}
+		if title != "" {
+			return truncateChatRunes(title, 64)
+		}
+	}
+	return ""
+}
+
 func updateChatTitle(cs *chatSession) {
 	if cs.Title != "" && cs.Title != "新会话" {
 		return
 	}
-	for _, m := range cs.Messages {
-		if m.Role == "user" && strings.TrimSpace(m.Content) != "" {
-			t := strings.Split(strings.TrimSpace(m.Content), "\n")[0]
-			if len([]rune(t)) > 64 {
-				t = string([]rune(t)[:64])
-			}
-			cs.Title = t
-			return
+	if title := temporaryChatTitle(cs.Messages); title != "" {
+		cs.Title = title
+		cs.TitleSource = chatTitleSourceTemporary
+	}
+}
+
+func sanitizeGeneratedChatTitle(title string) string {
+	title = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(title, "\r", " "), "\n", " "))
+	lower := strings.ToLower(title)
+	if strings.HasPrefix(lower, "!!!error:") || strings.HasPrefix(lower, "[error:") ||
+		strings.HasPrefix(lower, "error:") || strings.HasPrefix(title, "执行失败：") {
+		return ""
+	}
+	title = strings.Trim(title, "`\"'“”‘’ ")
+	for _, prefix := range []string{"标题:", "标题：", "Title:", "Title："} {
+		if strings.HasPrefix(strings.ToLower(title), strings.ToLower(prefix)) {
+			title = strings.TrimSpace(title[len(prefix):])
+			break
 		}
 	}
+	title = strings.Join(strings.Fields(title), " ")
+	title = strings.TrimFunc(title, func(r rune) bool {
+		return unicode.IsPunct(r) && r != '+' && r != '#'
+	})
+	return truncateChatRunes(strings.TrimSpace(title), maxChatTitleRunes)
+}
+
+func chatTitleExchangeForGeneration(cs chatSession) (chatTitleExchange, bool) {
+	messages := make([]chatMessage, 0, 2)
+	for _, msg := range cs.Messages {
+		if msg.Kind == "btw" || (msg.Role != "user" && msg.Role != "assistant") {
+			continue
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+	if len(messages) != 2 || messages[0].Role != "user" || messages[1].Role != "assistant" || messages[1].Error {
+		return chatTitleExchange{}, false
+	}
+	temporary := temporaryChatTitle(messages)
+	if temporary == "" {
+		return chatTitleExchange{}, false
+	}
+	switch cs.TitleSource {
+	case chatTitleSourceGenerated, chatTitleSourceManual:
+		return chatTitleExchange{}, false
+	}
+	title := strings.TrimSpace(cs.Title)
+	if title != "" && title != "新会话" && title != temporary {
+		return chatTitleExchange{}, false
+	}
+	return chatTitleExchange{
+		User:               truncateChatRunes(chatTitleUserContent(messages[0]), 2000),
+		Assistant:          truncateChatRunes(chatTitleVisibleContent(messages[1].Content), 4000),
+		UserMessageID:      messages[0].ID,
+		AssistantMessageID: messages[1].ID,
+	}, true
+}
+
+func chatTitleExchangeStillExists(cs chatSession, exchange chatTitleExchange) bool {
+	var userFound, assistantFound bool
+	for _, msg := range cs.Messages {
+		switch msg.ID {
+		case exchange.UserMessageID:
+			userFound = msg.Role == "user" &&
+				truncateChatRunes(chatTitleUserContent(msg), 2000) == exchange.User
+		case exchange.AssistantMessageID:
+			assistantFound = msg.Role == "assistant" && !msg.Error &&
+				truncateChatRunes(chatTitleVisibleContent(msg.Content), 4000) == exchange.Assistant
+		}
+	}
+	return userFound && assistantFound
+}
+
+func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
+	exchange, ok := chatTitleExchangeForGeneration(cs)
+	if !ok {
+		return
+	}
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	if s.ChatTitleJobs == nil {
+		s.ChatTitleJobs = map[string]bool{}
+	}
+	if s.ChatTitleJobs[sid] {
+		s.ChatMu.Unlock()
+		return
+	}
+	s.ChatTitleJobs[sid] = true
+	s.ChatMu.Unlock()
+
+	go func() {
+		defer func() {
+			s.ChatMu.Lock()
+			delete(s.ChatTitleJobs, sid)
+			s.ChatMu.Unlock()
+		}()
+		title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
+			"op":           "title",
+			"conversation": exchange,
+			"llm_no":       cs.Settings.LLMNo,
+			"ga_root":      s.CfgStore.Cfg.GARoot,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "chat title generation failed for %s: %v\n", sid, err)
+			return
+		}
+		title = sanitizeGeneratedChatTitle(title)
+		if title == "" {
+			return
+		}
+		s.SessionMu.Lock()
+		defer s.SessionMu.Unlock()
+		latest, err := loadChatSession(s.CfgStore.Cfg, sid)
+		if err != nil || latest.TitleSource == chatTitleSourceManual || latest.TitleSource == chatTitleSourceGenerated {
+			return
+		}
+		if !chatTitleExchangeStillExists(latest, exchange) {
+			return
+		}
+		temporary := temporaryChatTitle(latest.Messages)
+		current := strings.TrimSpace(latest.Title)
+		if current != "" && current != "新会话" && current != temporary {
+			return
+		}
+		latest.Title = title
+		latest.TitleSource = chatTitleSourceGenerated
+		if err := saveChatSessionLocked(s.CfgStore.Cfg, latest); err != nil {
+			fmt.Fprintf(os.Stderr, "chat title persistence failed for %s: %v\n", sid, err)
+		}
+	}()
 }
 
 func saveChatUploads(cfg config.AppConfig, files []chatUpload) (saved []map[string]interface{}, refs []string, err error) {
