@@ -239,11 +239,19 @@ class UltraPlanReadOnlyObserverTests(unittest.TestCase):
         )
         self.assertIsInstance(sessions, dict)
 
-    def test_session_selection_detects_new_and_changed_official_runs(self):
+    def test_session_selection_binds_only_to_this_conversations_run(self):
+        # Regression guard for the cross-conversation UltraPlan leak: a run_dir
+        # that already existed when this observer captured its baseline belongs
+        # to another conversation (or an earlier turn). Merely observing it
+        # change must never bind this observer onto it -- otherwise an unrelated
+        # conversation's UltraPlan bleeds into this one. Only a freshly created
+        # run_dir (absent from baseline) may be bound, unless a changed run's
+        # slug explicitly matches THIS objective (same-objective restart).
         old = {"current": "phase-a", "phases": [], "tasks": [], "events": []}
         changed = {"current": "phase-b", "phases": [], "tasks": [], "events": []}
         baseline = {"C:/runs/existing": chat_worker._ultraplan_session_signature(old)}
 
+        # A brand-new run_dir is bound (preferring an objective-slug match).
         self.assertEqual(
             chat_worker._select_ultraplan_session(
                 {"C:/runs/existing": old, "C:/runs/new-objective": changed},
@@ -252,12 +260,36 @@ class UltraPlanReadOnlyObserverTests(unittest.TestCase):
             ),
             "C:/runs/new-objective",
         )
-        self.assertEqual(
+        # A pre-existing run that merely changed, with no objective match, must
+        # NOT be grabbed -- this is the fix for the cross-talk leak.
+        self.assertIsNone(
             chat_worker._select_ultraplan_session(
                 {"C:/runs/existing": changed}, baseline
+            )
+        )
+        # Same-objective restart on a pre-existing run_dir may be re-bound only
+        # when its slug matches this objective.
+        reuse_baseline = {
+            "C:/runs/ship_feature": chat_worker._ultraplan_session_signature(old)
+        }
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/ship_feature": changed},
+                reuse_baseline,
+                objective="ship_feature",
+            ),
+            "C:/runs/ship_feature",
+        )
+        # Once bound, the selection is pinned and never re-bound mid-run.
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": changed, "C:/runs/other": changed},
+                baseline,
+                selected="C:/runs/existing",
             ),
             "C:/runs/existing",
         )
+        # An unchanged pre-existing run is never selected.
         self.assertIsNone(
             chat_worker._select_ultraplan_session(
                 {"C:/runs/existing": old}, baseline

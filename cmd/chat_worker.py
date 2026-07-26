@@ -956,25 +956,37 @@ def _capture_ultraplan_dashboard_baseline():
 
 
 def _select_ultraplan_session(sessions, baseline, selected=None, objective=''):
+    # Once this observer has bound to a run_dir, keep it. Re-binding onto a
+    # different conversation's session mid-run was the cross-talk leak, so a
+    # selected session is pinned for the lifetime of this observer.
     if selected:
         return selected
-    new_dirs = [run_dir for run_dir in sessions if run_dir not in baseline]
-    changed_dirs = [
-        run_dir for run_dir, session in sessions.items()
-        if run_dir in baseline
-        and _ultraplan_session_signature(session) != baseline.get(run_dir)
-    ]
-    candidates = new_dirs or changed_dirs
-    if not candidates:
-        return None
     objective_key = _ultraplan_task_match_key(objective)
+    # Only sessions that appeared AFTER this observer captured its baseline can
+    # belong to this conversation. Sessions already present at baseline belong to
+    # other conversations (or earlier turns); a mere content change must never
+    # bind us onto them -- that global "newest changed" fallback caused an old
+    # conversation to display a newer conversation's UltraPlan.
+    new_dirs = [run_dir for run_dir in sessions if run_dir not in baseline]
+    if new_dirs:
+        if objective_key:
+            matched = [run_dir for run_dir in new_dirs
+                       if objective_key in _ultraplan_task_match_key(run_dir)]
+            if matched:
+                return matched[-1]
+        # The official daemon preserves insertion order; newest fresh dir is last.
+        return new_dirs[-1]
+    # No fresh session yet. Narrow reuse case only: the same objective restarted
+    # on a pre-existing run_dir. Re-bind to a changed baseline session solely when
+    # its slug matches THIS objective, never to an arbitrary other conversation's.
     if objective_key:
-        matched = [run_dir for run_dir in candidates
-                   if objective_key in _ultraplan_task_match_key(run_dir)]
-        if matched:
-            return matched[-1]
-    # The official daemon preserves insertion order; the newest candidate is last.
-    return candidates[-1]
+        reused = [run_dir for run_dir, session in sessions.items()
+                  if run_dir in baseline
+                  and _ultraplan_session_signature(session) != baseline.get(run_dir)
+                  and objective_key in _ultraplan_task_match_key(run_dir)]
+        if reused:
+            return reused[-1]
+    return None
 
 
 def _tail_ultraplan_outputs(run_dir_str, state, emit_event, tail_state):
