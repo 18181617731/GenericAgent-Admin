@@ -9,6 +9,31 @@ import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { UsagePage } from './pages/UsagePage.jsx'
 
+// D2: deterministic GSAP stub — real tweens run on rAF timers and made the
+// Models provider editor assertions flaky in CI (targets mid-animation).
+vi.mock('gsap', () => {
+  const makeTimeline = () => {
+    const tl = {}
+    for (const k of ['to', 'from', 'fromTo', 'set', 'add', 'kill', 'play', 'pause', 'clear']) {
+      tl[k] = vi.fn(() => tl)
+    }
+    return tl
+  }
+  const gsapStub = {
+    registerPlugin: vi.fn(),
+    context: vi.fn(() => ({ revert: vi.fn(), kill: vi.fn() })),
+    timeline: vi.fn(makeTimeline),
+    set: vi.fn(),
+    from: vi.fn(),
+    to: vi.fn(),
+    fromTo: vi.fn(),
+    killTweensOf: vi.fn(),
+    utils: { selector: () => () => [] },
+  }
+  return { default: gsapStub, gsap: gsapStub }
+})
+vi.mock('@gsap/react', () => ({ useGSAP: vi.fn() }))
+
 const appStyles = readFileSync('src/style.css', 'utf8')
 
 globalThis.React = React
