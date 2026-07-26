@@ -18,6 +18,7 @@ import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selected
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
+import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
 
 gsap.registerPlugin(useGSAP)
 
@@ -2646,6 +2647,16 @@ export default function ChatApp() {
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
+  const [subagents, setSubagents] = useState([])
+  const subagentLikely = useMemo(() => hasSubagentLaunch(messages), [messages])
+  useEffect(() => {
+    if (!sid || !subagentLikely) { setSubagents([]); return undefined }
+    let alive = true
+    const tick = () => { api(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
+    tick()
+    const timer = busy ? setInterval(tick, 5000) : null
+    return () => { alive = false; if (timer) clearInterval(timer) }
+  }, [sid, busy, subagentLikely])
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
@@ -4153,6 +4164,21 @@ export default function ChatApp() {
             worldline={worldlineForView}
             onSwitchVersion={switchWorldline}
           />
+          {subagents.length > 0 && <div className="oa-subagents" aria-label="子代理状态">
+            {subagents.map(st => {
+              const v = subagentCardView(st)
+              if (!v) return null
+              return <div key={st.name} className={`oa-subagent-card tone-${v.tone}`}>
+                <div className="oa-subagent-head">
+                  <Bot size={14}/>
+                  <span className="oa-subagent-name">{v.name}</span>
+                  <span className="oa-subagent-state">{v.label}</span>
+                </div>
+                <div className="oa-subagent-meta">第 {v.rounds} 轮{v.ago ? ` · ${v.ago}` : ''}{v.hasExpected ? ' · 有期望标准' : ''}{v.hasReply ? ' · 有追加输入' : ''}</div>
+                {v.summary && <div className="oa-subagent-summary">{v.summary}</div>}
+              </div>
+            })}
+          </div>}
           {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
           <div ref={endRef}/>
         </section>

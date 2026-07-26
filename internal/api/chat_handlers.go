@@ -96,6 +96,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatBTW(w, r, parts[1])
 			return
 		}
+	case "subagents":
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.chatSubagents(w, r, parts[1])
+			return
+		}
 	case "worldline":
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatWorldlineState(w, r, parts[1])
