@@ -5,7 +5,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { fuzzyMatch } from './lib/format'
@@ -17,6 +17,7 @@ import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManage
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
+import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 
 gsap.registerPlugin(useGSAP)
 
@@ -2300,8 +2301,44 @@ export const ChatMessage = memo(function ChatMessage({
   )
 })
 
+function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefresh, onSwitch }) {
+  const rows = useMemo(() => buildWorldlineRows(state?.nodes, state?.current_path), [state])
+  const branchCount = rows.filter(row => !row.onPath).length
+  const unavailable = !state || state.available === false
+  return (
+    <aside className="oa-context-drawer oa-worldline-drawer" aria-label="世界线分支">
+      <div className="oa-context-head">
+        <div><b>世界线</b><span>{unavailable ? '当前会话暂无世界线数据' : `共 ${rows.length} 个节点 · ${branchCount} 个分支节点`}</span></div>
+        <div className="oa-context-actions">
+          <button type="button" onClick={onRefresh} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
+          <button type="button" onClick={onClose} aria-label="关闭世界线"><X size={15}/></button>
+        </div>
+      </div>
+      {unavailable && <div className="oa-worldline-empty">{state?.degraded_reason || '还没有世界线记录，发送一条消息后再试。'}</div>}
+      {!unavailable && rows.length === 0 && <div className="oa-worldline-empty">{loading ? '加载中…' : '暂无节点'}</div>}
+      {!unavailable && rows.length > 0 && <div className="oa-worldline-list">
+        {rows.map(row => (
+          <div key={row.node.id} className={`oa-worldline-row${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`} style={{ '--wl-level': row.level }}>
+            <span className="oa-worldline-dot" aria-hidden="true"/>
+            <div className="oa-worldline-info">
+              <b title={row.node.title || row.node.id}>{row.node.title || `节点 ${String(row.node.id).slice(0, 8)}`}</b>
+              <span>{row.node.mapping_status && row.node.mapping_status !== 'mapped' ? '无消息映射 · ' : ''}{row.node.created_at ? fmtDate(row.node.created_at) : ''}</span>
+            </div>
+            {row.isCurrent
+              ? <em className="oa-worldline-current">当前</em>
+              : <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId}
+                  onClick={() => onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button>}
+          </div>
+        ))}
+      </div>}
+      {state?.truncated && <div className="oa-worldline-empty">节点过多，已截断显示。</div>}
+    </aside>
+  )
+}
+
 const MessageList = memo(function MessageList({
   messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow,
+  worldline = null, onSwitchVersion = null,
 }) {
   const threadMessages = messages.filter(message => message.kind !== 'btw')
   const lastMessageId = threadMessages.at(-1)?.id
@@ -2330,6 +2367,24 @@ const MessageList = memo(function MessageList({
             clockNow={clockNow}
           />
         )
+        if (m.role === 'user' && onSwitchVersion) {
+          const versionInfo = messageVersionInfo(worldline, m.id)
+          if (versionInfo && versionInfo.total > 1) {
+            nodes.push(
+              <div key={`wlv-${m.id}`} className="oa-msg-versions">
+                <button type="button" disabled={isCurrentRunning || !versionInfo.previous_node_id}
+                  onClick={() => onSwitchVersion(versionInfo.previous_node_id)} title="上一个版本" aria-label="上一个版本">
+                  <ChevronLeft size={13}/>
+                </button>
+                <em>{versionInfo.index}/{versionInfo.total}</em>
+                <button type="button" disabled={isCurrentRunning || !versionInfo.next_node_id}
+                  onClick={() => onSwitchVersion(versionInfo.next_node_id)} title="下一个版本" aria-label="下一个版本">
+                  <ChevronRight size={13}/>
+                </button>
+              </div>
+            )
+          }
+        }
         return nodes
       })}
     </>
@@ -2642,6 +2697,11 @@ export default function ChatApp() {
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
   const extraPromptSelectionSeqRef = useRef(0)
+  const [worldlineOpen, setWorldlineOpen] = useState(false)
+  const [worldlineState, setWorldlineState] = useState(null)
+  const [worldlineLoading, setWorldlineLoading] = useState(false)
+  const [worldlineSwitchingId, setWorldlineSwitchingId] = useState('')
+  const worldlineSeqRef = useRef(0)
   const messagesRef = useRef([])
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
@@ -3125,7 +3185,54 @@ export default function ChatApp() {
     setMenuPos(null)
     setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
+    if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
   }
+
+  const loadWorldline = async (id = activeSidRef.current || sid, { force = false } = {}) => {
+    if (!id) return
+    if (!force && !worldlineOpen && worldlineState?.sessionID !== id) return
+    const token = ++worldlineSeqRef.current
+    setWorldlineLoading(true)
+    try {
+      const d = await api(`/api/chat/worldline/${id}`)
+      if (token !== worldlineSeqRef.current || activeSidRef.current !== id) return
+      setWorldlineState({ sessionID: id, ...d })
+    } catch (e) {
+      if (token !== worldlineSeqRef.current) return
+      setWorldlineState({ sessionID: id, available: false, degraded_reason: e?.message || String(e) })
+    } finally {
+      if (token === worldlineSeqRef.current) setWorldlineLoading(false)
+    }
+  }
+
+  const toggleWorldline = () => {
+    const next = !worldlineOpen
+    setWorldlineOpen(next)
+    if (next) loadWorldline(activeSidRef.current || sid, { force: true }).catch(() => {})
+  }
+
+  const switchWorldline = async (nodeId) => {
+    const id = activeSidRef.current || sid
+    if (!id || !nodeId) return
+    if (busy && streamingSid === id) { setNotice('对话运行中，完成后再切换世界线'); return }
+    setWorldlineSwitchingId(nodeId)
+    setErr(''); setNotice('')
+    try {
+      const d = await api(`/api/chat/worldline/${id}/switch`, { method: 'POST', body: JSON.stringify({ node_id: nodeId }) })
+      if (activeSidRef.current !== id) return
+      await openSession(id, false)
+      if (activeSidRef.current !== id) return
+      if (d?.worldline) setWorldlineState({ sessionID: id, ...d.worldline })
+      setNotice('已切换到所选世界线分支')
+      loadSessions(id).catch(() => {})
+    } catch (e) {
+      if (activeSidRef.current === id) setErr(e?.message || String(e))
+    } finally {
+      setWorldlineSwitchingId('')
+    }
+  }
+
+  const worldlineForView = worldlineState && worldlineState.sessionID === sid ? worldlineState : null
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
@@ -3659,6 +3766,7 @@ export default function ChatApp() {
           }
         }
       }
+      if (id && isActiveSession(id)) loadWorldline(id).catch(() => {})
       const next = popQueued()
       if (next) {
         setNotice(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`)
@@ -4004,6 +4112,9 @@ export default function ChatApp() {
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/>上下文<span>{rawHistory?.length || 0}</span>
         </button>
+        <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title="查看/切换对话世界线分支">
+          <GitBranch size={16}/>世界线{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
+        </button>
       </header>
 
       {contextOpen && <aside className="oa-context-drawer" aria-label="模型上下文">
@@ -4014,6 +4125,15 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
+      {worldlineOpen && <WorldlinePanel
+        state={worldlineForView}
+        loading={worldlineLoading}
+        switchingId={worldlineSwitchingId}
+        disabled={isCurrentRunning}
+        onClose={() => setWorldlineOpen(false)}
+        onRefresh={() => loadWorldline(sid, { force: true }).catch(() => {})}
+        onSwitch={switchWorldline}
+      />}
       <div className={`oa-workspace ${btwMessages.length && btwRailOpen ? 'has-btw' : ''}`}>
         <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
           {messages.length === 0 && <div className="oa-empty">
@@ -4027,6 +4147,8 @@ export default function ChatApp() {
             onEditResend={editAndResend}
             onRetryBTW={(message)=>sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)}
             clockNow={streamClock}
+            worldline={worldlineForView}
+            onSwitchVersion={switchWorldline}
           />
           {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
           <div ref={endRef}/>
