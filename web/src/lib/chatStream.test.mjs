@@ -111,3 +111,52 @@ test('stream delta batcher resolves drain only after all paced frames render', a
   assert.equal(flushed.join(''), 'smooth '.repeat(20))
   assert.ok(flushed.length > 1)
 })
+
+
+test('replay-mode batcher holds backlog silently then flushes instantly on beginLive', () => {
+  const callbacks = []
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: callback => { callbacks.push(callback); return callbacks.length },
+    cancel: () => {},
+    live: false,
+  })
+  batcher.push('replayed '.repeat(50))
+  assert.equal(callbacks.length, 0)
+  assert.deepEqual(flushed, [])
+  batcher.beginLive()
+  assert.deepEqual(flushed, ['replayed '.repeat(50)])
+  batcher.push('live-part')
+  assert.equal(callbacks.length, 1)
+  callbacks.shift()()
+  assert.equal(flushed.join(''), 'replayed '.repeat(50) + 'live-part')
+})
+
+test('replay-mode batcher drain flushes backlog even without a sync boundary', async () => {
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: () => 1,
+    cancel: () => {},
+    live: false,
+  })
+  batcher.push('tail')
+  await batcher.drain()
+  assert.deepEqual(flushed, ['tail'])
+})
+
+test('beginLive is idempotent and harmless when already live', () => {
+  const callbacks = []
+  const flushed = []
+  const batcher = createStreamDeltaBatcher({
+    onFlush: chunk => flushed.push(chunk),
+    schedule: callback => { callbacks.push(callback); return callbacks.length },
+    cancel: () => {},
+  })
+  batcher.beginLive()
+  batcher.push('abc')
+  assert.equal(callbacks.length, 1)
+  callbacks.shift()()
+  assert.deepEqual(flushed, ['abc'])
+})

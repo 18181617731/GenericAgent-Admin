@@ -15,7 +15,11 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
 }
 
 
-export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel }) => {
+// live=true (default): deltas animate frame-by-frame as before.
+// live=false: deltas accumulate silently until beginLive() flushes the backlog
+// in one shot (used for replayed events when reattaching after a page refresh,
+// so the whole in-progress output appears instantly instead of retyping).
+export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = true }) => {
   let pending = ''
   let scheduled = null
   let drainResolvers = []
@@ -42,24 +46,32 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel }) => {
     resolveDrains()
   }
 
+  const flushNow = () => {
+    if (scheduled != null) {
+      cancel(scheduled)
+      scheduled = null
+    }
+    if (!pending) return
+    const chunk = pending
+    pending = ''
+    onFlush(chunk)
+    resolveDrains()
+  }
+
   return {
     push(delta) {
       if (!delta) return
       pending += delta
-      scheduleNext()
+      if (live) scheduleNext()
     },
-    flushNow() {
-      if (scheduled != null) {
-        cancel(scheduled)
-        scheduled = null
-      }
-      if (!pending) return
-      const chunk = pending
-      pending = ''
-      onFlush(chunk)
-      resolveDrains()
+    beginLive() {
+      if (live) return
+      live = true
+      flushNow()
     },
+    flushNow,
     drain() {
+      if (!live) flushNow()
       if (!pending && scheduled == null) return Promise.resolve()
       return new Promise(resolve => drainResolvers.push(resolve))
     },

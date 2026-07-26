@@ -1062,6 +1062,14 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 	if done {
 		return
 	}
+	// Replay/live boundary: clients render everything before "sync" instantly
+	// (page-refresh reattach backlog) and only animate deltas after it.
+	// Done runs skip it (stream ends; the client drain flushes the backlog).
+	// Not stored in run.Events, so clients must not count it toward the cursor.
+	_, _ = w.Write([]byte("{\"type\":\"sync\"}\n"))
+	if flusher != nil {
+		flusher.Flush()
+	}
 	defer func() {
 		s.ChatMu.Lock()
 		if rr := s.ChatRuns[sid]; rr != nil && rr.Subscribers != nil {

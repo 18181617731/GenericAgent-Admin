@@ -3015,6 +3015,9 @@ export default function ChatApp() {
     )) : xs),
     schedule: callback => window.requestAnimationFrame ? window.requestAnimationFrame(callback) : window.setTimeout(callback, 16),
     cancel: handle => window.cancelAnimationFrame ? window.cancelAnimationFrame(handle) : window.clearTimeout(handle),
+    // Start in replay mode: backend emits {"type":"sync"} after the backlog,
+    // so reattach-after-refresh renders prior output instantly, then animates.
+    live: false,
   })
 
   const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
@@ -3029,6 +3032,13 @@ export default function ChatApp() {
       applyStreamEvent(ev, pendingId, clientUserID, sessionId)
     }
     const consumeEvent = (ev) => {
+      if (ev.type === 'sync') {
+        // Replay/live boundary: flush backlog instantly, animate what follows.
+        // Not stored in run.Events server-side, so it must NOT bump eventCount
+        // (the reconnect cursor would skip a real event otherwise).
+        batcher.beginLive()
+        return
+      }
       if (ev.type === 'delta' && typeof ev.delta === 'string') {
         batcher.push(ev.delta)
       } else if (ev.type === 'done' || ev.type === 'error') {
