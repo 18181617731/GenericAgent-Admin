@@ -41,6 +41,7 @@ type Server struct {
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
+	titleBackfillStarted    bool
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error

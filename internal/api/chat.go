@@ -130,7 +130,7 @@ const (
 	maxChatUploadFiles        = 8
 	maxChatUploadBytesPerFile = 20 << 20
 	maxChatUploadBytesTotal   = 40 << 20
-	maxChatTitleRunes         = 80
+	maxChatTitleRunes         = 50
 	// maxChatPostBodyBytes must accommodate base64-encoded uploads (which inflate
 	// raw bytes by ~4/3) plus prompt text and per-file metadata, so it is set well
 	// above maxChatUploadBytesTotal. The decoded raw size is still capped by
@@ -173,6 +173,7 @@ var (
 	errChatTitleChanged   = errors.New("chat changed while the title was being generated")
 	errChatTitleEmpty     = errors.New("title model returned an empty title")
 	errChatTitleRunActive = errors.New("cannot generate a title while the chat is running")
+	errChatTitleNotLegacy = errors.New("chat title is not eligible for automatic backfill")
 )
 
 type chatRun struct {
@@ -1928,7 +1929,20 @@ func sanitizeGeneratedChatTitle(title string) string {
 	title = strings.TrimFunc(title, func(r rune) bool {
 		return unicode.IsPunct(r) && r != '+' && r != '#'
 	})
-	return truncateChatRunes(strings.TrimSpace(title), maxChatTitleRunes)
+	title = strings.TrimSpace(title)
+	if len([]rune(title)) > maxChatTitleRunes {
+		return ""
+	}
+	lower = strings.ToLower(title)
+	for _, prefix := range []string{
+		"the conversation", "this conversation", "the user", "we were asked", "i was asked",
+		"我们被要求", "我被要求", "用户要求", "这个对话", "该对话", "对话内容", "以下对话", "我们根据", "总结为",
+	} {
+		if strings.HasPrefix(lower, strings.ToLower(prefix)) {
+			return ""
+		}
+	}
+	return title
 }
 
 func chatTitleExchangeForGeneration(cs chatSession) (chatTitleExchange, bool) {
@@ -2035,6 +2049,20 @@ func chatTitleContextStillExists(cs chatSession, context chatTitleContext) bool 
 	return true
 }
 
+func chatTitleNeedsAutomaticBackfill(cs chatSession) bool {
+	if cs.TitleSource == chatTitleSourceGenerated || cs.TitleSource == chatTitleSourceManual {
+		return false
+	}
+	if _, ok := chatTitleContextForSession(cs); !ok {
+		return false
+	}
+	current := strings.TrimSpace(cs.Title)
+	temporary := temporaryChatTitle(cs.Messages)
+	return current == "" || current == "新会话" ||
+		(temporary != "" && (current == temporary ||
+			(cs.TitleSource == "" && strings.HasPrefix(temporary, current))))
+}
+
 func (s *Server) chatTitleLLMNo(fallback int) int {
 	if selected := s.CfgStore.Cfg.ChatTitleModel; selected != nil && selected.LLMNo >= 0 {
 		return selected.LLMNo
@@ -2110,6 +2138,10 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 }
 
 func (s *Server) generateChatTitle(sid string) (chatSession, error) {
+	return s.generateChatTitleWithMode(sid, false)
+}
+
+func (s *Server) generateChatTitleWithMode(sid string, automaticBackfill bool) (chatSession, error) {
 	sid = safeChatID(sid)
 	if s.chatRunActive(sid) {
 		return chatSession{}, errChatTitleRunActive
@@ -2124,6 +2156,10 @@ func (s *Server) generateChatTitle(sid string) (chatSession, error) {
 	if err != nil {
 		s.SessionMu.Unlock()
 		return chatSession{}, err
+	}
+	if automaticBackfill && !chatTitleNeedsAutomaticBackfill(start) {
+		s.SessionMu.Unlock()
+		return chatSession{}, errChatTitleNotLegacy
 	}
 	context, ok := chatTitleContextForSession(start)
 	startTitle, startTitleSource := start.Title, start.TitleSource
@@ -2161,6 +2197,85 @@ func (s *Server) generateChatTitle(sid string) (chatSession, error) {
 		return chatSession{}, err
 	}
 	return latest, nil
+}
+
+func (s *Server) automaticChatTitleBackfillCandidates() ([]string, error) {
+	if err := ensureChatDataMigrated(s.CfgStore.Cfg); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		id        string
+		updatedAt int64
+	}
+	candidates := make([]candidate, 0, len(entries))
+	s.SessionMu.Lock()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		cs, loadErr := loadChatSession(s.CfgStore.Cfg, strings.TrimSuffix(entry.Name(), ".json"))
+		if loadErr == nil && chatTitleNeedsAutomaticBackfill(cs) {
+			candidates = append(candidates, candidate{id: cs.ID, updatedAt: cs.UpdatedAt})
+		}
+	}
+	s.SessionMu.Unlock()
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].updatedAt > candidates[j].updatedAt })
+	if len(candidates) > 80 {
+		candidates = candidates[:80]
+	}
+	ids := make([]string, len(candidates))
+	for index, item := range candidates {
+		ids[index] = item.id
+	}
+	return ids, nil
+}
+
+func (s *Server) StartAutomaticChatTitleBackfill() bool {
+	s.ChatMu.Lock()
+	if s.titleBackfillStarted {
+		s.ChatMu.Unlock()
+		return false
+	}
+	s.titleBackfillStarted = true
+	s.ChatMu.Unlock()
+
+	go func() {
+		ids, err := s.automaticChatTitleBackfillCandidates()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "chat title backfill scan failed: %v\n", err)
+			return
+		}
+		jobs := make(chan string)
+		var workers sync.WaitGroup
+		for range 2 {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				for sid := range jobs {
+					if _, err := s.generateChatTitleWithMode(sid, true); err != nil &&
+						!errors.Is(err, errChatTitleBusy) &&
+						!errors.Is(err, errChatTitleRunActive) &&
+						!errors.Is(err, errChatTitleNotLegacy) &&
+						!errors.Is(err, errChatTitleChanged) {
+						fmt.Fprintf(os.Stderr, "chat title backfill failed for %s: %v\n", sid, err)
+					}
+				}
+			}()
+		}
+		for _, sid := range ids {
+			jobs <- sid
+		}
+		close(jobs)
+		workers.Wait()
+	}()
+	return true
 }
 
 func saveChatUploads(cfg config.AppConfig, files []chatUpload) (saved []map[string]interface{}, refs []string, err error) {

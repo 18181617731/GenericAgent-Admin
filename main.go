@@ -51,6 +51,7 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
+	srv.StartAutomaticChatTitleBackfill()
 	addr := fmt.Sprintf("%s:%d", cfgStore.Cfg.Host, cfgStore.Cfg.Port)
 	url := "http://" + addr
 	server := newHTTPServer(addr, srv.Routes())

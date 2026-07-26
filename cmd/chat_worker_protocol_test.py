@@ -179,6 +179,70 @@ class ChatWorkerProtocolTest(unittest.TestCase):
                 "conversation": {"user": "hello", "assistant": "world"},
             })
 
+    def test_title_request_retries_verbose_meta_response(self):
+        class VerboseBackend:
+            history = []
+            system = ""
+            model = "title-model"
+
+            def __init__(self):
+                self.requests = []
+
+            def ask(self, request):
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return iter(["我们被要求为这个对话生成一个标题并总结其中的主要内容"])
+                return iter(["旧会话标题自动回填"])
+
+        agent = FakeAgent()
+        backend = VerboseBackend()
+        agent.llmclient.backend = backend
+
+        chat_worker.handle_title_request(agent, {
+            "op": "title",
+            "conversation": {
+                "messages": [
+                    {"role": "user", "content": "旧会话仍然使用第一句话作为标题"},
+                    {"role": "assistant", "content": "将自动重新生成"},
+                ],
+            },
+        })
+
+        self.assertEqual(len(backend.requests), 2)
+        self.assertTrue(backend.requests[0].startswith("["))
+        self.assertNotIn("Create a title", backend.requests[0])
+        self.assertEqual(self.events[-1]["title"], "旧会话标题自动回填")
+
+    def test_title_request_uses_final_content_instead_of_reasoning_chunks(self):
+        class FinalResponse:
+            content = "淘宝SKU布局与定价"
+
+        class ReasoningBackend:
+            history = []
+            system = ""
+            model = "deepseek-title-model"
+
+            def ask(self, request):
+                def stream():
+                    yield "我们需要分析对话并构造一个标题"
+                    return FinalResponse()
+                return stream()
+
+        agent = FakeAgent()
+        agent.llmclient.backend = ReasoningBackend()
+
+        chat_worker.handle_title_request(agent, {
+            "op": "title",
+            "conversation": {
+                "messages": [
+                    {"role": "user", "content": "分析竞品SKU并重新定价"},
+                    {"role": "assistant", "content": "已生成对比表"},
+                ],
+            },
+        })
+
+        self.assertEqual(self.events[-1]["title"], "淘宝SKU布局与定价")
+
     def test_ultraplan_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
         agent = FakeAgent()
         with mock.patch.object(

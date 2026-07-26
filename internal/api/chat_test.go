@@ -133,6 +133,81 @@ func TestChatGenerateTitleForExistingSessionUsesConfiguredModel(t *testing.T) {
 	}
 }
 
+func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	legacy := chatSession{
+		ID:       "legacy-default-title",
+		Title:    "第一句话作为旧标题",
+		Settings: chatSettings{LLMNo: 3},
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "第一句话作为旧标题 后面还有旧实现没有保留的内容", CreatedAt: 1},
+			{ID: "a1", Role: "assistant", Content: "第一轮回答", CreatedAt: 2},
+			{ID: "u2", Role: "user", Content: "真正主题是自动回填", CreatedAt: 3},
+			{ID: "a2", Role: "assistant", Content: "准备生成新标题", CreatedAt: 4},
+		},
+	}
+	custom := chatSession{
+		ID:       "legacy-custom-title",
+		Title:    "保留我的旧标题",
+		Settings: chatSettings{LLMNo: 3},
+		Messages: []chatMessage{
+			{ID: "u1", Role: "user", Content: "这不是当前标题", CreatedAt: 1},
+			{ID: "a1", Role: "assistant", Content: "回答", CreatedAt: 2},
+		},
+	}
+	for _, session := range []chatSession{legacy, custom} {
+		if err := saveChatSessionLocked(s.CfgStore.Cfg, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	old := runOneShotChatTitleWorkerFunc
+	defer func() { runOneShotChatTitleWorkerFunc = old }()
+	called := make(chan string, 2)
+	runOneShotChatTitleWorkerFunc = func(_ config.AppConfig, sid string, _ map[string]interface{}) (string, error) {
+		called <- sid
+		return "旧会话自动标题", nil
+	}
+
+	if !s.StartAutomaticChatTitleBackfill() {
+		t.Fatal("first automatic title backfill did not start")
+	}
+	select {
+	case sid := <-called:
+		if sid != legacy.ID {
+			t.Fatalf("backfill generated title for %q, want %q", sid, legacy.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic title backfill did not start")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	var stored chatSession
+	for {
+		stored, _ = loadChatSession(s.CfgStore.Cfg, legacy.ID)
+		if stored.TitleSource == chatTitleSourceGenerated || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if stored.Title != "旧会话自动标题" || stored.TitleSource != chatTitleSourceGenerated {
+		t.Fatalf("legacy title was not backfilled: %+v", stored)
+	}
+	preserved, err := loadChatSession(s.CfgStore.Cfg, custom.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.Title != custom.Title || preserved.TitleSource != "" {
+		t.Fatalf("custom legacy title was overwritten: %+v", preserved)
+	}
+
+	if s.StartAutomaticChatTitleBackfill() {
+		t.Fatal("automatic title backfill started more than once")
+	}
+}
+
 func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
@@ -250,6 +325,12 @@ func TestChatTitleGenerationOnlyUsesFirstCompletedTurn(t *testing.T) {
 	}
 	if title := sanitizeGeneratedChatTitle("!!!Error: HTTP 401"); title != "" {
 		t.Fatalf("transport error was accepted as a title: %q", title)
+	}
+	if title := sanitizeGeneratedChatTitle("我们被要求为这个对话生成一个标题并总结主要内容"); title != "" {
+		t.Fatalf("verbose meta response was accepted as a title: %q", title)
+	}
+	if title := sanitizeGeneratedChatTitle(strings.Repeat("过长标题", 20)); title != "" {
+		t.Fatalf("overlong response was accepted as a title: %q", title)
 	}
 	attachmentSession := chatSession{
 		Title:       "附件会话",
