@@ -726,3 +726,17 @@ func TestGoalCommandEnvForcesUTF8AndState(t *testing.T) {
 		t.Fatalf("PYTHONIOENCODING occurrences = %d, env=%#v", count, env)
 	}
 }
+
+func TestTasklistAllPIDs(t *testing.T) {
+	out := []byte("\"proc.exe\",\"123\",\"Console\",\"1\",\"1,000 K\"\r\n\"x\",\"4567\",\"Console\",\"1\",\"2 K\"\r\nINFO: nothing\r\n")
+	pids := tasklistAllPIDs(out)
+	if _, ok := pids[123]; !ok {
+		t.Fatalf("expected pid 123 in %v", pids)
+	}
+	if _, ok := pids[4567]; !ok {
+		t.Fatalf("expected pid 4567 in %v", pids)
+	}
+	if len(pids) != 2 {
+		t.Fatalf("expected 2 pids, got %v", pids)
+	}
+}

@@ -11924,3 +11924,127 @@ html[data-theme="dark"] .progress-bar {
 .oa-subagent-card.tone-stop .oa-subagent-state { background:rgba(220,38,38,.12); color:#b91c1c; }
 .oa-subagent-meta { margin-top:3px; color:var(--oa-muted, #7a756d); font-size:11.5px; }
 .oa-subagent-summary { margin-top:5px; color:var(--oa-text, #171717); opacity:.85; line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+
+/* ===== Goal 状态卡（chat 内 agent 自启 goal 模式） ===== */
+.oa-goalcard {
+  margin-top: 8px;
+  border: 1px solid var(--border, rgba(120, 120, 140, .25));
+  border-radius: 12px;
+  background: var(--panel, rgba(127, 127, 127, .04));
+  overflow: hidden;
+  max-width: 560px;
+}
+.oa-goalcard-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 11px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.oa-goalcard-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, .12);
+  color: var(--up-green, #16a34a);
+}
+.oa-goalcard.is-error .oa-goalcard-mark { background: rgba(220, 38, 38, .10); color: var(--i-b91c1c, #b91c1c); }
+.oa-goalcard-title { min-width: 0; }
+.oa-goalcard-title b { display: block; font-size: 13px; }
+.oa-goalcard-title small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oa-goalcard-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(154, 100, 39, .12);
+  color: var(--i-9a6427, #9a6427);
+  white-space: nowrap;
+}
+.oa-goalcard-chip.is-done { background: rgba(34, 197, 94, .12); color: var(--up-green, #16a34a); }
+.oa-goalcard-chip.is-error { background: rgba(220, 38, 38, .10); color: var(--i-b91c1c, #b91c1c); }
+.oa-goalcard-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: oa-goalcard-pulse 1.2s ease-in-out infinite;
+}
+@keyframes oa-goalcard-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.oa-goalcard-chevron { color: var(--muted); transition: transform .18s ease; }
+.oa-goalcard-chevron.is-collapsed { transform: rotate(-90deg); }
+.oa-goalcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 3px 11px 10px;
+  border-top: 1px dashed var(--border, rgba(120, 120, 140, .2));
+}
+.oa-goalcard-bar {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.oa-goalcard-bar-label { font-size: 11px; color: var(--muted); font-weight: 700; }
+.oa-goalcard-track {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, .16);
+  overflow: hidden;
+}
+.oa-goalcard-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--up-green, #16a34a);
+  transition: width .4s ease;
+}
+.oa-goalcard.is-error .oa-goalcard-fill { background: var(--i-b91c1c, #b91c1c); }
+.oa-goalcard-bar-value { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.oa-goalcard-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.oa-goalcard-summary {
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.oa-goalcard-err {
+  font-size: 12px;
+  color: var(--i-b91c1c, #b91c1c);
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .oa-goalcard-dot { animation: none; }
+  .oa-goalcard-chevron { transition: none; }
+  .oa-goalcard-fill { transition: none; }
+}

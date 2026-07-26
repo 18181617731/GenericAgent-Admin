@@ -5,10 +5,10 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
-import { fuzzyMatch } from './lib/format'
+import { formatDuration, formatGoalTime, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -1734,6 +1734,106 @@ function clampUltraPlanDrawerWidth(width, maxWidth = getUltraPlanDrawerMaxWidth(
   return Math.min(maxWidth, Math.max(ULTRAPLAN_DRAWER_MIN_WIDTH, Math.round(Number(width) || ULTRAPLAN_DRAWER_DEFAULT_WIDTH)))
 }
 
+const GOAL_CARD_TERMINAL = new Set(['achieved', 'stopped', 'failed', 'timeout', 'expired', 'error', 'given_up', 'gave_up', 'done', 'removed'])
+const goalCardPathKey = (p) => String(p || '').replace(/\\/g, '/').toLowerCase()
+
+const normalizeGoalCardState = (raw) => {
+  if (!raw || typeof raw !== 'object') return null
+  const g = { ...raw }
+  const nowSec = Date.now() / 1000
+  const start = Number(g.start_time || 0)
+  if (!(Number(g.elapsed_seconds) > 0) && start > 0) {
+    const end = Number(g.end_time || 0) > 0 ? Number(g.end_time) : nowSec
+    g.elapsed_seconds = Math.max(0, end - start)
+  }
+  const budget = Number(g.budget_seconds || 0)
+  if (!(Number(g.remaining_seconds) >= 0) && budget > 0) {
+    g.remaining_seconds = Math.max(0, budget - Number(g.elapsed_seconds || 0))
+  }
+  return g
+}
+
+const goalCardStatusInfo = (status, removed) => {
+  const s = String(status || '').toLowerCase()
+  if (removed) return { text: '已结束', cls: 'is-done' }
+  if (s === 'achieved' || s === 'success' || s === 'done') return { text: '已达成', cls: 'is-done' }
+  if (s === 'failed' || s === 'error') return { text: '失败', cls: 'is-error' }
+  if (s === 'stopped' || s === 'given_up' || s === 'gave_up') return { text: '已停止', cls: 'is-error' }
+  if (s === 'timeout' || s === 'expired') return { text: '超时', cls: 'is-error' }
+  if (!s || s === 'running' || s === 'active' || s === 'pending') return { text: '进行中', cls: 'is-running' }
+  return { text: s, cls: 'is-running' }
+}
+
+export function GoalStatusCard({ state, pending = false }) {
+  const [snap, setSnap] = useState(() => normalizeGoalCardState(state))
+  const [removed, setRemoved] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => { setSnap(prev => ({ ...(prev || {}), ...(normalizeGoalCardState(state) || {}) })) }, [state])
+  const status = String(snap?.status || '').toLowerCase()
+  const terminal = removed || GOAL_CARD_TERMINAL.has(status)
+  const stateFile = snap?.state_file || ''
+  useEffect(() => {
+    if (!stateFile || terminal) return undefined
+    let stop = false
+    const tick = async () => {
+      try {
+        const d = await api('/api/goals/list')
+        if (stop) return
+        const goals = Array.isArray(d?.goals) ? d.goals : []
+        const hit = goals.find(g => goalCardPathKey(g.state_file) === goalCardPathKey(stateFile))
+        if (hit) setSnap(prev => normalizeGoalCardState({ ...(prev || {}), ...hit }))
+        else if (!pending) setRemoved(true)
+      } catch { /* 网络波动时保留旧快照 */ }
+    }
+    const timer = setInterval(tick, 5000)
+    tick()
+    return () => { stop = true; clearInterval(timer) }
+  }, [stateFile, terminal, pending])
+  if (!snap) return null
+  const info = goalCardStatusInfo(snap.status, removed)
+  const budgetPct = goalBudgetPercent(snap)
+  const turnPct = goalTurnPercent(snap)
+  const budgetTotal = Number(snap.budget_seconds || 0) || (Number(snap.elapsed_seconds || 0) + Number(snap.remaining_seconds || 0))
+  const maxTurns = Number(snap.max_turns || 0)
+  const errText = snap.error_class || snap.last_error || ''
+  return (
+    <div className={`oa-goalcard ${info.cls}`}>
+      <button type="button" className="oa-goalcard-head" onClick={() => setCollapsed(v => !v)}
+        aria-expanded={!collapsed} title={collapsed ? '展开目标详情' : '收起目标详情'}>
+        <span className="oa-goalcard-mark"><Target size={15} /></span>
+        <span className="oa-goalcard-title">
+          <b>目标模式</b>
+          <small>{snap.objective || '(未提供目标描述)'}</small>
+        </span>
+        <em className={`oa-goalcard-chip ${info.cls}`}>{info.cls === 'is-running' && !removed ? <span className="oa-goalcard-dot" /> : null}{info.text}</em>
+        <ChevronDown size={14} className={`oa-goalcard-chevron ${collapsed ? 'is-collapsed' : ''}`} />
+      </button>
+      {!collapsed && (
+        <div className="oa-goalcard-body">
+          <div className="oa-goalcard-bar">
+            <span className="oa-goalcard-bar-label">时间预算</span>
+            <span className="oa-goalcard-track"><span className="oa-goalcard-fill" style={{ width: `${budgetPct}%` }} /></span>
+            <span className="oa-goalcard-bar-value">{formatDuration(snap.elapsed_seconds || 0)}{budgetTotal ? ` / ${formatDuration(budgetTotal)}` : ''}</span>
+          </div>
+          <div className="oa-goalcard-bar">
+            <span className="oa-goalcard-bar-label">轮次</span>
+            <span className="oa-goalcard-track"><span className="oa-goalcard-fill" style={{ width: `${turnPct}%` }} /></span>
+            <span className="oa-goalcard-bar-value">{Number(snap.turns_used || 0)}{maxTurns ? ` / ${maxTurns}` : ''}</span>
+          </div>
+          <div className="oa-goalcard-meta">
+            {snap.start_time ? <span>启动 {formatGoalTime(snap.start_time)}</span> : null}
+            {snap.mode ? <span>模式 {snap.mode}</span> : null}
+            {snap.pid ? <span>PID {snap.pid}</span> : null}
+            {removed ? <span>状态文件已清理</span> : null}
+          </div>
+          {snap.summary ? <div className="oa-goalcard-summary">{String(snap.summary)}</div> : null}
+          {errText ? <div className="oa-goalcard-err">{String(errText)}</div> : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskReply }) {
   const mergedState = useMemo(
     () => mergeUltraPlanStates(state, parseUltraPlanText(content)),
@@ -2303,6 +2403,10 @@ export const ChatMessage = memo(function ChatMessage({
 
       {m.role === 'assistant' && (
         <UltraPlanMessageDrawer content={m.content || ''} state={m.ultraplan_state} pending={pending} onAskReply={onAskReply} />
+      )}
+
+      {m.role === 'assistant' && m.goal_state && (
+        <GoalStatusCard state={m.goal_state} pending={pending} />
       )}
 
       <div className="oa-msg-meta">
@@ -2986,6 +3090,7 @@ export default function ChatApp() {
         const finalMsg = mergeFinalStreamMessage(m, ev.message)
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
+        if (!finalMsg.goal_state && m.goal_state) finalMsg.goal_state = m.goal_state
         return finalMsg
       }) : xs)
     }
@@ -2994,6 +3099,12 @@ export default function ChatApp() {
         if (m.id !== pendingId) return m
         const nextState = mergeUltraPlanStates(m.ultraplan_state, ev.state) || ev.state
         return { ...m, ultraplan_state: nextState }
+      }) : xs)
+    }
+    if (ev.type === 'goal_event' && ev.state) {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
+        return { ...m, goal_state: { ...(m.goal_state || {}), ...ev.state } }
       }) : xs)
     }
     if (ev.type === 'ultraplan_output' && ev.task_id && Array.isArray(ev.lines)) {

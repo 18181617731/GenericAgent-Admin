@@ -1,4 +1,4 @@
-import json, os, sys, time, traceback, threading, queue, re
+import glob, json, os, sys, time, traceback, threading, queue, re
 from pathlib import Path
 
 
@@ -1737,6 +1737,74 @@ def handle_btw_request(agent, req):
     emit({'type': 'btw_done', 'message': msg})
 
 
+_GOAL_CARD_KEYS = (
+    'objective', 'status', 'start_time', 'end_time', 'budget_seconds',
+    'max_turns', 'turns_used', 'llm_no', 'pid', 'mode', 'stop_reason',
+    'last_error', 'summary',
+)
+
+
+def _goal_state_files(root):
+    base = os.path.join(str(root), 'temp')
+    found = {}
+    for pattern in (os.path.join(base, 'goals', '*', 'state.json'), os.path.join(base, 'goal_*.json')):
+        for path in glob.glob(pattern):
+            try:
+                found[os.path.normcase(os.path.abspath(path))] = os.path.getmtime(path)
+            except OSError:
+                continue
+    return found
+
+
+def _read_goal_card_state(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    objective = str(data.get('objective') or '').strip()
+    status = data.get('status')
+    if not objective or not isinstance(status, str) or not status.strip():
+        return None
+    state = {}
+    for key in _GOAL_CARD_KEYS:
+        value = data.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            state[key] = value
+    state['objective'] = objective[:4000]
+    try:
+        state['updated_at'] = int(os.path.getmtime(path))
+    except OSError:
+        pass
+    state['state_file'] = os.path.abspath(path)
+    return state
+
+
+def _snapshot_goal_card(root, ctx):
+    pinned = ctx.get('path') or ''
+    if pinned:
+        state = _read_goal_card_state(pinned)
+        if state is None:
+            state = dict(ctx.get('state') or {})
+            if not state:
+                return None
+            state['missing'] = True
+        return state
+    baseline = ctx.get('baseline') or {}
+    fresh = []
+    for path, mtime in _goal_state_files(root).items():
+        if path not in baseline:
+            fresh.append((mtime, path))
+    for _, path in sorted(fresh):
+        state = _read_goal_card_state(path)
+        if state is not None:
+            ctx['path'] = path
+            return state
+    return None
+
+
 def handle_request(agent, worker, req):
     req = _normalize_request(req)
     _reset_usage()  # Clear usage accumulator for this turn
@@ -1804,6 +1872,28 @@ def handle_request(agent, worker, req):
     _up_stop = threading.Event() if _up_context else None
     _up_thread = None
     _last_plan = ['']
+    try:
+        _goal_card_baseline = _goal_state_files(root_for_req)
+    except Exception:
+        _goal_card_baseline = {}
+    _goal_card_ctx = {'baseline': _goal_card_baseline, 'path': '', 'state': {}, 'encoded': '', 'last_scan': 0.0}
+
+    def emit_goal_update(force=False):
+        now_mono = time.monotonic()
+        if not force and now_mono - _goal_card_ctx['last_scan'] < 1.0:
+            return
+        _goal_card_ctx['last_scan'] = now_mono
+        try:
+            state = _snapshot_goal_card(root_for_req, _goal_card_ctx)
+        except Exception:
+            return
+        if not state:
+            return
+        encoded = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        if encoded != _goal_card_ctx['encoded']:
+            _goal_card_ctx['encoded'] = encoded
+            _goal_card_ctx['state'] = state
+            emit({'type': 'goal_event', 'state': state})
 
     def stop_ultraplan_observer():
         if _up_stop is not None:
@@ -1846,6 +1936,7 @@ def handle_request(agent, worker, req):
                 item = display_queue.get(timeout=1.0)
             except queue.Empty:
                 emit_plan_update(''.join(chunks))
+                emit_goal_update()
                 if not worker.is_alive():
                     raise RuntimeError('GA core worker exited unexpectedly')
                 continue
@@ -1861,6 +1952,9 @@ def handle_request(agent, worker, req):
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
                 if _up_state.get('run_dir'):
                     msg['ultraplan_state'] = dict(_up_state)
+                emit_goal_update(force=True)
+                if _goal_card_ctx.get('state'):
+                    msg['goal_state'] = dict(_goal_card_ctx['state'])
                 state = _snapshot_ga_state(agent)
                 usage = _snapshot_usage()
                 usages = _snapshot_turn_usages()
@@ -1873,6 +1967,9 @@ def handle_request(agent, worker, req):
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'error': True}
         if _up_state.get('run_dir'):
             msg['ultraplan_state'] = dict(_up_state)
+        emit_goal_update(force=True)
+        if _goal_card_ctx.get('state'):
+            msg['goal_state'] = dict(_goal_card_ctx['state'])
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})

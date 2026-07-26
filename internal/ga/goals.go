@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -945,11 +946,62 @@ func killExactPID(pid int) error {
 	return p.Kill()
 }
 
+var (
+	pidSnapshotMu   sync.Mutex
+	pidSnapshotAt   time.Time
+	pidSnapshotPIDs map[int]struct{}
+)
+
+const pidSnapshotTTL = 1500 * time.Millisecond
+
+// tasklistAllPIDs parses `tasklist /FO CSV /NH` output into a PID set.
+func tasklistAllPIDs(out []byte) map[int]struct{} {
+	pids := make(map[int]struct{}, 256)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "INFO:") {
+			continue
+		}
+		fields := strings.Split(line, ",")
+		if len(fields) < 2 {
+			continue
+		}
+		got := strings.Trim(fields[1], " \t\r\n\"")
+		if v, err := strconv.Atoi(got); err == nil && v > 0 {
+			pids[v] = struct{}{}
+		}
+	}
+	return pids
+}
+
+// windowsPIDSnapshot returns a briefly cached full-process PID set so bursts
+// of liveness checks (goals list) cost one tasklist call instead of one per goal.
+func windowsPIDSnapshot() (map[int]struct{}, bool) {
+	pidSnapshotMu.Lock()
+	defer pidSnapshotMu.Unlock()
+	if pidSnapshotPIDs != nil && time.Since(pidSnapshotAt) < pidSnapshotTTL {
+		return pidSnapshotPIDs, true
+	}
+	cmd := exec.Command("tasklist", "/FO", "CSV", "/NH")
+	hideChildWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	pidSnapshotPIDs = tasklistAllPIDs(out)
+	pidSnapshotAt = time.Now()
+	return pidSnapshotPIDs, true
+}
+
 func isPIDRunning(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 	if runtime.GOOS == "windows" {
+		if snap, ok := windowsPIDSnapshot(); ok {
+			_, alive := snap[pid]
+			return alive
+		}
 		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/FO", "CSV", "/NH")
 		hideChildWindow(cmd)
 		out, err := cmd.Output()
