@@ -1406,10 +1406,10 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
         let added = 0, removed = 0, summary = ''
         
         if (parsed.type === 'file_patch') {
-          const oldLines = (parsed.old_content || '').split('\n')
-          const newLines = (parsed.new_content || '').split('\n')
-          added = newLines.length
-          removed = oldLines.length
+          // 用真实行级 diff 统计（旧实现取 old/new 块整块行数，会把未变的上下文行也计入 ±）
+          const d = computeLineDiff(parsed.old_content || '', parsed.new_content || '', { context: 0 })
+          added = d.added
+          removed = d.removed
           // 取 new_content 前30个字符作为摘要
           summary = (parsed.new_content || '').trim().slice(0, 50).replace(/\n/g, ' ')
         } else if (parsed.type === 'file_write') {
@@ -1432,12 +1432,19 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
         })
       }
     }
-    // 去重（同一文件多次操作只保留最后一次）
-    const pathMap = new Map()
+    // 按文件分组：同一文件的多次操作全部保留（此前按 path 去重会丢失前面的改动）
+    const groups = new Map()
     for (const op of ops) {
-      pathMap.set(op.path, op)
+      if (!groups.has(op.path)) groups.set(op.path, [])
+      groups.get(op.path).push(op)
     }
-    return Array.from(pathMap.values())
+    return Array.from(groups.entries()).map(([path, list]) => ({
+      path,
+      ops: list,
+      added: list.reduce((s, o) => s + o.added, 0),
+      removed: list.reduce((s, o) => s + o.removed, 0),
+      summary: list[list.length - 1].summary,
+    }))
   }, [content])
 
   const [expandedPaths, setExpandedPaths] = useState(new Set())
@@ -1469,13 +1476,13 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
       </div>
       {!collapsed && (
       <div className="oa-file-summary-list">
-        {fileOps.map((op, i) => {
-          const filename = op.path.split(/[/\\]/).pop() || op.path
-          const isPatch = op.type === 'file_patch'
-          const expanded = expandedPaths.has(op.path)
-          // Compute diff rows on demand
-          const diffResult = expanded
-            ? (isPatch
+        {fileOps.map((group, i) => {
+          const filename = group.path.split(/[/\\]/).pop() || group.path
+          const expanded = expandedPaths.has(group.path)
+          const multi = group.ops.length > 1
+          // Compute diff rows on demand（每次操作各算一份）
+          const diffResults = expanded
+            ? group.ops.map(op => op.type === 'file_patch'
                 ? computeLineDiff(op.old_content, op.new_content, { context: 3 })
                 : computeWriteRows(op.content))
             : null
@@ -1483,25 +1490,37 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
             <div key={i}>
               <div
                 className={'oa-file-summary-item' + (expanded ? ' expanded' : '')}
-                onClick={() => toggleExpand(op.path)}
-                title={op.path}
+                onClick={() => toggleExpand(group.path)}
+                title={group.path}
                 role="button"
                 tabIndex={0}
-                onKeyDown={e => { if (e.key === 'Enter') toggleExpand(op.path) }}
+                onKeyDown={e => { if (e.key === 'Enter') toggleExpand(group.path) }}
               >
                 <ChevronDown size={11} className={'oa-file-chevron' + (expanded ? ' open' : '')} />
                 <span className="oa-file-name">{filename}</span>
+                {multi && <span className="oa-file-op-count">×{group.ops.length}</span>}
                 <span className="oa-file-stats">
-                  {isPatch && op.removed > 0 && <span className="stat-removed">-{op.removed}</span>}
-                  {op.added > 0 && <span className="stat-added">+{op.added}</span>}
+                  {group.removed > 0 && <span className="stat-removed">-{group.removed}</span>}
+                  {group.added > 0 && <span className="stat-added">+{group.added}</span>}
                 </span>
-                {op.summary && !expanded && <span className="oa-file-preview">{op.summary}</span>}
+                {group.summary && !expanded && <span className="oa-file-preview">{group.summary}</span>}
               </div>
-              {expanded && diffResult && (
-                <div className="oa-file-summary-diff">
-                  <DiffRows rows={diffResult.rows} />
+              {expanded && diffResults && group.ops.map((op, j) => (
+                <div key={j}>
+                  {multi && (
+                    <div className="oa-file-op-label">
+                      #{j + 1} · {op.type === 'file_patch' ? 'patch' : 'write'}
+                      <span className="oa-file-stats">
+                        {op.type === 'file_patch' && op.removed > 0 && <span className="stat-removed">-{op.removed}</span>}
+                        {op.added > 0 && <span className="stat-added">+{op.added}</span>}
+                      </span>
+                    </div>
+                  )}
+                  <div className="oa-file-summary-diff">
+                    <DiffRows rows={diffResults[j].rows} />
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
           )
         })}
