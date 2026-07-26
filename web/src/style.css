@@ -1579,7 +1579,8 @@ html[data-theme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255,255,.0
 .oa-file-stats .stat-added{color:var(--i-18864b)}
 .oa-file-stats .stat-removed{color:var(--i-c43b43)}
 .oa-file-preview{flex:1;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8}
-.oa-file-summary-diff{margin:0 0 6px 18px;border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:320px;overflow-y:auto}
+.oa-file-summary-diff{margin:0 0 6px 18px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.oa-file-summary-diff .oa-diff{max-height:320px}
 
 .oa-diff{max-height:420px;overflow:auto;background:var(--n-f6f9fc);font:11.5px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .oa-diff-row{display:grid;grid-template-columns:46px 16px 1fr;align-items:baseline}
