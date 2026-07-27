@@ -449,7 +449,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		script = filepath.Join(work, "apply-update.cmd")
-		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
+		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, os.Getpid(), os.Args[1:]...)
 		cmd = exec.Command("cmd", "/C", "start", "", script)
 	} else {
 		script = filepath.Join(work, "apply-update.sh")
@@ -471,7 +471,16 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	return ApplyResult{OK: true, Message: "update downloaded; restarting", Script: script}, nil
 }
 
-func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string) string {
+func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string, oldPID int, launchArgs ...string) string {
+	args := ""
+	for _, arg := range launchArgs {
+		// 对含空格的参数加引号
+		if strings.Contains(arg, " ") {
+			args += fmt.Sprintf(` "%s"`, arg)
+		} else {
+			args += " " + arg
+		}
+	}
 	return fmt.Sprintf(`@echo off
 setlocal
 set "OLD=%s"
@@ -480,6 +489,18 @@ set "BAK=%s"
 set "WORKER=%s"
 set "NEW_WORKER=%s"
 set "WORKER_BAK=%s"
+set "OLD_PID=%d"
+set "ARGS=%s"
+
+REM Wait for old process to exit
+for /L %%%%i in (1,1,30) do (
+  tasklist /FI "PID eq %%OLD_PID%%" 2>nul | find "%%OLD_PID%%" >nul
+  if errorlevel 1 goto process_gone
+  timeout /t 1 /nobreak >nul
+)
+:process_gone
+
+REM Replace main executable
 for /L %%%%i in (1,1,30) do (
   move /Y "%%OLD%%" "%%BAK%%" >nul 2>nul && goto replaced
   timeout /t 1 /nobreak >nul
@@ -489,6 +510,8 @@ exit /b 1
 :replaced
 move /Y "%%NEW%%" "%%OLD%%" >nul
 if errorlevel 1 (move /Y "%%BAK%%" "%%OLD%%" >nul 2>nul & exit /b 1)
+
+REM Replace worker if present
 if not "%%NEW_WORKER%%"=="" (
   for %%%%D in ("%%WORKER%%") do if not exist "%%%%~dpD" mkdir "%%%%~dpD"
   if exist "%%WORKER%%" move /Y "%%WORKER%%" "%%WORKER_BAK%%" >nul 2>nul
@@ -500,8 +523,10 @@ if not "%%NEW_WORKER%%"=="" (
     exit /b 1
   )
 )
-start "" "%%OLD%%"
-`, oldExe, newExe, backup, worker, newWorker, workerBackup)
+
+REM Start new process with original arguments
+start "" "%%OLD%%" %%ARGS%%
+`, oldExe, newExe, backup, worker, newWorker, workerBackup, oldPID, args)
 }
 
 func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string) string {
