@@ -66,6 +66,7 @@ func Validate(cfg AppConfig) error {
 	}
 	if cfg.ChatDefaultLLMNo < 0 {
 		return fmt.Errorf("chat_default_llm_no must be positive")
+	}
 	if cfg.ChatTitleModel != nil {
 		if strings.TrimSpace(cfg.ChatTitleModel.ProviderVarName) == "" {
 			return fmt.Errorf("chat_title_model.provider_var_name is required")
