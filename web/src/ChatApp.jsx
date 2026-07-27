@@ -1798,6 +1798,22 @@ export function GoalStatusCard({ state, pending = false }) {
     tick()
     return () => { stop = true; clearInterval(timer) }
   }, [stateFile, terminal, pending])
+  const [insight, setInsight] = useState(null)
+  const [stepsOpen, setStepsOpen] = useState(false)
+  useEffect(() => {
+    if (!stateFile) return undefined
+    let stop = false
+    const tick = async () => {
+      try {
+        const d = await api(`/api/goals/insight?state_file=${encodeURIComponent(stateFile)}`)
+        if (!stop && d && d.found) setInsight(d)
+      } catch { /* 解析暂不可用时保持原卡片 */ }
+    }
+    tick()
+    if (terminal) return () => { stop = true }
+    const timer = setInterval(tick, 5000)
+    return () => { stop = true; clearInterval(timer) }
+  }, [stateFile, terminal])
   if (!snap) return null
   const info = goalCardStatusInfo(snap.status, removed)
   const budgetPct = goalBudgetPercent(snap)
@@ -1835,6 +1851,26 @@ export function GoalStatusCard({ state, pending = false }) {
             {snap.pid ? <span>PID {snap.pid}</span> : null}
             {removed ? <span>状态文件已清理</span> : null}
           </div>
+          {insight && Array.isArray(insight.entries) && insight.entries.length > 0 ? (
+            <div className="oa-goalcard-steps">
+              <button type="button" className="oa-goalcard-steps-head" onClick={() => setStepsOpen(v => !v)}
+                aria-expanded={stepsOpen} title={stepsOpen ? '收起过程' : '展开全部过程'}>
+                <span>过程解析 · {insight.total} 步{insight.wakes > 1 ? ` · ${insight.wakes} 次唤醒` : ''}</span>
+                <ChevronDown size={12} className={`oa-goalcard-chevron ${stepsOpen ? '' : 'is-collapsed'}`} />
+              </button>
+              <ol className="oa-goalcard-steps-list">
+                {(stepsOpen ? insight.entries : insight.entries.slice(-3)).map((e, i) => (
+                  <li key={`${e.ts || 0}-${e.turn || 0}-${i}`} className="oa-goalcard-step">
+                    <span className="oa-goalcard-step-time">{e.time || ''}{insight.wakes > 1 && e.turn ? ` #${e.turn}` : ''}</span>
+                    <span className="oa-goalcard-step-text">{e.text}</span>
+                  </li>
+                ))}
+              </ol>
+              {!stepsOpen && insight.total > 3 ? (
+                <div className="oa-goalcard-steps-more">已折叠前 {insight.total - 3} 步</div>
+              ) : null}
+            </div>
+          ) : null}
           {snap.summary ? <div className="oa-goalcard-summary">{String(snap.summary)}</div> : null}
           {errText ? <div className="oa-goalcard-err">{String(errText)}</div> : null}
         </div>
