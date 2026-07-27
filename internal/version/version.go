@@ -301,10 +301,16 @@ func Current() BuildInfo {
 }
 
 func updateSupportStatus() (bool, string) {
-	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
-		return false, "one-click self update is only implemented for Windows and Linux packages"
+	return updateSupportStatusFor(runtime.GOOS)
+}
+
+func updateSupportStatusFor(goos string) (bool, string) {
+	switch goos {
+	case "windows", "linux", "darwin":
+		return true, ""
+	default:
+		return false, "one-click self update is only implemented for Windows, macOS, and Linux packages"
 	}
-	return true, ""
 }
 
 func effectiveVersion() string {
@@ -394,8 +400,9 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if check.Asset == nil || check.Checksum == nil {
 		return ApplyResult{}, errors.New("missing release asset or checksum for current platform")
 	}
-	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
-		return ApplyResult{}, errors.New("one-click self update is only implemented for Windows and Linux packages")
+	supported, reason := updateSupportStatus()
+	if !supported {
+		return ApplyResult{}, errors.New(reason)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -446,8 +453,10 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		cmd = exec.Command("cmd", "/C", "start", "", script)
 	} else {
 		script = filepath.Join(work, "apply-update.sh")
-		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup)
-		cmd = exec.Command("bash", script)
+		content = unixUpdateScript()
+		restartLog := filepath.Join(work, "restart.log")
+		cmd = unixUpdateCommand(script, exe, newExe, backup, worker, newWorker, workerBackup, os.Getpid(), restartLog, os.Args[1:]...)
+		detachUpdateProcess(cmd)
 	}
 	if err := writeFileAtomic(script, []byte(content), 0600); err != nil {
 		return ApplyResult{}, err
@@ -529,6 +538,72 @@ if [ -n "$NEW_WORKER" ]; then
 fi
 exec "$OLD"
 `, oldExe, newExe, backup, worker, newWorker, workerBackup)
+}
+
+func unixUpdateCommand(script, oldExe, newExe, backup, worker, newWorker, workerBackup string, oldPID int, restartLog string, launchArgs ...string) *exec.Cmd {
+	args := []string{script, oldExe, newExe, backup, worker, newWorker, workerBackup, fmt.Sprint(oldPID), restartLog, "--"}
+	args = append(args, launchArgs...)
+	return exec.Command("/bin/sh", args...)
+}
+
+func unixUpdateScript() string {
+	return `#!/bin/sh
+OLD=$1
+NEW=$2
+BAK=$3
+WORKER=$4
+NEW_WORKER=$5
+WORKER_BAK=$6
+OLD_PID=$7
+RESTART_LOG=$8
+shift 8
+[ "${1-}" = "--" ] && shift
+exec >>"$RESTART_LOG" 2>&1
+
+attempt=0
+replaced=0
+while [ "$attempt" -lt 30 ]; do
+  if mv "$OLD" "$BAK" 2>/dev/null; then
+    replaced=1
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+if [ "$replaced" -ne 1 ]; then
+  echo "failed to replace $OLD"
+  exit 1
+fi
+
+if ! cp "$NEW" "$OLD"; then
+  mv "$BAK" "$OLD"
+  exit 1
+fi
+chmod +x "$OLD"
+
+if [ -n "$NEW_WORKER" ]; then
+  mkdir -p "$(dirname "$WORKER")" 2>/dev/null
+  [ -f "$WORKER" ] && cp "$WORKER" "$WORKER_BAK"
+  if ! cp "$NEW_WORKER" "$WORKER"; then
+    [ -f "$WORKER_BAK" ] && cp "$WORKER_BAK" "$WORKER"
+    cp "$BAK" "$OLD"
+    exit 1
+  fi
+fi
+
+attempt=0
+while kill -0 "$OLD_PID" 2>/dev/null; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 30 ]; then
+    echo "timed out waiting for process $OLD_PID to exit"
+    [ -f "$WORKER_BAK" ] && cp "$WORKER_BAK" "$WORKER"
+    cp "$BAK" "$OLD"
+    exit 1
+  fi
+  sleep 1
+done
+exec "$OLD" "$@"
+`
 }
 
 func fetchLatest(ctx context.Context) (rel *Release, err error) {
