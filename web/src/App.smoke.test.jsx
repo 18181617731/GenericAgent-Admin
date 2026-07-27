@@ -686,6 +686,52 @@ describe('chat response identity and time', () => {
     )
   })
 
+  test('renders comparison-report markdown without leaking syntax or unsafe HTML', () => {
+    const content = [
+      '<summary>source differences confirmed</summary>',
+      '',
+      '## Two legacy CPLD TU comparison report',
+      '',
+      '### Basic information',
+      '| Item | tianchi_101 | server_103 |',
+      '|------|-------------|------------|',
+      '| **Code size** | 689 lines | 1223 lines |',
+      '',
+      '---',
+      '',
+      '#### 1. **Data sources and maintenance**',
+      '| Dimension | tianchi_101 | server_103 |',
+      '|------|-------------|------------|',
+      '| **Data source** | **WebService**<br>dynamic address | **Local Excel**<br/>five xlsx files |',
+      '',
+      '#### 3. **Update core logic**',
+      'Both use `update_cpld_firmware()`; ~~obsolete path~~.',
+      '<img src=x onerror="window.__markdownInjected=true">',
+    ].join('\n')
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'markdown-comparison', role: 'assistant', content }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-response-summary')?.textContent).toContain('source differences confirmed')
+    expect(screen.getByRole('heading', { level: 2, name: 'Two legacy CPLD TU comparison report' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 3, name: 'Basic information' })).toBeTruthy()
+    const firstDetailHeading = container.querySelector('.oa-md h4')
+    expect(firstDetailHeading?.textContent).toBe('1. Data sources and maintenance')
+    expect(firstDetailHeading?.querySelector('strong')?.textContent).toBe('Data sources and maintenance')
+    expect(container.querySelectorAll('.oa-md-table')).toHaveLength(2)
+    expect(container.querySelectorAll('.oa-md-table br')).toHaveLength(2)
+    expect(container.querySelector('.oa-md hr')).toBeTruthy()
+    expect(container.querySelector('.oa-md code')?.textContent).toBe('update_cpld_firmware()')
+    expect(container.querySelector('.oa-md del')?.textContent).toBe('obsolete path')
+    expect(container.querySelector('.oa-md img')).toBeNull()
+    expect(container.querySelector('.oa-md')?.textContent).toContain('<img src=x onerror="window.__markdownInjected=true">')
+    expect(container.querySelector('.oa-md')?.textContent).not.toContain('<br>')
+  })
+
   test('renders an explicit empty result for a worldline command', () => {
     render(
       <ChatMessage

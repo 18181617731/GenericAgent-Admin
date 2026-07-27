@@ -1452,8 +1452,10 @@ html[data-theme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255,255,.0
 .oa-md{font-size:15px;line-height:1.75;color: var(--text);word-break:break-word}
 .oa-md p{margin:0 0 12px;white-space:pre-wrap}
 .oa-md p:last-child{margin-bottom:0}
-.oa-md h3,.oa-md h4,.oa-md h5{font-size:17px;line-height:1.45;margin:16px 0 8px;font-weight:650;color: var(--text)}
-.oa-md h4{font-size:16px}.oa-md h5{font-size:15px}
+.oa-md h1,.oa-md h2,.oa-md h3,.oa-md h4,.oa-md h5,.oa-md h6{line-height:1.4;margin:18px 0 8px;font-weight:700;color:var(--text)}
+.oa-md h1{font-size:22px}.oa-md h2{font-size:20px}.oa-md h3{font-size:18px}.oa-md h4{font-size:16px}.oa-md h5{font-size:15px}.oa-md h6{font-size:14px}
+.oa-md hr{height:1px;border:0;background:var(--oa-line);margin:18px 0}
+.oa-md-fragment > :first-child{margin-top:0}.oa-md-fragment > :last-child{margin-bottom:0}
 .oa-md code:not(pre code){background:var(--n-f2f2f2);border:1px solid var(--n-e7e7e7);border-radius:5px;padding:1px 5px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9em;color: var(--text)}
 .oa-md a{color:var(--i-0b57d0);text-decoration:none}.oa-md a:hover{text-decoration:underline}
 .oa-table-wrap{width:100%;overflow-x:auto;margin:10px 0 14px;border:1px solid var(--n-e5e7eb);border-radius:12px;background:var(--surface-strong)}

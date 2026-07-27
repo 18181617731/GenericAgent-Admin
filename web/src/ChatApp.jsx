@@ -175,7 +175,9 @@ const slashCommandNextDrawer = (c, nextText = '') => {
 const tokenizeInlineMarkdown = (text = '') => {
   const src = String(text || '')
   const tokens = []
-  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g
+  // Keep raw HTML escaped by React. The only HTML-shaped token accepted here is
+  // Markdown's commonly used hard line break, <br> (including <br/> variants).
+  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(~~([^~]+)~~)|(<br\s*\/?>)/gi
   let last = 0, m
   while ((m = re.exec(src)) !== null) {
     if (m.index > last) tokens.push({ type:'text', text:src.slice(last, m.index) })
@@ -183,6 +185,8 @@ const tokenizeInlineMarkdown = (text = '') => {
     else if (m[4]) tokens.push({ type:'strong', text:m[4] })
     else if (m[6]) tokens.push({ type:'em', text:m[6] })
     else if (m[8] && m[9]) tokens.push({ type:'link', text:m[8], href:m[9] })
+    else if (m[11]) tokens.push({ type:'del', text:m[11] })
+    else if (m[12]) tokens.push({ type:'br' })
     last = re.lastIndex
   }
   if (last < src.length) tokens.push({ type:'text', text:src.slice(last) })
@@ -195,6 +199,8 @@ function InlineMarkdown({ text = '' }) {
       if (t.type === 'code') return <code key={i}>{t.text}</code>
       if (t.type === 'strong') return <strong key={i}>{t.text}</strong>
       if (t.type === 'em') return <em key={i}>{t.text}</em>
+      if (t.type === 'del') return <del key={i}>{t.text}</del>
+      if (t.type === 'br') return <br key={i} />
       if (t.type === 'link') return <a key={i} href={t.href} target="_blank" rel="noreferrer">{t.text}</a>
       return <span key={i}>{t.text}</span>
     })}
@@ -1643,12 +1649,12 @@ function renderPlainTextBlock(b, key) {
   const unorderedOnly = lines.every(x => /^\s*[-*+]\s+/.test(x))
   if (orderedOnly) return renderListBlock(lines, key, true)
   if (unorderedOnly) return renderListBlock(lines, key, false)
-  if (/^#{1,3}\s+/.test(trimmed)) {
-    const level = Math.min(3, trimmed.match(/^#+/)[0].length)
-    const body = trimmed.replace(/^#{1,3}\s+/, '')
-    const Tag = `h${level + 2}`
-    return <Tag key={key}><InlineRichText text={body} /></Tag>
+  const heading = trimmed.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
+  if (heading) {
+    const Tag = `h${heading[1].length}`
+    return <Tag key={key}><InlineRichText text={heading[2]} /></Tag>
   }
+  if (/^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(trimmed)) return <hr key={key} />
   return <p key={key}><InlineRichText text={trimmed} /></p>
 }
 
@@ -1675,10 +1681,32 @@ function renderTextBlock(b, i) {
     listOrdered = null
   }
 
-  for (const line of lines) {
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+    const line = lines[lineIdx]
+    const nextLine = lines[lineIdx + 1] || ''
+    const isTableStart = line.includes('|') && nextLine.includes('|') && splitTableRow(nextLine).every(cell => parseTableAlign(cell) !== null)
     const isOrdered = /^\s*\d+[.)]\s+/.test(line)
     const isUnordered = /^\s*[-*+]\s+/.test(line)
-    if (isOrdered || isUnordered) {
+    const isHeading = /^\s{0,3}#{1,6}\s+/.test(line)
+    const isRule = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(line)
+    if (isTableStart) {
+      flushParagraph()
+      flushList()
+      const tableLines = [line, nextLine]
+      lineIdx += 2
+      while (lineIdx < lines.length && lines[lineIdx].includes('|')) {
+        tableLines.push(lines[lineIdx])
+        lineIdx += 1
+      }
+      lineIdx -= 1
+      const nestedTable = parseMarkdownTable(tableLines.join('\n'))
+      if (nestedTable) nodes.push(renderMarkdownTable(nestedTable, `${i}-t-${seq++}`))
+    } else if (isHeading || isRule) {
+      flushParagraph()
+      flushList()
+      const node = renderPlainTextBlock(line, `${i}-b-${seq++}`)
+      if (node) nodes.push(node)
+    } else if (isOrdered || isUnordered) {
       flushParagraph()
       const ordered = isOrdered
       if (list.length && listOrdered !== ordered) flushList()
