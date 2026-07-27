@@ -11,6 +11,14 @@ import { modelValidationSummary, validateModelProfiles } from './lib/modelsValid
 import { applyModelOrder, applyProviderOrder, mergePersistedModelOrder, orderedProviderProfiles } from './lib/modelsEditor'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
+import {
+  VERSION_RELOAD_DELAY_MS,
+  VERSION_RELOAD_RETRY_MS,
+  beginVersionRestartGrace,
+  shouldReloadAfterVersionUpdate,
+  shouldReportVersionPollError,
+  versionMatchesExpectedRelease,
+} from './lib/versionUpdatePolling'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { TaskRow } from './components/schedule'
@@ -340,6 +348,9 @@ export default function App() {
   const modelImportAttempted = useRef(false)
   const [llms, setLLMs] = useState([]), [reflectLLMNo, setReflectLLMNo] = useState(''), [showLLMPicker, setShowLLMPicker] = useState(false), [pendingServiceName, setPendingServiceName] = useState('')
   const appScope = useRef(null)
+  const versionRestartGraceUntil = useRef(0)
+  const versionUpdateNeedsReload = useRef(false)
+  const versionObservedRunning = useRef(false)
 
   useGSAP(() => {
     if (tab === 'chat' || prefersReducedMotion()) return
@@ -772,6 +783,7 @@ export default function App() {
     const d = await api('/api/version/status')
     setVersionStatus(d)
     if (d?.check) setVersionCheck(d.check)
+    if (d?.running) versionObservedRunning.current = true
     return d
   }
   useEffect(() => {
@@ -779,15 +791,38 @@ export default function App() {
     const tick = async () => {
       try {
         const d = await refreshVersionStatus()
-        if (!stop && d?.running) setTimeout(tick, 1500)
-      } catch (_) {}
+        
+        // 检测是否需要重新加载页面
+        if (versionUpdateNeedsReload.current && shouldReloadAfterVersionUpdate(d, versionObservedRunning.current)) {
+          const expectedVersion = versionCheck?.latest?.tag_name || ''
+          if (versionMatchesExpectedRelease(versionInfo?.version, expectedVersion)) {
+            // 版本匹配，重新加载页面
+            setTimeout(() => window.location.reload(), VERSION_RELOAD_DELAY_MS)
+            return
+          }
+        }
+        
+        if (!stop && d?.running) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
+      } catch (err) {
+        // 在宽限期内，容忍连接失败（更新期间服务可能暂时不可用）
+        if (shouldReportVersionPollError(versionRestartGraceUntil.current)) {
+          // 宽限期已过，报告错误
+          console.error('Version status poll error:', err)
+        }
+        // 无论是否在宽限期内，都继续轮询
+        if (!stop) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
+      }
     }
     tick()
     return () => { stop = true }
-  }, [])
+  }, [versionInfo, versionCheck])
   useEffect(() => {
     if (!versionStatus?.running) return
-    const timer = setInterval(() => refreshVersionStatus().catch(e => setMsg(e.message)), 1500)
+    const timer = setInterval(() => refreshVersionStatus().catch(e => {
+      if (shouldReportVersionPollError(versionRestartGraceUntil.current)) {
+        setMsg(e.message)
+      }
+    }), VERSION_RELOAD_RETRY_MS)
     return () => clearInterval(timer)
   }, [versionStatus?.running])
   const checkVersion = async () => {
@@ -799,8 +834,18 @@ export default function App() {
   const updateVersion = async () => {
     if (!confirmDanger('version-update', t.overview.versionUpdateConfirm)) return
     setVersionBusy(true)
-    try { const d = await api('/api/version/update', { dangerous:true, method:'POST', body:'{}' }); setVersionStatus(d); setMsg(t.overview.updateQueued) }
-    catch(e){ setMsg(e.message) }
+    try {
+      versionRestartGraceUntil.current = beginVersionRestartGrace()
+      versionUpdateNeedsReload.current = true
+      const d = await api('/api/version/update', { dangerous:true, method:'POST', body:'{}' })
+      setVersionStatus(d)
+      setMsg(t.overview.updateQueued)
+    }
+    catch(e){
+      versionRestartGraceUntil.current = 0
+      versionUpdateNeedsReload.current = false
+      setMsg(e.message)
+    }
     finally{ setVersionBusy(false) }
   }
   const installTMWebDriverDeps = async () => {
