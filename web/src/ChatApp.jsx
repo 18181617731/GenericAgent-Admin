@@ -5,7 +5,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
@@ -21,6 +21,7 @@ import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageUR
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
 import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
+import { chatErrorPresentation } from './lib/chatErrors.js'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -2491,7 +2492,22 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
   )
 })
 
-export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '' }) {
+const ChatErrorCard = memo(function ChatErrorCard({ message, onRetry }) {
+  const info = useMemo(() => chatErrorPresentation(message), [message])
+  return <section className={`oa-chat-error-card source-${info.source}`} role="alert" aria-label={`${info.sourceLabel}错误`}>
+    <header>
+      <span className="oa-chat-error-icon"><CircleAlert size={18}/></span>
+      <div><small>{info.sourceLabel}<code>{info.code}</code></small><h3>{info.summary}</h3></div>
+    </header>
+    <p>{info.hint}</p>
+    <div className="oa-chat-error-actions">
+      {onRetry && <button type="button" onClick={onRetry}><RefreshCw size={14}/>重新发送</button>}
+      {info.detail && <details><summary>查看技术详情</summary><pre>{info.detail}</pre></details>}
+    </div>
+  </section>
+})
+
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
@@ -2504,6 +2520,8 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const elapsedMs = getElapsedMs(m, clockNow || Date.now())
   const showUsageRow = m.role === 'assistant' && (usageHasTokens(usageTotal) || elapsedMs > 0)
   const usageLabel = m.role === 'assistant' ? '总计' : null
+  const stoppedByUser = m.error && /(?:\[已中止生成\]|^已停止生成$)/.test(String(m.content || '').trim())
+  const showErrorCard = m.error && !stoppedByUser
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(userText)
   const [editError, setEditError] = useState('')
@@ -2540,7 +2558,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}<GeneratedImageGallery content={m.content}/></> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
       </div>
@@ -2549,14 +2567,15 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, clockNow, worldline, onSwitchVersion }) {
+const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
       const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
+      const retrySource = m.error && i > 0 && messages[i - 1]?.role === 'user' ? messages[i - 1] : null
+      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
       return nodes
     })}
   </>
@@ -3894,6 +3913,25 @@ export default function ChatApp() {
     }
   }
 
+  const retryFailedTurn = async (sourceMessage) => {
+    if (!sourceMessage || busy) return
+    if (modelSwitching) {
+      setNotice('正在切换模型，请稍候重试')
+      return
+    }
+    const text = stripUserAttachmentBlock(sourceMessage.content || '').trim()
+    const sourceFiles = Array.isArray(sourceMessage.files) ? sourceMessage.files : []
+    const reusableFiles = sourceFiles.filter(file => String(file?.dataURL || '').startsWith('data:'))
+    if (!text && reusableFiles.length === 0) {
+      setErr(sourceFiles.length ? '原消息仅包含历史附件，请重新选择附件后发送' : '找不到可重新发送的原消息')
+      return
+    }
+    if (sourceFiles.length > reusableFiles.length) {
+      setNotice('正在重新发送文字内容；历史附件无法自动复用，如仍需要请重新选择附件。')
+    }
+    await runSend({ text, files:reusableFiles, llmNo, reasoningEffort, sessionId:activeSidRef.current || sid })
+  }
+
   const selectWorldlineRestoreNode = useCallback((nodeID, mode, target) => {
     const command = worldlineRestoreCommand(nodeID, mode, target)
     if (!command) return
@@ -4259,7 +4297,7 @@ export default function ChatApp() {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} />
         {subagents.length > 0 && <div className="oa-subagents" aria-label="子代理状态">{subagents.map(state => {
           const view = subagentCardView(state)
           return view && <div key={state.name} className={`oa-subagent-card tone-${view.tone}`}><div className="oa-subagent-head"><Bot size={14}/><span className="oa-subagent-name">{view.name}</span><span className="oa-subagent-state">{view.label}</span></div><div className="oa-subagent-meta">第 {view.rounds} 轮{view.ago ? ` · ${view.ago}` : ''}</div>{view.summary && <div className="oa-subagent-summary">{view.summary}</div>}</div>

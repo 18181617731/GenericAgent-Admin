@@ -526,6 +526,44 @@ describe('chat response model identity', () => {
     )
   })
 
+  test('shows a recoverable model-service card without exposing raw HTML', () => {
+    const onRetry = vi.fn()
+    const content = '!!!Error: HTTP 403: <!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body>blocked</body></html>'
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'provider-error', role: 'assistant', content, error: true }}
+        pending={false}
+        onAskReply={vi.fn()}
+        onRetry={onRetry}
+      />,
+    )
+
+    expect(screen.getByRole('alert', { name: '模型服务错误' }).textContent).toContain('HTTP 403')
+    expect(container.textContent).not.toContain('<html')
+    const details = screen.getByText('查看技术详情').closest('details')
+    expect(details.open).toBe(false)
+    fireEvent.click(details.querySelector('summary'))
+    expect(details.open).toBe(true)
+    expect(details.textContent).toContain('Cloudflare')
+    fireEvent.click(screen.getByRole('button', { name: '重新发送' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps partial output visible when the user stops generation', () => {
+    render(
+      <ChatMessage
+        message={{ id: 'stopped', role: 'assistant', content: '已生成的部分内容\n\n[已中止生成]', error: true }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: '重新发送' })).toBeNull()
+    expect(screen.getByText(/已生成的部分内容/)).toBeTruthy()
+    expect(screen.getByText(/已中止生成/)).toBeTruthy()
+  })
+
   test('renders comparison-report markdown without leaking syntax or unsafe HTML', () => {
     const content = [
       '<summary>source differences confirmed</summary>',

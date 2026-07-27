@@ -282,8 +282,11 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 	if cs.Settings.LLMNo != 0 {
 		t.Fatalf("LLMNo=%d want 0", cs.Settings.LLMNo)
 	}
-	if len(cs.Messages) != 2 || cs.Messages[1].Role != "assistant" || !cs.Messages[1].Error || !strings.Contains(cs.Messages[1].Content, "boom") {
+	if len(cs.Messages) != 2 || cs.Messages[1].Role != "assistant" || !cs.Messages[1].Error {
 		t.Fatalf("unexpected messages: %#v", cs.Messages)
+	}
+	if cs.Messages[1].ErrorInfo == nil || cs.Messages[1].ErrorInfo.Source != chatErrorSourceProject || !strings.Contains(cs.Messages[1].ErrorInfo.Detail, "boom") {
+		t.Fatalf("error_info=%#v want project error with worker detail", cs.Messages[1].ErrorInfo)
 	}
 	if cs.Messages[1].LLMNo == nil || *cs.Messages[1].LLMNo != 0 {
 		t.Fatalf("assistant llm_no=%v want 0: %#v", cs.Messages[1].LLMNo, cs.Messages)

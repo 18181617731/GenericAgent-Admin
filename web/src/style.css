@@ -907,6 +907,45 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
 .oa-content { white-space:pre-wrap; word-break:break-word; line-height:1.78; font-size:15.5px; color: var(--text); }
 .oa-message.user .oa-content { color:#fff; line-height:1.62; }
 .oa-message.error .oa-content { color:var(--i-a11936); }
+.oa-chat-error-card { width:min(100%,720px); border:1px solid #f0c6c2; border-left:4px solid #c84034; border-radius:8px; padding:15px 16px; background:#fff8f7; color:#3f2522; }
+.oa-chat-error-card header { display:flex; align-items:flex-start; gap:11px; }
+.oa-chat-error-icon { width:32px; height:32px; flex:none; display:grid; place-items:center; border-radius:50%; background:#fce6e3; color:#b42318; }
+.oa-chat-error-card header > div { min-width:0; }
+.oa-chat-error-card small { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:#8f3129; font-size:12px; font-weight:700; }
+.oa-chat-error-card small code { padding:2px 6px; border-radius:4px; background:rgba(180,35,24,.08); color:#8f3129; font-size:10px; }
+.oa-chat-error-card h3 { margin:4px 0 0; font-size:15px; line-height:1.45; letter-spacing:0; color:#562721; }
+.oa-chat-error-card > p { margin:10px 0 0 43px; color:#70423d; font-size:13px; line-height:1.6; }
+.oa-chat-error-actions { display:flex; align-items:flex-start; flex-wrap:wrap; gap:10px; margin:12px 0 0 43px; }
+.oa-chat-error-actions > button { min-height:34px; display:inline-flex; align-items:center; gap:6px; border:1px solid #d9aaa5; border-radius:6px; padding:0 11px; background:#fff; color:#8f3129; cursor:pointer; font-weight:650; }
+.oa-chat-error-actions > button:hover { border-color:#b42318; background:#fff2f0; }
+.oa-chat-error-actions details { min-width:min(100%,420px); color:#70423d; font-size:12px; }
+.oa-chat-error-actions summary { width:max-content; max-width:100%; padding:7px 0; cursor:pointer; font-weight:650; }
+.oa-chat-error-actions pre { max-height:180px; margin:5px 0 0; padding:10px; overflow:auto; border:1px solid #efd4d1; border-radius:6px; background:#fff; color:#563a37; white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.oa-chat-error-card.source-network { border-left-color:#b7791f; background:#fffbeb; }
+.oa-chat-error-card.source-network .oa-chat-error-icon { background:#fef3c7; color:#9a6700; }
+.oa-chat-error-card.source-project_runtime { border-left-color:#6b7280; background:#f8fafc; }
+.oa-chat-error-card.source-project_runtime .oa-chat-error-icon { background:#e5e7eb; color:#4b5563; }
+html[data-theme="dark"] .oa-chat-error-card { border-color:rgba(244,138,144,.34); background:#2a1d20; color:#f8d7d9; }
+html[data-theme="dark"] .oa-chat-error-icon { background:rgba(244,138,144,.15); color:#f48a90; }
+html[data-theme="dark"] .oa-chat-error-card small,
+html[data-theme="dark"] .oa-chat-error-card small code,
+html[data-theme="dark"] .oa-chat-error-card h3,
+html[data-theme="dark"] .oa-chat-error-card > p,
+html[data-theme="dark"] .oa-chat-error-actions details { color:#f4b8bc; }
+html[data-theme="dark"] .oa-chat-error-actions > button,
+html[data-theme="dark"] .oa-chat-error-actions pre { border-color:rgba(244,138,144,.28); background:#20171a; color:#f8d7d9; }
+html[data-theme="dark"] .oa-chat-error-actions > button:hover { border-color:#f48a90; background:#352126; }
+html[data-theme="dark"] .oa-chat-error-card.source-network { border-left-color:#f0b357; background:#292318; }
+html[data-theme="dark"] .oa-chat-error-card.source-network .oa-chat-error-icon { background:rgba(240,179,87,.15); color:#f0b357; }
+html[data-theme="dark"] .oa-chat-error-card.source-project_runtime { border-left-color:#94a3b8; background:#1d232b; }
+html[data-theme="dark"] .oa-chat-error-card.source-project_runtime .oa-chat-error-icon { background:rgba(148,163,184,.16); color:#cbd5e1; }
+@media (max-width:560px) {
+  .oa-chat-error-card { padding:13px 12px; }
+  .oa-chat-error-card > p, .oa-chat-error-actions { margin-left:0; }
+  .oa-chat-error-actions { display:grid; grid-template-columns:1fr; }
+  .oa-chat-error-actions > button { width:max-content; }
+  .oa-chat-error-actions details { min-width:0; width:100%; }
+}
 .oa-composer-wrap { width:min(860px, calc(100% - 48px)); justify-self:center; padding:12px 0 20px; background:linear-gradient(to top, var(--g-fbfaf7a98) 72%, rgba(251,250,247,0)); }
 .oa-composer { min-height:82px; display:grid; grid-template-columns:1fr; gap:8px; border:1px solid rgba(0,0,0,.12); border-radius:30px; padding:10px 10px 10px 18px; background:var(--g-ffffffa88); box-shadow:0 22px 64px rgba(0,0,0,.13), 0 2px 0 var(--g-ffffffa70) inset; backdrop-filter:blur(18px); transition:border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 .oa-composer:focus-within { border-color:rgba(0,0,0,.22); box-shadow:0 26px 76px rgba(0,0,0,.16), 0 2px 0 var(--g-ffffffa80) inset; transform:translateY(-1px); }
