@@ -2137,7 +2137,7 @@ func (s *Server) chatTitleLLMNo(fallback int) int {
 			return selected.LLMNo
 		}
 	}
-	return fallback
+	return -1 // Default to disabled if not configured
 }
 
 func (s *Server) beginChatTitleJob(sid string) bool {
