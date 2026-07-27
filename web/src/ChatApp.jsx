@@ -8,7 +8,7 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
-import { formatDuration, formatGoalTime, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
+import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -1762,6 +1762,12 @@ const normalizeGoalCardState = (raw) => {
   return g
 }
 
+const formatGoalCardTime = (value) => {
+  const d = dateFromTimestamp(value)
+  if (!d || d.getFullYear() < 2000 || d.getTime() > Date.now() + 86400000) return ''
+  return d.toLocaleString()
+}
+
 const goalCardStatusInfo = (status, removed) => {
   const s = String(status || '').toLowerCase()
   if (removed) return { text: '已结束', cls: 'is-done' }
@@ -1777,34 +1783,54 @@ export function GoalStatusCard({ state, pending = false }) {
   const [snap, setSnap] = useState(() => normalizeGoalCardState(state))
   const [removed, setRemoved] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  const [clockNow, setClockNow] = useState(() => Date.now())
   useEffect(() => { setSnap(prev => ({ ...(prev || {}), ...(normalizeGoalCardState(state) || {}) })) }, [state])
   const status = String(snap?.status || '').toLowerCase()
   const terminal = removed || GOAL_CARD_TERMINAL.has(status)
   const stateFile = snap?.state_file || ''
+  const goalId = snap?.id || ''
   useEffect(() => {
-    if (!stateFile || terminal) return undefined
+    if (terminal) return undefined
+    const timer = setInterval(() => setClockNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [terminal])
+  useEffect(() => {
+    if ((!stateFile && !goalId) || terminal) return undefined
     let stop = false
+    let timer = null
     const tick = async () => {
       try {
         const d = await api('/api/goals/list')
         if (stop) return
         const goals = Array.isArray(d?.goals) ? d.goals : []
-        const hit = goals.find(g => goalCardPathKey(g.state_file) === goalCardPathKey(stateFile))
-        if (hit) setSnap(prev => normalizeGoalCardState({ ...(prev || {}), ...hit }))
-        else if (!pending) setRemoved(true)
+        const hit = goals.find(g => (
+          (stateFile && goalCardPathKey(g?.state_file) === goalCardPathKey(stateFile))
+          || (goalId && String(g?.id || '') === String(goalId))
+        ))
+        if (hit) {
+          setRemoved(false)
+          setSnap(prev => normalizeGoalCardState({ ...(prev || {}), ...hit }))
+        }
       } catch { /* 网络波动时保留旧快照 */ }
+      if (!stop) timer = setTimeout(tick, 5000)
     }
-    const timer = setInterval(tick, 5000)
     tick()
-    return () => { stop = true; clearInterval(timer) }
-  }, [stateFile, terminal, pending])
+    return () => { stop = true; if (timer) clearTimeout(timer) }
+  }, [stateFile, goalId, terminal])
   if (!snap) return null
-  const info = goalCardStatusInfo(snap.status, removed)
-  const budgetPct = goalBudgetPercent(snap)
-  const turnPct = goalTurnPercent(snap)
-  const budgetTotal = Number(snap.budget_seconds || 0) || (Number(snap.elapsed_seconds || 0) + Number(snap.remaining_seconds || 0))
-  const maxTurns = Number(snap.max_turns || 0)
-  const errText = snap.error_class || snap.last_error || ''
+  const startedAt = dateFromTimestamp(snap.start_time)?.getTime()
+  const serverElapsed = Number(snap.elapsed_seconds || 0)
+  const elapsedSeconds = !terminal && Number.isFinite(startedAt)
+    ? Math.max(serverElapsed, Math.floor((clockNow - startedAt) / 1000))
+    : serverElapsed
+  const budgetTotal = Number(snap.budget_seconds || 0) || (serverElapsed + Number(snap.remaining_seconds || 0))
+  const liveSnap = { ...snap, elapsed_seconds: elapsedSeconds, remaining_seconds: Math.max(0, budgetTotal - elapsedSeconds) }
+  const info = goalCardStatusInfo(liveSnap.status, removed)
+  const budgetPct = goalBudgetPercent(liveSnap)
+  const turnPct = goalTurnPercent(liveSnap)
+  const maxTurns = Number(liveSnap.max_turns || 0)
+  const errText = liveSnap.error_class || liveSnap.last_error || ''
+  const startTimeText = formatGoalCardTime(liveSnap.start_time)
   return (
     <div className={`oa-goalcard ${info.cls}`}>
       <button type="button" className="oa-goalcard-head" onClick={() => setCollapsed(v => !v)}
@@ -1812,7 +1838,7 @@ export function GoalStatusCard({ state, pending = false }) {
         <span className="oa-goalcard-mark"><Target size={15} /></span>
         <span className="oa-goalcard-title">
           <b>目标模式</b>
-          <small>{snap.objective || '(未提供目标描述)'}</small>
+          <small>{liveSnap.objective || '(未提供目标描述)'}</small>
         </span>
         <em className={`oa-goalcard-chip ${info.cls}`}>{info.cls === 'is-running' && !removed ? <span className="oa-goalcard-dot" /> : null}{info.text}</em>
         <ChevronDown size={14} className={`oa-goalcard-chevron ${collapsed ? 'is-collapsed' : ''}`} />
@@ -1822,20 +1848,20 @@ export function GoalStatusCard({ state, pending = false }) {
           <div className="oa-goalcard-bar">
             <span className="oa-goalcard-bar-label">时间预算</span>
             <span className="oa-goalcard-track"><span className="oa-goalcard-fill" style={{ width: `${budgetPct}%` }} /></span>
-            <span className="oa-goalcard-bar-value">{formatDuration(snap.elapsed_seconds || 0)}{budgetTotal ? ` / ${formatDuration(budgetTotal)}` : ''}</span>
+            <span className="oa-goalcard-bar-value">{formatDuration(liveSnap.elapsed_seconds || 0)}{budgetTotal ? ` / ${formatDuration(budgetTotal)}` : ''}</span>
           </div>
           <div className="oa-goalcard-bar">
             <span className="oa-goalcard-bar-label">轮次</span>
             <span className="oa-goalcard-track"><span className="oa-goalcard-fill" style={{ width: `${turnPct}%` }} /></span>
-            <span className="oa-goalcard-bar-value">{Number(snap.turns_used || 0)}{maxTurns ? ` / ${maxTurns}` : ''}</span>
+            <span className="oa-goalcard-bar-value">{Number(liveSnap.turns_used || 0)}{maxTurns ? ` / ${maxTurns}` : ''}</span>
           </div>
           <div className="oa-goalcard-meta">
-            {snap.start_time ? <span>启动 {formatGoalTime(snap.start_time)}</span> : null}
-            {snap.mode ? <span>模式 {snap.mode}</span> : null}
-            {snap.pid ? <span>PID {snap.pid}</span> : null}
+            {startTimeText ? <span>启动 {startTimeText}</span> : null}
+            {liveSnap.mode ? <span>模式 {liveSnap.mode}</span> : null}
+            {liveSnap.pid ? <span>PID {liveSnap.pid}</span> : null}
             {removed ? <span>状态文件已清理</span> : null}
           </div>
-          {snap.summary ? <div className="oa-goalcard-summary">{String(snap.summary)}</div> : null}
+          {liveSnap.summary ? <div className="oa-goalcard-summary">{String(liveSnap.summary)}</div> : null}
           {errText ? <div className="oa-goalcard-err">{String(errText)}</div> : null}
         </div>
       )}
@@ -2272,7 +2298,7 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
 
 export const ChatMessage = memo(function ChatMessage({
   message: m, pending, onAskReply, onEditResend, onRetryBTW,
-  editDisabled = false, clockNow = 0, goalState = null,
+  editDisabled = false, clockNow = 0,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
@@ -2414,7 +2440,7 @@ export const ChatMessage = memo(function ChatMessage({
         <UltraPlanMessageDrawer content={m.content || ''} state={m.ultraplan_state} pending={pending} onAskReply={onAskReply} />
       )}
 
-      {goalState && <GoalStatusCard state={goalState} pending={pending} />}
+      {m.goal_state && <GoalStatusCard state={m.goal_state} pending={pending} />}
 
       <div className="oa-msg-meta">
         {ageText && <span className="oa-msg-age" title={ageText}><Clock3 size={11}/>{ageText}</span>}
@@ -2486,16 +2512,6 @@ const MessageList = memo(function MessageList({
 }) {
   const threadMessages = messages.filter(message => message.kind !== 'btw')
   const lastMessageId = threadMessages.at(-1)?.id
-  // Goal 卡是整轮目标的进度，不属于某条消息：取最新一条带 goal_state 的助手消息，
-  // 统一渲染在输出最下方，避免多轮 goal 时卡片被后续消息挤到中间。
-  const goalState = threadMessages.reduce(
-    (found, message) => (message.role === 'assistant' && message.goal_state ? message.goal_state : found),
-    null,
-  )
-  // 挂在最后一条助手消息上：既保留消息列的对齐几何，又始终落在输出最下方。
-  const goalCardHostId = goalState
-    ? threadMessages.reduce((id, message) => (message.role === 'assistant' && !message.kind ? message.id : id), null)
-    : null
   return (
     <>
       {threadMessages.flatMap((m, i) => {
@@ -2519,7 +2535,6 @@ const MessageList = memo(function MessageList({
             onRetryBTW={onRetryBTW}
             editDisabled={isCurrentRunning}
             clockNow={clockNow}
-            goalState={m.id === goalCardHostId ? goalState : null}
           />
         )
         if (m.role === 'user' && onSwitchVersion) {

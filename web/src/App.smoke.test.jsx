@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import { ChatMessage, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
+import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { UsagePage } from './pages/UsagePage.jsx'
@@ -650,6 +650,37 @@ describe('chat response identity and time', () => {
     )
 
     expect(container.querySelector('.oa-usage-time')?.textContent).toContain('4s')
+  })
+
+  test('normalizes goal start seconds and hides an invalid epoch date', () => {
+    const startSeconds = Math.floor(Date.parse('2026-07-17T08:09:10.000Z') / 1000)
+    const { container, rerender } = render(
+      <GoalStatusCard state={{ status: 'done', start_time: startSeconds, elapsed_seconds: 10 }} />,
+    )
+
+    expect(container.querySelector('.oa-goalcard-meta')?.textContent)
+      .toContain(new Date(startSeconds * 1000).toLocaleString())
+
+    rerender(<GoalStatusCard state={{ status: 'done', start_time: 1777777, elapsed_seconds: 10 }} />)
+    expect(container.querySelector('.oa-goalcard-meta')?.textContent).not.toContain('启动')
+  })
+
+  test('keeps each goal card at the tail of its owning assistant output', () => {
+    const messages = [
+      { id: 'goal-old', role: 'assistant', content: 'Old output', goal_state: { status: 'done', objective: 'Old goal' } },
+      { id: 'goal-new', role: 'assistant', content: 'New output', goal_state: { status: 'done', objective: 'New goal' } },
+    ]
+    const { container } = render(<>{messages.map(message => (
+      <ChatMessage key={message.id} message={message} pending={false} onAskReply={vi.fn()} />
+    ))}</>)
+
+    const assistants = [...container.querySelectorAll('.oa-message.assistant')]
+    expect(assistants).toHaveLength(2)
+    expect(assistants[0].querySelector('.oa-goalcard')?.textContent).toContain('Old goal')
+    expect(assistants[0].textContent).not.toContain('New goal')
+    expect(assistants[1].querySelector('.oa-goalcard')?.textContent).toContain('New goal')
+    expect(assistants[1].textContent).not.toContain('Old goal')
+    expect(assistants[0].querySelector('.oa-msg-body + .oa-goalcard')).toBeTruthy()
   })
 
   test('renders an explicit empty result for a worldline command', () => {
