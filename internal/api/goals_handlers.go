@@ -147,16 +147,3 @@ func (s *Server) goalsOutput(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, result)
 }
-
-func (s *Server) goalsInsight(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		bad(w, 405, "method not allowed")
-		return
-	}
-	result, err := ga.GoalInsightByState(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("state_file"))
-	if err != nil {
-		bad(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, result)
-}
