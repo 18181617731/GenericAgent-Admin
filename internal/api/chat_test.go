@@ -1528,3 +1528,50 @@ func TestChatForkSessionLegacyAndRawMismatch(t *testing.T) {
 		})
 	}
 }
+
+func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	h := s.Routes()
+
+	if s.CfgStore.Cfg.ChatDefaultLLMNo != 0 {
+		t.Fatalf("precondition: chat_default_llm_no=%d want 0", s.CfgStore.Cfg.ChatDefaultLLMNo)
+	}
+
+	// Pick model #4 in an existing session.
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/session-pick", strings.NewReader(`{"llm_no":4}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save settings status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The pick is remembered in config so it survives across sessions.
+	if got := s.CfgStore.Cfg.ChatDefaultLLMNo; got != 4 {
+		t.Fatalf("chat_default_llm_no=%d want 4", got)
+	}
+
+	// A brand new session must start on the picked model, not fall back to 0.
+	newRR := httptest.NewRecorder()
+	h.ServeHTTP(newRR, httptest.NewRequest(http.MethodPost, "/api/chat/session/new", nil))
+	if newRR.Code != http.StatusOK {
+		t.Fatalf("new session status=%d body=%s", newRR.Code, newRR.Body.String())
+	}
+	var created chatSession
+	if err := json.Unmarshal(newRR.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode new session: %v body=%s", err, newRR.Body.String())
+	}
+	if created.Settings.LLMNo != 4 {
+		t.Fatalf("new session llm_no=%d want 4", created.Settings.LLMNo)
+	}
+
+	// Loading a session that has no file on disk yet keeps the same default.
+	cs, err := loadChatSession(s.CfgStore.Cfg, created.ID)
+	if err != nil {
+		t.Fatalf("load fresh session: %v", err)
+	}
+	if cs.Settings.LLMNo != 4 {
+		t.Fatalf("unsaved session llm_no=%d want 4", cs.Settings.LLMNo)
+	}
+}

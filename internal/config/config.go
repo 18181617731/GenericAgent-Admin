@@ -41,6 +41,10 @@ type AppConfig struct {
 	UpdateRepoURL            string                    `json:"update_repo_url"`
 	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
 	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
+	// ChatDefaultLLMNo is the llm_no seeded into freshly created chat sessions.
+	// It tracks the model last picked in Admin Chat so a new conversation keeps
+	// using it instead of silently falling back to the first configured model.
+	ChatDefaultLLMNo int `json:"chat_default_llm_no,omitempty"`
 }
 
 func Validate(cfg AppConfig) error {
@@ -52,6 +56,9 @@ func Validate(cfg AppConfig) error {
 	}
 	if cfg.BufferLines < 0 {
 		return fmt.Errorf("buffer_lines must be positive")
+	}
+	if cfg.ChatDefaultLLMNo < 0 {
+		return fmt.Errorf("chat_default_llm_no must be positive")
 	}
 	if root := strings.TrimSpace(cfg.GARoot); root != "" {
 		st, err := os.Stat(root)

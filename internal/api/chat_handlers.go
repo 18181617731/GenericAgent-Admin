@@ -135,7 +135,7 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{}), RawHistory: []map[string]interface{}{}}
+	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}}
 	writeJSON(w, chatSessionForClient(cs))
 }
 
@@ -459,6 +459,8 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		bad(w, 500, err.Error())
 		return
 	}
+	// Remember the picked model so the next new session starts on it.
+	s.rememberDefaultChatLLMNo(cs.Settings.LLMNo)
 	writeJSON(w, map[string]interface{}{
 		"ok":                         true,
 		"settings":                   cs.Settings,

@@ -108,6 +108,42 @@ func normalizeChatSettings(st chatSettings) chatSettings {
 	return st
 }
 
+// defaultChatSettingsFor builds the settings a brand new chat session starts
+// with. The model index comes from config (the one last picked in Admin Chat)
+// so a new conversation keeps the current model instead of snapping back to the
+// first configured one.
+func defaultChatSettingsFor(cfg config.AppConfig) chatSettings {
+	st := chatSettings{}
+	if cfg.ChatDefaultLLMNo > 0 {
+		st.LLMNo = cfg.ChatDefaultLLMNo
+	}
+	return normalizeChatSettings(st)
+}
+
+func (s *Server) defaultChatSettings() chatSettings {
+	if s == nil || s.CfgStore == nil {
+		return normalizeChatSettings(chatSettings{})
+	}
+	return defaultChatSettingsFor(s.CfgStore.Cfg)
+}
+
+// rememberDefaultChatLLMNo persists llmNo as the seed for future sessions.
+// Best effort on purpose: a config write failure must not break the settings
+// update the user just made.
+func (s *Server) rememberDefaultChatLLMNo(llmNo int) {
+	if s == nil || s.CfgStore == nil || llmNo < 0 {
+		return
+	}
+	s.ConfigMu.Lock()
+	defer s.ConfigMu.Unlock()
+	cfg := s.CfgStore.Cfg
+	if cfg.ChatDefaultLLMNo == llmNo {
+		return
+	}
+	cfg.ChatDefaultLLMNo = llmNo
+	_ = s.CfgStore.Save(cfg)
+}
+
 type chatSession struct {
 	ID                     string                   `json:"id"`
 	Title                  string                   `json:"title"`
@@ -1612,7 +1648,7 @@ func loadChatSession(cfg config.AppConfig, sid string) (chatSession, error) {
 		return chatSession{}, err
 	}
 	sid = safeChatID(sid)
-	cs := chatSession{ID: sid, Title: "新会话", Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{})}
+	cs := chatSession{ID: sid, Title: "新会话", Messages: []chatMessage{}, Settings: defaultChatSettingsFor(cfg)}
 	b, err := os.ReadFile(chatSessionPath(cfg, sid))
 	if err != nil {
 		if os.IsNotExist(err) {
