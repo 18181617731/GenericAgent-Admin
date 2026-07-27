@@ -41,9 +41,6 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	if len(items) > 80 {
-		items = items[:80]
-	}
 	writeJSON(w, map[string]interface{}{"sessions": items})
 }
 
