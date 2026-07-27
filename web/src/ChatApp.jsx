@@ -2272,7 +2272,7 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
 
 export const ChatMessage = memo(function ChatMessage({
   message: m, pending, onAskReply, onEditResend, onRetryBTW,
-  editDisabled = false, clockNow = 0,
+  editDisabled = false, clockNow = 0, goalState = null,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
@@ -2414,9 +2414,7 @@ export const ChatMessage = memo(function ChatMessage({
         <UltraPlanMessageDrawer content={m.content || ''} state={m.ultraplan_state} pending={pending} onAskReply={onAskReply} />
       )}
 
-      {m.role === 'assistant' && m.goal_state && (
-        <GoalStatusCard state={m.goal_state} pending={pending} />
-      )}
+      {goalState && <GoalStatusCard state={goalState} pending={pending} />}
 
       <div className="oa-msg-meta">
         {ageText && <span className="oa-msg-age" title={ageText}><Clock3 size={11}/>{ageText}</span>}
@@ -2488,6 +2486,16 @@ const MessageList = memo(function MessageList({
 }) {
   const threadMessages = messages.filter(message => message.kind !== 'btw')
   const lastMessageId = threadMessages.at(-1)?.id
+  // Goal 卡是整轮目标的进度，不属于某条消息：取最新一条带 goal_state 的助手消息，
+  // 统一渲染在输出最下方，避免多轮 goal 时卡片被后续消息挤到中间。
+  const goalState = threadMessages.reduce(
+    (found, message) => (message.role === 'assistant' && message.goal_state ? message.goal_state : found),
+    null,
+  )
+  // 挂在最后一条助手消息上：既保留消息列的对齐几何，又始终落在输出最下方。
+  const goalCardHostId = goalState
+    ? threadMessages.reduce((id, message) => (message.role === 'assistant' && !message.kind ? message.id : id), null)
+    : null
   return (
     <>
       {threadMessages.flatMap((m, i) => {
@@ -2511,6 +2519,7 @@ const MessageList = memo(function MessageList({
             onRetryBTW={onRetryBTW}
             editDisabled={isCurrentRunning}
             clockNow={clockNow}
+            goalState={m.id === goalCardHostId ? goalState : null}
           />
         )
         if (m.role === 'user' && onSwitchVersion) {
