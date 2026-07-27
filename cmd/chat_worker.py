@@ -1239,14 +1239,32 @@ def _update_worldline_dirty_after_commit(agent, store, node_id, touched):
         pass
 
 
+def _worldline_content_text(value):
+    """Extract human-authored text from structured chat content for a node title."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [_worldline_content_text(item).strip() for item in value]
+        return '\n'.join(part for part in parts if part)
+    if isinstance(value, dict):
+        for key in ('text', 'content', 'result', 'message'):
+            if key in value:
+                text = _worldline_content_text(value.get(key)).strip()
+                if text:
+                    return text
+    return _chat_content_text(value)
+
+
 def _worldline_title(store, history, fallback):
     parent = store.head if store.head in store.nodes else store.root_id
     parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
     for item in (history or [])[parent_len:]:
         if isinstance(item, dict) and str(item.get('role') or '').lower() == 'user':
-            text = _chat_content_text(item.get('content')).strip()
+            text = _worldline_content_text(item.get('content')).strip()
             if text:
-                return _strip_worldline_project_mode(text).replace('\n', ' ').strip()[:160]
+                title = _strip_worldline_project_mode(text).replace('\n', ' ').strip()
+                if title:
+                    return title[:160]
     return str(fallback or 'checkpoint').replace('\n', ' ').strip()[:160] or 'checkpoint'
 
 
@@ -1640,6 +1658,33 @@ def handle_worldline_request(agent, req):
     store = getattr(agent, '_admin_worldline_store', None)
     if store is None and req.get('activate') is True:
         store = _ensure_worldline_store(agent, root_for_req, workspace)
+        history = req.get('history') if isinstance(req.get('history'), list) else []
+        latest_user, completed_pair = None, None
+        for message in history:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get('role') or '').lower()
+            message_id = str(message.get('id') or '').strip()
+            if role == 'user' and message_id:
+                latest_user = message
+            elif (role == 'assistant' and message_id and latest_user is not None and
+                  message.get('error') is not True):
+                completed_pair = (latest_user, message)
+        if not store.nodes and completed_pair is not None:
+            _restore_admin_history(agent, history, req.get('raw_history'))
+            _restore_ga_state(agent, req.get('history_info'), req.get('working'))
+            user_message, assistant_message = completed_pair
+            prompt = _chat_content_text(user_message.get('content')).strip()
+            node_id = _commit_worldline(agent, prompt or 'Imported chat history')
+            if node_id is not None:
+                _bind_worldline_head(store, root_for_req, sid, {
+                    'node_id': node_id,
+                    'turn_status': 'completed',
+                    'has_final_answer': True,
+                    'user_message_id': user_message['id'],
+                    'assistant_message_id': assistant_message['id'],
+                    'display_path': history,
+                })
     elif store is not None:
         cwd = os.path.realpath(str(workspace or root_for_req))
         if os.path.realpath(store.cwd) != cwd:

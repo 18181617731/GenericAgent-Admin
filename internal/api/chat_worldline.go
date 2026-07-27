@@ -56,6 +56,7 @@ type chatWorldlinePublicNode struct {
 	Children           []string `json:"children"`
 	Depth              int      `json:"depth"`
 	Ordinal            int      `json:"ordinal"`
+	Kind               string   `json:"kind"`
 	Title              string   `json:"title"`
 	CreatedAt          int64    `json:"created_at"`
 	MappingStatus      string   `json:"mapping_status"`
@@ -134,7 +135,7 @@ func publicWorldline(resp chatWorldlineResponse) chatWorldlinePublic {
 	for _, node := range resp.Tree.Nodes {
 		out.Nodes = append(out.Nodes, chatWorldlinePublicNode{ID: node.ID, ParentID: node.ParentID,
 			Children: append([]string{}, node.Children...), Depth: node.Depth, Ordinal: node.Ordinal,
-			Title: node.Title, CreatedAt: node.CreatedAt, MappingStatus: node.MappingStatus,
+			Kind: node.Kind, Title: node.Title, CreatedAt: node.CreatedAt, MappingStatus: node.MappingStatus,
 			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID,
 			UntrackedChanges: node.UntrackedChanges,
 			UntrackedFiles:   append([]string{}, node.UntrackedFiles...)})
@@ -212,6 +213,12 @@ func (s *Server) chatWorldlineRPC(sid string, req map[string]interface{}) (chatW
 	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
 	if err != nil {
 		return chatWorldlineResponse{}, err
+	}
+	if activate, _ := req["activate"].(bool); activate {
+		req["history"] = cs.Messages
+		req["raw_history"] = cs.RawHistory
+		req["history_info"] = cs.HistoryInfo
+		req["working"] = cs.Working
 	}
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
@@ -363,7 +370,11 @@ func (s *Server) chatWorldlineState(w http.ResponseWriter, r *http.Request, sid 
 		bad(w, http.StatusConflict, "chat is already running")
 		return
 	}
-	resp, err := s.chatWorldlineRPC(sid, map[string]interface{}{"action": "state"})
+	req := map[string]interface{}{"action": "state"}
+	if r.URL.Query().Get("activate") == "true" {
+		req["activate"] = true
+	}
+	resp, err := s.chatWorldlineRPC(sid, req)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return

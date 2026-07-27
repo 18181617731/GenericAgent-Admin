@@ -50,9 +50,9 @@ func TestPublicWorldlineContractAndVersionNavigation(t *testing.T) {
 	bUser, bAssistant := "u-b", "a-b"
 	resp := chatWorldlineResponse{
 		Tree: chatWorldlineTree{RootID: &root, Head: &head, CurrentPath: []string{"root", "b"}, SidecarStatus: "ok", Nodes: []chatWorldlineNode{
-			{ID: "root", Children: []string{"a", "b"}, Depth: 0, Ordinal: 1, Title: "same", MappingStatus: "unmapped"},
-			{ID: "b", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 3, Title: "same", CreatedAt: 22, MappingStatus: "mapped", UserMessageID: &bUser, AssistantMessageID: &bAssistant},
-			{ID: "a", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 2, Title: "same", CreatedAt: 11, MappingStatus: "mapped", UserMessageID: &aUser, AssistantMessageID: &aAssistant},
+			{ID: "root", Kind: "origin", Children: []string{"a", "b"}, Depth: 0, Ordinal: 1, Title: "same", MappingStatus: "unmapped"},
+			{ID: "b", Kind: "edit", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 3, Title: "same", CreatedAt: 22, MappingStatus: "mapped", UserMessageID: &bUser, AssistantMessageID: &bAssistant},
+			{ID: "a", Kind: "edit", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 2, Title: "same", CreatedAt: 11, MappingStatus: "mapped", UserMessageID: &aUser, AssistantMessageID: &aAssistant},
 		}},
 		Result: map[string]interface{}{"display_path": []interface{}{1.0}}, RawHistory: []map[string]interface{}{{"secret": true}},
 		HistoryInfo: []interface{}{map[string]interface{}{"secret": true}}, Working: map[string]interface{}{"secret": true},
@@ -66,6 +66,9 @@ func TestPublicWorldlineContractAndVersionNavigation(t *testing.T) {
 	}
 	if got.Nodes[1].ID != "b" || got.Nodes[1].Depth != 1 || got.Nodes[1].Ordinal != 3 || got.Nodes[1].CreatedAt != 22 {
 		t.Fatalf("node metadata changed: %#v", got.Nodes[1])
+	}
+	if got.Nodes[0].Kind != "origin" || got.Nodes[1].Kind != "edit" {
+		t.Fatalf("node kind not exposed: %#v", got.Nodes)
 	}
 	first, ok := got.MessageVersions["u-b"]
 	if !ok {
@@ -221,6 +224,67 @@ func installWorldlineTestWorker(t *testing.T, s *Server, sid string) *chatWorker
 		}
 	})
 	return worker
+}
+
+func TestWorldlineActivationCarriesPersistedSessionState(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "activation-payload"
+	initial := chatSession{
+		ID: sid, Title: sid,
+		Messages: []chatMessage{
+			{ID: "u-old", Role: "user", Content: "old question", CreatedAt: 1},
+			{ID: "a-old", Role: "assistant", Content: "old answer", CreatedAt: 2},
+		},
+		RawHistory:  []map[string]interface{}{{"role": "assistant", "content": "backend"}},
+		HistoryInfo: []interface{}{map[string]interface{}{"step": float64(1)}},
+		Working:     map[string]interface{}{"key_info": "restored"},
+		Settings:    normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	installWorldlineTestWorker(t, s, sid)
+
+	var activationChecked, readonlyChecked bool
+	s.chatWorldlineRPCHook = func(_ string, req map[string]interface{}) error {
+		if active, _ := req["activate"].(bool); active {
+			messages, ok := req["history"].([]chatMessage)
+			if !ok || len(messages) != 2 || messages[0].ID != "u-old" || messages[1].ID != "a-old" {
+				t.Fatalf("activation history = %#v", req["history"])
+			}
+			raw, ok := req["raw_history"].([]map[string]interface{})
+			if !ok || len(raw) != 1 || raw[0]["content"] != "backend" {
+				t.Fatalf("activation raw history = %#v", req["raw_history"])
+			}
+			info, ok := req["history_info"].([]interface{})
+			if !ok || len(info) != 1 {
+				t.Fatalf("activation history info = %#v", req["history_info"])
+			}
+			working, ok := req["working"].(map[string]interface{})
+			if !ok || working["key_info"] != "restored" {
+				t.Fatalf("activation working = %#v", req["working"])
+			}
+			activationChecked = true
+			return nil
+		}
+		for _, key := range []string{"history", "raw_history", "history_info", "working"} {
+			if _, exists := req[key]; exists {
+				t.Fatalf("read-only state unexpectedly carried %q", key)
+			}
+		}
+		readonlyChecked = true
+		return nil
+	}
+
+	if _, err := s.chatWorldlineRPC(sid, map[string]interface{}{"action": "state"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.chatWorldlineRPC(sid, map[string]interface{}{"action": "state", "activate": true}); err != nil {
+		t.Fatal(err)
+	}
+	if !readonlyChecked || !activationChecked {
+		t.Fatalf("hook coverage readonly=%v activation=%v", readonlyChecked, activationChecked)
+	}
 }
 
 func TestWorldlineSwitchRoundTripPersistsAcrossServerRestart(t *testing.T) {

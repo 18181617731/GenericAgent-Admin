@@ -5,7 +5,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RefreshCw, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
@@ -17,7 +17,7 @@ import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManage
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
-import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
+import { buildWorldlineEdges, buildWorldlineRows, worldlineMaxLevel, messageVersionInfo, worldlineNodeTitle, worldlineNodeKindLabel } from './lib/worldlineTree'
 import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
 
 gsap.registerPlugin(useGSAP)
@@ -2497,37 +2497,75 @@ export const ChatMessage = memo(function ChatMessage({
 })
 
 export function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefresh, onSwitch }) {
-  const rows = useMemo(() => buildWorldlineRows(state?.nodes, state?.current_path), [state])
-  const branchCount = rows.filter(row => !row.onPath).length
+  const rows = useMemo(() => buildWorldlineRows(state?.nodes, state?.current_path, state?.head), [state])
+  const edges = useMemo(() => buildWorldlineEdges(rows), [rows])
+  const maxLevel = worldlineMaxLevel(rows)
+  const rowHeight = 50
+  const levelGap = 18
+  const graphInset = 12
+  const graphWidth = graphInset * 2 + maxLevel * levelGap
+  const graphHeight = rows.length * rowHeight
   const unavailable = !state || state.available === false
   return (
     <aside className="oa-context-drawer oa-worldline-drawer" aria-label="世界线分支">
       <div className="oa-context-head">
-        <div><b>世界线</b><span>{unavailable ? '当前会话暂无世界线数据' : `共 ${rows.length} 个节点 · ${branchCount} 个分支节点`}</span></div>
+        <div><b>世界线</b></div>
         <div className="oa-context-actions">
-          <button type="button" onClick={onRefresh} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
+          <button type="button" onClick={onRefresh} disabled={loading} aria-label="刷新世界线" title="刷新"><RotateCw size={14}/></button>
           <button type="button" onClick={onClose} aria-label="关闭世界线"><X size={15}/></button>
         </div>
       </div>
-      {unavailable && <div className="oa-worldline-empty">{state?.degraded_reason || '还没有世界线记录，发送一条消息后再试。'}</div>}
+      {unavailable && <div className="oa-worldline-empty">{
+        state?.degraded_reason === 'inactive'
+          ? '世界线功能未启用，发送一条消息后自动激活。'
+          : (state?.degraded_reason || '还没有世界线记录，发送一条消息后再试。')
+      }</div>}
       {!unavailable && rows.length === 0 && <div className="oa-worldline-empty">{loading ? '加载中…' : '暂无节点'}</div>}
       {!unavailable && rows.length > 0 && <div className="oa-worldline-list">
-        {rows.map(row => (
-          <div key={row.node.id} className={`oa-worldline-row${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`} style={{ '--wl-level': row.level }}>
-            <span className="oa-worldline-dot" aria-hidden="true"/>
-            <div className="oa-worldline-info">
-              <b title={row.node.title || row.node.id}>{row.node.title || `节点 ${String(row.node.id).slice(0, 8)}`}</b>
-              <span>
-                {row.node.untracked_changes && <em className="oa-worldline-untracked" title={`存在世界线外的文件改动，切换分支不会还原这些文件：\n${(row.node.untracked_files || []).join('\n') || '未知文件'}`}>外部改动</em>}
-                {row.node.untracked_changes ? ' · ' : ''}{row.node.mapping_status && row.node.mapping_status !== 'mapped' ? '无消息映射 · ' : ''}{row.node.created_at ? fmtDate(row.node.created_at) : ''}
-              </span>
-            </div>
-            {row.isCurrent
-              ? <em className="oa-worldline-current">当前</em>
-              : <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId}
-                  onClick={() => onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button>}
+        <div className="oa-worldline-tree" style={{ '--wl-graph-width': `${graphWidth}px`, '--wl-tree-height': `${graphHeight}px` }}>
+          <svg className="oa-worldline-graph" width={graphWidth} height={graphHeight} viewBox={`0 0 ${graphWidth} ${graphHeight}`} aria-hidden="true">
+            {edges.map(edge => {
+              const x1 = graphInset + edge.parentLevel * levelGap
+              const x2 = graphInset + edge.childLevel * levelGap
+              const y1 = edge.parentIndex * rowHeight + rowHeight / 2
+              const y2 = edge.childIndex * rowHeight + rowHeight / 2
+              const d = x1 === x2
+                ? `M ${x1} ${y1} L ${x2} ${y2}`
+                : (() => {
+                    const railX = x1 + (x2 - x1) / 2
+                    const leaveY = Math.min(y1 + rowHeight * 0.32, y2)
+                    const joinY = Math.max(leaveY, y2 - rowHeight * 0.32)
+                    return `M ${x1} ${y1} C ${x1} ${leaveY}, ${railX} ${leaveY}, ${railX} ${leaveY} L ${railX} ${joinY} C ${railX} ${y2}, ${x2} ${y2}, ${x2} ${y2}`
+                  })()
+              return <path key={edge.id} className={`oa-worldline-edge${edge.onPath ? ' on-path' : ''}`} d={d}/>
+            })}
+            {rows.map((row, index) => {
+              const x = graphInset + row.level * levelGap
+              const y = index * rowHeight + rowHeight / 2
+              return <g key={row.node.id} className={`oa-worldline-node${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`}>
+                {row.isCurrent && <circle className="oa-worldline-node-ring" cx={x} cy={y} r="7"/>}
+                <circle className="oa-worldline-node-dot" cx={x} cy={y} r={row.isFork ? 4.5 : 3.5}/>
+              </g>
+            })}
+          </svg>
+          <div className="oa-worldline-rows">
+            {rows.map(row => (
+              <div key={row.node.id} className={`oa-worldline-row${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`}>
+                <div className="oa-worldline-info">
+                  <div className="oa-worldline-title">
+                    {worldlineNodeKindLabel(row.node) && <em className="oa-worldline-kind" title={`节点类型：${worldlineNodeKindLabel(row.node)}`}>{worldlineNodeKindLabel(row.node)}</em>}
+                    <b title={worldlineNodeTitle(row.node)}>{worldlineNodeTitle(row.node)}</b>
+                    {row.node.untracked_changes && <em className="oa-worldline-badge oa-worldline-untracked" title={`存在世界线外的文件改动，切换分支不会还原这些文件：\n${(row.node.untracked_files || []).join('\n') || '未知文件'}`} aria-label="外部改动">⚠</em>}
+                    {row.node.mapping_status && row.node.mapping_status !== 'mapped' && <em className="oa-worldline-badge oa-worldline-unmapped" title="无消息映射" aria-label="无消息映射">⊘</em>}
+                  </div>
+                  <span className="oa-worldline-date">{row.node.created_at ? fmtDate(row.node.created_at) : ''}</span>
+                </div>
+                {!row.isCurrent && <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId}
+                    onClick={() => onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button>}
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>}
       {state?.truncated && <div className="oa-worldline-empty">节点过多，已截断显示。</div>}
     </aside>
@@ -3413,13 +3451,14 @@ export default function ChatApp() {
     if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
   }
 
-  const loadWorldline = async (id = activeSidRef.current || sid, { force = false } = {}) => {
+  const loadWorldline = async (id = activeSidRef.current || sid, { force = false, activate = false } = {}) => {
     if (!id) return
     if (!force && !worldlineOpen && worldlineState?.sessionID !== id) return
     const token = ++worldlineSeqRef.current
     setWorldlineLoading(true)
     try {
-      const d = await api(`/api/chat/worldline/${id}`)
+      const url = `/api/chat/worldline/${id}${activate ? '?activate=true' : ''}`
+      const d = await api(url)
       if (token !== worldlineSeqRef.current || activeSidRef.current !== id) return
       setWorldlineState({ sessionID: id, ...d })
     } catch (e) {
@@ -3433,7 +3472,7 @@ export default function ChatApp() {
   const toggleWorldline = () => {
     const next = !worldlineOpen
     setWorldlineOpen(next)
-    if (next) loadWorldline(activeSidRef.current || sid, { force: true }).catch(() => {})
+    if (next) loadWorldline(activeSidRef.current || sid, { force: true, activate: true }).catch(() => {})
   }
 
   const switchWorldline = async (nodeId) => {
@@ -4227,7 +4266,7 @@ export default function ChatApp() {
     scrollToThreadEnd('auto')
   }
   const updateFollowFromScroll = () => {
-    const near = isNearBottom(threadRef.current)
+    const near = isNearBottom(threadRef.current, 20)
     setAutoFollow(near)
     setShowFollow(!near)
   }
@@ -4362,9 +4401,19 @@ export default function ChatApp() {
         switchingId={worldlineSwitchingId}
         disabled={isCurrentRunning}
         onClose={() => setWorldlineOpen(false)}
-        onRefresh={() => loadWorldline(sid, { force: true }).catch(() => {})}
+        onRefresh={() => loadWorldline(sid, { force: true, activate: true }).catch(() => {})}
         onSwitch={switchWorldline}
       />}
+      <div className="oa-banner-slot">
+        {err && <div className="oa-banner error">
+          <span>{err}</span>
+          <button type="button" onClick={() => setErr('')} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '18px', lineHeight: '1', padding: '0 4px' }} aria-label="关闭">&times;</button>
+        </div>}
+        {notice && <div className="oa-banner">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice('')} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '18px', lineHeight: '1', padding: '0 4px' }} aria-label="关闭">&times;</button>
+        </div>}
+      </div>
       <div className={`oa-workspace ${btwMessages.length && btwRailOpen ? 'has-btw' : ''}`}>
         <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
           {messages.length === 0 && <div className="oa-empty">
