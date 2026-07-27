@@ -130,12 +130,21 @@ const BUILTIN_SLASH_COMMANDS = [
 ]
 const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
+// 参数式命令：裸根命令（/goal）或以 <参数>/[参数] 占位结尾（/goal [goal]、/continue <编号>、/rewind [n]）。
+// 这类命令后面的自由文本必须保留，禁止被 insert 模板覆盖（否则会清空用户已输入的内容）。
+const SLASH_ARG_SUFFIX_RE = /\s(?:<[^>]+>|\[[^\]]+\])$/
+const isArgumentStyleSlashCmd = (cmd = '') => {
+  const s = String(cmd || '')
+  if (!s) return false
+  const root = s.split(/\s+/, 1)[0]
+  return s === root || SLASH_ARG_SUFFIX_RE.test(s)
+}
 const slashCommandInsertText = (c, current = '') => {
   if (!c) return current || ''
   const text = String(current || '')
   const cmd = String(c.cmd || '')
   const root = cmd.split(/\s+/, 1)[0]
-  const isArgumentFallback = cmd === root || /\s<[^>]+>$/.test(cmd)
+  const isArgumentFallback = isArgumentStyleSlashCmd(cmd)
   if (isArgumentFallback && new RegExp(`^\\s*${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+`).test(text)) {
     return text
   }
@@ -2938,7 +2947,7 @@ export default function ChatApp() {
     const argumentRootCandidates = argumentRoot
       ? allSlashCommands.filter(c => String(c.cmd || '').split(/\s+/, 1)[0] === argumentRoot)
       : []
-    const argumentFallback = argumentRootCandidates.find(c => /\s<[^>]+>$/.test(String(c.cmd || '')))
+    const argumentFallback = argumentRootCandidates.find(c => SLASH_ARG_SUFFIX_RE.test(String(c.cmd || '')))
       || argumentRootCandidates.find(c => String(c.cmd || '') === argumentRoot)
       || argumentRootCandidates[0]
     return allSlashCommands.filter(c => {
@@ -4049,7 +4058,13 @@ export default function ChatApp() {
         const selectingBareImprove = e.key === 'Enter' && /^\s*\/improve\s*$/.test(currentValue)
         const selectingContinueNumber = cmd?.cmd === '/continue <编号>' && /^\s*\/continue\s+\d+\s*$/.test(currentValue)
         const selectingUltraPlanObjective = cmd?.cmd === '/ultraplan <目标>' && /^\s*\/ultraplan\s+\S/.test(currentValue)
-        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber || selectingUltraPlanObjective) {
+        // 通用参数式命令（如 /goal [goal]）：输入框已是「根命令 + 自由文本」时，Enter 直接发送当前值，
+        // 不再走 applySlashCommand（否则 insert 模板会清空用户后面的内容）。
+        const selectedCmdText = String(cmd?.cmd || '')
+        const selectedCmdRoot = selectedCmdText.split(/\s+/, 1)[0]
+        const selectingArgumentFreeText = !!cmd && isArgumentStyleSlashCmd(selectedCmdText)
+          && new RegExp(`^\\s*${selectedCmdRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\S`).test(currentValue)
+        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber || selectingUltraPlanObjective || selectingArgumentFreeText) {
           e.preventDefault()
           setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
           setCmdEditIdx(-1)
