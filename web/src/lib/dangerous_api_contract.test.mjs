@@ -22,7 +22,7 @@ test('version update UI keeps destructive update behind status-aware controls', 
   assert.match(app, /confirmDanger\('version-update'/)
   assert.match(app, /api\('\/api\/version\/update', \{ dangerous:true, method:'POST'/)
   assert.match(app, /disabled=\{versionBusy \|\| versionStatus\?\.running \|\| !versionCheck\?\.update\}/)
-  assert.match(app, /setInterval\(\(\) => refreshVersionStatus\(\)\.catch\(e => setMsg\(e\.message\)\), 1500\)/)
+  assert.match(app, /setInterval\([^,]+,\s*VERSION_RELOAD_RETRY_MS\)/)
   assert.match(app, /api\('\/api\/version\/status'\)/)
 })
 
