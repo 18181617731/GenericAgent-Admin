@@ -446,8 +446,24 @@ def _restore_admin_history(agent, history, raw_history=None):
         pass
 
 
+def _reload_model_profiles(agent):
+    """Pick up mykey.py edits (base_url / key / model) without restarting the worker.
+
+    The worker is long lived and builds its agent once, so a profile edited from the
+    Admin Models page would otherwise stay invisible until the process is recycled.
+    GA's load_llm_sessions() is mtime gated: it returns immediately while mykey.py is
+    untouched, and rebuilds every client (keeping history and the current model index)
+    once the file changes.
+    """
+    try:
+        agent.load_llm_sessions()
+    except Exception:
+        pass
+
+
 def _select_llm_if_needed(agent, llm_no):
     """Keep GA official lazy tool injection cache unless the user switches models."""
+    _reload_model_profiles(agent)
     try:
         current = getattr(agent, 'llm_no', None)
         if current == llm_no:

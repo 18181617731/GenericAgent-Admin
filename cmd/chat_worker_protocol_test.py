@@ -433,5 +433,81 @@ class PlanPayloadAdapterTests(unittest.TestCase):
         self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
 
 
+class FakeReloadAgent:
+    """Agent stub tracking GA's mtime gated profile reload."""
+
+    def __init__(self, llm_no=0, reload_sets=None, reload_raises=False):
+        self.llm_no = llm_no
+        self.reload_calls = 0
+        self.switch_calls = []
+        self._reload_sets = reload_sets
+        self._reload_raises = reload_raises
+
+    def load_llm_sessions(self):
+        self.reload_calls += 1
+        if self._reload_raises:
+            raise RuntimeError("mykey.py is broken")
+        if self._reload_sets is not None:
+            self.llm_no = self._reload_sets
+
+    def next_llm(self, llm_no):
+        self.switch_calls.append(llm_no)
+        self.llm_no = llm_no
+
+
+class LegacyAgent:
+    """Agent without load_llm_sessions (older GA checkout)."""
+
+    def __init__(self):
+        self.llm_no = 0
+        self.switch_calls = []
+
+    def next_llm(self, llm_no):
+        self.switch_calls.append(llm_no)
+        self.llm_no = llm_no
+
+
+class SelectLlmReloadTest(unittest.TestCase):
+    def test_same_model_still_reloads_profiles_without_switching(self):
+        agent = FakeReloadAgent(llm_no=1)
+
+        chat_worker._select_llm_if_needed(agent, 1)
+
+        self.assertEqual(agent.reload_calls, 1)
+        self.assertEqual(agent.switch_calls, [])
+
+    def test_model_switch_reloads_then_switches(self):
+        agent = FakeReloadAgent(llm_no=0)
+
+        chat_worker._select_llm_if_needed(agent, 2)
+
+        self.assertEqual(agent.reload_calls, 1)
+        self.assertEqual(agent.switch_calls, [2])
+
+    def test_reload_runs_before_index_comparison(self):
+        # load_llm_sessions remaps llm_no by model name after a mykey.py edit,
+        # so the comparison must read the post-reload index.
+        agent = FakeReloadAgent(llm_no=0, reload_sets=3)
+
+        chat_worker._select_llm_if_needed(agent, 3)
+
+        self.assertEqual(agent.reload_calls, 1)
+        self.assertEqual(agent.switch_calls, [])
+
+    def test_broken_reload_does_not_block_model_switch(self):
+        agent = FakeReloadAgent(llm_no=0, reload_raises=True)
+
+        chat_worker._select_llm_if_needed(agent, 1)
+
+        self.assertEqual(agent.switch_calls, [1])
+
+    def test_agent_without_reload_hook_is_tolerated(self):
+        agent = LegacyAgent()
+
+        chat_worker._select_llm_if_needed(agent, 1)
+
+        self.assertEqual(agent.switch_calls, [1])
+
+
 if __name__ == "__main__":
     unittest.main()
