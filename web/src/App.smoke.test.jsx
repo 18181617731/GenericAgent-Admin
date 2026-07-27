@@ -681,6 +681,9 @@ describe('chat response identity and time', () => {
     expect(assistants[1].querySelector('.oa-goalcard')?.textContent).toContain('New goal')
     expect(assistants[1].textContent).not.toContain('Old goal')
     expect(assistants[0].querySelector('.oa-msg-body + .oa-goalcard')).toBeTruthy()
+    expect(appStyles).toMatch(
+      /\.oa-message\.assistant:has\(> \.oa-goalcard\) > \.oa-goalcard\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*2;/,
+    )
   })
 
   test('renders an explicit empty result for a worldline command', () => {

@@ -9917,6 +9917,42 @@ html[data-theme="dark"] .settings-card-icon { color: #67d9bd; background: rgba(1
   .oa-message-ultraplan .oa-up-entry { transition: none; }
 }
 
+/* Goal cards share the message-owned launcher geometry: response first, card below. */
+.oa-message.assistant:has(> .oa-goalcard) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  align-items: start;
+}
+.oa-message.assistant:has(> .oa-goalcard) > .oa-msg-body {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  min-width: 0;
+}
+.oa-message.assistant:has(> .oa-goalcard) > .oa-msg-meta {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+}
+.oa-message.assistant:has(> .oa-goalcard) > .oa-goalcard {
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+}
+.oa-message.assistant:has(> .oa-message-ultraplan):has(> .oa-goalcard) > .oa-goalcard {
+  grid-row: 3;
+}
+
+@media (max-width: 620px) {
+  .oa-message.assistant:has(> .oa-goalcard) {
+    grid-template-columns: minmax(0, 1fr) 30px !important;
+  }
+}
+
 /* BTW lives outside the transcript so side answers never cover or displace the main output. */
 .oa-workspace {
   position: relative;
