@@ -68,6 +68,29 @@ func TestStoreSaveCleansTempFileOnValidationError(t *testing.T) {
 	}
 }
 
+func TestStorePersistsIndependentChatTitleModel(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	cfg := Default()
+	cfg.ChatTitleModel = &ChatTitleModelRef{
+		ProviderVarName: "native_oai_config2",
+		Model:           "gpt-title",
+		LLMNo:           4,
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewStore(root)
+	if reloaded.Cfg.ChatTitleModel == nil || *reloaded.Cfg.ChatTitleModel != *cfg.ChatTitleModel {
+		t.Fatalf("chat title model was not persisted: %#v", reloaded.Cfg.ChatTitleModel)
+	}
+
+	cfg.ChatTitleModel = &ChatTitleModelRef{ProviderVarName: "native_oai_config2", Model: "gpt-title", LLMNo: -1}
+	if err := store.Save(cfg); err == nil || !strings.Contains(err.Error(), "llm_no") {
+		t.Fatalf("Save() err=%v, want invalid llm_no", err)
+	}
+}
+
 func TestStoreLoadRejectsInvalidPersistedConfig(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "config.local.json"), []byte(`{"port":-1}`), 0644); err != nil {

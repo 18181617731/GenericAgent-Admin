@@ -48,4 +48,20 @@ describe('chat file attachments', () => {
     expect(container.querySelector('.oa-msg-saved-paths')).toBeTruthy()
     expect(container.textContent).not.toContain('[FILE:')
   })
+
+  test('renders assistant FILE output as a remote download link', () => {
+    render(
+      <ChatMessage
+        message={{ id:'a-file', role:'assistant', content:'Done\n\n[FILE:C:/tmp/report.pdf]', created_at:0 }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Done')).toBeTruthy()
+    expect(screen.getByText('report.pdf')).toBeTruthy()
+    const download = screen.getByRole('link', { name:'下载文件 report.pdf' })
+    expect(download.getAttribute('href')).toBe('/api/files/download?path=C%3A%2Ftmp%2Freport.pdf')
+    expect(download.getAttribute('download')).toBe('report.pdf')
+  })
 })

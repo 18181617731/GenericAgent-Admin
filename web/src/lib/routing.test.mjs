@@ -22,3 +22,9 @@ test('buildRoute normalizes invalid tabs and task sub tabs', () => {
   assert.equal(buildRoute('missing'), '/overview')
   assert.equal(buildRoute('tasks', 'missing'), '/tasks/services')
 })
+
+test('usage overview has a stable refreshable route', () => {
+  setLocation('http://localhost/usage')
+  assert.deepEqual(parseRoute(), { tab: 'usage', taskSubTab: 'services' })
+  assert.equal(buildRoute('usage'), '/usage')
+})

@@ -522,6 +522,15 @@ func TestSlashCommandsIncludesGAPaletteEntries(t *testing.T) {
 	if err := os.WriteFile(slashFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+	projectsDir := filepath.Join(root, "temp", "projects")
+	for _, name := range []string{"zeta", "alpha"} {
+		if err := os.MkdirAll(filepath.Join(projectsDir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(projectsDir, "not-a-project.txt"), []byte("ignored"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := s.CfgStore.Cfg
 	cfg.GARoot = root
 	cfg.EffectivePython = ""
@@ -581,5 +590,28 @@ func TestSlashCommandsIncludesGAPaletteEntries(t *testing.T) {
 	}
 	if _, ok := seen["/continue <编号>"]; !ok {
 		t.Fatalf("parameterized continue variant missing")
+	}
+	alpha, ok := seen["/project alpha"]
+	if !ok || alpha.Insert != "/project alpha" || alpha.Key != "/project alpha" {
+		t.Fatalf("project alpha candidate missing or malformed: %#v", alpha)
+	}
+	zeta, ok := seen["/project zeta"]
+	if !ok || zeta.Insert != "/project zeta" || zeta.Key != "/project zeta" {
+		t.Fatalf("project zeta candidate missing or malformed: %#v", zeta)
+	}
+	if _, ok := seen["/project not-a-project.txt"]; ok {
+		t.Fatalf("regular files must not become project candidates")
+	}
+	alphaIndex, zetaIndex := -1, -1
+	for i, c := range got.Commands {
+		switch c.Cmd {
+		case "/project alpha":
+			alphaIndex = i
+		case "/project zeta":
+			zetaIndex = i
+		}
+	}
+	if alphaIndex < 0 || zetaIndex < 0 || alphaIndex > zetaIndex {
+		t.Fatalf("project candidates should be present in sorted source order: alpha=%d zeta=%d", alphaIndex, zetaIndex)
 	}
 }

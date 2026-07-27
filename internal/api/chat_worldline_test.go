@@ -50,9 +50,9 @@ func TestPublicWorldlineContractAndVersionNavigation(t *testing.T) {
 	bUser, bAssistant := "u-b", "a-b"
 	resp := chatWorldlineResponse{
 		Tree: chatWorldlineTree{RootID: &root, Head: &head, CurrentPath: []string{"root", "b"}, SidecarStatus: "ok", Nodes: []chatWorldlineNode{
-			{ID: "root", Children: []string{"a", "b"}, Depth: 0, Ordinal: 1, Title: "same", MappingStatus: "unmapped"},
-			{ID: "b", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 3, Title: "same", CreatedAt: 22, MappingStatus: "mapped", UserMessageID: &bUser, AssistantMessageID: &bAssistant},
-			{ID: "a", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 2, Title: "same", CreatedAt: 11, MappingStatus: "mapped", UserMessageID: &aUser, AssistantMessageID: &aAssistant},
+			{ID: "root", Kind: "origin", Children: []string{"a", "b"}, Depth: 0, Ordinal: 1, Title: "same", MappingStatus: "unmapped"},
+			{ID: "b", Kind: "edit", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 3, Title: "same", CreatedAt: 22, MappingStatus: "mapped", UserMessageID: &bUser, AssistantMessageID: &bAssistant},
+			{ID: "a", Kind: "edit", ParentID: &parent, Children: []string{}, Depth: 1, Ordinal: 2, Title: "same", CreatedAt: 11, MappingStatus: "mapped", UserMessageID: &aUser, AssistantMessageID: &aAssistant},
 		}},
 		Result: map[string]interface{}{"display_path": []interface{}{1.0}}, RawHistory: []map[string]interface{}{{"secret": true}},
 		HistoryInfo: []interface{}{map[string]interface{}{"secret": true}}, Working: map[string]interface{}{"secret": true},
@@ -66,6 +66,9 @@ func TestPublicWorldlineContractAndVersionNavigation(t *testing.T) {
 	}
 	if got.Nodes[1].ID != "b" || got.Nodes[1].Depth != 1 || got.Nodes[1].Ordinal != 3 || got.Nodes[1].CreatedAt != 22 {
 		t.Fatalf("node metadata changed: %#v", got.Nodes[1])
+	}
+	if got.Nodes[0].Kind != "origin" || got.Nodes[1].Kind != "edit" {
+		t.Fatalf("node kind not exposed: %#v", got.Nodes)
 	}
 	first, ok := got.MessageVersions["u-b"]
 	if !ok {
@@ -176,10 +179,13 @@ func TestWorldlineWorkerHelper(t *testing.T) {
 					{"id": other, "parent_id": "root", "children": []string{}, "depth": 1, "ordinal": 1, "title": other, "created_at": 3, "ago": 9, "mapping_status": "mapped", "user_message_id": "u-" + other, "assistant_message_id": "a-" + other},
 				},
 			},
-			"result": map[string]interface{}{"display_path": []map[string]interface{}{
-				{"id": userID, "role": "user", "content": "question " + node, "created_at": 10},
-				{"id": assistantID, "role": "assistant", "content": "answer " + node, "created_at": 11},
-			}},
+			"result": map[string]interface{}{
+				"display_path": []map[string]interface{}{
+					{"id": userID, "role": "user", "content": "question " + node, "created_at": 10},
+					{"id": assistantID, "role": "assistant", "content": "answer " + node, "created_at": 11},
+				},
+				"source_nodes": map[string]interface{}{"u-left": "left", "u-right": "right", "u-folded": "folded"},
+			},
 			"raw_history":  []map[string]interface{}{{"role": "assistant", "content": "raw " + node}},
 			"history_info": []interface{}{map[string]interface{}{"branch": node}},
 			"working":      map[string]interface{}{"branch": node},
@@ -218,6 +224,67 @@ func installWorldlineTestWorker(t *testing.T, s *Server, sid string) *chatWorker
 		}
 	})
 	return worker
+}
+
+func TestWorldlineActivationCarriesPersistedSessionState(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "activation-payload"
+	initial := chatSession{
+		ID: sid, Title: sid,
+		Messages: []chatMessage{
+			{ID: "u-old", Role: "user", Content: "old question", CreatedAt: 1},
+			{ID: "a-old", Role: "assistant", Content: "old answer", CreatedAt: 2},
+		},
+		RawHistory:  []map[string]interface{}{{"role": "assistant", "content": "backend"}},
+		HistoryInfo: []interface{}{map[string]interface{}{"step": float64(1)}},
+		Working:     map[string]interface{}{"key_info": "restored"},
+		Settings:    normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	installWorldlineTestWorker(t, s, sid)
+
+	var activationChecked, readonlyChecked bool
+	s.chatWorldlineRPCHook = func(_ string, req map[string]interface{}) error {
+		if active, _ := req["activate"].(bool); active {
+			messages, ok := req["history"].([]chatMessage)
+			if !ok || len(messages) != 2 || messages[0].ID != "u-old" || messages[1].ID != "a-old" {
+				t.Fatalf("activation history = %#v", req["history"])
+			}
+			raw, ok := req["raw_history"].([]map[string]interface{})
+			if !ok || len(raw) != 1 || raw[0]["content"] != "backend" {
+				t.Fatalf("activation raw history = %#v", req["raw_history"])
+			}
+			info, ok := req["history_info"].([]interface{})
+			if !ok || len(info) != 1 {
+				t.Fatalf("activation history info = %#v", req["history_info"])
+			}
+			working, ok := req["working"].(map[string]interface{})
+			if !ok || working["key_info"] != "restored" {
+				t.Fatalf("activation working = %#v", req["working"])
+			}
+			activationChecked = true
+			return nil
+		}
+		for _, key := range []string{"history", "raw_history", "history_info", "working"} {
+			if _, exists := req[key]; exists {
+				t.Fatalf("read-only state unexpectedly carried %q", key)
+			}
+		}
+		readonlyChecked = true
+		return nil
+	}
+
+	if _, err := s.chatWorldlineRPC(sid, map[string]interface{}{"action": "state"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.chatWorldlineRPC(sid, map[string]interface{}{"action": "state", "activate": true}); err != nil {
+		t.Fatal(err)
+	}
+	if !readonlyChecked || !activationChecked {
+		t.Fatalf("hook coverage readonly=%v activation=%v", readonlyChecked, activationChecked)
+	}
 }
 
 func TestWorldlineSwitchRoundTripPersistsAcrossServerRestart(t *testing.T) {
@@ -468,6 +535,34 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	}
 }
 
+func TestWorldlineEditResendAcceptsFoldedSourceOnSelectedPhysicalPath(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "edit-resend-folded"
+	initial := chatSession{
+		ID: sid, Title: sid,
+		Messages: []chatMessage{{ID: "u-folded", Role: "user", Content: "old prompt", CreatedAt: 1}},
+		Settings: normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	installWorldlineTestWorker(t, s, sid)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("failed to acquire chat run")
+	}
+	defer s.endChatRunOwned(sid, token)
+	if err := s.prepareChatWorldlineResend(sid, token, &initial, "u-folded"); err != nil {
+		t.Fatalf("folded source rejected despite private selected-path mapping: %v", err)
+	}
+	if len(initial.Messages) != 0 {
+		t.Fatalf("folded resend did not trim through source message: %+v", initial.Messages)
+	}
+	if initial.WorldlineHead != "folded" || len(initial.RawHistory) != 1 || initial.RawHistory[0]["content"] != "raw folded" {
+		t.Fatalf("folded restore state = head=%q raw=%+v", initial.WorldlineHead, initial.RawHistory)
+	}
+}
+
 func TestWorldlineDeleteIsNarrowAndRejectsBusySession(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	makeArtifacts := func(sid string) (string, string) {
@@ -531,5 +626,46 @@ func TestWorldlineDeleteIsNarrowAndRejectsBusySession(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("unrelated artifact changed: %s: %v", p, err)
 		}
+	}
+}
+
+func TestWorldlineEditResendFallsBackForLegacyUnmappedMessage(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "legacy-edit-resend"
+	cs := chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "first-user", Role: "user", Content: "first question"},
+			{ID: "first-assistant", Role: "assistant", Content: "first answer"},
+			{ID: "legacy-user", Role: "user", Content: "legacy question"},
+			{ID: "legacy-assistant", Role: "assistant", Content: "legacy answer"},
+		},
+		RawHistory: []map[string]interface{}{
+			{"role": "user", "content": "first question"},
+			{"role": "assistant", "content": "first answer"},
+			{"role": "user", "content": "legacy question"},
+			{"role": "assistant", "content": "legacy answer"},
+		},
+		HistoryInfo: []interface{}{map[string]interface{}{"stale": true}},
+		Working:     map[string]interface{}{"stale": true},
+	}
+	installWorldlineTestWorker(t, s, sid)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("failed to acquire chat run")
+	}
+	defer s.endChatRunOwned(sid, token)
+
+	if err := s.prepareChatWorldlineResend(sid, token, &cs, "legacy-user"); err != nil {
+		t.Fatalf("legacy unmapped resend fallback failed: %v", err)
+	}
+	if len(cs.Messages) != 2 || cs.Messages[0].ID != "first-user" || cs.Messages[1].ID != "first-assistant" {
+		t.Fatalf("messages were not truncated before legacy source: %+v", cs.Messages)
+	}
+	if len(cs.RawHistory) != 2 || cs.RawHistory[0]["content"] != "first question" || cs.RawHistory[1]["content"] != "first answer" {
+		t.Fatalf("raw history was not truncated before legacy source: %+v", cs.RawHistory)
+	}
+	if len(cs.HistoryInfo) != 0 || cs.Working != nil {
+		t.Fatalf("unsafe legacy GA state survived: info=%+v working=%+v", cs.HistoryInfo, cs.Working)
 	}
 }

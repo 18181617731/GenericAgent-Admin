@@ -12,17 +12,22 @@ function functionBlock(source, start, end) {
 
 const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
 
-test('prompt preset picker opens immediately and refreshes one stable session in background', () => {
+test('prompt preset picker keeps the first user selection while its background refresh finishes', () => {
+  const select = functionBlock(main, '  const selectExtraPromptPreset = (value) =>', '  const openExtraPromptEditor = () =>')
   const open = functionBlock(main, '  const openExtraPromptEditor = () =>', '  const openPromptPresetManager =')
+  assert.match(select, /extraPromptSelectionSeqRef\.current \+= 1/)
+  assert.match(select, /setExtraPromptSelection\(value\)/)
   assert.match(open, /const targetSid = activeSidRef\.current/)
   assert.match(open, /const targetOpenToken = openSeqRef\.current/)
-  assert.match(open, /const initialSelection = extraSysPromptPresetID/)
+  assert.match(open, /const initialSelectionSeq = extraPromptSelectionSeqRef\.current/)
   assert.match(open, /setExtraPromptTargetSid\(targetSid\)/)
-  assert.match(open, /setExtraPromptSelection\(initialSelection\)/)
+  assert.match(open, /setExtraPromptSelection\(extraSysPromptPresetID\)/)
   assert.match(open, /setExtraPromptOpen\(true\)/)
   assert.match(open, /loadChatState\(targetSid, targetOpenToken\)/)
   assert.match(open, /targetOpenToken !== openSeqRef\.current \|\| activeSidRef\.current !== targetSid/)
-  assert.match(open, /current === initialSelection \? freshState\.extraSysPromptPresetID : current/)
+  assert.match(open, /extraPromptSelectionSeqRef\.current === initialSelectionSeq/)
+  assert.match(open, /setExtraPromptSelection\(freshState\.extraSysPromptPresetID\)/)
+  assert.doesNotMatch(open, /current === initialSelection(?:\s|\?)/)
   assert.ok(open.indexOf('setExtraPromptOpen(true)') < open.indexOf('Promise.all('))
 })
 

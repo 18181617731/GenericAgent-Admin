@@ -1,11 +1,40 @@
+import { readFileSync } from 'node:fs'
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
-import App, { ChannelsPage, I18N } from './App.jsx'
-import { ChatMessage, PlanTodoCard, SessionUltraPlanPanel } from './ChatApp.jsx'
+import { App, ChannelsPage, I18N } from './App.jsx'
+import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, SessionUltraPlanPanel } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
+import { UsagePage } from './pages/UsagePage.jsx'
+
+// D2: deterministic GSAP stub — real tweens run on rAF timers and made the
+// Models provider editor assertions flaky in CI (targets mid-animation).
+vi.mock('gsap', () => {
+  const makeTimeline = () => {
+    const tl = {}
+    for (const k of ['to', 'from', 'fromTo', 'set', 'add', 'kill', 'play', 'pause', 'clear']) {
+      tl[k] = vi.fn(() => tl)
+    }
+    return tl
+  }
+  const gsapStub = {
+    registerPlugin: vi.fn(),
+    context: vi.fn(() => ({ revert: vi.fn(), kill: vi.fn() })),
+    timeline: vi.fn(makeTimeline),
+    set: vi.fn(),
+    from: vi.fn(),
+    to: vi.fn(),
+    fromTo: vi.fn(),
+    killTweensOf: vi.fn(),
+    utils: { selector: () => () => [] },
+  }
+  return { default: gsapStub, gsap: gsapStub }
+})
+vi.mock('@gsap/react', () => ({ useGSAP: vi.fn() }))
+
+const appStyles = readFileSync('src/style.css', 'utf8')
 
 globalThis.React = React
 
@@ -318,49 +347,185 @@ describe('plan todo card disclosure', () => {
     expect(body?.hidden).toBe(false)
   })
 
-  test('starts expanded and toggles the session UltraPlan dashboard closed, open, then closed', () => {
+  test('keeps UltraPlan message content in the primary mobile grid column', () => {
+    expect(appStyles).toMatch(
+      /@media \(max-width: 620px\)\s*\{\s*\.oa-message\.assistant:has\(> \.oa-message-ultraplan\)\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\) 30px !important;/,
+    )
+  })
+
+  test('auto-opens the message-owned UltraPlan inspector and supports close, reopen, and Escape', async () => {
     const { container } = render(
-      <SessionUltraPlanPanel
-        messages={[{
-          id: 'ultraplan-collapse',
+      <ChatMessage
+        message={{
+          id: 'ultraplan-inspector',
           role: 'assistant',
           content: '',
           ultraplan_state: {
             objective: 'Ship the dashboard',
-            current: 'Implementing collapse',
+            current: 'Implementing inspector',
             phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
           },
-        }]}
+        }}
+        pending={true}
         onAskReply={vi.fn()}
       />,
     )
 
-    const body = container.querySelector('.oa-up-body')
-    const collapse = () => screen.getByRole('button', { name: '\u6536\u8d77 UltraPlan \u6267\u884c\u9762\u677f' })
-    const expand = () => screen.getByRole('button', { name: '\u5c55\u5f00 UltraPlan \u6267\u884c\u9762\u677f' })
+    const entry = container.querySelector('.oa-up-entry')
+    expect(entry).toBeTruthy()
+    await waitFor(() => expect(entry.getAttribute('aria-expanded')).toBe('true'))
 
-    expect(container.querySelector('.oa-session-ultraplan > .oa-up-dash')).toBeTruthy()
-    expect(collapse().getAttribute('aria-controls')).toBe(body?.id)
-    expect(collapse().getAttribute('aria-expanded')).toBe('true')
-    expect(body?.hidden).toBe(false)
-    expect(collapse().querySelector('.lucide-chevron-down')).toBeTruthy()
-    expect(screen.getByText('Implementing collapse')).toBeTruthy()
+    const inspector = screen.getByRole('region', { name: 'UltraPlan' })
+    const drawerLayer = inspector.closest('.oa-up-drawer-layer')
+    expect(entry.getAttribute('aria-controls')).toBe(inspector.id)
+    expect(drawerLayer?.parentElement).toBe(document.body)
+    expect(container.contains(drawerLayer)).toBe(false)
+    expect(container.querySelector('.oa-message.assistant .oa-message-ultraplan > .oa-up-entry')).toBe(entry)
+    expect(container.querySelector('.oa-session-ultraplan')).toBeNull()
+    expect(container.querySelector('.oa-up-drawer-backdrop')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('Implementing inspector')).toBeTruthy()
 
-    fireEvent.click(collapse())
-    expect(expand().getAttribute('aria-expanded')).toBe('false')
-    expect(body?.hidden).toBe(true)
-    expect(expand().querySelector('.lucide-chevron-left')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '\u5173\u95ed UltraPlan \u8be6\u60c5' }))
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('region', { name: 'UltraPlan' })).toBeNull()
 
-    fireEvent.click(expand())
-    expect(collapse().getAttribute('aria-expanded')).toBe('true')
-    expect(body?.hidden).toBe(false)
+    fireEvent.click(entry)
+    expect(entry.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('region', { name: 'UltraPlan' })).toBeTruthy()
 
-    fireEvent.click(collapse())
-    expect(expand().getAttribute('aria-expanded')).toBe('false')
-    expect(body?.hidden).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('region', { name: 'UltraPlan' })).toBeNull()
   })
 
-  test('uses the latest persisted UltraPlan state while keeping final prose in the conversation', () => {
+  test('resizes the UltraPlan inspector from its left edge with pointer and keyboard controls', async () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'ultraplan-resize',
+          role: 'assistant',
+          content: '',
+          ultraplan_state: {
+            objective: 'Resize the inspector',
+            current: 'Checking width controls',
+            phases: [{ id: 'phase-1', name: 'Implementation', status: 'running' }],
+          },
+        }}
+        pending={true}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByRole('region', { name: 'UltraPlan' })).toBeTruthy())
+    const inspector = screen.getByRole('region', { name: 'UltraPlan' })
+    const separator = screen.getByRole('separator', { name: '\u8c03\u6574 UltraPlan \u4fa7\u680f\u5bbd\u5ea6' })
+
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('440px')
+    expect(separator.getAttribute('aria-controls')).toBe(inspector.id)
+    expect(separator.getAttribute('aria-orientation')).toBe('vertical')
+    expect(separator.getAttribute('aria-valuemin')).toBe('360')
+    expect(separator.getAttribute('aria-valuemax')).toBe('960')
+    expect(separator.getAttribute('aria-valuenow')).toBe('440')
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('472px')
+    expect(separator.getAttribute('aria-valuenow')).toBe('472')
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight', shiftKey: true })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('408px')
+
+    fireEvent.keyDown(separator, { key: 'Home' })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('360px')
+
+    fireEvent.pointerDown(separator, { button: 0, clientX: 700, pointerId: 7 })
+    expect(inspector.classList.contains('is-resizing')).toBe(true)
+    fireEvent.pointerMove(separator, { clientX: 500, pointerId: 7 })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('560px')
+    expect(separator.getAttribute('aria-valuenow')).toBe('560')
+    fireEvent.pointerUp(separator, { clientX: 500, pointerId: 7 })
+    expect(inspector.classList.contains('is-resizing')).toBe(false)
+
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(inspector.style.getPropertyValue('--oa-up-drawer-width')).toBe('960px')
+    expect(separator.getAttribute('aria-valuenow')).toBe('960')
+  })
+
+  test('follows the latest streamed subagent turn, then collapses turns when the task finishes', async () => {
+    const task = (status, output) => ({
+      id: 'streamed-subagent',
+      desc: 'Run delegated work',
+      status,
+      output,
+    })
+    const message = (status, output) => ({
+      id: 'ultraplan-turn-stream',
+      role: 'assistant',
+      content: '',
+      ultraplan_state: {
+        objective: 'Track delegated work',
+        recentTasks: [task(status, output)],
+      },
+    })
+    const turnOne = [
+      'LLM Running (Turn 1)',
+      '<summary>first turn</summary>',
+      'first body',
+    ].join('\n')
+    const turnOneUpdated = [
+      'LLM Running (Turn 1)',
+      '<summary>first turn updated</summary>',
+      'first body',
+      'still first turn',
+    ].join('\n')
+    const turnTwo = [
+      turnOneUpdated,
+      'LLM Running (Turn 2)',
+      '<summary>second turn</summary>',
+      'second body',
+    ].join('\n')
+
+    const { container, rerender } = render(
+      <ChatMessage message={message('running', turnOne)} pending={true} onAskReply={vi.fn()} />,
+    )
+    const drawerLayer = document.body.querySelector('.oa-up-drawer-layer')
+    const taskRow = drawerLayer?.querySelector('.oa-up-task')
+    expect(drawerLayer?.parentElement).toBe(document.body)
+    expect(container.contains(drawerLayer)).toBe(false)
+    const turnButton = (n) => screen.getByRole('button', { name: new RegExp(`Turn ${n}`) })
+    const turnIsOpen = (n) => turnButton(n).closest('.ant-collapse-item')
+      ?.classList.contains('ant-collapse-item-active')
+
+    await waitFor(() => expect(turnButton(1).getAttribute('aria-expanded')).toBe('true'))
+    expect(turnIsOpen(1)).toBe(true)
+
+    fireEvent.click(turnButton(1))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('false')
+    expect(turnIsOpen(1)).toBe(false)
+
+    rerender(<ChatMessage message={message('running', turnOneUpdated)} pending={true} onAskReply={vi.fn()} />)
+    await waitFor(() => expect(turnButton(1).textContent).toContain('first turn updated'))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('false')
+    expect(turnIsOpen(1)).toBe(false)
+
+    rerender(<ChatMessage message={message('running', turnTwo)} pending={true} onAskReply={vi.fn()} />)
+    await waitFor(() => expect(turnButton(2).getAttribute('aria-expanded')).toBe('true'))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('false')
+    expect(turnIsOpen(1)).toBe(false)
+    expect(turnIsOpen(2)).toBe(true)
+
+    rerender(<ChatMessage message={message('done', turnTwo)} pending={false} onAskReply={vi.fn()} />)
+    await waitFor(() => expect(turnButton(2).getAttribute('aria-expanded')).toBe('false'))
+    expect(turnIsOpen(1)).toBe(false)
+    expect(turnIsOpen(2)).toBe(false)
+
+    fireEvent.click(turnButton(1))
+    expect(turnButton(1).getAttribute('aria-expanded')).toBe('true')
+    expect(turnIsOpen(1)).toBe(true)
+    expect(taskRow).toBeTruthy()
+  })
+
+  test('keeps every UltraPlan dashboard in its owning assistant output and preserves final prose', () => {
     const messages = [
       {
         id: 'ultraplan-older-run',
@@ -387,19 +552,52 @@ describe('plan todo card disclosure', () => {
     ]
     const { container } = render(
       <>
-        <SessionUltraPlanPanel messages={messages} onAskReply={vi.fn()} />
-        <ChatMessage message={messages[1]} pending={false} onAskReply={vi.fn()} />
+        {messages.map(message => (
+          <ChatMessage key={message.id} message={message} pending={false} onAskReply={vi.fn()} />
+        ))}
       </>,
     )
 
-    const sessionPanel = container.querySelector('.oa-session-ultraplan')
-    const assistantMessage = container.querySelector('.oa-message')
-    expect(sessionPanel?.querySelectorAll('.oa-up-dash')).toHaveLength(1)
-    expect(assistantMessage?.querySelector('.oa-up-dash')).toBeNull()
-    expect(sessionPanel?.textContent).toContain('Find active state-owned jobs')
-    expect(sessionPanel?.textContent).not.toContain('Older objective')
-    expect(assistantMessage?.textContent).toContain('verified final result')
-    expect(assistantMessage?.textContent).not.toContain('Research is complete')
+    const assistantMessages = [...container.querySelectorAll('.oa-message.assistant')]
+    expect(assistantMessages).toHaveLength(2)
+    expect(container.querySelector('.oa-session-ultraplan')).toBeNull()
+    const olderEntry = assistantMessages[0].querySelector('.oa-message-ultraplan > .oa-up-entry')
+    const latestEntry = assistantMessages[1].querySelector('.oa-message-ultraplan > .oa-up-entry')
+    expect(olderEntry).toBeTruthy()
+    expect(latestEntry).toBeTruthy()
+    expect(olderEntry.getAttribute('aria-expanded')).toBe('false')
+    expect(latestEntry.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.oa-up-drawer-backdrop')).toBeNull()
+    expect(assistantMessages[0].textContent).toContain('Older objective')
+    expect(assistantMessages[0].textContent).not.toContain('Find active state-owned jobs')
+    expect(assistantMessages[1].textContent).toContain('Find active state-owned jobs')
+    expect(assistantMessages[1].textContent).not.toContain('Older objective')
+    const finalProse = assistantMessages[1].querySelector('.oa-ultraplan-prose')
+    expect(finalProse).toBeTruthy()
+    expect(finalProse.closest('.oa-message-ultraplan')).toBeNull()
+    expect(finalProse.textContent).toContain('verified final result')
+    expect(finalProse.textContent).not.toContain('Research is complete')
+    expect(assistantMessages[1].textContent.match(/verified final result/g)).toHaveLength(1)
+
+    fireEvent.click(latestEntry)
+    const drawerLayer = document.body.querySelector('.oa-up-drawer-layer')
+    const inspector = drawerLayer?.querySelector('.oa-up-drawer')
+    expect(drawerLayer).toBeTruthy()
+    expect(drawerLayer.parentElement).toBe(document.body)
+    expect(assistantMessages[1].contains(drawerLayer)).toBe(false)
+    expect(inspector).toBeTruthy()
+    expect(inspector.getAttribute('role')).toBe('region')
+    expect(inspector.hasAttribute('aria-modal')).toBe(false)
+    expect(drawerLayer.querySelector('.oa-up-drawer-backdrop')).toBeNull()
+    expect(latestEntry.getAttribute('aria-expanded')).toBe('true')
+    expect(inspector.textContent).toContain('Find active state-owned jobs')
+    expect(inspector.textContent).not.toContain('Older objective')
+    expect(finalProse.closest('[hidden]')).toBeNull()
+
+    fireEvent.click(inspector.querySelector('.oa-up-drawer-close'))
+    expect(document.body.querySelector('.oa-up-drawer-layer')).toBeNull()
+    expect(latestEntry.getAttribute('aria-expanded')).toBe('false')
+    expect(finalProse.textContent).toContain('verified final result')
   })
 })
 
@@ -454,6 +652,86 @@ describe('chat response identity and time', () => {
     )
 
     expect(container.querySelector('.oa-usage-time')?.textContent).toContain('4s')
+  })
+
+  test('normalizes goal start seconds and hides an invalid epoch date', () => {
+    const startSeconds = Math.floor(Date.parse('2026-07-17T08:09:10.000Z') / 1000)
+    const { container, rerender } = render(
+      <GoalStatusCard state={{ status: 'done', start_time: startSeconds, elapsed_seconds: 10 }} />,
+    )
+
+    expect(container.querySelector('.oa-goalcard-meta')?.textContent)
+      .toContain(new Date(startSeconds * 1000).toLocaleString())
+
+    rerender(<GoalStatusCard state={{ status: 'done', start_time: 1777777, elapsed_seconds: 10 }} />)
+    expect(container.querySelector('.oa-goalcard-meta')?.textContent).not.toContain('启动')
+  })
+
+  test('keeps each goal card at the tail of its owning assistant output', () => {
+    const messages = [
+      { id: 'goal-old', role: 'assistant', content: 'Old output', goal_state: { status: 'done', objective: 'Old goal' } },
+      { id: 'goal-new', role: 'assistant', content: 'New output', goal_state: { status: 'done', objective: 'New goal' } },
+    ]
+    const { container } = render(<>{messages.map(message => (
+      <ChatMessage key={message.id} message={message} pending={false} onAskReply={vi.fn()} />
+    ))}</>)
+
+    const assistants = [...container.querySelectorAll('.oa-message.assistant')]
+    expect(assistants).toHaveLength(2)
+    expect(assistants[0].querySelector('.oa-goalcard')?.textContent).toContain('Old goal')
+    expect(assistants[0].textContent).not.toContain('New goal')
+    expect(assistants[1].querySelector('.oa-goalcard')?.textContent).toContain('New goal')
+    expect(assistants[1].textContent).not.toContain('Old goal')
+    expect(assistants[0].querySelector('.oa-msg-body + .oa-goalcard')).toBeTruthy()
+    expect(appStyles).toMatch(
+      /\.oa-message\.assistant:has\(> \.oa-goalcard\) > \.oa-goalcard\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*2;/,
+    )
+  })
+
+  test('renders comparison-report markdown without leaking syntax or unsafe HTML', () => {
+    const content = [
+      '<summary>source differences confirmed</summary>',
+      '',
+      '## Two legacy CPLD TU comparison report',
+      '',
+      '### Basic information',
+      '| Item | tianchi_101 | server_103 |',
+      '|------|-------------|------------|',
+      '| **Code size** | 689 lines | 1223 lines |',
+      '',
+      '---',
+      '',
+      '#### 1. **Data sources and maintenance**',
+      '| Dimension | tianchi_101 | server_103 |',
+      '|------|-------------|------------|',
+      '| **Data source** | **WebService**<br>dynamic address | **Local Excel**<br/>five xlsx files |',
+      '',
+      '#### 3. **Update core logic**',
+      'Both use `update_cpld_firmware()`; ~~obsolete path~~.',
+      '<img src=x onerror="window.__markdownInjected=true">',
+    ].join('\n')
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'markdown-comparison', role: 'assistant', content }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-response-summary')?.textContent).toContain('source differences confirmed')
+    expect(screen.getByRole('heading', { level: 2, name: 'Two legacy CPLD TU comparison report' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 3, name: 'Basic information' })).toBeTruthy()
+    const firstDetailHeading = container.querySelector('.oa-md h4')
+    expect(firstDetailHeading?.textContent).toBe('1. Data sources and maintenance')
+    expect(firstDetailHeading?.querySelector('strong')?.textContent).toBe('Data sources and maintenance')
+    expect(container.querySelectorAll('.oa-md-table')).toHaveLength(2)
+    expect(container.querySelectorAll('.oa-md-table br')).toHaveLength(2)
+    expect(container.querySelector('.oa-md hr')).toBeTruthy()
+    expect(container.querySelector('.oa-md code')?.textContent).toBe('update_cpld_firmware()')
+    expect(container.querySelector('.oa-md del')?.textContent).toBe('obsolete path')
+    expect(container.querySelector('.oa-md img')).toBeNull()
+    expect(container.querySelector('.oa-md')?.textContent).toContain('<img src=x onerror="window.__markdownInjected=true">')
+    expect(container.querySelector('.oa-md')?.textContent).not.toContain('<br>')
   })
 
   test('renders an explicit empty result for a worldline command', () => {
@@ -540,6 +818,64 @@ describe('chat response identity and time', () => {
   })
 })
 
+describe('chat model cascade', () => {
+  const groups = [
+    { value: 'alpha', label: 'Alpha', models: [{ value: 'a-1', label: 'Alpha One' }] },
+    { value: 'beta', label: 'Beta', models: [{ value: 'b-1', label: 'Beta One' }] },
+  ]
+
+  test('exposes menu state, resets previews on reopen, and returns focus on Escape', () => {
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' })
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' }).id).toBe(trigger.getAttribute('aria-controls'))
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Alpha' }).nextElementSibling)
+    expect(screen.getByText('Beta One')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger)
+    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })
+    expect(reopenedMenu.textContent).toContain('Alpha One')
+    expect(reopenedMenu.textContent).not.toContain('Beta One')
+  })
+
+  test('selects a previewed provider model and closes the menu', () => {
+    const onChange = vi.fn()
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
+
+    expect(onChange).toHaveBeenCalledWith('b-1')
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+  })
+
+  test('scrolls only the model column when the current model is below its viewport', () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.classList?.contains('oa-cascade-models')) return { top: 100, bottom: 200 }
+      if (this.getAttribute?.('aria-current') === 'true' && this.closest('.oa-cascade-models')) return { top: 250, bottom: 280 }
+      return { top: 0, bottom: 0 }
+    })
+
+    try {
+      render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+
+      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+})
 
 
 
@@ -644,6 +980,50 @@ describe('file workflow confidence', () => {
   })
 })
 
+describe('usage overview page', () => {
+  const payload = {
+    totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 },
+    session_count: 2,
+    sessions_with_usage: 1,
+    assistant_replies: 3,
+    skipped_sessions: 0,
+    models: [{ id: 'gpt-5', name: 'gpt-5', assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+    sessions: [{ id: 'session-1', name: 'Alpha', updated_at: 1700000000000, assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+    daily: [{ date: new Date().toISOString().slice(0, 10), assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+  }
+
+  test('renders aggregate and breakdown data', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(payload))
+    render(<UsagePage lang="en" />)
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Alpha')).toBeNull()
+    expect(screen.queryByText('Session details')).toBeNull()
+    expect(screen.getByText('Daily activity')).toBeTruthy()
+    const heatCells = document.querySelectorAll('.usage-heat-cell')
+    expect(heatCells.length).toBeGreaterThanOrEqual(358)
+    expect(heatCells.length).toBeLessThanOrEqual(364)
+    expect(document.querySelector('.usage-heat-cell:not([data-level="0"])')).toBeTruthy()
+  })
+
+  test('renders an explicit empty state', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse({ ...payload, totals: {}, session_count: 0, sessions_with_usage: 0, assistant_replies: 0, models: [], sessions: [] }))
+    render(<UsagePage lang="en" />)
+    expect(await screen.findByText('No token usage has been recorded yet.')).toBeTruthy()
+  })
+
+  test('recovers from a request error', async () => {
+    globalThis.fetch = vi.fn()
+      .mockRejectedValueOnce(new Error('network offline'))
+      .mockResolvedValueOnce(jsonResponse(payload))
+    render(<UsagePage lang="en" />)
+    expect((await screen.findByRole('alert')).textContent).toMatch(/network offline/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('operator shell feedback', () => {
   const shellPayload = (url) => {
     const path = new URL(url, 'http://localhost').pathname
@@ -666,8 +1046,11 @@ describe('operator shell feedback', () => {
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
     render(<App />)
     const files = await screen.findByRole('button', { name: /文件|Files/i })
-    const overview = screen.getByRole('button', { name: /总览|Overview/i })
+    const usage = screen.getByRole('button', { name: /用量总览|Usage/i })
+    const overview = screen.getByRole('button', { name: /^(总览|Overview)$/i })
     expect(overview.getAttribute('aria-current')).toBe('page')
+    expect(usage.tagName).toBe('BUTTON')
+    expect(usage.disabled).toBe(false)
     files.focus()
     expect(document.activeElement).toBe(files)
     expect(files.tagName).toBe('BUTTON')

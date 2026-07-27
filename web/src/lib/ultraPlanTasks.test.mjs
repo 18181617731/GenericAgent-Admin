@@ -50,6 +50,29 @@ test('removes the same strong task leaked into a later phase', () => {
   assert.equal(result.phases[1].tasks.length, 0)
 })
 
+test('keeps distinct tasks that use the same output basename in different directories', () => {
+  const result = reconcileUltraPlanTasks([
+    { name: 'linux', tasks: [{ id: 'A', desc: 'Build Linux', output_file: 'runs/linux/result.out.txt', status: 'done', output: 'linux' }] },
+    { name: 'windows', tasks: [{ id: 'B', desc: 'Build Windows', output_file: 'runs/windows/result.out.txt', status: 'failed', output: 'windows' }] },
+  ], [])
+  assert.equal(result.phases[0].tasks.length, 1)
+  assert.equal(result.phases[0].tasks[0].id, 'A')
+  assert.equal(result.phases[0].tasks[0].output, 'linux')
+  assert.equal(result.phases[1].tasks.length, 1)
+  assert.equal(result.phases[1].tasks[0].id, 'B')
+  assert.equal(result.phases[1].tasks[0].output, 'windows')
+})
+
+test('still matches prompt and generated output aliases without conflicting identities', () => {
+  const tasks = dedupeUltraPlanTasks([
+    { id: 'S-alias', desc: 'Architecture lens', output_file: 'runs/001_architecture_lens.txt', status: 'running' },
+    { id: 'S-alias', desc: 'Architecture lens', output_file: 'runs/001_architecture_lens.out.txt', status: 'done', output: 'result' },
+  ])
+  assert.equal(tasks.length, 1)
+  assert.equal(tasks[0].status, 'done')
+  assert.equal(tasks[0].output, 'result')
+})
+
 test('keeps genuinely unmatched recent work visible', () => {
   const result = reconcileUltraPlanTasks([
     { name: 'explore', tasks: [{ desc: 'Architecture lens' }] },

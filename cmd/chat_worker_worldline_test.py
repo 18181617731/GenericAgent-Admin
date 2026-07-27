@@ -1,16 +1,39 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
-GA_ROOT = Path(__file__).resolve().parents[4]
-if str(GA_ROOT) not in sys.path:
+
+
+def _find_ga_root():
+    """Locate the GA repo (contains frontends/worldline.py).
+
+    Order: GA_ROOT env var -> ancestors of this file (nested checkout layout).
+    Returns None when not found; tests then rely on PYTHONPATH already
+    exposing `frontends`.
+    """
+    env = os.environ.get('GA_ROOT')
+    if env and (Path(env) / 'frontends' / 'worldline.py').is_file():
+        return Path(env)
+    for parent in Path(__file__).resolve().parents:
+        if (parent / 'frontends' / 'worldline.py').is_file():
+            return parent
+    return None
+
+
+GA_ROOT = _find_ga_root()
+if GA_ROOT and str(GA_ROOT) not in sys.path:
     sys.path.insert(0, str(GA_ROOT))
+if importlib.util.find_spec('frontends') is None:
+    raise unittest.SkipTest(
+        'frontends package not importable; set GA_ROOT env var to the GenericAgent repo root'
+    )
 WORKER_PATH = Path(__file__).with_name('chat_worker.py')
 SPEC = importlib.util.spec_from_file_location('ga_admin_chat_worker_worldline_tested', WORKER_PATH)
 worker = importlib.util.module_from_spec(SPEC)
@@ -38,6 +61,30 @@ class WorldlineSidecarTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_worldline_hook_guard_is_defined_and_installs_once(self):
+        registrations = []
+        plugins = ModuleType('plugins')
+        hooks = ModuleType('plugins.hooks')
+
+        def register(event):
+            self.assertEqual(event, 'tool_before')
+
+            def decorator(callback):
+                registrations.append(callback)
+                return callback
+
+            return decorator
+
+        hooks.register = register
+        plugins.hooks = hooks
+        with mock.patch.object(worker, '_WORLDLINE_HOOK_INSTALLED', False), \
+             mock.patch.dict(sys.modules, {'plugins': plugins, 'plugins.hooks': hooks}):
+            worker._install_worldline_hook()
+            worker._install_worldline_hook()
+            self.assertTrue(worker._WORLDLINE_HOOK_INSTALLED)
+
+        self.assertEqual(len(registrations), 1)
+
     def test_worldline_title_strips_project_mode_without_store_private_helper(self):
         store = SimpleNamespace(
             root_id='root',
@@ -55,6 +102,34 @@ class WorldlineSidecarTests(unittest.TestCase):
         }]
 
         self.assertEqual(worker._worldline_title(store, history, 'fallback'), 'Keep this title')
+
+    def test_worldline_title_extracts_text_from_structured_content(self):
+        store = SimpleNamespace(
+            root_id='root',
+            head='root',
+            nodes={'root': {'parent': None, 'children': []}},
+            rebuild_history=lambda _node_id: [],
+        )
+        history = [{
+            'role': 'user',
+            'content': [{
+                'type': 'text',
+                'text': (
+                    'Readable node title\n\n'
+                    '---\n[PROJECT MODE: ga-admin]\n'
+                    'Injected project instructions\n---\n'
+                ),
+            }],
+        }]
+
+        self.assertEqual(
+            worker._worldline_title(store, history, 'fallback'),
+            'Readable node title',
+        )
+
+    def test_worldline_content_text_handles_nested_result(self):
+        content = [{'type': 'tool_result', 'content': {'result': 'Useful result'}}]
+        self.assertEqual(worker._worldline_content_text(content), 'Useful result')
 
     def test_projection_preserves_sibling_order_repeated_title_identity_and_path(self):
         nodes = {
@@ -124,6 +199,30 @@ class WorldlineSidecarTests(unittest.TestCase):
         self.assertEqual(projection['current_path'], ['root', child_ids[-1]])
         self.assertEqual(projection['head'], child_ids[-1])
         self.assertTrue(all(set(node['children']) <= ids for node in projection['nodes']))
+
+    def test_state_source_nodes_keep_folded_physical_ancestors_private(self):
+        store = SimpleNamespace(
+            head='leaf',
+            nodes={
+                'root': {'parent': None, 'children': ['folded']},
+                'folded': {'parent': 'root', 'children': ['leaf']},
+                'leaf': {'parent': 'folded', 'children': []},
+            },
+        )
+        sidecar = {'status': 'ok', 'bindings': {
+            'folded': {'user_message_id': 'u-folded'},
+            'leaf': {'user_message_id': 'u-leaf'},
+            'sibling': {'user_message_id': 'u-sibling'},
+        }}
+        self.assertEqual(worker._worldline_source_nodes(store, sidecar), {
+            'u-folded': 'folded',
+            'u-leaf': 'leaf',
+        })
+        self.assertEqual(
+            worker._worldline_rpc_result(store, sidecar, 'ok', 'state', None),
+            {'source_nodes': {'u-folded': 'folded', 'u-leaf': 'leaf'}},
+        )
+        self.assertIsNone(worker._worldline_rpc_result(store, sidecar, 'ok', 'list', None))
 
     def test_completed_head_binding_is_atomic_and_persists_across_reload(self):
         req = {
@@ -198,23 +297,52 @@ class WorldlineSidecarTests(unittest.TestCase):
 
     def test_worldline_store_is_initialized_only_by_an_activating_request(self):
         emitted = []
+        empty_store = SimpleNamespace(nodes={})
+        history = [
+            {'id': 'u-old', 'role': 'user', 'content': 'old question'},
+            {'id': 'a-old', 'role': 'assistant', 'content': 'old answer'},
+        ]
+        agent = object()
         with mock.patch.object(worker, '_resolve_request_root', return_value=self.root), \
              mock.patch.object(worker, '_apply_workspace', return_value=None), \
-             mock.patch.object(worker, '_ensure_worldline_store', return_value=self.store) as ensure, \
+             mock.patch.object(worker, '_ensure_worldline_store', return_value=empty_store) as ensure, \
+             mock.patch.object(worker, '_restore_admin_history') as restore_history, \
+             mock.patch.object(worker, '_restore_ga_state') as restore_state, \
+             mock.patch.object(worker, '_commit_worldline', return_value='baseline') as commit, \
+             mock.patch.object(worker, '_bind_worldline_head') as bind, \
              mock.patch.object(worker, '_worldline_nodes', return_value={'nodes': []}), \
              mock.patch.object(worker, '_snapshot_backend_history', return_value=[]), \
              mock.patch.object(worker, '_snapshot_ga_state', return_value={}), \
              mock.patch.object(worker, 'emit', side_effect=emitted.append):
-            worker.handle_worldline_request(object(), {
-                'action': 'bind', 'sid': 'sid-1',
+            worker.handle_worldline_request(agent, {
+                'action': 'state', 'sid': 'sid-1',
             })
             ensure.assert_not_called()
+            commit.assert_not_called()
+            bind.assert_not_called()
             self.assertEqual(emitted[-1]['tree']['sidecar_status'], 'inactive')
 
-            worker.handle_worldline_request(object(), {
+            worker.handle_worldline_request(agent, {
                 'activate': True, 'action': 'list', 'sid': 'sid-1',
+                'history': history,
+                'raw_history': [{'role': 'assistant', 'content': 'backend'}],
+                'history_info': [{'step': 1}],
+                'working': {'key_info': 'restored'},
             })
-            ensure.assert_called_once_with(mock.ANY, self.root, None)
+            ensure.assert_called_once_with(agent, self.root, None)
+            restore_history.assert_called_once_with(
+                agent, history, [{'role': 'assistant', 'content': 'backend'}]
+            )
+            restore_state.assert_called_once_with(agent, [{'step': 1}], {'key_info': 'restored'})
+            commit.assert_called_once_with(agent, 'old question')
+            bind.assert_called_once_with(empty_store, self.root, 'sid-1', {
+                'node_id': 'baseline',
+                'turn_status': 'completed',
+                'has_final_answer': True,
+                'user_message_id': 'u-old',
+                'assistant_message_id': 'a-old',
+                'display_path': history,
+            })
             self.assertEqual(emitted[-1]['tree'], {'nodes': []})
 
     def test_mapped_restore_uses_core_conv_mode_and_returns_display_mapping(self):

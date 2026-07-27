@@ -25,6 +25,8 @@ type chatWorldlineNode struct {
 	MappingStatus      string   `json:"mapping_status"`
 	UserMessageID      *string  `json:"user_message_id"`
 	AssistantMessageID *string  `json:"assistant_message_id"`
+	UntrackedChanges   bool     `json:"untracked_changes"`
+	UntrackedFiles     []string `json:"untracked_files"`
 }
 
 type chatWorldlineTree struct {
@@ -54,11 +56,14 @@ type chatWorldlinePublicNode struct {
 	Children           []string `json:"children"`
 	Depth              int      `json:"depth"`
 	Ordinal            int      `json:"ordinal"`
+	Kind               string   `json:"kind"`
 	Title              string   `json:"title"`
 	CreatedAt          int64    `json:"created_at"`
 	MappingStatus      string   `json:"mapping_status"`
 	UserMessageID      *string  `json:"user_message_id"`
 	AssistantMessageID *string  `json:"assistant_message_id"`
+	UntrackedChanges   bool     `json:"untracked_changes"`
+	UntrackedFiles     []string `json:"untracked_files"`
 }
 
 type chatWorldlineVersionGroup struct {
@@ -130,8 +135,10 @@ func publicWorldline(resp chatWorldlineResponse) chatWorldlinePublic {
 	for _, node := range resp.Tree.Nodes {
 		out.Nodes = append(out.Nodes, chatWorldlinePublicNode{ID: node.ID, ParentID: node.ParentID,
 			Children: append([]string{}, node.Children...), Depth: node.Depth, Ordinal: node.Ordinal,
-			Title: node.Title, CreatedAt: node.CreatedAt, MappingStatus: node.MappingStatus,
-			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID})
+			Kind: node.Kind, Title: node.Title, CreatedAt: node.CreatedAt, MappingStatus: node.MappingStatus,
+			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID,
+			UntrackedChanges: node.UntrackedChanges,
+			UntrackedFiles:   append([]string{}, node.UntrackedFiles...)})
 		if node.MappingStatus == "mapped" && node.UserMessageID != nil && node.AssistantMessageID != nil {
 			parent := ""
 			if node.ParentID != nil {
@@ -206,6 +213,12 @@ func (s *Server) chatWorldlineRPC(sid string, req map[string]interface{}) (chatW
 	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
 	if err != nil {
 		return chatWorldlineResponse{}, err
+	}
+	if activate, _ := req["activate"].(bool); activate {
+		req["history"] = cs.Messages
+		req["raw_history"] = cs.RawHistory
+		req["history_info"] = cs.HistoryInfo
+		req["working"] = cs.Working
 	}
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
@@ -298,14 +311,34 @@ func (s *Server) prepareChatWorldlineResend(sid string, token *chatRun, cs *chat
 		path[nodeID] = true
 	}
 	sourceNodeID := ""
-	for _, node := range state.Tree.Nodes {
-		if node.MappingStatus == "mapped" && node.UserMessageID != nil && *node.UserMessageID == sourceUserMessageID && path[node.ID] {
-			sourceNodeID = node.ID
-			break
+	if state.Result != nil {
+		if rawSourceNodes, ok := state.Result["source_nodes"].(map[string]interface{}); ok {
+			if nodeID, ok := rawSourceNodes[sourceUserMessageID].(string); ok {
+				sourceNodeID = strings.TrimSpace(nodeID)
+			}
 		}
 	}
 	if sourceNodeID == "" {
-		return fmt.Errorf("source user message is not on the selected mapped worldline path")
+		for _, node := range state.Tree.Nodes {
+			if node.MappingStatus == "mapped" && node.UserMessageID != nil && *node.UserMessageID == sourceUserMessageID && path[node.ID] {
+				sourceNodeID = node.ID
+				break
+			}
+		}
+	}
+	if sourceNodeID == "" {
+		// Sessions created before worldline bindings have no node to restore.
+		// Keep resend safe by falling back to the persisted chat boundary rather
+		// than pretending that an unrelated worldline node represents this turn.
+		rawHistory := rawHistoryBeforeMessageForResend(*cs, messageIndex)
+		if !s.ownsChatRun(sid, token) {
+			return fmt.Errorf("worldline edit/resend lost ownership")
+		}
+		cs.Messages = append([]chatMessage(nil), cs.Messages[:messageIndex]...)
+		cs.RawHistory = rawHistory
+		cs.HistoryInfo = []interface{}{}
+		cs.Working = nil
+		return nil
 	}
 	restored, err := s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), map[string]interface{}{
 		"action": "restore", "node_id": sourceNodeID, "mode": "conversation", "to": "before",
@@ -337,7 +370,11 @@ func (s *Server) chatWorldlineState(w http.ResponseWriter, r *http.Request, sid 
 		bad(w, http.StatusConflict, "chat is already running")
 		return
 	}
-	resp, err := s.chatWorldlineRPC(sid, map[string]interface{}{"action": "state"})
+	req := map[string]interface{}{"action": "state"}
+	if r.URL.Query().Get("activate") == "true" {
+		req["activate"] = true
+	}
+	resp, err := s.chatWorldlineRPC(sid, req)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return

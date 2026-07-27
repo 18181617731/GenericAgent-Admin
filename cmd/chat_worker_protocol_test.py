@@ -125,6 +125,124 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", error)
         self.assertIn("usages", error)
 
+    def test_title_request_uses_isolated_backend_and_structured_conversation(self):
+        class FakeTitleBackend:
+            def __init__(self):
+                self.history = [{"role": "user", "content": "stale"}]
+                self.system = ""
+                self.model = "title-model"
+                self.request = None
+
+            def ask(self, request):
+                self.request = request
+                return iter(["同步", "上游更新"])
+
+        agent = FakeAgent()
+        backend = FakeTitleBackend()
+        agent.llmclient.backend = backend
+
+        chat_worker.handle_title_request(agent, {
+            "op": "title",
+            "llm_no": 0,
+            "conversation": {
+                "messages": [
+                    {"role": "user", "content": "同步上游更新"},
+                    {"role": "assistant", "content": "已经完成同步并解决冲突"},
+                    {"role": "user", "content": "再加入标题生成功能"},
+                ],
+            },
+        })
+
+        self.assertEqual(backend.history, [])
+        self.assertIn("untrusted data", backend.system)
+        self.assertIn('"role": "user", "content": "同步上游更新"', backend.request)
+        self.assertIn('"role": "assistant", "content": "已经完成同步并解决冲突"', backend.request)
+        self.assertIn('"role": "user", "content": "再加入标题生成功能"', backend.request)
+        self.assertEqual(self.events[-1]["type"], "title_done")
+        self.assertEqual(self.events[-1]["title"], "同步上游更新")
+
+    def test_title_request_rejects_transport_error_text(self):
+        class ErrorBackend:
+            history = []
+            system = ""
+            model = "broken-model"
+
+            def ask(self, request):
+                return iter(["!!!Error: HTTP 401"])
+
+        agent = FakeAgent()
+        agent.llmclient.backend = ErrorBackend()
+
+        with self.assertRaisesRegex(RuntimeError, "title model request failed"):
+            chat_worker.handle_title_request(agent, {
+                "op": "title",
+                "conversation": {"user": "hello", "assistant": "world"},
+            })
+
+    def test_title_request_retries_verbose_meta_response(self):
+        class VerboseBackend:
+            history = []
+            system = ""
+            model = "title-model"
+
+            def __init__(self):
+                self.requests = []
+
+            def ask(self, request):
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return iter(["我们被要求为这个对话生成一个标题并总结其中的主要内容"])
+                return iter(["旧会话标题自动回填"])
+
+        agent = FakeAgent()
+        backend = VerboseBackend()
+        agent.llmclient.backend = backend
+
+        chat_worker.handle_title_request(agent, {
+            "op": "title",
+            "conversation": {
+                "messages": [
+                    {"role": "user", "content": "旧会话仍然使用第一句话作为标题"},
+                    {"role": "assistant", "content": "将自动重新生成"},
+                ],
+            },
+        })
+
+        self.assertEqual(len(backend.requests), 2)
+        self.assertTrue(backend.requests[0].startswith("["))
+        self.assertNotIn("Create a title", backend.requests[0])
+        self.assertEqual(self.events[-1]["title"], "旧会话标题自动回填")
+
+    def test_title_request_uses_final_content_instead_of_reasoning_chunks(self):
+        class FinalResponse:
+            content = "淘宝SKU布局与定价"
+
+        class ReasoningBackend:
+            history = []
+            system = ""
+            model = "deepseek-title-model"
+
+            def ask(self, request):
+                def stream():
+                    yield "我们需要分析对话并构造一个标题"
+                    return FinalResponse()
+                return stream()
+
+        agent = FakeAgent()
+        agent.llmclient.backend = ReasoningBackend()
+
+        chat_worker.handle_title_request(agent, {
+            "op": "title",
+            "conversation": {
+                "messages": [
+                    {"role": "user", "content": "分析竞品SKU并重新定价"},
+                    {"role": "assistant", "content": "已生成对比表"},
+                ],
+            },
+        })
+
+        self.assertEqual(self.events[-1]["title"], "淘宝SKU布局与定价")
+
     def test_ultraplan_is_an_ordinary_agent_task_and_preserves_raw_delta(self):
         agent = FakeAgent()
         with mock.patch.object(
@@ -239,11 +357,19 @@ class UltraPlanReadOnlyObserverTests(unittest.TestCase):
         )
         self.assertIsInstance(sessions, dict)
 
-    def test_session_selection_detects_new_and_changed_official_runs(self):
+    def test_session_selection_binds_only_to_this_conversations_run(self):
+        # Regression guard for the cross-conversation UltraPlan leak: a run_dir
+        # that already existed when this observer captured its baseline belongs
+        # to another conversation (or an earlier turn). Merely observing it
+        # change must never bind this observer onto it -- otherwise an unrelated
+        # conversation's UltraPlan bleeds into this one. Only a freshly created
+        # run_dir (absent from baseline) may be bound, unless a changed run's
+        # slug explicitly matches THIS objective (same-objective restart).
         old = {"current": "phase-a", "phases": [], "tasks": [], "events": []}
         changed = {"current": "phase-b", "phases": [], "tasks": [], "events": []}
         baseline = {"C:/runs/existing": chat_worker._ultraplan_session_signature(old)}
 
+        # A brand-new run_dir is bound (preferring an objective-slug match).
         self.assertEqual(
             chat_worker._select_ultraplan_session(
                 {"C:/runs/existing": old, "C:/runs/new-objective": changed},
@@ -252,12 +378,36 @@ class UltraPlanReadOnlyObserverTests(unittest.TestCase):
             ),
             "C:/runs/new-objective",
         )
-        self.assertEqual(
+        # A pre-existing run that merely changed, with no objective match, must
+        # NOT be grabbed -- this is the fix for the cross-talk leak.
+        self.assertIsNone(
             chat_worker._select_ultraplan_session(
                 {"C:/runs/existing": changed}, baseline
+            )
+        )
+        # Same-objective restart on a pre-existing run_dir may be re-bound only
+        # when its slug matches this objective.
+        reuse_baseline = {
+            "C:/runs/ship_feature": chat_worker._ultraplan_session_signature(old)
+        }
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/ship_feature": changed},
+                reuse_baseline,
+                objective="ship_feature",
+            ),
+            "C:/runs/ship_feature",
+        )
+        # Once bound, the selection is pinned and never re-bound mid-run.
+        self.assertEqual(
+            chat_worker._select_ultraplan_session(
+                {"C:/runs/existing": changed, "C:/runs/other": changed},
+                baseline,
+                selected="C:/runs/existing",
             ),
             "C:/runs/existing",
         )
+        # An unchanged pre-existing run is never selected.
         self.assertIsNone(
             chat_worker._select_ultraplan_session(
                 {"C:/runs/existing": old}, baseline
@@ -399,6 +549,82 @@ class PlanPayloadAdapterTests(unittest.TestCase):
             "status": "done",
         }])
         self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
+
+
+class FakeReloadAgent:
+    """Agent stub tracking GA's mtime gated profile reload."""
+
+    def __init__(self, llm_no=0, reload_sets=None, reload_raises=False):
+        self.llm_no = llm_no
+        self.reload_calls = 0
+        self.switch_calls = []
+        self._reload_sets = reload_sets
+        self._reload_raises = reload_raises
+
+    def load_llm_sessions(self):
+        self.reload_calls += 1
+        if self._reload_raises:
+            raise RuntimeError("mykey.py is broken")
+        if self._reload_sets is not None:
+            self.llm_no = self._reload_sets
+
+    def next_llm(self, llm_no):
+        self.switch_calls.append(llm_no)
+        self.llm_no = llm_no
+
+
+class LegacyAgent:
+    """Agent without load_llm_sessions (older GA checkout)."""
+
+    def __init__(self):
+        self.llm_no = 0
+        self.switch_calls = []
+
+    def next_llm(self, llm_no):
+        self.switch_calls.append(llm_no)
+        self.llm_no = llm_no
+
+
+class SelectLlmReloadTest(unittest.TestCase):
+    def test_same_model_still_reloads_profiles_without_switching(self):
+        agent = FakeReloadAgent(llm_no=1)
+
+        chat_worker._select_llm_if_needed(agent, 1)
+
+        self.assertEqual(agent.reload_calls, 1)
+        self.assertEqual(agent.switch_calls, [])
+
+    def test_model_switch_reloads_then_switches(self):
+        agent = FakeReloadAgent(llm_no=0)
+
+        chat_worker._select_llm_if_needed(agent, 2)
+
+        self.assertEqual(agent.reload_calls, 1)
+        self.assertEqual(agent.switch_calls, [2])
+
+    def test_reload_runs_before_index_comparison(self):
+        # load_llm_sessions remaps llm_no by model name after a mykey.py edit,
+        # so the comparison must read the post-reload index.
+        agent = FakeReloadAgent(llm_no=0, reload_sets=3)
+
+        chat_worker._select_llm_if_needed(agent, 3)
+
+        self.assertEqual(agent.reload_calls, 1)
+        self.assertEqual(agent.switch_calls, [])
+
+    def test_broken_reload_does_not_block_model_switch(self):
+        agent = FakeReloadAgent(llm_no=0, reload_raises=True)
+
+        chat_worker._select_llm_if_needed(agent, 1)
+
+        self.assertEqual(agent.switch_calls, [1])
+
+    def test_agent_without_reload_hook_is_tolerated(self):
+        agent = LegacyAgent()
+
+        chat_worker._select_llm_if_needed(agent, 1)
+
+        self.assertEqual(agent.switch_calls, [1])
 
 
 if __name__ == "__main__":

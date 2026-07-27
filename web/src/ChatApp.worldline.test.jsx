@@ -3,7 +3,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { isWorldlinePickerResult, WorldlineRestoreDialog, worldlineRestoreCommand } from './ChatApp.jsx'
+import { isWorldlinePickerResult, WorldlinePanel, WorldlineRestoreDialog, worldlineRestoreCommand } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
 
@@ -41,6 +41,19 @@ describe('worldline restore-point chooser', () => {
     expect(isWorldlinePickerResult({ command:'worldline', action:'list', tree:{ nodes:[{ id:'node-1' }] } })).toBe(true)
     expect(isWorldlinePickerResult({ command:'worldline', action:'list', tree:{ nodes:[] } })).toBe(false)
     expect(isWorldlinePickerResult({ command:'worldline', action:'restore', tree:{ nodes:[{ id:'node-1' }] } })).toBe(false)
+  })
+
+  test('marks nodes with untracked external changes in the branch panel', () => {
+    const state = { available:true, nodes:[
+      { id:'node-1', parent_id:null, ordinal:1, title:'干净节点', mapping_status:'mapped' },
+      { id:'node-2', parent_id:'node-1', ordinal:2, title:'带外部改动', mapping_status:'mapped',
+        untracked_changes:true, untracked_files:['notes.txt'] },
+    ], current_path:['node-1','node-2'] }
+    render(<WorldlinePanel state={state} loading={false} switchingId={null} disabled={false}
+      onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={vi.fn()}/>)
+    const badges = screen.getAllByText('外部改动')
+    expect(badges.length).toBe(1)
+    expect(badges[0].title).toContain('notes.txt')
   })
 
   test('closes with Escape', () => {
