@@ -30,3 +30,9 @@ test('buildRoute normalizes invalid tabs and task sub tabs', () => {
 test('scheduled tasks are immediately above autonomous navigation', () => {
   assert.equal(NAV_ITEMS[NAV_ITEMS.indexOf('autonomous') - 1], 'tasks')
 })
+
+test('usage overview has a stable refreshable route', () => {
+  setLocation('http://localhost/usage')
+  assert.deepEqual(parseRoute(), { tab: 'usage', taskSubTab: 'scheduled' })
+  assert.equal(buildRoute('usage'), '/usage')
+})

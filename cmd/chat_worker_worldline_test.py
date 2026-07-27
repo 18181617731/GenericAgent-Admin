@@ -1,10 +1,11 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -37,6 +38,30 @@ class WorldlineSidecarTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_worldline_hook_guard_is_defined_and_installs_once(self):
+        registrations = []
+        plugins = ModuleType('plugins')
+        hooks = ModuleType('plugins.hooks')
+
+        def register(event):
+            self.assertEqual(event, 'tool_before')
+
+            def decorator(callback):
+                registrations.append(callback)
+                return callback
+
+            return decorator
+
+        hooks.register = register
+        plugins.hooks = hooks
+        with mock.patch.object(worker, '_WORLDLINE_HOOK_INSTALLED', False), \
+             mock.patch.dict(sys.modules, {'plugins': plugins, 'plugins.hooks': hooks}):
+            worker._install_worldline_hook()
+            worker._install_worldline_hook()
+            self.assertTrue(worker._WORLDLINE_HOOK_INSTALLED)
+
+        self.assertEqual(len(registrations), 1)
 
     def test_worldline_title_strips_project_mode_without_store_private_helper(self):
         store = SimpleNamespace(
@@ -124,6 +149,30 @@ class WorldlineSidecarTests(unittest.TestCase):
         self.assertEqual(projection['current_path'], ['root', child_ids[-1]])
         self.assertEqual(projection['head'], child_ids[-1])
         self.assertTrue(all(set(node['children']) <= ids for node in projection['nodes']))
+
+    def test_state_source_nodes_keep_folded_physical_ancestors_private(self):
+        store = SimpleNamespace(
+            head='leaf',
+            nodes={
+                'root': {'parent': None, 'children': ['folded']},
+                'folded': {'parent': 'root', 'children': ['leaf']},
+                'leaf': {'parent': 'folded', 'children': []},
+            },
+        )
+        sidecar = {'status': 'ok', 'bindings': {
+            'folded': {'user_message_id': 'u-folded'},
+            'leaf': {'user_message_id': 'u-leaf'},
+            'sibling': {'user_message_id': 'u-sibling'},
+        }}
+        self.assertEqual(worker._worldline_source_nodes(store, sidecar), {
+            'u-folded': 'folded',
+            'u-leaf': 'leaf',
+        })
+        self.assertEqual(
+            worker._worldline_rpc_result(store, sidecar, 'ok', 'state', None),
+            {'source_nodes': {'u-folded': 'folded', 'u-leaf': 'leaf'}},
+        )
+        self.assertIsNone(worker._worldline_rpc_result(store, sidecar, 'ok', 'list', None))
 
     def test_completed_head_binding_is_atomic_and_persists_across_reload(self):
         req = {

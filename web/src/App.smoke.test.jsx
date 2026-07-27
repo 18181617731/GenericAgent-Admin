@@ -4,11 +4,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage } from './App.jsx'
-import ChatApp, { ChatMessage, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
+import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
+import { UsagePage } from './pages/UsagePage.jsx'
 import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 import { SchedulerServiceRow } from './components/schedule.jsx'
 
@@ -491,6 +492,86 @@ describe('chat response model identity', () => {
     expect(container.querySelector('.oa-usage-time')?.textContent).toContain('4s')
   })
 
+  test('normalizes goal start seconds and hides an invalid epoch date', () => {
+    const startSeconds = Math.floor(Date.parse('2026-07-17T08:09:10.000Z') / 1000)
+    const { container, rerender } = render(
+      <GoalStatusCard state={{ status: 'done', start_time: startSeconds, elapsed_seconds: 10 }} />,
+    )
+
+    expect(container.querySelector('.oa-goalcard-meta')?.textContent)
+      .toContain(new Date(startSeconds * 1000).toLocaleString())
+
+    rerender(<GoalStatusCard state={{ status: 'done', start_time: 1777777, elapsed_seconds: 10 }} />)
+    expect(container.querySelector('.oa-goalcard-meta')?.textContent).not.toContain('启动')
+  })
+
+  test('keeps each goal card at the tail of its owning assistant output', () => {
+    const messages = [
+      { id: 'goal-old', role: 'assistant', content: 'Old output', goal_state: { status: 'done', objective: 'Old goal' } },
+      { id: 'goal-new', role: 'assistant', content: 'New output', goal_state: { status: 'done', objective: 'New goal' } },
+    ]
+    const { container } = render(<>{messages.map(message => (
+      <ChatMessage key={message.id} message={message} pending={false} onAskReply={vi.fn()} />
+    ))}</>)
+
+    const assistants = [...container.querySelectorAll('.oa-message.assistant')]
+    expect(assistants).toHaveLength(2)
+    expect(assistants[0].querySelector('.oa-goalcard')?.textContent).toContain('Old goal')
+    expect(assistants[0].textContent).not.toContain('New goal')
+    expect(assistants[1].querySelector('.oa-goalcard')?.textContent).toContain('New goal')
+    expect(assistants[1].textContent).not.toContain('Old goal')
+    expect(assistants[0].querySelector('.oa-msg-body + .oa-goalcard')).toBeTruthy()
+    expect(appStyles).toMatch(
+      /\.oa-message\.assistant:has\(> \.oa-goalcard\) > \.oa-goalcard\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*2;/,
+    )
+  })
+
+  test('renders comparison-report markdown without leaking syntax or unsafe HTML', () => {
+    const content = [
+      '<summary>source differences confirmed</summary>',
+      '',
+      '## Two legacy CPLD TU comparison report',
+      '',
+      '### Basic information',
+      '| Item | tianchi_101 | server_103 |',
+      '|------|-------------|------------|',
+      '| **Code size** | 689 lines | 1223 lines |',
+      '',
+      '---',
+      '',
+      '#### 1. **Data sources and maintenance**',
+      '| Dimension | tianchi_101 | server_103 |',
+      '|------|-------------|------------|',
+      '| **Data source** | **WebService**<br>dynamic address | **Local Excel**<br/>five xlsx files |',
+      '',
+      '#### 3. **Update core logic**',
+      'Both use `update_cpld_firmware()`; ~~obsolete path~~.',
+      '<img src=x onerror="window.__markdownInjected=true">',
+    ].join('\n')
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'markdown-comparison', role: 'assistant', content }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-response-summary')?.textContent).toContain('source differences confirmed')
+    expect(screen.getByRole('heading', { level: 2, name: 'Two legacy CPLD TU comparison report' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 3, name: 'Basic information' })).toBeTruthy()
+    const firstDetailHeading = container.querySelector('.oa-md h4')
+    expect(firstDetailHeading?.textContent).toBe('1. Data sources and maintenance')
+    expect(firstDetailHeading?.querySelector('strong')?.textContent).toBe('Data sources and maintenance')
+    expect(container.querySelectorAll('.oa-md-table')).toHaveLength(2)
+    expect(container.querySelectorAll('.oa-md-table br')).toHaveLength(2)
+    expect(container.querySelector('.oa-md hr')).toBeTruthy()
+    expect(container.querySelector('.oa-md code')?.textContent).toBe('update_cpld_firmware()')
+    expect(container.querySelector('.oa-md del')?.textContent).toBe('obsolete path')
+    expect(container.querySelector('.oa-md img')).toBeNull()
+    expect(container.querySelector('.oa-md')?.textContent).toContain('<img src=x onerror="window.__markdownInjected=true">')
+    expect(container.querySelector('.oa-md')?.textContent).not.toContain('<br>')
+  })
+
   test('renders an explicit empty result for a worldline command', () => {
     render(
       <ChatMessage
@@ -575,6 +656,64 @@ describe('chat response model identity', () => {
   })
 })
 
+describe('chat model cascade', () => {
+  const groups = [
+    { value: 'alpha', label: 'Alpha', models: [{ value: 'a-1', label: 'Alpha One' }] },
+    { value: 'beta', label: 'Beta', models: [{ value: 'b-1', label: 'Beta One' }] },
+  ]
+
+  test('exposes menu state, resets previews on reopen, and returns focus on Escape', async () => {
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' })
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' }).id).toBe(trigger.getAttribute('aria-controls'))
+
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'Beta' }))
+    expect(screen.getByText('Beta One')).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Beta' }).getAttribute('aria-selected')).toBe('true')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+
+    fireEvent.click(trigger)
+    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })
+    expect(reopenedMenu.textContent).toContain('Alpha One')
+    expect(reopenedMenu.textContent).not.toContain('Beta One')
+  })
+
+  test('selects a previewed provider model and closes the menu', () => {
+    const onChange = vi.fn()
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Beta One' }))
+
+    expect(onChange).toHaveBeenCalledWith('b-1')
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+  })
+
+  test('scrolls only the model column when the current model is below its viewport', () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.classList?.contains('oa-cascade-models')) return { top: 100, bottom: 200 }
+      if (this.getAttribute?.('aria-selected') === 'true' && this.closest('.oa-cascade-models')) return { top: 250, bottom: 280 }
+      return { top: 0, bottom: 0 }
+    })
+
+    try {
+      render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
+
+      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+})
 
 
 
@@ -678,6 +817,50 @@ describe('file workflow confidence', () => {
   })
 })
 
+describe('usage overview page', () => {
+  const payload = {
+    totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 },
+    session_count: 2,
+    sessions_with_usage: 1,
+    assistant_replies: 3,
+    skipped_sessions: 0,
+    models: [{ id: 'gpt-5', name: 'gpt-5', assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+    sessions: [{ id: 'session-1', name: 'Alpha', updated_at: 1700000000000, assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+    daily: [{ date: new Date().toISOString().slice(0, 10), assistant_replies: 3, totals: { input_tokens: 1200, output_tokens: 345, total_tokens: 1545 } }],
+  }
+
+  test('renders aggregate and breakdown data', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(payload))
+    render(<UsagePage lang="en" />)
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Alpha')).toBeNull()
+    expect(screen.queryByText('Session details')).toBeNull()
+    expect(screen.getByText('Daily activity')).toBeTruthy()
+    const heatCells = document.querySelectorAll('.usage-heat-cell')
+    expect(heatCells.length).toBeGreaterThanOrEqual(358)
+    expect(heatCells.length).toBeLessThanOrEqual(364)
+    expect(document.querySelector('.usage-heat-cell:not([data-level="0"])')).toBeTruthy()
+  })
+
+  test('renders an explicit empty state', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse({ ...payload, totals: {}, session_count: 0, sessions_with_usage: 0, assistant_replies: 0, models: [], sessions: [] }))
+    render(<UsagePage lang="en" />)
+    expect(await screen.findByText('No token usage has been recorded yet.')).toBeTruthy()
+  })
+
+  test('recovers from a request error', async () => {
+    globalThis.fetch = vi.fn()
+      .mockRejectedValueOnce(new Error('network offline'))
+      .mockResolvedValueOnce(jsonResponse(payload))
+    render(<UsagePage lang="en" />)
+    expect((await screen.findByRole('alert')).textContent).toMatch(/network offline/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('operator shell feedback', () => {
   const shellPayload = (url) => {
     const path = new URL(url, 'http://localhost').pathname
@@ -700,8 +883,11 @@ describe('operator shell feedback', () => {
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
     render(<App />)
     const files = await screen.findByRole('button', { name: /文件|Files/i })
-    const overview = screen.getByRole('button', { name: /总览|Overview/i })
+    const usage = screen.getByRole('button', { name: /用量总览|Usage/i })
+    const overview = screen.getByRole('button', { name: /^(总览|Overview)$/i })
     expect(overview.getAttribute('aria-current')).toBe('page')
+    expect(usage.tagName).toBe('BUTTON')
+    expect(usage.disabled).toBe(false)
     files.focus()
     expect(document.activeElement).toBe(files)
     expect(files.tagName).toBe('BUTTON')

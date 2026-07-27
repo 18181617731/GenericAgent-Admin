@@ -13,3 +13,67 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   }
   return merged
 }
+
+
+// live=true (default): deltas animate frame-by-frame as before.
+// live=false: deltas accumulate silently until beginLive() flushes the backlog
+// in one shot (used for replayed events when reattaching after a page refresh,
+// so the whole in-progress output appears instantly instead of retyping).
+export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = true }) => {
+  let pending = ''
+  let scheduled = null
+  let drainResolvers = []
+
+  const resolveDrains = () => {
+    if (pending || scheduled != null) return
+    const resolvers = drainResolvers
+    drainResolvers = []
+    resolvers.forEach(resolve => resolve())
+  }
+  const scheduleNext = () => {
+    if (pending && scheduled == null) scheduled = schedule(flushFrame)
+  }
+  const flushFrame = () => {
+    scheduled = null
+    if (!pending) return
+    // Small model deltas stay immediate; network bursts are drained across a few
+    // frames so the response advances continuously instead of jumping by blocks.
+    const chunkSize = pending.length <= 24 ? pending.length : Math.min(64, Math.max(4, Math.ceil(pending.length / 8)))
+    const chunk = pending.slice(0, chunkSize)
+    pending = pending.slice(chunkSize)
+    onFlush(chunk)
+    scheduleNext()
+    resolveDrains()
+  }
+
+  const flushNow = () => {
+    if (scheduled != null) {
+      cancel(scheduled)
+      scheduled = null
+    }
+    if (!pending) return
+    const chunk = pending
+    pending = ''
+    onFlush(chunk)
+    resolveDrains()
+  }
+
+  return {
+    push(delta) {
+      if (!delta) return
+      pending += delta
+      if (live) scheduleNext()
+    },
+    beginLive() {
+      if (live) return
+      live = true
+      flushNow()
+    },
+    flushNow,
+    drain() {
+      if (!live) flushNow()
+      if (!pending && scheduled == null) return Promise.resolve()
+      return new Promise(resolve => drainResolvers.push(resolve))
+    },
+  }
+}

@@ -50,9 +50,33 @@ export const ultraPlanTaskStrongKeys = (task = {}) => {
   return [...keys]
 }
 
+const taskIdentityValues = (task = {}, fields) => fields
+  .flatMap(field => Array.isArray(task[field]) ? task[field] : [task[field]])
+  .map(value => textValue(value).replace(/\\/g, '/'))
+  .filter(Boolean)
+
+const taskIds = (task = {}) => new Set(taskIdentityValues(task, ['id', 'task_id', 'key']).map(normalizedText))
+const taskPaths = (task = {}) => new Set(taskIdentityValues(task, [
+  'outputFile', 'output_file', 'outFile', 'out_file', 'file', 'path',
+]).map(value => normalizedText(value).replace(/(?:\.out)?\.txt$/i, '')))
+
+const hasConflictingExplicitIdentity = (left = {}, right = {}) => {
+  const leftIds = taskIds(left)
+  const rightIds = taskIds(right)
+  if (leftIds.size > 0 && rightIds.size > 0) return ![...leftIds].some(id => rightIds.has(id))
+
+  const leftPaths = taskPaths(left)
+  const rightPaths = taskPaths(right)
+  const leftQualified = [...leftPaths].filter(path => path.includes('/'))
+  const rightQualified = [...rightPaths].filter(path => path.includes('/'))
+  return leftQualified.length > 0 && rightQualified.length > 0
+    && !leftQualified.some(path => rightQualified.includes(path))
+}
+
 export const hasUltraPlanTaskStrongIdentity = (task = {}) => ultraPlanTaskStrongKeys(task).length > 0
 
 export const ultraPlanTasksMatch = (left = {}, right = {}, { includeDescription = true } = {}) => {
+  if (hasConflictingExplicitIdentity(left, right)) return false
   const rightStrong = new Set(ultraPlanTaskStrongKeys(right))
   if (ultraPlanTaskStrongKeys(left).some(key => rightStrong.has(key))) return true
   if (!includeDescription) return false

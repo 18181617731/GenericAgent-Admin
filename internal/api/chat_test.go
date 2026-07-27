@@ -1305,6 +1305,15 @@ func TestChatBTWPreservesMainResultThatFinishesFirst(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("btw worker calls=%d want=1", calls)
 	}
+	var response struct {
+		Message chatMessage `json:"message"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, rr.Body.String())
+	}
+	if response.Message.Kind != "btw" || response.Message.SideQuestion != "side question" {
+		t.Fatalf("response btw metadata=%#v", response.Message)
+	}
 	stored, err := loadChatSession(s.CfgStore.Cfg, "btw-first")
 	if err != nil {
 		t.Fatal(err)
@@ -1317,6 +1326,10 @@ func TestChatBTWPreservesMainResultThatFinishesFirst(t *testing.T) {
 		if stored.Messages[i].ID != want {
 			t.Fatalf("stored message[%d].ID=%q want=%q: %#v", i, stored.Messages[i].ID, want, stored.Messages)
 		}
+	}
+	btwStored := stored.Messages[len(stored.Messages)-1]
+	if btwStored.Kind != "btw" || btwStored.SideQuestion != "side question" {
+		t.Fatalf("stored btw metadata=%#v", btwStored)
 	}
 	if len(stored.RawHistory) != 1 || stored.RawHistory[0]["content"] != "raw main question" {
 		t.Fatalf("btw changed raw history: %#v", stored.RawHistory)

@@ -13,7 +13,7 @@ GenericAgent Admin Go 是 GenericAgent 的桌面级管理面板：Go 后端负�
 ### 日常用户能力
 
 - **一键管理 GA 服务**：发现并启动 `reflect/*.py`、`frontends/*app.py`、任务型服务与 Streamlit 前端，查看 stdout/stderr，支持停止单个服务或停止全部服务。
-- **原生 Chat 面板**：复用 GenericAgent 的模型配置与 `cmd/chat_worker.py`，支持流式回复、会话导航、文件/图片上传、复制与多轮对话。
+- **原生 Chat 面板**：复用 GenericAgent 的模型配置与 `cmd/chat_worker.py`，支持流式回复、会话导航、文件/图片上传、复制与多轮对话；聊天流内提供文件改动汇总卡（可整卡折叠、逐文件展开 diff）、子代理运行状态卡与会话世界线（worldline）视图。
 
 ### 管理员 / 维护者能力
 

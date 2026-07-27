@@ -176,10 +176,13 @@ func TestWorldlineWorkerHelper(t *testing.T) {
 					{"id": other, "parent_id": "root", "children": []string{}, "depth": 1, "ordinal": 1, "title": other, "created_at": 3, "ago": 9, "mapping_status": "mapped", "user_message_id": "u-" + other, "assistant_message_id": "a-" + other},
 				},
 			},
-			"result": map[string]interface{}{"display_path": []map[string]interface{}{
-				{"id": userID, "role": "user", "content": "question " + node, "created_at": 10},
-				{"id": assistantID, "role": "assistant", "content": "answer " + node, "created_at": 11},
-			}},
+			"result": map[string]interface{}{
+				"display_path": []map[string]interface{}{
+					{"id": userID, "role": "user", "content": "question " + node, "created_at": 10},
+					{"id": assistantID, "role": "assistant", "content": "answer " + node, "created_at": 11},
+				},
+				"source_nodes": map[string]interface{}{"u-left": "left", "u-right": "right", "u-folded": "folded"},
+			},
 			"raw_history":  []map[string]interface{}{{"role": "assistant", "content": "raw " + node}},
 			"history_info": []interface{}{map[string]interface{}{"branch": node}},
 			"working":      map[string]interface{}{"branch": node},
@@ -468,6 +471,34 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	}
 }
 
+func TestWorldlineEditResendAcceptsFoldedSourceOnSelectedPhysicalPath(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "edit-resend-folded"
+	initial := chatSession{
+		ID: sid, Title: sid,
+		Messages: []chatMessage{{ID: "u-folded", Role: "user", Content: "old prompt", CreatedAt: 1}},
+		Settings: normalizeChatSettings(chatSettings{}),
+	}
+	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		t.Fatal(err)
+	}
+	installWorldlineTestWorker(t, s, sid)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("failed to acquire chat run")
+	}
+	defer s.endChatRunOwned(sid, token)
+	if err := s.prepareChatWorldlineResend(sid, token, &initial, "u-folded"); err != nil {
+		t.Fatalf("folded source rejected despite private selected-path mapping: %v", err)
+	}
+	if len(initial.Messages) != 0 {
+		t.Fatalf("folded resend did not trim through source message: %+v", initial.Messages)
+	}
+	if initial.WorldlineHead != "folded" || len(initial.RawHistory) != 1 || initial.RawHistory[0]["content"] != "raw folded" {
+		t.Fatalf("folded restore state = head=%q raw=%+v", initial.WorldlineHead, initial.RawHistory)
+	}
+}
+
 func TestWorldlineDeleteIsNarrowAndRejectsBusySession(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	makeArtifacts := func(sid string) (string, string) {
@@ -531,5 +562,46 @@ func TestWorldlineDeleteIsNarrowAndRejectsBusySession(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("unrelated artifact changed: %s: %v", p, err)
 		}
+	}
+}
+
+func TestWorldlineEditResendFallsBackForLegacyUnmappedMessage(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "legacy-edit-resend"
+	cs := chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "first-user", Role: "user", Content: "first question"},
+			{ID: "first-assistant", Role: "assistant", Content: "first answer"},
+			{ID: "legacy-user", Role: "user", Content: "legacy question"},
+			{ID: "legacy-assistant", Role: "assistant", Content: "legacy answer"},
+		},
+		RawHistory: []map[string]interface{}{
+			{"role": "user", "content": "first question"},
+			{"role": "assistant", "content": "first answer"},
+			{"role": "user", "content": "legacy question"},
+			{"role": "assistant", "content": "legacy answer"},
+		},
+		HistoryInfo: []interface{}{map[string]interface{}{"stale": true}},
+		Working:     map[string]interface{}{"stale": true},
+	}
+	installWorldlineTestWorker(t, s, sid)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("failed to acquire chat run")
+	}
+	defer s.endChatRunOwned(sid, token)
+
+	if err := s.prepareChatWorldlineResend(sid, token, &cs, "legacy-user"); err != nil {
+		t.Fatalf("legacy unmapped resend fallback failed: %v", err)
+	}
+	if len(cs.Messages) != 2 || cs.Messages[0].ID != "first-user" || cs.Messages[1].ID != "first-assistant" {
+		t.Fatalf("messages were not truncated before legacy source: %+v", cs.Messages)
+	}
+	if len(cs.RawHistory) != 2 || cs.RawHistory[0]["content"] != "first question" || cs.RawHistory[1]["content"] != "first answer" {
+		t.Fatalf("raw history was not truncated before legacy source: %+v", cs.RawHistory)
+	}
+	if len(cs.HistoryInfo) != 0 || cs.Working != nil {
+		t.Fatalf("unsafe legacy GA state survived: info=%+v working=%+v", cs.HistoryInfo, cs.Working)
 	}
 }

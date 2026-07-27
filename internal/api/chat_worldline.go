@@ -25,6 +25,8 @@ type chatWorldlineNode struct {
 	MappingStatus      string   `json:"mapping_status"`
 	UserMessageID      *string  `json:"user_message_id"`
 	AssistantMessageID *string  `json:"assistant_message_id"`
+	UntrackedChanges   bool     `json:"untracked_changes"`
+	UntrackedFiles     []string `json:"untracked_files"`
 }
 
 type chatWorldlineTree struct {
@@ -59,6 +61,8 @@ type chatWorldlinePublicNode struct {
 	MappingStatus      string   `json:"mapping_status"`
 	UserMessageID      *string  `json:"user_message_id"`
 	AssistantMessageID *string  `json:"assistant_message_id"`
+	UntrackedChanges   bool     `json:"untracked_changes"`
+	UntrackedFiles     []string `json:"untracked_files"`
 }
 
 type chatWorldlineVersionGroup struct {
@@ -131,7 +135,9 @@ func publicWorldline(resp chatWorldlineResponse) chatWorldlinePublic {
 		out.Nodes = append(out.Nodes, chatWorldlinePublicNode{ID: node.ID, ParentID: node.ParentID,
 			Children: append([]string{}, node.Children...), Depth: node.Depth, Ordinal: node.Ordinal,
 			Title: node.Title, CreatedAt: node.CreatedAt, MappingStatus: node.MappingStatus,
-			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID})
+			UserMessageID: node.UserMessageID, AssistantMessageID: node.AssistantMessageID,
+			UntrackedChanges: node.UntrackedChanges,
+			UntrackedFiles:   append([]string{}, node.UntrackedFiles...)})
 		if node.MappingStatus == "mapped" && node.UserMessageID != nil && node.AssistantMessageID != nil {
 			parent := ""
 			if node.ParentID != nil {
@@ -298,14 +304,34 @@ func (s *Server) prepareChatWorldlineResend(sid string, token *chatRun, cs *chat
 		path[nodeID] = true
 	}
 	sourceNodeID := ""
-	for _, node := range state.Tree.Nodes {
-		if node.MappingStatus == "mapped" && node.UserMessageID != nil && *node.UserMessageID == sourceUserMessageID && path[node.ID] {
-			sourceNodeID = node.ID
-			break
+	if state.Result != nil {
+		if rawSourceNodes, ok := state.Result["source_nodes"].(map[string]interface{}); ok {
+			if nodeID, ok := rawSourceNodes[sourceUserMessageID].(string); ok {
+				sourceNodeID = strings.TrimSpace(nodeID)
+			}
 		}
 	}
 	if sourceNodeID == "" {
-		return fmt.Errorf("source user message is not on the selected mapped worldline path")
+		for _, node := range state.Tree.Nodes {
+			if node.MappingStatus == "mapped" && node.UserMessageID != nil && *node.UserMessageID == sourceUserMessageID && path[node.ID] {
+				sourceNodeID = node.ID
+				break
+			}
+		}
+	}
+	if sourceNodeID == "" {
+		// Sessions created before worldline bindings have no node to restore.
+		// Keep resend safe by falling back to the persisted chat boundary rather
+		// than pretending that an unrelated worldline node represents this turn.
+		rawHistory := rawHistoryBeforeMessageForResend(*cs, messageIndex)
+		if !s.ownsChatRun(sid, token) {
+			return fmt.Errorf("worldline edit/resend lost ownership")
+		}
+		cs.Messages = append([]chatMessage(nil), cs.Messages[:messageIndex]...)
+		cs.RawHistory = rawHistory
+		cs.HistoryInfo = []interface{}{}
+		cs.Working = nil
+		return nil
 	}
 	restored, err := s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), map[string]interface{}{
 		"action": "restore", "node_id": sourceNodeID, "mode": "conversation", "to": "before",

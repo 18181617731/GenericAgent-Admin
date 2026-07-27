@@ -10,6 +10,9 @@ ga-admin
 .air.toml
 ga-admin-dev
 tmp/
+/temp/
+/release/
+*.pid
 temp_run_logs/
 /temp/e2e-model-name/
 /output/playwright/

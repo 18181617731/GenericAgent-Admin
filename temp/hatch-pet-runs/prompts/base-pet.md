@@ -1,8 +1,0 @@
-Create one clean full-body reference sprite for Codex pet GA Navigator.
-
-Pet identity: A tiny original AI navigator mascot with a rounded robot-companion body, subtle GA monogram chest badge, warm off-white shell, black glass faceplate, teal-blue glowing antenna/visor accents, small tool-satchel details, friendly expressive eyes, desktop helper personality; no copyrighted character references, no text except a simple GA badge mark..
-Style: Pet-safe sprite: compact full-body mascot, readable in a 192x208 cell, clear silhouette, simple face, stable palette/materials, and crisp edges for chroma-key extraction. Style `3d-toy`: Stylized 3D toy mascot with smooth rounded forms, simple materials, clear silhouette, and no photoreal complexity. User style notes: premium 3D toy mascot, chibi proportions, soft clay/plastic material, crisp silhouette, transparent-background friendly, consistent identity across all animation rows.
-
-Brand inspiration: GenericAgent Admin: GenericAgent Admin is a warm, capable local AI control center: clean white UI, black command surfaces, soft beige accents, and a blue-green action glow for reliable automation. Use only broad mascot-safe cues; do not copy readable logos, marks, UI screenshots, or text.
-
-Place a single centered pose on a perfectly flat pure magenta #FF00FF chroma-key background. Keep the full pet visible, compact, readable at 192x208, and easy to animate. Preserve approved reference identity cues. No scenery, text, borders, checkerboard transparency, shadows, glows, detached effects, or extra props. Keep #FF00FF and close colors out of the pet, props, highlights, and effects.

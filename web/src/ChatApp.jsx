@@ -1,13 +1,14 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
-import { fuzzyMatch } from './lib/format'
+import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -18,6 +19,8 @@ import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
+import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
+import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -61,6 +64,20 @@ const timelineKey = (v) => {
   return d ? `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}` : 'unknown'
 }
 const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
+const parseBTWDisplay = (value) => {
+  const raw = String(value || '')
+  const match = raw.match(/^\s*(?:>\s*)?(?:🟡\s*)?\/btw(?:[ \t]+([\s\S]*))?\s*$/i)
+  if (!match) return null
+  return { prompt: String(match[1] || '').trim() }
+}
+const stripBTWEcho = (value) => {
+  const lines = String(value || '').split(/\r?\n/)
+  const firstContent = lines.findIndex(line => line.trim())
+  if (firstContent < 0 || !parseBTWDisplay(lines[firstContent])) return String(value || '')
+  lines.splice(firstContent, 1)
+  while (firstContent < lines.length && !lines[firstContent].trim()) lines.splice(firstContent, 1)
+  return lines.join('\n').trimStart()
+}
 const shortTitle = (s) => s?.title || '新会话'
 const runtimeModelMatches = (m, modelID) => {
   const target = String(modelID || '').trim()
@@ -85,6 +102,7 @@ const messageModelIdentity = (message, models = []) => {
 }
 
 const BUILTIN_SLASH_COMMANDS = [
+	{ cmd: '/project', key: '/project', insert: '/project', desc: '列出项目并查看或切换 Project Mode', builtIn: true },
   { cmd: '/continue', key: '/continue', insert: '/continue', desc: '列出可恢复的官方 GA 会话', builtIn: true },
   { cmd: '/continue <编号>', key: '/continue', insert: '/continue ', desc: '恢复第 N 个官方 GA 会话，可继续对话', builtIn: true },
   { cmd: '/review <自然语言请求>', key: '/review', insert: '/review ', desc: '审阅当前改动；可继续输入范围或关注点', builtIn: true },
@@ -104,23 +122,23 @@ const BUILTIN_SLASH_COMMANDS = [
 ]
 const builtinSlashKey = (cmd = '') => String(cmd || '').trim().toLowerCase()
 const builtinSlashCommandKey = (c) => builtinSlashKey(c?.key || c?.cmd)
+// 参数式命令：裸根命令（/goal）或以 <参数>/[参数] 占位结尾（/goal [goal]、/continue <编号>、/rewind [n]）。
+// 这类命令后面的自由文本必须保留，禁止被 insert 模板覆盖（否则会清空用户已输入的内容）。
+const SLASH_ARG_SUFFIX_RE = /\s(?:<[^>]+>|\[[^\]]+\])$/
+const isArgumentStyleSlashCmd = (cmd = '') => {
+  const s = String(cmd || '')
+  if (!s) return false
+  const root = s.split(/\s+/, 1)[0]
+  return s === root || SLASH_ARG_SUFFIX_RE.test(s)
+}
 const slashCommandInsertText = (c, current = '') => {
   if (!c) return current || ''
-  if (c.cmd === '/review <自然语言请求>') {
-    const text = String(current || '')
-    return /^\s*\/review\s+/.test(text) ? text : (c.insert ?? '/review ')
-  }
-  if (c.cmd === '/continue <编号>') {
-    const text = String(current || '')
-    return /^\s*\/continue\s+/.test(text) ? text : (c.insert ?? '/continue ')
-  }
-  if (c.cmd === '/workspace <路径>') {
-    const text = String(current || '')
-    return /^\s*\/workspace\s+/.test(text) ? text : (c.insert ?? '/workspace ')
-  }
-  if (c.cmd === '/ultraplan <目标>') {
-    const text = String(current || '')
-    return /^\s*\/ultraplan\s+/.test(text) ? text : (c.insert ?? '/ultraplan ')
+  const text = String(current || '')
+  const cmd = String(c.cmd || '')
+  const root = cmd.split(/\s+/, 1)[0]
+  const isArgumentFallback = isArgumentStyleSlashCmd(cmd)
+  if (isArgumentFallback && new RegExp(`^\\s*${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+`).test(text)) {
+    return text
   }
   return c?.insert ?? `${c?.cmd || ''} `
 }
@@ -149,7 +167,9 @@ const slashCommandNextDrawer = (c, nextText = '') => {
 const tokenizeInlineMarkdown = (text = '') => {
   const src = String(text || '')
   const tokens = []
-  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g
+  // Keep raw HTML escaped by React. The only HTML-shaped token accepted here is
+  // Markdown's commonly used hard line break, <br> (including <br/> variants).
+  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(~~([^~]+)~~)|(<br\s*\/?>)/gi
   let last = 0, m
   while ((m = re.exec(src)) !== null) {
     if (m.index > last) tokens.push({ type:'text', text:src.slice(last, m.index) })
@@ -157,6 +177,8 @@ const tokenizeInlineMarkdown = (text = '') => {
     else if (m[4]) tokens.push({ type:'strong', text:m[4] })
     else if (m[6]) tokens.push({ type:'em', text:m[6] })
     else if (m[8] && m[9]) tokens.push({ type:'link', text:m[8], href:m[9] })
+    else if (m[11]) tokens.push({ type:'del', text:m[11] })
+    else if (m[12]) tokens.push({ type:'br' })
     last = re.lastIndex
   }
   if (last < src.length) tokens.push({ type:'text', text:src.slice(last) })
@@ -169,6 +191,8 @@ function InlineMarkdown({ text = '' }) {
       if (t.type === 'code') return <code key={i}>{t.text}</code>
       if (t.type === 'strong') return <strong key={i}>{t.text}</strong>
       if (t.type === 'em') return <em key={i}>{t.text}</em>
+      if (t.type === 'del') return <del key={i}>{t.text}</del>
+      if (t.type === 'br') return <br key={i} />
       if (t.type === 'link') return <a key={i} href={t.href} target="_blank" rel="noreferrer">{t.text}</a>
       return <span key={i}>{t.text}</span>
     })}
@@ -283,6 +307,7 @@ function FileAttachment({ path }) {
       <em>{directory || '本地文件'}</em>
     </span>
     <span className="oa-file-actions">
+      <a href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></a>
       <button type="button" onClick={() => open('file')} title="打开文件" aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
       <button type="button" onClick={() => open('folder')} title="打开所在位置" aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
       <CopyButton text={clean} compact />
@@ -1203,23 +1228,345 @@ function AskUserPanel({ call, onReply }) {
   </div>
 }
 
+// Re-escape literal control chars inside JSON strings (backend sometimes pretty-prints with real newlines)
+function reescapeControlChars(text) {
+  const MAP = { '\n': '\\n', '\r': '\\r', '\t': '\\t' }
+  const out = []
+  let inStr = false, esc = false
+  for (const ch of text) {
+    if (!inStr) {
+      if (ch === '"') inStr = true
+      out.push(ch)
+      continue
+    }
+    if (esc) {
+      out.push(MAP[ch] || ch)
+      esc = false
+      continue
+    }
+    if (ch === '\\') {
+      out.push(ch)
+      esc = true
+      continue
+    }
+    if (ch === '"') {
+      out.push(ch)
+      inStr = false
+      continue
+    }
+    out.push(MAP[ch] || ch)
+  }
+  return out.join('')
+}
+
+// Parse file_write/file_patch tool arguments
+function parseFileToolArgs(toolName, argsText) {
+  const isFileWrite = /file_write$/i.test(toolName)
+  const isFilePatch = /file_patch$/i.test(toolName)
+  if (!isFileWrite && !isFilePatch) return null
+
+  let parsed = null
+  try {
+    parsed = JSON.parse(argsText || '{}')
+  } catch (e) {
+    // Retry with control-char escaping for malformed pretty-printed JSON
+    try {
+      parsed = JSON.parse(reescapeControlChars(argsText || '{}'))
+    } catch (e2) {
+      // Final fallback: XML-style parameter tags
+      const pathMatch = argsText?.match(/<parameter name="path">([^<]+)<\/antml:parameter>/i)
+      const contentMatch = argsText?.match(/<parameter name="content">([^]*?)<\/antml:parameter>/i)
+      const oldMatch = argsText?.match(/<parameter name="old_content">([^]*?)<\/antml:parameter>/i)
+      const newMatch = argsText?.match(/<parameter name="new_content">([^]*?)<\/antml:parameter>/i)
+      const modeMatch = argsText?.match(/<parameter name="mode">([^<]+)<\/antml:parameter>/i)
+
+      if (isFileWrite && pathMatch) {
+        return {
+          type: 'file_write',
+          path: pathMatch[1],
+          content: contentMatch?.[1] || '',
+          mode: modeMatch?.[1] || 'overwrite'
+        }
+      }
+      if (isFilePatch && pathMatch) {
+        return {
+          type: 'file_patch',
+          path: pathMatch[1],
+          old_content: oldMatch?.[1] || '',
+          new_content: newMatch?.[1] || ''
+        }
+      }
+      return null
+    }
+  }
+
+  if (isFileWrite && parsed?.path) {
+    return {
+      type: 'file_write',
+      path: parsed.path,
+      content: parsed.content || '',
+      mode: parsed.mode || 'overwrite'
+    }
+  }
+  if (isFilePatch && parsed?.path) {
+    return {
+      type: 'file_patch',
+      path: parsed.path,
+      old_content: parsed.old_content || '',
+      new_content: parsed.new_content || ''
+    }
+  }
+  return null
+}
+
+// Unified diff rows: line numbers + -/+ gutter, collapsed context
+function DiffRows({ rows }) {
+  return <div className="oa-diff" role="table" aria-label="文件改动逐行对照">
+    {rows.map((row, i) => {
+      if (row.type === 'gap') {
+        return <div className="oa-diff-row oa-diff-gap" key={`g${i}`} role="row">
+          <span className="oa-diff-no" aria-hidden="true">⋯</span>
+          <span className="oa-diff-sign" aria-hidden="true" />
+          <span className="oa-diff-text">{`未改动 ${row.count} 行`}</span>
+        </div>
+      }
+      const sign = row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '
+      return <div className={`oa-diff-row oa-diff-${row.type}`} key={i} role="row">
+        <span className="oa-diff-no">{row.type === 'add' ? row.newNo : row.oldNo}</span>
+        <span className="oa-diff-sign" aria-hidden="true">{sign}</span>
+        <span className="oa-diff-text">{row.text === '' ? '\u00a0' : row.text}</span>
+      </div>
+    })}
+  </div>
+}
+
+// Render file tool arguments in a structured way
+function FileToolArgsPanel({ toolName, args }) {
+  const fileArgs = parseFileToolArgs(toolName, args)
+  const [showContent, setShowContent] = useState(false)
+
+  const { type, path, content, old_content, new_content, mode } = fileArgs || {}
+  const diff = useMemo(() => {
+    if (!fileArgs) return null
+    return type === 'file_patch'
+      ? computeLineDiff(old_content, new_content, { context: 3 })
+      : computeWriteRows(content)
+  }, [fileArgs, type, old_content, new_content, content])
+
+  if (!fileArgs) {
+    return <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{args}</pre></div>
+  }
+
+  const { rows, added, removed, truncated } = diff
+  const changedTotal = added + removed
+
+  return <div className="oa-tool-args oa-file-tool-args">
+    <div className="oa-file-tool-header">
+      <span className="oa-file-tool-badge">
+        {type === 'file_write' ? '📝 写入文件' : '✏️ 修改文件'}
+      </span>
+      {mode && mode !== 'overwrite' && <span className="oa-file-tool-mode">{mode}</span>}
+      {changedTotal > 0 && (
+        <span className="oa-diff-stats">
+          {added > 0 && <span className="oa-diff-stats-add">{`+${added}`}</span>}
+          {removed > 0 && <span className="oa-diff-stats-del">{`-${removed}`}</span>}
+        </span>
+      )}
+    </div>
+
+    <FileAttachment path={path} />
+
+    {changedTotal === 0 && <div className="oa-file-tool-empty">无行级改动</div>}
+
+    {changedTotal > 0 && rows.length > 0 && (
+      <div className="oa-file-tool-content">
+        <button
+          type="button"
+          className="oa-file-tool-toggle"
+          onClick={() => setShowContent(v => !v)}
+          aria-expanded={showContent}
+        >
+          {showContent ? '收起改动' : `查看改动 (+${added} / -${removed})`}
+          <ChevronDown size={14} style={{ transform: showContent ? 'rotate(180deg)' : 'none' }} />
+        </button>
+        {showContent && (
+          <div className="oa-file-tool-preview">
+            {truncated && <div className="oa-diff-note">改动过大，已按块粗粒度对比</div>}
+            <DiffRows rows={rows} />
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+}
+
+const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
+  const fileOps = useMemo(() => {
+    const parts = normalizeToolParts(splitMarkdownParts(content))
+    const ops = []
+    for (const part of parts) {
+      if (part.type !== 'tool') continue
+      const call = part.call || {}
+      const parsed = parseFileToolArgs(call.name, call.args)
+      if (parsed && parsed.path) {
+        // 计算改动统计
+        let added = 0, removed = 0, summary = ''
+
+        if (parsed.type === 'file_patch') {
+          // 用真实行级 diff 统计（旧实现取 old/new 块整块行数，会把未变的上下文行也计入 ±）
+          const d = computeLineDiff(parsed.old_content || '', parsed.new_content || '', { context: 0 })
+          added = d.added
+          removed = d.removed
+          // 取 new_content 前30个字符作为摘要
+          summary = (parsed.new_content || '').trim().slice(0, 50).replace(/\n/g, ' ')
+        } else if (parsed.type === 'file_write') {
+          const lines = (parsed.content || '').split('\n')
+          added = lines.length
+          // 取 content 前30个字符作为摘要
+          summary = (parsed.content || '').trim().slice(0, 50).replace(/\n/g, ' ')
+        }
+
+        ops.push({
+          type: parsed.type,
+          path: parsed.path,
+          added,
+          removed,
+          summary: summary ? summary + (summary.length >= 50 ? '...' : '') : '',
+          // Store full content for expandable diff
+          old_content: parsed.old_content || '',
+          new_content: parsed.new_content || '',
+          content: parsed.content || ''
+        })
+      }
+    }
+    // 按文件分组：同一文件的多次操作全部保留（此前按 path 去重会丢失前面的改动）
+    const groups = new Map()
+    for (const op of ops) {
+      if (!groups.has(op.path)) groups.set(op.path, [])
+      groups.get(op.path).push(op)
+    }
+    return Array.from(groups.entries()).map(([path, list]) => ({
+      path,
+      ops: list,
+      added: list.reduce((s, o) => s + o.added, 0),
+      removed: list.reduce((s, o) => s + o.removed, 0),
+      summary: list[list.length - 1].summary,
+    }))
+  }, [content])
+
+  const [expandedPaths, setExpandedPaths] = useState(new Set())
+  const [collapsed, setCollapsed] = useState(false)
+
+  const toggleExpand = useCallback((fp) => {
+    setExpandedPaths(prev => {
+      const next = new Set(prev)
+      if (next.has(fp)) next.delete(fp)
+      else next.add(fp)
+      return next
+    })
+  }, [])
+
+  if (fileOps.length === 0) return null
+
+  return (
+    <div className="oa-file-summary">
+      <div
+        className={'oa-file-summary-header clickable' + (collapsed ? ' collapsed' : '')}
+        onClick={() => setCollapsed(v => !v)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter') setCollapsed(v => !v) }}
+      >
+        <FileText size={13} />
+        <span>文件改动 · {fileOps.length}</span>
+        <ChevronDown size={12} className={'oa-file-summary-toggle' + (collapsed ? '' : ' open')} />
+      </div>
+      {!collapsed && (
+      <div className="oa-file-summary-list">
+        {fileOps.map((group, i) => {
+          const filename = group.path.split(/[/\\]/).pop() || group.path
+          const expanded = expandedPaths.has(group.path)
+          const multi = group.ops.length > 1
+          // Compute diff rows on demand（每次操作各算一份）
+          const diffResults = expanded
+            ? group.ops.map(op => op.type === 'file_patch'
+                ? computeLineDiff(op.old_content, op.new_content, { context: 3 })
+                : computeWriteRows(op.content))
+            : null
+          return (
+            <div key={i}>
+              <div
+                className={'oa-file-summary-item' + (expanded ? ' expanded' : '')}
+                onClick={() => toggleExpand(group.path)}
+                title={group.path}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => { if (e.key === 'Enter') toggleExpand(group.path) }}
+              >
+                <ChevronDown size={11} className={'oa-file-chevron' + (expanded ? ' open' : '')} />
+                <span className="oa-file-name">{filename}</span>
+                {multi && <span className="oa-file-op-count">×{group.ops.length}</span>}
+                <span className="oa-file-stats">
+                  {group.removed > 0 && <span className="stat-removed">-{group.removed}</span>}
+                  {group.added > 0 && <span className="stat-added">+{group.added}</span>}
+                </span>
+                {group.summary && !expanded && <span className="oa-file-preview">{group.summary}</span>}
+              </div>
+              {expanded && diffResults && group.ops.map((op, j) => (
+                <div key={j}>
+                  {multi && (
+                    <div className="oa-file-op-label">
+                      #{j + 1} · {op.type === 'file_patch' ? 'patch' : 'write'}
+                      <span className="oa-file-stats">
+                        {op.type === 'file_patch' && op.removed > 0 && <span className="stat-removed">-{op.removed}</span>}
+                        {op.added > 0 && <span className="stat-added">+{op.added}</span>}
+                      </span>
+                    </div>
+                  )}
+                  <div className="oa-file-summary-diff">
+                    <DiffRows rows={diffResults[j].rows} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+      )}
+    </div>
+  )
+})
+
 function ToolCallBlock({ call, onAskReply }) {
   const toolName = String(call.name || 'unknown').trim()
   const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
+  const isFileTool = /file_(write|patch)$/i.test(toolName)
   const [open, setOpen] = useState(isAskUser)
   const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
   const askPayload = isAskUser ? getAskUserPayload(call) : null
   const askSummary = askPayload?.question || '等待用户确认'
-  return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${open ? 'open' : 'collapsed'}`}>
+
+  // Extract file path for file tools to show in header
+  const fileArgs = isFileTool ? parseFileToolArgs(toolName, call.args) : null
+  const fileName = fileArgs?.path?.split(/[\\/]/).filter(Boolean).pop()
+
+  return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${isFileTool ? 'oa-tool-file' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-      <span className="oa-tool-icon">{isAskUser ? '❓' : '🛠️'}</span><span>{isAskUser ? 'Ask user' : 'Tool'}</span><b>{toolName}</b>
+      <span className="oa-tool-icon">{isAskUser ? '❓' : isFileTool ? '📁' : '🛠️'}</span>
+      <span>{isAskUser ? 'Ask user' : 'Tool'}</span>
+      <b>{toolName}</b>
+      {fileName && <em className="oa-tool-file-name">{fileName}</em>}
       {isAskUser && <strong className="oa-ask-headline">{askSummary}</strong>}
       {resultStatus && <em>{resultStatus}</em>}
       {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? `${askPayload.candidates.length} 个选项` : '等待回复'}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
     </button>
     {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} /> : <>
-      {call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>}
+      {isFileTool ? (
+        <FileToolArgsPanel toolName={toolName} args={call.args} />
+      ) : (
+        call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>
+      )}
       {call.result && <div className="oa-tool-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
     </>)}
   </div>
@@ -1294,12 +1641,12 @@ function renderPlainTextBlock(b, key) {
   const unorderedOnly = lines.every(x => /^\s*[-*+]\s+/.test(x))
   if (orderedOnly) return renderListBlock(lines, key, true)
   if (unorderedOnly) return renderListBlock(lines, key, false)
-  if (/^#{1,3}\s+/.test(trimmed)) {
-    const level = Math.min(3, trimmed.match(/^#+/)[0].length)
-    const body = trimmed.replace(/^#{1,3}\s+/, '')
-    const Tag = `h${level + 2}`
-    return <Tag key={key}><InlineRichText text={body} /></Tag>
+  const heading = trimmed.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
+  if (heading) {
+    const Tag = `h${heading[1].length}`
+    return <Tag key={key}><InlineRichText text={heading[2]} /></Tag>
   }
+  if (/^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(trimmed)) return <hr key={key} />
   return <p key={key}><InlineRichText text={trimmed} /></p>
 }
 
@@ -1326,10 +1673,32 @@ function renderTextBlock(b, i) {
     listOrdered = null
   }
 
-  for (const line of lines) {
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+    const line = lines[lineIdx]
+    const nextLine = lines[lineIdx + 1] || ''
+    const isTableStart = line.includes('|') && nextLine.includes('|') && splitTableRow(nextLine).every(cell => parseTableAlign(cell) !== null)
     const isOrdered = /^\s*\d+[.)]\s+/.test(line)
     const isUnordered = /^\s*[-*+]\s+/.test(line)
-    if (isOrdered || isUnordered) {
+    const isHeading = /^\s{0,3}#{1,6}\s+/.test(line)
+    const isRule = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(line)
+    if (isTableStart) {
+      flushParagraph()
+      flushList()
+      const tableLines = [line, nextLine]
+      lineIdx += 2
+      while (lineIdx < lines.length && lines[lineIdx].includes('|')) {
+        tableLines.push(lines[lineIdx])
+        lineIdx += 1
+      }
+      lineIdx -= 1
+      const nestedTable = parseMarkdownTable(tableLines.join('\n'))
+      if (nestedTable) nodes.push(renderMarkdownTable(nestedTable, `${i}-t-${seq++}`))
+    } else if (isHeading || isRule) {
+      flushParagraph()
+      flushList()
+      const node = renderPlainTextBlock(line, `${i}-b-${seq++}`)
+      if (node) nodes.push(node)
+    } else if (isOrdered || isUnordered) {
       flushParagraph()
       const ordered = isOrdered
       if (list.length && listOrdered !== ordered) flushList()
@@ -1392,6 +1761,132 @@ function getUltraPlanDrawerMaxWidth() {
 
 function clampUltraPlanDrawerWidth(width, maxWidth = getUltraPlanDrawerMaxWidth()) {
   return Math.min(maxWidth, Math.max(ULTRAPLAN_DRAWER_MIN_WIDTH, Math.round(Number(width) || ULTRAPLAN_DRAWER_DEFAULT_WIDTH)))
+}
+
+const GOAL_CARD_TERMINAL = new Set(['achieved', 'stopped', 'failed', 'timeout', 'expired', 'error', 'given_up', 'gave_up', 'done', 'removed'])
+const goalCardPathKey = (p) => String(p || '').replace(/\\/g, '/').toLowerCase()
+
+const normalizeGoalCardState = (raw) => {
+  if (!raw || typeof raw !== 'object') return null
+  const g = { ...raw }
+  const nowSec = Date.now() / 1000
+  const start = Number(g.start_time || 0)
+  if (!(Number(g.elapsed_seconds) > 0) && start > 0) {
+    const end = Number(g.end_time || 0) > 0 ? Number(g.end_time) : nowSec
+    g.elapsed_seconds = Math.max(0, end - start)
+  }
+  const budget = Number(g.budget_seconds || 0)
+  if (!(Number(g.remaining_seconds) >= 0) && budget > 0) {
+    g.remaining_seconds = Math.max(0, budget - Number(g.elapsed_seconds || 0))
+  }
+  return g
+}
+
+const formatGoalCardTime = (value) => {
+  const d = dateFromTimestamp(value)
+  if (!d || d.getFullYear() < 2000 || d.getTime() > Date.now() + 86400000) return ''
+  return d.toLocaleString()
+}
+
+const goalCardStatusInfo = (status, removed) => {
+  const s = String(status || '').toLowerCase()
+  if (removed) return { text: '已结束', cls: 'is-done' }
+  if (s === 'achieved' || s === 'success' || s === 'done') return { text: '已达成', cls: 'is-done' }
+  if (s === 'failed' || s === 'error') return { text: '失败', cls: 'is-error' }
+  if (s === 'stopped' || s === 'given_up' || s === 'gave_up') return { text: '已停止', cls: 'is-error' }
+  if (s === 'timeout' || s === 'expired') return { text: '超时', cls: 'is-error' }
+  if (!s || s === 'running' || s === 'active' || s === 'pending') return { text: '进行中', cls: 'is-running' }
+  return { text: s, cls: 'is-running' }
+}
+
+export function GoalStatusCard({ state, pending = false }) {
+  const [snap, setSnap] = useState(() => normalizeGoalCardState(state))
+  const [removed, setRemoved] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  const [clockNow, setClockNow] = useState(() => Date.now())
+  useEffect(() => { setSnap(prev => ({ ...(prev || {}), ...(normalizeGoalCardState(state) || {}) })) }, [state])
+  const status = String(snap?.status || '').toLowerCase()
+  const terminal = removed || GOAL_CARD_TERMINAL.has(status)
+  const stateFile = snap?.state_file || ''
+  const goalId = snap?.id || ''
+  useEffect(() => {
+    if (terminal) return undefined
+    const timer = setInterval(() => setClockNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [terminal])
+  useEffect(() => {
+    if ((!stateFile && !goalId) || terminal) return undefined
+    let stop = false
+    let timer = null
+    const tick = async () => {
+      try {
+        const d = await api('/api/goals/list')
+        if (stop) return
+        const goals = Array.isArray(d?.goals) ? d.goals : []
+        const hit = goals.find(g => (
+          (stateFile && goalCardPathKey(g?.state_file) === goalCardPathKey(stateFile))
+          || (goalId && String(g?.id || '') === String(goalId))
+        ))
+        if (hit) {
+          setRemoved(false)
+          setSnap(prev => normalizeGoalCardState({ ...(prev || {}), ...hit }))
+        }
+      } catch { /* 网络波动时保留旧快照 */ }
+      if (!stop) timer = setTimeout(tick, 5000)
+    }
+    tick()
+    return () => { stop = true; if (timer) clearTimeout(timer) }
+  }, [stateFile, goalId, terminal])
+  if (!snap) return null
+  const startedAt = dateFromTimestamp(snap.start_time)?.getTime()
+  const serverElapsed = Number(snap.elapsed_seconds || 0)
+  const elapsedSeconds = !terminal && Number.isFinite(startedAt)
+    ? Math.max(serverElapsed, Math.floor((clockNow - startedAt) / 1000))
+    : serverElapsed
+  const budgetTotal = Number(snap.budget_seconds || 0) || (serverElapsed + Number(snap.remaining_seconds || 0))
+  const liveSnap = { ...snap, elapsed_seconds: elapsedSeconds, remaining_seconds: Math.max(0, budgetTotal - elapsedSeconds) }
+  const info = goalCardStatusInfo(liveSnap.status, removed)
+  const budgetPct = goalBudgetPercent(liveSnap)
+  const turnPct = goalTurnPercent(liveSnap)
+  const maxTurns = Number(liveSnap.max_turns || 0)
+  const errText = liveSnap.error_class || liveSnap.last_error || ''
+  const startTimeText = formatGoalCardTime(liveSnap.start_time)
+  return (
+    <div className={`oa-goalcard ${info.cls}`}>
+      <button type="button" className="oa-goalcard-head" onClick={() => setCollapsed(v => !v)}
+        aria-expanded={!collapsed} title={collapsed ? '展开目标详情' : '收起目标详情'}>
+        <span className="oa-goalcard-mark"><Target size={15} /></span>
+        <span className="oa-goalcard-title">
+          <b>目标模式</b>
+          <small>{liveSnap.objective || '(未提供目标描述)'}</small>
+        </span>
+        <em className={`oa-goalcard-chip ${info.cls}`}>{info.cls === 'is-running' && !removed ? <span className="oa-goalcard-dot" /> : null}{info.text}</em>
+        <ChevronDown size={14} className={`oa-goalcard-chevron ${collapsed ? 'is-collapsed' : ''}`} />
+      </button>
+      {!collapsed && (
+        <div className="oa-goalcard-body">
+          <div className="oa-goalcard-bar">
+            <span className="oa-goalcard-bar-label">时间预算</span>
+            <span className="oa-goalcard-track"><span className="oa-goalcard-fill" style={{ width: `${budgetPct}%` }} /></span>
+            <span className="oa-goalcard-bar-value">{formatDuration(liveSnap.elapsed_seconds || 0)}{budgetTotal ? ` / ${formatDuration(budgetTotal)}` : ''}</span>
+          </div>
+          <div className="oa-goalcard-bar">
+            <span className="oa-goalcard-bar-label">轮次</span>
+            <span className="oa-goalcard-track"><span className="oa-goalcard-fill" style={{ width: `${turnPct}%` }} /></span>
+            <span className="oa-goalcard-bar-value">{Number(liveSnap.turns_used || 0)}{maxTurns ? ` / ${maxTurns}` : ''}</span>
+          </div>
+          <div className="oa-goalcard-meta">
+            {startTimeText ? <span>启动 {startTimeText}</span> : null}
+            {liveSnap.mode ? <span>模式 {liveSnap.mode}</span> : null}
+            {liveSnap.pid ? <span>PID {liveSnap.pid}</span> : null}
+            {removed ? <span>状态文件已清理</span> : null}
+          </div>
+          {liveSnap.summary ? <div className="oa-goalcard-summary">{String(liveSnap.summary)}</div> : null}
+          {errText ? <div className="oa-goalcard-err">{String(errText)}</div> : null}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskReply }) {
@@ -1631,10 +2126,12 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
           : <p className="oa-turn-empty">正在等待该轮输出…</p>}
       </section>}
     </div>}
-    {(parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
+    {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
       {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
-      {renderAssistantBody(parsed.body || content || '', onAskReply, liveUltraPlanState || ultraplan_state)}
+      {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
+      {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state)}
     </div>}
+    <FileSummaryCard content={content} />
   </div>
 })
 
@@ -1853,6 +2350,26 @@ export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClo
   </aside>
 }
 
+export function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefresh, onSwitch }) {
+  const rows = useMemo(() => buildWorldlineRows(state?.nodes, state?.current_path, state?.head), [state])
+  const branchCount = rows.filter(row => !row.onPath).length
+  const unavailable = !state || state.available === false
+  return <aside className="oa-context-drawer oa-worldline-drawer" aria-label="世界线分支">
+    <div className="oa-context-head">
+      <div><b>世界线</b><span>{unavailable ? '当前会话暂无世界线数据' : `共 ${rows.length} 个节点 · ${branchCount} 个分支节点`}</span></div>
+      <div className="oa-context-actions"><button type="button" onClick={onRefresh} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button><button type="button" onClick={onClose} aria-label="关闭世界线"><X size={15}/></button></div>
+    </div>
+    {unavailable && <div className="oa-worldline-empty">{state?.degraded_reason || '还没有世界线记录，发送一条消息后再试。'}</div>}
+    {!unavailable && rows.length === 0 && <div className="oa-worldline-empty">{loading ? '加载中…' : '暂无节点'}</div>}
+    {!unavailable && rows.length > 0 && <div className="oa-worldline-list">{rows.map(row => <div key={row.node.id} className={`oa-worldline-row${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`} style={{ '--wl-level':row.level }}>
+      <span className="oa-worldline-dot" aria-hidden="true"/>
+      <div className="oa-worldline-info"><b title={row.node.title || row.node.id}>{row.node.title || `节点 ${String(row.node.id).slice(0, 8)}`}</b><span>{row.node.untracked_changes && <em className="oa-worldline-untracked">外部改动</em>}{row.node.created_at ? ` · ${fmtTime(row.node.created_at)}` : ''}</span></div>
+      {row.isCurrent ? <em className="oa-worldline-current">当前</em> : <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId} onClick={()=>onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button>}
+    </div>)}</div>}
+    {state?.truncated && <div className="oa-worldline-empty">节点过多，已截断显示。</div>}
+  </aside>
+}
+
 export const CommandResultCard = memo(function CommandResultCard({ result = {} }) {
   const command = `/${String(result.command || '').replace(/^\//, '')}`
   const summary = commandResultSummary(result)
@@ -2011,6 +2528,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
+      <div className="oa-msg-body">
       <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
       {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
@@ -2025,6 +2543,8 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
       {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}<GeneratedImageGallery content={m.content}/></> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
+      </div>
+      {m.goal_state && <GoalStatusCard state={m.goal_state} pending={pending} />}
     </div>
   </article>
 })
@@ -2036,7 +2556,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
       const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} editDisabled={isCurrentRunning} clockNow={clockNow} version={nodeVersionInfo(worldline?.data, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
+      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
       return nodes
     })}
   </>
@@ -2157,6 +2677,10 @@ function CustomSelect({ value, onChange, options, disabled, native = false, aria
 }
 
 export default function ChatApp() {
+  // Theme state: sync with localStorage and system preference
+  const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ga-admin-theme', theme) }, [theme])
+
   useEffect(() => {
     api('/api/config').then(cfg => {
       setCfg(cfg)
@@ -2187,9 +2711,20 @@ export default function ChatApp() {
   const [workingState, setWorkingState] = useState(null)
   const [planState, setPlanState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
+  const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
+  const [subagents, setSubagents] = useState([])
+  const subagentLikely = useMemo(() => hasSubagentLaunch(messages), [messages])
+  useEffect(() => {
+    if (!sid || !subagentLikely) { setSubagents([]); return undefined }
+    let alive = true
+    const tick = () => { api(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
+    tick()
+    const timer = busy ? setInterval(tick, 5000) : null
+    return () => { alive = false; if (timer) clearInterval(timer) }
+  }, [sid, busy, subagentLikely])
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
@@ -2217,6 +2752,7 @@ export default function ChatApp() {
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
   const [queueDraft, setQueueDraft] = useState('')
+  const [guidingQueueId, setGuidingQueueId] = useState('')
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
@@ -2239,8 +2775,16 @@ export default function ChatApp() {
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
   const runSeqRef = useRef(0)
+  const activeRunRef = useRef(false)
+  const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
+  const extraPromptSelectionSeqRef = useRef(0)
+  const [worldlineOpen, setWorldlineOpen] = useState(false)
+  const [worldlineState, setWorldlineState] = useState(null)
+  const [worldlineLoading, setWorldlineLoading] = useState(false)
+  const [worldlineSwitchingId, setWorldlineSwitchingId] = useState('')
+  const worldlineSeqRef = useRef(0)
   const messagesRef = useRef([])
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
@@ -2310,6 +2854,7 @@ export default function ChatApp() {
       const rest = slashFilter.slice(childRoot.length).trimStart()
       return rest.length > 0 && 'help'.startsWith(rest)
     }
+    const inProjectScope = slashFilter === '/project' || slashFilter.startsWith('/project ')
     const inContinueScope = slashFilter === '/continue' || slashFilter.startsWith('/continue ')
     const inReviewScope = slashFilter === '/review' || slashFilter.startsWith('/review ')
     const inImproveScope = slashFilter === '/improve' || slashFilter.startsWith('/improve ')
@@ -2317,8 +2862,25 @@ export default function ChatApp() {
     const isReviewNaturalLanguage = /^\/review\s+\S/.test(slashFilter) && !childAllowed('/review')
     const isContinueNumber = /^\/continue\s+\d+$/.test(slashFilter)
     const isUltraPlanObjective = /^\/ultraplan\s+\S/.test(slashFilter)
+    const exactRootCandidates = slashFilter.includes(' ')
+      ? []
+      : allSlashCommands.filter(c => {
+          const cmd = String(c.cmd || '')
+          const root = cmd.split(/\s+/, 1)[0]
+          return root === slashFilter
+        })
+    const exactRootPrimary = exactRootCandidates.find(c => String(c.cmd || '') === slashFilter) || exactRootCandidates[0]
+    const argumentRoot = slashFilter.includes(' ') ? slashFilter.split(/\s+/, 1)[0] : ''
+    const argumentRootCandidates = argumentRoot
+      ? allSlashCommands.filter(c => String(c.cmd || '').split(/\s+/, 1)[0] === argumentRoot)
+      : []
+    const argumentFallback = argumentRootCandidates.find(c => SLASH_ARG_SUFFIX_RE.test(String(c.cmd || '')))
+      || argumentRootCandidates.find(c => String(c.cmd || '') === argumentRoot)
+      || argumentRootCandidates[0]
     return allSlashCommands.filter(c => {
       const cmd = String(c.cmd || '')
+      if (exactRootPrimary) return c === exactRootPrimary
+      if (argumentFallback && c === argumentFallback) return true
       if (cmd === '/review help') return childAllowed('/review') && fuzzyMatch(cmd, slashFilter)
       if (cmd === '/review <自然语言请求>') {
         if (isReviewNaturalLanguage) return true
@@ -2336,6 +2898,8 @@ export default function ChatApp() {
         if (slashFilter === '/ultraplan' || fuzzyMatch('/ultraplan', rawFilter) || fuzzyMatch('/ultraplan', slashFilter)) return true
         if (slashFilter.startsWith('/ultraplan ')) return false
       }
+      if (cmd === '/project' && slashFilter.startsWith('/project ')) return true
+      if (inProjectScope && !cmd.startsWith('/project')) return false
       if (inContinueScope && cmd !== '/continue <编号>') return false
       if (inReviewScope && cmd !== '/review <自然语言请求>') return false
       if (inImproveScope && cmd !== '/improve') return false
@@ -2410,6 +2974,15 @@ export default function ChatApp() {
 
   const applyStreamEvent = (ev, pendingId, clientUserID = '', sessionId = '') => {
     if (!isActiveSession(sessionId)) return
+    if (Object.prototype.hasOwnProperty.call(ev, 'raw_history')) {
+      setRawHistory(Array.isArray(ev.raw_history) ? ev.raw_history : [])
+    }
+    if (Object.prototype.hasOwnProperty.call(ev, 'history_info')) {
+      setHistoryInfo(Array.isArray(ev.history_info) ? ev.history_info : [])
+    }
+    if (Object.prototype.hasOwnProperty.call(ev, 'working')) {
+      setWorkingState(ev.working && typeof ev.working === 'object' ? ev.working : null)
+    }
     if (Object.prototype.hasOwnProperty.call(ev, 'plan')) setPlanState(ev.plan || null)
     if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
       setSessions(xs => xs.map(x => x.id === sessionId ? {
@@ -2455,6 +3028,7 @@ export default function ChatApp() {
         if (!Number.isInteger(finalMsg.llm_no) && Number.isInteger(m.llm_no)) finalMsg.llm_no = m.llm_no
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
+        if (!finalMsg.goal_state && m.goal_state) finalMsg.goal_state = m.goal_state
         return finalMsg
       }) : xs)
     }
@@ -2463,6 +3037,12 @@ export default function ChatApp() {
         if (m.id !== pendingId) return m
         const nextState = mergeUltraPlanStates(m.ultraplan_state, ev.state) || ev.state
         return { ...m, ultraplan_state: nextState }
+      }) : xs)
+    }
+    if (ev.type === 'goal_event' && ev.state) {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
+        return { ...m, goal_state: { ...(m.goal_state || {}), ...ev.state } }
       }) : xs)
     }
     if (ev.type === 'ultraplan_output' && ev.task_id && Array.isArray(ev.lines)) {
@@ -2478,37 +3058,16 @@ export default function ChatApp() {
     }
   }
 
-  const createStreamBatcher = (pendingId, sessionId = '') => {
-    let pendingDelta = ''
-    let raf = 0
-    const flush = () => {
-      raf = 0
-      if (!pendingDelta) return
-      if (!isActiveSession(sessionId)) { pendingDelta = ''; return }
-      const chunk = pendingDelta
-      pendingDelta = ''
-      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m) : xs)
-    }
-    const schedule = () => {
-      if (raf) return
-      raf = window.requestAnimationFrame ? window.requestAnimationFrame(flush) : window.setTimeout(flush, 16)
-    }
-    return {
-      push(delta) {
-        if (!delta) return
-        pendingDelta += delta
-        schedule()
-      },
-      flushNow() {
-        if (raf) {
-          if (window.cancelAnimationFrame) window.cancelAnimationFrame(raf)
-          else window.clearTimeout(raf)
-          raf = 0
-        }
-        flush()
-      },
-    }
-  }
+  const createStreamBatcher = (pendingId, sessionId = '') => createStreamDeltaBatcher({
+    onFlush: chunk => setMessages(xs => isActiveSession(sessionId) ? xs.map(m => (
+      m.id === pendingId ? { ...m, content: (m.content || '') + chunk } : m
+    )) : xs),
+    schedule: callback => window.requestAnimationFrame ? window.requestAnimationFrame(callback) : window.setTimeout(callback, 16),
+    cancel: handle => window.cancelAnimationFrame ? window.cancelAnimationFrame(handle) : window.clearTimeout(handle),
+    // Start in replay mode: backend emits {"type":"sync"} after the backlog,
+    // so reattach-after-refresh renders prior output instantly, then animates.
+    live: false,
+  })
 
   const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
@@ -2516,19 +3075,28 @@ export default function ChatApp() {
     let commandPatch = null
     let eventCount = 0
     let terminal = false
+    let terminalEvent = null
     const applyEvent = (ev) => {
       if (ev?.type === 'command_result') commandPatch = reduceCommandResult(ev)
       applyStreamEvent(ev, pendingId, clientUserID, sessionId)
     }
     const consumeEvent = (ev) => {
+      if (ev.type === 'sync') {
+        // Replay/live boundary: flush backlog instantly, animate what follows.
+        // Not stored in run.Events server-side, so it must NOT bump eventCount
+        // (the reconnect cursor would skip a real event otherwise).
+        batcher.beginLive()
+        return
+      }
       if (ev.type === 'delta' && typeof ev.delta === 'string') {
         batcher.push(ev.delta)
+      } else if (ev.type === 'done' || ev.type === 'error') {
+        terminal = true
+        terminalEvent = ev
       } else {
-        batcher.flushNow()
         applyEvent(ev)
       }
       eventCount += 1
-      if (ev.type === 'done' || ev.type === 'error') terminal = true
     }
     try {
       while (true) {
@@ -2542,12 +3110,14 @@ export default function ChatApp() {
           consumeEvent(JSON.parse(line))
         }
       }
+      buf += dec.decode()
       if (buf.trim() && isActiveSession(sessionId)) consumeEvent(JSON.parse(buf))
+      await batcher.drain()
+      if (terminalEvent && isActiveSession(sessionId)) applyEvent(terminalEvent)
     } catch (error) {
+      batcher.flushNow()
       error.chatStreamOutcome = { commandPatch, eventCount, terminal }
       throw error
-    } finally {
-      batcher.flushNow()
     }
     return { commandPatch, eventCount, terminal }
   }
@@ -2717,7 +3287,49 @@ export default function ChatApp() {
     setMenuPos(null)
     setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
+    if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
   }
+
+  const loadWorldline = async (id = activeSidRef.current || sid, { force = false } = {}) => {
+    if (!id || (!force && !worldlineOpen && worldlineState?.sessionID !== id)) return
+    const token = ++worldlineSeqRef.current
+    setWorldlineLoading(true)
+    try {
+      const d = await api(`/api/chat/worldline/${id}`)
+      if (token === worldlineSeqRef.current && activeSidRef.current === id) setWorldlineState({ sessionID:id, ...d })
+    } catch (error) {
+      if (token === worldlineSeqRef.current) setWorldlineState({ sessionID:id, available:false, degraded_reason:error?.message || String(error) })
+    } finally {
+      if (token === worldlineSeqRef.current) setWorldlineLoading(false)
+    }
+  }
+
+  const toggleWorldline = () => {
+    const next = !worldlineOpen
+    setWorldlineOpen(next)
+    if (next) loadWorldline(activeSidRef.current || sid, { force:true }).catch(() => {})
+  }
+
+  const switchWorldline = async (nodeId) => {
+    const id = activeSidRef.current || sid
+    if (!id || !nodeId) return
+    if (busy && streamingSid === id) { setNotice('对话运行中，完成后再切换世界线'); return }
+    setWorldlineSwitchingId(nodeId); setErr(''); setNotice('')
+    try {
+      const d = await api(`/api/chat/worldline/${id}/switch`, { method:'POST', body:JSON.stringify({ node_id:nodeId }) })
+      if (activeSidRef.current !== id) return
+      await openSession(id, false)
+      if (d?.worldline && activeSidRef.current === id) setWorldlineState({ sessionID:id, ...d.worldline })
+      setNotice('已切换到所选世界线分支')
+      loadSessions(id).catch(() => {})
+    } catch (error) {
+      if (activeSidRef.current === id) setErr(error?.message || String(error))
+    } finally {
+      setWorldlineSwitchingId('')
+    }
+  }
+
+  const worldlineForView = worldlineState?.sessionID === sid ? worldlineState : null
 
   const selectSidebarSession = (id) => {
     if (!id) return
@@ -2745,6 +3357,7 @@ export default function ChatApp() {
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
     const openToken = ++openSeqRef.current
+    activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -2907,13 +3520,17 @@ export default function ChatApp() {
     setPromptPresets(next)
     return next
   }
+  const selectExtraPromptPreset = (value) => {
+    extraPromptSelectionSeqRef.current += 1
+    setExtraPromptSelection(value)
+  }
   const openExtraPromptEditor = () => {
     const targetSid = activeSidRef.current
     const targetOpenToken = openSeqRef.current
-    const initialSelection = extraSysPromptPresetID
+    const initialSelectionSeq = extraPromptSelectionSeqRef.current
     setPromptPresetManagerOpen(false)
     setExtraPromptTargetSid(targetSid)
-    setExtraPromptSelection(initialSelection)
+    setExtraPromptSelection(extraSysPromptPresetID)
     setExtraPromptOpen(true)
 
     Promise.all([
@@ -2921,7 +3538,9 @@ export default function ChatApp() {
       loadPromptPresets(),
     ]).then(([freshState]) => {
       if (!freshState || targetOpenToken !== openSeqRef.current || activeSidRef.current !== targetSid) return
-      setExtraPromptSelection(current => current === initialSelection ? freshState.extraSysPromptPresetID : current)
+      if (extraPromptSelectionSeqRef.current === initialSelectionSeq) {
+        setExtraPromptSelection(freshState.extraSysPromptPresetID)
+      }
     }).catch(e => {
       if (targetOpenToken === openSeqRef.current && activeSidRef.current === targetSid) {
         setErr(e.message || String(e))
@@ -3074,9 +3693,11 @@ export default function ChatApp() {
     setNotice('队列消息已更新')
   }
   const guideQueuedItem = (id) => {
+    if (guidingQueueRef.current) return
     const item = queuedRef.current.find(x => x.id === id)
     if (!item) return
-    syncQueue(queuedRef.current.filter(x => x.id !== id))
+    guidingQueueRef.current = id
+    setGuidingQueueId(id)
     guideQueued(item)
   }
   const onPaste = (e) => {
@@ -3118,33 +3739,59 @@ export default function ChatApp() {
     await runSend(item)
   }
 
-  const sendBTW = async (text, sessionId = activeSidRef.current || sid) => {
+  const sendBTW = async (text, sessionId = activeSidRef.current || sid, retryId = '') => {
     if (!sessionId) {
       setNotice('请先打开一个对话再使用 /btw')
       return
     }
-    if (String(text || '').trim() === '/btw') {
+    const prompt = String(text || '').trim()
+    const question = prompt.replace(/^\/btw(?:\s+|$)/i, '').trim()
+    if (!question) {
       setNotice('请在 /btw 后输入问题')
       return
     }
+    const placeholderId = retryId || `btw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const placeholder = {
+      id: placeholderId,
+      role: 'assistant',
+      kind: 'btw',
+      side_question: question,
+      btw_status: 'pending',
+      content: '',
+      created_at: Math.floor(Date.now() / 1000),
+    }
     setErr(''); setNotice('')
+    if (isActiveSession(sessionId)) setMessages(xs => retryId
+      ? xs.map(m => m.id === retryId ? placeholder : m)
+      : [...xs, placeholder])
     try {
-      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:text }) })
+      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:`/btw ${question}` }) })
       if (!isActiveSession(sessionId)) return
-      if (data?.message) setMessages(xs => xs.some(m => m.id === data.message.id) ? xs : [...xs, data.message])
+      if (data?.message) setMessages(xs => xs.map(m => m.id === placeholderId ? { ...data.message, btw_status:'done' } : m))
       await loadSessions(sessionId)
     } catch (e) {
-      if (isActiveSession(sessionId)) setErr(e.message || String(e))
+      if (!isActiveSession(sessionId)) return
+      const detail = e?.message || String(e)
+      setMessages(xs => xs.map(m => m.id === placeholderId
+        ? { ...m, btw_status:'error', content:detail }
+        : m))
     }
   }
 
   const runSend = async (item = {}) => {
+    const guidedQueueId = guidingQueueRef.current
+    if (guidedQueueId) {
+      syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId))
+      guidingQueueRef.current = ''
+      setGuidingQueueId('')
+    }
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
     const runToken = ++runSeqRef.current
     const openToken = openSeqRef.current
     const ctrl = new AbortController()
+    activeRunRef.current = true
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
     const targetSessionID = item.sessionId || sid
@@ -3198,7 +3845,11 @@ export default function ChatApp() {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
     } finally {
-      if (runToken !== runSeqRef.current || openToken !== openSeqRef.current || !isActiveSession(id)) return
+      if (runToken !== runSeqRef.current) return
+      if (openToken !== openSeqRef.current || !isActiveSession(id)) {
+        activeRunRef.current = false
+        return
+      }
       if (id) {
         await loadSessions(id).catch(()=>{})
         await openSession(id, false).catch(()=>{})
@@ -3230,11 +3881,13 @@ export default function ChatApp() {
           }
         }
       }
+      if (id && isActiveSession(id)) loadWorldline(id).catch(() => {})
       const next = popQueued()
       if (next) {
         setNotice(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`)
         setTimeout(() => runSend(next), 0)
       } else {
+        activeRunRef.current = false
         setBusy(false)
         setStreamingSid('')
       }
@@ -3286,7 +3939,7 @@ export default function ChatApp() {
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
       setPrompt('')
-      if (busy) {
+      if (busy || activeRunRef.current) {
         setNotice('当前正在执行，完成后可使用 /new 创建新对话')
         return
       }
@@ -3302,7 +3955,7 @@ export default function ChatApp() {
       await sendBTW(text)
       return
     }
-    if (busy) {
+    if (busy || activeRunRef.current) {
       enqueueMessage(item)
       return
     }
@@ -3351,7 +4004,13 @@ export default function ChatApp() {
         const selectingBareImprove = e.key === 'Enter' && /^\s*\/improve\s*$/.test(currentValue)
         const selectingContinueNumber = cmd?.cmd === '/continue <编号>' && /^\s*\/continue\s+\d+\s*$/.test(currentValue)
         const selectingUltraPlanObjective = cmd?.cmd === '/ultraplan <目标>' && /^\s*\/ultraplan\s+\S/.test(currentValue)
-        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber || selectingUltraPlanObjective) {
+        // 通用参数式命令（如 /goal [goal]）：输入框已是「根命令 + 自由文本」时，Enter 直接发送当前值，
+        // 不再走 applySlashCommand（否则 insert 模板会清空用户后面的内容）。
+        const selectedCmdText = String(cmd?.cmd || '')
+        const selectedCmdRoot = selectedCmdText.split(/\s+/, 1)[0]
+        const selectingArgumentFreeText = !!cmd && isArgumentStyleSlashCmd(selectedCmdText)
+          && new RegExp(`^\\s*${selectedCmdRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\S`).test(currentValue)
+        if (selectingNaturalReview || selectingBareContinue || selectingBareEffort || selectingBareImprove || selectingContinueNumber || selectingUltraPlanObjective || selectingArgumentFreeText) {
           e.preventDefault()
           setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
           setCmdEditIdx(-1)
@@ -3384,7 +4043,11 @@ export default function ChatApp() {
 
   const guideQueued = async (item = null) => {
     const next = item || popQueued()
-    if (!next) return
+    if (!next) {
+      guidingQueueRef.current = ''
+      setGuidingQueueId('')
+      return
+    }
     const id = sid
     const wasRunning = busy && streamingSid === sid
     ++runSeqRef.current
@@ -3502,6 +4165,7 @@ export default function ChatApp() {
   const isCurrentRunning = busy && streamingSid === sid
   const activePromptPreset = selectedPromptPresetView({ presets: promptPresets, selectedID: extraSysPromptPresetID, snapshot: extraSysPrompts })
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
+  const btwMessages = useMemo(() => messages.filter(message => message.kind === 'btw'), [messages])
   const copyContext = async () => {
     try {
       await navigator.clipboard.writeText(contextJson)
@@ -3566,6 +4230,9 @@ export default function ChatApp() {
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
           <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span>
         </button>
+        <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title="查看/切换对话世界线分支">
+          <GitBranch size={16}/>世界线{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
+        </button>
       </header>
 
       {contextOpen && <aside className="oa-context-drawer" aria-label="模型上下文">
@@ -3576,22 +4243,44 @@ export default function ChatApp() {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>原始 JSON</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
+      {worldlineOpen && (
+        <WorldlinePanel
+          state={worldlineForView}
+          loading={worldlineLoading}
+          switchingId={worldlineSwitchingId}
+          disabled={isCurrentRunning}
+          onClose={() => setWorldlineOpen(false)}
+          onRefresh={() => loadWorldline(sid, { force: true }).catch(() => {})}
+          onSwitch={switchWorldline}
+        />
+      )}
       <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
         {messages.length === 0 && <div className="oa-empty">
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} clockNow={streamClock} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} />
+        {subagents.length > 0 && <div className="oa-subagents" aria-label="子代理状态">{subagents.map(state => {
+          const view = subagentCardView(state)
+          return view && <div key={state.name} className={`oa-subagent-card tone-${view.tone}`}><div className="oa-subagent-head"><Bot size={14}/><span className="oa-subagent-name">{view.name}</span><span className="oa-subagent-state">{view.label}</span></div><div className="oa-subagent-meta">第 {view.rounds} 轮{view.ago ? ` · ${view.ago}` : ''}</div>{view.summary && <div className="oa-subagent-summary">{view.summary}</div>}</div>
+        })}</div>}
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
 
       <footer className="oa-composer-wrap">
         <PlanTodoCard plan={planState}/>
-        {queuedMessages.length > 0 && <div className="oa-queue-dock" aria-label="待发送队列">
+        {queuedMessages.length > 0 && <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label="待发送队列">
+          <div className="oa-queue-guide-hint">
+            <Sparkles className="oa-queue-guide-icon" size={14} aria-hidden="true"/>
+            <span className="oa-queue-guide-copy"><b>待发送</b><small>{isCurrentRunning ? '回复进行中，可接管任意一条立即发送' : '回复结束后将按顺序发送'}</small></span>
+            <span className="oa-queue-count" aria-label={`${queuedMessages.length} 条待发送消息`}>{queuedMessages.length} 条</span>
+          </div>
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
-            return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''}`}>
+            const isGuidingQueue = guidingQueueId === q.id
+            return <div key={q.id} className={`oa-queued-item ${isEditingQueue ? 'is-editing' : ''} ${isGuidingQueue ? 'is-guiding' : ''}`}>
+              <span className="oa-queue-index" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
               <div className="oa-queue-content" title={isEditingQueue ? '' : (q.text || '请处理这些附件')}>
                 {isEditingQueue ? <textarea className="oa-queue-edit-input" value={queueDraft} autoFocus rows={2} onChange={e=>setQueueDraft(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter' && (e.ctrlKey || e.metaKey)) saveQueueEdit(q.id); if(e.key==='Escape') cancelQueueEdit() }} /> : <>
                   <b>{q.text || '请处理这些附件'}</b>
@@ -3599,13 +4288,12 @@ export default function ChatApp() {
                 </>}
               </div>
               <div className="oa-queue-actions">
-                <span className="oa-queue-index">消息{i + 1}</span>
                 {isEditingQueue ? <>
-                  <button className="oa-queue-action" type="button" onClick={()=>saveQueueEdit(q.id)} title="保存队列消息" aria-label="保存队列消息"><Check size={14}/></button>
+                  <button className="oa-queue-action is-confirm" type="button" onClick={()=>saveQueueEdit(q.id)} title="保存队列消息" aria-label="保存队列消息"><Check size={14}/></button>
                   <button className="oa-queue-action" type="button" onClick={cancelQueueEdit} title="取消编辑" aria-label="取消编辑"><X size={14}/></button>
                 </> : <>
-                  <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning} title={isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : 'AI 回复时可引导'}><Sparkles size={14}/>引导</button>
-                  <button className="oa-queue-action" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息" aria-label="删除这条队列消息"><Trash2 size={14}/></button>
+                  <button className="oa-guide-btn" type="button" onClick={()=>guideQueuedItem(q.id)} disabled={!isCurrentRunning || Boolean(guidingQueueId)} title={isGuidingQueue ? '正在中止当前回复并发送这条消息' : (isCurrentRunning ? `暂停当前输出，立即发送消息${i + 1}` : '回复结束后会自动发送')}><Sparkles size={14}/>{isGuidingQueue ? '接管中…' : '引导发送'}</button>
+                  <button className="oa-queue-action is-danger" type="button" onClick={()=>removeQueued(q.id)} title="删除这条队列消息" aria-label="删除这条队列消息"><Trash2 size={14}/></button>
                   <button className="oa-queue-action" type="button" onClick={()=>editQueued(q.id)} title="编辑这条队列消息" aria-label="编辑这条队列消息"><Edit3 size={14}/></button>
                 </>}
               </div>
@@ -3695,18 +4383,18 @@ export default function ChatApp() {
               </div>
               <div className="oa-cmd-manager-list oa-prompt-preset-picker" role="radiogroup" aria-label="当前会话系统提示预设">
                 <label className={`oa-prompt-preset-option ${extraPromptSelection === '' ? 'is-selected' : ''}`}>
-                  <input type="radio" name="extra-system-prompt-preset" value="" checked={extraPromptSelection === ''} onChange={()=>setExtraPromptSelection('')}/>
+                  <input type="radio" name="extra-system-prompt-preset" value="" checked={extraPromptSelection === ''} onChange={()=>selectExtraPromptPreset('')}/>
                   <span className="oa-prompt-preset-radio"><Check size={13}/></span>
                   <span className="oa-prompt-preset-copy"><b>不使用预设</b><small>仅使用 Agent 默认系统提示</small></span>
                 </label>
                 {activePromptPreset.orphaned && <label className={`oa-prompt-preset-option is-orphaned ${extraPromptSelection === activePromptPreset.id ? 'is-selected' : ''}`}>
-                  <input type="radio" name="extra-system-prompt-preset" value={activePromptPreset.id} checked={extraPromptSelection === activePromptPreset.id} onChange={()=>setExtraPromptSelection(activePromptPreset.id)}/>
+                  <input type="radio" name="extra-system-prompt-preset" value={activePromptPreset.id} checked={extraPromptSelection === activePromptPreset.id} onChange={()=>selectExtraPromptPreset(activePromptPreset.id)}/>
                   <span className="oa-prompt-preset-radio"><Check size={13}/></span>
                   <span className="oa-prompt-preset-copy"><b>已删除的预设</b><small>{activePromptPreset.content || '当前会话仍保留原内容快照'}</small></span>
                   <em>快照</em>
                 </label>}
                 {promptPresets.map(item => <label className={`oa-prompt-preset-option ${extraPromptSelection === item.id ? 'is-selected' : ''}`} key={item.id}>
-                  <input type="radio" name="extra-system-prompt-preset" value={item.id} checked={extraPromptSelection === item.id} onChange={()=>setExtraPromptSelection(item.id)}/>
+                  <input type="radio" name="extra-system-prompt-preset" value={item.id} checked={extraPromptSelection === item.id} onChange={()=>selectExtraPromptPreset(item.id)}/>
                   <span className="oa-prompt-preset-radio"><Check size={13}/></span>
                   <span className="oa-prompt-preset-copy"><b>{item.name}</b><small>{item.content}</small></span>
                 </label>)}

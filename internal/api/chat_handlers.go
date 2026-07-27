@@ -96,6 +96,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatBTW(w, r, parts[1])
 			return
 		}
+	case "subagents":
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.chatSubagents(w, r, parts[1])
+			return
+		}
 	case "worldline":
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatWorldlineState(w, r, parts[1])
@@ -143,30 +148,146 @@ func visibleRawUserText(item map[string]interface{}) (string, bool) {
 	return text, text != ""
 }
 
+// normalizeChatMatchText makes session message content comparable with the text
+// recovered from raw history items. The two are never byte-identical in several
+// normal cases: the session copy carries the "[附件已保存]" suffix appended when
+// the turn had uploads, raw history drops non-text parts, and whitespace/CRLF
+// differs between transports.
+func normalizeChatMatchText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if idx := strings.Index(s, "\n\n[附件已保存]\n"); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.Join(strings.Fields(s), " ")
+}
+
+type rawUserTurn struct {
+	index int
+	text  string
+}
+
+func rawHistoryUserTurns(raw []map[string]interface{}) []rawUserTurn {
+	turns := make([]rawUserTurn, 0, len(raw))
+	for i, item := range raw {
+		if role, _ := item["role"].(string); role != "user" {
+			continue
+		}
+		text, ok := visibleRawUserText(item)
+		if !ok {
+			continue
+		}
+		turns = append(turns, rawUserTurn{index: i, text: text})
+	}
+	return turns
+}
+
+// rawHistoryBeforeMessage finds the raw-history cut point that precedes the
+// selected user message. Matching degrades through four tiers so that an
+// edit/resend never hard-fails on cosmetic content drift; the positional tier
+// also covers compacted raw history, where earlier user turns are gone.
 func rawHistoryBeforeMessage(cs chatSession, messageIndex int) ([]map[string]interface{}, error) {
 	if len(cs.RawHistory) == 0 {
 		return []map[string]interface{}{}, nil
 	}
-	target := cs.Messages[messageIndex]
+	rawUsers := rawHistoryUserTurns(cs.RawHistory)
+	if len(rawUsers) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+	cut := func(i int) []map[string]interface{} {
+		return append([]map[string]interface{}(nil), cs.RawHistory[:i]...)
+	}
+
+	targetNorm := normalizeChatMatchText(cs.Messages[messageIndex].Content)
 	occurrence := 0
-	for i := 0; i <= messageIndex; i++ {
-		if cs.Messages[i].Role == "user" && cs.Messages[i].Content == target.Content {
+	userOrdinal := 0
+	totalUsers := 0
+	for i := range cs.Messages {
+		if cs.Messages[i].Role != "user" {
+			continue
+		}
+		totalUsers++
+		if i > messageIndex {
+			continue
+		}
+		userOrdinal++
+		if normalizeChatMatchText(cs.Messages[i].Content) == targetNorm {
 			occurrence++
 		}
 	}
-	seen := 0
-	for i, item := range cs.RawHistory {
-		role, _ := item["role"].(string)
-		text, ok := visibleRawUserText(item)
-		if role != "user" || !ok || text != target.Content {
-			continue
+
+	// Tier 1+2: exact match on normalized text, honouring duplicate-content order.
+	if targetNorm != "" {
+		seen := 0
+		for _, ru := range rawUsers {
+			if normalizeChatMatchText(ru.text) != targetNorm {
+				continue
+			}
+			seen++
+			if seen == occurrence {
+				return cut(ru.index), nil
+			}
 		}
-		seen++
-		if seen == occurrence {
-			return append([]map[string]interface{}(nil), cs.RawHistory[:i]...), nil
+		// Tier 3: containment, for injected prefixes or dropped attachment parts.
+		seen = 0
+		for _, ru := range rawUsers {
+			rn := normalizeChatMatchText(ru.text)
+			if rn == "" || (!strings.Contains(rn, targetNorm) && !strings.Contains(targetNorm, rn)) {
+				continue
+			}
+			seen++
+			if seen == occurrence {
+				return cut(ru.index), nil
+			}
 		}
 	}
+
 	return nil, fmt.Errorf("raw history does not contain the selected user message")
+}
+
+// rawHistoryBeforeMessageForResend is the resend-path variant. The caller has
+// already located the turn by message ID inside this very session, so raw
+// history is only needed to pick a context boundary. When content matching
+// fails (compacted raw history, non-text parts, injected prefixes) it aligns by
+// user-turn position instead of aborting the resend.
+func rawHistoryBeforeMessageForResend(cs chatSession, messageIndex int) []map[string]interface{} {
+	if raw, err := rawHistoryBeforeMessage(cs, messageIndex); err == nil {
+		if raw == nil {
+			// A boundary of zero yields a nil slice, which would marshal as
+			// JSON null instead of an empty array.
+			return []map[string]interface{}{}
+		}
+		return raw
+	}
+	rawUsers := rawHistoryUserTurns(cs.RawHistory)
+	if len(rawUsers) == 0 {
+		return []map[string]interface{}{}
+	}
+	userOrdinal := 0
+	totalUsers := 0
+	for i := range cs.Messages {
+		if cs.Messages[i].Role != "user" {
+			continue
+		}
+		totalUsers++
+		if i <= messageIndex {
+			userOrdinal++
+		}
+	}
+	cut := func(i int) []map[string]interface{} {
+		out := make([]map[string]interface{}, i)
+		copy(out, cs.RawHistory[:i])
+		return out
+	}
+	// Prefer counting from the head. If raw history holds fewer user turns than
+	// the session (compaction dropped older ones), align from the tail so the
+	// offset relative to the newest turn still lines up.
+	if userOrdinal >= 1 && userOrdinal <= len(rawUsers) {
+		return cut(rawUsers[userOrdinal-1].index)
+	}
+	if fromEnd := totalUsers - userOrdinal; fromEnd >= 0 && fromEnd < len(rawUsers) {
+		return cut(rawUsers[len(rawUsers)-1-fromEnd].index)
+	}
+	return cut(rawUsers[len(rawUsers)-1].index)
 }
 
 func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid string) {
@@ -444,12 +565,14 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "/project"))
 	reply := ""
 	switch {
-	case arg == "" || strings.EqualFold(arg, "status"):
-		if strings.TrimSpace(cs.ProjectMode) == "" {
-			reply = "Project Mode 未启用。用法：`/project <项目名>`，关闭：`/project off`。"
+	case arg == "":
+		names := discoverProjectNames(s.CfgStore.Cfg.GARoot)
+		if len(names) == 0 {
+			reply = "当前没有已创建的项目。用法：`/project <项目名>`，关闭：`/project off`。"
 		} else {
-			reply = fmt.Sprintf("当前 Project Mode：`%s`\n\n项目记忆：`%s`\n\n关闭：`/project off`。", cs.ProjectMode, filepath.Join(s.CfgStore.Cfg.GARoot, "temp", "projects", cs.ProjectMode, "project_memory.md"))
+			reply = "可用项目：\n\n" + strings.Join(names, "\n") + "\n\n切换项目：`/project <项目名>`；关闭：`/project off`。"
 		}
+	case strings.EqualFold(arg, "status"):
 	case strings.EqualFold(arg, "off") || strings.EqualFold(arg, "disable") || strings.EqualFold(arg, "none"):
 		cs.ProjectMode = ""
 		reply = "已关闭当前会话的 Project Mode。项目文件和记忆均已保留。"
@@ -542,6 +665,8 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	msg.Kind = "btw"
+	msg.SideQuestion = strings.TrimSpace(strings.TrimPrefix(prompt, "/btw"))
 	s.SessionMu.Lock()
 	latest, loadErr := loadChatSession(s.CfgStore.Cfg, sid)
 	if loadErr == nil {

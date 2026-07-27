@@ -1,4 +1,4 @@
-import json, os, sys, time, traceback, threading, queue, re
+import glob, json, os, sys, time, traceback, threading, queue, re
 from pathlib import Path
 
 
@@ -1081,25 +1081,37 @@ def _capture_ultraplan_dashboard_baseline():
 
 
 def _select_ultraplan_session(sessions, baseline, selected=None, objective=''):
+    # Once this observer has bound to a run_dir, keep it. Re-binding onto a
+    # different conversation's session mid-run was the cross-talk leak, so a
+    # selected session is pinned for the lifetime of this observer.
     if selected:
         return selected
-    new_dirs = [run_dir for run_dir in sessions if run_dir not in baseline]
-    changed_dirs = [
-        run_dir for run_dir, session in sessions.items()
-        if run_dir in baseline
-        and _ultraplan_session_signature(session) != baseline.get(run_dir)
-    ]
-    candidates = new_dirs or changed_dirs
-    if not candidates:
-        return None
     objective_key = _ultraplan_task_match_key(objective)
+    # Only sessions that appeared AFTER this observer captured its baseline can
+    # belong to this conversation. Sessions already present at baseline belong to
+    # other conversations (or earlier turns); a mere content change must never
+    # bind us onto them -- that global "newest changed" fallback caused an old
+    # conversation to display a newer conversation's UltraPlan.
+    new_dirs = [run_dir for run_dir in sessions if run_dir not in baseline]
+    if new_dirs:
+        if objective_key:
+            matched = [run_dir for run_dir in new_dirs
+                       if objective_key in _ultraplan_task_match_key(run_dir)]
+            if matched:
+                return matched[-1]
+        # The official daemon preserves insertion order; newest fresh dir is last.
+        return new_dirs[-1]
+    # No fresh session yet. Narrow reuse case only: the same objective restarted
+    # on a pre-existing run_dir. Re-bind to a changed baseline session solely when
+    # its slug matches THIS objective, never to an arbitrary other conversation's.
     if objective_key:
-        matched = [run_dir for run_dir in candidates
-                   if objective_key in _ultraplan_task_match_key(run_dir)]
-        if matched:
-            return matched[-1]
-    # The official daemon preserves insertion order; the newest candidate is last.
-    return candidates[-1]
+        reused = [run_dir for run_dir, session in sessions.items()
+                  if run_dir in baseline
+                  and _ultraplan_session_signature(session) != baseline.get(run_dir)
+                  and objective_key in _ultraplan_task_match_key(run_dir)]
+        if reused:
+            return reused[-1]
+    return None
 
 
 def _tail_ultraplan_outputs(run_dir_str, state, emit_event, tail_state):
@@ -1174,6 +1186,8 @@ def _observe_ultraplan_daemon(
         # If stop is signalled during the wait, loop once more for a final snapshot.
         stop_event.wait(0.5)
 
+_WORLDLINE_HOOK_INSTALLED = False
+
 
 def _safe_session_id(value):
     value = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value or 'session')).strip('._')
@@ -1224,6 +1238,7 @@ def _ensure_worldline_store(agent, ga_root, workspace):
         return store
     store = RewindStore(str(_worldline_root(ga_root)), cwd)
     agent._admin_worldline_store = store
+    agent._admin_worldline_baseline = _worldline_git_fingerprint(cwd)
     _install_worldline_hook()
     return store
 
@@ -1235,6 +1250,124 @@ _WORLDLINE_PROJECT_MODE_BLOCK_RE = re.compile(
 
 def _strip_worldline_project_mode(text):
     return _WORLDLINE_PROJECT_MODE_BLOCK_RE.sub('', text or '')
+
+
+def _worldline_git_fingerprint(cwd):
+    """Best-effort `git status --porcelain` snapshot: {abs_posix_path: status}.
+
+    Returns None when cwd is not inside a git repo (detection disabled)."""
+    try:
+        import subprocess
+        top = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--show-toplevel'],
+                             capture_output=True, timeout=5)
+        if top.returncode != 0:
+            return None
+        repo_root = top.stdout.decode('utf-8', 'replace').strip()
+        if not repo_root:
+            return None
+        st = subprocess.run(['git', '-C', str(cwd), 'status', '--porcelain'],
+                            capture_output=True, timeout=10)
+        if st.returncode != 0:
+            return None
+        snapshot = {}
+        for line in st.stdout.decode('utf-8', 'replace').splitlines():
+            if len(line) < 4:
+                continue
+            status, path = line[:2], line[3:]
+            if ' -> ' in path:
+                path = path.split(' -> ', 1)[1]
+            path = path.strip()
+            if len(path) >= 2 and path[0] == '"' and path[-1] == '"':
+                path = path[1:-1]
+            if not path or '__pycache__' in path or path.endswith('.pyc'):
+                continue
+            ap = os.path.realpath(os.path.join(repo_root, path))
+            snapshot[ap.replace(os.sep, '/')] = status
+        return snapshot
+    except Exception:
+        return None
+
+
+_WORLDLINE_DIRTY_NODE_LIMIT = 500
+_WORLDLINE_DIRTY_FILE_LIMIT = 50
+
+
+def _worldline_dirty_path(store):
+    return os.path.join(str(store.root), 'admin_dirty.json')
+
+
+def _load_worldline_dirty(store):
+    try:
+        with open(_worldline_dirty_path(store), 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    clean = {}
+    for node_id, files in data.items():
+        if not isinstance(node_id, str) or not node_id or not isinstance(files, list):
+            continue
+        keep = [str(f)[:512] for f in files if isinstance(f, str) and f][:_WORLDLINE_DIRTY_FILE_LIMIT]
+        if keep:
+            clean[node_id] = keep
+    return clean
+
+
+def _record_worldline_dirty(store, node_id, files):
+    if not node_id or not files:
+        return
+    data = _load_worldline_dirty(store)
+    data[str(node_id)] = sorted(set(str(f)[:512] for f in files))[:_WORLDLINE_DIRTY_FILE_LIMIT]
+    while len(data) > _WORLDLINE_DIRTY_NODE_LIMIT:
+        data.pop(next(iter(data)))
+    path = _worldline_dirty_path(store)
+    tmp = path + '.tmp'
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _update_worldline_dirty_after_commit(agent, store, node_id, touched):
+    """Flag snapshot-bypassing edits (code_run / external tools) on the new node.
+
+    Compares git working-tree fingerprints taken at consecutive commits; any
+    file that changed but was never routed through the RewindStore is recorded
+    so the UI can warn that restoring this worldline will not revert it."""
+    try:
+        baseline = getattr(agent, '_admin_worldline_baseline', None)
+        current = _worldline_git_fingerprint(store.cwd)
+        agent._admin_worldline_baseline = current
+        if node_id is None or current is None or baseline is None:
+            return
+        changed = set()
+        for path, status in current.items():
+            if baseline.get(path) != status:
+                changed.add(path)
+        for path in baseline:
+            if path not in current:
+                changed.add(path)
+        if not changed:
+            return
+        touched_abs = set()
+        for rel in touched:
+            try:
+                touched_abs.add(os.path.realpath(store._abs(rel)).replace(os.sep, '/'))
+            except Exception:
+                continue
+        bypass = sorted(changed - touched_abs)
+        if not bypass:
+            return
+        cwd_posix = os.path.realpath(store.cwd).replace(os.sep, '/')
+        prefix = cwd_posix.lower() + '/'
+        display = [p[len(prefix):] if p.lower().startswith(prefix) else p for p in bypass]
+        _record_worldline_dirty(store, node_id, display)
+    except Exception:
+        pass
 
 
 def _worldline_title(store, history, fallback):
@@ -1262,11 +1395,14 @@ def _commit_worldline(agent, prompt):
     state = _snapshot_ga_state(agent)
     working = state.get('working') if isinstance(state, dict) else {}
     key_info = working.get('key_info') if isinstance(working, dict) else None
-    return store.commit(
+    touched = set(store._touched)  # commit() clears it; keep a copy for dirty detection
+    node_id = store.commit(
         _worldline_title(store, history, prompt), history=history,
         hist_info=state.get('history_info') if isinstance(state, dict) else None,
         key_info=key_info if isinstance(key_info, str) else None,
     )
+    _update_worldline_dirty_after_commit(agent, store, node_id, touched)
+    return node_id
 
 
 _WORLDLINE_SID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
@@ -1502,6 +1638,16 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
         if parent_id in public_children and node_id not in public_children[parent_id]:
             public_children[parent_id].append(node_id)
 
+    dirty = {}
+    for physical_id, files in _load_worldline_dirty(store).items():
+        target = folded.get(physical_id, physical_id)
+        if target not in tree.nodes:
+            continue
+        bucket = dirty.setdefault(target, [])
+        for name in files:
+            if name not in bucket and len(bucket) < _WORLDLINE_DIRTY_FILE_LIMIT:
+                bucket.append(name)
+
     logical_head = folded.get(store.head, store.head)
 
     def public_path(node_id):
@@ -1556,6 +1702,8 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
             'mapping_status': 'mapped' if binding is not None else 'unmapped',
             'user_message_id': binding.get('user_message_id') if binding else None,
             'assistant_message_id': binding.get('assistant_message_id') if binding else None,
+            'untracked_changes': bool(dirty.get(node_id)),
+            'untracked_files': list(dirty.get(node_id) or []),
         })
     return {
         'schema_version': _WORLDLINE_PUBLIC_SCHEMA,
@@ -1566,6 +1714,39 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
         'truncated': len(visible) > len(ordered),
         'nodes': out,
     }
+
+
+def _worldline_source_nodes(store, sidecar):
+    """Private RPC-only mapping; unlike the public projection, retain folded nodes."""
+    if not isinstance(sidecar, dict) or sidecar.get('status') == 'malformed':
+        return {}
+    bindings = sidecar.get('bindings') or {}
+    nodes = getattr(store, 'nodes', {})
+    node_id = str(getattr(store, 'head', '') or '')
+    path = []
+    seen = set()
+    while node_id and node_id not in seen and node_id in nodes:
+        seen.add(node_id)
+        path.append(node_id)
+        node = nodes[node_id]
+        node_id = str((node.get('parent') if isinstance(node, dict) else getattr(node, 'parent_id', None)) or '')
+    path.reverse()
+    out = {}
+    for node_id in path:
+        binding = bindings.get(node_id)
+        if not isinstance(binding, dict):
+            continue
+        user_id = str(binding.get('user_message_id') or '').strip()
+        if user_id:
+            out[user_id] = node_id
+    return out
+
+
+def _worldline_rpc_result(store, sidecar, sidecar_status, action, result):
+    if action == 'state':
+        private = _worldline_source_nodes(store, sidecar)
+        return {'source_nodes': private} if private else None
+    return result
 
 
 def _apply_worldline_restore(agent, result):
@@ -1656,7 +1837,8 @@ def handle_worldline_request(agent, req):
     emit({
         'type': 'worldline', 'action': action,
         'tree': _worldline_nodes(store, sidecar, sidecar_status),
-        'result': result, 'raw_history': _snapshot_backend_history(agent),
+        'result': _worldline_rpc_result(store, sidecar, sidecar_status, action, result),
+        'raw_history': _snapshot_backend_history(agent),
         'history_info': _snapshot_ga_state(agent).get('history_info') or [],
         'working': _snapshot_ga_state(agent).get('working') or {},
     })
@@ -1684,6 +1866,74 @@ def handle_btw_request(agent, req):
         'elapsed_ms': max(1, int((time.time() - started) * 1000)),
     }
     emit({'type': 'btw_done', 'message': msg})
+
+
+_GOAL_CARD_KEYS = (
+    'objective', 'status', 'start_time', 'end_time', 'budget_seconds',
+    'max_turns', 'turns_used', 'llm_no', 'pid', 'mode', 'stop_reason',
+    'last_error', 'summary',
+)
+
+
+def _goal_state_files(root):
+    base = os.path.join(str(root), 'temp')
+    found = {}
+    for pattern in (os.path.join(base, 'goals', '*', 'state.json'), os.path.join(base, 'goal_*.json')):
+        for path in glob.glob(pattern):
+            try:
+                found[os.path.normcase(os.path.abspath(path))] = os.path.getmtime(path)
+            except OSError:
+                continue
+    return found
+
+
+def _read_goal_card_state(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    objective = str(data.get('objective') or '').strip()
+    status = data.get('status')
+    if not objective or not isinstance(status, str) or not status.strip():
+        return None
+    state = {}
+    for key in _GOAL_CARD_KEYS:
+        value = data.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            state[key] = value
+    state['objective'] = objective[:4000]
+    try:
+        state['updated_at'] = int(os.path.getmtime(path))
+    except OSError:
+        pass
+    state['state_file'] = os.path.abspath(path)
+    return state
+
+
+def _snapshot_goal_card(root, ctx):
+    pinned = ctx.get('path') or ''
+    if pinned:
+        state = _read_goal_card_state(pinned)
+        if state is None:
+            state = dict(ctx.get('state') or {})
+            if not state:
+                return None
+            state['missing'] = True
+        return state
+    baseline = ctx.get('baseline') or {}
+    fresh = []
+    for path, mtime in _goal_state_files(root).items():
+        if path not in baseline:
+            fresh.append((mtime, path))
+    for _, path in sorted(fresh):
+        state = _read_goal_card_state(path)
+        if state is not None:
+            ctx['path'] = path
+            return state
+    return None
 
 
 def handle_request(agent, worker, req):
@@ -1753,6 +2003,28 @@ def handle_request(agent, worker, req):
     _up_stop = threading.Event() if _up_context else None
     _up_thread = None
     _last_plan = ['']
+    try:
+        _goal_card_baseline = _goal_state_files(root_for_req)
+    except Exception:
+        _goal_card_baseline = {}
+    _goal_card_ctx = {'baseline': _goal_card_baseline, 'path': '', 'state': {}, 'encoded': '', 'last_scan': 0.0}
+
+    def emit_goal_update(force=False):
+        now_mono = time.monotonic()
+        if not force and now_mono - _goal_card_ctx['last_scan'] < 1.0:
+            return
+        _goal_card_ctx['last_scan'] = now_mono
+        try:
+            state = _snapshot_goal_card(root_for_req, _goal_card_ctx)
+        except Exception:
+            return
+        if not state:
+            return
+        encoded = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        if encoded != _goal_card_ctx['encoded']:
+            _goal_card_ctx['encoded'] = encoded
+            _goal_card_ctx['state'] = state
+            emit({'type': 'goal_event', 'state': state})
 
     def stop_ultraplan_observer():
         if _up_stop is not None:
@@ -1795,6 +2067,7 @@ def handle_request(agent, worker, req):
                 item = display_queue.get(timeout=1.0)
             except queue.Empty:
                 emit_plan_update(''.join(chunks))
+                emit_goal_update()
                 if not worker.is_alive():
                     raise RuntimeError('GA core worker exited unexpectedly')
                 continue
@@ -1811,6 +2084,9 @@ def handle_request(agent, worker, req):
                 if _up_state.get('phases') or _up_state.get('objective'):
                     _up_state['complete'] = True
                     msg['ultraplan_state'] = dict(_up_state)
+                emit_goal_update(force=True)
+                if _goal_card_ctx.get('state'):
+                    msg['goal_state'] = dict(_goal_card_ctx['state'])
                 state = _snapshot_ga_state(agent)
                 usage = _snapshot_usage()
                 usages = _snapshot_turn_usages()

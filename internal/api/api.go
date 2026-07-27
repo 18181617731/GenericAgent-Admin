@@ -36,6 +36,7 @@ type Server struct {
 	ReactApp                *reactAppBridge
 	ChatMu                  sync.Mutex
 	SessionMu               sync.Mutex
+	UsageMu                 sync.Mutex
 	ConfigMu                sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
@@ -122,6 +123,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
 	mux.HandleFunc("/api/channels/test", s.channelTest)
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
+	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
 	mux.HandleFunc("/api/chat/", s.chatHandler)
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.

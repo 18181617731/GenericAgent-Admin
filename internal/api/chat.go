@@ -36,11 +36,14 @@ type chatMessage struct {
 	Files          []map[string]interface{} `json:"files,omitempty"`
 	CreatedAt      int64                    `json:"created_at"`
 	Error          bool                     `json:"error,omitempty"`
+	Kind           string                   `json:"kind,omitempty"`
+	SideQuestion   string                   `json:"side_question,omitempty"`
 	Usage          map[string]int           `json:"usage,omitempty"`
 	Usages         []map[string]int         `json:"usages,omitempty"`
 	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
 	RunStartedAtMS int64                    `json:"run_started_at_ms,omitempty"`
 	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
+	GoalState      map[string]interface{}   `json:"goal_state,omitempty"`
 	TaskOutputs    map[string][]string      `json:"task_outputs,omitempty"`
 }
 
@@ -306,6 +309,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var finalWorking map[string]interface{}
 	var rawHistorySeen, historyInfoSeen, workingSeen bool
 	var finalUltraPlanState map[string]interface{}
+	var finalGoalState map[string]interface{}
 	var finalReasoningEffort string
 	var finalModelID string
 	var taskOutputsAccumulator = make(map[string][]string)
@@ -341,6 +345,11 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if ev["type"] == "ultraplan_event" {
 			if state := chatUltraPlanStateFromEvent(ev); state != nil {
 				finalUltraPlanState = mergeChatMaps(finalUltraPlanState, state)
+			}
+		}
+		if ev["type"] == "goal_event" {
+			if state := chatGoalStateFromEvent(ev); state != nil {
+				finalGoalState = mergeChatMaps(finalGoalState, state)
 			}
 		}
 		if ev["type"] == "ultraplan_output" {
@@ -418,6 +427,12 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			if final.UltraPlanState != nil {
 				msg["ultraplan_state"] = final.UltraPlanState
+			}
+			if finalGoalState != nil {
+				final.GoalState = mergeChatMaps(mergeChatMaps(nil, finalGoalState), final.GoalState)
+			}
+			if final.GoalState != nil {
+				msg["goal_state"] = final.GoalState
 			}
 			if v, ok := ev["reasoning_effort"].(string); ok {
 				finalReasoningEffort = v
@@ -525,6 +540,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": commitFailure})
 		s.endChatRunOwned(sid, token)
 		return
+	}
+	if usageErr := s.recordSessionUsage(cs); usageErr != nil {
+		s.publishChatRun(sid, map[string]interface{}{"type": "usage_error", "error": usageErr.Error()})
 	}
 	if len(terminalLine) > 0 {
 		s.publishChatLine(sid, terminalLine)
@@ -684,6 +702,14 @@ func chatPlanFromEvent(ev map[string]interface{}) map[string]interface{} {
 }
 
 func chatUltraPlanStateFromEvent(ev map[string]interface{}) map[string]interface{} {
+	m, ok := ev["state"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return mergeChatMaps(nil, m)
+}
+
+func chatGoalStateFromEvent(ev map[string]interface{}) map[string]interface{} {
 	m, ok := ev["state"].(map[string]interface{})
 	if !ok {
 		return nil
@@ -1068,6 +1094,14 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 	}
 	if done {
 		return
+	}
+	// Replay/live boundary: clients render everything before "sync" instantly
+	// (page-refresh reattach backlog) and only animate deltas after it.
+	// Done runs skip it (stream ends; the client drain flushes the backlog).
+	// Not stored in run.Events, so clients must not count it toward the cursor.
+	_, _ = w.Write([]byte("{\"type\":\"sync\"}\n"))
+	if flusher != nil {
+		flusher.Flush()
 	}
 	defer func() {
 		s.ChatMu.Lock()

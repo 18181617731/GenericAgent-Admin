@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
 import { modelLabel } from '../lib/format'
@@ -50,6 +50,17 @@ function focusMenuItem(container, selector, current, offset) {
 function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, onPreview, onSelect, onClose, mobile, query, onQuery }) {
   const previewGroup = groups.find(group => group.value === previewProvider) || groups[0]
   const stats = modelGroupStats(groups)
+  const modelListRef = useRef(null)
+
+  useLayoutEffect(() => {
+    const list = modelListRef.current
+    const selected = list?.querySelector('[aria-selected="true"]')
+    if (!list || !selected) return
+    const listBox = list.getBoundingClientRect()
+    const selectedBox = selected.getBoundingClientRect()
+    if (selectedBox.top < listBox.top) list.scrollTop -= listBox.top - selectedBox.top + 2
+    else if (selectedBox.bottom > listBox.bottom) list.scrollTop += selectedBox.bottom - listBox.bottom + 2
+  }, [previewGroup?.value, selectedProvider, value])
   const onListKeyDown = event => {
     const provider = event.target.closest?.('[data-cascade-provider]')
     const model = event.target.closest?.('[data-cascade-model]')
@@ -88,7 +99,7 @@ function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, o
         <span>{group.label}</span><small>{group.models.length}</small><ChevronRight size={13}/>
       </button>)}
     </div>
-    <div className="oa-cascade-models" role="listbox" aria-label={previewGroup ? `${previewGroup.label} 模型` : '模型'}>
+    <div ref={modelListRef} className="oa-cascade-models" role="listbox" aria-label={previewGroup ? `${previewGroup.label} 模型` : '模型'}>
       <div className="oa-cascade-heading">{previewGroup?.label || '模型'}</div>
       {previewGroup?.models.length ? previewGroup.models.map(model => <button key={String(model.value)} type="button" role="option" aria-selected={previewGroup.value === selectedProvider && String(model.value) === String(value)} data-cascade-model
         className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
@@ -123,6 +134,7 @@ export function ProviderModelCascade({
   const triggerRef = useRef()
   const menuRef = useRef()
   const openedAt = useRef(0)
+  const menuId = useId()
   const mobileMode = mobile ?? detectedMobile
   const filteredGroups = useMemo(() => filterModelProviderGroups(groups, query), [groups, query])
 
@@ -135,6 +147,7 @@ export function ProviderModelCascade({
   useEffect(() => {
     if (mobile !== undefined || typeof window === 'undefined' || !window.matchMedia) return undefined
     const media = window.matchMedia('(max-width: 560px)')
+    if (!media) return undefined
     const sync = () => setDetectedMobile(media.matches)
     sync()
     media.addEventListener?.('change', sync)
@@ -203,8 +216,16 @@ export function ProviderModelCascade({
   const displayModel = activeModel?.label || '未发现模型'
   const displayTitle = [activeGroup?.label, displayModel].filter(Boolean).join(' · ')
   const selectModel = next => { onChange?.(next); closeMenu() }
+  const toggleMenu = () => {
+    openedAt.current = performance.now()
+    if (!open) {
+      setPreviewProvider(resolvedProvider)
+      setQuery('')
+    }
+    setOpen(current => !current)
+  }
   const menuClass = `oa-cascade-menu ${mobileMode ? 'oa-cascade-modal' : ''} is-placement-${resolvedPlacement} is-align-${align}`
-  const menu = <div className={menuClass} ref={menuRef} role="dialog" aria-modal={mobileMode || undefined} aria-label="服务商和模型">
+  const menu = <div id={menuId} className={menuClass} ref={menuRef} role="dialog" aria-modal={mobileMode || undefined} aria-label="服务商和模型">
     <ProviderModelMenu groups={filteredGroups} selectedProvider={resolvedProvider} previewProvider={previewProvider} value={value} query={query} onQuery={setQuery}
       onPreview={setPreviewProvider} onSelect={selectModel} onClose={closeMenu} mobile={mobileMode}/>
   </div>
@@ -212,10 +233,7 @@ export function ProviderModelCascade({
   return <>
     <div className={`oa-model-select oa-composer-cascade ${className}`.trim()} ref={ref}>
       {showLabel && <span>{label}</span>}
-      <button ref={triggerRef} type="button" disabled={disabled} title={disabled && disabledReason ? disabledReason : displayTitle} aria-label={`选择模型，当前 ${displayTitle || displayModel}${disabled && disabledReason ? `，${disabledReason}` : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => {
-        openedAt.current = performance.now()
-        setOpen(current => !current)
-      }}>
+      <button ref={triggerRef} type="button" disabled={disabled} title={disabled && disabledReason ? disabledReason : displayTitle} aria-label={`选择模型，当前 ${displayTitle || displayModel}${disabled && disabledReason ? `，${disabledReason}` : ''}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={toggleMenu}>
         <span className="oa-cascade-current-model">{displayModel}</span><ChevronDown size={13}/>
       </button>
       {open && !mobileMode && menu}

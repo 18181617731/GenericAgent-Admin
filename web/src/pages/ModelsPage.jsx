@@ -18,7 +18,7 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import {
@@ -783,6 +783,7 @@ export function Models({
   previewModels,
   saveModelProfile,
   onSaveModelOrder,
+  onSaveProviderOrder,
   discoverModels,
   probeModels,
   modelProbeProviders = [],
@@ -809,6 +810,19 @@ export function Models({
   const [dragIndex, setDragIndex] = useState(null)
   const [repeatOrderRowId, setRepeatOrderRowId] = useState('')
   const orderMoveSessionRef = useRef(null)
+  const [providerHoldIndex, setProviderHoldIndex] = useState(null)
+  const [providerDrag, setProviderDrag] = useState(null)
+  const [providerOrderError, setProviderOrderError] = useState('')
+  const providerNavRef = useRef(null)
+  const providerInteractionRef = useRef(null)
+  const providerHoldTimerRef = useRef(null)
+  const providerOrderBusyRef = useRef(false)
+  const providerProfilesRef = useRef(profiles)
+  const saveProviderOrderRef = useRef(onSaveProviderOrder)
+  const suppressProviderClickUntilRef = useRef(0)
+  const providerMotionKeysRef = useRef(new WeakMap())
+  const providerMotionKeySeedRef = useRef(0)
+  const providerFlipRectsRef = useRef(null)
   const [batchProbeBusy, setBatchProbeBusy] = useState(false)
   const [batchProbeProgress, setBatchProbeProgress] = useState(null)
   const [batchProbeResult, setBatchProbeResult] = useState(null)
@@ -818,6 +832,17 @@ export function Models({
   const [probeScopeError, setProbeScopeError] = useState('')
   const [probeScopeSaving, setProbeScopeSaving] = useState(false)
   const [effectiveProbeProviders, setEffectiveProbeProviders] = useState(() => normalizeModelProbeProviderKeys(modelProbeProviders))
+  const providerMotionKey = profile => {
+    if (profile?.client_id) return `client:${profile.client_id}`
+    if (!profile || typeof profile !== 'object') return `provider:${String(profile)}`
+    if (!providerMotionKeysRef.current.has(profile)) {
+      providerMotionKeySeedRef.current += 1
+      providerMotionKeysRef.current.set(profile, `local:${providerMotionKeySeedRef.current}`)
+    }
+    return providerMotionKeysRef.current.get(profile)
+  }
+  providerProfilesRef.current = profiles
+  saveProviderOrderRef.current = onSaveProviderOrder
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
@@ -841,6 +866,31 @@ export function Models({
   useEffect(() => {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(profiles.length - 1, 0)))
   }, [profiles.length])
+
+  useLayoutEffect(() => {
+    const previousRects = providerFlipRectsRef.current
+    providerFlipRectsRef.current = null
+    if (!previousRects || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    const entries = Array.from(providerNavRef.current?.querySelectorAll('[data-provider-motion-key]') || [])
+    entries.forEach(entry => {
+      const key = entry.dataset.providerMotionKey
+      if (key === providerInteractionRef.current?.dragKey) return
+      const previous = previousRects.get(key)
+      if (!previous) return
+      const current = entry.getBoundingClientRect()
+      const deltaX = previous.left - current.left
+      const deltaY = previous.top - current.top
+      if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return
+      entry.getAnimations?.().forEach(animation => animation.cancel())
+      entry.animate(
+        [
+          { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
+          { transform: 'translate3d(0, 0, 0)' },
+        ],
+        { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      )
+    })
+  }, [profiles])
 
   useEffect(() => {
     setEffectiveProbeProviders(incomingProbeProviderSignature ? incomingProbeProviderSignature.split('\n') : [])
@@ -867,7 +917,160 @@ export function Models({
     setActiveIndex(idx)
   }
 
+  const clearProviderHold = () => {
+    if (providerHoldTimerRef.current) {
+      window.clearTimeout(providerHoldTimerRef.current)
+      providerHoldTimerRef.current = null
+    }
+    setProviderHoldIndex(null)
+  }
+
+  const releaseProviderPointer = interaction => {
+    const target = interaction?.captureTarget
+    const pointerId = interaction?.pointerId
+    if (target?.hasPointerCapture?.(pointerId)) target.releasePointerCapture(pointerId)
+  }
+
+  const finishProviderDrag = async (interaction = providerInteractionRef.current) => {
+    const wasActive = Boolean(interaction?.active)
+    clearProviderHold()
+    setProviderDrag(null)
+    providerInteractionRef.current = null
+    releaseProviderPointer(interaction)
+    if (!wasActive) return
+    suppressProviderClickUntilRef.current = Date.now() + 300
+    if (interaction.fromIndex === interaction.currentIndex || providerOrderBusyRef.current) return
+    const orderedProfiles = providerProfilesRef.current
+    if (!saveProviderOrderRef.current) {
+      setProviderOrderError('当前页面未提供服务商顺序保存能力，请刷新后重试。')
+      return
+    }
+    providerOrderBusyRef.current = true
+    setProviderOrderError('')
+    try {
+      const ok = await saveProviderOrderRef.current(orderedProfiles)
+      if (!ok) setProviderOrderError('服务商顺序保存失败，当前排序草稿已保留，请检查页面提示后重试。')
+    } catch (error) {
+      setProviderOrderError(error?.message || '服务商顺序保存失败，当前排序草稿已保留。')
+    } finally {
+      providerOrderBusyRef.current = false
+    }
+  }
+
+  const cancelProviderDrag = (event, suppressClick = false) => {
+    const interaction = providerInteractionRef.current
+    clearProviderHold()
+    setProviderDrag(null)
+    providerInteractionRef.current = null
+    releaseProviderPointer(interaction)
+    if (suppressClick && interaction) suppressProviderClickUntilRef.current = Date.now() + 300
+  }
+
+  const moveProviderPreview = (clientY, interaction = providerInteractionRef.current) => {
+    if (!interaction?.active) return
+    const items = Array.from(providerNavRef.current?.querySelectorAll('[data-provider-index]') || [])
+    const overIndex = items.findIndex(item => {
+      const box = item.getBoundingClientRect()
+      return clientY >= box.top && clientY <= box.bottom
+    })
+    const previousIndex = interaction.currentIndex
+    if (overIndex < 0 || overIndex === previousIndex) return
+    providerFlipRectsRef.current = new Map(items.map(item => [
+      item.dataset.providerMotionKey,
+      item.getBoundingClientRect(),
+    ]))
+    interaction.currentIndex = overIndex
+    setProfiles(current => {
+      const next = moveOrderedItem(current, previousIndex, overIndex)
+      interaction.previewProfiles = next
+      providerProfilesRef.current = next
+      return next
+    })
+    setActiveIndex(current => {
+      if (current === previousIndex) return overIndex
+      if (previousIndex < overIndex && current > previousIndex && current <= overIndex) return current - 1
+      if (previousIndex > overIndex && current >= overIndex && current < previousIndex) return current + 1
+      return current
+    })
+    setProviderDrag(current => ({ ...current, index: overIndex }))
+    setProviderOrderError('')
+  }
+
+  const startProviderHold = (idx, event) => {
+    if (providerOrderBusyRef.current || (event.pointerType === 'mouse' && event.button !== 0)) return
+    clearProviderHold()
+    const captureTarget = event.currentTarget
+    try {
+      captureTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      // Pointer capture may be unavailable in synthetic/browser compatibility events.
+    }
+    providerInteractionRef.current = {
+      active: false,
+      captureTarget,
+      currentIndex: idx,
+      fromIndex: idx,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    }
+    setProviderHoldIndex(idx)
+    providerHoldTimerRef.current = window.setTimeout(() => {
+      providerHoldTimerRef.current = null
+      const interaction = providerInteractionRef.current
+      if (!interaction || interaction.fromIndex !== idx) return
+      interaction.active = true
+      const rect = interaction.captureTarget.getBoundingClientRect()
+      interaction.dragKey = providerMotionKey(providerProfilesRef.current[interaction.currentIndex])
+      interaction.grabX = interaction.startX - rect.left
+      interaction.grabY = interaction.startY - rect.top
+      interaction.width = rect.width
+      interaction.height = rect.height
+      setProviderHoldIndex(null)
+      setProviderDrag({
+        index: interaction.currentIndex,
+        key: interaction.dragKey,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      })
+      setProviderOrderError('')
+    }, 350)
+  }
+
+  const moveProviderHold = event => {
+    const interaction = providerInteractionRef.current
+    if (!interaction || event.pointerId !== interaction.pointerId) return
+    const deltaX = Math.abs(event.clientX - interaction.startX)
+    const deltaY = Math.abs(event.clientY - interaction.startY)
+    if (!interaction.active && Math.max(deltaX, deltaY) > 8) {
+      cancelProviderDrag(event, true)
+      return
+    }
+    if (!interaction.active) return
+    event.preventDefault?.()
+    setProviderDrag(current => ({
+      ...current,
+      left: event.clientX - interaction.grabX,
+      top: event.clientY - interaction.grabY,
+    }))
+    moveProviderPreview(event.clientY, interaction)
+  }
+
+  const endProviderHold = event => {
+    const interaction = providerInteractionRef.current
+    if (!interaction || event.pointerId !== interaction.pointerId) return
+    if (interaction.active) event.preventDefault?.()
+    void finishProviderDrag(interaction)
+  }
+
   const openAdd = () => setAddOpen(true)
+
+  useEffect(() => () => {
+    if (providerHoldTimerRef.current) window.clearTimeout(providerHoldTimerRef.current)
+    providerInteractionRef.current = null
+  }, [])
 
   const persistedOrderCount = orderedModelRows(persistedProfiles).length
   const resetOrderMoveSession = () => {
@@ -1108,31 +1311,59 @@ export function Models({
             <b>{profiles.length}</b>
           </header>
 
-          <nav className="model-provider-nav" aria-label="模型服务商">
-            {profiles.map((profile, idx) => {
+          <div ref={providerNavRef} className="model-provider-nav" role="navigation" aria-label="模型服务商">
+              {profiles.map((profile, idx) => {
               const result = validation[idx]
               const count = profileModels(profile).length
               const availability = modelAvailabilitySummary(profile)
               const meta = protocolMeta(profile.type || DEFAULT_PROTOCOL)
               const state = result?.errors?.length ? 'error' : (result?.warnings?.length || availability.unavailable) ? 'warning' : 'ready'
+                const motionKey = providerMotionKey(profile)
+                const isProviderDragging = providerDrag?.key === motionKey
               return (
-                <button
-                  key={profile.client_id || `provider-${idx}`}
-                  type="button"
-                  className={`model-provider-item${!addOpen && activeIndex === idx ? ' is-active' : ''}`}
-                  onClick={() => openProfile(idx)}
-                  aria-current={!addOpen && activeIndex === idx ? 'true' : undefined}
+                <div
+                  className={`model-provider-entry${isProviderDragging ? ' is-drag-placeholder' : ''}`}
+                  key={motionKey}
+                  data-provider-index={idx}
+                  data-provider-motion-key={motionKey}
+                  style={isProviderDragging ? { height: providerDrag.height } : undefined}
                 >
-                  <span className="model-provider-item-top">
-                    <strong>{profile.name || providerDisplayName(profile.var_name) || `服务商 ${idx + 1}`}</strong>
-                    <i className={`is-${state}`} title={state === 'error' ? '存在阻断项' : availability.unavailable ? `${availability.unavailable} 个模型不可用` : state === 'warning' ? '存在提醒' : '配置正常'} />
-                  </span>
-                  <span className="model-provider-base">{profile.apibase || '尚未填写 BaseURL'}</span>
-                  <span className="model-provider-meta"><em>{meta?.shortLabel || protocolLabel(profile.type)}</em><b>{availability.enabled}/{count} 启用</b></span>
-                </button>
+                  <button
+                    type="button"
+                    className={`model-provider-item${!addOpen && activeIndex === idx ? ' is-active' : ''}${providerHoldIndex === idx ? ' is-holding' : ''}${isProviderDragging ? ' is-dragging' : ''}`}
+                    style={isProviderDragging ? {
+                      left: providerDrag.left,
+                      top: providerDrag.top,
+                      width: providerDrag.width,
+                      height: providerDrag.height,
+                    } : undefined}
+                    onClick={() => {
+                      if (Date.now() < suppressProviderClickUntilRef.current) return
+                      openProfile(idx)
+                    }}
+                    onPointerDown={event => startProviderHold(idx, event)}
+                    onPointerMove={moveProviderHold}
+                    onPointerUp={endProviderHold}
+                    onPointerCancel={cancelProviderDrag}
+                    onPointerLeave={moveProviderHold}
+                    aria-current={!addOpen && activeIndex === idx ? 'true' : undefined}
+                    aria-label={`${profile.name || providerDisplayName(profile.var_name) || `服务商 ${idx + 1}`}，长按拖动调整顺序`}
+                  >
+                    <span className="model-provider-item-top">
+                      <strong>{profile.name || providerDisplayName(profile.var_name) || `服务商 ${idx + 1}`}</strong>
+                      <i className={`is-${state}`} title={state === 'error' ? '存在阻断项' : availability.unavailable ? `${availability.unavailable} 个模型不可用` : state === 'warning' ? '存在提醒' : '配置正常'} />
+                    </span>
+                    <span className="model-provider-base">{profile.apibase || '尚未填写 BaseURL'}</span>
+                    <span className="model-provider-meta"><em>{meta?.shortLabel || protocolLabel(profile.type)}</em><b>{availability.enabled}/{count} 启用</b></span>
+                  </button>
+                </div>
               )
             })}
-          </nav>
+          </div>
+
+          {providerOrderError && (
+            <Alert type="error" showIcon message={providerOrderError} className="model-provider-order-alert" />
+          )}
 
           <button type="button" className={`model-provider-add${addOpen ? ' is-active' : ''}`} onClick={openAdd}>
             <Plus size={15} /><span>新增服务商</span>

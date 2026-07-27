@@ -13,6 +13,8 @@ import {
   reconcileModelProbeResults,
   orderedModelRows,
   applyModelOrder,
+  applyProviderOrder,
+  orderedProviderProfiles,
   mergePersistedModelOrder,
   moveOrderedItem,
   reasoningEffortOptions,
