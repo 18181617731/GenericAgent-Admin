@@ -2129,8 +2129,13 @@ func chatTitleNeedsAutomaticBackfill(cs chatSession) bool {
 }
 
 func (s *Server) chatTitleLLMNo(fallback int) int {
-	if selected := s.CfgStore.Cfg.ChatTitleModel; selected != nil && selected.LLMNo >= 0 {
-		return selected.LLMNo
+	if selected := s.CfgStore.Cfg.ChatTitleModel; selected != nil {
+		if selected.LLMNo == -1 {
+			return -1 // Explicitly disabled
+		}
+		if selected.LLMNo >= 0 {
+			return selected.LLMNo
+		}
 	}
 	return fallback
 }
@@ -2159,6 +2164,10 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 	if !ok {
 		return
 	}
+	llmNo := s.chatTitleLLMNo(cs.Settings.LLMNo)
+	if llmNo == -1 {
+		return // Title generation explicitly disabled
+	}
 	sid = safeChatID(sid)
 	if !s.beginChatTitleJob(sid) {
 		return
@@ -2169,7 +2178,7 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 		title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
 			"op":           "title",
 			"conversation": exchange,
-			"llm_no":       s.chatTitleLLMNo(cs.Settings.LLMNo),
+			"llm_no":       llmNo,
 			"ga_root":      s.CfgStore.Cfg.GARoot,
 		})
 		if err != nil {
@@ -2222,6 +2231,11 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 		s.SessionMu.Unlock()
 		return chatSession{}, errChatTitleNotLegacy
 	}
+	llmNo := s.chatTitleLLMNo(start.Settings.LLMNo)
+	if llmNo == -1 {
+		s.SessionMu.Unlock()
+		return chatSession{}, fmt.Errorf("title generation is disabled")
+	}
 	context, ok := chatTitleContextForSession(start)
 	startTitle, startTitleSource := start.Title, start.TitleSource
 	s.SessionMu.Unlock()
@@ -2232,7 +2246,7 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 	title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
 		"op":           "title",
 		"conversation": context,
-		"llm_no":       s.chatTitleLLMNo(start.Settings.LLMNo),
+		"llm_no":       llmNo,
 		"ga_root":      s.CfgStore.Cfg.GARoot,
 	})
 	if err != nil {

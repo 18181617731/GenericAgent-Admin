@@ -928,24 +928,36 @@ export function Models({
     : ''
   const titleModelOptions = [
     { value: '', label: t.titleModelFollowConversation },
+    { value: '__disabled__', label: t.titleModelDisabled || '禁用自动标题生成' },
     ...titleModelRows.map((row, llmNo) => ({
       value: titleModelKey({ provider_var_name: row.providerVarName, model: row.model }),
       label: `${row.model} · ${providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
     })),
   ]
   useEffect(() => {
-    setTitleModelDraft(titleModelKey(titleModel))
-  }, [titleModel?.provider_var_name, titleModel?.model])
+    if (titleModel?.llm_no === -1) {
+      setTitleModelDraft('__disabled__')
+    } else {
+      setTitleModelDraft(titleModelKey(titleModel))
+    }
+  }, [titleModel?.provider_var_name, titleModel?.model, titleModel?.llm_no])
   const saveTitleModel = async () => {
     if (!onSaveTitleModel) return
-    const rowIndex = titleModelRows.findIndex(row => titleModelKey({
-      provider_var_name: row.providerVarName,
-      model: row.model,
-    }) === titleModelDraft)
-    const selected = rowIndex < 0 ? null : {
-      provider_var_name: titleModelRows[rowIndex].providerVarName,
-      model: titleModelRows[rowIndex].model,
-      llm_no: rowIndex,
+    let selected
+    if (titleModelDraft === '__disabled__') {
+      selected = { provider_var_name: '', model: '', llm_no: -1 }
+    } else if (titleModelDraft === '') {
+      selected = null
+    } else {
+      const rowIndex = titleModelRows.findIndex(row => titleModelKey({
+        provider_var_name: row.providerVarName,
+        model: row.model,
+      }) === titleModelDraft)
+      selected = rowIndex < 0 ? null : {
+        provider_var_name: titleModelRows[rowIndex].providerVarName,
+        model: titleModelRows[rowIndex].model,
+        llm_no: rowIndex,
+      }
     }
     await onSaveTitleModel(selected)
   }
