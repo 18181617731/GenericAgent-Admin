@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	if len(items) > 80 {
@@ -345,6 +345,7 @@ func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid str
 	fork := chatSession{
 		ID:          newChatID(),
 		Title:       title,
+		TitleSource: chatTitleSourceManual,
 		Messages:    append([]chatMessage(nil), cs.Messages[:targetIndex]...),
 		Settings:    cs.Settings,
 		RawHistory:  raw,
@@ -385,14 +386,18 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 	if len([]rune(title)) > 80 {
 		title = string([]rune(title)[:80])
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	cs.Title = title
+	cs.TitleSource = chatTitleSourceManual
 	cs.UpdatedAt = time.Now().Unix()
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}

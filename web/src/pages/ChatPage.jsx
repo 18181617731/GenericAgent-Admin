@@ -3,6 +3,7 @@ import { Paperclip, Play, RefreshCw, Square, X } from 'lucide-react'
 import { api, apiStream } from '../lib/api'
 import { fuzzyMatch } from '../lib/format'
 import { createStreamDeltaBatcher } from '../lib/chatStream.js'
+import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from '../lib/chatTitlePolling.js'
 import { TurnList } from '../components/turns'
 
 const readFileDataURL = (file) => new Promise((resolve, reject) => {
@@ -50,8 +51,10 @@ export function ChatPage({ t, slashCommands }) {
 
   const loadSessions = async () => {
     const d = await api('/api/chat/sessions')
-    setSessions(d.sessions || [])
+    const list = d.sessions || []
+    setSessions(list)
     if (!activeSidRef.current && d.sessions?.[0]) await openSession(d.sessions[0].id)
+    return list
   }
   const openSession = async (id) => {
     const d = await api(`/api/chat/session/${id}`)
@@ -175,7 +178,15 @@ export function ChatPage({ t, slashCommands }) {
         deltaBatcher.flushNow()
         throw error
       }
-      await loadSessions()
+      const refreshedSessions = await loadSessions()
+      const refreshedSession = refreshedSessions.find(session => session.id === cur)
+      if (shouldPollGeneratedTitle(refreshedSession)) {
+        void pollGeneratedChatTitle({
+          sessionId:cur,
+          loadSessions,
+          isActive:sessionId => activeSidRef.current === sessionId,
+        }).catch(()=>{})
+      }
     } catch(e) {
       setErr(e.message)
       setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content:`失败：${e.message}`, error:true} : m))

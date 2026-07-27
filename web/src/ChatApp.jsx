@@ -19,6 +19,7 @@ import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { buildWorldlineEdges, buildWorldlineRows, worldlineMaxLevel, messageVersionInfo, worldlineNodeTitle, worldlineNodeKindLabel } from './lib/worldlineTree'
 import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
+import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling'
 
 gsap.registerPlugin(useGSAP)
 
@@ -3386,7 +3387,13 @@ export default function ChatApp() {
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
       await followChatStream(res, pendingId, '', id, ctrl.signal)
-      if (isActiveSession(id)) await loadSessions(id)
+      if (isActiveSession(id)) {
+        const list = await loadSessions(id)
+        const currentSession = list.find(session => session.id === id)
+        if (shouldPollGeneratedTitle(currentSession)) {
+          void pollGeneratedChatTitle({ sessionId:id, loadSessions, isActive:isActiveSession }).catch(()=>{})
+        }
+      }
     } catch (e) {
       if (e.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
     } finally {
@@ -4002,8 +4009,12 @@ export default function ChatApp() {
         return
       }
       if (id) {
-        await loadSessions(id).catch(()=>{})
+        const refreshedSessions = await loadSessions(id).catch(()=>[])
         await openSession(id, false).catch(()=>{})
+        const refreshedSession = refreshedSessions.find(session => session.id === id)
+        if (shouldPollGeneratedTitle(refreshedSession)) {
+          void pollGeneratedChatTitle({ sessionId:id, loadSessions, isActive:isActiveSession }).catch(()=>{})
+        }
         if (commandPatch?.commandResult && optimistic && pending && isActiveSession(id)) {
           const showWorldlinePicker = isWorldlinePickerResult(commandPatch.commandResult)
           const resultMessage = {
@@ -4648,26 +4659,27 @@ export default function ChatApp() {
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
         <header className="oa-session-manager-dialog-head">
-          <div>
+          <div className="oa-session-manager-dialog-heading">
             <h2 id="oa-session-manager-dialog-title">管理历史会话</h2>
-            <p>选择不再需要的会话并批量删除</p>
+            <p>批量删除不再需要的会话</p>
           </div>
-          <button className="oa-icon-btn" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label="关闭会话管理" autoFocus><X size={17}/></button>
+          <button className="oa-icon-btn oa-session-manager-dialog-close" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label="关闭会话管理" autoFocus><X size={17}/></button>
         </header>
-        <div className="oa-session-manager-toolbar">
-          <button className="oa-session-dialog-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting}>
+        <div className="oa-session-manager-dialog-tools">
+          <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting}>
             <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && selectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
             <span>{allSessionsSelected ? '取消全选' : '全选'}</span>
           </button>
-          <span className="oa-session-dialog-count">已选 {selectedSessionCount} / {sessions.length}</span>
+          <span className="oa-session-selected-count">已选 {selectedSessionCount} / {sessions.length}</span>
         </div>
         <div className="oa-session-manager-dialog-list">
           {sessions.map(s => {
             const selected = selectedSessionIdSet.has(s.id)
+            const sourceLabel = s.title_source === 'generated' ? 'AI' : s.title_source === 'manual' ? '手动' : '旧标题'
             return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
               <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
               <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>当前</em>}</span>
+                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
                 <small><Clock3 size={12}/>{fmtTime(s.updated_at) || '刚刚'} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
               </span>
             </button>

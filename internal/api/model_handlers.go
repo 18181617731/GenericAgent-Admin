@@ -6,11 +6,150 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
+	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/modelconfig"
 )
+
+type chatTitleModelOption struct {
+	ProviderVarName string `json:"provider_var_name"`
+	Model           string `json:"model"`
+	LLMNo           int    `json:"llm_no"`
+}
+
+func orderedChatTitleModelOptions(profiles []modelconfig.Profile) []chatTitleModelOption {
+	type orderedOption struct {
+		chatTitleModelOption
+		order    int
+		sequence int
+	}
+	rows := make([]orderedOption, 0)
+	sequence := 0
+	for _, profile := range profiles {
+		configs := profile.ModelConfigs
+		if len(configs) == 0 {
+			models := profile.Models
+			if len(models) == 0 && strings.TrimSpace(profile.Model) != "" {
+				models = []string{profile.Model}
+			}
+			configs = make([]modelconfig.ModelConfig, 0, len(models))
+			for _, model := range models {
+				configs = append(configs, modelconfig.ModelConfig{Model: model})
+			}
+		}
+		for _, modelConfig := range configs {
+			model := strings.TrimSpace(modelConfig.Model)
+			if model == "" {
+				continue
+			}
+			order := sequence
+			if modelConfig.SortOrder != nil {
+				order = *modelConfig.SortOrder
+			}
+			rows = append(rows, orderedOption{
+				chatTitleModelOption: chatTitleModelOption{
+					ProviderVarName: strings.TrimSpace(profile.VarName),
+					Model:           model,
+				},
+				order:    order,
+				sequence: sequence,
+			})
+			sequence++
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].order != rows[j].order {
+			return rows[i].order < rows[j].order
+		}
+		return rows[i].sequence < rows[j].sequence
+	})
+	options := make([]chatTitleModelOption, len(rows))
+	for i, row := range rows {
+		row.LLMNo = i
+		options[i] = row.chatTitleModelOption
+	}
+	return options
+}
+
+func resolveChatTitleModel(ref *config.ChatTitleModelRef, options []chatTitleModelOption) (*config.ChatTitleModelRef, bool) {
+	if ref == nil {
+		return nil, true
+	}
+	provider := strings.TrimSpace(ref.ProviderVarName)
+	model := strings.TrimSpace(ref.Model)
+	for _, option := range options {
+		if option.ProviderVarName == provider && option.Model == model {
+			return &config.ChatTitleModelRef{
+				ProviderVarName: option.ProviderVarName,
+				Model:           option.Model,
+				LLMNo:           option.LLMNo,
+			}, true
+		}
+	}
+	return nil, false
+}
+
+func (s *Server) reconcileChatTitleModel(profiles []modelconfig.Profile) error {
+	current := s.CfgStore.Cfg.ChatTitleModel
+	if current == nil {
+		return nil
+	}
+	resolved, _ := resolveChatTitleModel(current, orderedChatTitleModelOptions(profiles))
+	if resolved != nil &&
+		resolved.ProviderVarName == current.ProviderVarName &&
+		resolved.Model == current.Model &&
+		resolved.LLMNo == current.LLMNo {
+		return nil
+	}
+	s.ConfigMu.Lock()
+	defer s.ConfigMu.Unlock()
+	cfg := s.CfgStore.Cfg
+	cfg.ChatTitleModel = resolved
+	return s.CfgStore.Save(cfg)
+}
+
+func (s *Server) modelsTitleModel(w http.ResponseWriter, r *http.Request) {
+	d, err := s.loadModelsFromOfficialMyKey(false)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	options := orderedChatTitleModelOptions(d.Profiles)
+	if r.Method == http.MethodGet {
+		resolved, _ := resolveChatTitleModel(s.CfgStore.Cfg.ChatTitleModel, options)
+		writeJSON(w, map[string]interface{}{"model": resolved, "options": options})
+		return
+	}
+	if r.Method != http.MethodPut {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Model *config.ChatTitleModelRef `json:"model"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resolved, found := resolveChatTitleModel(req.Model, options)
+	if !found {
+		bad(w, http.StatusBadRequest, "selected title model is not present in the saved model configuration")
+		return
+	}
+	s.ConfigMu.Lock()
+	cfg := s.CfgStore.Cfg
+	cfg.ChatTitleModel = resolved
+	err = s.CfgStore.Save(cfg)
+	s.ConfigMu.Unlock()
+	if err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"model": resolved, "options": options})
+}
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
@@ -45,6 +184,10 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 		d, err := s.loadModelsFromOfficialMyKey(false)
 		if err != nil {
 			bad(w, 500, err.Error())
+			return
+		}
+		if err := s.reconcileChatTitleModel(d.Profiles); err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, d)
@@ -428,6 +571,10 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, profiles, p.OverwriteActive)
 	if err != nil {
 		bad(w, 400, err.Error())
+		return
+	}
+	if err := s.reconcileChatTitleModel(profiles); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, res)
