@@ -2560,7 +2560,9 @@ export function WorldlinePanel({ state, loading, switchingId, disabled, onClose,
                   </div>
                   <span className="oa-worldline-date">{row.node.created_at ? fmtDate(row.node.created_at) : ''}</span>
                 </div>
-                {!row.isCurrent && <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId}
+                {!row.isCurrent && <button type="button" className="oa-worldline-switch" 
+                    disabled={disabled || !!switchingId || row.node.mapping_status === 'unmapped'}
+                    title={row.node.mapping_status === 'unmapped' ? '起点节点无对话内容，无法切换' : ''}
                     onClick={() => onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button>}
               </div>
             ))}
