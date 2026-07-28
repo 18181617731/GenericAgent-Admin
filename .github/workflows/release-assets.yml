@@ -80,22 +80,6 @@ jobs:
             goarch: arm64
             runner: windows-latest
             cgo: '1'
-          - goos: darwin
-            goarch: amd64
-            runner: macos-latest
-            cgo: '1'
-          - goos: darwin
-            goarch: arm64
-            runner: macos-latest
-            cgo: '1'
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: '0'
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-latest
-            cgo: '0'
 
     steps:
       - name: Checkout release source
@@ -205,8 +189,8 @@ jobs:
         shell: bash
         run: |
           find package -maxdepth 1 -type f -print | sort
-          test "$(find package -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 6
-          test "$(find package -maxdepth 1 -type f -name '*.zip.sha256' | wc -l)" -eq 6
+          test "$(find package -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
+          test "$(find package -maxdepth 1 -type f -name '*.zip.sha256' | wc -l)" -eq 2
 
       - name: Create tag and publish GitHub Release
         uses: softprops/action-gh-release@v2
