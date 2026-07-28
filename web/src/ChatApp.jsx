@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
@@ -2956,6 +2956,9 @@ export default function ChatApp() {
   const [worldlineSwitchingId, setWorldlineSwitchingId] = useState('')
   const worldlineSeqRef = useRef(0)
   const messagesRef = useRef([])
+  // Keep a synchronous mirror of `messages` so async flows (e.g. re-attaching to a running
+  // stream after a page refresh) can read the committed list without waiting for a state updater.
+  useEffect(() => { messagesRef.current = messages }, [messages])
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
   const chatScope = useRef(null)
@@ -3377,11 +3380,15 @@ export default function ChatApp() {
     const ctrl = new AbortController()
     streamAbortRef.current = ctrl
     let pendingId = `resume-${Date.now()}`
+    // Resolve the placeholder id up-front: `followChatStream` below reads `pendingId` right
+    // after `await fetch`, which may win the race against the state updater.
+    const knownId = pickResumePlaceholderId(messagesRef.current)
+    if (knownId) pendingId = knownId
     setBusy(true); setStreamingSid(id); setAutoFollow(true); setShowFollow(false)
     setMessages(xs => {
-      const existing = xs.find(m => m.role === 'assistant' && !m.content)
-      if (existing?.id) {
-        pendingId = existing.id
+      const existingId = pickResumePlaceholderId(xs)
+      if (existingId) {
+        pendingId = existingId
         return xs
       }
       return [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }]

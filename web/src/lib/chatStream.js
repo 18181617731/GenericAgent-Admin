@@ -77,3 +77,15 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
     },
   }
 }
+
+// When re-attaching to a running stream (page refresh), replayed deltas must land on the
+// placeholder of *that* run. Only the tail message can be it: an empty assistant earlier in
+// the history is a stale leftover from an aborted/refreshed run, and targeting one of those
+// would append the replay mid-history while the tail stayed stuck on "thinking" forever.
+export const pickResumePlaceholderId = (messages) => {
+  const list = Array.isArray(messages) ? messages : []
+  const tail = list.length ? list[list.length - 1] : null
+  if (!tail || tail.role !== 'assistant') return ''
+  if (tail.content) return ''
+  return tail.id || ''
+}
