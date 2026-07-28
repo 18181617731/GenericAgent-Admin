@@ -11834,6 +11834,23 @@ html[data-theme="dark"] .ant-drawer-header {
   border-color: var(--border) !important;
 }
 
+/* Modal container improvements for both themes */
+.ant-modal-container {
+  background: var(--surface) !important;
+  border-radius: 16px !important;
+  box-shadow: 
+    0 12px 48px rgba(0, 0, 0, 0.12),
+    0 4px 16px rgba(0, 0, 0, 0.08) !important;
+  padding: 24px !important;
+}
+
+html[data-theme="dark"] .ant-modal-container {
+  box-shadow: 
+    0 12px 48px rgba(0, 0, 0, 0.4),
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.06) !important;
+}
+
 html[data-theme="dark"] .ant-card-head,
 html[data-theme="dark"] .ant-collapse-header,
 html[data-theme="dark"] .ant-collapse-item,
