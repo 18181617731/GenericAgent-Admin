@@ -1,6 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import {
+  CHAT_SESSION_DRAFTS_STORAGE_KEY,
+  clearChatSessionDrafts,
+  loadChatSessionDraft,
+  saveChatSessionDraft,
+} from './chatSessionDrafts.js'
+
+function memoryStorage(initial = {}) {
+  const values = new Map(Object.entries(initial))
+  return {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: key => values.delete(key),
+  }
+}
 
 function functionBlock(source, start, end) {
   const from = source.indexOf(start)
@@ -27,4 +42,63 @@ test('new chat stays out of the session list until its first send', () => {
 
   const legacySend = functionBlock(legacy, '  const send = async () => {', '  return <section')
   assert.match(legacySend, /await loadSessions\(\)/)
+})
+
+test('chat session drafts persist independently and clear selectively', () => {
+  const storage = memoryStorage()
+
+  saveChatSessionDraft('session-a', 'draft A', storage)
+  saveChatSessionDraft('session-b', 'draft B', storage)
+  assert.equal(loadChatSessionDraft('session-a', storage), 'draft A')
+  assert.equal(loadChatSessionDraft('session-b', storage), 'draft B')
+
+  saveChatSessionDraft('session-a', '', storage)
+  assert.equal(loadChatSessionDraft('session-a', storage), '')
+  assert.equal(loadChatSessionDraft('session-b', storage), 'draft B')
+
+  clearChatSessionDrafts(['session-b', 'missing'], storage)
+  assert.equal(loadChatSessionDraft('session-b', storage), '')
+  assert.equal(storage.getItem(CHAT_SESSION_DRAFTS_STORAGE_KEY), null)
+})
+
+test('chat session draft storage failures do not break the composer', () => {
+  const corrupt = memoryStorage({ [CHAT_SESSION_DRAFTS_STORAGE_KEY]: '{not-json' })
+  assert.equal(loadChatSessionDraft('session-a', corrupt), '')
+  assert.doesNotThrow(() => saveChatSessionDraft('session-a', 'recovered', corrupt))
+  assert.equal(loadChatSessionDraft('session-a', corrupt), 'recovered')
+
+  const unavailable = {
+    getItem() { throw new Error('blocked') },
+    setItem() { throw new Error('blocked') },
+    removeItem() { throw new Error('blocked') },
+  }
+  assert.equal(loadChatSessionDraft('session-a', unavailable), '')
+  assert.doesNotThrow(() => saveChatSessionDraft('session-a', 'draft', unavailable))
+  assert.doesNotThrow(() => clearChatSessionDrafts('session-a', unavailable))
+})
+
+test('main chat wires draft persistence into switching, typing, sending, and deletion', () => {
+  const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  assert.match(main, /loadChatSessionDraft/)
+  assert.match(main, /saveChatSessionDraft/)
+  assert.match(main, /clearChatSessionDrafts/)
+
+  const openSession = functionBlock(main, '  const openSession = async', '  const loadSessions = async')
+  assert.match(openSession, /loadChatSessionDraft\(id\)/)
+
+  const promptSetter = functionBlock(main, '  const setSessionPrompt =', '  useEffect(() => { activeSidRef.current = sid }, [sid])')
+  assert.match(promptSetter, /saveChatSessionDraft/)
+
+  const promptChange = functionBlock(main, '  const handlePromptChange =', '  const handlePromptKeyDown =')
+  assert.match(promptChange, /setSessionPrompt\(v\)/)
+
+  const send = functionBlock(main, '  const send = async', '  const applySlashCommand =')
+  assert.match(send, /setSessionPrompt\(''\)/)
+  const runSend = functionBlock(main, '  const runSend = async (item = {}) => {', '  const expandCustomSlashCommand =')
+  assert.match(runSend, /clearChatSessionDrafts\(id\)/)
+
+  const deleteSession = functionBlock(main, '  const deleteSession = async', '  const openSessionManager =')
+  assert.match(deleteSession, /clearChatSessionDrafts/)
+  const batchDelete = functionBlock(main, '  const deleteSelectedSessions = async', '  const startRename =')
+  assert.match(batchDelete, /clearChatSessionDrafts/)
 })

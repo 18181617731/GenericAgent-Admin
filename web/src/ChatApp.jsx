@@ -14,6 +14,7 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { clearChatSessionDrafts, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -2973,6 +2974,11 @@ export default function ChatApp() {
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
   const chatScope = useRef(null)
+  const setSessionPrompt = useCallback((value, sessionId = activeSidRef.current) => {
+    const next = typeof value === 'string' ? value : String(value || '')
+    setPrompt(next)
+    saveChatSessionDraft(sessionId, next)
+  }, [])
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
   const COMPOSER_MAX_H = 160
 
@@ -3458,6 +3464,7 @@ export default function ChatApp() {
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
     setSid(id)
+    setSessionPrompt(loadChatSessionDraft(id), id)
     setBusy(false)
     setStreamingSid('')
     setAutoFollow(true)
@@ -3556,13 +3563,15 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
+    clearChatSessionDrafts(d.id)
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
   }
 
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
     await api(`/api/chat/session/${id}`, { method:'DELETE' })
+    clearChatSessionDrafts(id)
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')
     setMenuPos(null)
@@ -3618,6 +3627,7 @@ export default function ChatApp() {
     setNotice('')
     try {
       const result = await deleteChatSessions(ids, id => api(`/api/chat/session/${id}`, { method:'DELETE' }))
+      clearChatSessionDrafts(result.deletedIds)
       const deleted = new Set(result.deletedIds)
       const activeDeleted = deleted.has(sid)
       if (deleted.size) setSessions(xs => xs.filter(session => !deleted.has(session.id)))
@@ -3896,7 +3906,7 @@ export default function ChatApp() {
 
   const fillAskReply = useCallback((text) => {
     const value = String(text || '')
-    setPrompt(value)
+    setSessionPrompt(value)
     setNotice(ct('已填入快捷回复，确认后可发送', 'Quick reply inserted; review and send when ready'))
     const focusPrompt = () => {
       const el = promptRef.current
@@ -3907,7 +3917,7 @@ export default function ChatApp() {
     }
     requestAnimationFrame(focusPrompt)
     setTimeout(focusPrompt, 0)
-  }, [])
+  }, [setSessionPrompt])
 
   const editAndResend = async (messageId, text) => {
     const item = buildEditResendItem({
@@ -3986,6 +3996,7 @@ export default function ChatApp() {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
+        clearChatSessionDrafts(id)
         activeSidRef.current = id
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
@@ -4051,7 +4062,7 @@ export default function ChatApp() {
             const hasUser = baseMessages.some(m => m.id === optimistic.id)
             return [...baseMessages, ...(hasUser ? [] : [optimistic]), ...(showWorldlinePicker ? [] : [resultMessage])]
           })
-          if (Object.prototype.hasOwnProperty.call(commandPatch, 'prefill')) setPrompt(commandPatch.prefill)
+          if (Object.prototype.hasOwnProperty.call(commandPatch, 'prefill')) setSessionPrompt(commandPatch.prefill, id)
           if (showWorldlinePicker) {
             setWorldlineRestorePicker({ nodes:commandPatch.commandResult.tree.nodes, sessionID:id })
           }
@@ -4081,7 +4092,7 @@ export default function ChatApp() {
   const selectWorldlineRestoreNode = useCallback((nodeID, mode, target) => {
     const command = worldlineRestoreCommand(nodeID, mode, target)
     if (!command) return
-    setPrompt(command)
+    setSessionPrompt(command)
     setWorldlineRestorePicker(null)
     setNotice(ct('已填入恢复命令，确认后发送', 'Restore command inserted; review before sending'))
     window.setTimeout(() => {
@@ -4090,7 +4101,7 @@ export default function ChatApp() {
       input.focus()
       input.setSelectionRange?.(command.length, command.length)
     }, 0)
-  }, [])
+  }, [setSessionPrompt])
 
   const expandCustomSlashCommand = useCallback((value) => {
     const raw = String(value || '').trim()
@@ -4118,17 +4129,21 @@ export default function ChatApp() {
     const text = expandCustomSlashCommand(String(sourceText || '').trim())
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
-      setPrompt('')
       if (busy || activeRunRef.current) {
         setNotice(ct('当前正在执行，完成后可使用 /new 创建新对话', 'A run is in progress. Use /new after it completes.'))
         return
       }
+      setSessionPrompt('')
       await newSession()
       return
     }
     if (!text && !files.length) return
+    if (isBTWCommand(text) && !files.length && !(activeSidRef.current || sid)) {
+      await sendBTW(text)
+      return
+    }
     const item = { text, files, llmNo, reasoningEffort }
-    setPrompt(''); setAttachments([])
+    setSessionPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
     if (isBTWCommand(text) && !files.length) {
@@ -4145,7 +4160,7 @@ export default function ChatApp() {
   const applySlashCommand = (cmd, currentValue = prompt) => {
     if (!cmd) return
     const next = slashCommandInsertText(cmd, currentValue)
-    setPrompt(next)
+    setSessionPrompt(next)
     setCmdDrawer(slashCommandNextDrawer(cmd, next))
     setCmdEditIdx(-1)
     setTimeout(() => promptRef.current?.focus(), 0)
@@ -4153,7 +4168,7 @@ export default function ChatApp() {
 
   const handlePromptChange = (e) => {
     const v = e.target.value
-    setPrompt(v)
+    setSessionPrompt(v)
     if (v.startsWith('/')) {
       setCmdDrawer({ open:true, filter:v.slice(1), selectedIdx:0 })
       setCmdEditIdx(-1)
