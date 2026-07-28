@@ -31,11 +31,23 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
     resolvers.forEach(resolve => resolve())
   }
   const scheduleNext = () => {
-    if (pending && scheduled == null) scheduled = schedule(flushFrame)
+    if (pending && scheduled == null) {
+      // Skip frame-by-frame animation when tab is in background
+      if (typeof document !== 'undefined' && document.hidden) {
+        flushNow()
+      } else {
+        scheduled = schedule(flushFrame)
+      }
+    }
   }
   const flushFrame = () => {
     scheduled = null
     if (!pending) return
+    // If tab became hidden during scheduled flush, drain immediately instead of chunking
+    if (typeof document !== 'undefined' && document.hidden) {
+      flushNow()
+      return
+    }
     // Small model deltas stay immediate; network bursts are drained across a few
     // frames so the response advances continuously instead of jumping by blocks.
     const chunkSize = pending.length <= 24 ? pending.length : Math.min(64, Math.max(4, Math.ceil(pending.length / 8)))
