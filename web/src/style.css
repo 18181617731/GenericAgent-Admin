@@ -11804,13 +11804,18 @@ html[data-theme="dark"] {
   --mp-accent-soft: rgba(129,140,248,.14);
 }
 
+/* Light theme: header with subtle background */
+.ant-modal-header,
+.ant-drawer-header {
+  background: var(--surface-muted) !important;
+  border-color: var(--border) !important;
+}
+
 html[data-theme="dark"] .ant-card,
 html[data-theme="dark"] .ant-collapse,
 html[data-theme="dark"] .ant-collapse-content,
 html[data-theme="dark"] .ant-modal-content,
-html[data-theme="dark"] .ant-modal-header,
 html[data-theme="dark"] .ant-drawer-content,
-html[data-theme="dark"] .ant-drawer-header,
 html[data-theme="dark"] .ant-dropdown-menu,
 html[data-theme="dark"] .ant-select-dropdown,
 html[data-theme="dark"] .ant-picker-panel-container,
@@ -11820,6 +11825,12 @@ html[data-theme="dark"] .ant-table-thead > tr > th,
 html[data-theme="dark"] .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {
   background: var(--surface) !important;
   color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme="dark"] .ant-modal-header,
+html[data-theme="dark"] .ant-drawer-header {
+  background: var(--surface-muted) !important;
   border-color: var(--border) !important;
 }
 
