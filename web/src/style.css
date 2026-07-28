@@ -2049,6 +2049,19 @@ html[data-theme="dark"] .oa-file-card .oa-mini-copy:hover{
   white-space:nowrap;
   font:inherit;
 }
+.oa-session-title .oa-session-draft-badge,
+.oa-session-dialog-title .oa-session-draft-badge{
+  flex:0 0 auto;
+  padding:1px 6px;
+  border:1px solid #ead7a8;
+  border-radius:999px;
+  background:#fff8e7;
+  color:#805b12;
+  font-size:10px;
+  font-style:normal;
+  font-weight:650;
+  line-height:1.35;
+}
 .oa-session small{
   display:block !important;
   max-width:100% !important;
@@ -12276,4 +12289,11 @@ html[data-theme="dark"] .oa-chat .oa-model-select:hover {
 html[data-theme="dark"] .oa-chat .oa-attach-btn.is-open {
   background: rgba(16, 163, 127, .16) !important;
   border-color: rgba(16, 163, 127, .42) !important;
+}
+
+html[data-theme="dark"] .oa-session-title .oa-session-draft-badge,
+html[data-theme="dark"] .oa-session-dialog-title .oa-session-draft-badge {
+  border-color: rgba(224, 174, 70, .38);
+  background: rgba(224, 174, 70, .13);
+  color: #f0c66e;
 }

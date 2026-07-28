@@ -14,7 +14,7 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
-import { clearChatSessionDrafts, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
+import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -2887,6 +2887,7 @@ export default function ChatApp() {
     }).catch(() => {})
   }, [])
   const [sessions, setSessions] = useState([])
+  const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
   const [rawHistory, setRawHistory] = useState([])
@@ -2974,11 +2975,37 @@ export default function ChatApp() {
   const scrollModeRef = useRef('auto')
   const queuedRef = useRef([])
   const chatScope = useRef(null)
+  const persistSessionDraft = useCallback((sessionId, value) => {
+    const id = String(sessionId || '').trim()
+    const draft = typeof value === 'string' ? value : String(value || '')
+    saveChatSessionDraft(id, draft)
+    if (!id) return
+    setDraftSessionIds(current => {
+      const hasDraft = Boolean(draft)
+      if (current.has(id) === hasDraft) return current
+      const next = new Set(current)
+      if (hasDraft) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+  const clearSessionDrafts = useCallback((sessionIds) => {
+    const values = Array.isArray(sessionIds) ? sessionIds : [sessionIds]
+    const ids = values.map(value => String(value || '').trim()).filter(Boolean)
+    clearChatSessionDrafts(ids)
+    if (!ids.length) return
+    setDraftSessionIds(current => {
+      const next = new Set(current)
+      let changed = false
+      for (const id of ids) changed = next.delete(id) || changed
+      return changed ? next : current
+    })
+  }, [])
   const setSessionPrompt = useCallback((value, sessionId = activeSidRef.current) => {
     const next = typeof value === 'string' ? value : String(value || '')
     setPrompt(next)
-    saveChatSessionDraft(sessionId, next)
-  }, [])
+    persistSessionDraft(sessionId, next)
+  }, [persistSessionDraft])
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
   const COMPOSER_MAX_H = 160
 
@@ -3563,7 +3590,7 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    clearChatSessionDrafts(d.id)
+    clearSessionDrafts(d.id)
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
   }
@@ -3571,7 +3598,7 @@ export default function ChatApp() {
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
     await api(`/api/chat/session/${id}`, { method:'DELETE' })
-    clearChatSessionDrafts(id)
+    clearSessionDrafts(id)
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')
     setMenuPos(null)
@@ -3627,7 +3654,7 @@ export default function ChatApp() {
     setNotice('')
     try {
       const result = await deleteChatSessions(ids, id => api(`/api/chat/session/${id}`, { method:'DELETE' }))
-      clearChatSessionDrafts(result.deletedIds)
+      clearSessionDrafts(result.deletedIds)
       const deleted = new Set(result.deletedIds)
       const activeDeleted = deleted.has(sid)
       if (deleted.size) setSessions(xs => xs.filter(session => !deleted.has(session.id)))
@@ -3996,7 +4023,7 @@ export default function ChatApp() {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
-        clearChatSessionDrafts(id)
+        clearSessionDrafts(id)
         activeSidRef.current = id
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
@@ -4395,7 +4422,7 @@ export default function ChatApp() {
             <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
             <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
           </div> : <button className="oa-session" onClick={()=>openSession(s.id)} title={shortTitle(s)}>
-            <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b></span>
+            <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
             <small><Clock3 size={11}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
           </button>}
           {editing !== s.id && <button className={`oa-session-more ${menuOpen === s.id ? 'is-open' : ''}`} onClick={(e)=>{
@@ -4716,7 +4743,7 @@ export default function ChatApp() {
             return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
               <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
               <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
                 <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
               </span>
             </button>

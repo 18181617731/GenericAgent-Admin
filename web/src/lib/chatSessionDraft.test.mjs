@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import {
   CHAT_SESSION_DRAFTS_STORAGE_KEY,
   clearChatSessionDrafts,
+  listChatSessionDraftIds,
   loadChatSessionDraft,
   saveChatSessionDraft,
 } from './chatSessionDrafts.js'
@@ -49,14 +50,17 @@ test('chat session drafts persist independently and clear selectively', () => {
 
   saveChatSessionDraft('session-a', 'draft A', storage)
   saveChatSessionDraft('session-b', 'draft B', storage)
+  assert.deepEqual(listChatSessionDraftIds(storage).sort(), ['session-a', 'session-b'])
   assert.equal(loadChatSessionDraft('session-a', storage), 'draft A')
   assert.equal(loadChatSessionDraft('session-b', storage), 'draft B')
 
   saveChatSessionDraft('session-a', '', storage)
+  assert.deepEqual(listChatSessionDraftIds(storage), ['session-b'])
   assert.equal(loadChatSessionDraft('session-a', storage), '')
   assert.equal(loadChatSessionDraft('session-b', storage), 'draft B')
 
   clearChatSessionDrafts(['session-b', 'missing'], storage)
+  assert.deepEqual(listChatSessionDraftIds(storage), [])
   assert.equal(loadChatSessionDraft('session-b', storage), '')
   assert.equal(storage.getItem(CHAT_SESSION_DRAFTS_STORAGE_KEY), null)
 })
@@ -77,17 +81,23 @@ test('chat session draft storage failures do not break the composer', () => {
   assert.doesNotThrow(() => clearChatSessionDrafts('session-a', unavailable))
 })
 
-test('main chat wires draft persistence into switching, typing, sending, and deletion', () => {
+test('main chat wires reactive draft badges into persistence, sending, and deletion', () => {
   const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+  assert.match(main, /listChatSessionDraftIds/)
   assert.match(main, /loadChatSessionDraft/)
   assert.match(main, /saveChatSessionDraft/)
   assert.match(main, /clearChatSessionDrafts/)
+  assert.match(main, /const \[draftSessionIds, setDraftSessionIds\]/)
+  assert.equal(main.match(/className="oa-session-draft-badge"/g)?.length, 2)
+  assert.match(style, /\.oa-session-title \.oa-session-draft-badge/)
+  assert.match(style, /html\[data-theme="dark"\] \.oa-session-title \.oa-session-draft-badge/)
 
   const openSession = functionBlock(main, '  const openSession = async', '  const loadSessions = async')
   assert.match(openSession, /loadChatSessionDraft\(id\)/)
 
   const promptSetter = functionBlock(main, '  const setSessionPrompt =', '  useEffect(() => { activeSidRef.current = sid }, [sid])')
-  assert.match(promptSetter, /saveChatSessionDraft/)
+  assert.match(promptSetter, /persistSessionDraft\(sessionId, next\)/)
 
   const promptChange = functionBlock(main, '  const handlePromptChange =', '  const handlePromptKeyDown =')
   assert.match(promptChange, /setSessionPrompt\(v\)/)
@@ -95,10 +105,10 @@ test('main chat wires draft persistence into switching, typing, sending, and del
   const send = functionBlock(main, '  const send = async', '  const applySlashCommand =')
   assert.match(send, /setSessionPrompt\(''\)/)
   const runSend = functionBlock(main, '  const runSend = async (item = {}) => {', '  const expandCustomSlashCommand =')
-  assert.match(runSend, /clearChatSessionDrafts\(id\)/)
+  assert.match(runSend, /clearSessionDrafts\(id\)/)
 
   const deleteSession = functionBlock(main, '  const deleteSession = async', '  const openSessionManager =')
-  assert.match(deleteSession, /clearChatSessionDrafts/)
+  assert.match(deleteSession, /clearSessionDrafts\(id\)/)
   const batchDelete = functionBlock(main, '  const deleteSelectedSessions = async', '  const startRename =')
-  assert.match(batchDelete, /clearChatSessionDrafts/)
+  assert.match(batchDelete, /clearSessionDrafts\(result\.deletedIds\)/)
 })

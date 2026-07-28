@@ -33,6 +33,10 @@ function writeDraftMap(drafts, storage) {
   }
 }
 
+export function listChatSessionDraftIds(storage) {
+  return Object.keys(readDraftMap(storage))
+}
+
 export function loadChatSessionDraft(sessionId, storage) {
   const id = String(sessionId || '').trim()
   if (!id) return ''
