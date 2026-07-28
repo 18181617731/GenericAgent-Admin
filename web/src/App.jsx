@@ -40,6 +40,7 @@ const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m
 const UsagePage = lazy(() => import('./pages/UsagePage').then(m => ({ default: m.UsagePage })))
 const Models = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.Models })))
 const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })))
+const AutonomousPage = lazy(() => import('./pages/AutonomousPage').then(m => ({ default: m.AutonomousPage })))
 
 gsap.registerPlugin(useGSAP)
 
@@ -318,11 +319,11 @@ export default function App() {
       const play = () => {
         tl = gsap.timeline({ defaults: { ease: 'power2.out', duration: 0.28 } })
         tl.from(q('.main > header'), { y: 8, autoAlpha: 0, clearProps: 'transform,opacity,visibility' })
-          .from(q('.stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page'), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
+          .from(q('.stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page, .autonomous-page'), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
       }
       const raf = window.requestAnimationFrame(play)
       const guard = window.setTimeout(() => {
-        gsap.set(q('.main > header, .stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page'), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
+        gsap.set(q('.main > header, .stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page, .autonomous-page'), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
       }, 900)
       return () => { window.cancelAnimationFrame(raf); window.clearTimeout(guard); tl?.kill() }
     }, appScope)
@@ -1256,7 +1257,7 @@ export default function App() {
       </section>}
       {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
-      {tab==='autonomous' && <section><Panel title={t.lists.reflectServices} className="reflect-services-panel">{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={serviceActionStates[s.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
+      {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
       {tab==='usage' && <UsagePage lang={lang}/>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>}

@@ -1090,6 +1090,7 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/ga/processes/adopt", `{}`},
 		{http.MethodPost, "/api/services/autostart", `{}`},
 		{http.MethodPost, "/api/services/model", `{}`},
+		{http.MethodPost, "/api/autonomous/approvals", `{}`},
 		{http.MethodPost, "/api/models/export", `{}`},
 		{http.MethodPut, "/api/models/title-model", `{"invalid_payload":true}`},
 		{http.MethodPut, "/api/channels", `{}`},
@@ -1111,6 +1112,7 @@ func safeValidationDangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/goals/start", `{}`},
 		{http.MethodPost, "/api/goals/stop", `{}`},
 		{http.MethodPost, "/api/goals/delete", `{}`},
+		{http.MethodPost, "/api/autonomous/approvals", `{}`},
 		{http.MethodPut, "/api/config", `not-json`},
 		{http.MethodPost, "/api/setup/validate", `{}`},
 		// Keep this list limited to handlers that reject the test payload before

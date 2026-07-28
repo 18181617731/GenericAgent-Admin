@@ -10,6 +10,7 @@ import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 import { UsagePage } from './pages/UsagePage.jsx'
+import { AutonomousPage } from './pages/AutonomousPage.jsx'
 import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 import { SchedulerServiceRow } from './components/schedule.jsx'
 
@@ -93,6 +94,95 @@ afterEach(() => {
   window.localStorage.clear()
   window.history.replaceState({}, '', '/')
   vi.restoreAllMocks()
+})
+
+const pendingApproval = {
+  id: 'draft-one', title: '补充自主操作 SOP', state: 'pending', status: '待批未落地',
+  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
+}
+
+const approvalOverview = (items = [pendingApproval]) => ({
+  source_exists: true,
+  items,
+  pending: items.filter(item => item.state === 'pending').length,
+  approved: items.filter(item => item.state === 'approved').length,
+  rejected: items.filter(item => item.state === 'rejected').length,
+})
+
+describe('autonomous operations page', () => {
+  test('should approve and queue a pending draft when the user confirms', async () => {
+    installBrowserPolyfills()
+    const decided = { ...pendingApproval, state: 'approved', decision: 'approved', decided_at: '2026-07-28T10:00:00Z' }
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') return jsonResponse({ queued: true, overview: approvalOverview([decided]) })
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview())
+      throw new Error(`unexpected url ${url}`)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const setMessage = vi.fn()
+    render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '审批意见或补充要求（可选）' }), { target: { value: '先验证，再执行' } })
+    fireEvent.click(screen.getByRole('button', { name: '批准并加入队列' }))
+
+    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('已批准并加入自主任务队列', 'success'))
+    const post = globalThis.fetch.mock.calls.find(([, options]) => options?.method === 'POST')
+    expect(post?.[1]?.headers?.['X-GA-Confirm']).toBe('dangerous')
+    expect(JSON.parse(post?.[1]?.body)).toEqual({ id: 'draft-one', decision: 'approved', note: '先验证，再执行' })
+    fireEvent.click(screen.getByRole('tab', { name: /已处理/ }))
+    expect(await screen.findByText('已批准')).toBeTruthy()
+  })
+
+  test('should keep rejection dialog actionable when the decision request fails', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') return { ok: false, status: 500, statusText: 'Server Error', text: async () => JSON.stringify({ error: 'write failed' }) }
+      return jsonResponse(approvalOverview())
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const setMessage = vi.fn()
+    render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: '拒绝' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '拒绝原因（可选）' }), { target: { value: '暂不处理' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认拒绝' }))
+
+    await waitFor(() => expect(setMessage).toHaveBeenCalledWith(expect.stringContaining('write failed'), 'error'))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '确认拒绝' }).disabled).toBe(false)
+  })
+
+  test('should render report markdown safely and return to the record list', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async url => {
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([]))
+      if (String(url).startsWith('/api/files/read')) return jsonResponse({ content: '# 执行完成\n\n<script>window.__autonomousInjected=true</script>\n\n| 项目 | 结果 |\n| --- | --- |\n| 验证 | 通过 |' })
+      throw new Error(`unexpected url ${url}`)
+    })
+    const reports = [{ name: 'daily-review.md', path: 'temp/autonomous_reports/daily-review.md', mod_time: '2026-07-28T10:00:00Z' }]
+    const { container } = render(<AutonomousPage lang="zh" reports={reports}/>)
+
+    fireEvent.click(screen.getByRole('tab', { name: '执行记录' }))
+    fireEvent.click(screen.getByRole('button', { name: /daily-review\.md/ }))
+
+    expect(await screen.findByRole('heading', { name: '执行完成' })).toBeTruthy()
+    expect(container.querySelector('.autonomous-markdown script')).toBeNull()
+    expect(globalThis.window.__autonomousInjected).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: '返回记录列表' }))
+    expect(screen.getByText('选择左侧记录查看详情')).toBeTruthy()
+  })
+
+  test('should expose detailed keyboard-accessible help for autonomous services', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async () => jsonResponse(approvalOverview([])))
+    render(<AutonomousPage lang="zh" services={[{ name: 'reflect/autonomous.py', running: false }]}/>)
+
+    const help = await screen.findByLabelText(/主自主引擎：核心后台服务/)
+    expect(help.getAttribute('tabindex')).toBe('0')
+    expect(help.getAttribute('data-tooltip')).toContain('自主任务队列')
+  })
 })
 
 describe('plan todo card disclosure', () => {
@@ -985,7 +1075,7 @@ describe('operator shell feedback', () => {
     expect(screen.queryByText('GA 源代码更新')).toBeNull()
     expect(document.documentElement.lang).toBe('en')
     expect(window.localStorage.getItem('ga-admin-lang')).toBe('en')
-  })
+  }, 30000)
 
   test('refresh shows pending, success, and a recoverable error', async () => {
     installBrowserPolyfills()

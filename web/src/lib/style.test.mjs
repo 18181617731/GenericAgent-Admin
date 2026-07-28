@@ -42,6 +42,14 @@ test('git sync logs stay bounded and scrollable', () => {
   assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*\.mini-log\s*\{[^}]*max-height\s*:\s*220px/i)
 })
 
+test('autonomous execution records stay uniformly left aligned', () => {
+  const reportButtonRule = ruleBodies('.autonomous-report-list button').join('\n')
+  assert.match(reportButtonRule, /grid-template-columns\s*:\s*minmax\(0,\s*1fr\)/i)
+  assert.match(reportButtonRule, /justify-content\s*:\s*stretch/i)
+  assert.match(reportButtonRule, /justify-items\s*:\s*start/i)
+  assert.match(reportButtonRule, /text-align\s*:\s*left\s*!important/i)
+})
+
 test('mobile chat keeps semantic colors for total usage metrics', () => {
   for (const [selector, color] of [
     ['span.oa-usage-time', '#7c3aed'],
