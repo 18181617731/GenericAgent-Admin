@@ -420,7 +420,8 @@ export default function App() {
         api('/api/version/info').catch(e => ({ error:e.message })),
         api('/api/version/status').catch(() => null)
       ])
-      setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); if (vstat?.id || vstat?.stage) setVersionStatus(vstat)
+      const visibleVersionStatus = (vstat?.id || vstat?.stage) && !shouldHideCompletedVersionProgress(vstat, ver?.version) ? vstat : null
+      setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setVersionStatus(visibleVersionStatus)
       await readObservability(h).catch(e => { setObservability(null); setObservabilityError(e.message) })
       if (!h?.ok) {
         setServices([]); setLogs([]); setFileList([])
@@ -698,14 +699,19 @@ export default function App() {
 
   const refreshVersionStatus = async () => {
     const d = await api('/api/version/status')
-    if (d?.check) setVersionCheck(d.check)
+    const check = d?.check || null
+    const updateDone = d.stage === 'done'
+    if (check) setVersionCheck(check)
     if (d?.running) versionObservedRunning.current = true
-    if (!d?.running && (d?.stage === 'done' || d?.stage === 'error')) {
+    if (!d?.running && (updateDone || d?.stage === 'error')) {
       const info = await api('/api/version/info').catch(() => null)
       if (info) setVersionInfo(info)
-      if (d.stage === 'done') {
-        const check = await api('/api/version/check').catch(() => null)
-        if (check) setVersionCheck(check)
+      if (versionUpdateNeedsReload.current && shouldReloadAfterVersionUpdate(d, versionObservedRunning.current)) {
+        const expectedVersion = check?.latest?.tag_name || ''
+        if (versionMatchesExpectedRelease(info?.version, expectedVersion)) {
+          versionUpdateNeedsReload.current = false
+          setTimeout(() => window.location.reload(), VERSION_RELOAD_DELAY_MS)
+        }
       }
       if (shouldHideCompletedVersionProgress(d, info?.version)) {
         setVersionStatus(null)
@@ -715,36 +721,6 @@ export default function App() {
     setVersionStatus(d)
     return d
   }
-  useEffect(() => {
-    let stop = false
-    const tick = async () => {
-      try {
-        const d = await refreshVersionStatus()
-        
-        // 检测是否需要重新加载页面
-        if (versionUpdateNeedsReload.current && shouldReloadAfterVersionUpdate(d, versionObservedRunning.current)) {
-          const expectedVersion = versionCheck?.latest?.tag_name || ''
-          if (versionMatchesExpectedRelease(versionInfo?.version, expectedVersion)) {
-            // 版本匹配，重新加载页面
-            setTimeout(() => window.location.reload(), VERSION_RELOAD_DELAY_MS)
-            return
-          }
-        }
-        
-        if (!stop && d?.running) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
-      } catch (err) {
-        // 在宽限期内，容忍连接失败（更新期间服务可能暂时不可用）
-        if (shouldReportVersionPollError(versionRestartGraceUntil.current)) {
-          // 宽限期已过，报告错误
-          console.error('Version status poll error:', err)
-        }
-        // 无论是否在宽限期内，都继续轮询
-        if (!stop) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
-      }
-    }
-    tick()
-    return () => { stop = true }
-  }, [versionInfo, versionCheck])
   useEffect(() => {
     if (!versionStatus?.running) return
     const timer = setInterval(() => refreshVersionStatus().catch(e => {

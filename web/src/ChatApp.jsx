@@ -22,6 +22,7 @@ import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue,
 import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
+import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 

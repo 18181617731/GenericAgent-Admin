@@ -938,6 +938,37 @@ describe('operator shell feedback', () => {
     expect(files.disabled).toBe(false)
   })
 
+  test('hides an applied update status without repeatedly checking GitHub', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async url => {
+      const path = new URL(url, 'http://localhost').pathname
+      const payloads = {
+        '/api/config': { ga_root: '' },
+        '/api/ga/health': { ok: false, error: 'GA root not configured' },
+        '/api/autostart/status': { supported: false, enabled: false },
+        '/api/version/info': { version: 'v1.0.32' },
+        '/api/version/status': {
+          id: 'old-update',
+          stage: 'done',
+          running: false,
+          progress: 100,
+          applied_version: 'v1.0.32',
+          message: 'SHOULD_HIDE_STALE_PROGRESS',
+          check: { latest: { tag_name: 'v1.0.32' } },
+        },
+        '/api/ga/inventory': {},
+        '/api/risk/catalog': {},
+      }
+      if (!(path in payloads)) throw new Error(`unexpected url ${url}`)
+      return jsonResponse(payloads[path])
+    })
+
+    render(<App />)
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/version/status', expect.anything()))
+    await waitFor(() => expect(screen.queryByText('SHOULD_HIDE_STALE_PROGRESS')).toBeNull())
+    expect(globalThis.fetch.mock.calls.filter(([url]) => String(url).includes('/api/version/check'))).toHaveLength(0)
+  })
+
   test('switches the complete overview shell to English without stale Chinese labels', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
