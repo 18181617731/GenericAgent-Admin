@@ -2,7 +2,10 @@
 
 package version
 
-import "os/exec"
+import (
+	"os/exec"
+	"syscall"
+)
 
 func hideChildWindow(cmd *exec.Cmd) {}
 

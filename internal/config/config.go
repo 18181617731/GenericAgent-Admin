@@ -21,6 +21,13 @@ type ExtraSystemPromptPreset struct {
 	Content string `json:"content"`
 }
 
+type ChatTitleModelRef struct {
+	Enable          bool   `json:"enable"`           // false = disabled (default, saves tokens)
+	ProviderVarName string `json:"provider_var_name"` // empty = follow conversation model
+	Model           string `json:"model"`
+	LLMNo           int    `json:"llm_no"`
+}
+
 type AppConfig struct {
 	GARoot                   string                    `json:"ga_root"`
 	ChatDataDir              string                    `json:"chat_data_dir"`
@@ -42,6 +49,10 @@ type AppConfig struct {
 	UpdateRepoURL            string                    `json:"update_repo_url"`
 	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
 	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
+	// ChatDefaultLLMNo is the llm_no seeded into freshly created chat sessions.
+	// It tracks the model last picked in Admin Chat so a new conversation keeps
+	// using it instead of silently falling back to the first configured model.
+	ChatDefaultLLMNo int `json:"chat_default_llm_no,omitempty"`
 }
 
 func Validate(cfg AppConfig) error {
@@ -53,6 +64,24 @@ func Validate(cfg AppConfig) error {
 	}
 	if cfg.BufferLines < 0 {
 		return fmt.Errorf("buffer_lines must be positive")
+	}
+	if cfg.ChatDefaultLLMNo < 0 {
+		return fmt.Errorf("chat_default_llm_no must be positive")
+	}
+	if cfg.ChatTitleModel != nil {
+		// llm_no must always be non-negative regardless of the enable flag.
+		if cfg.ChatTitleModel.LLMNo < 0 {
+			return fmt.Errorf("chat_title_model.llm_no must be non-negative")
+		}
+		if cfg.ChatTitleModel.Enable {
+			// Allow both provider_var_name and model to be empty when enabled,
+			// which means "follow the current conversation model".
+			provEmpty := strings.TrimSpace(cfg.ChatTitleModel.ProviderVarName) == ""
+			modelEmpty := strings.TrimSpace(cfg.ChatTitleModel.Model) == ""
+			if provEmpty != modelEmpty {
+				return fmt.Errorf("chat_title_model: provider_var_name and model must both be set or both be empty")
+			}
+		}
 	}
 	if root := strings.TrimSpace(cfg.GARoot); root != "" {
 		st, err := os.Stat(root)

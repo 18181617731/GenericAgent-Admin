@@ -56,3 +56,21 @@ test('mobile chat keeps semantic colors for total usage metrics', () => {
 test('touch sidebars expose actions without an iOS hover-first tap', () => {
   assert.match(css, /@media\s*\(hover:\s*none\),\s*\(pointer:\s*coarse\)[\s\S]*?\.oa-session-more\s*\{[^}]*opacity\s*:\s*1[^}]*pointer-events\s*:\s*auto/i)
 })
+
+test('settings auto-title card has toggle and action field styles', () => {
+  const toggleRule = ruleBodies('.settings-field-toggle').join('\n')
+  assert.match(toggleRule, /grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+auto/i)
+  const stateRule = ruleBodies('.settings-toggle-state').join('\n')
+  assert.match(stateRule, /border-radius\s*:\s*999px/i)
+  assert.match(stateRule, /font-weight\s*:\s*700/i)
+  const actionRule = ruleBodies('.settings-field-action').join('\n')
+  assert.match(actionRule, /justify-items\s*:\s*end/i)
+  assert.match(
+    css,
+    /\.settings-toggle-state\.is-on\s*\{[^}]*color\s*:\s*var\(--green\)[^}]*\}/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*760px\)[\s\S]*?\.settings-field-toggle\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)[^}]*\}/i,
+  )
+})

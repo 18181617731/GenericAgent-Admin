@@ -38,12 +38,9 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	if len(items) > 80 {
-		items = items[:80]
-	}
 	writeJSON(w, map[string]interface{}{"sessions": items})
 }
 
@@ -135,7 +132,7 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: normalizeChatSettings(chatSettings{}), RawHistory: []map[string]interface{}{}}
+	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}}
 	writeJSON(w, chatSessionForClient(cs))
 }
 
@@ -345,6 +342,7 @@ func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid str
 	fork := chatSession{
 		ID:          newChatID(),
 		Title:       title,
+		TitleSource: chatTitleSourceManual,
 		Messages:    append([]chatMessage(nil), cs.Messages[:targetIndex]...),
 		Settings:    cs.Settings,
 		RawHistory:  raw,

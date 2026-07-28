@@ -66,26 +66,17 @@ const LEGACY_PROTOCOLS = [
   { value: 'chatgpt', label: '兼容旧值：chatgpt', shortLabel: 'ChatGPT（旧值）', prefix: 'oai_config', discover: true, color: 'cyan' },
 ]
 
-const protocolMeta = value => LEGACY_PROTOCOLS.find(item => item.value === value) || OFFICIAL_PROTOCOLS[0]
-const protocolLabel = value => protocolMeta(value)?.shortLabel || value || 'Native OAI'
+const protocolMeta = (value, t) => {
+  const meta = LEGACY_PROTOCOLS.find(item => item.value === value) || OFFICIAL_PROTOCOLS[0]
+  const localized = t?.models?.protocols?.[meta.value]
+  return localized ? { ...meta, label: localized[0], shortLabel: localized[0], help: localized[1] || meta.help } : meta
+}
+const protocolLabel = (value, t) => protocolMeta(value, t)?.shortLabel || value || 'Native OAI'
 const supportsModelDiscovery = value => !!protocolMeta(value)?.discover
 const nextVarName = (protocol, profiles = []) => nextProviderVarName(
   protocolMeta(protocol)?.prefix || 'native_oai_config',
   profiles,
 )
-
-const ERR_KEYS = {
-  varNameRequired: '必须填写变量名',
-  varNameInvalid: '变量名须为 Python 标识符',
-  varNameDiscoveryToken: '变量名须含 api / config / cookie，或使用官方命名',
-  varNameDuplicate: '变量名重复',
-  modelRequired: '至少选择一个模型',
-  apiBaseRequired: '必须填写 API Base',
-  apiBaseProtocol: 'API Base 须以 http:// 或 https:// 开头',
-  maxRetriesInvalid: '重试次数须 ≥ 0',
-  readTimeoutInvalid: '超时须 > 0',
-  apiKeyEmpty: 'API Key 为空（仅适用于本地或无认证端点）',
-}
 
 const modelIdOf = value => String(value?.id || value?.name || value || '').trim()
 const uniqueModels = values => {
@@ -102,13 +93,14 @@ const isMaskedSecret = value => {
   return /^\*{4,}$/.test(secret) || /\*{2,}/.test(secret)
 }
 
-function StatusTag({ result }) {
+function StatusTag({ result, t }) {
+  const text = t.models
   if (!result) return null
   const errors = result.errors?.length || 0
   const warnings = result.warnings?.length || 0
-  if (errors) return <Tag color="error">{errors} 个阻断项</Tag>
-  if (warnings) return <Tag color="warning">{warnings} 个提醒</Tag>
-  return <Tag color="success">配置有效</Tag>
+  if (errors) return <Tag color="error">{text.blockItems(errors)}</Tag>
+  if (warnings) return <Tag color="warning">{text.reminders(warnings)}</Tag>
+  return <Tag color="success">{text.valid}</Tag>
 }
 
 function optionalNumber(value) {
@@ -117,21 +109,22 @@ function optionalNumber(value) {
   return Number.isNaN(parsed) ? value : parsed
 }
 
-function OptionalBoolSelect({ value, onChange, trueLabel = '启用', falseLabel = '关闭' }) {
+function OptionalBoolSelect({ value, onChange, t, trueLabel, falseLabel }) {
   return (
     <Select
       value={value === true || value === false ? value : 'inherit'}
       onChange={next => onChange(next === 'inherit' ? undefined : next)}
       options={[
-        { value: 'inherit', label: '使用默认值' },
-        { value: true, label: trueLabel },
-        { value: false, label: falseLabel },
+        { value: 'inherit', label: t.models.inherit },
+        { value: true, label: trueLabel || t.enabled },
+        { value: false, label: falseLabel || t.disabled },
       ]}
     />
   )
 }
 
-function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
+function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
+  const text = t.models
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
   const enabled = isModelConfigEnabled(config)
@@ -139,7 +132,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
   const availabilityTitle = [config.availability_detail, config.availability_latency_ms ? `${config.availability_latency_ms} ms` : ''].filter(Boolean).join(' · ')
   const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
     .filter(Boolean)
-    .join(' · ') || '默认参数'
+    .join(' · ') || text.defaultParams
 
   return (
     <article className={`model-config-row${configOpen ? ' is-open' : ''}${enabled ? '' : ' is-disabled'}`}>
@@ -150,7 +143,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
           </span>
           <div className="model-config-copy">
             <span className="model-config-id" title={config.model || ''}>
-              {config.model || '未命名模型'}
+              {config.model || text.unnamedModel}
             </span>
             <span className="model-config-summary">{configSummary}</span>
             {availability === 'unavailable'
@@ -166,7 +159,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
           onClick={() => setConfigOpen(open => !open)}
           aria-expanded={configOpen}
         >
-          <span>{configOpen ? '收起' : '配置'}</span>
+          <span>{configOpen ? text.collapse : text.configure}</span>
           <ChevronDown size={13} className="model-config-chevron" aria-hidden="true" />
         </Button>
         <Button
@@ -175,9 +168,9 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
           className="model-config-action model-config-delete"
           icon={<Trash2 size={13} />}
           onClick={onRemove}
-          aria-label={`删除模型 ${config.model || index + 1}`}
+          aria-label={text.deleteModel(config.model || index + 1)}
         >
-          删除
+          {t.delete}
         </Button>
       </div>
 
@@ -185,49 +178,49 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove }) {
         <div className="model-row-advanced">
           <div className="model-row-advanced-grid">
             <label className="model-field">
-              <span className="model-field-label">流式输出</span>
-              <OptionalBoolSelect value={config.stream} onChange={stream => onChange({ stream })} />
+              <span className="model-field-label">{text.stream}</span>
+              <OptionalBoolSelect value={config.stream} onChange={stream => onChange({ stream })} t={t} />
             </label>
             <label className="model-field">
-              <span className="model-field-label">最大重试次数</span>
-              <Input type="number" min={0} value={config.max_retries ?? ''} onChange={event => onChange({ max_retries: optionalNumber(event.target.value) })} placeholder="使用默认值" />
+              <span className="model-field-label">{text.maxRetries}</span>
+              <Input type="number" min={0} value={config.max_retries ?? ''} onChange={event => onChange({ max_retries: optionalNumber(event.target.value) })} placeholder={text.inherit} />
             </label>
             <label className="model-field">
-              <span className="model-field-label">读取超时（秒）</span>
-              <Input type="number" min={1} value={config.read_timeout ?? ''} onChange={event => onChange({ read_timeout: optionalNumber(event.target.value) })} placeholder="使用默认值" />
+              <span className="model-field-label">{text.readTimeout}</span>
+              <Input type="number" min={1} value={config.read_timeout ?? ''} onChange={event => onChange({ read_timeout: optionalNumber(event.target.value) })} placeholder={text.inherit} />
             </label>
             <label className="model-field">
-              <span className="model-field-label">连接超时（秒）</span>
-              <Input type="number" min={1} value={config.connect_timeout ?? ''} onChange={event => onChange({ connect_timeout: optionalNumber(event.target.value) })} placeholder="使用默认值" />
+              <span className="model-field-label">{text.connectTimeout}</span>
+              <Input type="number" min={1} value={config.connect_timeout ?? ''} onChange={event => onChange({ connect_timeout: optionalNumber(event.target.value) })} placeholder={text.inherit} />
             </label>
             {fields.userAgent && (
               <label className="model-field">
                 <span className="model-field-label">User-Agent</span>
-                <Input value={config.user_agent || ''} onChange={event => onChange({ user_agent: event.target.value || undefined })} placeholder="可选" />
+                <Input value={config.user_agent || ''} onChange={event => onChange({ user_agent: event.target.value || undefined })} placeholder={text.optional} />
               </label>
             )}
             {fields.apiMode && (
               <label className="model-field">
-                <span className="model-field-label">API 模式</span>
-                <Select allowClear value={config.api_mode || undefined} onChange={api_mode => onChange({ api_mode })} placeholder="使用默认值" options={API_MODE_OPTIONS} />
+                <span className="model-field-label">{text.apiMode}</span>
+                <Select allowClear value={config.api_mode || undefined} onChange={api_mode => onChange({ api_mode })} placeholder={text.inherit} options={API_MODE_OPTIONS} />
               </label>
             )}
             {fields.thinkingType && (
               <label className="model-field">
-                <span className="model-field-label">思考类型</span>
-                <Select allowClear value={config.thinking_type || undefined} onChange={thinking_type => onChange({ thinking_type })} placeholder="使用默认值" options={THINKING_TYPE_OPTIONS} />
+                <span className="model-field-label">{text.thinkingType}</span>
+                <Select allowClear value={config.thinking_type || undefined} onChange={thinking_type => onChange({ thinking_type })} placeholder={text.inherit} options={THINKING_TYPE_OPTIONS} />
               </label>
             )}
             {fields.reasoningFamily && (
               <label className="model-field">
-                <span className="model-field-label">推理强度</span>
-                <Select allowClear value={config.reasoning_effort || undefined} onChange={reasoning_effort => onChange({ reasoning_effort })} placeholder="使用默认值" options={reasoningEffortOptions(protocol)} />
+                <span className="model-field-label">{text.reasoningEffort}</span>
+                <Select allowClear value={config.reasoning_effort || undefined} onChange={reasoning_effort => onChange({ reasoning_effort })} placeholder={text.inherit} options={reasoningEffortOptions(protocol)} />
               </label>
             )}
             {fields.fakeClaudeCode && (
               <label className="model-field">
-                <span className="model-field-label">模拟 Claude Code 系统提示</span>
-                <OptionalBoolSelect value={config.fake_cc_system_prompt} onChange={fake_cc_system_prompt => onChange({ fake_cc_system_prompt })} />
+                <span className="model-field-label">{text.fakeClaude}</span>
+                <OptionalBoolSelect value={config.fake_cc_system_prompt} onChange={fake_cc_system_prompt => onChange({ fake_cc_system_prompt })} t={t} />
               </label>
             )}
           </div>
@@ -286,9 +279,9 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
 
       <div className="model-config-table">
         <div className="model-config-table-head" aria-hidden="true">
-          <span>模型 ID</span>
-          <span>配置</span>
-          <span>删除</span>
+          <span>{text.modelId}</span>
+          <span>{text.configuration}</span>
+          <span>{t.delete}</span>
         </div>
         <div className="model-config-list">
           {configs.length > 0 ? configs.map((config, index) => (
@@ -299,8 +292,9 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
               protocol={profile.type || DEFAULT_PROTOCOL}
               onChange={patch => onChange(updateModelConfig(profile, index, patch))}
               onRemove={() => onChange(removeModelConfig(profile, index))}
+              t={t}
             />
-          )) : <div className="model-config-empty">还没有模型。手动输入模型 ID，或先从接口获取。</div>}
+          )) : <div className="model-config-empty">{text.noModels}</div>}
         </div>
       </div>
 
@@ -309,15 +303,15 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
           value={draft}
           onChange={event => setDraft(event.target.value)}
           onPressEnter={addDraft}
-          placeholder="手动输入模型 ID"
-          aria-label="手动输入模型 ID"
+          placeholder={text.manualModel}
+          aria-label={text.manualModel}
         />
-        <Button icon={<Plus size={14} />} onClick={addDraft} disabled={!draft.trim()}>添加模型</Button>
+        <Button icon={<Plus size={14} />} onClick={addDraft} disabled={!draft.trim()}>{text.addModel}</Button>
       </div>
 
       <Modal
         className="model-discover-modal"
-        title="获取模型"
+        title={text.fetchModels}
         open={discoverOpen}
         onCancel={() => setDiscoverOpen(false)}
         footer={null}
@@ -325,25 +319,25 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
         destroyOnHidden
       >
         <div className="model-discover-modal-head">
-          <span>{busy ? '正在从服务商接口获取模型…' : discoveryError ? '获取模型失败' : `发现 ${candidates.length} 个未添加模型`}</span>
+          <span>{busy ? text.fetchingModels : discoveryError ? text.fetchFailed : text.discovered(candidates.length)}</span>
           <Button size="small" type="primary" onClick={() => addCandidates(candidates)} disabled={busy || !!discoveryError || !candidates.length}>
-            全部添加
+            {text.addAll}
           </Button>
         </div>
         {busy ? (
-          <div className="model-discover-modal-state" role="status"><RefreshCw size={18} className="is-spinning" />正在获取模型</div>
+          <div className="model-discover-modal-state" role="status"><RefreshCw size={18} className="is-spinning" />{text.fetching}</div>
         ) : discoveryError ? (
           <Alert
             type="error"
             showIcon
-            message="无法获取候选模型"
+            message={text.cannotFetch}
             description={discoveryError}
-            action={<Button size="small" onClick={onDiscover}>重试</Button>}
+            action={<Button size="small" onClick={onDiscover}>{t.retry}</Button>}
           />
         ) : candidates.length > 0 ? (
           <div className="model-candidate-list">
             {candidates.map(model => (
-              <button key={model} type="button" className="model-candidate-item" onClick={() => addCandidates([model])} aria-label={`添加模型 ${model}`}>
+              <button key={model} type="button" className="model-candidate-item" onClick={() => addCandidates([model])} aria-label={text.addModelAria(model)}>
                 <span title={model}>{model}</span>
                 <Plus size={14} />
               </button>
@@ -351,8 +345,8 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
           </div>
         ) : (
           <div className="model-discover-modal-state" role="status">
-            <span>没有发现新的模型，可重试或直接填写模型 ID。</span>
-            <Button size="small" onClick={onDiscover}>重新获取</Button>
+            <span>{text.noNewModels}</span>
+            <Button size="small" onClick={onDiscover}>{text.refetch}</Button>
           </div>
         )}
       </Modal>
@@ -376,7 +370,9 @@ function ProfileCard({
   onClearRevealedKey,
   onSave,
   saveState,
+  t,
 }) {
+  const text = t.models
   const [discoverBusy, setDiscoverBusy] = useState(false)
   const [discoverError, setDiscoverError] = useState('')
   const [discovered, setDiscovered] = useState([])
@@ -495,14 +491,14 @@ function ProfileCard({
               <Tag color={meta.color}>{protocolLabel(p.type || DEFAULT_PROTOCOL)}</Tag>
               <span className="model-count-badge">{availability.enabled}/{selectedModels.length} 个启用</span>
             </div>
-            <span className="model-source-base">{p.apibase || '尚未填写 BaseURL'}</span>
+            <span className="model-source-base">{p.apibase || text.baseMissing}</span>
           </div>
         </div>
         <Space size={8} className="model-source-actions">
-          <StatusTag result={result} />
-          {dirty && <span className="model-save-state is-dirty">未保存</span>}
-          {!dirty && saveOk && <span className="model-save-state is-saved">已保存</span>}
-          {saveError && <span className="model-save-state is-error">保存失败</span>}
+          <StatusTag result={result} t={t} />
+          {dirty && <span className="model-save-state is-dirty">{text.unsaved}</span>}
+          {!dirty && saveOk && <span className="model-save-state is-saved">{text.saved}</span>}
+          {saveError && <span className="model-save-state is-error">{text.saveFailed}</span>}
           <Button
             type="primary"
             icon={<CheckCircle2 size={14} />}
@@ -510,16 +506,16 @@ function ProfileCard({
             disabled={saveBusy || result?.errors?.length > 0}
             onClick={save}
           >
-            保存
+            {t.save}
           </Button>
-          <Button danger type="text" icon={<Trash2 size={15} />} onClick={() => removeProfile(idx)} title="删除此服务商" />
+          <Button danger type="text" icon={<Trash2 size={15} />} onClick={() => removeProfile(idx)} title={text.deleteProviderTitle} />
         </Space>
       </header>
 
       <div className="model-source-body">
         <div className="model-workflow-heading model-workflow-heading--fields">
-          <strong><span>1</span> 连接服务商</strong>
-          <small>确认名称、官方协议和 BaseURL；API Key 可保留已保存值。</small>
+          <strong><span>1</span> {text.connectStep}</strong>
+          <small>{text.connectHelp}</small>
         </div>
         <div className="model-primary-grid">
           <label className="model-field">
@@ -538,7 +534,7 @@ function ProfileCard({
             <small>可使用中文；失去焦点后自动保存。</small>
           </label>
           <label className="model-field model-field--provider">
-            <span className="model-field-label">名称</span>
+            <span className="model-field-label">{text.name}</span>
             <Input
               value={providerDisplayName(p.var_name)}
               onChange={event => patch({
@@ -548,12 +544,12 @@ function ProfileCard({
                   p.var_name,
                 ),
               })}
-              placeholder="例如 gpt55_medium"
+              placeholder={text.nameExample}
             />
-            <small>用于区分服务商；内部协议前缀会自动维护。</small>
+            <small>{text.nameHelp}</small>
           </label>
           <label className="model-field">
-            <span className="model-field-label">官方协议</span>
+            <span className="model-field-label">{text.protocol}</span>
             <Select
               value={p.type || DEFAULT_PROTOCOL}
               onChange={value => patch({
@@ -565,7 +561,7 @@ function ProfileCard({
                   idx,
                 ),
               })}
-              options={OFFICIAL_PROTOCOLS}
+              options={OFFICIAL_PROTOCOLS.map(item => protocolMeta(item.value, t))}
             />
           </label>
           <label className="model-field model-field--base">
@@ -573,7 +569,7 @@ function ProfileCard({
             <Input value={p.apibase || ''} onChange={event => patch({ apibase: event.target.value })} placeholder="https://api.example.com/v1" />
           </label>
           <label className="model-field model-field--key">
-            <span className="model-field-label">API Key <em>{revealed ? '临时显示' : '默认隐藏'}</em></span>
+            <span className="model-field-label">API Key <em>{revealed ? text.tempShown : text.hiddenByDefault}</em></span>
             <Input
               type={revealed ? 'text' : 'password'}
               value={shownApiKey}
@@ -581,14 +577,14 @@ function ProfileCard({
                 onClearRevealedKey?.(idx, p, profileKey)
                 patch({ apikey: event.target.value })
               }}
-              placeholder="保留掩码表示不覆盖已保存密钥"
+              placeholder={text.keyPlaceholder}
               addonAfter={revealed ? (
                 <Space size={2}>
-                  <Button size="small" type="text" icon={<EyeOff size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>隐藏</Button>
-                  <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)} title="重新读取" aria-label="重新读取 API Key" />
+                  <Button size="small" type="text" icon={<EyeOff size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>{t.hide}</Button>
+                  <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)} title={text.reread} aria-label={`${text.reread} API Key`} />
                 </Space>
               ) : (
-                <Button size="small" type="text" icon={<Eye size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>显示</Button>
+                <Button size="small" type="text" icon={<Eye size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>{t.show}</Button>
               )}
             />
           </label>
@@ -605,21 +601,22 @@ function ProfileCard({
           availabilityResult={availabilityResult}
           disabled={discoverBusy || !p.apibase || !supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)}
           discoveryError={discoverError}
+          t={t}
         />
 
         <div className="model-workflow-heading model-workflow-heading--save">
-          <strong><span>3</span> 检查并保存</strong>
-          <small>{result?.errors?.length ? '先修复下方阻断项，再保存此服务商。' : dirty ? '当前修改尚未保存；确认提醒后保存。' : '配置修改后，使用卡片右上角的保存按钮单独保存。'}</small>
+          <strong><span>3</span> {text.saveStep}</strong>
+          <small>{result?.errors?.length ? text.fixBlocks : dirty ? text.dirtyHelp : text.savedHelp}</small>
         </div>
-        {saveBusy && <Alert type="info" showIcon message="正在保存此服务商" description="请稍候，完成前不会重复提交。" className="model-inline-alert" />}
-        {saveOk && !dirty && <Alert type="success" showIcon message="已保存到 mykey.py" description="此服务商配置已保存，可继续配置其他服务商。" className="model-inline-alert" />}
+        {saveBusy && <Alert type="info" showIcon message={text.savingProvider} description={text.savingDescription} className="model-inline-alert" />}
+        {saveOk && !dirty && <Alert type="success" showIcon message={text.savedMykey} description={text.savedDescription} className="model-inline-alert" />}
         {saveError && (
           <Alert
             type="error"
             showIcon
-            message="此服务商保存失败"
-            description={saveState?.error || '未知错误'}
-            action={<Button size="small" onClick={save} disabled={!!result?.errors?.length} loading={saveBusy}>重试保存</Button>}
+            message={text.providerSaveFailed}
+            description={saveState?.error || text.unknownError}
+            action={<Button size="small" onClick={save} disabled={!!result?.errors?.length} loading={saveBusy}>{text.retrySave}</Button>}
             className="model-inline-alert"
           />
         )}
@@ -627,8 +624,8 @@ function ProfileCard({
           <Alert
             type="error"
             showIcon
-            message="此服务商暂时不能保存"
-            description={<ul>{result.errors.map(key => <li key={key}>{ERR_KEYS[key] || key}</li>)}</ul>}
+            message={text.cannotSave}
+            description={<ul>{result.errors.map(key => <li key={key}>{text.errors[key] || key}</li>)}</ul>}
             className="model-inline-alert"
           />
         )}
@@ -636,8 +633,8 @@ function ProfileCard({
           <Alert
             type="warning"
             showIcon
-            message="保存前请留意"
-            description={<ul>{result.warnings.map(key => <li key={key}>{ERR_KEYS[key] || key}</li>)}</ul>}
+            message={text.beforeSave}
+            description={<ul>{result.warnings.map(key => <li key={key}>{text.errors[key] || key}</li>)}</ul>}
             className="model-inline-alert"
           />
         )}
@@ -647,6 +644,7 @@ function ProfileCard({
 }
 
 function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
+  const text = t.models
   const [form, setForm] = useState(() => ({
     protocol: DEFAULT_PROTOCOL,
     providerVar: nextVarName(DEFAULT_PROTOCOL, profiles),
@@ -656,7 +654,7 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
   }))
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState('')
-  const meta = protocolMeta(form.protocol)
+  const meta = protocolMeta(form.protocol, t)
   const patchForm = next => setForm(current => ({ ...current, ...next }))
   const changeProtocol = protocol => setForm(current => ({
     ...current,
@@ -671,11 +669,11 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
   const add = async () => {
     const varName = form.providerVar.trim()
     if (!providerDisplayName(varName)) {
-      setError('请填写名称。')
+      setError(text.nameRequired)
       return
     }
     if (!form.baseUrl.trim()) {
-      setError('请填写 BaseURL。')
+      setError(text.baseRequired)
       return
     }
     setAdding(true)
@@ -714,10 +712,10 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
     <section className="model-add-panel">
       <header className="model-add-head">
         <div>
-          <strong>新增服务商</strong>
-          <span>一个服务商可同时管理多个模型，只需配置一次协议、BaseURL 和密钥。</span>
+          <strong>{text.addProvider}</strong>
+          <span>{text.addProviderHelp}</span>
         </div>
-        <Button type="text" icon={<X size={16} />} onClick={onClose} aria-label="关闭新增面板" />
+        <Button type="text" icon={<X size={16} />} onClick={onClose} aria-label={text.closeAdd} />
       </header>
       <div className="model-add-grid">
         <label className="model-field">
@@ -741,13 +739,13 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
                 form.providerVar,
               ),
             })}
-            placeholder="例如 gpt55_medium"
+            placeholder={text.nameExample}
           />
-          <small>用于区分服务商；内部协议前缀会自动维护。</small>
+          <small>{text.nameHelp}</small>
         </label>
         <label className="model-field">
-          <span className="model-field-label">官方协议</span>
-          <Select value={form.protocol} onChange={changeProtocol} options={OFFICIAL_PROTOCOLS} />
+          <span className="model-field-label">{text.protocol}</span>
+          <Select value={form.protocol} onChange={changeProtocol} options={OFFICIAL_PROTOCOLS.map(item => protocolMeta(item.value, t))} />
           <small>{meta.help}</small>
         </label>
         <label className="model-field model-field--base">
@@ -755,16 +753,16 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
           <Input value={form.baseUrl} onChange={event => patchForm({ baseUrl: event.target.value })} placeholder="https://api.example.com/v1" />
         </label>
         <label className="model-field model-field--key">
-          <span className="model-field-label">API Key <em>可选</em></span>
+          <span className="model-field-label">API Key <em>{text.optionalKey}</em></span>
           <Input type="password" value={form.apiKey} onChange={event => patchForm({ apiKey: event.target.value })} placeholder={t.hints?.savedSecret || '填写密钥'} />
         </label>
       </div>
       {error && <Alert className="model-inline-alert" type="error" showIcon message={error} />}
       <footer className="model-add-footer">
-        <span>添加后会立即保存到 mykey.py；后续修改仍需在卡片中点击“保存”。</span>
+        <span>{text.addProviderFooter}</span>
         <Space>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" icon={<Plus size={14} />} loading={adding} onClick={add}>添加并保存</Button>
+          <Button onClick={onClose}>{t.cancel}</Button>
+          <Button type="primary" icon={<Plus size={14} />} loading={adding} onClick={add}>{text.addAndSave}</Button>
         </Space>
       </footer>
     </section>
@@ -800,6 +798,7 @@ export function Models({
   onRevealKey,
   onClearRevealedKey,
 }) {
+  const text = t.models
   const [addOpen, setAddOpen] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
@@ -1125,7 +1124,7 @@ export function Models({
   }
   const saveModelOrder = async () => {
     if (!onSaveModelOrder) {
-      setOrderError('当前页面未提供顺序保存能力，请刷新后重试。')
+      setOrderError(text.orderMissing)
       return
     }
     setOrderSaving(true)
@@ -1133,7 +1132,7 @@ export function Models({
     try {
       const ok = await onSaveModelOrder(orderRows)
       if (!ok) {
-        setOrderError('保存失败，当前排序草稿已保留，请检查页面提示后重试。')
+        setOrderError(text.orderSaveFailed)
         return
       }
       setOrderOpen(false)
@@ -1141,7 +1140,7 @@ export function Models({
       setDragIndex(null)
       resetOrderMoveSession()
     } catch (error) {
-      setOrderError(error?.message || '保存失败，当前排序草稿已保留。')
+      setOrderError(error?.message || text.orderSaveFailedShort)
     } finally {
       setOrderSaving(false)
     }
@@ -1212,13 +1211,13 @@ export function Models({
 
   const riskItems = [{
     key: 'risk',
-    label: <Space size={7}><AlertTriangle size={14} />模型路由与保存安全</Space>,
+    label: <Space size={7}><AlertTriangle size={14} />{text.riskTitle}</Space>,
     children: (
       <div className="model-risk-content">
         <Alert
           type={risk.status === 'error' ? 'error' : 'info'}
-          message={risk.status === 'ready' ? '风险目录已加载' : risk.status === 'error' ? '风险目录不可用' : '暂无目录条目'}
-          description={risk.status === 'error' ? risk.error : '获取模型是只读操作；新增、删除与每张卡片的“保存”才会更新 mykey.py。'}
+          message={risk.status === 'ready' ? text.riskReady : risk.status === 'error' ? text.riskUnavailable : text.riskEmpty}
+          description={risk.status === 'error' ? risk.error : text.riskHelp}
         />
         {risk.items.length > 0 && (
           <div className="model-risk-grid">
@@ -1231,7 +1230,7 @@ export function Models({
           </div>
         )}
         {risk.missingConfirmedWriteRoutes.length > 0 && (
-          <Alert type="warning" message={`目录缺少已确认写入门禁：${risk.missingConfirmedWriteRoutes.join(', ')}`} />
+          <Alert type="warning" message={text.missingGates(risk.missingConfirmedWriteRoutes.join(', '))} />
         )}
       </div>
     ),
@@ -1252,16 +1251,16 @@ export function Models({
             icon={<ListOrdered size={14} />}
             onClick={openModelOrder}
             disabled={!persistedOrderCount}
-            title={persistedOrderCount ? '调整已保存模型的全局顺序' : '保存模型后才能调整顺序'}
+            title={persistedOrderCount ? text.orderAvailable : text.orderUnavailable}
           >
-            模型顺序
+            {text.modelOrder}
           </Button>
           <Button icon={<FileCode2 size={14} />} onClick={openPreview}>配置预览</Button>
           <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
         </div>
       </header>
 
-      <div className="model-summary-line" aria-label="配置概况">
+      <div className="model-summary-line" aria-label={text.configSummary}>
         <div className="model-summary-status">
           <span className={`model-summary-dot${hasErrors ? ' is-error' : ''}`} />
           <strong>{summary.total} 个服务商</strong>
@@ -1270,7 +1269,7 @@ export function Models({
           {summary.errors > 0 && <span className="is-error">{summary.errors} 个阻断项</span>}
           {summary.warnings > 0 && <span className="is-warning">{summary.warnings} 个提醒</span>}
         </div>
-        <div className="model-summary-source"><FileCode2 size={13} /><span>配置来源</span><code>mykey.py</code></div>
+        <div className="model-summary-source"><FileCode2 size={13} /><span>{text.configSource}</span><code>mykey.py</code></div>
       </div>
 
       {batchProbeBusy && (
@@ -1307,7 +1306,7 @@ export function Models({
       <div className="model-workbench">
         <aside className="model-provider-rail">
           <header className="model-rail-head">
-            <div><strong>服务商目录</strong><span>选择一项进行编辑</span></div>
+            <div><strong>{text.providerDirectory}</strong><span>{text.chooseProvider}</span></div>
             <b>{profiles.length}</b>
           </header>
 
@@ -1366,16 +1365,16 @@ export function Models({
           )}
 
           <button type="button" className={`model-provider-add${addOpen ? ' is-active' : ''}`} onClick={openAdd}>
-            <Plus size={15} /><span>新增服务商</span>
+            <Plus size={15} /><span>{text.addProvider}</span>
           </button>
 
           <footer className="model-rail-foot">
             <CheckCircle2 size={13} />
-            <span>单项保存，密钥不会出现在预览中</span>
+            <span>{text.singleSaveHint}</span>
           </footer>
         </aside>
 
-        <section className="model-editor-workspace" aria-label={addOpen ? '新增服务商' : '服务商编辑器'}>
+        <section className="model-editor-workspace" aria-label={addOpen ? text.addProvider : text.providerEditor}>
           {addOpen && (
             <AddProfileForm
               profiles={profiles}
@@ -1409,6 +1408,7 @@ export function Models({
                   onClearRevealedKey={onClearRevealedKey}
                   onSave={saveModelProfile}
                   saveState={modelSaveStatus[key] || modelSaveStatus[idx]}
+                  t={t}
                 />
               </div>
             )
@@ -1417,9 +1417,9 @@ export function Models({
           {!profiles.length && !addOpen && (
             <div className="model-empty-state">
               <Layers size={36} strokeWidth={1.2} className="model-empty-icon" />
-              <strong>{importLoading ? '正在读取 mykey.py…' : '还没有服务商'}</strong>
-              <span>{importLoading ? '请稍候，配置加载后会显示在这里。' : '创建第一个服务商，将同源模型集中管理。'}</span>
-              {!importLoading && <Button type="primary" icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>}
+              <strong>{importLoading ? text.loadingMykey : text.noProviders}</strong>
+              <span>{importLoading ? text.loadingHelp : text.noProvidersHelp}</span>
+              {!importLoading && <Button type="primary" icon={<Plus size={15} />} onClick={openAdd}>{text.addProvider}</Button>}
             </div>
           )}
         </section>
@@ -1475,7 +1475,7 @@ export function Models({
       )}
 
       <Drawer
-        title="调整模型顺序"
+        title={text.orderTitle}
         placement="right"
         width={620}
         open={orderOpen}
@@ -1485,10 +1485,10 @@ export function Models({
         className="model-order-drawer"
         footer={(
           <div className="model-order-footer">
-            <span>关闭会丢弃未保存的顺序调整</span>
+            <span>{text.discardOrder}</span>
             <Space>
-              <Button onClick={closeModelOrder} disabled={orderSaving}>取消</Button>
-              <Button type="primary" onClick={saveModelOrder} loading={orderSaving} disabled={!orderRows.length}>确认并保存</Button>
+              <Button onClick={closeModelOrder} disabled={orderSaving}>{t.cancel}</Button>
+              <Button type="primary" onClick={saveModelOrder} loading={orderSaving} disabled={!orderRows.length}>{text.confirmSave}</Button>
             </Space>
           </div>
         )}
@@ -1496,11 +1496,11 @@ export function Models({
         <Alert
           type="info"
           showIcon
-          message="列表顺序就是 --llm-no 的取值"
-          description="编号从 0 开始。保存后，mykey.py 中展开的模型变量会按此顺序声明；页面中尚未保存的模型不会出现在这里。"
+          message={text.orderInfo}
+          description={text.orderDescription}
         />
         {orderError && <Alert type="error" showIcon message={orderError} className="model-order-error" />}
-        <div className="model-order-list" role="list" aria-label="已保存模型的全局顺序">
+        <div className="model-order-list" role="list" aria-label={text.savedOrder}>
           {orderRows.map((row, index) => (
             <div
               key={row.id}
@@ -1538,8 +1538,8 @@ export function Models({
                   type="text"
                   size="small"
                   icon={<ArrowUp size={15} />}
-                  aria-label={`上移 ${row.model || row.variableName}`}
-                  title="上移"
+                  aria-label={`${text.moveUp} ${row.model || row.variableName}`}
+                  title={text.moveUp}
                   disabled={orderSaving || index === 0}
                   onClick={event => moveModelOrder(row.id, -1, event)}
                 />
@@ -1547,8 +1547,8 @@ export function Models({
                   type="text"
                   size="small"
                   icon={<ArrowDown size={15} />}
-                  aria-label={`下移 ${row.model || row.variableName}`}
-                  title="下移"
+                  aria-label={`${text.moveDown} ${row.model || row.variableName}`}
+                  title={text.moveDown}
                   disabled={orderSaving || index === orderRows.length - 1}
                   onClick={event => moveModelOrder(row.id, 1, event)}
                 />
@@ -1559,16 +1559,16 @@ export function Models({
       </Drawer>
 
       <Drawer
-        title="mykey.py 配置预览"
+        title={text.previewTitle}
         placement="right"
         width={680}
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
         className="model-preview-drawer"
-        extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>刷新预览</Button>}
+        extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>{text.refreshPreview}</Button>}
       >
-        <Alert type="info" showIcon message="预览不会读取或显示已保存的明文密钥。" />
-        <pre className="model-preview-pre">{modelPreview || (profiles.length ? '正在生成预览…' : '添加至少一个服务商后显示预览。')}</pre>
+        <Alert type="info" showIcon message={text.previewSecret} />
+        <pre className="model-preview-pre">{modelPreview || (profiles.length ? text.generatingPreview : text.previewNeedsProvider)}</pre>
       </Drawer>
     </section>
   )

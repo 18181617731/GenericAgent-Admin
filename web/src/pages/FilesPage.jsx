@@ -64,16 +64,17 @@ export function FilesPage({
   const [contentMode, setContentMode] = useState('edit')
   const mobileTabsRef = useRef(null)
   const dirty = fileEditorDirty(fileContent, loadedFileContent)
+  const text = t.files
   const retargeted = Boolean(loadedFilePath && filePath && loadedFilePath !== filePath)
-  const saveReview = saveReviewText({ path: filePath, loadedPath: loadedFilePath, dirty })
+  const saveReview = !filePath ? text.chooseBeforeSave : retargeted ? text.reviewRetargeted(loadedFilePath, filePath) : dirty ? text.reviewDirty(filePath) : text.reviewClean(filePath)
   const hasLoadedTarget = Boolean(String(loadedFilePath || '').trim())
   const saveDisabled = !hasLoadedTarget || !filePath || !dirty
   const saveDisabledReason = !hasLoadedTarget
-    ? 'Read a file before saving. The editor has no loaded target.'
+    ? text.readFirst
     : !filePath
-      ? 'Choose a save target before saving.'
+      ? text.chooseSaveTarget
       : !dirty
-        ? `Save is disabled because ${loadedFilePath} has no unsaved changes.`
+        ? text.noChanges(loadedFilePath)
         : ''
   const fileListEmpty = !fileList?.length
   const searchEmpty = !searchHits?.length
@@ -136,7 +137,7 @@ export function FilesPage({
         message={fileStatus?.message}
         onRetry={fileStatus?.onRetry}
         onDismiss={dismissFileStatus}
-        retryLabel="Retry file action"
+        retryLabel={text.retryAction}
       />
       <div className="files-mobile-tabs" ref={mobileTabsRef} role="tablist" aria-label="文件视图">
         <button type="button" role="tab" aria-selected={mobileView === 'browse'} className={mobileView === 'browse' ? 'active' : ''} onClick={() => setMobileView('browse')}><FolderOpen size={16}/>文件</button>

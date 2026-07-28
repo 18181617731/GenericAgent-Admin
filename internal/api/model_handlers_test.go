@@ -50,6 +50,59 @@ func TestModelsRawAndPreviewMethodContracts(t *testing.T) {
 	}
 }
 
+func TestModelsTitleModelPersistsStableReferenceAndReconcilesOrder(t *testing.T) {
+	root := t.TempDir()
+	s := newModelTestServer(t, root)
+	firstOrder, secondOrder := 0, 1
+	profiles := []modelconfig.Profile{
+		{
+			VarName: "native_oai_config1",
+			Type:    "native_oai",
+			Name:    "main",
+			APIBase: "https://api.example/v1",
+			Model:   "chat-model",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "chat-model", SortOrder: &firstOrder},
+				{Model: "title-model", SortOrder: &secondOrder},
+			},
+			APIKey: "sk-test",
+		},
+	}
+	if _, err := modelconfig.Export(root, profiles, true); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"model":{"provider_var_name":"native_oai_config1","model":"title-model","llm_no":99}}`)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/models/title-model", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := s.CfgStore.Cfg.ChatTitleModel; got == nil || got.LLMNo != 1 || got.Model != "title-model" {
+		t.Fatalf("saved title model=%#v, want resolved llm_no 1", got)
+	}
+
+	profiles[0].ModelConfigs[0].SortOrder = &secondOrder
+	profiles[0].ModelConfigs[1].SortOrder = &firstOrder
+	if err := s.reconcileChatTitleModel(profiles); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CfgStore.Cfg.ChatTitleModel; got == nil || got.LLMNo != 0 {
+		t.Fatalf("reconciled title model=%#v, want llm_no 0", got)
+	}
+
+	profiles[0].ModelConfigs = profiles[0].ModelConfigs[:1]
+	if err := s.reconcileChatTitleModel(profiles); err != nil {
+		t.Fatal(err)
+	}
+	if s.CfgStore.Cfg.ChatTitleModel != nil {
+		t.Fatalf("deleted model should clear selection: %#v", s.CfgStore.Cfg.ChatTitleModel)
+	}
+}
+
 func TestModelsSaveAcceptsBooleanFakeCCSystemPrompt(t *testing.T) {
 	root := t.TempDir()
 	s := newModelTestServer(t, root)
@@ -325,13 +378,13 @@ func TestModelsExportRenamedProviderInheritsSecretByPreviousVarName(t *testing.T
 	payload := map[string]interface{}{
 		"overwrite_active": true,
 		"profiles": []map[string]interface{}{{
-			"var_name":         newVar,
+			"var_name":          newVar,
 			"previous_var_name": oldVar,
-			"type":             "native_claude",
-			"name":             "renamed provider",
-			"apibase":          "https://api.example/v1",
-			"model":            "claude-test",
-			"apikey":           "sk-****cret",
+			"type":              "native_claude",
+			"name":              "renamed provider",
+			"apibase":           "https://api.example/v1",
+			"model":             "claude-test",
+			"apikey":            "sk-****cret",
 		}},
 	}
 	body, _ := json.Marshal(payload)

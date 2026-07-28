@@ -1,6 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './chatStream.js'
+
+test('resume targets the tail placeholder and never a stale empty assistant mid-history', () => {
+  const stale = { id:'stale-mid', role:'assistant', content:'' }
+  const tail = { id:'tail-live', role:'assistant', content:'' }
+  // The regression: a leftover empty assistant sits before the real placeholder.
+  assert.equal(pickResumePlaceholderId([
+    { id:'u1', role:'user', content:'hi' },
+    stale,
+    { id:'u2', role:'user', content:'again' },
+    tail,
+  ]), 'tail-live')
+  // No placeholder yet (backend has not appended it): caller must create its own.
+  assert.equal(pickResumePlaceholderId([{ id:'u1', role:'user', content:'hi' }]), '')
+  // Tail already has content, so it is a finished message, not a placeholder.
+  assert.equal(pickResumePlaceholderId([{ id:'a1', role:'assistant', content:'done' }]), '')
+  assert.equal(pickResumePlaceholderId([]), '')
+  assert.equal(pickResumePlaceholderId(undefined), '')
+  assert.equal(pickResumePlaceholderId([{ role:'assistant', content:'' }]), '')
+})
 
 test('recognizes only the dedicated btw command boundary', () => {
   assert.equal(isBTWCommand('/btw question'), true)

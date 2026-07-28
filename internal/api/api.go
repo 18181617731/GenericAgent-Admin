@@ -40,13 +40,15 @@ type Server struct {
 	ConfigMu                sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
+	ChatTitleJobs           map[string]bool
+	titleBackfillStarted    bool
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}}
+	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -121,6 +123,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/probe", s.modelsProbe)
 	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
 	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
+	mux.HandleFunc("/api/models/title-model", s.requireDangerousConfirm(s.modelsTitleModel))
 	mux.HandleFunc("/api/channels/test", s.channelTest)
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
@@ -201,6 +204,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/models/discover", Level: "reversible", Action: "discover_provider_models", Reason: "queries the selected provider models endpoint without saving configuration"},
 	{Path: "/api/models/probe", Level: "reversible", Action: "probe_provider_models", Reason: "sends a minimal real chat request to verify configured model availability without saving configuration"},
 	{Path: "/api/models/export", Level: "dangerous", Action: "export_models", Reason: "writes active GA model configuration"},
+	{Path: "/api/models/title-model", Level: "reversible", Action: "set_chat_title_model", Reason: "changes the model used for chat title generation"},
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},

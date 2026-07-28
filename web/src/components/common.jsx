@@ -12,6 +12,7 @@ const serviceLogPath = (svc) => svc?.log_path || svc?.log || ''
 function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   const cmd = serviceCommand(svc)
   const logPath = serviceLogPath(svc)
+  const text = t?.service || {}
   const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
   const modelMatch = (svc?.model_no === null || svc?.model_no === undefined) ? null : llms.find(m => m.index === svc.model_no)
   const defaultLabel = (t && t.runModelDefault) || '默认（启动时选择）'
@@ -34,11 +35,11 @@ function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
         /></div>
       : (modelText !== null && <span><em>模型</em><code title={modelText}>{modelText}</code></span>)}
     <span><em>PID</em><b>{servicePid(svc)}</b></span>
-    <span><em>返回码</em><b>{serviceReturnCode(svc)}</b></span>
-    <span><em>启动时间</em><code title={serviceStartedAt(svc)}>{serviceStartedAt(svc)}</code></span>
-    <span><em>工作目录</em><code title={svc?.workdir}>{svc?.workdir || '-'}</code></span>
-    <span><em>命令</em><code title={cmd}>{cmd}</code></span>
-    {logPath && <span><em>日志</em><code title={logPath}>{logPath}</code></span>}
+    <span><em>{text.returnCode}</em><b>{serviceReturnCode(svc)}</b></span>
+    <span><em>{text.startedAt}</em><code title={serviceStartedAt(svc)}>{serviceStartedAt(svc)}</code></span>
+    <span><em>{text.workdir}</em><code title={svc?.workdir}>{svc?.workdir || '-'}</code></span>
+    <span><em>{text.command}</em><code title={cmd}>{cmd}</code></span>
+    {logPath && <span><em>{text.log}</em><code title={logPath}>{logPath}</code></span>}
   </div>
 }
 
@@ -88,7 +89,7 @@ export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, on
       <div><b>{svc.name}</b><small>{svc.kind}</small></div>
       <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
     </div>
-    <ServiceMeta svc={svc} compact/>
+    <ServiceMeta svc={svc} compact t={t}/>
     <div className="channel-service-actions">
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label>
       <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
