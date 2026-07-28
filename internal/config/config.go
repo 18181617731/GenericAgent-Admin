@@ -22,7 +22,7 @@ type ExtraSystemPromptPreset struct {
 }
 
 type ChatTitleModelRef struct {
-	Enable          bool   `json:"enable"`           // false = disabled (default, saves tokens)
+	Enable          bool   `json:"enable"`            // false = disabled (default, saves tokens)
 	ProviderVarName string `json:"provider_var_name"` // empty = follow conversation model
 	Model           string `json:"model"`
 	LLMNo           int    `json:"llm_no"`
@@ -46,6 +46,7 @@ type AppConfig struct {
 	ServiceAutostart         []string                  `json:"service_autostart"`
 	ServiceModels            map[string]int            `json:"service_models,omitempty"`
 	ModelProbeProviders      []string                  `json:"model_probe_providers,omitempty"`
+	ChatTitleModel           *ChatTitleModelRef        `json:"chat_title_model,omitempty"`
 	UpdateRepoURL            string                    `json:"update_repo_url"`
 	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
 	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
@@ -225,6 +226,7 @@ func (s *Store) Load() error {
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = "off"
 	}
+	clearMissingPythonPaths(&cfg)
 	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
 	cfg.EffectivePython = effectivePython(cfg)
 	if err := Validate(cfg); err != nil {
@@ -232,6 +234,27 @@ func (s *Store) Load() error {
 	}
 	s.Cfg = cfg
 	return nil
+}
+
+func clearMissingPythonPaths(cfg *AppConfig) {
+	if cfg == nil {
+		return
+	}
+	if pathMissing(cfg.PythonPath) {
+		cfg.PythonPath = ""
+	}
+	if pathMissing(cfg.EffectivePython) {
+		cfg.EffectivePython = ""
+	}
+}
+
+func pathMissing(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
 }
 
 func (s *Store) Save(cfg AppConfig) error {

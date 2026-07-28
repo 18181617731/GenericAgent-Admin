@@ -100,7 +100,11 @@ func TestGaGitUpdateRunsDailyAutoSyncStrategy(t *testing.T) {
 	root := gitSyncTestRoot(t)
 	s := newConfigTestServer(t)
 	s.CfgStore.Cfg.GARoot = root
-	s.CfgStore.Cfg.EffectivePython = "python-test"
+	configuredPython := filepath.Join(root, "python-test.exe")
+	if err := os.WriteFile(configuredPython, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.CfgStore.Cfg.EffectivePython = configuredPython
 	oldRunGit := runGitCommandFunc
 	oldAutoSync := runGAAutoSyncFunc
 	t.Cleanup(func() { runGitCommandFunc = oldRunGit; runGAAutoSyncFunc = oldAutoSync })
@@ -126,7 +130,7 @@ func TestGaGitUpdateRunsDailyAutoSyncStrategy(t *testing.T) {
 		}
 	}
 	runGAAutoSyncFunc = func(_ context.Context, python, script, repo string) (string, error) {
-		if python != "python-test" || script != gaGitSyncScript(root) || repo != root {
+		if python != configuredPython || script != gaGitSyncScript(root) || repo != root {
 			t.Fatalf("unexpected autosync invocation: %q %q %q", python, script, repo)
 		}
 		return "同步状态: 全部成功", nil

@@ -144,6 +144,26 @@ func TestStoreLoadRejectsInvalidRuntimeBounds(t *testing.T) {
 	}
 }
 
+func TestStoreLoadClearsMissingPythonWithoutLosingOtherSettings(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "deleted-venv", "python.exe")
+	data := []byte(`{"ga_root":"` + filepath.ToSlash(root) + `","python_path":"` + filepath.ToSlash(missing) + `","effective_python":"` + filepath.ToSlash(missing) + `","bootstrap_done":true}`)
+	if err := os.WriteFile(filepath.Join(root, "config.local.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &Store{Root: root, Cfg: Default()}
+	if err := store.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if filepath.Clean(store.Cfg.GARoot) != filepath.Clean(root) || !store.Cfg.BootstrapDone {
+		t.Fatalf("non-Python settings were lost: %#v", store.Cfg)
+	}
+	if store.Cfg.PythonPath != "" || store.Cfg.EffectivePython != "" {
+		t.Fatalf("missing Python paths were retained: %#v", store.Cfg)
+	}
+}
+
 func TestBootstrapConfigDefaultsAndEffectivePythonPersistence(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)

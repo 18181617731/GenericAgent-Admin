@@ -125,16 +125,17 @@ export function DangerRecoveryNotice({
   </aside>
 }
 
-export function ObservabilityCard({ snapshot, error = '', onRefresh, onRepair, repairing = false, repairResult = null }) {
+export function ObservabilityCard({ snapshot, error = '', onRefresh, onRepair, repairing = false, repairResult = null, labels = {} }) {
   const summary = observabilitySummary(snapshot)
   const icons = { status: CircleCheckBig, python: Terminal, dependencies: PackageCheck, runtime: Activity }
   const missing = snapshot?.missingCore || []
   const issues = snapshot?.errors || []
   const runtime = snapshot?.runtime
   const checkedAt = snapshot?.generatedAt ? new Date(snapshot.generatedAt).toLocaleString() : ''
-  return <section className="observability-card" aria-label="运行概览">
+  const title = labels.observability || '运行概览'
+  return <section className="observability-card" aria-label={title}>
     <div className="observability-head">
-      <div><b>运行概览</b><span>{summary.detail}</span></div>
+      <div><b>{title}</b><span>{summary.detail}</span></div>
       <div className="observability-actions">
         {runtime?.repairable && <button type="button" onClick={onRepair} disabled={repairing} title="安装缺失依赖并修复旧 UltraPlan 脚本"><Wrench size={14}/>{repairing ? '修复并复检中…' : '一键修复'}</button>}
         <button type="button" className="secondary" onClick={onRefresh} disabled={repairing} title="重新读取运行概览"><RefreshCw size={14}/>刷新</button>

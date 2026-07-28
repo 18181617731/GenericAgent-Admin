@@ -388,6 +388,8 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
 	if err == nil {
 		cs.Title = title
+		cs.TitleSource = chatTitleSourceManual
+		cs.UpdatedAt = time.Now().Unix()
 		err = saveChatSessionLocked(s.CfgStore.Cfg, cs)
 	}
 	s.SessionMu.Unlock()
@@ -462,6 +464,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		bad(w, 500, err.Error())
 		return
 	}
+	s.rememberDefaultChatLLMNo(cs.Settings.LLMNo)
 	restarted := false
 	if cs.Settings.LLMNo != previousLLMNo {
 		restarted = s.resetChatWorker(sid)

@@ -3,7 +3,7 @@ import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
-import App, { ChannelsPage } from './App.jsx'
+import App, { ChannelsPage, I18N } from './App.jsx'
 import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
@@ -91,6 +91,7 @@ const reflectService = {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.history.replaceState({}, '', '/')
   vi.restoreAllMocks()
 })
 
@@ -1112,7 +1113,7 @@ const modelProfile = {
 }
 
 const modelProps = overrides => ({
-  t,
+  t: I18N.zh,
   profiles: [modelProfile],
   setProfiles: vi.fn(),
   patchProfile: vi.fn(),
@@ -1552,6 +1553,7 @@ describe('mobile file workflow', () => {
       read: '读取', search: '搜索', tail: '尾读', download: '下载', delete: '删除', save: '保存', empty: '空内容',
       lists: { fileList: '文件列表', filePreview: '文件预览', searchResults: '搜索结果' },
       hints: { filePath: '相对路径', searchText: '搜索文本', tailLines: '尾部行数' },
+      files: I18N.zh.files,
     },
     browsePath: 'memory', setBrowsePath: vi.fn(), filePath: '', setFilePath: vi.fn(),
     fileList: [{ kind: 'dir', path: 'memory/logs' }, { kind: 'file', path: 'memory/notes.md' }],

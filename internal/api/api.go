@@ -482,7 +482,9 @@ func (s *Server) startTMWebDriverMaster() (int, []string, error) {
 
 func resolvePythonForRoot(gaRoot, configured string) string {
 	if configured = strings.TrimSpace(configured); configured != "" {
-		return configured
+		if path, err := executablePath(configured); err == nil {
+			return path
+		}
 	}
 	var candidates []string
 	if runtime.GOOS == "windows" {

@@ -83,10 +83,10 @@ export function FilesPage({
   const hasFilePath = Boolean(String(filePath || '').trim())
   const markdownFile = isMarkdownPath(loadedFilePath || filePath)
   const parent = parentPath(browsePath)
-  const searchHint = fileSearch ? 'No matches found. Check the path filter or try a broader term.' : 'Enter search text, then run search.'
+  const searchHint = fileSearch ? `${text.noMatches}. ${text.broaderSearch}` : text.searchPrompt
   const fileListHint = hasBrowsePath
-    ? 'No files returned for this path. Confirm the GA root or choose a folder and read again.'
-    : 'No GA root selected yet. Paste the project root or a folder path, then click Read.'
+    ? text.noFilesPath
+    : text.noRootPath
 
   useEffect(() => {
     if (!loadedFilePath) return
@@ -158,7 +158,7 @@ export function FilesPage({
             <button type="button" onClick={runSearch} disabled={busy || !fileSearch.trim()}><Search size={15}/>{t.search}</button>
           </div>
           <div className="file-list">
-            {fileListEmpty && <div className="empty-card" role="status"><b>{hasBrowsePath ? 'Folder is empty or unavailable' : 'Choose a GA root to browse files'}</b><span>{t.hints?.fileListEmpty || fileListHint}</span></div>}
+            {fileListEmpty && <div className="empty-card" role="status"><b>{hasBrowsePath ? text.folderEmpty : text.chooseRoot}</b><span>{t.hints?.fileListEmpty || fileListHint}</span></div>}
             {fileList.map(entry => <button type="button" className={`file-entry file-entry-${entry.kind}`} key={entry.path} onClick={() => openEntry(entry)} title={entry.path}>
               <span className="file-entry-icon">{entry.kind === 'dir' ? <Folder size={18}/> : <FileText size={18}/>}</span>
               <span className="file-entry-label"><b>{pathName(entry.path)}</b><small>{entry.path}</small></span>
@@ -168,16 +168,16 @@ export function FilesPage({
           {(fileSearch || searchHits.length > 0) && <div className="files-search-results">
             <div className="files-search-results-head"><h4>{t.lists.searchResults} <span>{searchHits.length}</span></h4><button type="button" onClick={() => clearSearch?.()} aria-label="清空文件搜索"><X size={14}/>清空</button></div>
             {searchEmpty && searchAttempted
-              ? <div className="empty-card" role="status"><b>No matches found</b><span>Check the path filter or try a broader term.</span></div>
+              ? <div className="empty-card" role="status"><b>{text.noMatches}</b><span>{text.broaderSearch}</span></div>
               : searchEmpty && <p className="muted">{t.hints?.searchEmpty || searchHint}</p>}
             {searchHits.map(hit => <button type="button" className="hit" key={`${hit.path}:${hit.line}`} onClick={() => openSearchHit(hit.path)} title={`${hit.path}:${hit.line} · ${hit.preview}`}><b>{pathName(hit.path)}:{hit.line}</b><span>{hit.preview}</span></button>)}
           </div>}
         </Panel>
         <Panel title={t.lists.filePreview} className="log-panel files-preview-panel">
           <div className="file-editor-toolbar">
-            <span className={dirty ? 'status-pill warn' : 'status-pill ok'}>{dirty ? '有未保存更改' : '已保存/干净'}</span>
-            {loadedFilePath && <span className="muted" title={loadedFilePath}>已加载：{loadedFilePath}</span>}
-            {retargeted && <span className="status-pill bad">Save target changed</span>}
+            <span className={dirty ? 'status-pill warn' : 'status-pill ok'}>{dirty ? text.dirty : text.clean}</span>
+            {loadedFilePath && <span className="muted" title={loadedFilePath}>{text.loaded}: {loadedFilePath}</span>}
+            {retargeted && <span className="status-pill bad">{text.targetChanged}</span>}
             {markdownFile && hasLoadedTarget && <div className="file-content-mode" role="group" aria-label="Markdown 查看模式">
               <button type="button" className={contentMode === 'preview' ? 'active' : ''} aria-pressed={contentMode === 'preview'} onClick={() => setContentMode('preview')}><Eye size={14}/>预览</button>
               <button type="button" className={contentMode === 'edit' ? 'active' : ''} aria-pressed={contentMode === 'edit'} onClick={() => setContentMode('edit')}><Pencil size={14}/>编辑</button>
@@ -195,15 +195,15 @@ export function FilesPage({
             <button type="button" onClick={() => tailFile(filePath)} disabled={!hasFilePath || busy}>{t.tail || 'Tail'}</button>
             <button type="button" onClick={() => downloadFile(filePath)} disabled={!hasFilePath || busy} title="下载当前文件"><Download size={15}/><span>{t.download || 'Download'}</span></button>
             <button type="button" className="danger-subtle" onClick={() => deleteFile(filePath)} disabled={!hasFilePath || busy} title="删除当前文件，需要再次确认"><Trash2 size={15}/><span>{t.delete || 'Delete'}</span></button>
-            {dirty && <button type="button" onClick={discardChanges} disabled={busy || !discardChanges}><Undo2 size={15}/><span>Discard changes</span></button>}
+            {dirty && <button type="button" onClick={discardChanges} disabled={busy || !discardChanges}><Undo2 size={15}/><span>{text.discard}</span></button>}
             <button type="button" className="primary" onClick={saveFile} disabled={saveDisabled || busy} title={saveReview} aria-describedby={saveDisabledReason ? 'file-save-reason' : undefined}><Save size={15}/><span>{t.save}</span></button>
           </div>
           {saveDisabledReason && <p id="file-save-reason" className="muted">{saveDisabledReason}</p>}
           <div className={`file-save-review ${retargeted ? 'bad' : dirty ? 'warn' : 'ok'}`} role="status" aria-live="polite">
             {saveReview}
           </div>
-          {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>尚未加载文件</b><span>从文件列表选择一个文件，或输入文件路径后读取。</span></div>}
-          {(hasFilePath || fileContent) && (!markdownFile || contentMode === 'edit') && <textarea aria-label="文件内容编辑器" className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>}
+          {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>{text.noFileLoaded}</b><span>{text.noFileLoadedHelp}</span></div>}
+          {(hasFilePath || fileContent) && (!markdownFile || contentMode === 'edit') && <textarea aria-label={text.editorLabel} className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>}
         </Panel>
       </div>
     </section>

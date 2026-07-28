@@ -230,9 +230,10 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
   )
 }
 
-function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, busy, checking, disabled, availabilityResult, discoveryError = '' }) {
+function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, busy, checking, disabled, availabilityResult, discoveryError = '', t }) {
   const [draft, setDraft] = useState('')
   const [discoverOpen, setDiscoverOpen] = useState(false)
+  const text = t.models
   const configs = profileModelConfigs(profile)
   const existing = new Set(configs.map(config => modelIdOf(config)))
   const candidates = uniqueModels(discovered).filter(model => !existing.has(model))

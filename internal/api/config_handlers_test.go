@@ -114,6 +114,15 @@ func TestSetupEnvReportsOptionalUvAndNpm(t *testing.T) {
 	}
 }
 
+func TestPythonForSetupSkipsDeletedConfiguredPython(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "temp", ".venv", "python.exe")
+	got := pythonForSetup(root, config.AppConfig{PythonPath: missing, EffectivePython: missing})
+	if got == missing {
+		t.Fatalf("pythonForSetup() retained deleted interpreter %q", got)
+	}
+}
+
 func TestSetupBrowseRejectsMalformedJSON(t *testing.T) {
 	s := newConfigTestServer(t)
 	rr := httptest.NewRecorder()

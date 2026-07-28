@@ -419,12 +419,16 @@ func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}
 	}
 	commit, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
 	status, _ := runGitCommand(ctx, abs, "status", "--short")
-	upstream, _ := runGitCommand(ctx, abs, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	upstream, upstreamErr := runGitCommand(ctx, abs, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	upstreamConfigured := upstreamErr == nil && strings.TrimSpace(upstream) != ""
+	if !upstreamConfigured {
+		upstream = ""
+	}
 	expectedOrigin := ""
 	if strings.TrimSpace(branch) != "" {
 		expectedOrigin = "origin/" + strings.TrimSpace(branch)
 	}
-	trackingMatchesOrigin := strings.TrimSpace(upstream) == expectedOrigin && expectedOrigin != ""
+	trackingMatchesOrigin := upstreamConfigured && strings.TrimSpace(upstream) == expectedOrigin && expectedOrigin != ""
 	ahead := 0
 	behind := 0
 	if trackingMatchesOrigin {
@@ -452,7 +456,7 @@ func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}
 	synchronized := remoteLatest && ahead == 0 && !dirty && !conflicts
 	return map[string]interface{}{
 		"ok": true, "root": abs, "branch": strings.TrimSpace(branch), "commit": strings.TrimSpace(commit),
-		"upstream": tracking, "ahead": ahead, "behind": behind,
+		"upstream": tracking, "upstream_configured": upstreamConfigured, "ahead": ahead, "behind": behind,
 		"expected_origin": expectedOrigin, "tracking_matches_origin": trackingMatchesOrigin,
 		"latest": remoteLatest, "remote_latest": remoteLatest, "synchronized": synchronized,
 		"dirty": dirty, "conflicts": conflicts, "changed_files": gitChangedFileCount(status), "status": status,
@@ -531,6 +535,10 @@ func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if beforeStatus["conflicts"] == true {
 		bad(w, 409, "GA 仓库存在未解决冲突，请人工处理后再同步")
+		return
+	}
+	if beforeStatus["upstream_configured"] != true {
+		bad(w, 400, "current GA branch has no upstream; configure origin tracking before updating")
 		return
 	}
 	if beforeStatus["tracking_matches_origin"] != true {
@@ -624,11 +632,14 @@ func pythonForSetup(root string, cfg config.AppConfig) string {
 	if _, err := os.Stat(venvPy); err == nil {
 		return venvPy
 	}
-	if strings.TrimSpace(cfg.EffectivePython) != "" {
-		return strings.TrimSpace(cfg.EffectivePython)
-	}
-	if strings.TrimSpace(cfg.PythonPath) != "" {
-		return strings.TrimSpace(cfg.PythonPath)
+	for _, candidate := range []string{cfg.EffectivePython, cfg.PythonPath, "python"} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if path, err := executablePath(candidate); err == nil {
+			return path
+		}
 	}
 	return "python"
 }
