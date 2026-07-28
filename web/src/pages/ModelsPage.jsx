@@ -937,6 +937,9 @@ export function Models({
   useEffect(() => {
     if (titleModel?.llm_no === -1) {
       setTitleModelDraft('__disabled__')
+    } else if (!titleModel || (titleModel.provider_var_name === '' && titleModel.model === '')) {
+      // null or empty config → default to disabled (avoid accidental token consumption)
+      setTitleModelDraft('__disabled__')
     } else {
       setTitleModelDraft(titleModelKey(titleModel))
     }
