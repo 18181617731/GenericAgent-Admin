@@ -1,14 +1,15 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, Bot, Brain, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, XCircle, Download, Moon, Sun } from 'lucide-react'
+import { Activity, Bot, Brain, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Sparkles, Target, Terminal, Trash2, UploadCloud, XCircle, Download, Moon, Sun } from 'lucide-react'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
 import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
-import { applyModelOrder, applyProviderOrder, mergePersistedModelOrder, orderedProviderProfiles } from './lib/modelsEditor'
+import { applyModelOrder, applyProviderOrder, mergePersistedModelOrder, orderedModelRows, orderedProviderProfiles } from './lib/modelsEditor'
+import { providerDisplayName } from './lib/modelsProvider'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
 import {
@@ -302,11 +303,13 @@ export default function App() {
     title: '运行环境', summary: '集中管理 GA Admin 的本地路径与 Chat Python 网络环境。', configured: '配置已载入', unsavedHint: '修改后统一保存，写入前仍会二次确认。',
     paths: '基础路径', pathsDesc: '确定 GenericAgent 与 Chat 运行时从哪里读取程序和会话数据。', rootHelp: 'GenericAgent 项目根目录，保存后会重新载入工作区。', pythonHelp: '留空时自动检测；仅在需要固定解释器时填写。', dataHelp: '留空时使用默认目录；可指定独立的 Chat 会话存储位置。',
     network: '网络代理', networkDesc: '仅影响 Chat Python 子进程，不会更改系统全局代理。', proxyMode: '代理模式', proxyOff: '关闭', proxySystem: '跟随系统', proxyCustom: '自定义', proxyOffHelp: 'Chat Python 直接连接网络。', proxySystemHelp: '继承当前系统与进程环境中的代理配置。', proxyCustomHelp: '使用下方环境变量启动 Chat Python。',
+    autoTitle: '自动标题', autoTitleDesc: '控制新会话是否自动生成标题，以及使用哪个模型。', autoTitleToggle: '自动生成会话标题', autoTitleToggleHelp: '关闭后不会为任何会话调用模型生成标题，不产生额外 token 消耗。', autoTitleOn: '已开启', autoTitleOff: '已关闭', autoTitleModelHelp: '选择专用于生成标题的模型；选择“跟随当前对话模型”则使用会话自身的模型。', autoTitleSave: '保存自动标题设置',
     saveAll: '保存全部配置'
   } : {
     title: 'Runtime environment', summary: 'Manage local paths and the Chat Python network environment in one place.', configured: 'Configuration loaded', unsavedHint: 'Save all changes together. A confirmation is still required before writing.',
     paths: 'Base paths', pathsDesc: 'Define where GenericAgent and Chat load programs and conversation data.', rootHelp: 'GenericAgent project root. The workspace reloads after saving.', pythonHelp: 'Leave blank for automatic detection; set only when pinning an interpreter.', dataHelp: 'Leave blank for the default location, or use a dedicated Chat data directory.',
     network: 'Network proxy', networkDesc: 'Applies only to Chat Python subprocesses and does not change the system-wide proxy.', proxyMode: 'Proxy mode', proxyOff: 'Off', proxySystem: 'Use system', proxyCustom: 'Custom', proxyOffHelp: 'Chat Python connects directly.', proxySystemHelp: 'Inherit proxy settings from the current system and process environment.', proxyCustomHelp: 'Launch Chat Python with the environment variables below.',
+    autoTitle: 'Automatic titles', autoTitleDesc: 'Control whether new chats generate a title automatically, and which model does it.', autoTitleToggle: 'Generate chat titles automatically', autoTitleToggleHelp: 'When off, no model call is made for titles, so no extra tokens are spent.', autoTitleOn: 'On', autoTitleOff: 'Off', autoTitleModelHelp: 'Pick a dedicated title model, or follow the conversation model of each chat.', autoTitleSave: 'Save title settings',
     saveAll: 'Save all settings'
   }
   const initialRoute = useMemo(() => parseRoute(), [])
@@ -331,7 +334,10 @@ export default function App() {
   const [persistedModelProfiles, setPersistedModelProfiles] = useState([])
   const [modelSaveStatus, setModelSaveStatus] = useState({})
   const [titleModel, setTitleModel] = useState(null)
+  const [titleModelChoices, setTitleModelChoices] = useState([])
   const [titleModelSaving, setTitleModelSaving] = useState(false)
+  const [titleEnabled, setTitleEnabled] = useState(false)
+  const [titleModelDraft, setTitleModelDraft] = useState('')
   const [modelImportLoading, setModelImportLoading] = useState(false)
   const [modelRevealedKeys, setModelRevealedKeys] = useState({}), [modelKeyBusy, setModelKeyBusy] = useState({})
   const [filePath, setFilePath] = useState('memory'), [loadedFilePath, setLoadedFilePath] = useState(''), [fileList, setFileList] = useState([]), [fileContent, setFileContent] = useState(''), [loadedFileContent, setLoadedFileContent] = useState(''), [fileSearch, setFileSearch] = useState(''), [searchHits, setSearchHits] = useState([]), [tailLines, setTailLinesRaw] = useState(200)
@@ -470,6 +476,8 @@ export default function App() {
     if (tab === 'autonomous' && health?.ok && !llms.length) loadLLMs()
     if (tab === 'files' && health?.ok && !fileList.length) loadFiles(filePath).catch(e => setMsg(e.message))
     if (tab === 'setup' && health?.ok && !tmwdStatus) refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
+    // The auto-title card lives on the settings page and needs its own option list.
+    if (tab === 'settings' && health?.ok && !titleModelChoices.length) loadTitleModel().catch(() => {})
   }, [tab, health?.ok])
   const toggleAutostart = async () => { const next = !autostart?.enabled; if (!confirmDanger('admin-autostart', lang === 'zh' ? (next ? '启用 GA Admin 开机自启动？' : '禁用 GA Admin 开机自启动？') : (next ? 'Enable GA Admin at login?' : 'Disable GA Admin at login?'))) return; setBusy(true); setMsg(''); try { const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { dangerous:true, method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status?remote=1'); setGitStatus(d); setMsg(d.upstream_configured === false ? t.overview.sourceMissingMessage : (d.latest ? t.overview.sourceCurrentMessage : t.overview.sourceBehindMessage(d.behind || 0))) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
@@ -890,6 +898,7 @@ export default function App() {
   const loadTitleModel = async () => {
     const data = await api('/api/models/title-model')
     setTitleModel(data?.model || null)
+    setTitleModelChoices(Array.isArray(data?.options) ? data.options : [])
     return data
   }
   const saveTitleModel = async model => {
@@ -910,6 +919,58 @@ export default function App() {
     } finally {
       setTitleModelSaving(false)
     }
+  }
+  // The settings page never loads the models editor, so prefer the option list
+  // returned by /api/models/title-model and fall back to local model rows.
+  const titleModelRows = useMemo(() => {
+    if (titleModelChoices.length) {
+      return titleModelChoices.map(option => ({
+        providerVarName: String(option?.provider_var_name || ''),
+        model: String(option?.model || ''),
+      }))
+    }
+    return orderedModelRows(persistedModelProfiles)
+  }, [titleModelChoices, persistedModelProfiles])
+  const titleModelKey = value => value
+    ? JSON.stringify([String(value.provider_var_name || ''), String(value.model || '')])
+    : ''
+  const titleModelOptions = useMemo(() => [
+    { value: '', label: t.titleModelFollowConversation },
+    ...titleModelRows.map((row, llmNo) => ({
+      value: titleModelKey({ provider_var_name: row.providerVarName, model: row.model }),
+      label: `${row.model} · ${providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
+    })),
+  ], [titleModelRows, t.titleModelFollowConversation])
+  useEffect(() => {
+    const enabled = titleModel?.enable === true
+    setTitleEnabled(enabled)
+    if (!enabled || (!titleModel.provider_var_name && !titleModel.model)) {
+      setTitleModelDraft('')
+    } else {
+      setTitleModelDraft(titleModelKey(titleModel))
+    }
+  }, [titleModel?.enable, titleModel?.provider_var_name, titleModel?.model])
+  const submitTitleModel = async () => {
+    let selected
+    if (!titleEnabled) {
+      selected = { enable: false, provider_var_name: '', model: '', llm_no: 0 }
+    } else if (titleModelDraft === '') {
+      selected = { enable: true, provider_var_name: '', model: '', llm_no: 0 }
+    } else {
+      const rowIndex = titleModelRows.findIndex(row => titleModelKey({
+        provider_var_name: row.providerVarName,
+        model: row.model,
+      }) === titleModelDraft)
+      selected = rowIndex < 0
+        ? { enable: true, provider_var_name: '', model: '', llm_no: 0 }
+        : {
+            enable: true,
+            provider_var_name: titleModelRows[rowIndex].providerVarName,
+            model: titleModelRows[rowIndex].model,
+            llm_no: rowIndex,
+          }
+    }
+    await saveTitleModel(selected)
   }
   const importModels = async ({ quiet = false } = {}) => {
     if (!quiet) setBusy(true)
@@ -1274,11 +1335,60 @@ export default function App() {
                 </div>}
               </div>
             </section>
+            <section className="settings-card">
+              <header className="settings-card-head">
+                <span className="settings-card-icon"><Sparkles size={16}/></span>
+                <div>
+                  <strong>{settingsText.autoTitle}</strong>
+                  <small>{settingsText.autoTitleDesc}</small>
+                </div>
+              </header>
+              <div className="settings-fields">
+                <div className="settings-field settings-field-toggle">
+                  <label className="toggle-switch" htmlFor="settings-auto-title">
+                    <input
+                      id="settings-auto-title"
+                      type="checkbox"
+                      role="switch"
+                      checked={titleEnabled}
+                      disabled={titleModelSaving}
+                      onChange={e=>setTitleEnabled(e.target.checked)}
+                    />
+                    <span className="toggle-slider"></span>
+                    <span className="toggle-switch-text">
+                      <span>{settingsText.autoTitleToggle}</span>
+                      <small>{settingsText.autoTitleToggleHelp}</small>
+                    </span>
+                  </label>
+                  <span className={`settings-toggle-state ${titleEnabled ? 'is-on' : 'is-off'}`}>
+                    {titleEnabled ? settingsText.autoTitleOn : settingsText.autoTitleOff}
+                  </span>
+                </div>
+                <label className="settings-field" htmlFor="settings-auto-title-model">
+                  <span>{t.titleModel}</span><small>{settingsText.autoTitleModelHelp}</small>
+                  <select
+                    id="settings-auto-title-model"
+                    value={titleModelDraft}
+                    disabled={!titleEnabled || titleModelSaving}
+                    onChange={e=>setTitleModelDraft(e.target.value)}
+                  >
+                    {titleModelOptions.map(option => (
+                      <option key={option.value || 'follow'} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="settings-field settings-field-action">
+                  <button className="primary" type="button" disabled={titleModelSaving} onClick={submitTitleModel}>
+                    <Save size={15}/>{settingsText.autoTitleSave}
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
 
         </div>
       </section>}
-      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} onSaveProviderOrder={saveProviderOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} titleModel={titleModel} titleModelSaving={titleModelSaving} onSaveTitleModel={saveTitleModel} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
+      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} onSaveProviderOrder={saveProviderOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page">
         <div className="logs-layout">
           <Panel title={t.lists.processes} className="logs-side">

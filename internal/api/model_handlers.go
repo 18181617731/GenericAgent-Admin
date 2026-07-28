@@ -80,9 +80,15 @@ func resolveChatTitleModel(ref *config.ChatTitleModelRef, options []chatTitleMod
 	}
 	provider := strings.TrimSpace(ref.ProviderVarName)
 	model := strings.TrimSpace(ref.Model)
+	// Empty provider+model means "follow the conversation model"; it is a valid
+	// selection that carries no routing target, so it never appears in options.
+	if provider == "" && model == "" {
+		return &config.ChatTitleModelRef{Enable: ref.Enable}, true
+	}
 	for _, option := range options {
 		if option.ProviderVarName == provider && option.Model == model {
 			return &config.ChatTitleModelRef{
+				Enable:          ref.Enable,
 				ProviderVarName: option.ProviderVarName,
 				Model:           option.Model,
 				LLMNo:           option.LLMNo,

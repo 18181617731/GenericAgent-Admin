@@ -2129,15 +2129,22 @@ func chatTitleNeedsAutomaticBackfill(cs chatSession) bool {
 }
 
 func (s *Server) chatTitleLLMNo(fallback int) int {
-	if selected := s.CfgStore.Cfg.ChatTitleModel; selected != nil {
-		if selected.LLMNo == -1 {
-			return -1 // Explicitly disabled
-		}
-		if selected.LLMNo >= 0 {
-			return selected.LLMNo
-		}
+	selected := s.CfgStore.Cfg.ChatTitleModel
+	if selected == nil || !selected.Enable {
+		return -1 // Disabled by default or explicitly
 	}
-	return -1 // Default to disabled if not configured
+	// Enable=true: empty provider/model = follow conversation model
+	if strings.TrimSpace(selected.ProviderVarName) == "" && strings.TrimSpace(selected.Model) == "" {
+		if fallback < 0 {
+			return -1
+		}
+		return fallback
+	}
+	// Enable=true with specific provider/model = use configured LLMNo
+	if selected.LLMNo >= 0 {
+		return selected.LLMNo
+	}
+	return -1
 }
 
 func (s *Server) beginChatTitleJob(sid string) bool {

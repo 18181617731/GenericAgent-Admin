@@ -22,7 +22,8 @@ type ExtraSystemPromptPreset struct {
 }
 
 type ChatTitleModelRef struct {
-	ProviderVarName string `json:"provider_var_name"`
+	Enable          bool   `json:"enable"`           // false = disabled (default, saves tokens)
+	ProviderVarName string `json:"provider_var_name"` // empty = follow conversation model
 	Model           string `json:"model"`
 	LLMNo           int    `json:"llm_no"`
 }
@@ -68,14 +69,18 @@ func Validate(cfg AppConfig) error {
 		return fmt.Errorf("chat_default_llm_no must be positive")
 	}
 	if cfg.ChatTitleModel != nil {
-		if strings.TrimSpace(cfg.ChatTitleModel.ProviderVarName) == "" {
-			return fmt.Errorf("chat_title_model.provider_var_name is required")
-		}
-		if strings.TrimSpace(cfg.ChatTitleModel.Model) == "" {
-			return fmt.Errorf("chat_title_model.model is required")
-		}
+		// llm_no must always be non-negative regardless of the enable flag.
 		if cfg.ChatTitleModel.LLMNo < 0 {
 			return fmt.Errorf("chat_title_model.llm_no must be non-negative")
+		}
+		if cfg.ChatTitleModel.Enable {
+			// Allow both provider_var_name and model to be empty when enabled,
+			// which means "follow the current conversation model".
+			provEmpty := strings.TrimSpace(cfg.ChatTitleModel.ProviderVarName) == ""
+			modelEmpty := strings.TrimSpace(cfg.ChatTitleModel.Model) == ""
+			if provEmpty != modelEmpty {
+				return fmt.Errorf("chat_title_model: provider_var_name and model must both be set or both be empty")
+			}
 		}
 	}
 	if root := strings.TrimSpace(cfg.GARoot); root != "" {

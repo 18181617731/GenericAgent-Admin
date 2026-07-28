@@ -36,6 +36,8 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
 	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	// Title generation defaults to disabled, so opt in for this test.
+	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
 	cs := chatSession{
 		ID:          "title-success",
 		Title:       "请帮我同步上游并解决冲突",
@@ -86,6 +88,7 @@ func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
 	s := newGoalTestServer(t, root)
 	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
 	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{
+		Enable:          true,
 		ProviderVarName: "native_oai_config2",
 		Model:           "title-model",
 		LLMNo:           7,
@@ -141,6 +144,8 @@ func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testi
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
 	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	// Title generation defaults to disabled, so opt in for this test.
+	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
 	legacy := chatSession{
 		ID:       "legacy-default-title",
 		Title:    "第一句话作为旧标题",
@@ -216,6 +221,8 @@ func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
 	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	// Title generation defaults to disabled, so opt in for this test.
+	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
 	cs := chatSession{
 		ID:          "title-manual-race",
 		Title:       "第一句话",
