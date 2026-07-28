@@ -12184,3 +12184,64 @@ html[data-theme="dark"] .progress-bar {
   .oa-goalcard-chevron { transition: none; }
   .oa-goalcard-fill { transition: none; }
 }
+
+
+/* === Dark theme: native editor and scheduler controls ===
+   These controls are not managed by Ant Design and need explicit states. */
+html[data-theme="dark"] .editor-mode-toggle {
+  background: var(--surface);
+  border-color: var(--border);
+}
+html[data-theme="dark"] .editor-mode-toggle button:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+html[data-theme="dark"] .editor-mode-toggle button.active {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+html[data-theme="dark"] .form-field input,
+html[data-theme="dark"] .form-field select,
+html[data-theme="dark"] .form-field textarea {
+  background: var(--surface-strong);
+  border-color: var(--border-strong);
+  color: var(--text);
+  color-scheme: dark;
+}
+html[data-theme="dark"] .form-field input:hover,
+html[data-theme="dark"] .form-field select:hover,
+html[data-theme="dark"] .form-field textarea:hover {
+  background: var(--surface-muted);
+  border-color: var(--border-strong);
+}
+html[data-theme="dark"] .form-field input::placeholder,
+html[data-theme="dark"] .form-field textarea::placeholder,
+html[data-theme="dark"] .oa-message-editor-hint,
+html[data-theme="dark"] .oa-session-selected-count {
+  color: var(--muted);
+}
+html[data-theme="dark"] .oa-session-check.is-checked,
+html[data-theme="dark"] .oa-session-check.is-partial,
+html[data-theme="dark"] .oa-message-editor-actions .oa-message-editor-submit {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+/* Chat composer controls: override late hard-coded light fills in dark mode. */
+html[data-theme="dark"] .oa-chat .oa-context-btn,
+html[data-theme="dark"] .oa-chat .oa-attach-btn,
+html[data-theme="dark"] .oa-chat .oa-model-select {
+  background: var(--surface-muted) !important;
+  color: var(--text);
+}
+html[data-theme="dark"] .oa-chat .oa-context-btn:hover,
+html[data-theme="dark"] .oa-chat .oa-attach-btn:hover,
+html[data-theme="dark"] .oa-chat .oa-model-select:hover {
+  background: var(--oa-hover) !important;
+}
+html[data-theme="dark"] .oa-chat .oa-attach-btn.is-open {
+  background: rgba(16, 163, 127, .16) !important;
+  border-color: rgba(16, 163, 127, .42) !important;
+}

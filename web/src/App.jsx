@@ -296,7 +296,11 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('ga-admin-language-change', { detail: nextLang }))
   }
   const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ga-admin-theme', theme) }, [theme])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('ga-admin-theme', theme)
+    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme }))
+  }, [theme])
   useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
   const t = I18N[lang] || I18N.en
   const settingsText = lang === 'zh' ? {

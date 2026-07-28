@@ -2856,7 +2856,11 @@ function CustomSelect({ value, onChange, options, disabled }) {
 export default function ChatApp() {
   // Theme state: sync with localStorage and system preference
   const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ga-admin-theme', theme) }, [theme])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('ga-admin-theme', theme)
+    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme }))
+  }, [theme])
 
   useEffect(() => {
     document.documentElement.lang = chatLanguage() === 'en' ? 'en' : 'zh-CN'
