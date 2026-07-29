@@ -613,6 +613,10 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`uses: actions/setup-node@v5`,
 		`uses: actions/upload-artifact@v5`,
 		`uses: actions/download-artifact@v5`,
+		`goos: windows`,
+		`goarch: amd64`,
+		`goarch: arm64`,
+		`-eq 2`,
 		`cp cmd/frontends/worldline.py dist/cmd/frontends/worldline.py`,
 		`GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 go run ./cmd/package-chat-runtime`,
 		`from frontends.worldline import RewindStore, restore_plan, tree_from_store`,
@@ -625,9 +629,15 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 			t.Fatalf("release workflow missing %q", item)
 		}
 	}
+	if got := strings.Count(workflow, `goos: windows`); got != 2 {
+		t.Fatalf("release workflow Windows matrix entries = %d, want 2", got)
+	}
 	for _, forbidden := range []string{
 		`uses: actions/checkout@v4`,
 		`ref: ${{ inputs.tag || github.ref_name }}`,
+		`goos: darwin`,
+		`goos: linux`,
+		`-eq 6`,
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow still contains unsupported pattern %q", forbidden)
