@@ -99,6 +99,8 @@ _CURRENT_USAGE = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
 # "[Output]" line marks the end of one turn, so we snapshot and reset there.
 _TURN_USAGES = []
+# Latest context-size stats parsed from llmcore's [Debug] lines.
+_CTX_STATS = {'ctx_chars': 0, 'ctx_msgs': 0}
 
 
 class _UsageCapturingStderr:
@@ -143,6 +145,16 @@ class _UsageCapturingStderr:
                 # the internal turn finishes, instead of waiting for `done`.
                 try:
                     emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
+                except Exception:
+                    pass
+            # [Debug] Current context: 12345 chars, 42 messages.
+            # llmcore prints this whenever trim_messages_history is called.
+            m = re.search(r'\[Debug\].*?(\d+)\s+chars,\s*(\d+)\s+messages', text)
+            if m:
+                _CTX_STATS['ctx_chars'] = int(m.group(1))
+                _CTX_STATS['ctx_msgs'] = int(m.group(2))
+                try:
+                    emit({'type': 'ctx_stats', 'ctx_chars': _CTX_STATS['ctx_chars'], 'ctx_msgs': _CTX_STATS['ctx_msgs']})
                 except Exception:
                     pass
     
