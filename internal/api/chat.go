@@ -1305,15 +1305,17 @@ print(json.dumps(items, ensure_ascii=False))`
 	}
 	if draft, importErr := s.loadModelsFromOfficialMyKey(false); importErr == nil {
 		annotateChatLLMProviders(llms, draft.Profiles)
+		annotateChatLLMFailoverGroups(llms, draft.FailoverGroups)
 	}
 	return llms, nil
 }
 
 type chatProviderModel struct {
-	provider string
-	model    string
-	order    int
-	sequence int
+	provider    string
+	model       string
+	displayName string
+	order       int
+	sequence    int
 }
 
 func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelconfig.Profile) {
@@ -1337,7 +1339,13 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 			if config.SortOrder != nil {
 				order = *config.SortOrder
 			}
-			configured = append(configured, chatProviderModel{provider: provider, model: model, order: order, sequence: sequence})
+			configured = append(configured, chatProviderModel{
+				provider:    provider,
+				model:       model,
+				displayName: strings.TrimSpace(config.Name),
+				order:       order,
+				sequence:    sequence,
+			})
 			sequence++
 		}
 	}
@@ -1351,6 +1359,9 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 	used := make([]bool, len(configured))
 	unresolved := make([]int, 0)
 	for i, item := range llms {
+		if isChatLLMFailover(item) {
+			continue
+		}
 		model := chatLLMModel(item)
 		if i < len(configured) && (model == "" || configured[i].model == model) {
 			applyChatProviderModel(item, configured[i])
@@ -1373,10 +1384,38 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 	}
 }
 
+func isChatLLMFailover(item map[string]interface{}) bool {
+	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(item["provider"])), "MixinSession")
+}
+
+func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []modelconfig.FailoverGroup) {
+	groupIndex := 0
+	for _, item := range llms {
+		if !isChatLLMFailover(item) || groupIndex >= len(groups) {
+			continue
+		}
+		name := strings.TrimSpace(groups[groupIndex].VarName)
+		groupIndex++
+		name = strings.TrimPrefix(name, "mixin_config_")
+		if name != "" {
+			item["failover_group"] = name
+			item["label"] = name
+		}
+	}
+}
+
 func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
 	item["provider"] = configured.provider
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
+	}
+	if configured.displayName != "" {
+		item["label"] = configured.displayName
+	} else {
+		// fallback to name when display_name is empty
+		if name, ok := item["name"].(string); ok && strings.TrimSpace(name) != "" {
+			item["label"] = name
+		}
 	}
 }
 

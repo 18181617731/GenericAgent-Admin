@@ -3,8 +3,8 @@ import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable } from './components/common.jsx'
-import { App, ChannelsPage, I18N } from './App.jsx'
-import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, SessionUltraPlanPanel } from './ChatApp.jsx'
+import App, { ChannelsPage, I18N } from './App.jsx'
+import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, groupRuntimeModels } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { UsagePage } from './pages/UsagePage.jsx'
@@ -190,6 +190,8 @@ function ModelsHarness({
   discoverModels = vi.fn(async () => ({ models: [] })),
   saveModelProfile,
   modelSaveStatus = {},
+  failoverGroups = [],
+  onSaveFailoverGroups = vi.fn(async () => true),
 }) {
   const [profiles, setProfiles] = React.useState([{ ...initialProfile }])
   const patchProfile = (idx, patch) => {
@@ -210,6 +212,8 @@ function ModelsHarness({
       discoverModels={discoverModels}
       saveModelProfile={saveModelProfile}
       modelSaveStatus={modelSaveStatus}
+      failoverGroups={failoverGroups}
+      onSaveFailoverGroups={onSaveFailoverGroups}
       riskCatalog={[]}
       getProfileKey={() => 'profile-key'}
     />
@@ -230,6 +234,25 @@ describe('Models provider editor', () => {
     const updatedNameInput = container.querySelector('.model-field--provider input')
     expect(updatedNameInput.value).toBe('renamed')
     expect(document.activeElement).toBe(updatedNameInput)
+  })
+
+  test('edits a model display name without changing its model ID', () => {
+    installBrowserPolyfills()
+    const initialProfile = {
+      ...validModelProfile,
+      model_configs: [{ model: 'demo-model', name: 'Demo Friendly' }],
+    }
+    const { container } = render(<ModelsHarness initialProfile={initialProfile} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+    const displayNameInput = screen.getByLabelText('显示名称')
+    expect(displayNameInput.value).toBe('Demo Friendly')
+
+    fireEvent.change(displayNameInput, { target: { value: 'Renamed Friendly' } })
+
+    expect(screen.getByLabelText('显示名称').value).toBe('Renamed Friendly')
+    expect(container.querySelector('.model-config-display-name')?.textContent).toBe('Renamed Friendly')
+    expect(container.querySelector('.model-config-id')?.textContent).toBe('demo-model')
   })
 
   test('shows discovery pending then empty state with a recovery action', async () => {
@@ -308,6 +331,58 @@ describe('Models provider editor', () => {
     expect(screen.getByText('disk is read-only')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '重试保存' }))
     expect(saveModelProfile).toHaveBeenCalledWith(0, 'profile-key')
+  })
+
+  test('keeps failover groups independently collapsed and expands a newly added group', () => {
+    installBrowserPolyfills()
+    render(
+      <ModelsHarness
+        failoverGroups={[
+          {
+            var_name: 'mixin_config_primary',
+            members: [{ provider_var_name: validModelProfile.var_name, model: validModelProfile.model }],
+            max_retries: 10,
+            base_delay: 0.5,
+          },
+          {
+            var_name: 'mixin_config_secondary',
+            members: [],
+            max_retries: 10,
+            base_delay: 0.5,
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6545\u969c\u8f6c\u79fb' }))
+
+    let groups = [...document.querySelectorAll('.model-failover-group')]
+    let toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(groups).toHaveLength(2)
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
+    expect(groups.every(group => !group.querySelector('.model-failover-group-body'))).toBe(true)
+
+    fireEvent.click(toggles[0])
+    groups = [...document.querySelectorAll('.model-failover-group')]
+    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
+    expect(groups[0].querySelector('.model-failover-group-body')).toBeTruthy()
+    expect(groups[1].querySelector('.model-failover-group-body')).toBeNull()
+
+    fireEvent.click(toggles[1])
+    fireEvent.click(toggles[0])
+    groups = [...document.querySelectorAll('.model-failover-group')]
+    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true'])
+    expect(groups[0].querySelector('.model-failover-group-body')).toBeNull()
+    expect(groups[1].querySelector('.model-failover-group-body')).toBeTruthy()
+
+    fireEvent.click(document.querySelector('.model-failover-section:not(.model-failover-group) > .model-failover-section-head button'))
+    groups = [...document.querySelectorAll('.model-failover-group')]
+    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(groups).toHaveLength(3)
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true', 'true'])
+    expect(groups[2].querySelector('.model-failover-group-body')).toBeTruthy()
   })
 })
 
@@ -823,6 +898,18 @@ describe('chat model cascade', () => {
     { value: 'alpha', label: 'Alpha', models: [{ value: 'a-1', label: 'Alpha One' }] },
     { value: 'beta', label: 'Beta', models: [{ value: 'b-1', label: 'Beta One' }] },
   ]
+
+  test('keeps the runtime provider and uses the saved label as the model name', () => {
+    const grouped = groupRuntimeModels([
+      { index: 1, provider: 'MixinSession', failover_group: 'primary', model: 'gpt-5.6-sol', label: 'primary' },
+      { index: 2, provider: 'primary', model: 'ordinary-model' },
+    ])
+
+    expect(grouped).toEqual([
+      { value: 'provider:MixinSession', label: 'MixinSession', models: [{ value: 1, label: 'primary' }] },
+      { value: 'provider:primary', label: 'primary', models: [{ value: 2, label: 'ordinary-model' }] },
+    ])
+  })
 
   test('exposes menu state, resets previews on reopen, and returns focus on Escape', () => {
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)

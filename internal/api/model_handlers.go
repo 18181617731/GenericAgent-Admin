@@ -164,7 +164,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "updated_at": d.UpdatedAt, "source": modelconfig.SourceStatus(s.CfgStore.Cfg.GARoot)})
+		writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "failover_groups": d.FailoverGroups, "updated_at": d.UpdatedAt, "source": modelconfig.SourceStatus(s.CfgStore.Cfg.GARoot)})
 		return
 	}
 	if r.Method == "PUT" {
@@ -172,7 +172,8 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var p struct {
-			Profiles []modelconfig.Profile `json:"profiles"`
+			Profiles       []modelconfig.Profile       `json:"profiles"`
+			FailoverGroups []modelconfig.FailoverGroup `json:"failover_groups"`
 		}
 		if err := decode(r, &p); err != nil {
 			bad(w, 400, err.Error())
@@ -183,7 +184,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		if _, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, profiles, true); err != nil {
+		if _, err := modelconfig.ExportWithFailoverGroups(s.CfgStore.Cfg.GARoot, profiles, p.FailoverGroups, true); err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
@@ -288,13 +289,14 @@ func (s *Server) modelsPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p struct {
-		Profiles []modelconfig.Profile `json:"profiles"`
+		Profiles       []modelconfig.Profile       `json:"profiles"`
+		FailoverGroups []modelconfig.FailoverGroup `json:"failover_groups"`
 	}
 	if err := decode(r, &p); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	txt, err := modelconfig.RenderPreview(p.Profiles)
+	txt, err := modelconfig.RenderPreviewWithFailoverGroups(p.Profiles, p.FailoverGroups)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -540,7 +542,7 @@ func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
 		// mykey.py is the source of truth; importing it must not persist a stale
 		// model_profiles.json shadow copy.
 	}
-	writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "updated_at": d.UpdatedAt, "saved": false, "masked": !p.Reveal})
+	writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "failover_groups": d.FailoverGroups, "updated_at": d.UpdatedAt, "saved": false, "masked": !p.Reveal})
 }
 
 func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
@@ -553,8 +555,9 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		PreviousVarName string `json:"previous_var_name"`
 	}
 	var p struct {
-		Profiles        []exportProfileRequest `json:"profiles"`
-		OverwriteActive bool                   `json:"overwrite_active"`
+		Profiles        []exportProfileRequest      `json:"profiles"`
+		FailoverGroups  []modelconfig.FailoverGroup `json:"failover_groups"`
+		OverwriteActive bool                        `json:"overwrite_active"`
 	}
 	if err := decode(r, &p); err != nil {
 		bad(w, 400, err.Error())
@@ -574,7 +577,7 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	res, err := modelconfig.Export(s.CfgStore.Cfg.GARoot, profiles, p.OverwriteActive)
+	res, err := modelconfig.ExportWithFailoverGroups(s.CfgStore.Cfg.GARoot, profiles, p.FailoverGroups, p.OverwriteActive)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

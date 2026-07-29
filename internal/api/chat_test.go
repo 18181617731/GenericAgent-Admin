@@ -424,6 +424,27 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 	}
 }
 
+func TestAnnotateChatLLMProvidersUsesConfiguredModelDisplayName(t *testing.T) {
+	var draft modelconfig.Draft
+	data := []byte(`{"profiles":[{"var_name":"native_oai_config_alpha","model_configs":[{"model":"model-a","name":"Alpha Friendly"},{"model":"model-b"}]}]}`)
+	if err := json.Unmarshal(data, &draft); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	llms := []map[string]interface{}{
+		{"index": 0, "model": "model-a", "label": "NativeOAISession/model-a"},
+		{"index": 1, "model": "model-b", "label": "NativeOAISession/model-b"},
+	}
+
+	annotateChatLLMProviders(llms, draft.Profiles)
+
+	if got := llms[0]["label"]; got != "Alpha Friendly" {
+		t.Fatalf("configured label=%v want=%q: %#v", got, "Alpha Friendly", llms)
+	}
+	if got := llms[1]["label"]; got != "NativeOAISession/model-b" {
+		t.Fatalf("unconfigured label changed to %v: %#v", got, llms)
+	}
+}
+
 func TestChatProviderDisplayNameMatchesModelsProviderProjection(t *testing.T) {
 	cases := []struct {
 		profile modelconfig.Profile
@@ -466,6 +487,41 @@ func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *test
 		if got := llm["provider"]; got != "gpt55_medium_responses" {
 			t.Fatalf("llms[%d].provider=%v want=%q: %#v", i, got, "gpt55_medium_responses", llms)
 		}
+	}
+}
+
+func TestAnnotateChatLLMFailoverGroupsUsesSavedSuffixesAndOnlyTouchesMixins(t *testing.T) {
+	llms := []map[string]interface{}{
+		{"index": 0, "label": "NativeOAISession/model-a", "provider": "alpha", "model": "model-a"},
+		{"index": 1, "label": "Mixin/model-a -> model-b", "provider": "MixinSession"},
+		{"index": 2, "label": "NativeClaudeSession/model-b", "provider": "beta", "model": "model-b"},
+		{"index": 3, "label": "Mixin/model-b -> model-a", "provider": "MixinSession"},
+		{"index": 4, "label": "Mixin/orphan", "provider": "MixinSession"},
+	}
+	groups := []modelconfig.FailoverGroup{
+		{VarName: "mixin_config_primary"},
+		{VarName: "mixin_config_backup_2"},
+	}
+
+	annotateChatLLMFailoverGroups(llms, groups)
+
+	if got := llms[1]["label"]; got != "primary" {
+		t.Fatalf("first mixin label=%v want=%q: %#v", got, "primary", llms)
+	}
+	if got := llms[1]["failover_group"]; got != "primary" {
+		t.Fatalf("first mixin failover_group=%v want=%q: %#v", got, "primary", llms)
+	}
+	if got := llms[3]["label"]; got != "backup_2" {
+		t.Fatalf("second mixin label=%v want=%q: %#v", got, "backup_2", llms)
+	}
+	if got := llms[3]["failover_group"]; got != "backup_2" {
+		t.Fatalf("second mixin failover_group=%v want=%q: %#v", got, "backup_2", llms)
+	}
+	if got := llms[0]["label"]; got != "NativeOAISession/model-a" {
+		t.Fatalf("ordinary LLM label changed to %v: %#v", got, llms)
+	}
+	if got := llms[4]["label"]; got != "Mixin/orphan" {
+		t.Fatalf("unmatched mixin label changed to %v: %#v", got, llms)
 	}
 }
 

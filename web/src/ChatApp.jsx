@@ -108,10 +108,24 @@ const modelProvider = (m) => {
   return (split > 0 ? name.slice(0, split) : name) || ct('未分组服务商', 'Ungrouped provider')
 }
 const runtimeModelLabel = (m) => {
+  const label = String(m?.label || '').trim()
+  if (label) return label.includes('/') ? label.split('/').pop() : label
   const model = String(m?.model || '').trim()
   if (model) return model
-  const label = modelLabel(m)
-  return label.includes('/') ? label.split('/').pop() : label
+  return modelLabel(m)
+}
+const runtimeModelGroup = (m) => {
+  const provider = modelProvider(m)
+  return { value:`provider:${provider}`, label:provider }
+}
+export const groupRuntimeModels = (llms = []) => {
+  const groups = new Map()
+  llms.forEach(model => {
+    const group = runtimeModelGroup(model)
+    if (!groups.has(group.value)) groups.set(group.value, { ...group, models:[] })
+    groups.get(group.value).models.push({ value:model.index, label:runtimeModelLabel(model) })
+  })
+  return Array.from(groups.values())
 }
 
 const BUILTIN_SLASH_COMMANDS = [
@@ -4382,16 +4396,8 @@ export default function ChatApp() {
   const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
-  const providerGroups = useMemo(() => {
-    const groups = new Map()
-    llms.forEach(model => {
-      const provider = modelProvider(model)
-      if (!groups.has(provider)) groups.set(provider, [])
-      groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model) })
-    })
-    return Array.from(groups, ([provider, models]) => ({ value: provider, label: provider, models }))
-  }, [llms])
-  const selectedProvider = activeModel ? modelProvider(activeModel) : (providerGroups[0]?.value || '')
+  const providerGroups = useMemo(() => groupRuntimeModels(llms), [llms])
+  const selectedProvider = activeModel ? runtimeModelGroup(activeModel).value : (providerGroups[0]?.value || '')
   const isCurrentRunning = busy && streamingSid === sid
   const activePromptPreset = selectedPromptPresetView({ presets: promptPresets, selectedID: extraSysPromptPresetID, snapshot: extraSysPrompts })
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])

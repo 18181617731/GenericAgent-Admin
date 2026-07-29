@@ -124,6 +124,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\chat_worker.py`,
 		`C:\Temp\cmd\chat_worker.py`,
 		`C:\Program Files\GA Admin\cmd\chat_worker.py.bak`,
+		0,
 	)
 	want := []string{
 		`set "OLD=C:\Program Files\GA Admin\ga-admin.exe"`,
@@ -150,7 +151,7 @@ func TestWindowsUpdateScriptQuotesVariablesSafely(t *testing.T) {
 }
 
 func TestWindowsUpdateScriptRestoresExeWhenWorkerMoveFails(t *testing.T) {
-	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak")
+	script := windowsUpdateScript("old.exe", "new.exe", "old.exe.bak", "cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak", 0)
 	want := []string{
 		`for %%D in ("%WORKER%") do if not exist "%%~dpD" mkdir "%%~dpD"`,
 		`if exist "%WORKER%" move /Y "%WORKER%" "%WORKER_BAK%"`,

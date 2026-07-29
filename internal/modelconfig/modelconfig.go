@@ -54,6 +54,7 @@ func parseOptionalBoolString(v string) bool {
 
 type ModelConfig struct {
 	Model              string                 `json:"model"`
+	Name               string                 `json:"name,omitempty"`
 	SortOrder          *int                   `json:"sort_order,omitempty"`
 	Stream             *bool                  `json:"stream,omitempty"`
 	MaxRetries         *int                   `json:"max_retries,omitempty"`
@@ -64,6 +65,10 @@ type ModelConfig struct {
 	ThinkingType       string                 `json:"thinking_type,omitempty"`
 	ReasoningEffort    string                 `json:"reasoning_effort,omitempty"`
 	FakeCCSystemPrompt *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`
+	FailoverOrder      *int                   `json:"failover_order,omitempty"`
+	FailoverMaxRetries *int                   `json:"failover_max_retries,omitempty"`
+	FailoverBaseDelay  *float64               `json:"failover_base_delay,omitempty"`
+	FailoverSpringBack *int                   `json:"failover_spring_back,omitempty"`
 	Extra              map[string]interface{} `json:"extra,omitempty"`
 }
 
@@ -90,14 +95,29 @@ type Profile struct {
 	Extra              map[string]interface{} `json:"extra,omitempty"`
 }
 
+type FailoverMember struct {
+	ProviderVarName string `json:"provider_var_name"`
+	Model           string `json:"model"`
+}
+
+type FailoverGroup struct {
+	VarName    string           `json:"var_name"`
+	Members    []FailoverMember `json:"members"`
+	MaxRetries int              `json:"max_retries"`
+	BaseDelay  float64          `json:"base_delay"`
+	SpringBack *int             `json:"spring_back,omitempty"`
+}
+
 type Draft struct {
-	UpdatedAt string    `json:"updated_at,omitempty"`
-	Profiles  []Profile `json:"profiles"`
+	UpdatedAt      string          `json:"updated_at,omitempty"`
+	Profiles       []Profile       `json:"profiles"`
+	FailoverGroups []FailoverGroup `json:"failover_groups,omitempty"`
 }
 type Store struct{ Root string }
 
 var (
 	nameRe                 = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	failoverGroupNameRe    = regexp.MustCompile(`^mixin_config_[A-Za-z0-9_]+$`)
 	managedModelsBeginRe   = regexp.MustCompile(`(?m)^# >>> GA Admin managed models >>>\r?$`)
 	managedModelsEndRe     = regexp.MustCompile(`(?m)^# <<< GA Admin managed models <<<\r?$`)
 	legacyProviderGroupsRe = regexp.MustCompile(`(?m)^_ga_admin_provider_groups = [^\r\n]*\r?$`)
@@ -259,6 +279,7 @@ func profileModelConfigs(p Profile) []ModelConfig {
 		copy(configs, p.ModelConfigs)
 		for i := range configs {
 			configs[i].Model = strings.TrimSpace(configs[i].Model)
+			configs[i].Name = strings.TrimSpace(configs[i].Name)
 		}
 		return configs
 	}
@@ -339,6 +360,15 @@ func Validate(profiles []Profile) error {
 
 func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 	seen := map[string]bool{}
+	type failoverMember struct {
+		order      int
+		family     string
+		model      string
+		maxRetries int
+		baseDelay  float64
+		springBack *int
+	}
+	members := []failoverMember{}
 	for _, raw := range profiles {
 		p := normalizeProfile(raw)
 		if p.VarName == "" || !nameRe.MatchString(p.VarName) {
@@ -371,12 +401,192 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 				return fmt.Errorf("duplicate var_name: %s", varName)
 			}
 			seen[varName] = true
+			if config.FailoverOrder != nil {
+				if *config.FailoverOrder < 0 {
+					return fmt.Errorf("failover_order must be zero or greater for model %s", config.Model)
+				}
+				maxRetries := 10
+				if config.FailoverMaxRetries != nil {
+					maxRetries = *config.FailoverMaxRetries
+				}
+				baseDelay := 0.5
+				if config.FailoverBaseDelay != nil {
+					baseDelay = *config.FailoverBaseDelay
+				}
+				if maxRetries < 0 || baseDelay < 0 {
+					return fmt.Errorf("failover retry settings must be zero or greater for model %s", config.Model)
+				}
+				if config.FailoverSpringBack != nil && *config.FailoverSpringBack <= 0 {
+					return fmt.Errorf("failover_spring_back must be greater than zero for model %s", config.Model)
+				}
+				family := "legacy"
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.Type)), "native_") {
+					family = "native"
+				}
+				members = append(members, failoverMember{*config.FailoverOrder, family, config.Model, maxRetries, baseDelay, config.FailoverSpringBack})
+			}
 		}
 		if p.APIBase == "" {
 			return errors.New("apibase and model are required")
 		}
 	}
+	if len(members) > 0 {
+		if len(members) < 2 {
+			return errors.New("failover requires at least two model sessions")
+		}
+		sort.Slice(members, func(i, j int) bool { return members[i].order < members[j].order })
+		first := members[0]
+		for i, member := range members {
+			if member.order != i {
+				return errors.New("failover_order values must be unique and consecutive from zero")
+			}
+			if member.family != first.family {
+				return errors.New("failover cannot mix Native and Legacy model families")
+			}
+			if member.maxRetries != first.maxRetries || member.baseDelay != first.baseDelay {
+				return errors.New("failover retry settings must match for every member")
+			}
+			if (member.springBack == nil) != (first.springBack == nil) || (member.springBack != nil && *member.springBack != *first.springBack) {
+				return errors.New("failover spring_back must match for every member")
+			}
+		}
+	}
 	return nil
+}
+
+type resolvedFailoverGroup struct {
+	VarName      string
+	SessionNames []string
+	MaxRetries   int
+	BaseDelay    float64
+	SpringBack   *int
+}
+
+func legacyFailoverGroups(profiles []Profile) []FailoverGroup {
+	type orderedMember struct {
+		order  int
+		member FailoverMember
+		config ModelConfig
+	}
+	ordered := []orderedMember{}
+	for _, profile := range normalizeProfiles(profiles) {
+		for _, config := range profileModelConfigs(profile) {
+			if config.FailoverOrder == nil {
+				continue
+			}
+			ordered = append(ordered, orderedMember{
+				order: *config.FailoverOrder,
+				member: FailoverMember{
+					ProviderVarName: profile.VarName,
+					Model:           config.Model,
+				},
+				config: config,
+			})
+		}
+	}
+	if len(ordered) == 0 {
+		return nil
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].order < ordered[j].order })
+	first := ordered[0].config
+	maxRetries := 10
+	if first.FailoverMaxRetries != nil {
+		maxRetries = *first.FailoverMaxRetries
+	}
+	baseDelay := 0.5
+	if first.FailoverBaseDelay != nil {
+		baseDelay = *first.FailoverBaseDelay
+	}
+	members := make([]FailoverMember, 0, len(ordered))
+	for _, item := range ordered {
+		members = append(members, item.member)
+	}
+	return []FailoverGroup{{
+		VarName:    "mixin_config_1",
+		Members:    members,
+		MaxRetries: maxRetries,
+		BaseDelay:  baseDelay,
+		SpringBack: first.FailoverSpringBack,
+	}}
+}
+
+func resolveFailoverGroups(profiles []Profile, groups []FailoverGroup) ([]resolvedFailoverGroup, error) {
+	type memberTarget struct {
+		sessionName string
+		family      string
+	}
+	targets := map[string]map[string]memberTarget{}
+	generatedNames := map[string]bool{}
+	for _, profile := range profiles {
+		family := "legacy"
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(profile.Type)), "native_") {
+			family = "native"
+		}
+		byModel := map[string]memberTarget{}
+		for index, config := range profileModelConfigs(profile) {
+			sessionName := expandedVarName(profile.VarName, index)
+			generatedNames[sessionName] = true
+			byModel[config.Model] = memberTarget{sessionName: sessionName, family: family}
+		}
+		targets[profile.VarName] = byModel
+	}
+
+	seenGroups := map[string]bool{}
+	resolved := make([]resolvedFailoverGroup, 0, len(groups))
+	for groupIndex, raw := range groups {
+		group := raw
+		group.VarName = strings.TrimSpace(group.VarName)
+		if !failoverGroupNameRe.MatchString(group.VarName) {
+			return nil, fmt.Errorf("failover group var_name must match mixin_config_[A-Za-z0-9_]+ at index %d: %s", groupIndex, group.VarName)
+		}
+		if seenGroups[group.VarName] || generatedNames[group.VarName] {
+			return nil, fmt.Errorf("duplicate failover group var_name: %s", group.VarName)
+		}
+		seenGroups[group.VarName] = true
+		if len(group.Members) < 2 {
+			return nil, fmt.Errorf("failover group %s requires at least two model sessions", group.VarName)
+		}
+		if group.MaxRetries < 0 || group.BaseDelay < 0 {
+			return nil, fmt.Errorf("failover retry settings must be zero or greater for group %s", group.VarName)
+		}
+		if group.SpringBack != nil && *group.SpringBack <= 0 {
+			return nil, fmt.Errorf("spring_back must be greater than zero for group %s", group.VarName)
+		}
+
+		sessionNames := make([]string, 0, len(group.Members))
+		seenMembers := map[string]bool{}
+		family := ""
+		for memberIndex, member := range group.Members {
+			providerVarName := strings.TrimSpace(member.ProviderVarName)
+			model := strings.TrimSpace(member.Model)
+			byModel, ok := targets[providerVarName]
+			if !ok {
+				return nil, fmt.Errorf("unknown provider_var_name %q in failover group %s", providerVarName, group.VarName)
+			}
+			target, ok := byModel[model]
+			if !ok {
+				return nil, fmt.Errorf("unknown model %q for provider %s in failover group %s", model, providerVarName, group.VarName)
+			}
+			if seenMembers[target.sessionName] {
+				return nil, fmt.Errorf("duplicate member at index %d in failover group %s", memberIndex, group.VarName)
+			}
+			seenMembers[target.sessionName] = true
+			if family == "" {
+				family = target.family
+			} else if family != target.family {
+				return nil, fmt.Errorf("failover group %s cannot mix Native and Legacy model families", group.VarName)
+			}
+			sessionNames = append(sessionNames, target.sessionName)
+		}
+		resolved = append(resolved, resolvedFailoverGroup{
+			VarName:      group.VarName,
+			SessionNames: sessionNames,
+			MaxRetries:   group.MaxRetries,
+			BaseDelay:    group.BaseDelay,
+			SpringBack:   group.SpringBack,
+		})
+	}
+	return resolved, nil
 }
 
 func IsMaskedSecret(s string) bool {
@@ -443,6 +653,34 @@ profiles_by_var={}
 profile_order=[]
 declaration_order_by_var={}
 identity_by_var={}
+mixin_groups_raw=[]
+for mixin_var, mixin_value in vars(mod).items():
+    if mixin_var.startswith('_') or 'mixin' not in mixin_var.lower() or not isinstance(mixin_value, dict):
+        continue
+    mixin_data=jsonable(mixin_value)
+    if not isinstance(mixin_data, dict):
+        continue
+    refs=mixin_data.get('llm_nos', [])
+    if isinstance(refs, (list, tuple)):
+        mixin_groups_raw.append((mixin_var, dict(mixin_data)))
+mixin=getattr(mod, 'mixin_config', {})
+failover_refs={}
+failover_values={}
+if isinstance(mixin, dict):
+    llm_nos=mixin.get('llm_nos', [])
+    if isinstance(llm_nos, (list, tuple)):
+        for order, ref in enumerate(llm_nos):
+            if isinstance(ref, str) and ref:
+                failover_refs.setdefault(ref, order)
+    max_retries=mixin.get('max_retries')
+    base_delay=mixin.get('base_delay')
+    spring_back=mixin.get('spring_back')
+    if isinstance(max_retries, int) and not isinstance(max_retries, bool):
+        failover_values['failover_max_retries']=max_retries
+    if isinstance(base_delay, (int, float)) and not isinstance(base_delay, bool):
+        failover_values['failover_base_delay']=base_delay
+    if isinstance(spring_back, int) and not isinstance(spring_back, bool):
+        failover_values['failover_spring_back']=spring_back
 for var, value in vars(mod).items():
     if var.startswith('_'):
         continue
@@ -479,6 +717,12 @@ for var, value in vars(mod).items():
     else:
         typ='native_oai'
     p={'var_name':var,'source_var_name':var,'type':typ,'name':name,'apibase':apibase,'model':model,'apikey':mask(apikey_text)}
+    failover_order=failover_refs.get(var)
+    if failover_order is None and name:
+        failover_order=failover_refs.get(name)
+    if failover_order is not None:
+        p['failover_order']=failover_order
+        p.update(failover_values)
     identity_by_var[var]=(typ, apibase.strip().rstrip('/'), apikey_text)
     for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
@@ -501,7 +745,7 @@ def model_configs_of(profile):
     if not model:
         return []
     config={'model':model}
-    for key in ('sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','thinking_type','reasoning_effort','fake_cc_system_prompt'):
+    for key in ('name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
         if key in profile:
             config[key]=profile[key]
     extra=profile.get('extra')
@@ -533,10 +777,23 @@ if isinstance(groups, dict):
             continue
         configs=[]
         seen_models=set()
+        display_names=meta.get('display_names', {}) if meta else {}
+        if not isinstance(display_names, dict):
+            display_names={}
         for child in children:
+            child_var=str(child.get('var_name', '') or '')
             for config in model_configs_of(child):
                 model=str(config.get('model', '')).strip()
                 if model and model not in seen_models:
+                    # Read name from config itself (new convention)
+                    name_from_config=config.get('name')
+                    if isinstance(name_from_config, str) and name_from_config.strip():
+                        config['name']=name_from_config.strip()
+                    else:
+                        # Fallback to legacy display_names metadata for backward compatibility
+                        display_name=display_names.get(child_var)
+                        if isinstance(display_name, str) and display_name.strip():
+                            config['name']=display_name.strip()
                     seen_models.add(model)
                     configs.append(config)
         models=[config['model'] for config in configs]
@@ -610,7 +867,60 @@ for profile in profiles:
     profile['model']=models[0] if models else ''
     profile['models']=models
     profile['model_configs']=configs
-print(json.dumps({'updated_at':'','profiles':profiles}, ensure_ascii=False))`
+
+final_by_identity={}
+final_by_var={}
+for profile in profiles:
+    var_name=profile.get('var_name')
+    if isinstance(var_name, str) and var_name:
+        final_by_var[var_name]=profile
+        identity=identity_by_var.get(var_name)
+        if identity is not None:
+            final_by_identity[identity]=profile
+session_targets={}
+for source_var, source_profile in profiles_by_var.items():
+    provider_var=child_to_provider.get(source_var, source_var)
+    identity=identity_by_var.get(provider_var)
+    if identity is None:
+        identity=identity_by_var.get(source_var)
+    final_profile=final_by_identity.get(identity) if identity is not None else None
+    if final_profile is None:
+        final_profile=final_by_var.get(provider_var) or final_by_var.get(source_var)
+    model=str(source_profile.get('model', '') or '').strip()
+    final_var=final_profile.get('var_name') if isinstance(final_profile, dict) else ''
+    if not isinstance(final_var, str) or not final_var or not model:
+        continue
+    target={'provider_var_name':final_var, 'model':model}
+    session_targets[source_var]=target
+    source_name=source_profile.get('name')
+    if isinstance(source_name, str) and source_name:
+        session_targets[source_name]=target
+
+failover_groups=[]
+for mixin_var, mixin_data in mixin_groups_raw:
+    refs=mixin_data.get('llm_nos', [])
+    members=[]
+    unresolved=False
+    for ref in refs:
+        target=session_targets.get(ref) if isinstance(ref, str) else None
+        if target is None:
+            unresolved=True
+            break
+        members.append(dict(target))
+    if unresolved or len(members) < 2:
+        continue
+    max_retries=mixin_data.get('max_retries', 10)
+    if not isinstance(max_retries, int) or isinstance(max_retries, bool):
+        max_retries=10
+    base_delay=mixin_data.get('base_delay', 0.5)
+    if not isinstance(base_delay, (int, float)) or isinstance(base_delay, bool):
+        base_delay=0.5
+    group={'var_name':mixin_var, 'members':members, 'max_retries':max_retries, 'base_delay':base_delay}
+    spring_back=mixin_data.get('spring_back')
+    if isinstance(spring_back, int) and not isinstance(spring_back, bool):
+        group['spring_back']=spring_back
+    failover_groups.append(group)
+print(json.dumps({'updated_at':'','profiles':profiles,'failover_groups':failover_groups}, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", script, mykey, boolArg(reveal))
 	hideChildWindow(cmd)
 	var stderr bytes.Buffer
@@ -657,18 +967,36 @@ func boolArg(v bool) string {
 }
 
 func Render(profiles []Profile) (string, error) {
-	return render(profiles, false)
+	return renderWithFailoverGroups(profiles, legacyFailoverGroups(profiles), false)
 }
 
 func RenderPreview(profiles []Profile) (string, error) {
-	return render(profiles, true)
+	return renderWithFailoverGroups(profiles, legacyFailoverGroups(profiles), true)
 }
 
-func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
+func RenderWithFailoverGroups(profiles []Profile, groups []FailoverGroup) (string, error) {
+	return renderWithFailoverGroups(profiles, groups, false)
+}
+
+func RenderPreviewWithFailoverGroups(profiles []Profile, groups []FailoverGroup) (string, error) {
+	return renderWithFailoverGroups(profiles, groups, true)
+}
+
+func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowMaskedSecrets bool) (string, error) {
 	if err := validateProfiles(profiles, allowMaskedSecrets); err != nil {
 		return "", err
 	}
 	profiles = normalizeProfiles(profiles)
+	resolvedGroups, err := resolveFailoverGroups(profiles, groups)
+	if err != nil {
+		return "", err
+	}
+	failoverSessionNames := map[string]bool{}
+	for _, group := range resolvedGroups {
+		for _, sessionName := range group.SessionNames {
+			failoverSessionNames[sessionName] = true
+		}
+	}
 	type renderEntry struct {
 		profile      Profile
 		config       ModelConfig
@@ -682,13 +1010,15 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 		configs := profileModelConfigs(p)
 		childVars := make([]string, 0, len(configs))
 		for i, config := range configs {
-			childVars = append(childVars, expandedVarName(p.VarName, i))
+			sessionName := expandedVarName(p.VarName, i)
+			childVars = append(childVars, sessionName)
 			entries = append(entries, renderEntry{
 				profile:      p,
 				config:       config,
 				localIndex:   i,
 				defaultOrder: defaultOrder,
 			})
+
 			defaultOrder++
 		}
 		groupMeta := map[string]interface{}{
@@ -715,14 +1045,62 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 		return left < right
 	})
 
+	// In mykey.py the "name" field is both the human-facing display name and the
+	// routing key that mixin_config['llm_nos'] references (see mykey_template.py
+	// and llmcore.py MixinSession). Resolve one effective name per session here so
+	// the rendered config dict and llm_nos always agree.
+	//
+	// Failover members claim their names first: an ambiguous name would make
+	// MixinSession route to the wrong session, so those must stay unique. Plain
+	// sessions may still share a name (several providers can serve the same model
+	// id), they just must not shadow a failover member's name.
+	effectiveNames := make(map[string]string, len(entries))
+	claimedNames := make(map[string]bool, len(entries))
+	resolveName := func(entry renderEntry, sessionName string) string {
+		if name := strings.TrimSpace(entry.config.Name); name != "" {
+			return name
+		}
+		if failoverSessionNames[sessionName] {
+			return sessionName
+		}
+		if entry.config.Model != "" {
+			return entry.config.Model
+		}
+		return sessionName
+	}
+	for _, entry := range entries {
+		sessionName := expandedVarName(entry.profile.VarName, entry.localIndex)
+		if !failoverSessionNames[sessionName] {
+			continue
+		}
+		name := resolveName(entry, sessionName)
+		if claimedNames[name] {
+			name = sessionName
+		}
+		claimedNames[name] = true
+		effectiveNames[sessionName] = name
+	}
+	for _, entry := range entries {
+		sessionName := expandedVarName(entry.profile.VarName, entry.localIndex)
+		if _, done := effectiveNames[sessionName]; done {
+			continue
+		}
+		name := resolveName(entry, sessionName)
+		if claimedNames[name] {
+			name = sessionName
+		}
+		effectiveNames[sessionName] = name
+	}
+
 	var b strings.Builder
 	b.WriteString("# Auto-generated by GenericAgent-Admin-Go.\n# Review before copying to mykey.py. Keep this file private.\n# GenericAgent discovers official config dicts by variable name: native_claude/native_oai/claude/oai or api/config/cookie.\n\n")
 	for _, entry := range entries {
 		p := entry.profile
 		config := entry.config
 		m := map[string]interface{}{}
-		if config.Model != "" {
-			m["name"] = config.Model
+		sessionName := expandedVarName(p.VarName, entry.localIndex)
+		if name := effectiveNames[sessionName]; name != "" {
+			m["name"] = name
 		}
 		m["apikey"] = p.APIKey
 		m["apibase"] = p.APIBase
@@ -765,11 +1143,35 @@ func render(profiles []Profile, allowMaskedSecrets bool) (string, error) {
 		}
 		b.WriteString(fmt.Sprintf("%s = %s\n\n", expandedVarName(p.VarName, entry.localIndex), dict))
 	}
-	groups, err := pyDict(providerGroups)
+	providerGroupsDict, err := pyDict(providerGroups)
 	if err != nil {
 		return "", err
 	}
-	b.WriteString(fmt.Sprintf("# Admin-only provider grouping metadata; GenericAgent ignores underscore-prefixed variables.\n_ga_admin_provider_groups = %s\n", groups))
+	b.WriteString(fmt.Sprintf("# Admin-only provider grouping metadata; GenericAgent ignores underscore-prefixed variables.\n_ga_admin_provider_groups = %s\n", providerGroupsDict))
+	for _, group := range resolvedGroups {
+		// Map session names to their effective display names for llm_nos routing
+		llmNos := make([]string, len(group.SessionNames))
+		for i, sessionName := range group.SessionNames {
+			if name, ok := effectiveNames[sessionName]; ok && name != "" {
+				llmNos[i] = name
+			} else {
+				llmNos[i] = sessionName
+			}
+		}
+		mixin := map[string]interface{}{
+			"llm_nos":     llmNos,
+			"max_retries": group.MaxRetries,
+			"base_delay":  group.BaseDelay,
+		}
+		if group.SpringBack != nil {
+			mixin["spring_back"] = *group.SpringBack
+		}
+		mixinDict, err := pyDict(mixin)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(fmt.Sprintf("\n%s = %s\n", group.VarName, mixinDict))
+	}
 	return b.String(), nil
 }
 
@@ -802,6 +1204,12 @@ func pyVal(v interface{}) (string, error) {
 		return fmt.Sprintf("%v", x), nil
 	case int:
 		return fmt.Sprintf("%d", x), nil
+	case []string:
+		parts := make([]string, len(x))
+		for i, item := range x {
+			parts[i] = fmt.Sprintf("%q", item)
+		}
+		return "[" + strings.Join(parts, ", ") + "]", nil
 	case nil:
 		return "None", nil
 	default:
@@ -818,7 +1226,7 @@ func sourceVarNamesToRemove(profiles []Profile) ([]string, error) {
 	varNames := make([]string, 0, len(profiles))
 	for _, p := range profiles {
 		name := strings.TrimSpace(p.SourceVarName)
-		if name == "" || name == p.VarName || seen[name] {
+		if name == "" || seen[name] {
 			continue
 		}
 		if !nameRe.MatchString(name) {
@@ -838,6 +1246,7 @@ type sourceAssignmentRange struct {
 }
 
 type sourceAssignmentResult struct {
+	Names   []string                `json:"names"`
 	Ranges  []sourceAssignmentRange `json:"ranges"`
 	Missing []string                `json:"missing"`
 }
@@ -854,6 +1263,12 @@ try:
 except SyntaxError as exc:
     raise RuntimeError(f'mykey.py syntax error at line {exc.lineno}: {exc.msg}')
 
+# Every top-level variable whose name contains "mixin" belongs to the GA
+# failover surface. Discover it from the AST so deleting or renaming a group
+# removes the previous declaration even when the caller no longer knows its
+# name.
+requested=set(names)
+
 lines=raw.splitlines(keepends=True)
 line_starts=[]
 offset=0
@@ -863,6 +1278,14 @@ for line in lines:
 
 def bound_names(target):
     return {node.id for node in ast.walk(target) if isinstance(node, ast.Name)}
+
+for node in tree.body:
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            requested.update(name for name in bound_names(target) if 'mixin' in name)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        requested.update(name for name in bound_names(node.target) if 'mixin' in name)
+names=sorted(requested)
 
 def node_range(node):
     if getattr(node, 'end_lineno', None) is None or getattr(node, 'end_col_offset', None) is None:
@@ -919,14 +1342,17 @@ for name in names:
     if start < 0 or end <= start or end > len(raw):
         raise RuntimeError(f'invalid source range for {name}')
     ranges.append({'name': name, 'start': start, 'end': end})
-print(json.dumps({'ranges': ranges, 'missing': missing}, separators=(',', ':')))`
+print(json.dumps({'names': names, 'ranges': ranges, 'missing': missing}, separators=(',', ':')))`
 
 func stripExplicitSourceAssignments(gaRoot string, content []byte, profiles []Profile) ([]byte, error) {
 	varNames, err := sourceVarNamesToRemove(profiles)
 	if err != nil {
 		return nil, err
 	}
-	if len(varNames) == 0 {
+	// The AST helper also discovers every top-level variable whose name contains
+	// "mixin", so deleting or renaming a failover group removes its old source
+	// assignment even though it is absent from the new request.
+	if len(varNames) == 0 && !bytes.Contains(content, []byte("mixin")) {
 		return append([]byte(nil), content...), nil
 	}
 	namesJSON, err := json.Marshal(varNames)
@@ -947,11 +1373,23 @@ func stripExplicitSourceAssignments(gaRoot string, content []byte, profiles []Pr
 	if err := json.Unmarshal(out, &result); err != nil {
 		return nil, fmt.Errorf("decode previous model assignment ranges: %w", err)
 	}
-	expected := make(map[string]bool, len(varNames))
+	requested := make(map[string]bool, len(varNames))
 	for _, name := range varNames {
+		requested[name] = true
+	}
+	expected := make(map[string]bool, len(result.Names))
+	for _, name := range result.Names {
+		if expected[name] || !nameRe.MatchString(name) {
+			return nil, fmt.Errorf("unexpected discovered previous model assignment %q", name)
+		}
 		expected[name] = true
 	}
-	seen := make(map[string]bool, len(varNames))
+	for name := range requested {
+		if !expected[name] {
+			return nil, fmt.Errorf("missing requested previous model assignment classification for %q", name)
+		}
+	}
+	seen := make(map[string]bool, len(expected))
 	for _, name := range result.Missing {
 		if !expected[name] || seen[name] {
 			return nil, fmt.Errorf("unexpected missing previous model assignment for %q", name)
@@ -1041,10 +1479,14 @@ func mergeRenderedModels(existing, rendered string, profiles []Profile) (string,
 }
 
 func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string]interface{}, error) {
+	return ExportWithFailoverGroups(gaRoot, profiles, legacyFailoverGroups(profiles), overwriteActive)
+}
+
+func ExportWithFailoverGroups(gaRoot string, profiles []Profile, groups []FailoverGroup, overwriteActive bool) (map[string]interface{}, error) {
 	if err := validateExportRoot(gaRoot); err != nil {
 		return nil, err
 	}
-	rendered, err := Render(profiles)
+	rendered, err := RenderWithFailoverGroups(profiles, groups)
 	if err != nil {
 		return nil, err
 	}
@@ -1056,7 +1498,12 @@ func Export(gaRoot string, profiles []Profile, overwriteActive bool) (map[string
 			return nil, err
 		}
 	}
-	cleanedExisting, err := stripExplicitSourceAssignments(gaRoot, existing, profiles)
+	base, err := stripManagedModels(string(existing))
+	if err != nil {
+		return nil, err
+	}
+	base = stripLegacyRenderedModels(base)
+	cleanedExisting, err := stripExplicitSourceAssignments(gaRoot, []byte(base), profiles)
 	if err != nil {
 		return nil, err
 	}

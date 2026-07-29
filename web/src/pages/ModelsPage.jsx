@@ -10,6 +10,7 @@ import {
   GripVertical,
   Layers,
   ListOrdered,
+  Network,
   Plus,
   RefreshCw,
   Trash2,
@@ -18,13 +19,24 @@ import {
 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Collapse, Drawer, Input, Modal, Select, Space, Tag } from 'antd'
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
+import { CSS as DndCSS } from '@dnd-kit/utilities'
 import { emptyProfile } from '../lib/format'
 import {
+  FAILOVER_VAR_PREFIX,
+  failoverGroupSuffix,
+  failoverGroupVarName,
+  migrateFailoverGroupNames,
+  nextFailoverGroupName,
+  normalizeFailoverGroups,
   API_MODE_OPTIONS,
   THINKING_TYPE_OPTIONS,
   addModelConfigs,
   modelProtocolFields,
   moveOrderedItem,
+  orderedFailoverRows,
+  orderedModelAndFailoverRows,
   orderedModelRows,
   profileModelConfigs,
   reasoningEffortOptions,
@@ -126,6 +138,11 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
             {String(index + 1).padStart(2, '0')}
           </span>
           <div className="model-config-copy">
+            {config.name && (
+              <span className="model-config-display-name" title={config.name}>
+                {config.name}
+              </span>
+            )}
             <span className="model-config-id" title={config.model || ''}>
               {config.model || text.unnamedModel}
             </span>
@@ -156,6 +173,10 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
       {configOpen && (
         <div className="model-row-advanced">
           <div className="model-row-advanced-grid">
+            <label className="model-field">
+              <span className="model-field-label">{text.displayName}</span>
+              <Input value={config.name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder} />
+            </label>
             <label className="model-field">
               <span className="model-field-label">{text.stream}</span>
               <OptionalBoolSelect value={config.stream} onChange={stream => onChange({ stream })} t={t} />
@@ -644,6 +665,121 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
   )
 }
 
+function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, text, providerDisplayName }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id })
+  const style = {
+    transform: DndCSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 100 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+    boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,0.18)' : undefined,
+    position: 'relative',
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-order-id={row.id}
+      role="listitem"
+      className={`model-order-row${isDragging ? ' is-dragging' : ''}${row.type === 'failover' ? ' is-failover' : ''}`}
+    >
+      <span
+        {...attributes}
+        {...listeners}
+        className="model-order-grip"
+        style={{ cursor: isDragging ? 'grabbing' : 'grab', display: 'flex', alignItems: 'center', touchAction: 'none' }}
+        aria-label="drag to reorder"
+      >
+        <GripVertical size={17} aria-hidden="true" />
+      </span>
+      <div className="model-order-index" aria-label={`--llm-no ${index}`}>
+        <strong>{index}</strong>
+        <span>--llm-no</span>
+      </div>
+      {row.type === 'failover' ? (
+        <>
+          <div className="model-order-copy model-order-failover">
+            <div className="model-failover-name">
+              <code>{row.varName}</code>
+              <strong>
+                <Network size={14} style={{ marginRight: '4px', verticalAlign: 'text-bottom' }} />
+                {text.failoverGroup || 'Failover Group'}
+              </strong>
+              <span>{row.members?.length || 0} {text.failoverMembers || 'members'}</span>
+            </div>
+            {row.members && row.members.length > 0 && (
+              <div className="model-failover-members">
+                {row.members.map((member, memberIndex) => (
+                  <div key={memberIndex} className="model-failover-member">
+                    <span className="model-failover-member-index">{memberIndex + 1}.</span>
+                    <code>{member.provider_var_name || member.model || JSON.stringify(member)}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="model-order-copy">
+          <code>{row.variableName}</code>
+          <strong title={row.model}>{row.model || text.missingModelId}</strong>
+          <span>{text.providerName}: {providerDisplayName(row.providerVarName) || text.unnamed}</span>
+        </div>
+      )}
+      <div className="model-order-actions">
+        <Button
+          type="text"
+          size="small"
+          icon={<ArrowUp size={15} />}
+          aria-label={`${text.moveUp} ${row.type === 'failover' ? row.varName : (row.model || row.variableName)}`}
+          title={text.moveUp}
+          disabled={orderSaving || index === 0}
+          onClick={() => moveModelOrder(index, index - 1)}
+        />
+        <Button
+          type="text"
+          size="small"
+          icon={<ArrowDown size={15} />}
+          aria-label={`${text.moveDown} ${row.type === 'failover' ? row.varName : (row.model || row.variableName)}`}
+          title={text.moveDown}
+          disabled={orderSaving || index === orderRows.length - 1}
+          onClick={() => moveModelOrder(index, index + 1)}
+        />
+      </div>
+    </div>
+  )
+}
+
+function SortableFailoverMemberRow({ memberKey, member, memberIndex, groupIndex, groupLength, failoverSaving, candidate, moveFailoverMember, toggleFailoverMember, patchFailoverGroup, group, text, providerDisplayName }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: memberKey })
+  const style = {
+    transform: DndCSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 100 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+  }
+  return (
+    <div ref={setNodeRef} style={style} role="listitem" className={`model-failover-priority-row${isDragging ? ' is-dragging' : ''}`}>
+      <span
+        {...attributes}
+        {...listeners}
+        style={{ cursor: isDragging ? 'grabbing' : 'grab', display: 'flex', alignItems: 'center', touchAction: 'none' }}
+        aria-label="drag to reorder"
+      >
+        <GripVertical size={15} aria-hidden="true" />
+      </span>
+      <span className="model-failover-priority-index">{memberIndex + 1}</span>
+      <span><strong>{member.model}</strong><small>{providerDisplayName(member.provider_var_name) || member.provider_var_name}</small></span>
+      {!candidate && <span>{text.failoverMissingMember || 'Missing'}</span>}
+      <Space size={0}>
+        <Button type="text" size="small" icon={<ArrowUp size={13} />} disabled={failoverSaving || memberIndex === 0} onClick={() => moveFailoverMember(groupIndex, memberIndex, memberIndex - 1)} />
+        <Button type="text" size="small" icon={<ArrowDown size={13} />} disabled={failoverSaving || memberIndex === groupLength - 1} onClick={() => moveFailoverMember(groupIndex, memberIndex, memberIndex + 1)} />
+        <Button danger type="text" size="small" icon={<X size={13} />} disabled={failoverSaving} onClick={() => candidate ? toggleFailoverMember(groupIndex, candidate) : patchFailoverGroup(groupIndex, { members: group.members.filter((_, i) => i !== memberIndex) })} />
+      </Space>
+    </div>
+  )
+}
+
 export function Models({
   t,
   profiles,
@@ -657,6 +793,8 @@ export function Models({
   saveModelProfile,
   onSaveModelOrder,
   onSaveProviderOrder,
+  failoverGroups = [],
+  onSaveFailoverGroups,
   discoverModels,
   modelPreview,
   modelSaveStatus = {},
@@ -677,7 +815,13 @@ export function Models({
   const [orderRows, setOrderRows] = useState([])
   const [orderSaving, setOrderSaving] = useState(false)
   const [orderError, setOrderError] = useState('')
-  const [dragIndex, setDragIndex] = useState(null)
+
+  const [failoverGroupExpanded, setFailoverGroupExpanded] = useState(new Set())
+  const [failoverOpen, setFailoverOpen] = useState(false)
+  const [failoverDrafts, setFailoverDrafts] = useState([])
+  const [failoverSaving, setFailoverSaving] = useState(false)
+  const [failoverError, setFailoverError] = useState('')
+  const failoverGroupKeySeedRef = useRef(0)
   const [providerHoldIndex, setProviderHoldIndex] = useState(null)
   const [providerDrag, setProviderDrag] = useState(null)
   const [providerOrderError, setProviderOrderError] = useState('')
@@ -691,6 +835,7 @@ export function Models({
   const providerMotionKeysRef = useRef(new WeakMap())
   const providerMotionKeySeedRef = useRef(0)
   const providerFlipRectsRef = useRef(null)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   const providerMotionKey = profile => {
     if (profile?.client_id) return `client:${profile.client_id}`
     if (!profile || typeof profile !== 'object') return `provider:${String(profile)}`
@@ -918,9 +1063,8 @@ export function Models({
 
   const persistedOrderCount = orderedModelRows(persistedProfiles).length
   const openModelOrder = () => {
-    setOrderRows(orderedModelRows(persistedProfiles))
+    setOrderRows(orderedModelAndFailoverRows(persistedProfiles, failoverGroups))
     setOrderError('')
-    setDragIndex(null)
     setOrderOpen(true)
   }
   const closeModelOrder = () => {
@@ -928,15 +1072,18 @@ export function Models({
     setOrderOpen(false)
     setOrderRows([])
     setOrderError('')
-    setDragIndex(null)
   }
   const moveModelOrder = (fromIndex, toIndex) => {
     setOrderRows(current => moveOrderedItem(current, fromIndex, toIndex))
     setOrderError('')
   }
-  const dropModelOrder = toIndex => {
-    if (Number.isInteger(dragIndex)) moveModelOrder(dragIndex, toIndex)
-    setDragIndex(null)
+  const handleDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return
+    setOrderRows(rows => {
+      const oldIndex = rows.findIndex(r => r.id === active.id)
+      const newIndex = rows.findIndex(r => r.id === over.id)
+      return arrayMove(rows, oldIndex, newIndex)
+    })
   }
   const saveModelOrder = async () => {
     if (!onSaveModelOrder) {
@@ -953,11 +1100,169 @@ export function Models({
       }
       setOrderOpen(false)
       setOrderRows([])
-      setDragIndex(null)
     } catch (error) {
       setOrderError(error?.message || text.orderSaveFailedShort)
     } finally {
       setOrderSaving(false)
+    }
+  }
+
+  const failoverCandidates = useMemo(() => orderedModelRows(persistedProfiles).map(row => {
+    const protocol = String(persistedProfiles[row.profileIndex]?.type || DEFAULT_PROTOCOL)
+    return { ...row, family: protocol.startsWith('native_') ? 'native' : 'legacy', protocol }
+  }), [persistedProfiles])
+  const failoverMemberKey = member => `${String(member?.provider_var_name || member?.providerVarName || '')}\u0000${String(member?.model || '')}`
+  const failoverCandidateMap = new Map(failoverCandidates.map(candidate => [
+    failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model }),
+    candidate,
+  ]))
+  const failoverValidation = (() => {
+    const names = new Set()
+    for (let groupIndex = 0; groupIndex < failoverDrafts.length; groupIndex += 1) {
+      const group = failoverDrafts[groupIndex]
+      const suffix = failoverGroupSuffix(group.var_name).trim()
+      const name = failoverGroupVarName(suffix)
+      if (!/^[A-Za-z0-9_]+$/.test(suffix)) return `${text.failoverGroup || 'Failover group'} ${groupIndex + 1}: ${text.errors?.varNameInvalid || 'invalid variable name'}`
+      if (names.has(name)) return `${text.failoverGroup || 'Failover group'} ${groupIndex + 1}: ${text.errors?.varNameDuplicate || 'duplicate variable name'}`
+      names.add(name)
+      if (!Array.isArray(group.members) || group.members.length < 2) return `${name}: ${text.failoverNeedsTwo}`
+      const families = new Set()
+      for (const member of group.members) {
+        const candidate = failoverCandidateMap.get(failoverMemberKey(member))
+        if (!candidate) return `${name}: ${text.failoverMissingMember || 'A selected model is no longer available.'}`
+        families.add(candidate.family)
+      }
+      if (families.size > 1) return `${name}: ${text.failoverSameFamily}`
+      const retries = Number(group.max_retries)
+      if (!Number.isInteger(retries) || retries < 0) return `${name}: ${text.failoverRetriesInvalid}`
+      const delay = Number(group.base_delay)
+      if (!Number.isFinite(delay) || delay < 0) return `${name}: ${text.failoverDelayInvalid}`
+      if (group.spring_back !== '' && group.spring_back !== undefined && group.spring_back !== null) {
+        const springBack = Number(group.spring_back)
+        if (!Number.isInteger(springBack) || springBack <= 0) return `${name}: ${text.failoverSpringInvalid}`
+      }
+    }
+    return ''
+  })()
+  const nextFailoverGroupUiKey = () => `failover-group-${++failoverGroupKeySeedRef.current}`
+  const toggleFailoverGroup = groupKey => {
+    setFailoverGroupExpanded(current => {
+      const next = new Set(current)
+      if (next.has(groupKey)) next.delete(groupKey)
+      else next.add(groupKey)
+      return next
+    })
+  }
+  const openFailover = () => {
+    setFailoverDrafts(migrateFailoverGroupNames(normalizeFailoverGroups(failoverGroups)).map(group => ({
+      ...group,
+      _ui_key: nextFailoverGroupUiKey(),
+      members: group.members.map(member => ({ ...member })),
+      max_retries: group.max_retries ?? 10,
+      base_delay: group.base_delay ?? 0.5,
+      spring_back: group.spring_back ?? '',
+    })))
+    setFailoverGroupExpanded(new Set())
+    setFailoverError('')
+    setFailoverOpen(true)
+  }
+  const closeFailover = () => {
+    if (failoverSaving) return
+    setFailoverOpen(false)
+    setFailoverDrafts([])
+    setFailoverGroupExpanded(new Set())
+    setFailoverError('')
+  }
+  const addFailoverGroup = () => {
+    const groupKey = nextFailoverGroupUiKey()
+    setFailoverDrafts(current => [...current, {
+      _ui_key: groupKey,
+      var_name: nextFailoverGroupName(current),
+      members: [],
+      max_retries: 10,
+      base_delay: 0.5,
+      spring_back: '',
+    }])
+    setFailoverGroupExpanded(current => new Set(current).add(groupKey))
+    setFailoverError('')
+  }
+  const patchFailoverGroup = (groupIndex, patch) => {
+    setFailoverDrafts(current => current.map((group, index) => index === groupIndex ? { ...group, ...patch } : group))
+    setFailoverError('')
+  }
+  const removeFailoverGroup = groupIndex => {
+    const groupKey = failoverDrafts[groupIndex]?._ui_key
+    setFailoverDrafts(current => current.filter((_, index) => index !== groupIndex))
+    if (groupKey) {
+      setFailoverGroupExpanded(current => {
+        const next = new Set(current)
+        next.delete(groupKey)
+        return next
+      })
+    }
+    setFailoverError('')
+  }
+  const moveFailoverGroup = (fromIndex, toIndex) => {
+    setFailoverDrafts(current => moveOrderedItem(current, fromIndex, toIndex))
+    setFailoverError('')
+  }
+  const toggleFailoverMember = (groupIndex, candidate) => {
+    const key = failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
+    setFailoverDrafts(current => current.map((group, index) => {
+      if (index !== groupIndex) return group
+      const members = Array.isArray(group.members) ? group.members : []
+      const selected = members.some(member => failoverMemberKey(member) === key)
+      return {
+        ...group,
+        members: selected
+          ? members.filter(member => failoverMemberKey(member) !== key)
+          : [...members, { provider_var_name: candidate.providerVarName, model: candidate.model }],
+      }
+    }))
+    setFailoverError('')
+  }
+  const moveFailoverMember = (groupIndex, fromIndex, toIndex) => {
+    setFailoverDrafts(current => current.map((group, index) => index === groupIndex
+      ? { ...group, members: moveOrderedItem(group.members, fromIndex, toIndex) }
+      : group))
+    setFailoverError('')
+  }
+  const saveFailover = async () => {
+    if (!onSaveFailoverGroups) {
+      setFailoverError(text.failoverSaveMissing)
+      return
+    }
+    if (failoverValidation) {
+      setFailoverError(failoverValidation)
+      return
+    }
+    const nextGroups = failoverDrafts.map(group => {
+      const normalized = {
+        var_name: String(group.var_name || '').trim(),
+        members: group.members.map(member => ({
+          provider_var_name: String(member.provider_var_name || '').trim(),
+          model: String(member.model || '').trim(),
+        })),
+        max_retries: Number(group.max_retries),
+        base_delay: Number(group.base_delay),
+      }
+      if (group.spring_back !== '' && group.spring_back !== undefined && group.spring_back !== null) normalized.spring_back = Number(group.spring_back)
+      return normalized
+    })
+    setFailoverSaving(true)
+    setFailoverError('')
+    try {
+      const ok = await onSaveFailoverGroups(nextGroups)
+      if (!ok) {
+        setFailoverError(text.failoverSaveFailed)
+        return
+      }
+      setFailoverOpen(false)
+      setFailoverDrafts([])
+    } catch (error) {
+      setFailoverError(error?.message || text.failoverSaveFailed)
+    } finally {
+      setFailoverSaving(false)
     }
   }
 
@@ -1000,6 +1305,14 @@ export function Models({
             title={persistedOrderCount ? text.orderAvailable : text.orderUnavailable}
           >
             {text.modelOrder}
+          </Button>
+          <Button
+            icon={<Network size={14} />}
+            onClick={openFailover}
+            disabled={!persistedOrderCount}
+            title={persistedOrderCount ? text.failoverAvailable : text.orderUnavailable}
+          >
+            {text.failover}
           </Button>
           <Button icon={<FileCode2 size={14} />} onClick={openPreview}>{text.configPreview}</Button>
           <Button type="primary" icon={<Plus size={15} />} onClick={openAdd}>{text.addProvider}</Button>
@@ -1168,60 +1481,176 @@ export function Models({
           description={text.orderDescription}
         />
         {orderError && <Alert type="error" showIcon message={orderError} className="model-order-error" />}
-        <div className="model-order-list" role="list" aria-label={text.savedOrder}>
-          {orderRows.map((row, index) => (
-            <div
-              key={row.id}
-              role="listitem"
-              className={`model-order-row${dragIndex === index ? ' is-dragging' : ''}`}
-              draggable={!orderSaving}
-              onDragStart={event => {
-                setDragIndex(index)
-                event.dataTransfer.effectAllowed = 'move'
-                event.dataTransfer.setData('text/plain', row.id)
-              }}
-              onDragOver={event => {
-                event.preventDefault()
-                event.dataTransfer.dropEffect = 'move'
-              }}
-              onDrop={event => {
-                event.preventDefault()
-                dropModelOrder(index)
-              }}
-              onDragEnd={() => setDragIndex(null)}
-            >
-              <GripVertical size={17} className="model-order-grip" aria-hidden="true" />
-              <div className="model-order-index" aria-label={`--llm-no ${index}`}>
-                <strong>{index}</strong>
-                <span>--llm-no</span>
-              </div>
-              <div className="model-order-copy">
-                <code>{row.variableName}</code>
-                <strong title={row.model}>{row.model || text.missingModelId}</strong>
-                <span>{text.providerName}: {providerDisplayName(row.providerVarName) || text.unnamed}</span>
-              </div>
-              <div className="model-order-actions">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ArrowUp size={15} />}
-                  aria-label={`${text.moveUp} ${row.model || row.variableName}`}
-                  title={text.moveUp}
-                  disabled={orderSaving || index === 0}
-                  onClick={() => moveModelOrder(index, index - 1)}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={orderRows.map(r => r.id)} strategy={verticalListSortingStrategy}>
+            <div className="model-order-list" role="list" aria-label={text.savedOrder}>
+              {orderRows.map((row, index) => (
+                <SortableOrderRow
+                  key={row.id}
+                  row={row}
+                  index={index}
+                  orderRows={orderRows}
+                  orderSaving={orderSaving}
+                  moveModelOrder={moveModelOrder}
+                  text={text}
+                  providerDisplayName={providerDisplayName}
                 />
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ArrowDown size={15} />}
-                  aria-label={`${text.moveDown} ${row.model || row.variableName}`}
-                  title={text.moveDown}
-                  disabled={orderSaving || index === orderRows.length - 1}
-                  onClick={() => moveModelOrder(index, index + 1)}
-                />
-              </div>
+              ))}
             </div>
-          ))}
+          </SortableContext>
+        </DndContext>
+      </Drawer>
+
+      <Drawer
+        title={text.failoverTitle}
+        placement="right"
+        width={780}
+        open={failoverOpen}
+        onClose={closeFailover}
+        closable={!failoverSaving}
+        maskClosable={!failoverSaving}
+        className="model-failover-drawer"
+        footer={(
+          <div className="model-order-footer model-failover-footer">
+            <span>{text.failoverDiscard}</span>
+            <Space>
+              <Button onClick={closeFailover} disabled={failoverSaving}>{t.cancel}</Button>
+              <Button type="primary" onClick={saveFailover} loading={failoverSaving} disabled={Boolean(failoverValidation)}>{text.confirmSave}</Button>
+            </Space>
+          </div>
+        )}
+      >
+        <div className="model-failover-stack">
+          <Alert type="info" showIcon message={text.failoverInfo} description={text.failoverDescription} />
+          {failoverError && <Alert type="error" showIcon message={failoverError} />}
+          {!failoverError && failoverValidation && <Alert type="warning" showIcon message={failoverValidation} />}
+
+          <section className="model-failover-section">
+            <div className="model-failover-section-head">
+              <div><span className="model-failover-kicker">00</span><strong>{text.failoverGroups || text.failoverTitle}</strong></div>
+              <Button icon={<Plus size={14} />} disabled={failoverSaving} onClick={addFailoverGroup}>{text.addGroup || t.add}</Button>
+            </div>
+            {!failoverDrafts.length && <div className="model-failover-empty">{text.failoverNoGroups || 'No failover groups. Add one to get started.'}</div>}
+          </section>
+
+          {failoverDrafts.map((group, groupIndex) => {
+            const selectedKeys = new Set(group.members.map(failoverMemberKey))
+            const selectedFamilies = new Set(group.members.map(member => failoverCandidateMap.get(failoverMemberKey(member))?.family).filter(Boolean))
+            const groupExpanded = failoverGroupExpanded.has(group._ui_key)
+            return (
+              <section className={`model-failover-section model-failover-group${groupExpanded ? ' is-expanded' : ' is-collapsed'}`} key={group._ui_key}>
+                <div className="model-failover-section-head model-failover-group-head">
+                  <div className="model-failover-group-title">
+                    <span className="model-failover-kicker">{String(groupIndex + 1).padStart(2, '0')}</span>
+                    <span><strong>{group.var_name || text.failoverGroup || 'Failover group'}</strong><small>{group.members.length} {text.failoverMembers || 'members'}</small></span>
+                  </div>
+                  <Space size={2}>
+                    <Button type="text" size="small" icon={<ArrowUp size={14} />} aria-label={text.moveUp} disabled={failoverSaving || groupIndex === 0} onClick={() => moveFailoverGroup(groupIndex, groupIndex - 1)} />
+                    <Button type="text" size="small" icon={<ArrowDown size={14} />} aria-label={text.moveDown} disabled={failoverSaving || groupIndex === failoverDrafts.length - 1} onClick={() => moveFailoverGroup(groupIndex, groupIndex + 1)} />
+                    <Button danger type="text" size="small" icon={<Trash2 size={14} />} aria-label={t.delete} disabled={failoverSaving} onClick={() => removeFailoverGroup(groupIndex)} />
+                    <Button
+                      type="text"
+                      size="small"
+                      className="model-failover-group-toggle"
+                      icon={<ChevronDown size={14} />}
+                      aria-label={groupExpanded ? text.collapse : text.configure}
+                      aria-expanded={groupExpanded}
+                      onClick={() => toggleFailoverGroup(group._ui_key)}
+                    />
+                  </Space>
+                </div>
+                {groupExpanded && <div className="model-failover-group-body">
+                <label className="model-failover-name">
+                  <span>{text.varName || 'Variable name'}</span>
+                  <Input
+                    addonBefore={FAILOVER_VAR_PREFIX}
+                    value={failoverGroupSuffix(group.var_name)}
+                    disabled={failoverSaving}
+                    onChange={event => patchFailoverGroup(groupIndex, { var_name: failoverGroupVarName(event.target.value) })}
+                  />
+                </label>
+
+                <div className="model-failover-section-head">
+                  <div><span className="model-failover-kicker">A</span><strong>{text.failoverCandidates}</strong></div>
+                  <span>{group.members.length} / {failoverCandidates.length}</span>
+                </div>
+                <p>{text.failoverCandidatesHelp}</p>
+                <div className="model-failover-candidates">
+                  {failoverCandidates.length ? failoverCandidates.map(candidate => {
+                    const key = failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
+                    const selected = selectedKeys.has(key)
+                    const locked = selectedFamilies.size > 0 && !selectedFamilies.has(candidate.family)
+                    return (
+                      <button
+                        type="button"
+                        key={candidate.id}
+                        className={`model-failover-candidate${selected ? ' is-selected' : ''}`}
+                        disabled={failoverSaving || (locked && !selected)}
+                        aria-pressed={selected}
+                        onClick={() => toggleFailoverMember(groupIndex, candidate)}
+                      >
+                        <span className="model-failover-check">{selected ? <CheckCircle2 size={15} /> : null}</span>
+                        <span><strong>{candidate.model || text.missingModelId}</strong><small>{providerDisplayName(candidate.providerVarName) || text.unnamed} · {candidate.protocol}</small></span>
+                      </button>
+                    )
+                  }) : <div className="model-failover-empty">{text.failoverNoCandidates}</div>}
+                </div>
+
+                <div className="model-failover-section-head">
+                  <div><span className="model-failover-kicker">B</span><strong>{text.failoverPriority}</strong></div>
+                </div>
+                <p>{text.failoverPriorityHelp}</p>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={({ active, over }) => {
+                    if (!over || active.id === over.id) return
+                    const oldIdx = group.members.findIndex(m => failoverMemberKey(m) === active.id)
+                    const newIdx = group.members.findIndex(m => failoverMemberKey(m) === over.id)
+                    if (oldIdx !== -1 && newIdx !== -1) moveFailoverMember(groupIndex, oldIdx, newIdx)
+                  }}
+                >
+                  <SortableContext items={group.members.map(m => failoverMemberKey(m))} strategy={verticalListSortingStrategy}>
+                    <div className="model-failover-priority" role="list" aria-label={text.failoverPriority}>
+                      {group.members.map((member, memberIndex) => {
+                        const candidate = failoverCandidateMap.get(failoverMemberKey(member))
+                        return (
+                          <SortableFailoverMemberRow
+                            key={failoverMemberKey(member)}
+                            memberKey={failoverMemberKey(member)}
+                            member={member}
+                            memberIndex={memberIndex}
+                            groupIndex={groupIndex}
+                            groupLength={group.members.length}
+                            failoverSaving={failoverSaving}
+                            candidate={candidate}
+                            moveFailoverMember={moveFailoverMember}
+                            toggleFailoverMember={toggleFailoverMember}
+                            patchFailoverGroup={patchFailoverGroup}
+                            group={group}
+                            text={text}
+                            providerDisplayName={providerDisplayName}
+                          />
+                        )
+                      })}
+                      {!group.members.length && <div className="model-failover-empty">{text.failoverNeedsTwo}</div>}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+
+                <div className="model-failover-section-head">
+                  <div><span className="model-failover-kicker">C</span><strong>{text.failoverPolicy}</strong></div>
+                </div>
+                <p>{text.failoverPolicyHelp}</p>
+                <div className="model-failover-settings">
+                  <label><span>{text.failoverRetries}</span><Input type="number" min="0" step="1" value={group.max_retries} disabled={failoverSaving} onChange={event => patchFailoverGroup(groupIndex, { max_retries: event.target.value })} /><small>{text.failoverRetriesHelp}</small></label>
+                  <label><span>{text.failoverDelay}</span><Input type="number" min="0" step="0.1" value={group.base_delay} disabled={failoverSaving} onChange={event => patchFailoverGroup(groupIndex, { base_delay: event.target.value })} /><small>{text.failoverDelayHelp}</small></label>
+                  <label><span>{text.failoverSpring}</span><Input type="number" min="1" step="1" value={group.spring_back} placeholder={text.failoverSpringPlaceholder} disabled={failoverSaving} onChange={event => patchFailoverGroup(groupIndex, { spring_back: event.target.value })} /><small>{text.failoverSpringHelp}</small></label>
+                </div>
+                </div>}
+              </section>
+            )
+          })}
         </div>
       </Drawer>
 
