@@ -745,6 +745,8 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
 				"type":         "done",
 				"message":      done,
+				"ctx_chars":    3800,
+				"ctx_msgs":     3,
 				"raw_history":  rawHistory,
 				"history_info": []interface{}{map[string]interface{}{"turn": "final"}},
 				"working":      map[string]interface{}{"phase": "complete"},
@@ -827,12 +829,19 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if strings.Count(rr.Body.String(), `"model_id":"vendor/model-real"`) < 2 {
 		t.Fatalf("stream missing model event or terminal message model_id: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"ctx_chars":3800`) || !strings.Contains(rr.Body.String(), `"ctx_msgs":3`) {
+		t.Fatalf("stream terminal message missing context stats: %s", rr.Body.String())
+	}
 	stored, err := loadChatSession(s.CfgStore.Cfg, "session-hist")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(stored.Messages) == 0 || stored.Messages[len(stored.Messages)-1].ModelID != "vendor/model-real" {
 		t.Fatalf("stored assistant model_id=%q want vendor/model-real: %#v", stored.Messages[len(stored.Messages)-1].ModelID, stored.Messages)
+	}
+	storedFinal := stored.Messages[len(stored.Messages)-1]
+	if storedFinal.CtxChars != 3800 || storedFinal.CtxMsgs != 3 {
+		t.Fatalf("stored assistant context stats=(%d,%d) want (3800,3): %#v", storedFinal.CtxChars, storedFinal.CtxMsgs, storedFinal)
 	}
 
 	reloadReq := httptest.NewRequest(http.MethodGet, "/api/chat/session/session-hist", nil)
@@ -847,6 +856,10 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if len(reloaded.Messages) == 0 || reloaded.Messages[len(reloaded.Messages)-1].ModelID != "vendor/model-real" {
 		t.Fatalf("reloaded assistant model_id=%q want vendor/model-real: %#v", reloaded.Messages[len(reloaded.Messages)-1].ModelID, reloaded.Messages)
+	}
+	reloadedFinal := reloaded.Messages[len(reloaded.Messages)-1]
+	if reloadedFinal.CtxChars != 3800 || reloadedFinal.CtxMsgs != 3 {
+		t.Fatalf("reloaded assistant context stats=(%d,%d) want (3800,3): %#v", reloadedFinal.CtxChars, reloadedFinal.CtxMsgs, reloadedFinal)
 	}
 	if len(stored.RawHistory) != 3 {
 		t.Fatalf("stored raw_history len=%d want 3: %#v", len(stored.RawHistory), stored.RawHistory)

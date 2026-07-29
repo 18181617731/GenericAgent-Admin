@@ -29,13 +29,18 @@ test('recognizes only the dedicated btw command boundary', () => {
   assert.equal(isBTWCommand('question /btw later'), false)
 })
 
-test('final stream message keeps realtime usage absent from the persisted event', () => {
+test('final stream message keeps realtime usage and context absent from the persisted event', () => {
   const usage = { input_tokens: 4290, output_tokens: 118 }
   const usages = [usage]
-  const merged = mergeFinalStreamMessage({ model_id:'live-model', usage, usages }, { id:'final', content:'done' })
+  const merged = mergeFinalStreamMessage(
+    { model_id:'live-model', usage, usages, ctx_chars:3800, ctx_msgs:3 },
+    { id:'final', content:'done' },
+  )
   assert.equal(merged.model_id, 'live-model')
   assert.equal(merged.usage, usage)
   assert.equal(merged.usages, usages)
+  assert.equal(merged.ctx_chars, 3800)
+  assert.equal(merged.ctx_msgs, 3)
 })
 
 test('stream follow only stops after an empty completed replay of a finished run', () => {

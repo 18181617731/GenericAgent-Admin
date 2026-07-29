@@ -39,6 +39,8 @@ type chatMessage struct {
 	SideQuestion   string                   `json:"side_question,omitempty"`
 	Usage          map[string]int           `json:"usage,omitempty"`
 	Usages         []map[string]int         `json:"usages,omitempty"`
+	CtxChars       int                      `json:"ctx_chars,omitempty"`
+	CtxMsgs        int                      `json:"ctx_msgs,omitempty"`
 	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
 	RunStartedAtMS int64                    `json:"run_started_at_ms,omitempty"`
 	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
@@ -539,6 +541,13 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			msg["elapsed_ms"] = final.ElapsedMS
 			ev["message"] = msg
 			final.Usage, final.Usages = chatUsageFromEvent(ev)
+			final.CtxChars, final.CtxMsgs = chatCtxStatsFromEvent(ev)
+			if final.CtxChars > 0 {
+				msg["ctx_chars"] = final.CtxChars
+			}
+			if final.CtxMsgs > 0 {
+				msg["ctx_msgs"] = final.CtxMsgs
+			}
 			if finalUltraPlanState != nil {
 				final.UltraPlanState = mergeChatMaps(mergeChatMaps(nil, finalUltraPlanState), final.UltraPlanState)
 			}
@@ -1041,6 +1050,38 @@ func chatUsageFromEvents(events [][]byte) (map[string]int, []map[string]int) {
 	return usage, usages
 }
 
+func chatCtxStatsFromEvent(ev map[string]interface{}) (int, int) {
+	ctxChars, _ := chatLLMIndex(ev["ctx_chars"])
+	ctxMsgs, _ := chatLLMIndex(ev["ctx_msgs"])
+	if msg, ok := ev["message"].(map[string]interface{}); ok {
+		if ctxChars <= 0 {
+			ctxChars, _ = chatLLMIndex(msg["ctx_chars"])
+		}
+		if ctxMsgs <= 0 {
+			ctxMsgs, _ = chatLLMIndex(msg["ctx_msgs"])
+		}
+	}
+	return ctxChars, ctxMsgs
+}
+
+func chatCtxStatsFromEvents(events [][]byte) (int, int) {
+	ctxChars, ctxMsgs := 0, 0
+	for _, line := range events {
+		var ev map[string]interface{}
+		if json.Unmarshal(line, &ev) != nil {
+			continue
+		}
+		nextChars, nextMsgs := chatCtxStatsFromEvent(ev)
+		if nextChars > 0 {
+			ctxChars = nextChars
+		}
+		if nextMsgs > 0 {
+			ctxMsgs = nextMsgs
+		}
+	}
+	return ctxChars, ctxMsgs
+}
+
 func chatPartialContentFromEvents(events [][]byte) string {
 	var b strings.Builder
 	for _, line := range events {
@@ -1085,6 +1126,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 		content = "\u5df2\u505c\u6b62\u751f\u6210"
 	}
 	usage, usages := chatUsageFromEvents(events)
+	ctxChars, ctxMsgs := chatCtxStatsFromEvents(events)
 	final := chatMessage{
 		ID:             pendingID,
 		Role:           "assistant",
@@ -1095,6 +1137,8 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 		RunStartedAtMS: startedAtMS,
 		Usage:          usage,
 		Usages:         usages,
+		CtxChars:       ctxChars,
+		CtxMsgs:        ctxMsgs,
 	}
 
 	s.SessionMu.Lock()

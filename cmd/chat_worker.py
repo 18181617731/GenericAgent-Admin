@@ -120,16 +120,20 @@ class _UsageCapturingStderr:
             return
         import re
         with _USAGE_LOCK:
+            usage_changed = False
             # [Cache] input=123 cached=45  or  [Cache] input=123 creation=10 read=20
             m = re.search(r'\[Cache\]\s+input=(\d+)', text)
             if m:
                 _CURRENT_USAGE['input_tokens'] = int(m.group(1))
+                usage_changed = True
             m = re.search(r'cached=(\d+)', text)
             if m:
                 _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
+                usage_changed = True
             m = re.search(r'read=(\d+)', text)
             if m:
                 _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
+                usage_changed = True
             # [Output] tokens=456  -- marks the end of one internal LLM turn.
             m = re.search(r'\[Output\]\s+tokens=(\d+)', text)
             if m:
@@ -141,10 +145,17 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['input_tokens'] = 0
                 _CURRENT_USAGE['output_tokens'] = 0
                 _CURRENT_USAGE['cached_tokens'] = 0
-                # Push this turn's usage live so the UI can render it the moment
-                # the internal turn finishes, instead of waiting for `done`.
+                # Replace the live Cache snapshot at the same index with this
+                # completed turn once output usage becomes available.
                 try:
                     emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
+                except Exception:
+                    pass
+            elif usage_changed:
+                # Cache/input usage is known before the model finishes. Publish it
+                # immediately so the live row can show usage and context together.
+                try:
+                    emit({'type': 'turn_usage', 'index': len(_TURN_USAGES), 'usage': dict(_CURRENT_USAGE)})
                 except Exception:
                     pass
             # [Debug] Current context: 12345 chars, 42 messages.

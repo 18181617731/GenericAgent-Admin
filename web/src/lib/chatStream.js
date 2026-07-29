@@ -11,6 +11,8 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   if ((!Array.isArray(merged.usages) || merged.usages.length === 0) && Array.isArray(streamed.usages) && streamed.usages.length) {
     merged.usages = streamed.usages
   }
+  if (!(Number(merged.ctx_chars) > 0) && Number(streamed.ctx_chars) > 0) merged.ctx_chars = streamed.ctx_chars
+  if (!(Number(merged.ctx_msgs) > 0) && Number(streamed.ctx_msgs) > 0) merged.ctx_msgs = streamed.ctx_msgs
   return merged
 }
 

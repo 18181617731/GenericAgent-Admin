@@ -93,6 +93,31 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", done)
         self.assertIn("usages", done)
 
+    def test_usage_is_published_on_cache_then_completed_at_the_same_index(self):
+        chat_worker._reset_usage()
+        capture = chat_worker._UsageCapturingStderr(mock.Mock())
+
+        capture.write("[Cache] input=1500 cached=821500\n")
+        live = self.events[-1]
+        self.assertEqual(live["type"], "turn_usage")
+        self.assertEqual(live["index"], 0)
+        self.assertEqual(live["usage"], {
+            "input_tokens": 1500,
+            "output_tokens": 0,
+            "cached_tokens": 821500,
+        })
+
+        capture.write("[Output] tokens=22100\n")
+        completed = self.events[-1]
+        self.assertEqual(completed["type"], "turn_usage")
+        self.assertEqual(completed["index"], 0)
+        self.assertEqual(completed["usage"], {
+            "input_tokens": 1500,
+            "output_tokens": 22100,
+            "cached_tokens": 821500,
+        })
+        self.assertEqual(chat_worker._snapshot_turn_usages(), [completed["usage"]])
+
     def test_ordinary_request_does_not_initialize_worldline(self):
         agent = FakeAgent()
         with mock.patch.object(chat_worker, "_ensure_worldline_store") as ensure:
