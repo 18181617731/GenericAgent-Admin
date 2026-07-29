@@ -254,6 +254,42 @@ def _snapshot_backend_history(agent):
         return []
 
 
+def _snapshot_ctx_stats(agent):
+    """Return ctx_chars and ctx_msgs for the done payload.
+
+    Prefers the value captured by _UsageCapturingStderr (set whenever llmcore
+    calls trim_messages_history).  Falls back to computing directly from the
+    backend history so that short conversations — where trim is never called —
+    still report a non-zero context size.
+    """
+    try:
+        with _USAGE_LOCK:
+            chars = _CTX_STATS.get('ctx_chars', 0)
+            msgs  = _CTX_STATS.get('ctx_msgs',  0)
+        if chars or msgs:
+            return chars, msgs
+        # Fallback: compute from raw backend history
+        history = getattr(agent.llmclient.backend, 'history', []) or []
+        total_chars = 0
+        total_msgs  = 0
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            total_msgs += 1
+            content = entry.get('content') or ''
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        total_chars += len(part.get('text') or '')
+                    elif isinstance(part, str):
+                        total_chars += len(part)
+        return total_chars, total_msgs
+    except Exception:
+        return 0, 0
+
+
 def _snapshot_model_id(agent):
     """Return the active backend's concrete model ID for this reply."""
     try:
@@ -668,7 +704,8 @@ def _maybe_expand_official_slash_command(root, prompt):
 def _emit_immediate_done(agent, content, history_info=None, working=None):
     msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
     state = _snapshot_ga_state(agent)
-    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+    _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
+    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
 
 
 
@@ -2155,7 +2192,8 @@ def handle_request(agent, worker, req):
                 usages = _snapshot_turn_usages()
                 _commit_worldline(agent, prompt)
                 plan = emit_plan_update(text)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+                _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
                 return
     except Exception as e:
         stop_ultraplan_observer()

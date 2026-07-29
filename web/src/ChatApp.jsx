@@ -3268,8 +3268,8 @@ export default function ChatApp() {
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         if (!finalMsg.goal_state && m.goal_state) finalMsg.goal_state = m.goal_state
-        if (!finalMsg.ctx_chars && m.ctx_chars) finalMsg.ctx_chars = m.ctx_chars
-        if (!finalMsg.ctx_msgs && m.ctx_msgs) finalMsg.ctx_msgs = m.ctx_msgs
+        if (!finalMsg.ctx_chars) finalMsg.ctx_chars = ev.ctx_chars || m.ctx_chars || 0
+        if (!finalMsg.ctx_msgs) finalMsg.ctx_msgs = ev.ctx_msgs || m.ctx_msgs || 0
         return finalMsg
       }) : xs)
     }
