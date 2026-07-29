@@ -121,19 +121,26 @@ class _UsageCapturingStderr:
         import re
         with _USAGE_LOCK:
             usage_changed = False
-            # [Cache] input=123 cached=45  or  [Cache] input=123 creation=10 read=20
-            m = re.search(r'\[Cache\]\s+input=(\d+)', text)
-            if m:
-                _CURRENT_USAGE['input_tokens'] = int(m.group(1))
-                usage_changed = True
-            m = re.search(r'cached=(\d+)', text)
-            if m:
-                _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
-                usage_changed = True
-            m = re.search(r'read=(\d+)', text)
-            if m:
-                _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
-                usage_changed = True
+            # Legacy GA emits input/cached, while newer Claude sessions emit
+            # input/creation/read. Claude's billable input is the sum of all
+            # three fields; only cache reads count as cached input.
+            cache_line = re.search(r'\[Cache\][^\r\n]*', text)
+            if cache_line:
+                fields = {
+                    key: int(value)
+                    for key, value in re.findall(r'(input|cached|creation|read)=(\d+)', cache_line.group(0))
+                }
+                if 'input' in fields:
+                    if 'creation' in fields or 'read' in fields:
+                        _CURRENT_USAGE['input_tokens'] = (
+                            fields['input'] + fields.get('creation', 0) + fields.get('read', 0)
+                        )
+                        _CURRENT_USAGE['cached_tokens'] = fields.get('read', 0)
+                    else:
+                        _CURRENT_USAGE['input_tokens'] = fields['input']
+                        if 'cached' in fields:
+                            _CURRENT_USAGE['cached_tokens'] = fields['cached']
+                    usage_changed = True
             # [Output] tokens=456  -- marks the end of one internal LLM turn.
             m = re.search(r'\[Output\]\s+tokens=(\d+)', text)
             if m:
@@ -310,6 +317,52 @@ def _snapshot_model_id(agent):
         return ' '.join(value.split())[:256]
     except Exception:
         return ''
+
+
+def _install_outbound_model_hooks(agent):
+    """Emit the concrete model immediately before every routed LLM attempt."""
+    try:
+        backend = agent.llmclient.backend
+        sessions = list(getattr(backend, '_sessions', ()) or ())
+    except Exception:
+        sessions = []
+    originals = []
+    for session in sessions:
+        try:
+            original = session.raw_ask
+            had_instance_attr = 'raw_ask' in vars(session)
+            instance_value = vars(session).get('raw_ask')
+        except Exception:
+            continue
+
+        def wrapped(*args, _original=original, _session=session, **kwargs):
+            try:
+                model_id = getattr(_session, 'model', '')
+                if isinstance(model_id, str):
+                    model_id = ' '.join(model_id.split())[:256]
+                    if model_id:
+                        emit({'type': 'model', 'model_id': model_id})
+            except Exception:
+                pass
+            return _original(*args, **kwargs)
+
+        try:
+            session.raw_ask = wrapped
+            originals.append((session, had_instance_attr, instance_value))
+        except Exception:
+            continue
+
+    def restore():
+        for session, had_instance_attr, instance_value in reversed(originals):
+            try:
+                if had_instance_attr:
+                    session.raw_ask = instance_value
+                else:
+                    delattr(session, 'raw_ask')
+            except Exception:
+                pass
+
+    return restore
 
 
 def _json_clone(value, fallback):
@@ -2156,6 +2209,7 @@ def handle_request(agent, worker, req):
             emit({'type': 'plan_update', 'plan': plan})
         return plan
 
+    restore_model_hooks = _install_outbound_model_hooks(agent)
     try:
         if _up_context:
             _up_thread = threading.Thread(
@@ -2217,6 +2271,8 @@ def handle_request(agent, worker, req):
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+    finally:
+        restore_model_hooks()
 
 
 def main():
