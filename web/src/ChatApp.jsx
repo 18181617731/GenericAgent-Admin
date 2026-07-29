@@ -2379,7 +2379,7 @@ export const ChatMessage = memo(function ChatMessage({
   const hasUsage = turnUsages.some(u => u && (u.input_tokens > 0 || u.cached_tokens > 0 || u.output_tokens > 0))
   const usageTotal = hasUsage ? sumUsages(turnUsages) : null
   const elapsedMs = getElapsedMs(m, clockNow)
-  const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0)
+  const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0 || m.ctx_chars > 0 || m.ctx_msgs > 0)
   const isBTW = m.kind === 'btw'
   const btwDisplay = m.role === 'user' ? parseBTWDisplay(userText) : null
 
