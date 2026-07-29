@@ -25,13 +25,14 @@ import {
 } from './lib/versionUpdatePolling'
 import { withUpstreamI18n } from './lib/i18nIntegration'
 import { dashboardSummary } from './lib/dashboard'
-import { autonomousServices, scheduleServices } from './lib/serviceDomains'
+import { autonomousServices, goalWorkflowServices, guardianServices, scheduleServices } from './lib/serviceDomains'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { SchedulerServiceRow, TaskRow } from './components/schedule'
 import { ErrorBoundary, GlobalFeedback, RouteFallback } from './components/feedback'
 import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
+import { EnvironmentGuardianSection } from './components/ServicePlacement.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
@@ -127,11 +128,11 @@ const TaskFormEditor = ({ value, onChange, t }) => {
 }
 
 const OverviewPage = ({
-  t, services, schedule, observability, observabilityError, refreshObservability,
+  t, lang, services, guardianSvcs, serviceActionStates, schedule, observability, observabilityError, refreshObservability,
   versionInfo, versionCheck, versionStatus, versionBusy, checkVersion, updateVersion,
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
   updateGASource, autostart, toggleAutostart, root, overview, gitSyncView,
-  repairGARuntime, runtimeRepairing, runtimeRepairResult,
+  repairGARuntime, runtimeRepairing, runtimeRepairResult, onServiceStart, onServiceStop, onServiceLogs, onServiceAutostart,
 }) => {
   const text = t.overview
   const versionMessage = versionStatus?.error || (versionStatus?.stage === 'queued'
@@ -156,6 +157,8 @@ const OverviewPage = ({
       repairResult={runtimeRepairResult}
       labels={{ ...text, refresh: t.refresh }}
     />
+
+    <EnvironmentGuardianSection services={guardianSvcs} lang={lang} actionStates={serviceActionStates} onStart={onServiceStart} onStop={onServiceStop} onLogs={onServiceLogs} onAutostart={onServiceAutostart}/>
 
     <div className="overview-operations">
       <Panel title={t.cards.version} className="overview-panel overview-panel-updates">
@@ -342,6 +345,8 @@ export default function App() {
   const scheduleSvcs = useMemo(() => scheduleServices(services), [services])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => autonomousServices(services), [services])
+  const goalWorkflowSvcs = useMemo(() => goalWorkflowServices(services), [services])
+  const guardianSvcs = useMemo(() => guardianServices(services), [services])
 
   const loadScheduleTasks = async ({ quiet = false } = {}) => {
     if (!quiet) setScheduleLoading(true)
@@ -1088,7 +1093,10 @@ export default function App() {
 
   const overviewPage = <OverviewPage
     t={t}
+    lang={lang}
     services={services}
+    guardianSvcs={guardianSvcs}
+    serviceActionStates={serviceActionStates}
     schedule={schedule}
     observability={observability}
     observabilityError={observabilityError}
@@ -1115,6 +1123,10 @@ export default function App() {
     repairGARuntime={repairGARuntime}
     runtimeRepairing={runtimeRepairing}
     runtimeRepairResult={runtimeRepairResult}
+    onServiceStart={name=>serviceAction(name, 'start')}
+    onServiceStop={name=>serviceAction(name, 'stop')}
+    onServiceLogs={viewServiceLogs}
+    onServiceAutostart={toggleServiceAutostart}
   />
 
   return <>
@@ -1259,7 +1271,7 @@ export default function App() {
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
       {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
       {tab==='usage' && <UsagePage lang={lang}/>}
-      {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
+      {tab==='goals' && <GoalsPage t={t} lang={lang} workflowServices={goalWorkflowSvcs} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>}
       {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page">

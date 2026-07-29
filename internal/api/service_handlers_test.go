@@ -220,3 +220,39 @@ func TestServicesListExposesProcessContext(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceRoutesEnforceWorkflowAndModelBoundaries(t *testing.T) {
+	root := t.TempDir()
+	reflectDir := filepath.Join(root, "reflect")
+	if err := os.MkdirAll(reflectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"watchdog.py", "agent_team_worker.py", "checklist_master.py"} {
+		if err := os.WriteFile(filepath.Join(reflectDir, name), []byte("# test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newServiceHandlerTestServer(t, root).Routes()
+	cases := []struct {
+		name string
+		path string
+		body string
+		want int
+		text string
+	}{
+		{name: "watchdog model", path: "/api/services/model", body: `{"name":"reflect/watchdog.py","llm_no":1}`, want: http.StatusBadRequest, text: "does not support model"},
+		{name: "worker start", path: "/api/services/start", body: `{"name":"reflect/agent_team_worker.py"}`, want: http.StatusBadRequest, text: "managed by its Goal"},
+		{name: "checklist autostart", path: "/api/services/autostart", body: `{"name":"reflect/checklist_master.py","enabled":true}`, want: http.StatusBadRequest, text: "autostart is managed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("X-GA-Confirm", "dangerous")
+			h.ServeHTTP(rr, req)
+			if rr.Code != tc.want || !strings.Contains(rr.Body.String(), tc.text) {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.want, rr.Body.String())
+			}
+		})
+	}
+}

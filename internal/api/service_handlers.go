@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -28,7 +29,7 @@ func (s *Server) servicesWithAutostart() []service.ServiceInfo {
 	models := s.CfgStore.Cfg.ServiceModels
 	for i := range items {
 		items[i].Autostart = auto[items[i].Name]
-		if models != nil {
+		if models != nil && service.SupportsModelConfiguration(items[i]) {
 			if no, ok := models[items[i].Name]; ok {
 				n := no
 				items[i].ModelNo = &n
@@ -63,14 +64,25 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	svc, err := s.startServiceByName(q.Name, q.Params)
 	if err != nil {
-		bad(w, 404, err.Error())
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrServiceNotFound) {
+			status = http.StatusNotFound
+		}
+		bad(w, status, err.Error())
 		return
 	}
 	writeJSON(w, svc)
 }
 
 func (s *Server) startServiceByName(name string, params map[string]string) (service.ServiceInfo, error) {
-	if params == nil || strings.TrimSpace(params["llm_no"]) == "" {
+	svc, ok := s.Svc.Find(name)
+	if !ok {
+		return service.ServiceInfo{}, service.ErrServiceNotFound
+	}
+	if !service.SupportsManualLifecycle(svc) {
+		return svc, service.ErrWorkflowManaged
+	}
+	if service.SupportsModelConfiguration(svc) && (params == nil || strings.TrimSpace(params["llm_no"]) == "") {
 		if models := s.CfgStore.Cfg.ServiceModels; models != nil {
 			if no, ok := models[name]; ok {
 				if params == nil {
@@ -123,8 +135,13 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
-	if _, ok := s.Svc.Find(q.Name); !ok {
+	svc, ok := s.Svc.Find(q.Name)
+	if !ok {
 		bad(w, 404, "service not found")
+		return
+	}
+	if q.Enabled && !service.SupportsManualLifecycle(svc) {
+		bad(w, 400, "service autostart is managed by its Goal or checklist workflow")
 		return
 	}
 	cfg := s.CfgStore.Cfg
@@ -161,8 +178,13 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
-	if _, ok := s.Svc.Find(q.Name); !ok {
+	svc, ok := s.Svc.Find(q.Name)
+	if !ok {
 		bad(w, 404, "service not found")
+		return
+	}
+	if q.LLMNo != nil && !service.SupportsModelConfiguration(svc) {
+		bad(w, 400, "service does not support model configuration")
 		return
 	}
 	cfg := s.CfgStore.Cfg

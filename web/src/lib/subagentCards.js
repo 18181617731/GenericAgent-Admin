@@ -16,22 +16,33 @@ export function hasSubagentLaunch(messages) {
 // tone: run | done | warn | stop
 export function subagentCardView(st, now = Date.now()) {
   if (!st || !st.name) return null
+  const stale = Boolean(st.updated_at && now - st.updated_at > STALL_MS)
   let label = '运行中'
   let tone = 'run'
   if (st.intervened) { label = '已干预'; tone = 'warn' }
   else if (st.stop_requested) { label = '停止请求'; tone = 'stop' }
   else if (st.round_ended) { label = '本轮完成'; tone = 'done' }
-  else if (st.updated_at && now - st.updated_at > STALL_MS) { label = '疑似停滞'; tone = 'warn' }
+  else if (stale) { label = '疑似停滞'; tone = 'warn' }
   return {
     name: st.name,
     label,
     tone,
+    history: Boolean(st.round_ended || ((st.stop_requested || st.intervened) && stale)),
     rounds: st.rounds || 0,
     summary: st.latest_summary || '',
     hasReply: !!st.has_reply,
     hasExpected: !!st.has_expected,
     ago: formatAgo(st.updated_at, now),
   }
+}
+
+export function subagentCardGroups(states, now = Date.now()) {
+  const groups = { current: [], history: [] }
+  for (const state of Array.isArray(states) ? states : []) {
+    const view = subagentCardView(state, now)
+    if (view) groups[view.history ? 'history' : 'current'].push(view)
+  }
+  return groups
 }
 
 export function formatAgo(ts, now = Date.now()) {

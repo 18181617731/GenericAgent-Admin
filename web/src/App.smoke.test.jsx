@@ -13,6 +13,8 @@ import { UsagePage } from './pages/UsagePage.jsx'
 import { AutonomousPage } from './pages/AutonomousPage.jsx'
 import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 import { SchedulerServiceRow } from './components/schedule.jsx'
+import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
+import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -182,6 +184,58 @@ describe('autonomous operations page', () => {
     const help = await screen.findByLabelText(/主自主引擎：核心后台服务/)
     expect(help.getAttribute('tabindex')).toBe('0')
     expect(help.getAttribute('data-tooltip')).toContain('自主任务队列')
+  })
+})
+
+describe('service placement experience', () => {
+  test('shows watchdog under runtime protection without a model selector', () => {
+    const onStart = vi.fn()
+    render(<EnvironmentGuardianSection
+      services={[{ name: 'reflect/watchdog.py', kind: 'guardian', running: false, command: ['python', 'reflect/watchdog.py'] }]}
+      onStart={onStart}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+    />)
+
+    expect(screen.getByRole('region', { name: '运行保障' })).toBeTruthy()
+    expect(screen.getByText('服务看护器')).toBeTruthy()
+    expect(screen.queryByText('执行模型')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '启动' }))
+    expect(onStart).toHaveBeenCalledWith('reflect/watchdog.py')
+  })
+
+  test('explains Goal workflow components without standalone service controls', () => {
+    render(<GoalWorkflowGuide services={[
+      { name: 'reflect/agent_team_worker.py', kind: 'reflect' },
+      { name: 'reflect/checklist_master.py', kind: 'reflect' },
+    ]}/>)
+
+    expect(screen.getByRole('region', { name: 'Goal 协作组件' })).toBeTruthy()
+    expect(screen.getByText('团队协作工作器')).toBeTruthy()
+    expect(screen.getByText('检查清单管理器')).toBeTruthy()
+    expect(screen.getAllByText('脚本可用')).toHaveLength(2)
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByText(/不提供独立启动、开机自启或全局模型配置/)).toBeTruthy()
+  })
+})
+
+describe('chat subagent status presentation', () => {
+  test('should distinguish current subagent work from collapsed session history', () => {
+    const now = Date.now()
+    render(<SubagentStatusPanel states={[
+      { name: 'active-task', rounds: 2, updated_at: now, latest_summary: '正在核验下载结果' },
+      { name: 'completed-task', rounds: 3, round_ended: true, updated_at: now - 3600000, latest_summary: '报告已生成' },
+    ]}/>)
+
+    expect(screen.getByRole('region', { name: '本会话子任务' })).toBeTruthy()
+    expect(screen.getByText('每张卡代表一个独立子任务；“子任务第 N 轮”不是历史对话轮次。')).toBeTruthy()
+    expect(screen.getByText('子任务第 2 轮 · 最近更新 刚刚')).toBeTruthy()
+    const history = screen.getByText('历史任务').closest('details')
+    expect(history.open).toBe(false)
+    fireEvent.click(screen.getByText('历史任务'))
+    expect(history.open).toBe(true)
+    expect(screen.getByText('子任务第 3 轮 · 最近更新 1小时前')).toBeTruthy()
   })
 })
 

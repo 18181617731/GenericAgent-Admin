@@ -514,6 +514,17 @@ func TestStartGoalValidatesBounds(t *testing.T) {
 	}
 }
 
+func TestHiveWorkerArgsUsesSelectedGoalModel(t *testing.T) {
+	llmNo := 7
+	args := hiveWorkerArgs("http://127.0.0.1:9000", "board-key", &llmNo)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"reflect/agent_team_worker.py", "--base_url http://127.0.0.1:9000", "--board_key board-key", "--name hive-worker-1", "--llm_no 7"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("worker args missing %q: %s", want, joined)
+		}
+	}
+}
+
 func TestStartGoalRecordsStartFailure(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("uses Windows PATHEXT-free fake python command semantics")

@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+var (
+	ErrServiceNotFound = errors.New("service not found")
+	ErrWorkflowManaged = errors.New("service lifecycle is managed by its Goal or checklist workflow")
+)
+
 type ServiceInfo struct {
 	Name       string   `json:"name"`
 	Kind       string   `json:"kind"`
@@ -98,10 +103,26 @@ func (m *Manager) python() string {
 
 func excluded(name string) bool {
 	switch name {
-	case "chatapp_common.py", "goal_mode.py":
+	case "chatapp_common.py", "goal_mode.py", "watchdog.py":
 		return true
 	}
 	return false
+}
+
+func workflowManagedService(name string) bool {
+	switch filepath.ToSlash(name) {
+	case "reflect/agent_team_worker.py", "reflect/checklist_master.py", "reflect/goal_mode.py":
+		return true
+	}
+	return false
+}
+
+func SupportsManualLifecycle(s ServiceInfo) bool {
+	return !workflowManagedService(s.Name)
+}
+
+func SupportsModelConfiguration(s ServiceInfo) bool {
+	return s.Kind == "reflect" && !workflowManagedService(s.Name)
 }
 
 func existsFile(p string) bool {
@@ -129,6 +150,7 @@ func (m *Manager) Discover() []ServiceInfo {
 	m.addIfExists(&out, filepath.Join("reflect", "scheduler.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "scheduler.py"))})
 	m.addIfExists(&out, filepath.Join("reflect", "autonomous.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "autonomous.py"))})
 	m.addIfExists(&out, filepath.Join("reflect", "goal_mode.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "goal_mode.py"))})
+	m.addIfExists(&out, filepath.Join("reflect", "watchdog.py"), "guardian", []string{py, filepath.ToSlash(filepath.Join("reflect", "watchdog.py"))})
 
 	reflectDir := filepath.Join(m.GARoot, "reflect")
 	if entries, err := os.ReadDir(reflectDir); err == nil {
@@ -234,7 +256,10 @@ func buildServiceArgs(s ServiceInfo, params map[string]string) ([]string, error)
 func (m *Manager) StartWithParams(name string, params map[string]string) (ServiceInfo, error) {
 	s, ok := m.Find(name)
 	if !ok {
-		return s, errors.New("service not found")
+		return s, ErrServiceNotFound
+	}
+	if !SupportsManualLifecycle(s) {
+		return s, ErrWorkflowManaged
 	}
 	m.mu.Lock()
 	if p, ok := m.procs[name]; ok && p.cmd.Process != nil && p.ret == nil {

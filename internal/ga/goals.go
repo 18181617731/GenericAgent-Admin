@@ -1153,6 +1153,14 @@ func relGoalPath(root, p string) string {
 	return filepath.ToSlash(p)
 }
 
+func hiveWorkerArgs(baseURL, boardKey string, llmNo *int) []string {
+	args := []string{"agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "agent_team_worker.py")), "--base_url", baseURL, "--board_key", boardKey, "--name", "hive-worker-1"}
+	if llmNo != nil && *llmNo >= 0 {
+		args = append(args, "--llm_no", strconv.Itoa(*llmNo))
+	}
+	return args
+}
+
 func StartHiveGoal(root string, opt GoalStartOptions, userObjective string) (GoalMeta, error) {
 	bbsScript := filepath.Join(root, "assets", "agent_bbs.py")
 	if !existsFile(bbsScript) {
@@ -1270,7 +1278,7 @@ func StartHiveGoal(root string, opt GoalStartOptions, userObjective string) (Goa
 		return GoalMeta{}, err
 	}
 	defer workerLog.Close()
-	workerArgs := []string{"agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "agent_team_worker.py")), "--base_url", baseURL, "--board_key", boardKey, "--name", "hive-worker-1"}
+	workerArgs := hiveWorkerArgs(baseURL, boardKey, opt.LLMNo)
 	workerCmd := exec.Command(windowlessPythonPath(pythonPath), workerArgs...)
 	hideChildWindow(workerCmd)
 	workerCmd.Dir = root

@@ -2,7 +2,7 @@ const COPY = {
   zh: {
     services: '运行控制', approvals: '待审批', records: '执行记录', refresh: '刷新', running: '运行中', stopped: '已停止',
     serviceStat: '自主服务', pendingStat: '待审批', reportStat: '执行记录', latestStat: '最近执行', noRecent: '暂无记录',
-    serviceIntro: '主引擎负责空闲触发，其余为按需辅助服务。建议只启用实际使用的服务，避免无效模型调用。',
+    serviceIntro: '这里只显示可独立管理的自主执行服务。Goal/Hive 任务组件由对应工作流管理，服务看护器已归入总览的运行保障区域。',
     approvalIntro: '批准只会记录决定并加入自主任务队列；具体变更仍由自主服务按 SOP 执行并生成报告。',
     pending: '待处理', handled: '已处理', noPending: '当前没有待审批任务', noHandled: '还没有审批记录', noLedger: '未发现待批草案台账',
     approve: '批准并加入队列', reject: '拒绝', confirmReject: '确认拒绝', cancel: '取消', rejectNote: '拒绝原因（可选）',
@@ -16,7 +16,7 @@ const COPY = {
   en: {
     services: 'Runtime', approvals: 'Approvals', records: 'Execution records', refresh: 'Refresh', running: 'Running', stopped: 'Stopped',
     serviceStat: 'Autonomous services', pendingStat: 'Pending approvals', reportStat: 'Execution records', latestStat: 'Latest run', noRecent: 'No records',
-    serviceIntro: 'The main engine handles idle triggers; other services are optional helpers. Enable only what you use to avoid unnecessary model calls.',
+    serviceIntro: 'Only independently managed autonomous execution services appear here. Goal/Hive run components are managed by their workflow, while the watchdog is shown under runtime protection on Overview.',
     approvalIntro: 'Approval records the decision and queues a task. The autonomous service still applies changes under its SOP and writes a report.',
     pending: 'Pending', handled: 'Handled', noPending: 'No tasks are waiting for approval', noHandled: 'No approval decisions yet', noLedger: 'No pending-draft ledger was found',
     approve: 'Approve and queue', reject: 'Reject', confirmReject: 'Confirm rejection', cancel: 'Cancel', rejectNote: 'Reason for rejection (optional)',

@@ -1,11 +1,11 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
@@ -19,8 +19,9 @@ import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
+import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
 import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
-import { hasSubagentLaunch, subagentCardView } from './lib/subagentCards'
+import { hasSubagentLaunch } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
 
@@ -34,6 +35,7 @@ const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedi
 const chatLanguage = () => typeof localStorage !== 'undefined' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 const ct = (zh, en) => chatLanguage() === 'en' ? en : zh
 const chatLocale = () => chatLanguage() === 'en' ? 'en-US' : 'zh-CN'
+export const ChatFileScopeContext = createContext({ workspace: '', gaRoot: '' })
 
 const timestampMs = (v) => {
   if (v instanceof Date) return v.getTime()
@@ -283,13 +285,67 @@ const FILE_KIND_RULES = [
 
 const getFileVisual = (value) => FILE_KIND_RULES.find((rule) => rule.re.test(String(value || '').split(/[?#]/)[0])) || { kind:'file', Icon:FileText }
 
-function FileAttachment({ path }) {
-  const clean = String(path || '').trim()
-  const name = clean.split(/[\\/]/).filter(Boolean).pop() || clean || ct('文件', 'File')
+const isAbsoluteLocalPath = (value = '') => /^(?:[a-z]:[\\/]|[\\/]{2}|\/)/i.test(String(value || '').trim())
+
+const normalizedLocalPath = (value = '') => String(value || '').trim().replace(/[\\/]+/g, '/').replace(/\/$/, '')
+
+const isWithinLocalPath = (candidate, scope) => {
+  const cleanCandidate = normalizedLocalPath(candidate).toLowerCase()
+  const cleanScope = normalizedLocalPath(scope).toLowerCase()
+  return Boolean(cleanCandidate && cleanScope && (cleanCandidate === cleanScope || cleanCandidate.startsWith(`${cleanScope}/`)))
+}
+
+const resolveLocalPath = (base, relative) => {
+  const cleanBase = normalizedLocalPath(base)
+  if (!isAbsoluteLocalPath(cleanBase)) return ''
+  const drive = cleanBase.match(/^[a-z]:/i)?.[0] || ''
+  const separator = drive || String(base || '').includes('\\') ? '\\' : '/'
+  const baseParts = cleanBase.replace(/^[a-z]:/i, '').split('/').filter(Boolean)
+  for (const part of normalizedLocalPath(relative).split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (!baseParts.length) return ''
+      baseParts.pop()
+      continue
+    }
+    baseParts.push(part)
+  }
+  const prefix = drive ? `${drive}${separator}` : cleanBase.startsWith('/') ? separator : ''
+  return `${prefix}${baseParts.join(separator)}`
+}
+
+export function resolveChatToolFilePath(path, scope = {}) {
+  const raw = String(path || '').trim()
+  const workspace = String(scope?.workspace || '').trim()
+  const gaRoot = String(scope?.gaRoot || '').trim()
+  if (!raw || isAbsoluteLocalPath(raw) || !/^(?:\.\.?[\\/])/.test(raw) || !isAbsoluteLocalPath(workspace)) return raw
+  const resolved = resolveLocalPath(workspace, raw)
+  return isWithinLocalPath(resolved, workspace) || isWithinLocalPath(resolved, gaRoot) ? resolved : raw
+}
+
+export function extractToolResultFilePath(result = '') {
+  const match = String(result || '').match(/\b(?:patch(?:ing|ed)?|writ(?:ing|ten)|creat(?:ing|ed)|delet(?:ing|ed)|remov(?:ing|ed)|renam(?:ing|ed)|mov(?:ing|ed)|cop(?:ying|ied))\s+(?:the\s+)?(?:file|folder|directory)?\s*:\s*([a-z]:[^\r\n]+)/i)
+  const path = String(match?.[1] || '').trim().replace(/^["'`]+|["'`\])}>.,;:]+$/g, '')
+  return isAbsoluteLocalPath(path) ? path : ''
+}
+
+const FILE_MUTATION_TOOL_RE = /\bfile_(?:write|patch|delete|remove|move|rename|copy|mkdir|create)\b/i
+const hasFileMutation = (content = '') => FILE_MUTATION_TOOL_RE.test(String(content || ''))
+
+function StepFileMutationMarker() {
+  const label = ct('本步骤包含文件增删改操作', 'This step changes files')
+  return <span className="oa-turn-file-marker" title={label} aria-label={label}><FilePenLine size={14}/></span>
+}
+
+function FileAttachment({ path, resolvedPath = '' }) {
+  const displayPath = String(path || '').trim()
+  const fileScope = useContext(ChatFileScopeContext)
+  const clean = resolveChatToolFilePath(resolvedPath || displayPath, fileScope)
+  const name = displayPath.split(/[\\/]/).filter(Boolean).pop() || displayPath || ct('文件', 'File')
   const extMatch = name.match(/\.([^.]+)$/)
   const extension = extMatch ? extMatch[1].slice(0, 6).toUpperCase() : 'FILE'
-  const splitAt = Math.max(clean.lastIndexOf('\\'), clean.lastIndexOf('/'))
-  const directory = splitAt >= 0 ? clean.slice(0, splitAt) : ct('本地文件', 'Local file')
+  const splitAt = Math.max(displayPath.lastIndexOf('\\'), displayPath.lastIndexOf('/'))
+  const directory = splitAt >= 0 ? displayPath.slice(0, splitAt) : ct('本地文件', 'Local file')
   const visual = getFileVisual(name)
   const { kind, Icon } = visual
   const isImage = kind === 'image'
@@ -302,7 +358,7 @@ function FileAttachment({ path }) {
       alert(ct(`打开失败：${e?.message || e}`, `Open failed: ${e?.message || e}`))
     }
   }
-  return <span className={`oa-file-card oa-file-kind-${kind}`} title={clean}>
+  return <span className={`oa-file-card oa-file-kind-${kind}`} title={displayPath || clean}>
     <button type="button" className="oa-file-leading" onClick={() => open('file')} aria-label={ct(`打开文件 ${name}`, `Open file ${name}`)}>
       <Icon className="oa-file-fallback-icon" size={19}/>
       {isImage && <img src={imageUrl} alt="" loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />}
@@ -315,7 +371,7 @@ function FileAttachment({ path }) {
       <a href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></a>
       <button type="button" onClick={() => open('file')} title={ct('打开文件', 'Open file')} aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
       <button type="button" onClick={() => open('folder')} title={ct('打开所在位置', 'Open containing folder')} aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
-      <CopyButton text={clean} compact />
+      <CopyButton text={displayPath || clean} compact />
     </span>
   </span>
 }
@@ -1346,7 +1402,7 @@ function DiffRows({ rows }) {
 }
 
 // Render file tool arguments in a structured way
-function FileToolArgsPanel({ toolName, args }) {
+function FileToolArgsPanel({ toolName, args, result }) {
   const fileArgs = parseFileToolArgs(toolName, args)
   const [showContent, setShowContent] = useState(false)
 
@@ -1379,7 +1435,7 @@ function FileToolArgsPanel({ toolName, args }) {
       )}
     </div>
 
-    <FileAttachment path={path} />
+    <FileAttachment path={path} resolvedPath={extractToolResultFilePath(result)} />
 
     {changedTotal === 0 && <div className="oa-file-tool-empty">无行级改动</div>}
 
@@ -1568,7 +1624,7 @@ function ToolCallBlock({ call, onAskReply }) {
     </button>
     {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} /> : <>
       {isFileTool ? (
-        <FileToolArgsPanel toolName={toolName} args={call.args} />
+        <FileToolArgsPanel toolName={toolName} args={call.args} result={call.result} />
       ) : (
         call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>
       )}
@@ -2112,10 +2168,12 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
       {stackOpen && boxedRuns.map((r, i) => {
         const open = isTurnOpen(r, i)
         const tu = turnUsages && turnUsages[i]
+        const filesChanged = hasFileMutation(r.body)
         return <div className="oa-turn-node" key={`${r.turn}-${i}`}>
           <section className={`oa-turn-card ${open ? 'open' : 'collapsed'}`}>
             <button className="oa-turn-toggle" type="button" onClick={() => toggleTurn(r, i)} aria-expanded={open} title={r.title || ct('执行步骤', 'Execution step')}>
               <span className="oa-turn-index">{ct('步骤', 'Step')} {r.turn}</span>
+              {filesChanged && <StepFileMutationMarker />}
               <b>{r.title || ct('执行步骤', 'Execution step')}</b>
               <UsageRow u={tu} className="oa-usage-inline" />
               <ChevronDown size={15} className="oa-turn-chevron"/>
@@ -2125,7 +2183,7 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
         </div>
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
-        <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">{ct('步骤', 'Step')} {lastRun.turn}</span><b>{lastRun.title || ct('正在执行', 'Running')}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? ct('实时输出中', 'Live output') : ct('最新一轮', 'Latest turn')}</em></div>
+        <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">{ct('步骤', 'Step')} {lastRun.turn}</span>{hasFileMutation(lastRun.body) && <StepFileMutationMarker />}<b>{lastRun.title || ct('正在执行', 'Running')}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? ct('实时输出中', 'Live output') : ct('最新一轮', 'Latest turn')}</em></div>
         {lastRun.body || ultraPlanStateForLastRun
           ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun)
           : <p className="oa-turn-empty">{ct('正在等待该轮输出…', 'Waiting for this turn’s output…')}</p>}
@@ -2552,7 +2610,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
     <div className="oa-bubble">
       <div className="oa-msg-body">
       <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
-      {imageFiles.length > 0 && <div className="oa-message-images">{imageFiles.map((file, i) => <img key={uploadFileName(file) || i} src={uploadFileSource(file)} alt={uploadFileName(file)} />)}</div>}
+      {imageFiles.length > 0 && <div className="oa-msg-images">{imageFiles.map((file, i) => <a className="oa-msg-image-link" key={uploadFileName(file) || i} href={uploadFileSource(file)} target="_blank" rel="noreferrer"><img className="oa-msg-image" src={uploadFileSource(file)} alt={uploadFileName(file)} /></a>)}</div>}
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
         {pendingFiles.map((file, i) => {
@@ -4235,7 +4293,8 @@ export default function ChatApp() {
     }
   }
 
-  return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
+  return <ChatFileScopeContext.Provider value={{ workspace: current?.workspace || '', gaRoot: cfg?.ga_root || cfg?.GARoot || '' }}>
+    <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="oa-side-head">
         <div className="oa-logo"><Bot size={18}/><span>GenericAgent</span></div>
@@ -4320,10 +4379,7 @@ export default function ChatApp() {
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
         <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} />
-        {subagents.length > 0 && <div className="oa-subagents" aria-label="子代理状态">{subagents.map(state => {
-          const view = subagentCardView(state)
-          return view && <div key={state.name} className={`oa-subagent-card tone-${view.tone}`}><div className="oa-subagent-head"><Bot size={14}/><span className="oa-subagent-name">{view.name}</span><span className="oa-subagent-state">{view.label}</span></div><div className="oa-subagent-meta">第 {view.rounds} 轮{view.ago ? ` · ${view.ago}` : ''}</div>{view.summary && <div className="oa-subagent-summary">{view.summary}</div>}</div>
-        })}</div>}
+        <SubagentStatusPanel states={subagents}/>
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
@@ -4547,5 +4603,6 @@ export default function ChatApp() {
         </footer>
       </section>
     </div>}
-  </div>
+    </div>
+  </ChatFileScopeContext.Provider>
 }
