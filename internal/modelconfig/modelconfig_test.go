@@ -916,9 +916,9 @@ func TestRenderOfficialFailoverMixin(t *testing.T) {
 		t.Fatalf("Render() error = %v", err)
 	}
 	for _, want := range []string{
-		`"name": "native_oai_config_primary"`,
-		`"name": "native_claude_config_backup"`,
-		`mixin_config_1 = {"base_delay": 0.5, "llm_nos": ["native_oai_config_primary", "native_claude_config_backup"], "max_retries": 10, "spring_back": 120}`,
+		`"name": "gpt-main"`,
+		`"name": "claude-main"`,
+		`mixin_config_1 = {"base_delay": 0.5, "llm_nos": ["gpt-main", "claude-main"], "max_retries": 10, "spring_back": 120}`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
@@ -926,7 +926,7 @@ func TestRenderOfficialFailoverMixin(t *testing.T) {
 	}
 }
 
-func TestRenderExplicitFailoverGroupUsesReferencedSessionNames(t *testing.T) {
+func TestRenderExplicitFailoverGroupPreservesModelNames(t *testing.T) {
 	profiles := []Profile{
 		{
 			VarName: "native_oai_config_primary", Type: "native_oai",
@@ -953,9 +953,44 @@ func TestRenderExplicitFailoverGroupUsesReferencedSessionNames(t *testing.T) {
 		t.Fatalf("RenderWithFailoverGroups() error = %v", err)
 	}
 	for _, want := range []string{
-		`"name": "native_oai_config_primary"`,
+		`"name": "gpt-main"`,
+		`"name": "gpt-backup"`,
+		`"llm_nos": ["gpt-main", "gpt-backup"]`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderExplicitFailoverGroupKeepsRoutingNamesUnique(t *testing.T) {
+	profiles := []Profile{
+		{
+			VarName: "native_oai_config_primary", Type: "native_oai",
+			APIBase: "https://primary.example/v1", APIKey: "sk-primary", Model: "gpt-main",
+			ModelConfigs: []ModelConfig{{Model: "gpt-main", Name: "shared-route"}},
+		},
+		{
+			VarName: "native_oai_config_backup", Type: "native_oai",
+			APIBase: "https://backup.example/v1", APIKey: "sk-backup", Model: "gpt-backup",
+			ModelConfigs: []ModelConfig{{Model: "gpt-backup", Name: "shared-route"}},
+		},
+	}
+	groups := []FailoverGroup{{
+		VarName: "mixin_config_1",
+		Members: []FailoverMember{
+			{ProviderVarName: "native_oai_config_primary", Model: "gpt-main"},
+			{ProviderVarName: "native_oai_config_backup", Model: "gpt-backup"},
+		},
+	}}
+	rendered, err := RenderWithFailoverGroups(profiles, groups)
+	if err != nil {
+		t.Fatalf("RenderWithFailoverGroups() error = %v", err)
+	}
+	for _, want := range []string{
+		`"name": "shared-route"`,
 		`"name": "native_oai_config_backup"`,
-		`"llm_nos": ["native_oai_config_primary", "native_oai_config_backup"]`,
+		`"llm_nos": ["shared-route", "native_oai_config_backup"]`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, rendered)

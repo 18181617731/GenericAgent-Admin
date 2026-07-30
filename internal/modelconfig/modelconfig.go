@@ -1060,11 +1060,8 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 		if name := strings.TrimSpace(entry.config.Name); name != "" {
 			return name
 		}
-		if failoverSessionNames[sessionName] {
-			return sessionName
-		}
-		if entry.config.Model != "" {
-			return entry.config.Model
+		if model := strings.TrimSpace(entry.config.Model); model != "" {
+			return model
 		}
 		return sessionName
 	}
