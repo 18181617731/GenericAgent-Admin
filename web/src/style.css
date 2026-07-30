@@ -917,6 +917,10 @@ html[data-theme="light"] {
   --muted: #6b6b6b;
   --muted-2: #8f8f8f;
   --green: #10a37f;
+  --code-bg: #f7f7f8;
+  --code-text: #0d0d0d;
+  --code-inline-bg: #f2f2f2;
+  --pre-text: #0d0d0d;
   --shadow: none;
   --shadow-soft: none;
   --shadow-tiny: none;
@@ -3565,6 +3569,10 @@ html[data-theme="dark"] {
   --muted-2: #777d85;
   --green: #19c39c;
   --red: #f0616d;
+  --code-bg: #20242a;
+  --code-text: #ececec;
+  --code-inline-bg: #24282e;
+  --pre-text: #ececec;
   --ga-accent: #19c39c;
   --ga-accent-2: #5b8cff;
   --ga-warn: #e0a23c;
