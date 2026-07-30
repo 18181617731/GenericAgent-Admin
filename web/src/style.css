@@ -2,25 +2,26 @@
 
 :root,
 html[data-theme="warm"] {
-  --bg: #fbfaf7;
-  --bg-soft: #f4f2ee;
-  --surface: var(--g-ffffffa82);
-  --surface-strong: #ffffff;
-  --surface-muted: #f7f5f1;
-  --border: rgba(23, 23, 23, .10);
-  --border-strong: rgba(23, 23, 23, .20);
-  --text: #171717;
-  --muted: #6f6a62;
-  --muted-2: #9a948b;
-  --blue: #2563eb;
-  --cyan: #0f766e;
-  --violet: #6d5dfc;
-  --green: #10a37f;
-  --orange: #b45309;
-  --red: #b4233a;
-  --shadow: 0 24px 70px rgba(0, 0, 0, .10);
-  --shadow-soft: 0 14px 42px rgba(0, 0, 0, .075);
-  --shadow-tiny: 0 1px 2px rgba(0, 0, 0, .045);
+  --bg: #FEFCF7;
+  --bg-soft: #FAF7F0;
+  --surface: #FFFFFF;
+  --surface-strong: #FFFFFF;
+  --surface-muted: #F5F0E5;
+  --border: #E0D8C8;
+  --border-strong: #C9BDA8;
+  --text: #1A1610;
+  --muted: #5C5344;
+  --muted-2: #8B7355;
+  --blue: #0288A8;
+  --cyan: #0A7C7A;
+  --violet: #8B6DD4;
+  --green: #2D7A3E;
+  --orange: #D4741A;
+  --red: #C4374F;
+  --gold: #B8860B;
+  --shadow: 0 24px 70px rgba(26, 22, 16, .08);
+  --shadow-soft: 0 14px 42px rgba(26, 22, 16, .055);
+  --shadow-tiny: 0 1px 2px rgba(26, 22, 16, .04);
   --radius-xl: 24px;
   --radius-lg: 18px;
   --radius-md: 14px;
