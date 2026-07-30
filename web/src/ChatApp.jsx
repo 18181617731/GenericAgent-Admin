@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
@@ -2992,6 +2992,9 @@ export default function ChatApp() {
   // stream after a page refresh) can read the committed list without waiting for a state updater.
   useEffect(() => { messagesRef.current = messages }, [messages])
   const scrollModeRef = useRef('auto')
+  const autoFollowRef = useRef(true)
+  const previousScrollTopRef = useRef(0)
+  useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
   const persistSessionDraft = useCallback((sessionId, value) => {
@@ -4362,25 +4365,37 @@ export default function ChatApp() {
     }
   }, [sessionManagerOpen, batchDeleting])
 
-  const scrollToThreadEnd = (behavior = 'auto') => endRef.current?.scrollIntoView({ behavior, block:'end' })
+  const scrollToThreadEnd = (behavior = 'auto') => {
+    endRef.current?.scrollIntoView({ behavior, block:'end' })
+    if (threadRef.current) previousScrollTopRef.current = threadRef.current.scrollTop
+  }
+  const setFollowState = (enabled) => {
+    autoFollowRef.current = enabled
+    setAutoFollow(enabled)
+    setShowFollow(!enabled)
+  }
   const resumeFollow = () => {
-    setAutoFollow(true)
-    setShowFollow(false)
+    setFollowState(true)
     scrollToThreadEnd('auto')
   }
   const updateFollowFromScroll = () => {
-    const near = isNearBottom(threadRef.current, 20)
-    setAutoFollow(near)
-    setShowFollow(!near)
+    const thread = threadRef.current
+    if (!thread) return
+    const scrollTop = thread.scrollTop
+    const action = scrollFollowAction({
+      nearBottom: isNearBottom(thread, 20),
+      previousScrollTop: previousScrollTopRef.current,
+      scrollTop,
+    })
+    previousScrollTopRef.current = scrollTop
+    if (action === 'resume' && !autoFollowRef.current) setFollowState(true)
+    else if (action === 'pause' && autoFollowRef.current) setFollowState(false)
   }
   const breakFollow = () => {
-    if (autoFollow && !isNearBottom(threadRef.current, 12)) {
-      setAutoFollow(false)
-      setShowFollow(true)
-    }
+    if (autoFollowRef.current && !isNearBottom(threadRef.current, 12)) setFollowState(false)
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (autoFollow) {
       const behavior = scrollModeRef.current || 'auto'
       scrollModeRef.current = 'auto'
@@ -4389,6 +4404,18 @@ export default function ChatApp() {
       setShowFollow(true)
     }
   }, [messages, busy, autoFollow])
+
+  const lastThreadMessageId = messages.reduce((id, message) => message.kind === 'btw' ? id : message.id, '')
+  useEffect(() => {
+    const cards = threadRef.current?.querySelectorAll('.oa-message[data-id]')
+    const tail = cards?.[cards.length - 1]
+    if (!tail || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (autoFollowRef.current) scrollToThreadEnd('auto')
+    })
+    observer.observe(tail)
+    return () => observer.disconnect()
+  }, [lastThreadMessageId, sid])
 
   useGSAP(() => {
     if (prefersReducedMotion()) return

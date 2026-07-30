@@ -4,6 +4,12 @@ export const shouldFinishStreamFollow = ({ running, replay, completed, eventCoun
   !running && replay && completed && eventCount === 0
 )
 
+export const scrollFollowAction = ({ nearBottom, previousScrollTop, scrollTop, epsilon = 1 }) => {
+  if (nearBottom) return 'resume'
+  if (Number(scrollTop) < Number(previousScrollTop) - epsilon) return 'pause'
+  return 'preserve'
+}
+
 export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   const merged = { ...finalMessage }
   if ((!merged.model_id || !String(merged.model_id).trim()) && streamed.model_id) merged.model_id = streamed.model_id

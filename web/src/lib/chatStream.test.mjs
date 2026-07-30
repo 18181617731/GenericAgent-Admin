@@ -1,6 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './chatStream.js'
+
+test('scroll follow preserves auto mode when fast content growth moves the bottom away', () => {
+  assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 320 }), 'preserve')
+  assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 321 }), 'preserve')
+})
+
+test('scroll follow pauses only for upward movement and resumes at the bottom', () => {
+  assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 300 }), 'pause')
+  assert.equal(scrollFollowAction({ nearBottom: true, previousScrollTop: 300, scrollTop: 420 }), 'resume')
+})
 
 test('resume targets the tail placeholder and never a stale empty assistant mid-history', () => {
   const stale = { id:'stale-mid', role:'assistant', content:'' }
