@@ -42,6 +42,25 @@ test('shared status feedback stays keyboard-visible and readable at narrow width
   )
 })
 
+test('sidebar status notice fits its compact rail without hiding actions', () => {
+  const noticeRule = ruleBodies('.ga-status-notice').join('\n')
+  assert.match(noticeRule, /display\s*:\s*inline-grid/i)
+  assert.match(noticeRule, /grid-template-columns\s*:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/i)
+  assert.match(noticeRule, /min-width\s*:\s*0/i)
+  assert.match(noticeRule, /box-sizing\s*:\s*border-box/i)
+
+  const sidebarRule = ruleBodies('.sidebar > .ga-status-notice').join('\n')
+  assert.match(sidebarRule, /width\s*:\s*100%/i)
+  assert.match(sidebarRule, /grid-template-columns\s*:\s*auto\s+minmax\(0,\s*1fr\)/i)
+
+  const messageRule = ruleBodies('.sidebar > .ga-status-notice .ga-status-message').join('\n')
+  assert.match(messageRule, /white-space\s*:\s*normal/i)
+  assert.match(messageRule, /overflow-wrap\s*:\s*anywhere/i)
+
+  const actionsRule = ruleBodies('.sidebar > .ga-status-notice .ga-status-actions').join('\n')
+  assert.match(actionsRule, /width\s*:\s*100%/i)
+})
+
 test('language controls reserve stable space for translated labels', () => {
   assert.match(css, /\.sidebar \.lang-switch\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto 30px/s)
   assert.match(css, /\.sidebar \.lang-switch-label\s*\{[^}]*white-space:\s*nowrap/s)

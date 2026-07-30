@@ -179,30 +179,81 @@ nav button.active, nav button:hover {
 .refresh { width: 100%; margin-top: 10px; }
 
 .ga-status-notice {
-  display: inline-flex;
+  --status-accent: var(--accent, #18735f);
+  --status-tint: rgba(24, 115, 95, .08);
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
-  max-width: min(560px, 54vw);
-  padding: 6px 8px 6px 10px;
-  border: 1px solid var(--border);
+  min-width: 0;
+  min-height: 38px;
+  max-width: min(560px, 100%);
+  box-sizing: border-box;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--status-accent) 24%, var(--border));
   border-radius: 12px;
-  background: var(--surface);
+  background: linear-gradient(135deg, var(--status-tint), var(--surface) 52%);
   color: var(--text);
-  box-shadow: var(--shadow-soft);
+  box-shadow: inset 3px 0 0 var(--status-accent), var(--shadow-soft);
 }
-.ga-status-mark { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--accent, #18735f); }
+.ga-status-mark {
+  grid-column: 1;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--status-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-accent) 14%, transparent);
+}
+.ga-status-pending {
+  --status-accent: #9a6700;
+  --status-tint: rgba(154, 103, 0, .08);
+}
 .ga-status-pending .ga-status-mark { animation: ga-status-pulse 1.1s ease-in-out infinite; }
-.ga-status-error { border-color: rgba(180, 35, 58, .28); background: rgba(180, 35, 58, .07); }
-.ga-status-error .ga-status-mark { background: #b4233a; }
-.ga-status-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.ga-status-actions { display: inline-flex; gap: 4px; margin-left: auto; }
-.ga-status-actions button { min-height: 26px; padding: 3px 8px; white-space: nowrap; }
+.ga-status-error {
+  --status-accent: #b4233a;
+  --status-tint: rgba(180, 35, 58, .09);
+}
+.ga-status-message {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ga-status-actions { grid-column: 3; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; }
+.ga-status-actions:empty { display: none; }
+.ga-status-actions button { min-height: 26px; padding: 3px 8px; border-radius: 8px; white-space: nowrap; }
 .ga-status-actions button:focus-visible {
-  outline: 2px solid var(--accent, #18735f);
+  outline: 2px solid var(--status-accent);
   outline-offset: 2px;
 }
 .ga-status-dismiss { background: transparent; box-shadow: none; }
+
+/* The home notice lives in the narrow sidebar even on a wide viewport. */
+.sidebar > .ga-status-notice {
+  width: 100%;
+  margin-top: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  padding: 10px 10px 9px 12px;
+}
+.sidebar > .ga-status-notice .ga-status-mark { grid-row: 1; margin-top: .35em; }
+.sidebar > .ga-status-notice .ga-status-message {
+  grid-row: 1;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+.sidebar > .ga-status-notice .ga-status-actions {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+  margin-top: 2px;
+}
 @keyframes ga-status-pulse { 50% { opacity: .35; transform: scale(.72); } }
 
 @media (max-width: 620px) {
