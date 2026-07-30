@@ -31,9 +31,9 @@ export const THEMES = Object.freeze([
       colorWarning: '#E68A00',
       colorError: '#C62828',
       colorInfo: '#0288A8',
-      colorBgContainer: '#FFFFFF',
+      colorBgContainer: '#F3EEE3',
       colorBgLayout: '#FAF7F0',
-      colorBgElevated: '#FFFFFF',
+      colorBgElevated: '#F3EEE3',
     },
   },
   {
