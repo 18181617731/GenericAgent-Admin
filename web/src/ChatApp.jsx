@@ -2909,6 +2909,7 @@ export default function ChatApp() {
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
+  const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
@@ -4510,14 +4511,28 @@ export default function ChatApp() {
           {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
         </div>
       </> : <div className="oa-session-list oa-project-list">
-        {projectSessionGroups.map(group => <section className="oa-project-group" key={group.name}>
-          <div className="oa-project-head">
-            <span><FolderOpen size={14}/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small></span>
-            <button type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
-          </div>
-          {group.sessions.map(renderSidebarSession)}
-          {!group.sessions.length && <div className="oa-project-empty">{ct('暂无对话，点击 + 快速开始', 'No chats yet. Click + to start.')}</div>}
-        </section>)}
+        {projectSessionGroups.map((group, index) => {
+          const expanded = expandedProjectNames.has(group.name)
+          const bodyId = `oa-project-sessions-${index}`
+          const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
+          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'}`} key={group.name}>
+            <div className="oa-project-head">
+              <button className="oa-project-toggle" type="button" onClick={()=>setExpandedProjectNames(current => {
+                const next = new Set(current)
+                if (next.has(group.name)) next.delete(group.name)
+                else next.add(group.name)
+                return next
+              })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
+                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><span className="oa-project-icon" aria-hidden="true"><FolderOpen size={14}/></span><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
+              </button>
+              <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
+            </div>
+            <div className="oa-project-body" id={bodyId} hidden={!expanded}>
+              {group.sessions.map(renderSidebarSession)}
+              {!group.sessions.length && <div className="oa-project-empty">{ct('暂无对话，点击 + 快速开始', 'No chats yet. Click + to start.')}</div>}
+            </div>
+          </section>
+        })}
         {!projectSessionGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{ct('暂无可用项目', 'No projects available')}</span></div>}
       </div>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
