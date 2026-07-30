@@ -12766,3 +12766,112 @@ html[data-theme="dark"] .oa-session-dialog-title .oa-session-draft-badge {
   background: rgba(224, 174, 70, .13);
   color: #f0c66e;
 }
+
+
+/* /chat sidebar project launcher */
+.oa-sidebar-tabs {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:4px;
+  margin:2px 0 10px;
+  padding:3px;
+  border:1px solid var(--oa-line);
+  border-radius:12px;
+  background:rgba(0,0,0,.035);
+}
+.oa-sidebar-tabs button {
+  min-width:0;
+  min-height:36px;
+  padding:0 9px;
+  border:0;
+  border-radius:9px;
+  background:transparent;
+  color:var(--oa-muted);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  font:inherit;
+  font-size:12px;
+  font-weight:680;
+  cursor:pointer;
+  transition:background .16s ease,color .16s ease,box-shadow .16s ease;
+}
+.oa-sidebar-tabs button span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.oa-sidebar-tabs button small {
+  min-width:18px;
+  height:18px;
+  padding:0 5px;
+  border-radius:999px;
+  background:rgba(0,0,0,.06);
+  color:inherit;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size:10px;
+  font-variant-numeric:tabular-nums;
+}
+.oa-sidebar-tabs button:hover { color:var(--text); background:rgba(255,255,255,.58); }
+.oa-sidebar-tabs button.active { color:var(--text); background:var(--surface-strong); box-shadow:0 1px 3px rgba(0,0,0,.09); }
+.oa-sidebar-tabs button:focus-visible,
+.oa-project-head > button:focus-visible { outline:2px solid var(--oa-green); outline-offset:2px; }
+.oa-project-list { gap:10px; padding:1px 2px 2px 0; }
+.oa-project-group {
+  flex:0 0 auto;
+  padding:6px;
+  border:1px solid var(--oa-line);
+  border-radius:14px;
+  background:rgba(255,255,255,.36);
+}
+.oa-project-head {
+  min-height:34px;
+  padding:0 3px 5px 7px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.oa-project-head > span { min-width:0; display:flex; align-items:center; gap:7px; color:var(--oa-muted); }
+.oa-project-head > span svg { flex:0 0 auto; color:var(--oa-green); }
+.oa-project-head b { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:12px; font-weight:740; }
+.oa-project-head small {
+  flex:0 0 auto;
+  min-width:18px;
+  height:18px;
+  padding:0 5px;
+  border-radius:999px;
+  background:rgba(0,0,0,.055);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size:10px;
+  font-variant-numeric:tabular-nums;
+}
+.oa-project-head > button {
+  flex:0 0 auto;
+  width:29px;
+  height:29px;
+  padding:0;
+  border:1px solid var(--oa-line);
+  border-radius:9px;
+  background:var(--surface-strong);
+  color:var(--text);
+  display:grid;
+  place-items:center;
+  cursor:pointer;
+  transition:background .16s ease,border-color .16s ease,transform .16s ease;
+}
+.oa-project-head > button:hover { border-color:rgba(16,163,127,.42); background:rgba(16,163,127,.1); color:var(--oa-green); transform:translateY(-1px); }
+.oa-project-head > button:disabled { opacity:.45; cursor:default; transform:none; }
+.oa-project-group .oa-session-row { margin:1px 0; }
+.oa-project-empty { padding:8px 9px 10px; color:var(--oa-muted); font-size:11px; line-height:1.45; }
+.oa-projects-empty { min-height:112px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; text-align:center; }
+.oa-projects-empty svg { color:var(--oa-green); opacity:.8; }
+html[data-theme="dark"] .oa-sidebar-tabs { background:rgba(255,255,255,.035); }
+html[data-theme="dark"] .oa-sidebar-tabs button small,
+html[data-theme="dark"] .oa-project-head small { background:rgba(255,255,255,.07); }
+html[data-theme="dark"] .oa-sidebar-tabs button:hover { background:rgba(255,255,255,.055); }
+html[data-theme="dark"] .oa-sidebar-tabs button.active { background:var(--oa-active); box-shadow:none; }
+html[data-theme="dark"] .oa-project-group { background:rgba(255,255,255,.022); }
+html[data-theme="dark"] .oa-project-head > button { background:var(--oa-active); border-color:var(--oa-line-strong); }
+html[data-theme="dark"] .oa-project-head > button:hover { background:rgba(16,163,127,.13); border-color:rgba(16,163,127,.45); }

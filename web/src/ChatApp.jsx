@@ -15,6 +15,7 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
+import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -2906,6 +2907,8 @@ export default function ChatApp() {
     }).catch(() => {})
   }, [])
   const [sessions, setSessions] = useState([])
+  const [projects, setProjects] = useState([])
+  const [sidebarTab, setSidebarTab] = useState('history')
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
@@ -3597,6 +3600,7 @@ export default function ChatApp() {
     const d = await api('/api/chat/sessions')
     const list = d.sessions || []
     setSessions(list)
+    setProjects(Array.isArray(d.projects) ? d.projects : [])
     if (open) {
       const next = prefer || list[0]?.id || ''
       if (next) await openSession(next, false)
@@ -3607,7 +3611,8 @@ export default function ChatApp() {
     return list
   }
 
-  const newSession = async () => {
+  const createSession = async (projectMode = '') => {
+    const selectedProject = typeof projectMode === 'string' ? projectMode.trim() : ''
     setWorldlineRestorePicker(null)
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
@@ -3615,13 +3620,22 @@ export default function ChatApp() {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
+    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject ? { project_mode:selectedProject } : {}) })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
+    if (selectedProject) await loadSessions(d.id)
+  }
+
+  const newSession = async () => {
+    await createSession()
+  }
+
+  const newProjectSession = async (projectMode) => {
+    await createSession(projectMode)
   }
 
   const deleteSession = async (id) => {
@@ -4332,7 +4346,10 @@ export default function ChatApp() {
       inFlight = true
       try {
         const d = await api('/api/chat/sessions')
-        if (!stopped) setSessions(d.sessions || [])
+        if (!stopped) {
+          setSessions(d.sessions || [])
+          setProjects(Array.isArray(d.projects) ? d.projects : [])
+        }
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
       } finally {
@@ -4430,6 +4447,7 @@ export default function ChatApp() {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
+  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
   const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
   const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
@@ -4450,6 +4468,23 @@ export default function ChatApp() {
     }
   }
 
+  const renderSidebarSession = (session) => <div key={session.id} className={`oa-session-row ${session.id===sid?'active':''} ${session.running?'is-running':''}`}>
+    {editing === session.id ? <div className="oa-rename">
+      <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') saveRename(session.id); if(event.key==='Escape') setEditing('') }}/>
+      <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
+    </div> : <button className="oa-session" onClick={()=>openSession(session.id)} title={shortTitle(session)}>
+      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(session)}</b>{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
+      <small><Clock3 size={11}/>{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
+    </button>}
+    {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={(event)=>{
+      event.stopPropagation()
+      if (menuOpen === session.id) { setMenuOpen(''); setMenuPos(null); return }
+      const rect = event.currentTarget.getBoundingClientRect()
+      setMenuPos({ top: Math.max(8, rect.top - 78), left: Math.max(8, rect.right - 136) })
+      setMenuOpen(session.id)
+    }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16}/></button>}
+  </div>
+
   return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="oa-side-head">
@@ -4457,29 +4492,34 @@ export default function ChatApp() {
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
       <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
-      <div className="oa-session-manager-head">
-        <span className="oa-session-manager-title">{ct('历史会话', 'History')} <small>{sessions.length}</small></span>
-        <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
+      <div className="oa-sidebar-tabs" role="tablist" aria-label={ct('会话视图', 'Session views')}>
+        <button type="button" role="tab" aria-selected={sidebarTab === 'history'} className={sidebarTab === 'history' ? 'active' : ''} onClick={()=>setSidebarTab('history')}>
+          <Clock3 size={14}/><span>{ct('历史', 'History')}</span><small>{sessions.length}</small>
+        </button>
+        <button type="button" role="tab" aria-selected={sidebarTab === 'projects'} className={sidebarTab === 'projects' ? 'active' : ''} onClick={()=>setSidebarTab('projects')}>
+          <FolderOpen size={14}/><span>{ct('项目', 'Projects')}</span><small>{projectSessionGroups.length}</small>
+        </button>
       </div>
-      <div className="oa-session-list">
-        {sessions.map(s => <div key={s.id} className={`oa-session-row ${s.id===sid?'active':''} ${s.running?'is-running':''}`}>
-          {editing === s.id ? <div className="oa-rename">
-            <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
-            <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
-          </div> : <button className="oa-session" onClick={()=>openSession(s.id)} title={shortTitle(s)}>
-            <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
-            <small><Clock3 size={11}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
-          </button>}
-          {editing !== s.id && <button className={`oa-session-more ${menuOpen === s.id ? 'is-open' : ''}`} onClick={(e)=>{
-            e.stopPropagation()
-            if (menuOpen === s.id) { setMenuOpen(''); setMenuPos(null); return }
-            const r = e.currentTarget.getBoundingClientRect()
-            setMenuPos({ top: Math.max(8, r.top - 78), left: Math.max(8, r.right - 136) })
-            setMenuOpen(s.id)
-          }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16}/></button>}
-        </div>)}
-        {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
-      </div>
+      {sidebarTab === 'history' ? <>
+        <div className="oa-session-manager-head">
+          <span className="oa-session-manager-title">{ct('最近对话', 'Recent chats')}</span>
+          <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
+        </div>
+        <div className="oa-session-list">
+          {sessions.map(renderSidebarSession)}
+          {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
+        </div>
+      </> : <div className="oa-session-list oa-project-list">
+        {projectSessionGroups.map(group => <section className="oa-project-group" key={group.name}>
+          <div className="oa-project-head">
+            <span><FolderOpen size={14}/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small></span>
+            <button type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
+          </div>
+          {group.sessions.map(renderSidebarSession)}
+          {!group.sessions.length && <div className="oa-project-empty">{ct('暂无对话，点击 + 快速开始', 'No chats yet. Click + to start.')}</div>}
+        </section>)}
+        {!projectSessionGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{ct('暂无可用项目', 'No projects available')}</span></div>}
+      </div>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
