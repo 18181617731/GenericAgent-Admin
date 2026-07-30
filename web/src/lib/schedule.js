@@ -5,6 +5,8 @@ export const DEFAULT_SCHEDULE_TASK = Object.freeze({
   prompt: '',
 })
 
+const validTaskLLMNo = value => value !== null && value !== undefined && value !== '' && Number.isInteger(Number(value)) && Number(value) >= 0
+
 export const normalizeScheduleTasksPayload = (payload = {}) => {
   const src = payload && typeof payload === 'object' ? payload : {}
   const tasks = Array.isArray(src.tasks) ? src.tasks : []
@@ -27,6 +29,7 @@ export const normalizeScheduleTasksPayload = (payload = {}) => {
           repeat: task.repeat || 'manual',
           status,
           prompt: task.prompt || '',
+          llm_no: validTaskLLMNo(task.llm_no) ? Number(task.llm_no) : null,
           recent_reports: Array.isArray(task.recent_reports) ? task.recent_reports : [],
         }
       }),

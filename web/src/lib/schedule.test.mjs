@@ -58,3 +58,20 @@ test('normalizeScheduleTasksPayload handles null and missing task fields as disa
   assert.equal(state.tasks[0].prompt, '')
   assert.deepEqual(state.tasks[0].recent_reports, [])
 })
+
+test('normalizeScheduleTasksPayload preserves a valid task model selection', () => {
+  const state = normalizeScheduleTasksPayload({ tasks: [{ id: 'daily', enabled: true, llm_no: 7 }] })
+  assert.equal(state.tasks[0].llm_no, 7)
+  assert.equal(normalizeScheduleTasksPayload({ tasks: [{ id: 'daily', llm_no: null }] }).tasks[0].llm_no, null)
+  assert.equal(normalizeScheduleTasksPayload({ tasks: [{ id: 'daily', llm_no: -1 }] }).tasks[0].llm_no, null)
+})
+
+test('schedule UI exposes model selection, card editing, and grouped markdown reports', () => {
+  const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
+  const component = readFileSync(new URL('../components/schedule.jsx', import.meta.url), 'utf8')
+  assert.match(app, /const known = \['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'\]/)
+  assert.match(app, /<ScheduleReportTree tasks=\{tasks\}/)
+  assert.match(component, /task-state-\$\{state\}/)
+  assert.match(component, /ScheduleArtifactPreview/)
+  assert.doesNotMatch(component, /mini-reports/)
+})

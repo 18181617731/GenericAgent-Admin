@@ -1393,12 +1393,13 @@ print(json.dumps(items, ensure_ascii=False))`
 }
 
 type chatProviderModel struct {
-	provider string
-	model    string
-	apiBase  string
-	protocol string
-	order    int
-	sequence int
+	provider    string
+	model       string
+	displayName string
+	apiBase     string
+	protocol    string
+	order       int
+	sequence    int
 }
 
 func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelconfig.Profile) {
@@ -1426,12 +1427,13 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 				order = *config.SortOrder
 			}
 			configured = append(configured, chatProviderModel{
-				provider: provider,
-				model:    model,
-				apiBase:  normalizeChatAPIBase(profile.APIBase),
-				protocol: strings.ToLower(strings.TrimSpace(profile.Type)),
-				order:    order,
-				sequence: sequence,
+				provider:    provider,
+				model:       model,
+				displayName: strings.TrimSpace(config.Name),
+				apiBase:     normalizeChatAPIBase(profile.APIBase),
+				protocol:    strings.ToLower(strings.TrimSpace(profile.Type)),
+				order:       order,
+				sequence:    sequence,
 			})
 			sequence++
 		}

@@ -85,6 +85,18 @@ func TestScheduleTaskPutRequiresDangerousConfirm(t *testing.T) {
 	}
 }
 
+func TestScheduleTaskRejectsInvalidModelNumberBeforeRuntimeChange(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/schedule/task", strings.NewReader(`{"id":"task","task":{"llm_no":-1}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "llm_no must be a non-negative integer") {
+		t.Fatalf("invalid llm_no status/body = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestScheduleTaskRawContractRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	h := newGoalTestServer(t, root).Routes()

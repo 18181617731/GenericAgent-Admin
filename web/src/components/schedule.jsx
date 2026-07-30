@@ -1,31 +1,81 @@
-import { Eye, Play, Power, Square } from 'lucide-react'
+import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ChevronRight, Eye, FileText, Play, Power, Square } from 'lucide-react'
 
-const statusLabel = (task, t) => {
-  if (task.error) return t.error
-  if (task.status) return task.status
-  return task.enabled ? t.enabled : t.disabled
+const taskState = (task) => {
+  if (task.error || task.status === 'ERROR') return 'error'
+  return task.enabled ? 'enabled' : 'disabled'
 }
 
-export function TaskRow({ task, t, onToggle, onEdit, onArtifact }) {
+const taskStateLabel = (state, t) => state === 'error' ? t.error : (state === 'enabled' ? t.enabled : t.disabled)
+
+const taskModelLabel = (task, llms, t) => {
+  if (task.llm_no === null || task.llm_no === undefined || task.llm_no === '' || !Number.isInteger(Number(task.llm_no)) || Number(task.llm_no) < 0) return t.tasks.defaultModel
+  const model = llms.find(item => Number(item?.index) === Number(task.llm_no))
+  if (!model) return `#${task.llm_no}`
+  return `${model.provider || t.tasks.unnamedProvider} · ${model.model || model.name || model.label || t.tasks.unnamedModel} · #${model.index}`
+}
+
+export function TaskRow({ task, llms = [], t, onToggle, onEdit }) {
   const id = task.id || task.name || t.tasks.unnamed
-  const status = statusLabel(task, t)
+  const state = taskState(task)
+  const status = taskStateLabel(state, t)
+  const openTask = () => onEdit?.(id)
+  const onKeyDown = event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openTask()
+    }
+  }
   return (
-    <div className={`task-row status-${String(status).toLowerCase()}`}>
-      <div>
-        <b>{id}</b>
-        <span>{task.schedule || t.tasks.unscheduled} - {task.repeat || t.tasks.manual} - <b className="status-badge">{status}</b></span>
-        {!task.enabled && !task.error && <em className="muted">{t.tasks.explicitEnable}</em>}
-        {task.error && <em className="err-text">{task.error}</em>}
-        {task.next_hint && <em>{task.next_hint}</em>}
-        <p>{task.prompt || t.empty}</p>
-        {task.recent_reports?.length > 0 && <div className="mini-reports">{task.recent_reports.map((r, idx)=><button key={r.path || r.name || idx} onClick={()=>onArtifact(r.path)} disabled={!r.path}>{r.name || r.path || t.tasks.report}</button>)}</div>}
-        <div className="actions">
-          <button onClick={()=>onEdit(id)}><Eye size={14}/>{t.read}</button>
-          <button onClick={()=>onToggle(id, !task.enabled)}><Power size={14}/>{task.enabled ? t.disabled : t.enabled}</button>
+    <article className={`task-row task-state-${state}`} role="button" tabIndex={0} onClick={openTask} onKeyDown={onKeyDown}>
+      <div className="task-card-head">
+        <div className="task-card-title">
+          <b>{id}</b>
+          <span>{task.schedule || t.tasks.unscheduled} · {task.repeat || t.tasks.manual}</span>
+        </div>
+        <div className="task-card-actions">
+          <span className={`task-state-badge ${state}`}>{status}</span>
+          <button type="button" className="task-toggle" title={task.enabled ? t.disabled : t.enabled} aria-label={task.enabled ? t.disabled : t.enabled} onClick={event => { event.stopPropagation(); onToggle?.(id, !task.enabled) }}><Power size={15}/></button>
         </div>
       </div>
-    </div>
+      <span className="task-model"><FileText size={14}/>{taskModelLabel(task, llms, t)}</span>
+      {!task.enabled && state !== 'error' && <em className="muted">{t.tasks.explicitEnable}</em>}
+      {task.error && <em className="err-text">{task.error}</em>}
+      {task.next_hint && <em>{task.next_hint}</em>}
+      <p>{task.prompt || t.empty}</p>
+    </article>
   )
+}
+
+export function ScheduleReportTree({ tasks = [], selectedPath, onSelect, t }) {
+  const [expanded, setExpanded] = useState({})
+  return <div className="schedule-report-tree">
+    {tasks.length ? tasks.map(task => {
+      const id = task.id || task.name || t.tasks.unnamed
+      const reports = (task.recent_reports || []).slice(0, 30)
+      const open = Boolean(expanded[id])
+      return <section className="schedule-report-group" key={id}>
+        <button type="button" className="schedule-report-group-toggle" aria-expanded={open} onClick={() => setExpanded(current => ({ ...current, [id]: !open }))}>
+          <ChevronRight size={16} className={open ? 'expanded' : ''}/>
+          <span><b>{id}</b><small>{reports.length ? t.tasks.reportCount(reports.length) : t.tasks.noReports}</small></span>
+        </button>
+        {open && <div className="schedule-report-items">
+          {reports.length ? reports.map(report => <button type="button" key={report.path} className={selectedPath === report.path ? 'active' : ''} onClick={() => onSelect?.(report.path)}>
+            <FileText size={15}/><span>{report.name}<small>{report.mod_time ? new Date(report.mod_time).toLocaleString() : ''}</small></span>
+          </button>) : <p className="muted">{t.tasks.noReports}</p>}
+        </div>}
+      </section>
+    }) : <p className="muted">{t.empty}</p>}
+  </div>
+}
+
+export function ScheduleArtifactPreview({ title, content, empty }) {
+  if (!content) return <div className="schedule-artifact-empty">{empty}</div>
+  return <article className="artifact-view schedule-artifact-markdown" aria-label={title || '执行记录预览'}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{content}</ReactMarkdown>
+  </article>
 }
 
 export function SchedulerServiceRow({ service, t, actionState = null, onStart, onStop, onLogs, onAutostart }) {

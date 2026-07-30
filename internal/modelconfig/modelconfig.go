@@ -56,6 +56,7 @@ func parseOptionalBoolString(v string) bool {
 
 type ModelConfig struct {
 	Model                 string                 `json:"model"`
+	Name                  string                 `json:"name,omitempty"`
 	SortOrder             *int                   `json:"sort_order,omitempty"`
 	Enabled               *bool                  `json:"enabled,omitempty"`
 	AutoDisabled          bool                   `json:"auto_disabled,omitempty"`
@@ -72,6 +73,10 @@ type ModelConfig struct {
 	ThinkingType          string                 `json:"thinking_type,omitempty"`
 	ReasoningEffort       string                 `json:"reasoning_effort,omitempty"`
 	FakeCCSystemPrompt    *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`
+	FailoverOrder         *int                   `json:"failover_order,omitempty"`
+	FailoverMaxRetries    *int                   `json:"failover_max_retries,omitempty"`
+	FailoverBaseDelay     *float64               `json:"failover_base_delay,omitempty"`
+	FailoverSpringBack    *int                   `json:"failover_spring_back,omitempty"`
 	Extra                 map[string]interface{} `json:"extra,omitempty"`
 }
 
@@ -403,6 +408,30 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 			}
 			if config.ConnectTimeout != nil && *config.ConnectTimeout <= 0 {
 				return fmt.Errorf("connect_timeout must be greater than zero for model %s", config.Model)
+			}
+			if config.FailoverOrder != nil {
+				if *config.FailoverOrder < 0 {
+					return fmt.Errorf("failover_order must be zero or greater for model %s", config.Model)
+				}
+				maxRetries := 10
+				if config.FailoverMaxRetries != nil {
+					maxRetries = *config.FailoverMaxRetries
+				}
+				baseDelay := 0.5
+				if config.FailoverBaseDelay != nil {
+					baseDelay = *config.FailoverBaseDelay
+				}
+				if maxRetries < 0 || baseDelay < 0 {
+					return fmt.Errorf("failover retry settings must be zero or greater for model %s", config.Model)
+				}
+				if config.FailoverSpringBack != nil && *config.FailoverSpringBack <= 0 {
+					return fmt.Errorf("failover_spring_back must be greater than zero for model %s", config.Model)
+				}
+				family := "legacy"
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.Type)), "native_") {
+					family = "native"
+				}
+				members = append(members, failoverMember{*config.FailoverOrder, family, config.Model, maxRetries, baseDelay, config.FailoverSpringBack})
 			}
 			if ModelConfigEnabled(config) {
 				varName := expandedVarName(p.VarName, i)

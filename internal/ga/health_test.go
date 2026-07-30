@@ -73,13 +73,16 @@ func containsHealthItem(items []string, want string) bool {
 func TestBuildInventoryMemorySummaryIncludesOnlyVisibleMemoryFiles(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"memory/global_mem_insight.txt": "insight",
-		"memory/global_mem.txt":         "facts",
-		"memory/agent_sop.md":           "sop",
-		"memory/helper.py":              "util",
-		"memory/L4_raw_sessions/raw.md": "raw",
-		"memory/.hidden.md":             "hidden",
-		"memory/__pycache__/helper.pyc": "cache",
+		"memory/global_mem_insight.txt":  "insight",
+		"memory/global_mem.txt":          "facts",
+		"memory/agent_sop.md":            "sop",
+		"memory/helper.py":               "util",
+		"memory/file_access_stats.json":  "metadata",
+		"memory/custom_notes.txt":        "notes",
+		"memory/project_notes/readme.md": "workspace",
+		"memory/L4_raw_sessions/raw.md":  "raw",
+		"memory/.hidden.md":              "hidden",
+		"memory/__pycache__/helper.pyc":  "cache",
 	}
 	for rel, content := range files {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -104,6 +107,12 @@ func TestBuildInventoryMemorySummaryIncludesOnlyVisibleMemoryFiles(t *testing.T)
 	}
 	if got := entryNames(inv.Memory.Utils); len(got) != 1 || got[0] != "helper.py" {
 		t.Fatalf("memory utils = %v, want only visible .py util", got)
+	}
+	if got := entryNames(inv.Memory.Materials); len(got) != 2 || !containsHealthItem(got, "file_access_stats.json") || !containsHealthItem(got, "custom_notes.txt") {
+		t.Fatalf("memory materials = %v, want visible non-Markdown and non-Python files", got)
+	}
+	if got := entryNames(inv.Memory.Workspaces); len(got) != 1 || got[0] != "project_notes" {
+		t.Fatalf("memory workspaces = %v, want only visible non-raw directories", got)
 	}
 	if got := entryNames(inv.Memory.Raw); len(got) != 1 || got[0] != "raw.md" {
 		t.Fatalf("raw sessions = %v, want raw.md", got)

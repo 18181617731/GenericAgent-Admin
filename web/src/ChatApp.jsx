@@ -26,6 +26,7 @@ import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 import { hasSubagentLaunch } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
+import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -2883,6 +2884,7 @@ export default function ChatApp() {
   const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
+  const memoryDraftRef = useRef(consumeMemoryChatDraft())
   const extraPromptSelectionSeqRef = useRef(0)
   const [worldlineOpen, setWorldlineOpen] = useState(false)
   const [worldlineState, setWorldlineState] = useState(null)
@@ -3512,7 +3514,7 @@ export default function ChatApp() {
     return list
   }
 
-  const newSession = async () => {
+  const newSession = async (projectMode = '') => {
     if (isNarrowChatViewport()) setCollapsed(true)
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
@@ -3520,22 +3522,18 @@ export default function ChatApp() {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject ? { project_mode:selectedProject } : {}) })
+    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
-    if (selectedProject) await loadSessions(d.id)
-  }
-
-  const newSession = async () => {
-    await createSession()
+    if (projectMode) await loadSessions(d.id)
   }
 
   const newProjectSession = async (projectMode) => {
-    await createSession(projectMode)
+    await newSession(projectMode)
   }
 
   const deleteSession = async (id) => {
@@ -4268,7 +4266,22 @@ export default function ChatApp() {
   }
 
   useEffect(() => {
-    loadSessions('', { open:true }).catch(e=>setErr(e.message))
+    const initialize = async () => {
+      try {
+        const draft = memoryDraftRef.current
+        if (draft) {
+          await newSession()
+          setPrompt(draft.prompt)
+          setNotice(ct('已创建文件优化对话。请先审阅草稿，确认后再发送。', 'File-improvement chat created. Review the draft before sending.'))
+          window.setTimeout(() => promptRef.current?.focus(), 0)
+          return
+        }
+        await loadSessions('', { open:true })
+      } catch (error) {
+        setErr(error?.message || String(error))
+      }
+    }
+    initialize()
     loadPromptPresets().catch(e=>setErr(e.message))
     return () => streamAbortRef.current?.abort?.()
   }, [])
@@ -4403,6 +4416,23 @@ export default function ChatApp() {
     }
   }
 
+  const renderSidebarSession = session => <div key={session.id} className={`oa-session-row ${session.id === sid ? 'active' : ''} ${session.running ? 'is-running' : ''}`}>
+    {editing === session.id ? <div className="oa-rename">
+      <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event => setDraftTitle(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') saveRename(session.id); if (event.key === 'Escape') setEditing('') }} />
+      <button onClick={() => saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14} /></button><button onClick={() => setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14} /></button>
+    </div> : <button type="button" className="oa-session" onClick={() => selectSidebarSession(session.id)} title={shortTitle(session)}>
+      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true" />}<b>{shortTitle(session)}</b></span>
+      <small><Clock3 size={11} />{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
+    </button>}
+    {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={event => {
+      event.stopPropagation()
+      if (menuOpen === session.id) { setMenuOpen(''); setMenuPos(null); return }
+      const rect = event.currentTarget.getBoundingClientRect()
+      setMenuPos({ top: Math.max(8, rect.top - 78), left: Math.max(8, rect.right - 136) })
+      setMenuOpen(session.id)
+    }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16} /></button>}
+  </div>
+
   return <ChatFileScopeContext.Provider value={{ workspace: current?.workspace || '', gaRoot: cfg?.ga_root || cfg?.GARoot || '' }}>
     <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -4411,29 +4441,6 @@ export default function ChatApp() {
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
       <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
-      <div className="oa-session-manager-head">
-        <span className="oa-session-manager-title">{ct('历史会话', 'History')} <small>{sessions.length}</small></span>
-        <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
-      </div>
-      <div className="oa-session-list">
-        {sessions.map(s => <div key={s.id} className={`oa-session-row ${s.id===sid?'active':''} ${s.running?'is-running':''}`}>
-          {editing === s.id ? <div className="oa-rename">
-            <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
-            <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
-          </div> : <button type="button" className="oa-session" onClick={()=>selectSidebarSession(s.id)} title={shortTitle(s)}>
-            <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b></span>
-            <small><Clock3 size={11}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
-          </button>}
-          {editing !== s.id && <button className={`oa-session-more ${menuOpen === s.id ? 'is-open' : ''}`} onClick={(e)=>{
-            e.stopPropagation()
-            if (menuOpen === s.id) { setMenuOpen(''); setMenuPos(null); return }
-            const r = e.currentTarget.getBoundingClientRect()
-            setMenuPos({ top: Math.max(8, r.top - 78), left: Math.max(8, r.right - 136) })
-            setMenuOpen(s.id)
-          }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16}/></button>}
-        </div>)}
-        {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
-      </div>
       {sidebarTab === 'history' ? <>
         <div className="oa-session-manager-head">
           <span className="oa-session-manager-title">{ct('最近对话', 'Recent chats')}</span>

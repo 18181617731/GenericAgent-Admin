@@ -19,6 +19,9 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS as DndCSS } from '@dnd-kit/utilities'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
@@ -945,6 +948,12 @@ export function Models({
   const [dragIndex, setDragIndex] = useState(null)
   const [repeatOrderRowId, setRepeatOrderRowId] = useState('')
   const orderMoveSessionRef = useRef(null)
+  const [failoverGroupExpanded, setFailoverGroupExpanded] = useState(new Set())
+  const [failoverOpen, setFailoverOpen] = useState(false)
+  const [failoverDrafts, setFailoverDrafts] = useState([])
+  const [failoverSaving, setFailoverSaving] = useState(false)
+  const [failoverError, setFailoverError] = useState('')
+  const failoverGroupKeySeedRef = useRef(0)
   const [providerHoldIndex, setProviderHoldIndex] = useState(null)
   const [providerDrag, setProviderDrag] = useState(null)
   const [providerOrderError, setProviderOrderError] = useState('')
@@ -967,6 +976,7 @@ export function Models({
   const [probeScopeError, setProbeScopeError] = useState('')
   const [probeScopeSaving, setProbeScopeSaving] = useState(false)
   const [effectiveProbeProviders, setEffectiveProbeProviders] = useState(() => normalizeModelProbeProviderKeys(modelProbeProviders))
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   const providerMotionKey = profile => {
     if (profile?.client_id) return `client:${profile.client_id}`
     if (!profile || typeof profile !== 'object') return `provider:${String(profile)}`
@@ -1282,6 +1292,165 @@ export function Models({
     }
   }
 
+  const failoverCandidates = useMemo(() => orderedModelRows(persistedProfiles).map(row => {
+    const protocol = String(persistedProfiles[row.profileIndex]?.type || DEFAULT_PROTOCOL)
+    return { ...row, family: protocol.startsWith('native_') ? 'native' : 'legacy', protocol }
+  }), [persistedProfiles])
+  const failoverMemberKey = member => `${String(member?.provider_var_name || member?.providerVarName || '')}\u0000${String(member?.model || '')}`
+  const failoverCandidateMap = new Map(failoverCandidates.map(candidate => [
+    failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model }),
+    candidate,
+  ]))
+  const failoverValidation = (() => {
+    const names = new Set()
+    for (let groupIndex = 0; groupIndex < failoverDrafts.length; groupIndex += 1) {
+      const group = failoverDrafts[groupIndex]
+      const suffix = failoverGroupSuffix(group.var_name).trim()
+      const name = failoverGroupVarName(suffix)
+      if (!/^[A-Za-z0-9_]+$/.test(suffix)) return `${text.failoverGroup || 'Failover group'} ${groupIndex + 1}: ${text.errors?.varNameInvalid || 'invalid variable name'}`
+      if (names.has(name)) return `${text.failoverGroup || 'Failover group'} ${groupIndex + 1}: ${text.errors?.varNameDuplicate || 'duplicate variable name'}`
+      names.add(name)
+      if (!Array.isArray(group.members) || group.members.length < 2) return `${name}: ${text.failoverNeedsTwo}`
+      const families = new Set()
+      for (const member of group.members) {
+        const candidate = failoverCandidateMap.get(failoverMemberKey(member))
+        if (!candidate) return `${name}: ${text.failoverMissingMember || 'A selected model is no longer available.'}`
+        families.add(candidate.family)
+      }
+      if (families.size > 1) return `${name}: ${text.failoverSameFamily}`
+      const retries = Number(group.max_retries)
+      if (!Number.isInteger(retries) || retries < 0) return `${name}: ${text.failoverRetriesInvalid}`
+      const delay = Number(group.base_delay)
+      if (!Number.isFinite(delay) || delay < 0) return `${name}: ${text.failoverDelayInvalid}`
+      if (group.spring_back !== '' && group.spring_back !== undefined && group.spring_back !== null) {
+        const springBack = Number(group.spring_back)
+        if (!Number.isInteger(springBack) || springBack <= 0) return `${name}: ${text.failoverSpringInvalid}`
+      }
+    }
+    return ''
+  })()
+  const nextFailoverGroupUiKey = () => `failover-group-${++failoverGroupKeySeedRef.current}`
+  const toggleFailoverGroup = groupKey => {
+    setFailoverGroupExpanded(current => {
+      const next = new Set(current)
+      if (next.has(groupKey)) next.delete(groupKey)
+      else next.add(groupKey)
+      return next
+    })
+  }
+  const openFailover = () => {
+    setFailoverDrafts(migrateFailoverGroupNames(normalizeFailoverGroups(failoverGroups)).map(group => ({
+      ...group,
+      _ui_key: nextFailoverGroupUiKey(),
+      members: group.members.map(member => ({ ...member })),
+      max_retries: group.max_retries ?? 10,
+      base_delay: group.base_delay ?? 0.5,
+      spring_back: group.spring_back ?? '',
+    })))
+    setFailoverGroupExpanded(new Set())
+    setFailoverError('')
+    setFailoverOpen(true)
+  }
+  const closeFailover = () => {
+    if (failoverSaving) return
+    setFailoverOpen(false)
+    setFailoverDrafts([])
+    setFailoverGroupExpanded(new Set())
+    setFailoverError('')
+  }
+  const addFailoverGroup = () => {
+    const groupKey = nextFailoverGroupUiKey()
+    setFailoverDrafts(current => [...current, {
+      _ui_key: groupKey,
+      var_name: nextFailoverGroupName(current),
+      members: [],
+      max_retries: 10,
+      base_delay: 0.5,
+      spring_back: '',
+    }])
+    setFailoverGroupExpanded(current => new Set(current).add(groupKey))
+    setFailoverError('')
+  }
+  const patchFailoverGroup = (groupIndex, patch) => {
+    setFailoverDrafts(current => current.map((group, index) => index === groupIndex ? { ...group, ...patch } : group))
+    setFailoverError('')
+  }
+  const removeFailoverGroup = groupIndex => {
+    const groupKey = failoverDrafts[groupIndex]?._ui_key
+    setFailoverDrafts(current => current.filter((_, index) => index !== groupIndex))
+    if (groupKey) {
+      setFailoverGroupExpanded(current => {
+        const next = new Set(current)
+        next.delete(groupKey)
+        return next
+      })
+    }
+    setFailoverError('')
+  }
+  const moveFailoverGroup = (fromIndex, toIndex) => {
+    setFailoverDrafts(current => moveOrderedItem(current, fromIndex, toIndex))
+    setFailoverError('')
+  }
+  const toggleFailoverMember = (groupIndex, candidate) => {
+    const key = failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
+    setFailoverDrafts(current => current.map((group, index) => {
+      if (index !== groupIndex) return group
+      const members = Array.isArray(group.members) ? group.members : []
+      const selected = members.some(member => failoverMemberKey(member) === key)
+      return {
+        ...group,
+        members: selected
+          ? members.filter(member => failoverMemberKey(member) !== key)
+          : [...members, { provider_var_name: candidate.providerVarName, model: candidate.model }],
+      }
+    }))
+    setFailoverError('')
+  }
+  const moveFailoverMember = (groupIndex, fromIndex, toIndex) => {
+    setFailoverDrafts(current => current.map((group, index) => index === groupIndex
+      ? { ...group, members: moveOrderedItem(group.members, fromIndex, toIndex) }
+      : group))
+    setFailoverError('')
+  }
+  const saveFailover = async () => {
+    if (!onSaveFailoverGroups) {
+      setFailoverError(text.failoverSaveMissing)
+      return
+    }
+    if (failoverValidation) {
+      setFailoverError(failoverValidation)
+      return
+    }
+    const nextGroups = failoverDrafts.map(group => {
+      const normalized = {
+        var_name: String(group.var_name || '').trim(),
+        members: group.members.map(member => ({
+          provider_var_name: String(member.provider_var_name || '').trim(),
+          model: String(member.model || '').trim(),
+        })),
+        max_retries: Number(group.max_retries),
+        base_delay: Number(group.base_delay),
+      }
+      if (group.spring_back !== '' && group.spring_back !== undefined && group.spring_back !== null) normalized.spring_back = Number(group.spring_back)
+      return normalized
+    })
+    setFailoverSaving(true)
+    setFailoverError('')
+    try {
+      const ok = await onSaveFailoverGroups(nextGroups)
+      if (!ok) {
+        setFailoverError(text.failoverSaveFailed)
+        return
+      }
+      setFailoverOpen(false)
+      setFailoverDrafts([])
+    } catch (error) {
+      setFailoverError(error?.message || text.failoverSaveFailed)
+    } finally {
+      setFailoverSaving(false)
+    }
+  }
+
   const openProbeScope = () => {
     const allKeys = profiles.map(modelProbeProviderKey)
     const specific = effectiveProbeProviders.length > 0
@@ -1390,6 +1559,14 @@ export function Models({
             title={persistedOrderCount ? text.orderAvailable : text.orderUnavailable}
           >
             {text.modelOrder}
+          </Button>
+          <Button
+            icon={<Network size={14} />}
+            onClick={openFailover}
+            disabled={!persistedOrderCount}
+            title={persistedOrderCount ? text.failoverAvailable : text.orderUnavailable}
+          >
+            {text.failover}
           </Button>
           <Button icon={<FileCode2 size={14} />} onClick={openPreview}>配置预览</Button>
           <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
@@ -1689,9 +1866,9 @@ export function Models({
                   onClick={event => moveModelOrder(row.id, 1, event)}
                 />
               </div>
-            </div>
-          </SortableContext>
-        </DndContext>
+                      </div>
+                    ))}
+                  </div>
       </Drawer>
 
       <Drawer

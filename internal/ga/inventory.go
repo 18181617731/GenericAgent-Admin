@@ -26,11 +26,13 @@ type Entry struct {
 	Domain  string    `json:"domain,omitempty"`
 }
 type MemorySummary struct {
-	Insight FileStatus `json:"insight"`
-	Facts   FileStatus `json:"facts"`
-	SOPs    []Entry    `json:"sops"`
-	Utils   []Entry    `json:"utils"`
-	Raw     []Entry    `json:"raw_sessions"`
+	Insight    FileStatus `json:"insight"`
+	Facts      FileStatus `json:"facts"`
+	SOPs       []Entry    `json:"sops"`
+	Utils      []Entry    `json:"utils"`
+	Workspaces []Entry    `json:"workspaces"`
+	Materials  []Entry    `json:"materials"`
+	Raw        []Entry    `json:"raw_sessions"`
 }
 type Inventory struct {
 	Root                  string           `json:"root"`
@@ -54,6 +56,7 @@ type ScheduleTask struct {
 	Repeat        string       `json:"repeat"`
 	Enabled       bool         `json:"enabled"`
 	Prompt        string       `json:"prompt"`
+	LLMNo         *int         `json:"llm_no,omitempty"`
 	MaxDelayHours any          `json:"max_delay_hours,omitempty"`
 	ModTime       time.Time    `json:"mod_time,omitempty"`
 	Status        string       `json:"status"`
@@ -168,11 +171,19 @@ func buildMemory(root string) MemorySummary {
 	m := MemorySummary{Insight: status(root, "memory/global_mem_insight.txt"), Facts: status(root, "memory/global_mem.txt")}
 	for _, e := range listDir(root, "memory", func(name string, isDir bool) string { return "memory" }) {
 		lower := strings.ToLower(e.Name)
-		if e.Kind == "file" && strings.HasSuffix(lower, ".md") {
-			m.SOPs = append(m.SOPs, e)
+		if e.Kind == "dir" && lower != "l4_raw_sessions" {
+			m.Workspaces = append(m.Workspaces, e)
 		}
-		if e.Kind == "file" && strings.HasSuffix(lower, ".py") {
+		if e.Kind != "file" || lower == "global_mem_insight.txt" || lower == "global_mem.txt" {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown"):
+			m.SOPs = append(m.SOPs, e)
+		case strings.HasSuffix(lower, ".py"):
 			m.Utils = append(m.Utils, e)
+		default:
+			m.Materials = append(m.Materials, e)
 		}
 	}
 	m.Raw = listDir(root, "memory/L4_raw_sessions", func(name string, isDir bool) string { return "raw" })
@@ -181,8 +192,9 @@ func buildMemory(root string) MemorySummary {
 
 func BuildSchedule(root string) ScheduleOverview {
 	ov := ScheduleOverview{SchemaVersion: 1, Log: status(root, "sche_tasks/scheduler.log")}
-	ov.DoneRecent = listDir(root, "sche_tasks/done", func(name string, isDir bool) string { return "report" })
-	ov.DoneCount = len(ov.DoneRecent)
+	allReports := listDir(root, "sche_tasks/done", func(name string, isDir bool) string { return "report" })
+	ov.DoneCount = len(allReports)
+	ov.DoneRecent = append([]Entry(nil), allReports...)
 	if len(ov.DoneRecent) > 20 {
 		ov.DoneRecent = ov.DoneRecent[:20]
 	}
@@ -215,8 +227,14 @@ func BuildSchedule(root string) ScheduleOverview {
 		if v, ok := raw["enabled"].(bool); ok {
 			t.Enabled = v
 		}
+		if llmNo, ok, err := ScheduleTaskLLMNo(raw); err != nil {
+			t.Status = "ERROR"
+			t.Error = err.Error()
+		} else if ok {
+			t.LLMNo = &llmNo
+		}
 		t.MaxDelayHours = raw["max_delay_hours"]
-		t.RecentReports = reportsFor(ov.DoneRecent, id)
+		t.RecentReports = reportsFor(allReports, id)
 		if len(t.RecentReports) > 0 {
 			last := t.RecentReports[0]
 			t.LastReport = &last
@@ -582,12 +600,13 @@ func classifyFrontend(name string, isDir bool) string {
 func reportsFor(reports []Entry, id string) []Entry {
 	out := []Entry{}
 	for _, r := range reports {
-		if strings.Contains(r.Name, id) {
+		name := strings.TrimSuffix(r.Name, filepath.Ext(r.Name))
+		if strings.HasSuffix(name, "_"+id) {
 			out = append(out, r)
 		}
 	}
-	if len(out) > 5 {
-		return out[:5]
+	if len(out) > 30 {
+		return out[:30]
 	}
 	return out
 }

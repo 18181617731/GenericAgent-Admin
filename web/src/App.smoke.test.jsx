@@ -1861,6 +1861,26 @@ describe('mobile file workflow', () => {
     expect(screen.queryByRole('textbox', { name: '文件内容编辑器' })).toBeNull()
   })
 
+  test('expands the preview workspace and restores the file list', () => {
+    const props = fileProps()
+    Object.assign(props, {
+      filePath: 'memory/guide.md',
+      loadedFilePath: 'memory/guide.md',
+      loadedFileContent: '# Guide',
+      fileContent: '# Guide',
+    })
+    const { container } = render(<FilesPage {...props}/>)
+    const workspace = container.querySelector('.files-workspace')
+
+    expect(workspace.classList.contains('files-preview-expanded')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '扩大预览' }))
+    expect(workspace.classList.contains('files-preview-expanded')).toBe(true)
+    expect(screen.getByRole('button', { name: '恢复分栏' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复分栏' }))
+    expect(workspace.classList.contains('files-preview-expanded')).toBe(false)
+  })
+
   test('protects dirty content before opening another file and exposes search result counts', () => {
     const props = fileProps()
     props.fileContent = 'changed'
