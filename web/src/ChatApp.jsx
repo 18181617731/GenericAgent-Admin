@@ -1,5 +1,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { applyThemeToDocument, getInitialTheme } from './themes'
+import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
@@ -2876,11 +2878,11 @@ function CustomSelect({ value, onChange, options, disabled }) {
 
 export default function ChatApp() {
   // Theme state: sync with localStorage and system preference
-  const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+  const [theme, setTheme] = useState(getInitialTheme)
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    localStorage.setItem('ga-admin-theme', theme)
-    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme }))
+    const activeTheme = applyThemeToDocument(theme)
+    localStorage.setItem('ga-admin-theme', activeTheme.id)
+    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: activeTheme.id }))
   }, [theme])
 
   useEffect(() => {
@@ -4556,6 +4558,7 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
         <div className="oa-title"><b>{current ? shortTitle(current) : ct('新对话', 'New chat')}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <ThemePicker value={theme} onChange={setTheme} lang={chatLanguage()} variant="compact" />
         <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={ct('查看发给模型的 raw_history', 'View raw_history sent to the model')}>
           <PanelRightOpen size={16}/>{ct('上下文', 'Context')}<span>{rawHistory?.length || 0}</span>
         </button>
