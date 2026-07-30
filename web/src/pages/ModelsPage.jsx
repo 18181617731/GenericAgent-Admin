@@ -196,7 +196,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
           <div className="model-row-advanced-grid">
             <label className="model-field">
               <span className="model-field-label">{text.displayName}</span>
-              <Input value={config.name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder} />
+              <Input aria-label={text.displayName} value={config.name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder} />
             </label>
             <label className="model-field">
               <span className="model-field-label">{text.stream}</span>
@@ -849,7 +849,7 @@ function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, 
         <div className="model-order-copy">
           <code>{row.variableName}</code>
           <strong title={row.model}>{row.model || text.missingModelId}</strong>
-          <span>{text.providerName}: {providerDisplayName(row.providerVarName) || text.unnamed}</span>
+          <span>{text.providerName}{text.providerName === '服务商名称' ? '：' : ': '}{providerDisplayName(row.providerVarName) || text.unnamed}</span>
         </div>
       )}
       <div className="model-order-actions">

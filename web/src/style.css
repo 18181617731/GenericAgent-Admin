@@ -2283,6 +2283,12 @@ html[data-theme="dark"] .oa-file-card .oa-mini-copy:hover{
   font-weight:650;
   line-height:1.35;
 }
+html[data-theme="dark"] .oa-session-title .oa-session-draft-badge,
+html[data-theme="dark"] .oa-session-dialog-title .oa-session-draft-badge{
+  border-color:rgba(240, 179, 87, .38);
+  background:rgba(240, 179, 87, .14);
+  color:#f5ca7c;
+}
 .oa-session small{
   display:block !important;
   max-width:100% !important;

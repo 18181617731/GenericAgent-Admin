@@ -3514,7 +3514,7 @@ export default function ChatApp() {
     return list
   }
 
-  const newSession = async (projectMode = '') => {
+  const createSession = async (projectMode = '') => {
     if (isNarrowChatViewport()) setCollapsed(true)
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
@@ -3532,8 +3532,12 @@ export default function ChatApp() {
     if (projectMode) await loadSessions(d.id)
   }
 
+  const newSession = async () => {
+    await createSession()
+  }
+
   const newProjectSession = async (projectMode) => {
-    await newSession(projectMode)
+    await createSession(projectMode)
   }
 
   const deleteSession = async (id) => {
@@ -4421,7 +4425,7 @@ export default function ChatApp() {
       <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event => setDraftTitle(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') saveRename(session.id); if (event.key === 'Escape') setEditing('') }} />
       <button onClick={() => saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14} /></button><button onClick={() => setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14} /></button>
     </div> : <button type="button" className="oa-session" onClick={() => selectSidebarSession(session.id)} title={shortTitle(session)}>
-      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true" />}<b>{shortTitle(session)}</b></span>
+      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true" />}<b>{shortTitle(session)}</b>{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
       <small><Clock3 size={11} />{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
     </button>}
     {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={event => {

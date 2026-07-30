@@ -116,9 +116,9 @@ export function UsagePage({ lang = 'zh' }) {
     {!error && data && <>
       {data.skipped_sessions > 0 && <div className="usage-warning"><AlertTriangle size={16}/><span>{n(data.skipped_sessions)} {c.skipped}</span></div>}
       <div className="usage-metrics">
-        <Metric label={c.total} value={tok(data.totals?.total_tokens).short} title={tok(data.totals?.total_tokens).full} accent/>
-        <Metric label={c.input} value={tok(data.totals?.input_tokens).short} title={tok(data.totals?.input_tokens).full}/>
-        <Metric label={c.output} value={tok(data.totals?.output_tokens).short} title={tok(data.totals?.output_tokens).full}/>
+        <Metric label={c.total} value={tok(data.totals?.total_tokens).full} title={tok(data.totals?.total_tokens).full} accent/>
+        <Metric label={c.input} value={tok(data.totals?.input_tokens).full} title={tok(data.totals?.input_tokens).full}/>
+        <Metric label={c.output} value={tok(data.totals?.output_tokens).full} title={tok(data.totals?.output_tokens).full}/>
         <Metric label={c.sessions} value={`${n(data.sessions_with_usage)} / ${n(data.session_count)}`}/>
         <Metric label={c.replies} value={n(data.assistant_replies)}/>
       </div>
