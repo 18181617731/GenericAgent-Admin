@@ -41,7 +41,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	writeJSON(w, map[string]interface{}{"sessions": items})
+	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Cfg.GARoot)})
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +132,36 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}}
+	var req struct {
+		ProjectMode string `json:"project_mode"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decode(r, &req); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	projectMode := strings.TrimSpace(req.ProjectMode)
+	if projectMode != "" {
+		found := false
+		for _, name := range discoverProjectNames(s.CfgStore.Cfg.GARoot) {
+			if name == projectMode {
+				found = true
+				break
+			}
+		}
+		if !found {
+			bad(w, http.StatusBadRequest, "project does not exist")
+			return
+		}
+	}
+	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}, ProjectMode: projectMode}
+	if projectMode != "" {
+		if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, chatSessionForClient(cs))
 }
 

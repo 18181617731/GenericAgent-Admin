@@ -1,6 +1,6 @@
 import React, { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
@@ -14,6 +14,8 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
+import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -2234,17 +2236,29 @@ const getElapsedMs = (m, now = Date.now()) => {
   if (m.run_started_at_ms > 0) return Math.max(0, now - m.run_started_at_ms)
   return 0
 }
+const formatTokens = (count = 0) => {
+  const num = Math.max(0, Number(count) || 0)
+  if (num >= 1e9) return `${(num / 1e9).toFixed(1)}B`
+  if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`
+  if (num >= 1e3) return `${(num / 1e3).toFixed(1)}K`
+  return num.toLocaleString(chatLocale())
+}
 
-const UsageRow = ({ u, label, className, elapsedMs = 0, live = false }) => {
+const UsageRow = ({ u, label, className, elapsedMs = 0, live = false, ctxChars = 0, ctxMsgs = 0 }) => {
   const hasTokens = usageHasTokens(u)
   const hasElapsed = elapsedMs > 0
-  if (!hasTokens && !hasElapsed) return null
+  const hasCtx = ctxChars > 0 || ctxMsgs > 0
+  if (!hasTokens && !hasElapsed && !hasCtx) return null
   return <div className={`oa-usage ${className || ''}`}>
     {label && <span className="oa-usage-label">{label}</span>}
     {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? ct('实时耗时', 'Live elapsed time') : ct('耗时', 'Elapsed time')}><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1.5A4.5 4.5 0 1 1 8 11a4.5 4.5 0 0 1 0-7.5z"/><path d="M7.5 4.5h1v3.65l2.2 1.3-.5.9L7.5 9V4.5z"/></svg>{ct('耗时', 'Time')} <b>{formatElapsedMs(elapsedMs)}</b></span>}
-    {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct('输入 tokens', 'Input tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{u.input_tokens.toLocaleString(chatLocale())}</b></span>}
-    {u?.cached_tokens > 0 && <span className="oa-usage-cache" title={ct('缓存 tokens', 'Cached tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>{ct('缓存', 'Cached')} <b>{u.cached_tokens.toLocaleString(chatLocale())}</b></span>}
-    {u?.output_tokens > 0 && <span className="oa-usage-out" title={ct('输出 tokens', 'Output tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>{ct('输出', 'Output')} <b>{u.output_tokens.toLocaleString(chatLocale())}</b></span>}
+    {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct('输入 tokens', 'Input tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{formatTokens(u.input_tokens)}</b></span>}
+    {u?.cached_tokens > 0 && <span className="oa-usage-cache" title={ct('缓存 tokens', 'Cached tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>{ct('缓存', 'Cached')} <b>{formatTokens(u.cached_tokens)}</b></span>}
+    {u?.output_tokens > 0 && <span className="oa-usage-out" title={ct('输出 tokens', 'Output tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>{ct('输出', 'Output')} <b>{formatTokens(u.output_tokens)}</b></span>}
+    {hasCtx && <span className="oa-usage-ctx" title={ct(
+      `AI 当前记住了 ${ctxMsgs} 条对话消息${ctxChars > 0 ? `，约 ${formatTokens(ctxChars)} 字` : ''}。上下文越长记忆越多，超出上限时旧消息会被自动裁剪。`,
+      `AI currently holds ${ctxMsgs} messages in context${ctxChars > 0 ? ` (~${formatTokens(ctxChars)} chars)` : ''}. Older messages are trimmed when the limit is reached.`
+    )}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M2 4h12v1.5H2V4zm0 3.5h9v1.5H2V7.5zm0 3.5h7v1.5H2V11z"/></svg>{ct('上下文', 'Ctx')} <b>{ctxMsgs > 0 ? `${ctxMsgs}msg` : ''}{ctxChars > 0 ? ` ${formatTokens(ctxChars)}ch` : ''}</b></span>}
   </div>
 }
 
@@ -2760,7 +2774,11 @@ function CustomSelect({ value, onChange, options, disabled, native = false, aria
 export default function ChatApp() {
   // Theme state: sync with localStorage and system preference
   const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ga-admin-theme', theme) }, [theme])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('ga-admin-theme', theme)
+    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme }))
+  }, [theme])
 
   useEffect(() => {
     document.documentElement.lang = chatLanguage() === 'en' ? 'en' : 'zh-CN'
@@ -2786,6 +2804,10 @@ export default function ChatApp() {
     }).catch(() => {})
   }, [])
   const [sessions, setSessions] = useState([])
+  const [projects, setProjects] = useState([])
+  const [sidebarTab, setSidebarTab] = useState('history')
+  const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
+  const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
   const [rawHistory, setRawHistory] = useState([])
@@ -2872,8 +2894,42 @@ export default function ChatApp() {
   // stream after a page refresh) can read the committed list without waiting for a state updater.
   useEffect(() => { messagesRef.current = messages }, [messages])
   const scrollModeRef = useRef('auto')
+  const autoFollowRef = useRef(true)
+  const previousScrollTopRef = useRef(0)
+  useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
+  const persistSessionDraft = useCallback((sessionId, value) => {
+    const id = String(sessionId || '').trim()
+    const draft = typeof value === 'string' ? value : String(value || '')
+    saveChatSessionDraft(id, draft)
+    if (!id) return
+    setDraftSessionIds(current => {
+      const hasDraft = Boolean(draft)
+      if (current.has(id) === hasDraft) return current
+      const next = new Set(current)
+      if (hasDraft) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+  const clearSessionDrafts = useCallback((sessionIds) => {
+    const values = Array.isArray(sessionIds) ? sessionIds : [sessionIds]
+    const ids = values.map(value => String(value || '').trim()).filter(Boolean)
+    clearChatSessionDrafts(ids)
+    if (!ids.length) return
+    setDraftSessionIds(current => {
+      const next = new Set(current)
+      let changed = false
+      for (const id of ids) changed = next.delete(id) || changed
+      return changed ? next : current
+    })
+  }, [])
+  const setSessionPrompt = useCallback((value, sessionId = activeSidRef.current) => {
+    const next = typeof value === 'string' ? value : String(value || '')
+    setPrompt(next)
+    persistSessionDraft(sessionId, next)
+  }, [persistSessionDraft])
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
   const COMPOSER_MAX_H = 160
 
@@ -3103,6 +3159,11 @@ export default function ChatApp() {
         return { ...m, usages }
       }) : xs)
     }
+    if (ev.type === 'ctx_stats' && typeof ev.ctx_chars === 'number') {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
+        m.id === pendingId ? { ...m, ctx_chars: ev.ctx_chars, ctx_msgs: ev.ctx_msgs } : m
+      ) : xs)
+    }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
       if (typeof ev.reasoning_effort === 'string') setReasoningEffort(normalizeReasoningEffort(ev.reasoning_effort))
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
@@ -3114,6 +3175,8 @@ export default function ChatApp() {
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         if (!finalMsg.goal_state && m.goal_state) finalMsg.goal_state = m.goal_state
+        if (!finalMsg.ctx_chars) finalMsg.ctx_chars = ev.ctx_chars || m.ctx_chars || 0
+        if (!finalMsg.ctx_msgs) finalMsg.ctx_msgs = ev.ctx_msgs || m.ctx_msgs || 0
         return finalMsg
       }) : xs)
     }
@@ -3361,6 +3424,7 @@ export default function ChatApp() {
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
     setSid(id)
+    setSessionPrompt(loadChatSessionDraft(id), id)
     setBusy(false)
     setStreamingSid('')
     setAutoFollow(true)
@@ -3437,6 +3501,7 @@ export default function ChatApp() {
     const d = await api('/api/chat/sessions')
     const list = d.sessions || []
     setSessions(list)
+    setProjects(Array.isArray(d.projects) ? d.projects : [])
     if (open) {
       const next = prefer || list[0]?.id || ''
       if (next) await openSession(next, false)
@@ -3455,17 +3520,28 @@ export default function ChatApp() {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
+    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject ? { project_mode:selectedProject } : {}) })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setPrompt(''); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
+    clearSessionDrafts(d.id)
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
+    if (selectedProject) await loadSessions(d.id)
+  }
+
+  const newSession = async () => {
+    await createSession()
+  }
+
+  const newProjectSession = async (projectMode) => {
+    await createSession(projectMode)
   }
 
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
     await api(`/api/chat/session/${id}`, { method:'DELETE' })
+    clearSessionDrafts(id)
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')
     setMenuPos(null)
@@ -3521,6 +3597,7 @@ export default function ChatApp() {
     setNotice('')
     try {
       const result = await deleteChatSessions(ids, id => api(`/api/chat/session/${id}`, { method:'DELETE' }))
+      clearSessionDrafts(result.deletedIds)
       const deleted = new Set(result.deletedIds)
       const activeDeleted = deleted.has(sid)
       if (deleted.size) setSessions(xs => xs.filter(session => !deleted.has(session.id)))
@@ -3810,7 +3887,7 @@ export default function ChatApp() {
 
   const fillAskReply = useCallback((text) => {
     const value = String(text || '')
-    setPrompt(value)
+    setSessionPrompt(value)
     setNotice(ct('已填入快捷回复，确认后可发送', 'Quick reply inserted; review and send when ready'))
     const focusPrompt = () => {
       const el = promptRef.current
@@ -3821,7 +3898,7 @@ export default function ChatApp() {
     }
     requestAnimationFrame(focusPrompt)
     setTimeout(focusPrompt, 0)
-  }, [])
+  }, [setSessionPrompt])
 
   const editAndResend = async (messageId, text) => {
     const item = buildEditResendItem({
@@ -3900,6 +3977,7 @@ export default function ChatApp() {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
+        clearSessionDrafts(id)
         activeSidRef.current = id
         scrollModeRef.current = 'auto'
         setSid(id); setStreamingSid(id)
@@ -3966,7 +4044,7 @@ export default function ChatApp() {
             const hasUser = baseMessages.some(m => m.id === optimistic.id)
             return [...baseMessages, ...(hasUser ? [] : [optimistic]), ...(showWorldlinePicker ? [] : [resultMessage])]
           })
-          if (Object.prototype.hasOwnProperty.call(commandPatch, 'prefill')) setPrompt(commandPatch.prefill)
+          if (Object.prototype.hasOwnProperty.call(commandPatch, 'prefill')) setSessionPrompt(commandPatch.prefill, id)
           if (showWorldlinePicker) {
             setWorldlineRestorePicker({ nodes:commandPatch.commandResult.tree.nodes, sessionID:id })
           }
@@ -4015,7 +4093,7 @@ export default function ChatApp() {
   const selectWorldlineRestoreNode = useCallback((nodeID, mode, target) => {
     const command = worldlineRestoreCommand(nodeID, mode, target)
     if (!command) return
-    setPrompt(command)
+    setSessionPrompt(command)
     setWorldlineRestorePicker(null)
     setNotice(ct('已填入恢复命令，确认后发送', 'Restore command inserted; review before sending'))
     window.setTimeout(() => {
@@ -4024,7 +4102,7 @@ export default function ChatApp() {
       input.focus()
       input.setSelectionRange?.(command.length, command.length)
     }, 0)
-  }, [])
+  }, [setSessionPrompt])
 
   const expandCustomSlashCommand = useCallback((value) => {
     const raw = String(value || '').trim()
@@ -4056,17 +4134,21 @@ export default function ChatApp() {
     const text = expandCustomSlashCommand(String(sourceText || '').trim())
     const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
-      setPrompt('')
       if (busy || activeRunRef.current) {
         setNotice(ct('当前正在执行，完成后可使用 /new 创建新对话', 'A run is in progress. Use /new after it completes.'))
         return
       }
+      setSessionPrompt('')
       await newSession()
       return
     }
     if (!text && !files.length) return
+    if (isBTWCommand(text) && !files.length && !(activeSidRef.current || sid)) {
+      await sendBTW(text)
+      return
+    }
     const item = { text, files, llmNo, reasoningEffort }
-    setPrompt(''); setAttachments([])
+    setSessionPrompt(''); setAttachments([])
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
     setCmdEditIdx(-1)
     if (isBTWCommand(text) && !files.length) {
@@ -4083,7 +4165,7 @@ export default function ChatApp() {
   const applySlashCommand = (cmd, currentValue = prompt) => {
     if (!cmd) return
     const next = slashCommandInsertText(cmd, currentValue)
-    setPrompt(next)
+    setSessionPrompt(next)
     setCmdDrawer(slashCommandNextDrawer(cmd, next))
     setCmdEditIdx(-1)
     setTimeout(() => promptRef.current?.focus(), 0)
@@ -4091,7 +4173,7 @@ export default function ChatApp() {
 
   const handlePromptChange = (e) => {
     const v = e.target.value
-    setPrompt(v)
+    setSessionPrompt(v)
     if (v.startsWith('/')) {
       setCmdDrawer({ open:true, filter:v.slice(1), selectedIdx:0 })
       setCmdEditIdx(-1)
@@ -4199,7 +4281,10 @@ export default function ChatApp() {
       inFlight = true
       try {
         const d = await api('/api/chat/sessions')
-        if (!stopped) setSessions(d.sessions || [])
+        if (!stopped) {
+          setSessions(d.sessions || [])
+          setProjects(Array.isArray(d.projects) ? d.projects : [])
+        }
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
       } finally {
@@ -4232,25 +4317,37 @@ export default function ChatApp() {
     }
   }, [sessionManagerOpen, batchDeleting])
 
-  const scrollToThreadEnd = (behavior = 'auto') => endRef.current?.scrollIntoView({ behavior, block:'end' })
+  const scrollToThreadEnd = (behavior = 'auto') => {
+    endRef.current?.scrollIntoView({ behavior, block:'end' })
+    if (threadRef.current) previousScrollTopRef.current = threadRef.current.scrollTop
+  }
+  const setFollowState = (enabled) => {
+    autoFollowRef.current = enabled
+    setAutoFollow(enabled)
+    setShowFollow(!enabled)
+  }
   const resumeFollow = () => {
-    setAutoFollow(true)
-    setShowFollow(false)
+    setFollowState(true)
     scrollToThreadEnd('auto')
   }
   const updateFollowFromScroll = () => {
-    const near = isNearBottom(threadRef.current, 20)
-    setAutoFollow(near)
-    setShowFollow(!near)
+    const thread = threadRef.current
+    if (!thread) return
+    const scrollTop = thread.scrollTop
+    const action = scrollFollowAction({
+      nearBottom: isNearBottom(thread, 20),
+      previousScrollTop: previousScrollTopRef.current,
+      scrollTop,
+    })
+    previousScrollTopRef.current = scrollTop
+    if (action === 'resume' && !autoFollowRef.current) setFollowState(true)
+    else if (action === 'pause' && autoFollowRef.current) setFollowState(false)
   }
   const breakFollow = () => {
-    if (autoFollow && !isNearBottom(threadRef.current, 12)) {
-      setAutoFollow(false)
-      setShowFollow(true)
-    }
+    if (autoFollowRef.current && !isNearBottom(threadRef.current, 12)) setFollowState(false)
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (autoFollow) {
       const behavior = scrollModeRef.current || 'auto'
       scrollModeRef.current = 'auto'
@@ -4259,6 +4356,18 @@ export default function ChatApp() {
       setShowFollow(true)
     }
   }, [messages, busy, autoFollow])
+
+  const lastThreadMessageId = messages.reduce((id, message) => message.kind === 'btw' ? id : message.id, '')
+  useEffect(() => {
+    const cards = threadRef.current?.querySelectorAll('.oa-message[data-id]')
+    const tail = cards?.[cards.length - 1]
+    if (!tail || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (autoFollowRef.current) scrollToThreadEnd('auto')
+    })
+    observer.observe(tail)
+    return () => observer.disconnect()
+  }, [lastThreadMessageId, sid])
 
   useGSAP(() => {
     if (prefersReducedMotion()) return
@@ -4273,6 +4382,7 @@ export default function ChatApp() {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
+  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
   const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
   const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
@@ -4324,6 +4434,40 @@ export default function ChatApp() {
         </div>)}
         {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
       </div>
+      {sidebarTab === 'history' ? <>
+        <div className="oa-session-manager-head">
+          <span className="oa-session-manager-title">{ct('最近对话', 'Recent chats')}</span>
+          <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
+        </div>
+        <div className="oa-session-list">
+          {sessions.map(renderSidebarSession)}
+          {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
+        </div>
+      </> : <div className="oa-session-list oa-project-list">
+        {projectSessionGroups.map((group, index) => {
+          const expanded = expandedProjectNames.has(group.name)
+          const bodyId = `oa-project-sessions-${index}`
+          const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
+          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'}`} key={group.name}>
+            <div className="oa-project-head">
+              <button className="oa-project-toggle" type="button" onClick={()=>setExpandedProjectNames(current => {
+                const next = new Set(current)
+                if (next.has(group.name)) next.delete(group.name)
+                else next.add(group.name)
+                return next
+              })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
+                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><span className="oa-project-icon" aria-hidden="true"><FolderOpen size={14}/></span><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
+              </button>
+              <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
+            </div>
+            <div className="oa-project-body" id={bodyId} hidden={!expanded}>
+              {group.sessions.map(renderSidebarSession)}
+              {!group.sessions.length && <div className="oa-project-empty">{ct('暂无对话，点击 + 快速开始', 'No chats yet. Click + to start.')}</div>}
+            </div>
+          </section>
+        })}
+        {!projectSessionGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{ct('暂无可用项目', 'No projects available')}</span></div>}
+      </div>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
@@ -4585,7 +4729,7 @@ export default function ChatApp() {
             return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
               <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
               <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
                 <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
               </span>
             </button>

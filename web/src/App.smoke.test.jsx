@@ -423,6 +423,8 @@ function ModelsHarness({
   discoverModels = vi.fn(async () => ({ models: [] })),
   saveModelProfile,
   modelSaveStatus = {},
+  failoverGroups = [],
+  onSaveFailoverGroups = vi.fn(async () => true),
 }) {
   const [profiles, setProfiles] = React.useState([{ ...initialProfile }])
   const patchProfile = (idx, patch) => {
@@ -443,6 +445,8 @@ function ModelsHarness({
       discoverModels={discoverModels}
       saveModelProfile={saveModelProfile}
       modelSaveStatus={modelSaveStatus}
+      failoverGroups={failoverGroups}
+      onSaveFailoverGroups={onSaveFailoverGroups}
       riskCatalog={[]}
       getProfileKey={() => 'profile-key'}
     />
@@ -463,6 +467,25 @@ describe('Models provider editor', () => {
     const updatedNameInput = container.querySelector('.model-field--provider input')
     expect(updatedNameInput.value).toBe('renamed')
     expect(document.activeElement).toBe(updatedNameInput)
+  })
+
+  test('edits a model display name without changing its model ID', () => {
+    installBrowserPolyfills()
+    const initialProfile = {
+      ...validModelProfile,
+      model_configs: [{ model: 'demo-model', name: 'Demo Friendly' }],
+    }
+    const { container } = render(<ModelsHarness initialProfile={initialProfile} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+    const displayNameInput = screen.getByLabelText('显示名称')
+    expect(displayNameInput.value).toBe('Demo Friendly')
+
+    fireEvent.change(displayNameInput, { target: { value: 'Renamed Friendly' } })
+
+    expect(screen.getByLabelText('显示名称').value).toBe('Renamed Friendly')
+    expect(container.querySelector('.model-config-display-name')?.textContent).toBe('Renamed Friendly')
+    expect(container.querySelector('.model-config-id')?.textContent).toBe('demo-model')
   })
 
   test('shows discovery pending then empty state with a recovery action', async () => {
@@ -541,6 +564,58 @@ describe('Models provider editor', () => {
     expect(screen.getByText('disk is read-only')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '重试保存' }))
     expect(saveModelProfile).toHaveBeenCalledWith(0, 'profile-key')
+  })
+
+  test('keeps failover groups independently collapsed and expands a newly added group', () => {
+    installBrowserPolyfills()
+    render(
+      <ModelsHarness
+        failoverGroups={[
+          {
+            var_name: 'mixin_config_primary',
+            members: [{ provider_var_name: validModelProfile.var_name, model: validModelProfile.model }],
+            max_retries: 10,
+            base_delay: 0.5,
+          },
+          {
+            var_name: 'mixin_config_secondary',
+            members: [],
+            max_retries: 10,
+            base_delay: 0.5,
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6545\u969c\u8f6c\u79fb' }))
+
+    let groups = [...document.querySelectorAll('.model-failover-group')]
+    let toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(groups).toHaveLength(2)
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
+    expect(groups.every(group => !group.querySelector('.model-failover-group-body'))).toBe(true)
+
+    fireEvent.click(toggles[0])
+    groups = [...document.querySelectorAll('.model-failover-group')]
+    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
+    expect(groups[0].querySelector('.model-failover-group-body')).toBeTruthy()
+    expect(groups[1].querySelector('.model-failover-group-body')).toBeNull()
+
+    fireEvent.click(toggles[1])
+    fireEvent.click(toggles[0])
+    groups = [...document.querySelectorAll('.model-failover-group')]
+    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true'])
+    expect(groups[0].querySelector('.model-failover-group-body')).toBeNull()
+    expect(groups[1].querySelector('.model-failover-group-body')).toBeTruthy()
+
+    fireEvent.click(document.querySelector('.model-failover-section:not(.model-failover-group) > .model-failover-section-head button'))
+    groups = [...document.querySelectorAll('.model-failover-group')]
+    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    expect(groups).toHaveLength(3)
+    expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true', 'true'])
+    expect(groups[2].querySelector('.model-failover-group-body')).toBeTruthy()
   })
 })
 

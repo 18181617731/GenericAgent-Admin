@@ -16,7 +16,17 @@ import {
   applyProviderOrder,
   orderedProviderProfiles,
   mergePersistedModelOrder,
+  normalizeFailoverGroups,
+  FAILOVER_VAR_PREFIX,
+  failoverGroupSuffix,
+  failoverGroupVarName,
+  migrateFailoverGroupNames,
+  nextFailoverGroupName,
+  remapFailoverGroupReferences,
+  mergePersistedFailoverConfig,
   moveOrderedItem,
+  applyFailoverConfig,
+  orderedFailoverRows,
   reasoningEffortOptions,
   withModelConfigs,
 } from './modelsEditor.js'
@@ -259,4 +269,160 @@ test('moveOrderedItem reorders immutably and ignores invalid moves', () => {
   assert.equal(moveOrderedItem(rows, 1, 1), rows)
   assert.equal(moveOrderedItem(rows, -1, 1), rows)
   assert.equal(moveOrderedItem(rows, 1, 3), rows)
+})
+
+
+test('failover helpers persist membership and settings on model rows', () => {
+  const profiles = [
+    { var_name: 'native_oai_config_main', model_configs: [{ model: 'alpha' }, { model: 'beta' }] },
+    { var_name: 'native_claude_config_backup', model_configs: [{ model: 'gamma' }] },
+  ]
+  const rows = orderedModelRows(profiles)
+  const next = applyFailoverConfig(profiles, [rows[2], rows[0]], {
+    maxRetries: 10,
+    baseDelay: 0.5,
+    springBack: 120,
+  })
+
+  assert.deepEqual(orderedFailoverRows(next).map(row => row.model), ['gamma', 'alpha'])
+  assert.equal(next[1].model_configs[0].failover_order, 0)
+  assert.equal(next[0].model_configs[0].failover_order, 1)
+  assert.equal(next[0].model_configs[1].failover_order, undefined)
+  for (const config of [next[1].model_configs[0], next[0].model_configs[0]]) {
+    assert.equal(config.failover_max_retries, 10)
+    assert.equal(config.failover_base_delay, 0.5)
+    assert.equal(config.failover_spring_back, 120)
+  }
+  assert.equal(profiles[0].model_configs[0].failover_order, undefined)
+})
+
+test('normalizes explicit failover groups without losing intentional zero values', () => {
+  assert.deepEqual(normalizeFailoverGroups([{
+    var_name: '  routing_mixin  ',
+    members: [{ provider_var_name: ' provider_a ', model: ' alpha ' }],
+    max_retries: 0,
+    base_delay: 0,
+    spring_back: '',
+  }, {
+    var_name: 'backup_mixin',
+    members: [],
+  }]), [{
+    var_name: 'routing_mixin',
+    members: [{ provider_var_name: 'provider_a', model: 'alpha' }],
+    max_retries: 0,
+    base_delay: 0,
+  }, {
+    var_name: 'backup_mixin',
+    members: [],
+    max_retries: 10,
+    base_delay: 0.5,
+  }])
+})
+
+test('converts failover group names between the fixed prefix and editable suffix', () => {
+  assert.equal(FAILOVER_VAR_PREFIX, 'mixin_config_')
+  assert.equal(failoverGroupSuffix('mixin_config_primary'), 'primary')
+  assert.equal(failoverGroupSuffix('legacy_route'), 'legacy_route')
+  assert.equal(failoverGroupVarName('primary_2'), 'mixin_config_primary_2')
+})
+
+test('migrates legacy failover group names into the fixed namespace without collisions', () => {
+  const groups = [
+    { var_name: 'mixin_config_main', marker: 1 },
+    { var_name: 'main', marker: 2 },
+    { var_name: 'route-prod', marker: 3 },
+    { var_name: 'route prod', marker: 4 },
+    { var_name: '!!!', marker: 5 },
+  ]
+  assert.deepEqual(migrateFailoverGroupNames(groups), [
+    { var_name: 'mixin_config_main', marker: 1 },
+    { var_name: 'mixin_config_main_2', marker: 2 },
+    { var_name: 'mixin_config_route_prod', marker: 3 },
+    { var_name: 'mixin_config_route_prod_2', marker: 4 },
+    { var_name: 'mixin_config_5', marker: 5 },
+  ])
+})
+
+test('allocates stable unique failover group variable names', () => {
+  assert.equal(nextFailoverGroupName([]), 'mixin_config_1')
+  assert.equal(nextFailoverGroupName([
+    { var_name: 'mixin_config_1' },
+    { var_name: 'mixin_config_2' },
+    { var_name: 'mixin_config_4' },
+  ]), 'mixin_config_3')
+})
+
+test('remaps explicit failover member references after provider and model rename', () => {
+  const groups = [{
+    var_name: 'routing_mixin',
+    members: [
+      { provider_var_name: 'provider_a', model: 'alpha' },
+      { provider_var_name: 'provider_b', model: 'beta' },
+    ],
+    max_retries: 7,
+    base_delay: 1.25,
+    spring_back: 12,
+  }]
+  assert.deepEqual(remapFailoverGroupReferences(groups, [{
+    from_provider_var_name: 'provider_a',
+    from_model: 'alpha',
+    to_provider_var_name: 'provider_next',
+    to_model: 'alpha-v2',
+  }]), [{
+    ...groups[0],
+    members: [
+      { provider_var_name: 'provider_next', model: 'alpha-v2' },
+      { provider_var_name: 'provider_b', model: 'beta' },
+    ],
+  }])
+})
+
+test('failover metadata survives model rename and ordinary model ordering', () => {
+  const profiles = [{
+    var_name: 'native_oai_config_main',
+    model_configs: [
+      { model: 'alpha', failover_order: 1, failover_max_retries: 7, failover_base_delay: 1.25 },
+      { model: 'beta', failover_order: 0, failover_max_retries: 7, failover_base_delay: 1.25 },
+    ],
+  }]
+  const renamed = withModelConfigs(profiles[0], [
+    { ...profiles[0].model_configs[0], model: 'alpha-renamed' },
+    profiles[0].model_configs[1],
+  ])
+  const reordered = applyModelOrder([renamed], orderedModelRows([renamed]).reverse())
+
+  assert.deepEqual(orderedFailoverRows(reordered).map(row => row.model), ['beta', 'alpha-renamed'])
+  assert.deepEqual(reordered[0].model_configs.map(config => config.failover_max_retries), [7, 7])
+})
+
+test('persisted failover metadata merges without overwriting provider drafts', () => {
+  const drafts = [{
+    var_name: 'native_oai_config_main',
+    apibase: 'https://draft.example',
+    apikey: 'draft-secret',
+    model_configs: [
+      { model: 'alpha-renamed', stream: false, failover_order: 9, failover_spring_back: 9 },
+      { model: 'beta', stream: true, failover_order: 8 },
+    ],
+  }]
+  const persisted = [{
+    var_name: 'native_oai_config_main',
+    apibase: 'https://persisted.example',
+    apikey: 'persisted-secret',
+    model_configs: [
+      { model: 'alpha', failover_order: 1, failover_max_retries: 6, failover_base_delay: 0.75 },
+      { model: 'beta' },
+    ],
+  }]
+
+  const merged = mergePersistedFailoverConfig(drafts, persisted)
+  assert.equal(merged[0].apibase, 'https://draft.example')
+  assert.equal(merged[0].apikey, 'draft-secret')
+  assert.equal(merged[0].model_configs[0].model, 'alpha-renamed')
+  assert.equal(merged[0].model_configs[0].stream, false)
+  assert.equal(merged[0].model_configs[0].failover_order, 1)
+  assert.equal(merged[0].model_configs[0].failover_max_retries, 6)
+  assert.equal(merged[0].model_configs[0].failover_base_delay, 0.75)
+  assert.equal(merged[0].model_configs[0].failover_spring_back, undefined)
+  assert.equal(merged[0].model_configs[1].failover_order, undefined)
 })

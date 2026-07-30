@@ -428,6 +428,46 @@ func TestExportImportKeepsProviderModelsGrouped(t *testing.T) {
 	}
 }
 
+func TestExportImportPreservesPerModelDisplayNames(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-test-only","model_configs":[{"model":"acme-chat","name":"Acme Chat"},{"model":"acme-reasoning","name":"Acme Reasoning"}]}]}`)
+	var input Draft
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if _, err := Export(root, input.Profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	encoded, err := json.Marshal(draft.Profiles[0].ModelConfigs)
+	if err != nil {
+		t.Fatalf("Marshal result error = %v", err)
+	}
+	var got []map[string]interface{}
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("Unmarshal result error = %v", err)
+	}
+	if got[0]["name"] != "Acme Chat" || got[1]["name"] != "Acme Reasoning" {
+		t.Fatalf("display names = %#v, want preserved per model", got)
+	}
+
+	mykey, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read mykey.py: %v", err)
+	}
+	// New contract: the "name" field is both display name and routing key.
+	// Verify that the exported mykey.py uses display names consistently.
+	for _, expected := range []string{`"name": "Acme Chat"`, `"name": "Acme Reasoning"`} {
+		if !strings.Contains(string(mykey), expected) {
+			t.Fatalf("missing display name in mykey.py: %q\n%s", expected, mykey)
+		}
+	}
+}
+
 func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"acme-chat","reasoning_effort":"low","read_timeout":120},{"model":"acme-reasoning","reasoning_effort":"high","read_timeout":600}]}]}`)
@@ -1016,5 +1056,226 @@ func TestRenderPreviewAllowsMaskedSecretWithoutUnmasking(t *testing.T) {
 	}
 	if !strings.Contains(renderedFull, `"apikey": "sk-****cret"`) {
 		t.Fatalf("render did not keep masked placeholder:\n%s", renderedFull)
+	}
+}
+
+func TestImportOfficialFailoverMixin(t *testing.T) {
+	root := t.TempDir()
+	source := `native_oai_config_primary = {
+    "apikey": "sk-primary", "apibase": "https://primary.example/v1",
+    "model": "gpt-main", "name": "primary-session",
+}
+native_claude_config_backup = {
+    "apikey": "sk-backup", "apibase": "https://backup.example/v1",
+    "model": "claude-main", "name": "backup-session",
+}
+mixin_config = {
+    "llm_nos": ["primary-session", "backup-session"],
+    "max_retries": 7, "base_delay": 0.25, "spring_back": 90,
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(source), 0600); err != nil {
+		t.Fatalf("write mykey.py: %v", err)
+	}
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	got := map[string]ModelConfig{}
+	for _, profile := range draft.Profiles {
+		for _, config := range profileModelConfigs(profile) {
+			got[config.Model] = config
+		}
+	}
+	for model, wantOrder := range map[string]int{"gpt-main": 0, "claude-main": 1} {
+		config, ok := got[model]
+		if !ok || config.FailoverOrder == nil || *config.FailoverOrder != wantOrder {
+			t.Fatalf("imported %q failover order = %#v, want %d", model, config.FailoverOrder, wantOrder)
+		}
+		if config.FailoverMaxRetries == nil || *config.FailoverMaxRetries != 7 || config.FailoverBaseDelay == nil || *config.FailoverBaseDelay != 0.25 || config.FailoverSpringBack == nil || *config.FailoverSpringBack != 90 {
+			t.Fatalf("imported %q failover settings = %#v", model, config)
+		}
+	}
+}
+
+func TestExportReplacesUnmanagedOfficialMixin(t *testing.T) {
+	root := t.TempDir()
+	old := []byte("custom_setting = 'keep'\n\nmixin_config = {'llm_nos': ['stale-a', 'stale-b']}\n")
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), old, 0600); err != nil {
+		t.Fatalf("write mykey.py: %v", err)
+	}
+	zero, one := 0, 1
+	profiles := []Profile{
+		{VarName: "native_oai_config_primary", Type: "native_oai", APIBase: "https://a.example/v1", APIKey: "sk-a", Model: "a", ModelConfigs: []ModelConfig{{Model: "a", FailoverOrder: &zero}}},
+		{VarName: "native_oai_config_backup", Type: "native_oai", APIBase: "https://b.example/v1", APIKey: "sk-b", Model: "b", ModelConfigs: []ModelConfig{{Model: "b", FailoverOrder: &one}}},
+	}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read exported mykey.py: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "mixin_config =") || strings.Count(text, "mixin_config_1 =") != 1 || strings.Contains(text, "stale-a") || !strings.Contains(text, "custom_setting = 'keep'") {
+		t.Fatalf("unexpected exported mykey.py:\n%s", text)
+	}
+}
+
+func TestRenderOfficialFailoverMixin(t *testing.T) {
+	zero, one := 0, 1
+	retries, springBack := 10, 120
+	delay := 0.5
+	profiles := []Profile{
+		{
+			VarName: "native_oai_config_primary", Type: "native_oai", Name: "shared",
+			APIBase: "https://primary.example/v1", APIKey: "sk-primary", Model: "gpt-main",
+			ModelConfigs: []ModelConfig{{Model: "gpt-main", FailoverOrder: &zero, FailoverMaxRetries: &retries, FailoverBaseDelay: &delay, FailoverSpringBack: &springBack}},
+		},
+		{
+			VarName: "native_claude_config_backup", Type: "native_claude", Name: "shared",
+			APIBase: "https://backup.example/v1", APIKey: "sk-backup", Model: "claude-main",
+			ModelConfigs: []ModelConfig{{Model: "claude-main", FailoverOrder: &one, FailoverMaxRetries: &retries, FailoverBaseDelay: &delay, FailoverSpringBack: &springBack}},
+		},
+	}
+	rendered, err := Render(profiles)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	for _, want := range []string{
+		`"name": "gpt-main"`,
+		`"name": "claude-main"`,
+		`mixin_config_1 = {"base_delay": 0.5, "llm_nos": ["gpt-main", "claude-main"], "max_retries": 10, "spring_back": 120}`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderExplicitFailoverGroupPreservesModelNames(t *testing.T) {
+	profiles := []Profile{
+		{
+			VarName: "native_oai_config_primary", Type: "native_oai",
+			APIBase: "https://primary.example/v1", APIKey: "sk-primary", Model: "gpt-main",
+			ModelConfigs: []ModelConfig{{Model: "gpt-main"}},
+		},
+		{
+			VarName: "native_oai_config_backup", Type: "native_oai",
+			APIBase: "https://backup.example/v1", APIKey: "sk-backup", Model: "gpt-backup",
+			ModelConfigs: []ModelConfig{{Model: "gpt-backup"}},
+		},
+	}
+	groups := []FailoverGroup{{
+		VarName: "mixin_config_1",
+		Members: []FailoverMember{
+			{ProviderVarName: "native_oai_config_primary", Model: "gpt-main"},
+			{ProviderVarName: "native_oai_config_backup", Model: "gpt-backup"},
+		},
+		MaxRetries: 10,
+		BaseDelay:  0.5,
+	}}
+	rendered, err := RenderWithFailoverGroups(profiles, groups)
+	if err != nil {
+		t.Fatalf("RenderWithFailoverGroups() error = %v", err)
+	}
+	for _, want := range []string{
+		`"name": "gpt-main"`,
+		`"name": "gpt-backup"`,
+		`"llm_nos": ["gpt-main", "gpt-backup"]`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderExplicitFailoverGroupKeepsRoutingNamesUnique(t *testing.T) {
+	profiles := []Profile{
+		{
+			VarName: "native_oai_config_primary", Type: "native_oai",
+			APIBase: "https://primary.example/v1", APIKey: "sk-primary", Model: "gpt-main",
+			ModelConfigs: []ModelConfig{{Model: "gpt-main", Name: "shared-route"}},
+		},
+		{
+			VarName: "native_oai_config_backup", Type: "native_oai",
+			APIBase: "https://backup.example/v1", APIKey: "sk-backup", Model: "gpt-backup",
+			ModelConfigs: []ModelConfig{{Model: "gpt-backup", Name: "shared-route"}},
+		},
+	}
+	groups := []FailoverGroup{{
+		VarName: "mixin_config_1",
+		Members: []FailoverMember{
+			{ProviderVarName: "native_oai_config_primary", Model: "gpt-main"},
+			{ProviderVarName: "native_oai_config_backup", Model: "gpt-backup"},
+		},
+	}}
+	rendered, err := RenderWithFailoverGroups(profiles, groups)
+	if err != nil {
+		t.Fatalf("RenderWithFailoverGroups() error = %v", err)
+	}
+	for _, want := range []string{
+		`"name": "shared-route"`,
+		`"name": "native_oai_config_backup"`,
+		`"llm_nos": ["shared-route", "native_oai_config_backup"]`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestResolveFailoverGroupsRequiresFixedVariablePrefix(t *testing.T) {
+	profiles := []Profile{
+		{VarName: "native_oai_config_a", Type: "native_oai", Model: "a", ModelConfigs: []ModelConfig{{Model: "a"}}},
+		{VarName: "native_oai_config_b", Type: "native_oai", Model: "b", ModelConfigs: []ModelConfig{{Model: "b"}}},
+	}
+	valid := FailoverGroup{
+		VarName: "mixin_config_primary_2",
+		Members: []FailoverMember{
+			{ProviderVarName: "native_oai_config_a", Model: "a"},
+			{ProviderVarName: "native_oai_config_b", Model: "b"},
+		},
+	}
+	if _, err := resolveFailoverGroups(profiles, []FailoverGroup{valid}); err != nil {
+		t.Fatalf("resolveFailoverGroups() rejected valid fixed-prefix name: %v", err)
+	}
+	for _, name := range []string{
+		"mixin_config",
+		"mixin_config_",
+		"routing_mixin",
+		"prefix_mixin_config_route",
+		"mixin_config_bad-name",
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := valid
+			invalid.VarName = name
+			if _, err := resolveFailoverGroups(profiles, []FailoverGroup{invalid}); err == nil || !strings.Contains(err.Error(), "must match mixin_config_[A-Za-z0-9_]+") {
+				t.Fatalf("resolveFailoverGroups() error = %v, want fixed-prefix validation error", err)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsMixedFailoverFamilies(t *testing.T) {
+	zero, one := 0, 1
+	profiles := []Profile{
+		{VarName: "native_oai_config_primary", Type: "native_oai", APIBase: "https://a.example/v1", APIKey: "sk-a", Model: "a", ModelConfigs: []ModelConfig{{Model: "a", FailoverOrder: &zero}}},
+		{VarName: "api_config_backup", Type: "openai", APIBase: "https://b.example/v1", APIKey: "sk-b", Model: "b", ModelConfigs: []ModelConfig{{Model: "b", FailoverOrder: &one}}},
+	}
+	if err := Validate(profiles); err == nil || !strings.Contains(strings.ToLower(err.Error()), "native") {
+		t.Fatalf("Validate() error = %v, want Native/Legacy family error", err)
+	}
+}
+
+func TestValidateRejectsSingleAndGappedFailover(t *testing.T) {
+	zero, two := 0, 2
+	base := Profile{VarName: "native_oai_config_a", Type: "native_oai", APIBase: "https://a.example/v1", APIKey: "sk-a", Model: "a", ModelConfigs: []ModelConfig{{Model: "a", FailoverOrder: &zero}}}
+	if err := Validate([]Profile{base}); err == nil {
+		t.Fatal("Validate() accepted a one-member failover group")
+	}
+	other := Profile{VarName: "native_oai_config_b", Type: "native_oai", APIBase: "https://b.example/v1", APIKey: "sk-b", Model: "b", ModelConfigs: []ModelConfig{{Model: "b", FailoverOrder: &two}}}
+	if err := Validate([]Profile{base, other}); err == nil {
+		t.Fatal("Validate() accepted non-consecutive failover_order values")
 	}
 }

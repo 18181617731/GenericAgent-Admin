@@ -127,6 +127,8 @@ _CURRENT_USAGE = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
 # "[Output]" line marks the end of one turn, so we snapshot and reset there.
 _TURN_USAGES = []
+# Latest context-size stats parsed from llmcore's [Debug] lines.
+_CTX_STATS = {'ctx_chars': 0, 'ctx_msgs': 0}
 
 
 class _UsageCapturingStderr:
@@ -146,16 +148,27 @@ class _UsageCapturingStderr:
             return
         import re
         with _USAGE_LOCK:
-            # [Cache] input=123 cached=45  or  [Cache] input=123 creation=10 read=20
-            m = re.search(r'\[Cache\]\s+input=(\d+)', text)
-            if m:
-                _CURRENT_USAGE['input_tokens'] = int(m.group(1))
-            m = re.search(r'cached=(\d+)', text)
-            if m:
-                _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
-            m = re.search(r'read=(\d+)', text)
-            if m:
-                _CURRENT_USAGE['cached_tokens'] = int(m.group(1))
+            usage_changed = False
+            # Legacy GA emits input/cached, while newer Claude sessions emit
+            # input/creation/read. Claude's billable input is the sum of all
+            # three fields; only cache reads count as cached input.
+            cache_line = re.search(r'\[Cache\][^\r\n]*', text)
+            if cache_line:
+                fields = {
+                    key: int(value)
+                    for key, value in re.findall(r'(input|cached|creation|read)=(\d+)', cache_line.group(0))
+                }
+                if 'input' in fields:
+                    if 'creation' in fields or 'read' in fields:
+                        _CURRENT_USAGE['input_tokens'] = (
+                            fields['input'] + fields.get('creation', 0) + fields.get('read', 0)
+                        )
+                        _CURRENT_USAGE['cached_tokens'] = fields.get('read', 0)
+                    else:
+                        _CURRENT_USAGE['input_tokens'] = fields['input']
+                        if 'cached' in fields:
+                            _CURRENT_USAGE['cached_tokens'] = fields['cached']
+                    usage_changed = True
             # [Output] tokens=456  -- marks the end of one internal LLM turn.
             m = re.search(r'\[Output\]\s+tokens=(\d+)', text)
             if m:
@@ -167,10 +180,27 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['input_tokens'] = 0
                 _CURRENT_USAGE['output_tokens'] = 0
                 _CURRENT_USAGE['cached_tokens'] = 0
-                # Push this turn's usage live so the UI can render it the moment
-                # the internal turn finishes, instead of waiting for `done`.
+                # Replace the live Cache snapshot at the same index with this
+                # completed turn once output usage becomes available.
                 try:
                     emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
+                except Exception:
+                    pass
+            elif usage_changed:
+                # Cache/input usage is known before the model finishes. Publish it
+                # immediately so the live row can show usage and context together.
+                try:
+                    emit({'type': 'turn_usage', 'index': len(_TURN_USAGES), 'usage': dict(_CURRENT_USAGE)})
+                except Exception:
+                    pass
+            # [Debug] Current context: 12345 chars, 42 messages.
+            # llmcore prints this whenever trim_messages_history is called.
+            m = re.search(r'\[Debug\].*?(\d+)\s+chars,\s*(\d+)\s+messages', text)
+            if m:
+                _CTX_STATS['ctx_chars'] = int(m.group(1))
+                _CTX_STATS['ctx_msgs'] = int(m.group(2))
+                try:
+                    emit({'type': 'ctx_stats', 'ctx_chars': _CTX_STATS['ctx_chars'], 'ctx_msgs': _CTX_STATS['ctx_msgs']})
                 except Exception:
                     pass
     
@@ -268,6 +298,42 @@ def _snapshot_backend_history(agent):
         return json.loads(json.dumps(history, ensure_ascii=False, default=str))
     except Exception:
         return []
+
+
+def _snapshot_ctx_stats(agent):
+    """Return ctx_chars and ctx_msgs for the done payload.
+
+    Prefers the value captured by _UsageCapturingStderr (set whenever llmcore
+    calls trim_messages_history).  Falls back to computing directly from the
+    backend history so that short conversations — where trim is never called —
+    still report a non-zero context size.
+    """
+    try:
+        with _USAGE_LOCK:
+            chars = _CTX_STATS.get('ctx_chars', 0)
+            msgs  = _CTX_STATS.get('ctx_msgs',  0)
+        if chars or msgs:
+            return chars, msgs
+        # Fallback: compute from raw backend history
+        history = getattr(agent.llmclient.backend, 'history', []) or []
+        total_chars = 0
+        total_msgs  = 0
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            total_msgs += 1
+            content = entry.get('content') or ''
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        total_chars += len(part.get('text') or '')
+                    elif isinstance(part, str):
+                        total_chars += len(part)
+        return total_chars, total_msgs
+    except Exception:
+        return 0, 0
 
 
 def _snapshot_model_id(agent):
@@ -687,7 +753,8 @@ def _maybe_expand_official_slash_command(root, prompt):
 def _emit_immediate_done(agent, content, history_info=None, working=None):
     msg = {'id': new_id(), 'role': 'assistant', 'content': content, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
     state = _snapshot_ga_state(agent)
-    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+    _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
+    emit({'type': 'done', 'message': msg, 'usage': _snapshot_usage(), 'usages': _snapshot_turn_usages(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or history_info or [], 'working': state.get('working') or working or {}, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
 
 
 
@@ -2226,6 +2293,7 @@ def handle_request(agent, worker, req):
             emit({'type': 'plan_update', 'plan': plan})
         return plan
 
+    restore_model_hooks = _install_outbound_model_hooks(agent)
     try:
         if _up_context:
             _up_thread = threading.Thread(
@@ -2274,13 +2342,16 @@ def handle_request(agent, worker, req):
                 usages = _snapshot_turn_usages()
                 _commit_worldline(agent, prompt)
                 plan = emit_plan_update(text)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+                _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+    finally:
+        restore_model_hooks()
 
 
 def main():

@@ -772,6 +772,8 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
 				"type":         "done",
 				"message":      done,
+				"ctx_chars":    3800,
+				"ctx_msgs":     3,
 				"raw_history":  rawHistory,
 				"history_info": []interface{}{map[string]interface{}{"turn": "final"}},
 				"working":      map[string]interface{}{"phase": "complete"},
@@ -853,6 +855,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if strings.Count(rr.Body.String(), `"model_id":"vendor/model-real"`) < 2 {
 		t.Fatalf("stream missing model event or terminal message model_id: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"ctx_chars":3800`) || !strings.Contains(rr.Body.String(), `"ctx_msgs":3`) {
+		t.Fatalf("stream terminal message missing context stats: %s", rr.Body.String())
 	}
 	stored, err := loadChatSession(s.CfgStore.Cfg, "session-hist")
 	if err != nil {
@@ -1026,6 +1031,82 @@ func TestChatNewSessionDoesNotPersistDraftUntilFirstSend(t *testing.T) {
 	}
 	if !strings.Contains(listAfterSendRR.Body.String(), created.ID) {
 		t.Fatalf("session missing from list after first send: %s", listAfterSendRR.Body.String())
+	}
+}
+
+func TestChatSessionsIncludesDiscoveredProjects(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"zeta", "alpha"} {
+		if err := os.MkdirAll(filepath.Join(root, "temp", "projects", name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	h := s.Routes()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Projects []string `json:"projects"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.Join(got.Projects, ",") != "alpha,zeta" {
+		t.Fatalf("projects=%v want [alpha zeta]", got.Projects)
+	}
+}
+
+func TestChatNewSessionForProjectPersistsMode(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp", "projects", "alpha"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	h := s.Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session/new", strings.NewReader(`{"project_mode":"alpha"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var created chatSession
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if created.ID == "" || created.ProjectMode != "alpha" {
+		t.Fatalf("created=%+v", created)
+	}
+	stored, err := loadChatSession(s.CfgStore.Cfg, created.ID)
+	if err != nil {
+		t.Fatalf("load persisted session: %v", err)
+	}
+	if stored.ProjectMode != "alpha" {
+		t.Fatalf("stored project_mode=%q want alpha", stored.ProjectMode)
+	}
+}
+
+func TestChatNewSessionRejectsUnknownProject(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	h := s.Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session/new", strings.NewReader(`{"project_mode":"missing"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "project does not exist") {
+		t.Fatalf("unexpected body: %s", rr.Body.String())
 	}
 }
 

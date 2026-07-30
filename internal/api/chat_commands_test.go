@@ -252,6 +252,11 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 		"index": float64(1),
 		"usage": map[string]interface{}{"input_tokens": float64(1290), "output_tokens": float64(38), "cached_tokens": float64(7)},
 	})
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":      "ctx_stats",
+		"ctx_chars": float64(3800),
+		"ctx_msgs":  float64(3),
+	})
 	// A sparse index must neither allocate nor contaminate the aggregate.
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":  "turn_usage",
@@ -283,6 +288,9 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	}
 	if len(got.Usages) != 2 || got.Usages[0]["input_tokens"] != 3000 || got.Usages[1]["output_tokens"] != 38 {
 		t.Fatalf("per-turn usages not persisted after cancel: %#v", got.Usages)
+	}
+	if got.CtxChars != 3800 || got.CtxMsgs != 3 {
+		t.Fatalf("context stats not persisted after cancel: (%d,%d) message=%#v", got.CtxChars, got.CtxMsgs, got)
 	}
 	raw, err := json.Marshal(stored.RawHistory)
 	if err != nil {

@@ -957,7 +957,7 @@ func (s *Server) autostartStatus(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	writeJSON(w, autostart.StatusForCurrent())
+	writeJSON(w, autostart.StatusForCurrent(s.CfgStore.Root))
 }
 
 func (s *Server) autostartEnable(w http.ResponseWriter, r *http.Request) {
@@ -965,7 +965,7 @@ func (s *Server) autostartEnable(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	st, err := autostart.EnableCurrent()
+	st, err := autostart.EnableCurrent(s.CfgStore.Root)
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
@@ -978,7 +978,7 @@ func (s *Server) autostartDisable(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	st, err := autostart.DisableCurrent()
+	st, err := autostart.DisableCurrent(s.CfgStore.Root)
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
