@@ -9,6 +9,7 @@ html[data-theme="warm"] {
   --surface-muted: #F5F0E5;
   --surface-subtle: rgba(0, 0, 0, .025);
   --surface-subtle-hover: rgba(0, 0, 0, .045);
+  --surface-hover: rgba(0, 0, 0, .03);
   --border: #E0D8C8;
   --border-strong: #C9BDA8;
   --border-subtle: rgba(0, 0, 0, .08);
