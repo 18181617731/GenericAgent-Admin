@@ -62,12 +62,11 @@ test('sidebar status notice fits its compact rail without hiding actions', () =>
 })
 
 test('language controls reserve stable space for translated labels', () => {
-  assert.match(css, /\.sidebar \.lang-switch\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto 30px/s)
+  assert.match(css, /\.sidebar \.lang-switch\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s)
   assert.match(css, /\.sidebar \.lang-switch-label\s*\{[^}]*white-space:\s*nowrap/s)
-  assert.match(css, /\.sidebar \.theme-toggle\s*\{[^}]*width:\s*30px[^}]*height:\s*30px/s)
   assert.match(
     css,
-    /html\[data-theme="dark"\] \.app:not\(\.app-tab-chat\) \.sidebar nav button\.active,[\s\S]*?\{[^}]*background:\s*var\(--surface-muted\)\s*!important[^}]*color:\s*var\(--text\)\s*!important/s,
+    /html\[data-color-scheme="dark"\] \.app:not\(\.app-tab-chat\) \.sidebar nav button\.active,[\s\S]*?\{[^}]*background:\s*var\(--surface-muted\)\s*!important[^}]*color:\s*var\(--text\)\s*!important/s,
   )
 })
 
@@ -116,4 +115,40 @@ test('settings auto-title card has toggle and action field styles', () => {
     css,
     /@media\s*\(max-width:\s*760px\)[\s\S]*?\.settings-field-toggle\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)[^}]*\}/i,
   )
+})
+
+
+test('theme IDs only select token scopes while color schemes own shared compatibility', () => {
+  assert.match(css, /html\[data-color-scheme="light"\]\s*\{\s*color-scheme:\s*light;\s*\}/i)
+  assert.match(css, /html\[data-color-scheme="dark"\]\s*\{\s*color-scheme:\s*dark;\s*\}/i)
+
+  const themeRules = [...css.matchAll(/([^{}]*\[data-theme="(?:light|warm|dark)"\][^{}]*)\{([^{}]*)\}/g)]
+  assert.ok(themeRules.length >= 3, 'expected a token scope for every registered theme')
+
+  for (const [, selector, body] of themeRules) {
+    const declarations = body
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split(';')
+      .map(value => value.trim())
+      .filter(Boolean)
+    assert.ok(declarations.length > 0, `empty theme token scope: ${selector.trim()}`)
+    assert.ok(
+      declarations.every(declaration => declaration.startsWith('--')),
+      `theme scope contains a structural declaration: ${selector.trim()}`,
+    )
+  }
+
+  assert.equal((css.match(/\[data-theme="dark"\]/g) || []).length, 1)
+  assert.ok((css.match(/\[data-color-scheme="dark"\]/g) || []).length > 1)
+})
+
+test('chat layout is shared instead of being coupled to the light palette', () => {
+  const lightChatRule = ruleBodies('html[data-theme="light"] .oa-chat').join('\n')
+  assert.doesNotMatch(lightChatRule, /(?:height|display|grid-template-columns|overflow|transition)\s*:/i)
+
+  const sharedChatRule = ruleBodies('.oa-chat')
+    .find(rule => /grid-template-columns\s*:\s*260px\s+minmax\(0,\s*1fr\)/i.test(rule))
+  assert.ok(sharedChatRule, 'missing shared 260px chat layout')
+  assert.match(sharedChatRule, /height\s*:\s*100vh/i)
+  assert.match(sharedChatRule, /overflow\s*:\s*hidden/i)
 })

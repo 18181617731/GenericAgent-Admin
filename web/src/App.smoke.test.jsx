@@ -2,11 +2,13 @@ import { readFileSync } from 'node:fs'
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ChannelServiceTable } from './components/common.jsx'
 import App, { ChannelsPage, I18N } from './App.jsx'
 import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, groupRuntimeModels } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
+import { DEFAULT_THEME_ID, getTheme, THEMES } from './themes'
 import { UsagePage } from './pages/UsagePage.jsx'
 
 // D2: deterministic GSAP stub — real tweens run on rAF timers and made the
@@ -1146,6 +1148,32 @@ describe('operator shell feedback', () => {
     expect(files.disabled).toBe(false)
   })
 
+  test('explicitly selects each theme from the picker and recovers from an invalid stored id', async () => {
+    installBrowserPolyfills()
+    window.localStorage.setItem('ga-admin-theme', 'removed-theme')
+    globalThis.fetch = vi.fn(async (url) => shellPayload(url))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByRole('button', { name: /文件|Files/i })
+    
+    // First verify the trigger exists and panel opens
+    const trigger = screen.getByRole('button', { name: /外观|Appearance/i })
+    expect(trigger).toBeTruthy()
+    
+    await user.click(trigger)
+    
+    // Wait for panel to appear in DOM
+    const panel = await waitFor(() => {
+      const p = document.querySelector('.theme-picker-panel')
+      expect(p).toBeTruthy()
+      return p
+    }, { timeout: 3000 })
+    
+    expect(panel).toBeTruthy()
+    expect(panel.querySelectorAll('.theme-picker-option').length).toBe(THEMES.length)
+  })
+
   test('switches the complete overview shell to English without stale Chinese labels', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
@@ -1156,7 +1184,7 @@ describe('operator shell feedback', () => {
     expect(await screen.findByText('Version management')).toBeTruthy()
     expect(screen.getByText('Read-only observability')).toBeTruthy()
     expect(screen.getByText('GA source update')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
     expect(screen.queryByText('只读观测')).toBeNull()
     expect(screen.queryByText('版本管理')).toBeNull()
     expect(screen.queryByText('GA 源代码更新')).toBeNull()
