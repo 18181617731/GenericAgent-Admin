@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"path/filepath"
 	"testing"
 )
 
@@ -26,5 +27,20 @@ func TestNewHTTPServerSetsTimeouts(t *testing.T) {
 	}
 	if server.IdleTimeout <= server.ReadHeaderTimeout {
 		t.Fatalf("IdleTimeout = %v must exceed ReadHeaderTimeout = %v", server.IdleTimeout, server.ReadHeaderTimeout)
+	}
+}
+
+func TestAppRootExplicitRootTakesPrecedence(t *testing.T) {
+	explicit := t.TempDir()
+	got, err := appRoot(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.Abs(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("appRoot(%q) = %q, want %q", explicit, got, want)
 	}
 }

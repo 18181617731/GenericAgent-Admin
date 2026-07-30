@@ -29,7 +29,7 @@ var webFS embed.FS
 
 func main() {
 	launch := parseLaunchOptions()
-	cwd, err := appRoot()
+	cwd, err := appRoot(launch.AppRoot)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -90,6 +90,7 @@ func main() {
 type launchOptions struct {
 	Headless  bool
 	NoBrowser bool
+	AppRoot   string
 	Port      int
 	PortSet   bool
 }
@@ -112,6 +113,7 @@ func parseLaunchOptions() launchOptions {
 	headlessFlag := flag.Bool("headless", false, "run without browser or tray; intended for Linux servers")
 	serverOnlyFlag := flag.Bool("server-only", false, "alias for --headless")
 	noBrowserFlag := flag.Bool("no-browser", false, "do not open the web UI automatically")
+	appRootFlag := flag.String("app-root", "", "override the directory containing config.local.json")
 	portFlag := flag.Int("port", 0, "override HTTP listen port for this launch (1-65535)")
 	flag.Parse()
 
@@ -133,6 +135,7 @@ func parseLaunchOptions() launchOptions {
 	return launchOptions{
 		Headless:  headless,
 		NoBrowser: *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
+		AppRoot:   strings.TrimSpace(*appRootFlag),
 		Port:      *portFlag,
 		PortSet:   portSet,
 	}
@@ -170,7 +173,11 @@ func waitForShutdownSignal(server *http.Server, cleanup func()) {
 	_ = server.Shutdown(ctx)
 }
 
-func appRoot() (string, error) {
+func appRoot(explicitRoot string) (string, error) {
+	if root := strings.TrimSpace(explicitRoot); root != "" {
+		return filepath.Abs(root)
+	}
+
 	wd, wdErr := os.Getwd()
 	exe, err := os.Executable()
 	if err != nil {
