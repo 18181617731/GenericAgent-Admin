@@ -120,6 +120,36 @@ test('observability summary explains healthy state instead of exposing raw count
   assert.match(summary.stats[3].detail, /主程序 正常/)
 })
 
+test('observability summary surfaces a failed chat runtime check', () => {
+  const summary = observabilitySummary({
+    ok: false,
+    coreFiles: [{ exists: true }],
+    runtime: {
+      ok: false,
+      pythonOK: true,
+      pythonVersion: '3.12.1',
+      dependencies: [{ ok: true }],
+      agentmainOK: true,
+      ultraplanOK: true,
+      chatWorkerChecked: true,
+      chatWorkerOK: false,
+      chatWorkerError: '缺少模型路由钩子',
+    },
+    memory: {},
+    riskItems: [],
+    warnings: [],
+    errors: ['Chat 对话运行组件检查失败'],
+  })
+
+  assert.equal(summary.status, '需处理')
+  assert.deepEqual(summary.stats.at(-1), {
+    key: 'chat',
+    label: '对话运行组件',
+    value: '失败',
+    detail: '缺少模型路由钩子',
+  })
+})
+
 test('observability summary calls missing core files out as actionable', () => {
   const summary = observabilitySummary({ ok: true, coreFiles: [{ exists: true }, { exists: false }], runtime: { ok: true }, memory: {}, riskItems: [] })
   assert.equal(summary.status, '需处理')

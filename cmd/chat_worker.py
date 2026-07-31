@@ -564,6 +564,7 @@ def _reload_model_profiles(agent):
 
 def _select_llm_if_needed(agent, llm_no):
     """Select the requested model or fail before the old model can answer."""
+    _reload_model_profiles(agent)
     current = _snapshot_llm_no(agent)
     if current != llm_no:
         agent.next_llm(llm_no)
@@ -1982,6 +1983,7 @@ def handle_btw_request(agent, req):
     _select_llm_if_needed(agent, llm_no)
     if str(reasoning_effort or '').strip():
         _apply_reasoning_effort_setting(agent, reasoning_effort)
+    _sync_usage_llm_no(agent)
     _apply_workspace(agent, root_for_req, req.get('workspace'))
     _restore_admin_history(agent, history, raw_history)
     from frontends.btw_cmd import handle_frontend_command
@@ -2153,6 +2155,7 @@ def handle_title_request(agent, req):
     req = _normalize_request(req)
     _reset_usage()
     _select_llm_if_needed(agent, req.get('llm_no', 0))
+    _sync_usage_llm_no(agent)
     backend = agent.llmclient.backend
     backend.history = []
     backend.system = _CHAT_TITLE_SYSTEM_PROMPT
@@ -2332,7 +2335,6 @@ def handle_request(agent, worker, req):
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent)}
                 if _up_state.get('phases') or _up_state.get('objective'):
-                    _up_state['complete'] = True
                     msg['ultraplan_state'] = dict(_up_state)
                 emit_goal_update(force=True)
                 if _goal_card_ctx.get('state'):

@@ -42,6 +42,6 @@ test('reflect services can start with a safe model fallback', () => {
   assert.match(app, /setReflectLLMNo\(current => current !== '' \? current : \(fallbackModel\?\.index\?\.toString\(\) \|\| '0'\)\)/)
   assert.match(app, /if \(!\/\^\\d\+\$\/\.test\(selectedLLMNo\)\)/)
   assert.match(app, /<ModelCascadePicker models=\{llms\} value=\{reflectLLMNo\}/)
-  assert.match(picker, /groupRuntimeModels\(models\)/)
-  assert.match(picker, /onChange\(model\.value\)/)
+  assert.match(picker, /buildModelProviderGroups\(models/)
+  assert.match(picker, /onChange=\{onChange\}/)
 })

@@ -4,6 +4,7 @@ import { api, apiStream } from '../lib/api'
 import { fuzzyMatch } from '../lib/format'
 import { createStreamDeltaBatcher } from '../lib/chatStream.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from '../lib/chatTitlePolling.js'
+import { consumeMemoryChatDraft } from '../lib/memoryChatDraft.js'
 import { TurnList } from '../components/turns'
 import { ModelCascadePicker } from '../components/ModelCascadePicker'
 
@@ -27,6 +28,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
   const [files, setFiles] = useState([])
   const [settings, setSettings] = useState({ llm_no: 0 })
   const activeSidRef = useRef('')
+  const memoryDraftRef = useRef(consumeMemoryChatDraft())
   const fileInputRef = useRef(null)
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
@@ -73,7 +75,22 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     setFiles([])
     setSettings({ llm_no: d.settings?.llm_no || 0 })
   }
-  useEffect(()=>{ loadSessions().catch(e=>setErr(e.message)) }, [])
+  useEffect(() => {
+    const initialize = async () => {
+      try {
+        if (memoryDraftRef.current) {
+          await newSession()
+          setPrompt(memoryDraftRef.current.prompt)
+          window.setTimeout(() => promptRef.current?.focus(), 0)
+          return
+        }
+        await loadSessions()
+      } catch (error) {
+        setErr(error.message)
+      }
+    }
+    initialize()
+  }, [])
   useEffect(() => {
     if (!cmdDrawer.open) return
     const handler = (e) => { if (cmdDrawerRef.current && !cmdDrawerRef.current.contains(e.target)) closeCmdDrawer() }

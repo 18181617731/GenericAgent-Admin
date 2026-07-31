@@ -25,30 +25,32 @@ import (
 	"unicode"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/modelconfig"
 )
 
 type chatMessage struct {
-	ID             string                   `json:"id"`
-	Role           string                   `json:"role"`
-	Content        string                   `json:"content"`
-	ModelID        string                   `json:"model_id,omitempty"`
-	LLMNo          *int                     `json:"llm_no,omitempty"`
-	Files          []map[string]interface{} `json:"files,omitempty"`
-	CreatedAt      int64                    `json:"created_at"`
-	Error          bool                     `json:"error,omitempty"`
-	ErrorInfo      *chatErrorInfo           `json:"error_info,omitempty"`
-	Kind           string                   `json:"kind,omitempty"`
-	SideQuestion   string                   `json:"side_question,omitempty"`
-	Usage          map[string]int           `json:"usage,omitempty"`
-	Usages         []map[string]int         `json:"usages,omitempty"`
-	CtxChars       int                      `json:"ctx_chars,omitempty"`
-	CtxMsgs        int                      `json:"ctx_msgs,omitempty"`
-	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
-	RunStartedAtMS int64                    `json:"run_started_at_ms,omitempty"`
-	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
-	GoalState      map[string]interface{}   `json:"goal_state,omitempty"`
-	TaskOutputs    map[string][]string      `json:"task_outputs,omitempty"`
+	ID              string                   `json:"id"`
+	Role            string                   `json:"role"`
+	Content         string                   `json:"content"`
+	ModelID         string                   `json:"model_id,omitempty"`
+	LLMNo           *int                     `json:"llm_no,omitempty"`
+	Files           []map[string]interface{} `json:"files,omitempty"`
+	CreatedAt       int64                    `json:"created_at"`
+	Error           bool                     `json:"error,omitempty"`
+	ErrorInfo       *chatErrorInfo           `json:"error_info,omitempty"`
+	Kind            string                   `json:"kind,omitempty"`
+	SideQuestion    string                   `json:"side_question,omitempty"`
+	Usage           map[string]int           `json:"usage,omitempty"`
+	Usages          []map[string]int         `json:"usages,omitempty"`
+	ReasoningEffort string                   `json:"reasoning_effort,omitempty"`
+	CtxChars        int                      `json:"ctx_chars,omitempty"`
+	CtxMsgs         int                      `json:"ctx_msgs,omitempty"`
+	ElapsedMS       int64                    `json:"elapsed_ms,omitempty"`
+	RunStartedAtMS  int64                    `json:"run_started_at_ms,omitempty"`
+	UltraPlanState  map[string]interface{}   `json:"ultraplan_state,omitempty"`
+	GoalState       map[string]interface{}   `json:"goal_state,omitempty"`
+	TaskOutputs     map[string][]string      `json:"task_outputs,omitempty"`
 }
 
 const (
@@ -589,6 +591,8 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			if v, ok := ev["reasoning_effort"].(string); ok {
 				finalReasoningEffort = v
+				final.ReasoningEffort = normalizeChatSettings(chatSettings{ReasoningEffort: v}).ReasoningEffort
+				msg["reasoning_effort"] = final.ReasoningEffort
 			}
 			delete(ev, "raw_history")
 			delete(ev, "history_info")
@@ -1411,7 +1415,7 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 		if len(configs) == 0 {
 			configs = make([]modelconfig.ModelConfig, 0, len(profile.Models))
 			for _, model := range profile.Models {
-				configs = append(configs, modelconfig.ModelConfig{Model: model})
+				configs = append(configs, modelconfig.ModelConfig{Model: model, ReasoningEffort: profile.ReasoningEffort})
 			}
 		}
 		for _, config := range configs {
@@ -1518,6 +1522,11 @@ func applyChatProviderModel(item map[string]interface{}, configured chatProvider
 		if name, ok := item["name"].(string); ok && strings.TrimSpace(name) != "" {
 			item["label"] = name
 		}
+	}
+	if configured.reasoningEffort != "" {
+		item["reasoning_effort"] = configured.reasoningEffort
+	} else {
+		delete(item, "reasoning_effort")
 	}
 }
 
@@ -1695,6 +1704,11 @@ func (s *Server) resetChatWorker(sid string) bool {
 
 func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {
 	root := cfg.GARoot
+	if _, statErr := os.Stat(filepath.Join(root, "llmcore.py")); statErr == nil {
+		if _, telemetryErr := ga.EnsureUsageTelemetry(root); telemetryErr != nil {
+			fmt.Fprintf(os.Stderr, "[chat] usage telemetry unavailable: %v\n", telemetryErr)
+		}
+	}
 	py := chatPythonForConfig(cfg)
 	script, err := resolveChatWorkerScript()
 	if err != nil {
@@ -1786,7 +1800,39 @@ func chatWorkerEnvironment(cfg config.AppConfig, root, sid string) []string {
 		}
 		filtered = append(filtered, kv)
 	}
-	return append(filtered, "GA_ADMIN_SESSION_ID="+safeChatID(sid))
+	filtered = append(filtered, "GA_ADMIN_SESSION_ID="+safeChatID(sid))
+	channel, source, sessionName := chatWorkerUsageContext(sid)
+	if channel != "" {
+		filtered = replaceChatEnv(filtered, "GA_ADMIN_USAGE_DIR", usageEventDir(cfg))
+		filtered = replaceChatEnv(filtered, "GA_ADMIN_USAGE_CHANNEL", channel)
+		filtered = replaceChatEnv(filtered, "GA_ADMIN_USAGE_SOURCE", source)
+		filtered = replaceChatEnv(filtered, "GA_ADMIN_USAGE_SESSION_ID", safeChatID(sid))
+		filtered = replaceChatEnv(filtered, "GA_ADMIN_USAGE_SESSION_NAME", sessionName)
+	}
+	return filtered
+}
+
+func chatWorkerUsageContext(sid string) (string, string, string) {
+	sid = strings.TrimSpace(sid)
+	switch {
+	case strings.HasSuffix(sid, "-title"):
+		return "title_generation", "chat-title", "自动标题生成"
+	case strings.HasSuffix(sid, "-btw"):
+		return "side_question", "chat-side-question", "旁问"
+	default:
+		return "", "", ""
+	}
+}
+
+func replaceChatEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for index, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			env[index] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 func resolveChatWorkerScript() (string, error) {

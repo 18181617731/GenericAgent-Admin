@@ -7,8 +7,9 @@ import (
 )
 
 type modelProbeOptions struct {
-	APIMode   string `json:"api_mode,omitempty"`
-	UserAgent string `json:"user_agent,omitempty"`
+	APIMode         string `json:"api_mode,omitempty"`
+	UserAgent       string `json:"user_agent,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 func (s *Server) resolveModelProbeOptions(varName string, requested map[string]modelProbeOptions) map[string]modelProbeOptions {
@@ -21,8 +22,9 @@ func (s *Server) resolveModelProbeOptions(varName string, requested map[string]m
 				}
 				for _, config := range probeProfileModelConfigs(profile) {
 					result[config.Model] = modelProbeOptions{
-						APIMode:   firstProbeValue(config.APIMode, profile.APIMode),
-						UserAgent: firstProbeValue(config.UserAgent, profile.UserAgent),
+						APIMode:         firstProbeValue(config.APIMode, profile.APIMode),
+						UserAgent:       firstProbeValue(config.UserAgent, profile.UserAgent),
+						ReasoningEffort: firstProbeValue(config.ReasoningEffort, profile.ReasoningEffort),
 					}
 				}
 			}
@@ -35,6 +37,9 @@ func (s *Server) resolveModelProbeOptions(varName string, requested map[string]m
 		}
 		if strings.TrimSpace(options.UserAgent) != "" {
 			current.UserAgent = options.UserAgent
+		}
+		if strings.TrimSpace(options.ReasoningEffort) != "" {
+			current.ReasoningEffort = options.ReasoningEffort
 		}
 		result[model] = current
 	}

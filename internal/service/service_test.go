@@ -36,6 +36,75 @@ func TestDiscoverExcludesGoalModeFromGenericReflectList(t *testing.T) {
 	}
 }
 
+func TestServiceEnvClassifiesAutomaticUsageChannels(t *testing.T) {
+	manager := NewManager(t.TempDir(), 100)
+	manager.SetUsageDir(filepath.Join(t.TempDir(), "usage_events"))
+	for _, item := range []struct {
+		name    string
+		channel string
+	}{
+		{name: "reflect/scheduler.py", channel: "scheduled_task"},
+		{name: "reflect/autonomous.py", channel: "autonomous"},
+		{name: "reflect/goal_mode.py", channel: "goal"},
+		{name: "reflect/custom.py", channel: "service"},
+	} {
+		env := manager.serviceEnv(item.name, map[string]string{"llm_no": "3"})
+		values := map[string]string{}
+		for _, entry := range env {
+			parts := strings.SplitN(entry, "=", 2)
+			if len(parts) == 2 {
+				values[parts[0]] = parts[1]
+			}
+		}
+		if values["GA_ADMIN_USAGE_CHANNEL"] != item.channel || values["GA_ADMIN_USAGE_SOURCE"] != item.name || values["GA_ADMIN_LLM_NO"] != "3" {
+			t.Fatalf("%s usage env=%#v", item.name, values)
+		}
+	}
+}
+
+func TestDiscoverClassifiesWatchdogAsGuardianWithoutAgentWrapper(t *testing.T) {
+	root := t.TempDir()
+	reflectDir := filepath.Join(root, "reflect")
+	if err := os.MkdirAll(reflectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reflectDir, "watchdog.py"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	items := NewManager(root, 100).Discover()
+	if len(items) != 1 {
+		t.Fatalf("items=%#v", items)
+	}
+	watchdog := items[0]
+	if watchdog.Kind != "guardian" {
+		t.Fatalf("watchdog kind=%q want guardian", watchdog.Kind)
+	}
+	if joined := strings.Join(watchdog.Command[1:], " "); joined != "reflect/watchdog.py" {
+		t.Fatalf("watchdog command=%q", joined)
+	}
+	if SupportsModelConfiguration(watchdog) {
+		t.Fatal("watchdog must not expose model configuration")
+	}
+}
+
+func TestWorkflowManagedServicesRejectGenericStart(t *testing.T) {
+	root := t.TempDir()
+	reflectDir := filepath.Join(root, "reflect")
+	if err := os.MkdirAll(reflectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"agent_team_worker.py", "checklist_master.py"} {
+		if err := os.WriteFile(filepath.Join(reflectDir, name), []byte("# test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		rel := filepath.ToSlash(filepath.Join("reflect", name))
+		if _, err := NewManager(root, 100).Start(rel); err == nil || !strings.Contains(err.Error(), "workflow") {
+			t.Fatalf("Start(%q) err=%v", rel, err)
+		}
+	}
+}
+
 func TestDiscoverIncludesChannelFrontendApps(t *testing.T) {
 	root := t.TempDir()
 	frontendsDir := filepath.Join(root, "frontends")

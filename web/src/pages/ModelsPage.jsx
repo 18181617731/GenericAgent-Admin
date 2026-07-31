@@ -849,7 +849,7 @@ function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, 
         <div className="model-order-copy">
           <code>{row.variableName}</code>
           <strong title={row.model}>{row.model || text.missingModelId}</strong>
-          <span>{text.providerName}: {providerDisplayName(row.providerVarName) || text.unnamed}</span>
+          <span>{text.providerName}{text.providerName === '服务商名称' ? '：' : ': '}{providerDisplayName(row.providerVarName) || text.unnamed}</span>
         </div>
       )}
       <div className="model-order-actions">

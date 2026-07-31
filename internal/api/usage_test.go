@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -206,6 +207,161 @@ func TestUsageOverviewRejectsNonGet(t *testing.T) {
 	s.usageOverview(rr, httptest.NewRequest(http.MethodPost, "/api/usage/overview", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUsageOverviewFiltersAndPaginatesUsageRecords(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	if err := os.MkdirAll(chatDataDir(cfg), 0o755); err != nil {
+		t.Fatalf("create chat data directory: %v", err)
+	}
+	first := time.Date(2026, time.July, 27, 9, 0, 0, 0, time.Local).Unix()
+	second := time.Date(2026, time.July, 28, 9, 0, 0, 0, time.Local).Unix()
+	llmNo := 4
+	ledger := usageLedger{Entries: []usageLedgerEntry{
+		{Key: "one", SessionID: "session-one", Title: "First session", MessageID: "m1", ModelID: "model-a", LLMNo: &llmNo, CreatedAt: first, ElapsedMS: 1200, Totals: usageTotals{InputTokens: 10, OutputTokens: 4, TotalTokens: 14, Other: map[string]int{"cached_tokens": 2}}},
+		{Key: "two", SessionID: "session-two", Title: "Second session", MessageID: "m2", ModelID: "model-a", CreatedAt: second, ElapsedMS: 2300, Totals: usageTotals{InputTokens: 20, OutputTokens: 8, TotalTokens: 28, Other: map[string]int{"cached_tokens": 3}}},
+		{Key: "three", SessionID: "session-three", Title: "Other session", MessageID: "m3", ModelID: "model-b", CreatedAt: second, Totals: usageTotals{InputTokens: 30, OutputTokens: 9, TotalTokens: 39}},
+	}}
+	if err := writeUsageLedger(cfg, ledger); err != nil {
+		t.Fatalf("write usage ledger: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/usage/overview?from=2026-07-27&to=2026-07-28&model=model-a&page=2&page_size=1", nil)
+	recorder := httptest.NewRecorder()
+	s.usageOverview(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response usageOverviewResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.RecordTotal != 2 || response.RecordPage != 2 || response.RecordPageSize != 1 || response.RecordTotalPages != 2 {
+		t.Fatalf("record pagination=%+v", response)
+	}
+	if len(response.Records) != 1 || response.Records[0].ID != "one" || response.Records[0].CachedTokens != 2 || response.Records[0].ElapsedMS != 1200 {
+		t.Fatalf("records=%+v", response.Records)
+	}
+	if response.Records[0].CreatedAtMS != first*1000 {
+		t.Fatalf("created_at_ms=%d want %d", response.Records[0].CreatedAtMS, first*1000)
+	}
+	if len(response.RecordModels) != 2 || len(response.RecordProviders) != 0 {
+		t.Fatalf("record filter options models=%v providers=%v", response.RecordModels, response.RecordProviders)
+	}
+}
+
+func TestUsageExportIsReadOnlyAndReturnsCSV(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	if err := os.MkdirAll(chatDataDir(cfg), 0o755); err != nil {
+		t.Fatalf("create chat data directory: %v", err)
+	}
+	entry := usageLedgerEntry{Key: "export-one", SessionID: "session", Title: "Export session", ModelID: "model-export", CreatedAt: time.Now().Unix(), Totals: usageTotals{InputTokens: 5, OutputTokens: 2, TotalTokens: 7}}
+	if err := writeUsageLedger(cfg, usageLedger{Entries: []usageLedgerEntry{entry}}); err != nil {
+		t.Fatalf("write usage ledger: %v", err)
+	}
+	path := usageLedgerPath(cfg)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat ledger: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	s.usageExport(recorder, httptest.NewRequest(http.MethodGet, "/api/usage/export?model=model-export", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Header().Get("Content-Type"), "text/csv") || !strings.Contains(recorder.Header().Get("Content-Disposition"), "usage-records.csv") {
+		t.Fatalf("headers=%v", recorder.Header())
+	}
+	if !strings.Contains(recorder.Body.String(), "model-export") || !strings.Contains(recorder.Body.String(), "Export session") || !strings.Contains(recorder.Body.String(), "历史记录未保存服务商") {
+		t.Fatalf("csv=%q", recorder.Body.String())
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat ledger after export: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Fatalf("export changed ledger: before=%v/%d after=%v/%d", before.ModTime(), before.Size(), after.ModTime(), after.Size())
+	}
+}
+
+func TestUsageOverviewRejectsInvalidRecordQuery(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	recorder := httptest.NewRecorder()
+	s.usageOverview(recorder, httptest.NewRequest(http.MethodGet, "/api/usage/overview?from=not-a-date", nil))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestEnrichUsageLedgerMetadataReadsSessionDetails(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	llmNo := 3
+	session := chatSession{ID: "metadata-session", Title: "Renamed session", Messages: []chatMessage{{
+		ID: "reply", Role: "assistant", ModelID: "model-meta", LLMNo: &llmNo, CreatedAt: 99, ElapsedMS: 456,
+	}}}
+	if err := saveChatSession(cfg, session); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	ledger := usageLedger{Entries: []usageLedgerEntry{{
+		Key: usageEntryKey(session.ID, "reply", 0), SessionID: session.ID, ModelID: session.Messages[0].ModelID,
+		CreatedAt: 99, Totals: usageTotals{TotalTokens: 1},
+	}}}
+	enriched := enrichUsageLedgerMetadata(cfg, ledger)
+	if len(enriched.Entries) != 1 || enriched.Entries[0].Title != "Renamed session" || enriched.Entries[0].LLMNo == nil || *enriched.Entries[0].LLMNo != llmNo || enriched.Entries[0].ElapsedMS != 456 {
+		t.Fatalf("enriched=%+v", enriched.Entries)
+	}
+}
+
+func TestUsageEventsAreIngestedIdempotentlyIncludingInputOnlyUsage(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	cfg := s.CfgStore.Cfg
+	if err := os.MkdirAll(usageEventDir(cfg), 0o755); err != nil {
+		t.Fatalf("create usage event directory: %v", err)
+	}
+	event := usageEvent{
+		ID: "event-input-only", Channel: "autonomous", Source: "reflect/autonomous.py",
+		SessionID: "auto-session", SessionName: "自主进化", ModelID: "model-auto",
+		ReasoningEffort: "max", CreatedAt: 123456, Totals: map[string]int{"input_tokens": 17},
+	}
+	contents, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(usageEventDir(cfg), "ga-autonomous-test.jsonl"), append(contents, '\n'), 0o644); err != nil {
+		t.Fatalf("write usage event: %v", err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		recorder := httptest.NewRecorder()
+		s.usageOverview(recorder, httptest.NewRequest(http.MethodGet, "/api/usage/overview", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("attempt=%d status=%d body=%s", attempt, recorder.Code, recorder.Body.String())
+		}
+		var response usageOverviewResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.RecordTotal != 1 || response.Totals.InputTokens != 17 || response.Totals.TotalTokens != 17 {
+			t.Fatalf("attempt=%d response=%+v", attempt, response)
+		}
+		if len(response.Records) != 1 || response.Records[0].Channel != "autonomous" || response.Records[0].ReasoningEffort != "max" {
+			t.Fatalf("attempt=%d records=%+v", attempt, response.Records)
+		}
+	}
+	ledger, err := readUsageLedger(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Entries) != 1 {
+		t.Fatalf("ledger entries=%d, want 1: %+v", len(ledger.Entries), ledger.Entries)
 	}
 }
 

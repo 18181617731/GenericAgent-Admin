@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronRight, Download, Eye, FileText, Folder, FolderOpen, Pencil, Save, Search, Trash2, Undo2, X } from 'lucide-react'
+import { ChevronRight, Download, ExternalLink, Eye, FileCode2, FileImage, FileText, Folder, FolderOpen, HardDrive, Maximize2, Minimize2, Pencil, RefreshCw, Save, Search, Trash2, Undo2, X } from 'lucide-react'
 import { Panel } from '../components/common'
 import { StatusNotice } from '../components/feedback'
 import { fileEditorDirty, saveReviewText } from '../lib/filesSafety'
@@ -19,6 +19,34 @@ const pathName = (path) => {
 }
 
 const isMarkdownPath = (path) => /\.(?:md|markdown)$/i.test(String(path || '').trim())
+
+const pathSegments = (path) => {
+  const parts = String(path || '').replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join('/') }))
+}
+
+const fileExtension = (path) => pathName(path).split('.').pop()?.toUpperCase() || 'FILE'
+
+const formatFileSize = (size) => {
+  const bytes = Number(size)
+  if (!Number.isFinite(bytes) || bytes < 0) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)) - 1, units.length - 1)
+  return `${(bytes / (1024 ** (unit + 1))).toFixed(unit ? 1 : 0)} ${units[unit]}`
+}
+
+const formatFileDate = (value) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+}
+
+const entryIcon = (entry) => {
+  if (entry.kind === 'dir') return <Folder size={18}/>
+  if (/\.(?:png|jpe?g|gif|webp|svg|bmp)$/i.test(entry.path)) return <FileImage size={18}/>
+  if (/\.(?:py|js|jsx|ts|tsx|json|ya?ml|toml|ini|sh|bat)$/i.test(entry.path)) return <FileCode2 size={18}/>
+  return <FileText size={18}/>
+}
 
 function MarkdownPreview({ content }) {
   return <article className="file-markdown-preview" aria-label="Markdown 格式化预览">
@@ -53,6 +81,7 @@ export function FilesPage({
   saveFile,
   deleteFile,
   downloadFile,
+  revealFileInExplorer,
   runSearch,
   clearSearch,
   discardChanges,
@@ -62,9 +91,17 @@ export function FilesPage({
 }) {
   const [mobileView, setMobileView] = useState('browse')
   const [contentMode, setContentMode] = useState('edit')
+  const [previewExpanded, setPreviewExpanded] = useState(false)
   const mobileTabsRef = useRef(null)
   const dirty = fileEditorDirty(fileContent, loadedFileContent)
   const text = t.files
+  const explorer = t.fileExplorer || (String(text?.workflow || '').includes('文件')
+    ? {
+        root: 'GA 根目录', location: '当前目录', folderActions: '目录操作', up: '返回上级目录', refresh: '刷新当前目录', openFolder: '在本机资源管理器中打开当前目录', showFile: '在资源管理器中显示', go: '前往', items: count => `${count} 项`, name: '名称', modified: '修改日期', type: '类型', size: '大小', folder: '文件夹',
+      }
+    : {
+        root: 'GA root', location: 'Current folder', folderActions: 'Folder actions', up: 'Go up', refresh: 'Refresh folder', openFolder: 'Open current folder on this computer', showFile: 'Show in folder', go: 'Go', items: count => `${count} items`, name: 'Name', modified: 'Modified', type: 'Type', size: 'Size', folder: 'Folder',
+      })
   const retargeted = Boolean(loadedFilePath && filePath && loadedFilePath !== filePath)
   const saveReview = !filePath ? text.chooseBeforeSave : retargeted ? text.reviewRetargeted(loadedFilePath, filePath) : dirty ? text.reviewDirty(filePath) : text.reviewClean(filePath)
   const hasLoadedTarget = Boolean(String(loadedFilePath || '').trim())
@@ -83,6 +120,7 @@ export function FilesPage({
   const hasFilePath = Boolean(String(filePath || '').trim())
   const markdownFile = isMarkdownPath(loadedFilePath || filePath)
   const parent = parentPath(browsePath)
+  const segments = pathSegments(browsePath)
   const searchHint = fileSearch ? `${text.noMatches}. ${text.broaderSearch}` : text.searchPrompt
   const fileListHint = hasBrowsePath
     ? text.noFilesPath
@@ -143,25 +181,33 @@ export function FilesPage({
         <button type="button" role="tab" aria-selected={mobileView === 'browse'} className={mobileView === 'browse' ? 'active' : ''} onClick={() => setMobileView('browse')}><FolderOpen size={16}/>文件</button>
         <button type="button" role="tab" aria-selected={mobileView === 'preview'} className={mobileView === 'preview' ? 'active' : ''} onClick={() => setMobileView('preview')}><FileText size={16}/>预览{dirty ? ' *' : ''}</button>
       </div>
-      <div className={`workspace files-workspace files-view-${mobileView}`}>
+      <div className={`workspace files-workspace files-view-${mobileView}${previewExpanded ? ' files-preview-expanded' : ''}`}>
         <Panel title={t.lists.fileList} className="files-browser-panel">
-          <div className="files-path-row">
-            <input aria-label="浏览路径" value={browsePath} onChange={e => setBrowsePath(e.target.value)} placeholder={t.hints.filePath}/>
-            <button type="button" onClick={() => loadFiles(browsePath)} disabled={busy}><FolderOpen size={15}/>{t.read}</button>
-          </div>
-          <div className="files-browse-actions">
-            <button type="button" onClick={() => loadFiles(parent)} disabled={busy || !browsePath} title="返回上级目录"><Undo2 size={15}/>上级</button>
-            <span className="files-current-path" title={browsePath || '/'}>{browsePath || '/'} · {fileList?.length || 0} 项</span>
+          <div className="files-explorer-toolbar">
+            <nav className="files-breadcrumbs" aria-label={explorer.location}>
+              <button type="button" className="files-root-crumb" onClick={() => loadFiles('')} disabled={busy}><HardDrive size={15}/>{explorer.root}</button>
+              {segments.map(segment => <span className="files-breadcrumb-part" key={segment.path}><ChevronRight size={14}/><button type="button" onClick={() => loadFiles(segment.path)} disabled={busy}>{segment.name}</button></span>)}
+            </nav>
+            <div className="files-directory-tools" role="toolbar" aria-label={explorer.folderActions}>
+              <button type="button" onClick={() => loadFiles(parent)} disabled={busy || !browsePath} title={explorer.up} aria-label={explorer.up}><Undo2 size={16}/></button>
+              <button type="button" onClick={() => loadFiles(browsePath)} disabled={busy} title={explorer.refresh} aria-label={explorer.refresh}><RefreshCw size={16}/></button>
+              <button type="button" className="files-host-open" onClick={() => revealFileInExplorer?.(browsePath || '.', 'folder')} disabled={busy} title={explorer.openFolder} aria-label={explorer.openFolder}><ExternalLink size={16}/></button>
+            </div>
           </div>
           <div className="files-search-row">
             <input aria-label="文件搜索文本" value={fileSearch} onChange={e => setFileSearch(e.target.value)} placeholder={t.hints.searchText} onKeyDown={e => e.key === 'Enter' && fileSearch.trim() && runSearch()}/>
             <button type="button" onClick={runSearch} disabled={busy || !fileSearch.trim()}><Search size={15}/>{t.search}</button>
           </div>
+          <div className="files-directory-summary"><span title={browsePath || explorer.root}>{browsePath || explorer.root}</span><b>{explorer.items(fileList?.length || 0)}</b></div>
+          <div className="file-list-columns" aria-hidden="true"><span></span><span>{explorer.name}</span><span>{explorer.modified}</span><span>{explorer.type}</span><span>{explorer.size}</span><span></span></div>
           <div className="file-list">
             {fileListEmpty && <div className="empty-card" role="status"><b>{hasBrowsePath ? text.folderEmpty : text.chooseRoot}</b><span>{t.hints?.fileListEmpty || fileListHint}</span></div>}
             {fileList.map(entry => <button type="button" className={`file-entry file-entry-${entry.kind}`} key={entry.path} onClick={() => openEntry(entry)} title={entry.path}>
-              <span className="file-entry-icon">{entry.kind === 'dir' ? <Folder size={18}/> : <FileText size={18}/>}</span>
+              <span className="file-entry-icon">{entryIcon(entry)}</span>
               <span className="file-entry-label"><b>{pathName(entry.path)}</b><small>{entry.path}</small></span>
+              <time className="file-entry-date" dateTime={entry.mod_time || undefined}>{formatFileDate(entry.mod_time)}</time>
+              <span className="file-entry-type">{entry.kind === 'dir' ? explorer.folder : fileExtension(entry.path)}</span>
+              <span className="file-entry-size">{entry.kind === 'dir' ? '-' : formatFileSize(entry.size)}</span>
               {entry.kind === 'dir' && <ChevronRight className="file-entry-next" size={16}/>}
             </button>)}
           </div>
@@ -178,6 +224,10 @@ export function FilesPage({
             <span className={dirty ? 'status-pill warn' : 'status-pill ok'}>{dirty ? text.dirty : text.clean}</span>
             {loadedFilePath && <span className="muted" title={loadedFilePath}>{text.loaded}: {loadedFilePath}</span>}
             {retargeted && <span className="status-pill bad">{text.targetChanged}</span>}
+            {hasLoadedTarget && <button type="button" className="file-preview-size-toggle" aria-pressed={previewExpanded} onClick={() => setPreviewExpanded(value => !value)} title={previewExpanded ? '恢复文件列表与预览的分栏显示' : '收起文件列表，扩大预览或编辑空间'}>
+              {previewExpanded ? <Minimize2 size={14}/> : <Maximize2 size={14}/>}<span>{previewExpanded ? '恢复分栏' : '扩大预览'}</span>
+            </button>}
+            {loadedFilePath && <button type="button" className="file-reveal-action" onClick={() => revealFileInExplorer?.(loadedFilePath, 'folder')} disabled={busy} title={explorer.showFile} aria-label={explorer.showFile}><ExternalLink size={14}/><span>{explorer.showFile}</span></button>}
             {markdownFile && hasLoadedTarget && <div className="file-content-mode" role="group" aria-label="Markdown 查看模式">
               <button type="button" className={contentMode === 'preview' ? 'active' : ''} aria-pressed={contentMode === 'preview'} onClick={() => setContentMode('preview')}><Eye size={14}/>预览</button>
               <button type="button" className={contentMode === 'edit' ? 'active' : ''} aria-pressed={contentMode === 'edit'} onClick={() => setContentMode('edit')}><Pencil size={14}/>编辑</button>

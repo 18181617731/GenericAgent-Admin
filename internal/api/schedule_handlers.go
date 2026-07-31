@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"genericagent-admin-go/internal/ga"
@@ -37,12 +38,17 @@ func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 		if taskRaw == nil {
 			taskRaw = req.Raw
 		}
+		patch, restarted, err := s.prepareScheduleTaskModel(taskRaw)
+		if err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
 		t, err := ga.SaveTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
 		if err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
-		writeJSON(w, map[string]interface{}{"ok": true, "task": t, "raw": taskRaw})
+		writeJSON(w, map[string]interface{}{"ok": true, "task": t, "raw": taskRaw, "runtime_patch": patch, "scheduler_restarted": restarted})
 	default:
 		bad(w, 405, "method not allowed")
 	}
@@ -79,12 +85,56 @@ func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
 	if taskRaw == nil {
 		taskRaw = req.Raw
 	}
+	patch, restarted, err := s.prepareScheduleTaskModel(taskRaw)
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
 	t, err := ga.CreateTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "task": t})
+	writeJSON(w, map[string]interface{}{"ok": true, "task": t, "runtime_patch": patch, "scheduler_restarted": restarted})
+}
+
+func (s *Server) prepareScheduleTaskModel(raw map[string]any) (ga.ScheduleModelDispatchResult, bool, error) {
+	llmNo, selected, err := ga.ScheduleTaskLLMNo(raw)
+	if err != nil || !selected {
+		return ga.ScheduleModelDispatchResult{}, false, err
+	}
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
+	if err != nil {
+		return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("cannot verify scheduled task model: %w", err)
+	}
+	if !containsScheduleLLMNo(llms, llmNo) {
+		return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("scheduled task model #%d is unavailable", llmNo)
+	}
+	patch, err := ga.EnsureScheduleModelDispatch(s.CfgStore.Cfg.GARoot)
+	if err != nil || len(patch.Updated) == 0 {
+		return patch, false, err
+	}
+	running, err := ga.SchedulerRunning(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython)
+	if err != nil {
+		return patch, false, err
+	}
+	if !running {
+		return patch, false, nil
+	}
+	if _, err := s.startServiceByName("reflect/scheduler.py", nil); err != nil {
+		return patch, false, fmt.Errorf("restart scheduler for model dispatch: %w", err)
+	}
+	return patch, true, nil
+}
+
+func containsScheduleLLMNo(llms []map[string]interface{}, want int) bool {
+	for _, llm := range llms {
+		index, selected, err := ga.ScheduleTaskLLMNo(map[string]any{"llm_no": llm["index"]})
+		if err == nil && selected && index == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) scheduleDelete(w http.ResponseWriter, r *http.Request) {

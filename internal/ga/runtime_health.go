@@ -42,6 +42,9 @@ type RuntimeHealth struct {
 	UltraplanOK            bool                `json:"ultraplan_ok"`
 	UltraplanMissing       []string            `json:"ultraplan_missing,omitempty"`
 	UltraplanError         string              `json:"ultraplan_error,omitempty"`
+	ChatWorkerOK           bool                `json:"chat_worker_ok"`
+	ChatWorkerPath         string              `json:"chat_worker_path,omitempty"`
+	ChatWorkerError        string              `json:"chat_worker_error,omitempty"`
 	LegacyUltraplanScripts []string            `json:"legacy_ultraplan_scripts,omitempty"`
 	Repairable             bool                `json:"repairable"`
 	ProbeError             string              `json:"probe_error,omitempty"`

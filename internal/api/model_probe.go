@@ -39,6 +39,8 @@ type modelProbeResult struct {
 	Status    string `json:"status"`
 	Detail    string `json:"detail"`
 	LatencyMS int64  `json:"latency_ms"`
+	usage     usageTotals
+	effort    string
 }
 
 type modelProbeResponse struct {
@@ -80,6 +82,10 @@ func (s *Server) modelsProbe(w http.ResponseWriter, r *http.Request) {
 	options := s.resolveModelProbeOptions(input.VarName, input.ModelOptions)
 	checkedAt := modelProbeNow().In(time.FixedZone("Asia/Shanghai", 8*60*60))
 	results := runModelProbes(r.Context(), input.BaseURL, apiKey, models, options, isClaude, checkedAt)
+	if err := s.recordModelProbeUsage(input.VarName, results, checkedAt); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	response := modelProbeResponse{Results: results, CheckedAt: checkedAt.Format(time.RFC3339)}
 	for _, result := range results {
 		if result.Available {
@@ -117,6 +123,33 @@ func runModelProbes(ctx context.Context, baseURL, apiKey string, models []string
 	return results
 }
 
+func (s *Server) recordModelProbeUsage(varName string, results []modelProbeResult, checkedAt time.Time) error {
+	sessionID := fmt.Sprintf("model-probe-%d", time.Now().UnixNano())
+	entries := make([]usageLedgerEntry, 0, len(results))
+	for _, result := range results {
+		if result.usage.TotalTokens <= 0 {
+			continue
+		}
+		effort := strings.TrimSpace(result.effort)
+		if effort == "" {
+			effort = "off"
+		}
+		entries = append(entries, usageLedgerEntry{
+			Key:             fmt.Sprintf("%s:%s", sessionID, result.ID),
+			Channel:         "model_probe",
+			Source:          strings.TrimSpace(varName),
+			SessionID:       sessionID,
+			Title:           "模型检测 · " + result.ID,
+			ModelID:         result.ID,
+			ReasoningEffort: effort,
+			CreatedAt:       checkedAt.Unix(),
+			ElapsedMS:       result.LatencyMS,
+			Totals:          result.usage,
+		})
+	}
+	return s.recordUsageEntries(entries)
+}
+
 func probeModel(ctx context.Context, baseURL, apiKey, model string, options modelProbeOptions, isClaude bool, now time.Time) (result modelProbeResult) {
 	started := time.Now()
 	result = modelProbeResult{ID: model, Status: "request_failed"}
@@ -127,7 +160,7 @@ func probeModel(ctx context.Context, baseURL, apiKey, model string, options mode
 		result.Detail = err.Error()
 		return result
 	}
-	body := modelProbePayload(model, expected, isClaude, options.APIMode)
+	body := modelProbePayload(model, expected, isClaude, options)
 	client := &http.Client{Timeout: modelProbeTimeout}
 	for _, endpoint := range endpoints {
 		for _, headers := range modelDiscoveryAuthHeaders(apiKey, isClaude) {
@@ -138,10 +171,12 @@ func probeModel(ctx context.Context, baseURL, apiKey, model string, options mode
 				continue
 			}
 			if status < 200 || status >= 300 {
-				result.Detail = redactProbeDetail(fmt.Sprintf("HTTP %d: %s", status, reply), apiKey)
+				result.Detail = redactProbeDetail(fmt.Sprintf("HTTP %d: %s", status, reply.Text), apiKey)
 				continue
 			}
-			if !validModelProbeAnswer(reply, expected) {
+			result.usage = reply.Usage
+			result.effort = options.ReasoningEffort
+			if !validModelProbeAnswer(reply.Text, expected) {
 				result.Status = "invalid_answer"
 				result.Detail = "模型已响应，但未正确回答北京时间"
 				return result
@@ -171,10 +206,10 @@ func validModelProbeAnswer(reply, expected string) bool {
 	return true
 }
 
-func requestModelProbe(ctx context.Context, client *http.Client, endpoint string, headers map[string]string, payload []byte, isClaude bool, apiMode string) (string, int, error) {
+func requestModelProbe(ctx context.Context, client *http.Client, endpoint string, headers map[string]string, payload []byte, isClaude bool, apiMode string) (modelProbeReply, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", 0, err
+		return modelProbeReply{}, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream, application/json")
@@ -183,27 +218,27 @@ func requestModelProbe(ctx context.Context, client *http.Client, endpoint string
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, err
+		return modelProbeReply{}, 0, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, modelProbeBodyLimit))
 	if err != nil {
-		return "", resp.StatusCode, err
+		return modelProbeReply{}, resp.StatusCode, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return probeErrorMessage(body), resp.StatusCode, nil
+		return modelProbeReply{Text: probeErrorMessage(body)}, resp.StatusCode, nil
 	}
 	reply, err := decodeModelProbeReply(body, isClaude, apiMode)
 	return reply, resp.StatusCode, err
 }
 
-func modelProbePayload(model, expected string, isClaude bool, apiMode string) []byte {
+func modelProbePayload(model, expected string, isClaude bool, options modelProbeOptions) []byte {
 	system := "当前服务器提供的可信北京时间是 " + expected + "（Asia/Shanghai）。必须使用这个时间回答。"
 	user := "现在北京时间几点了？只回答 YYYY-MM-DD HH:mm。"
 	var payload map[string]interface{}
 	if isClaude {
 		payload = map[string]interface{}{"model": model, "max_tokens": 64, "stream": true, "system": system, "messages": []map[string]string{{"role": "user", "content": user}}}
-	} else if normalizeModelProbeAPIMode(apiMode) == "responses" {
+	} else if normalizeModelProbeAPIMode(options.APIMode) == "responses" {
 		payload = map[string]interface{}{"model": model, "stream": true, "instructions": system, "input": user, "max_output_tokens": 64}
 	} else {
 		payload = map[string]interface{}{"model": model, "stream": true, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}}
@@ -212,6 +247,15 @@ func modelProbePayload(model, expected string, isClaude bool, apiMode string) []
 			payload["max_completion_tokens"] = 64
 		} else {
 			payload["max_tokens"] = 64
+		}
+	}
+	if effort := strings.TrimSpace(options.ReasoningEffort); effort != "" && effort != "off" {
+		if isClaude {
+			payload["output_config"] = map[string]string{"effort": effort}
+		} else if normalizeModelProbeAPIMode(options.APIMode) == "responses" {
+			payload["reasoning"] = map[string]string{"effort": effort}
+		} else {
+			payload["reasoning_effort"] = effort
 		}
 	}
 	body, _ := json.Marshal(payload)

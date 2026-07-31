@@ -42,6 +42,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		c = s.CfgStore.Cfg
 		s.Svc.SetRoot(c.GARoot, c.EffectivePython, c.BufferLines)
+		s.Svc.SetUsageDir(usageEventDir(c))
 		writeJSON(w, c)
 		return
 	}
@@ -986,13 +987,18 @@ func (s *Server) autostartDisable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, st)
 }
 
+var startAutostartService = func(s *Server, name string) error {
+	_, err := s.startServiceByName(name, nil)
+	return err
+}
+
 func (s *Server) StartAutostartServices() {
 	for _, name := range s.CfgStore.Cfg.ServiceAutostart {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
-		if _, err := s.Svc.Start(name); err != nil {
+		if err := startAutostartService(s, name); err != nil {
 			log.Printf("service autostart %s failed: %v", name, err)
 		}
 	}

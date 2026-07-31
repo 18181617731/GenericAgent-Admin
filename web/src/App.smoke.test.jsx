@@ -13,6 +13,8 @@ import { UsagePage } from './pages/UsagePage.jsx'
 import { AutonomousPage } from './pages/AutonomousPage.jsx'
 import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 import { SchedulerServiceRow } from './components/schedule.jsx'
+import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
+import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -185,6 +187,58 @@ describe('autonomous operations page', () => {
   })
 })
 
+describe('service placement experience', () => {
+  test('shows watchdog under runtime protection without a model selector', () => {
+    const onStart = vi.fn()
+    render(<EnvironmentGuardianSection
+      services={[{ name: 'reflect/watchdog.py', kind: 'guardian', running: false, command: ['python', 'reflect/watchdog.py'] }]}
+      onStart={onStart}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+    />)
+
+    expect(screen.getByRole('region', { name: '运行保障' })).toBeTruthy()
+    expect(screen.getByText('服务看护器')).toBeTruthy()
+    expect(screen.queryByText('执行模型')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '启动' }))
+    expect(onStart).toHaveBeenCalledWith('reflect/watchdog.py')
+  })
+
+  test('explains Goal workflow components without standalone service controls', () => {
+    render(<GoalWorkflowGuide services={[
+      { name: 'reflect/agent_team_worker.py', kind: 'reflect' },
+      { name: 'reflect/checklist_master.py', kind: 'reflect' },
+    ]}/>)
+
+    expect(screen.getByRole('region', { name: 'Goal 协作组件' })).toBeTruthy()
+    expect(screen.getByText('团队协作工作器')).toBeTruthy()
+    expect(screen.getByText('检查清单管理器')).toBeTruthy()
+    expect(screen.getAllByText('脚本可用')).toHaveLength(2)
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByText(/不提供独立启动、开机自启或全局模型配置/)).toBeTruthy()
+  })
+})
+
+describe('chat subagent status presentation', () => {
+  test('should distinguish current subagent work from collapsed session history', () => {
+    const now = Date.now()
+    render(<SubagentStatusPanel states={[
+      { name: 'active-task', rounds: 2, updated_at: now, latest_summary: '正在核验下载结果' },
+      { name: 'completed-task', rounds: 3, round_ended: true, updated_at: now - 3600000, latest_summary: '报告已生成' },
+    ]}/>)
+
+    expect(screen.getByRole('region', { name: '本会话子任务' })).toBeTruthy()
+    expect(screen.getByText('每张卡代表一个独立子任务；“子任务第 N 轮”不是历史对话轮次。')).toBeTruthy()
+    expect(screen.getByText('子任务第 2 轮 · 最近更新 刚刚')).toBeTruthy()
+    const history = screen.getByText('历史任务').closest('details')
+    expect(history.open).toBe(false)
+    fireEvent.click(screen.getByText('历史任务'))
+    expect(history.open).toBe(true)
+    expect(screen.getByText('子任务第 3 轮 · 最近更新 1小时前')).toBeTruthy()
+  })
+})
+
 describe('plan todo card disclosure', () => {
   test('starts expanded and toggles the plan body with matching chevrons', () => {
     const { container } = render(<PlanTodoCard plan={{
@@ -315,6 +369,46 @@ describe('scheduled-task service controls', () => {
     />)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onStart).toHaveBeenCalledWith(service.name)
+  })
+
+  test('selects a scheduler model, clears it back to GA default, and locks changes while running', () => {
+    const service = { name: 'reflect/scheduler.py', kind: 'reflect', running: false, autostart: false, model_no: 2 }
+    const onModel = vi.fn()
+    const schedulerT = { ...t, nav: { logs: 'Logs' }, retry: 'Retry', serviceDesc: { scheduler: 'Scheduled task runner' } }
+    const llms = [
+      { index: 0, provider: 'Provider A', model: 'model-a' },
+      { index: 2, provider: 'Provider B', model: 'model-b' },
+    ]
+    const view = render(<SchedulerServiceRow
+      service={service}
+      llms={llms}
+      t={schedulerT}
+      onStart={vi.fn()}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+      onModel={onModel}
+    />)
+
+    const trigger = screen.getByRole('button', { name: /选择模型，当前 Provider B/ })
+    expect(trigger.textContent).toContain('model-b')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('option', { name: '默认' }))
+    fireEvent.click(screen.getByRole('option', { name: /GA default model/ }))
+    expect(onModel).toHaveBeenCalledWith(service.name, null)
+
+    view.rerender(<SchedulerServiceRow
+      service={{ ...service, running: true }}
+      llms={llms}
+      t={schedulerT}
+      onStart={vi.fn()}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+      onModel={onModel}
+    />)
+    expect(screen.getByRole('button', { name: /选择模型/ }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: /选择模型/ }).title).toContain('Stop the scheduler')
   })
 })
 
@@ -1090,6 +1184,34 @@ describe('usage overview page', () => {
     expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
+
+  test('queries usage records without exposing message content', async () => {
+    const recordPayload = {
+      ...payload,
+      record_total: 2,
+      record_page: 1,
+      record_page_size: 20,
+      record_total_pages: 1,
+      record_providers: ['Local provider'],
+      record_models: ['Friendly model'],
+      records: [{
+        id: 'usage-1', session_id: 'session-1', session_name: 'Session one', provider: 'Local provider', model_id: 'model-real', model_name: 'Friendly model',
+        created_at_ms: Date.now(), elapsed_ms: 1250, input_tokens: 40, cached_tokens: 4, output_tokens: 12, total_tokens: 52,
+      }],
+    }
+    const requestedUrls = []
+    globalThis.fetch = vi.fn(async url => {
+      requestedUrls.push(String(url))
+      return jsonResponse(recordPayload)
+    })
+    render(<UsagePage lang="en" />)
+    expect((await screen.findAllByText('Session one')).length).toBeGreaterThan(0)
+    fireEvent.change(screen.getByPlaceholderText('Search model, session, or ID'), { target: { value: 'Friendly model' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Query' }))
+    await waitFor(() => expect(requestedUrls.some(url => url.includes('model=Friendly+model'))).toBe(true))
+    expect((screen.getAllByText('Local provider')).length).toBeGreaterThan(0)
+    expect((screen.getAllByText('1.3 s')).length).toBeGreaterThan(0)
+  })
 })
 
 describe('operator shell feedback', () => {
@@ -1829,6 +1951,26 @@ describe('mobile file workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: '预览' }))
     expect(screen.getByText('追加内容')).toBeTruthy()
     expect(screen.queryByRole('textbox', { name: '文件内容编辑器' })).toBeNull()
+  })
+
+  test('expands the preview workspace and restores the file list', () => {
+    const props = fileProps()
+    Object.assign(props, {
+      filePath: 'memory/guide.md',
+      loadedFilePath: 'memory/guide.md',
+      loadedFileContent: '# Guide',
+      fileContent: '# Guide',
+    })
+    const { container } = render(<FilesPage {...props}/>)
+    const workspace = container.querySelector('.files-workspace')
+
+    expect(workspace.classList.contains('files-preview-expanded')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '扩大预览' }))
+    expect(workspace.classList.contains('files-preview-expanded')).toBe(true)
+    expect(screen.getByRole('button', { name: '恢复分栏' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复分栏' }))
+    expect(workspace.classList.contains('files-preview-expanded')).toBe(false)
   })
 
   test('protects dirty content before opening another file and exposes search result counts', () => {

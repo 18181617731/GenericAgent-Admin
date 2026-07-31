@@ -1,14 +1,15 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, XCircle, Download, Moon, Sun } from 'lucide-react'
+import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download, Moon, Sun } from 'lucide-react'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
+import { clearMemoryChatDraft, queueMemoryChatDraft } from './lib/memoryChatDraft'
 import { configDraftDirty } from './lib/configDraft'
 import { gitSyncPresentation } from './lib/gitSync'
-import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, normalizeScheduleTasksPayload } from './lib/schedule'
+import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, firstScheduleTaskID, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
 import { applyFailoverConfig, applyModelOrder, applyModelAndFailoverOrder, applyProviderOrder, mergePersistedFailoverConfig, mergePersistedModelOrder, normalizeFailoverGroups, orderedModelAndFailoverRows, orderedModelRows, orderedProviderProfiles, remapFailoverGroupReferences } from './lib/modelsEditor'
 import { providerDisplayName } from './lib/modelsProvider'
@@ -25,13 +26,14 @@ import {
 } from './lib/versionUpdatePolling'
 import { withUpstreamI18n } from './lib/i18nIntegration'
 import { dashboardSummary } from './lib/dashboard'
-import { autonomousServices, scheduleServices } from './lib/serviceDomains'
+import { autonomousServices, goalWorkflowServices, guardianServices, scheduleServices } from './lib/serviceDomains'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
-import { SchedulerServiceRow, TaskRow } from './components/schedule'
+import { ScheduleArtifactPreview, ScheduleReportTree, SchedulerServiceRow, TaskRow } from './components/schedule'
 import { ErrorBoundary, GlobalFeedback, RouteFallback } from './components/feedback'
 import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
+import { EnvironmentGuardianSection } from './components/ServicePlacement.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
@@ -41,6 +43,7 @@ const UsagePage = lazy(() => import('./pages/UsagePage').then(m => ({ default: m
 const Models = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.Models })))
 const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })))
 const AutonomousPage = lazy(() => import('./pages/AutonomousPage').then(m => ({ default: m.AutonomousPage })))
+const MemoryPage = lazy(() => import('./pages/MemoryPage').then(m => ({ default: m.MemoryPage })))
 
 gsap.registerPlugin(useGSAP)
 
@@ -77,7 +80,7 @@ export const I18N = withUpstreamI18n({
   }
 })
 
-const TaskFormEditor = ({ value, onChange, t }) => {
+const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 }) => {
   const text = t.tasks
   let data
   try { data = JSON.parse(value) } catch {}
@@ -88,8 +91,21 @@ const TaskFormEditor = ({ value, onChange, t }) => {
     const next = { ...data, [key]: val }
     onChange(JSON.stringify(next, null, 2))
   }
-  const extraKeys = Object.keys(data).filter(k => !['enabled','max_delay_hours','repeat','schedule','prompt'].includes(k))
+  const updateModel = value => {
+    const next = { ...data }
+    if (value === '') delete next.llm_no
+    else next.llm_no = Number(value)
+    onChange(JSON.stringify(next, null, 2))
+  }
+  const extraKeys = Object.keys(data).filter(k => !['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'].includes(k))
   const repeatOptions = ['manual','daily','weekly','every_2h','every_4h','every_6h','every_8h','every_12h','once']
+  const taskModels = llms.filter(model => Number.isInteger(Number(model?.index)) && Number(model.index) >= 0)
+  const effectiveSchedulerModelNo = normalizeScheduleModelNo(schedulerModelNo)
+  const schedulerModel = taskModels.find(model => Number(model.index) === effectiveSchedulerModelNo)
+  const schedulerModelText = schedulerModel
+    ? `${schedulerModel.provider || text.unnamedProvider} · ${schedulerModel.model || schedulerModel.name || schedulerModel.label || text.unnamedModel} · #${schedulerModel.index}`
+    : `#${effectiveSchedulerModelNo}`
+  const followSchedulerLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
 
   return <div className="schedule-form-editor">
     <div className="form-field">
@@ -116,22 +132,38 @@ const TaskFormEditor = ({ value, onChange, t }) => {
       <input type="text" value={data.schedule || ''} onChange={e => updateField('schedule', e.target.value)} placeholder={text.schedulePlaceholder}/>
     </div>
     <div className="form-field">
+      <label>{text.executionModel}</label>
+      <ModelCascadePicker
+        models={taskModels}
+        value={data.llm_no ?? ''}
+        allowDefault
+        defaultLabel={`${followSchedulerLabel}${t.autostart === '开机自启' ? '：' : ': '}${schedulerModelText}`}
+        label=""
+        showLabel={false}
+        placement="auto"
+        align="start"
+        className="schedule-task-model-cascade"
+        onChange={updateModel}
+      />
+      <small>{text.executionModelHelp}</small>
+    </div>
+    <div className="form-field">
       <label>{text.prompt}</label>
       <textarea value={data.prompt || ''} onChange={e => updateField('prompt', e.target.value)} placeholder={text.promptPlaceholder}/>
     </div>
     {extraKeys.length > 0 && <details className="extra-fields">
       <summary>{text.extraFields} ({extraKeys.length})</summary>
-      <pre>{JSON.stringify(Object.fromEntries(Object.entries(data).filter(([k]) => !['enabled','max_delay_hours','repeat','schedule','prompt'].includes(k))), null, 2)}</pre>
+      <pre>{JSON.stringify(Object.fromEntries(Object.entries(data).filter(([k]) => !['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'].includes(k))), null, 2)}</pre>
     </details>}
   </div>
 }
 
 const OverviewPage = ({
-  t, services, schedule, observability, observabilityError, refreshObservability,
+  t, lang, services, guardianSvcs, serviceActionStates, schedule, observability, observabilityError, refreshObservability,
   versionInfo, versionCheck, versionStatus, versionBusy, checkVersion, updateVersion,
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
   updateGASource, autostart, toggleAutostart, root, overview, gitSyncView,
-  repairGARuntime, runtimeRepairing, runtimeRepairResult,
+  repairGARuntime, runtimeRepairing, runtimeRepairResult, onServiceStart, onServiceStop, onServiceLogs, onServiceAutostart,
 }) => {
   const text = t.overview
   const versionMessage = versionStatus?.error || (versionStatus?.stage === 'queued'
@@ -156,6 +188,8 @@ const OverviewPage = ({
       repairResult={runtimeRepairResult}
       labels={{ ...text, refresh: t.refresh }}
     />
+
+    <EnvironmentGuardianSection services={guardianSvcs} lang={lang} actionStates={serviceActionStates} onStart={onServiceStart} onStop={onServiceStop} onLogs={onServiceLogs} onAutostart={onServiceAutostart}/>
 
     <div className="overview-operations">
       <Panel title={t.cards.version} className="overview-panel overview-panel-updates">
@@ -297,10 +331,11 @@ export default function App() {
   const [modelImportLoading, setModelImportLoading] = useState(false)
   const [modelRevealedKeys, setModelRevealedKeys] = useState({}), [modelKeyBusy, setModelKeyBusy] = useState({})
   const [browsePath, setBrowsePath] = useState('memory'), [filePath, setFilePath] = useState(''), [loadedFilePath, setLoadedFilePath] = useState(''), [fileList, setFileList] = useState([]), [fileContent, setFileContent] = useState(''), [loadedFileContent, setLoadedFileContent] = useState(''), [fileSearch, setFileSearch] = useState(''), [searchHits, setSearchHits] = useState([]), [tailLines, setTailLinesRaw] = useState(200)
-  const [fileStatus, setFileStatus] = useState({})
+  const [fileStatus, setFileStatus] = useState({}), [memoryRefreshing, setMemoryRefreshing] = useState(false)
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [loadedTaskEditor, setLoadedTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [editorMode, setEditorMode] = useState('form')
   const [scheduleData, setScheduleData] = useState(null), [scheduleLoading, setScheduleLoading] = useState(false), [scheduleError, setScheduleError] = useState('')
+  const scheduleInitialLoad = useRef(false), scheduleDefaultTaskSelected = useRef(false)
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
   const [goals, setGoals] = useState([]), [goalObjective, setGoalObjective] = useState(''), [goalBudget, setGoalBudget] = useState(480), [goalMaxTurns, setGoalMaxTurns] = useState(200), [goalLLMNo, setGoalLLMNo] = useState(''), [goalHive, setGoalHive] = useState(false), [selectedGoal, setSelectedGoal] = useState(''), [goalOutput, setGoalOutput] = useState(''), [goalOutputMeta, setGoalOutputMeta] = useState(null)
@@ -345,8 +380,14 @@ export default function App() {
   const hasUnsavedChanges = fileDirty || taskDirty || settingsDirty
   const gitSyncView = gitSyncPresentation(gitStatus)
   const scheduleSvcs = useMemo(() => scheduleServices(services), [services])
+  const schedulerModelNo = useMemo(() => {
+    const scheduler = scheduleSvcs.find(service => service.name === 'reflect/scheduler.py') || scheduleSvcs[0]
+    return normalizeScheduleModelNo(scheduler?.model_no)
+  }, [scheduleSvcs])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => autonomousServices(services), [services])
+  const goalWorkflowSvcs = useMemo(() => goalWorkflowServices(services), [services])
+  const guardianSvcs = useMemo(() => guardianServices(services), [services])
 
   const loadScheduleTasks = async ({ quiet = false } = {}) => {
     if (!quiet) setScheduleLoading(true)
@@ -456,8 +497,13 @@ export default function App() {
   useEffect(() => {
     if (tab === 'goals' && health?.ok) { loadGoals().catch(e => setMsg(e.message)); loadLLMs() }
     if (tab === 'chat' && health?.ok && !llms.length) loadLLMs()
-    if (tab === 'autonomous' && health?.ok && !llms.length) loadLLMs()
+    if ((tab === 'autonomous' || tab === 'tasks') && health?.ok && !llms.length) loadLLMs()
+    if (tab === 'tasks' && health?.ok && !scheduleInitialLoad.current) {
+      scheduleInitialLoad.current = true
+      loadScheduleTasks({ quiet:true }).catch(e => setScheduleError(e.message))
+    }
     if (tab === 'files' && health?.ok && !fileList.length) loadFiles(browsePath).catch(e => setMsg(e.message))
+    if (tab === 'memory' && health?.ok) refreshMemoryInventory({ quiet:true }).catch(() => {})
     if (tab === 'setup' && health?.ok && !tmwdStatus) refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
     // The auto-title card lives on the settings page and needs its own option list.
     if (tab === 'settings' && health?.ok && !titleModelChoices.length) loadTitleModel().catch(() => {})
@@ -471,6 +517,19 @@ export default function App() {
   const refreshApp = () => {
     if (settingsDirty && !window.confirm('配置页面有未保存更改。刷新数据将放弃这些更改，是否继续？')) return
     load()
+  }
+  const refreshMemoryInventory = async ({ quiet = false } = {}) => {
+    setMemoryRefreshing(true)
+    try {
+      const inventory = await api('/api/ga/inventory')
+      setHealth(current => current ? { ...current, inventory } : current)
+      if (!quiet) setMsg(t.memoryWorkspace.refreshed)
+    } catch (error) {
+      if (!quiet) setMsg(t.memoryWorkspace.refreshFailed(error.message))
+      throw error
+    } finally {
+      setMemoryRefreshing(false)
+    }
   }
   const checkSetupEnv = async () => { setBusy(true); try { const d = await api('/api/setup/env'); setSetupEnv(d); setMsg(d.ok ? t.envReady : t.envMissing) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const browseSetupDir = async (target = 'root') => { setBusy(true); try { const base = target === 'install' ? installRoot : root; const d = await api('/api/setup/browse', { method:'POST', body: JSON.stringify({ path: base }) }); if (d.path) { target === 'install' ? setInstallRoot(d.path) : setRoot(d.path) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -509,7 +568,7 @@ export default function App() {
     }
   }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', t.service.autostartConfirm(name, enabled))) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const setServiceModel = async (name, llm_no) => { setBusy(true); try { const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) }); setServices(d.services || []); setMsg(t.service.modelUpdated) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const setServiceModel = async (name, llm_no) => { setBusy(true); try { const body = { name, llm_no: llm_no === '' || llm_no === null || llm_no === undefined ? null : Number(llm_no) }; const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify(body) }); setServices(d.services || []); setMsg(t.service.modelUpdated) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = (name = selected) => {
     if (!name) return
     setSelected(name)
@@ -685,6 +744,7 @@ export default function App() {
       const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`)
       setFileList(d.items || d.entries || [])
       setBrowsePath(path || '')
+      if (!quiet) setFileStatus({})
     } catch (e) {
       setFileList([])
       setMsg(e.message)
@@ -700,6 +760,18 @@ export default function App() {
   const saveFile = async () => { if (!filePath || !fileEditorDirty(fileContent, loadedFileContent)) return; if (loadedFilePath && filePath !== loadedFilePath && !confirmDanger('files-retarget', `Editor content was loaded from ${loadedFilePath}, but will be saved to ${filePath}. Continue?`)) return; if (!confirmDanger('files-write', `Write file ${filePath}? This overwrites content and the backend will create a backup.`)) return; setBusy(true); try { const d = await api('/api/files/write', { dangerous:true, method:'POST', body: JSON.stringify({ path:filePath, content:fileContent }) }); const savedContent = d.content || fileContent; setFileContent(savedContent); setLoadedFileContent(savedContent); setLoadedFilePath(filePath); setMsg(t.hints.fileSaved || t.saved || 'Saved'); await loadFiles(dirnameForPath(filePath)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const deleteFile = async (path = filePath) => { if (!path) return; if (!confirmDanger('files-delete', `Delete ${path}? This removes the file or directory under GA root.`)) return; setBusy(true); try { await api('/api/files/delete', { dangerous:true, method:'POST', body: JSON.stringify({ path }) }); if (path === loadedFilePath) { setFileContent(''); setLoadedFileContent(''); setLoadedFilePath('') } setMsg(t.deleted || 'Deleted'); await loadFiles(dirnameForPath(path)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const downloadFile = (path = filePath) => { if (!path) return; window.open(`/api/files/download?path=${encodeURIComponent(path)}`, '_blank', 'noopener,noreferrer') }
+  const revealFileInExplorer = async (path, mode = 'folder') => {
+    if (!path || !confirmDanger('files-open', mode === 'folder' ? `在资源管理器中显示 ${path}？` : `使用本机默认程序打开 ${path}？`)) return
+    setBusy(true)
+    try {
+      await api('/api/files/open', { dangerous:true, method:'POST', body: JSON.stringify({ path, mode }) })
+      setFileStatus({ kind: 'success', action: 'open', message: mode === 'folder' ? `已在资源管理器中显示 ${path}` : `已使用默认程序打开 ${path}` })
+    } catch (error) {
+      setFileStatus({ kind: 'error', action: 'open', message: `无法打开 ${path}：${error.message}`, onRetry: () => revealFileInExplorer(path, mode) })
+    } finally {
+      setBusy(false)
+    }
+  }
 
 
 
@@ -775,10 +847,17 @@ export default function App() {
   }
   const runSearch = async () => { setBusy(true); try { const d = await api(`/api/files/search?path=${encodeURIComponent(browsePath)}&q=${encodeURIComponent(fileSearch)}&limit=80`); setSearchHits(d.hits || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
-  const loadTask = async (id) => { if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return; setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); const content = safeJson(d.raw); setTaskId(d.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(raw); setTaskEditor(saved); setLoadedTaskEditor(saved); setMsg(t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const loadTask = useCallback(async (id) => { if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return; setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); const content = safeJson(d.raw); setTaskId(d.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }, [taskDirty, taskId])
+  const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const createTask = async () => { const id = newTaskId.trim(); if (!id) { setMsg('Schedule task id is required'); return }; if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。创建新任务将替换当前编辑器内容，是否继续？`)) return; if (!confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return; setBusy(true); try { const payload = buildScheduleCreateRequest(id, DEFAULT_SCHEDULE_TASK); const d = await api('/api/schedule/create', { dangerous:true, method:'POST', body: JSON.stringify(payload) }); const created = d.task || DEFAULT_SCHEDULE_TASK; const content = safeJson(created.raw || payload.task); setTaskId(created.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setMsg(t.hints.taskSaved); await loadScheduleTasks(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const deleteTask = async () => { if (!taskId) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${taskId}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: taskId }) }); setMsg(t.hints.taskDeleted); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}'); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  useEffect(() => {
+    if (tab !== 'tasks' || taskSubTab !== 'scheduled' || scheduleDefaultTaskSelected.current || taskId || taskDirty) return
+    const firstID = firstScheduleTaskID(scheduleData?.tasks)
+    if (!firstID) return
+    scheduleDefaultTaskSelected.current = true
+    loadTask(firstID)
+  }, [tab, taskSubTab, taskId, taskDirty, scheduleData?.tasks, loadTask])
   const readScheduleArtifact = async (path, targetTab = 'tasks') => { setBusy(true); try { const d = await api(`/api/schedule/artifact?path=${encodeURIComponent(path)}`); setScheduleArtifactTitle(path); setScheduleArtifact(d.content || ''); setTab(targetTab); setTaskSubTab('reports') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
   const loadTitleModel = async () => {
@@ -1053,13 +1132,44 @@ export default function App() {
     setMobileNavOpen(false)
     dismissMessage()
     if (nextTab === 'chat') {
-      if (hasUnsavedChanges && !window.confirm('当前有未保存的文件、任务或配置更改。进入独立 Chat 页面将放弃这些更改，是否继续？')) return
+      if (hasUnsavedChanges && !window.confirm('当前有未保存的文件、任务或配置更改。进入独立 Chat 页面将放弃这些更改，是否继续？')) return false
       allowUnloadRef.current = true
       window.location.href = buildRoute('chat')
-      return
+      return true
     }
     pushRoute(nextTab)
     setTab(nextTab)
+    return true
+  }
+  const openMemoryEntry = (entry) => {
+    const path = String(entry?.path || '').trim()
+    if (!path) return
+    const directory = entry.kind === 'dir'
+    const browseTarget = directory ? path : dirnameForPath(path)
+    setBrowsePath(browseTarget)
+    navigateTo('files')
+    if (directory) loadFiles(browseTarget).catch(error => setMsg(error.message))
+    else readFile(path)
+  }
+  const copyMemoryPath = async (path) => {
+    if (!path) return
+    try {
+      await navigator.clipboard.writeText(path)
+      setMsg(t.memoryWorkspace.copySuccess(path))
+    } catch (error) {
+      setMsg(t.memoryWorkspace.copyFailed(error.message))
+    }
+  }
+  const discussMemoryFile = (entry, prompt) => {
+    const path = String(entry?.path || '').trim()
+    if (!path || !prompt) return
+    try {
+      queueMemoryChatDraft({ path, prompt })
+    } catch (error) {
+      setMsg(t.memoryWorkspace.chatStartFailed(error.message))
+      return
+    }
+    if (navigateTo('chat') === false) clearMemoryChatDraft()
   }
   const navigateTaskSubTab = nextSubTab => {
     if (!TASK_SUB_TABS.includes(nextSubTab)) return
@@ -1109,7 +1219,10 @@ export default function App() {
 
   const overviewPage = <OverviewPage
     t={t}
+    lang={lang}
     services={services}
+    guardianSvcs={guardianSvcs}
+    serviceActionStates={serviceActionStates}
     schedule={schedule}
     observability={observability}
     observabilityError={observabilityError}
@@ -1136,6 +1249,10 @@ export default function App() {
     repairGARuntime={repairGARuntime}
     runtimeRepairing={runtimeRepairing}
     runtimeRepairResult={runtimeRepairResult}
+    onServiceStart={name=>serviceAction(name, 'start')}
+    onServiceStop={name=>serviceAction(name, 'stop')}
+    onServiceLogs={viewServiceLogs}
+    onServiceAutostart={toggleServiceAutostart}
   />
 
   return <>
@@ -1198,7 +1315,7 @@ export default function App() {
           <Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="正常"/></Panel>
         </div>
       </section>}
-      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} discardChanges={discardFileChanges} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>}
+      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} revealFileInExplorer={revealFileInExplorer} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} discardChanges={discardFileChanges} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>}
 
       {tab==='tasks' && <section className="tasks-page">
         <div className="stats schedule-stats">
@@ -1218,7 +1335,7 @@ export default function App() {
           <Panel title={t.lists.scheduleService}>
             <div className="service-list clean-list">
               {scheduleSvcs.length
-                ? scheduleSvcs.map(svc => <SchedulerServiceRow key={svc.name} service={svc} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
+                ? scheduleSvcs.map(svc => <SchedulerServiceRow key={svc.name} service={svc} llms={llms} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/> )
                 : <p className="muted">{t.hints.noScheduler}</p>}
             </div>
           </Panel>
@@ -1241,7 +1358,7 @@ export default function App() {
               {scheduleLoading
                 ? <p className="muted">{t.busy}</p>
                 : tasks.length
-                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} t={t} onToggle={toggleTask} onEdit={loadTask} onArtifact={readScheduleArtifact}/>)
+                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} llms={llms} t={t} schedulerModelNo={schedulerModelNo} selected={taskId === (task.id || task.name)} onToggle={toggleTask} onEdit={loadTask} onDelete={deleteTask}/>)
                   : <p className="muted">{t.hints.noTasks}</p>}
             </div>
           </Panel>
@@ -1253,11 +1370,10 @@ export default function App() {
             <p className="muted">{editorMode==='json' ? t.hints.jsonHelp : t.tasks.formHelp}</p>
             {editorMode==='json'
               ? <textarea className="json-editor compact-editor" value={taskEditor} onChange={e=>setTaskEditor(e.target.value)}/>
-              : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t}/>}
+              : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t} llms={llms} schedulerModelNo={schedulerModelNo}/>}
             <div className="actions">
               <span className={taskDirty ? 'status-pill warn' : 'status-pill ok'}>{taskDirty ? '有未保存更改' : '编辑器已同步'}</span>
               <button onClick={saveTask} disabled={!taskDirty || (!taskId && !newTaskId)}><Save size={14}/>{t.save}</button>
-              <button onClick={deleteTask} disabled={!taskId}><XCircle size={14}/>{t.remove}</button>
             </div>
           </Panel>
           </div>
@@ -1265,18 +1381,14 @@ export default function App() {
 
         {taskSubTab==='reports' && <div className="workspace tasks-workspace">
           <Panel title={t.lists.recentReports}>
-            <div className="report-list clean-list">
-              {(schedule.done_recent || []).length
-                ? (schedule.done_recent || []).map(r => <button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path)}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)
-                : <p className="muted">{t.empty}</p>}
-            </div>
+            <ScheduleReportTree tasks={tasks} selectedPath={scheduleArtifactTitle} onSelect={path=>readScheduleArtifact(path)} t={t}/>
           </Panel>
           <Panel title={scheduleArtifactTitle || t.lists.generatedPreview}>
-            <pre className="artifact-view">{scheduleArtifact || t.empty}</pre>
+            <ScheduleArtifactPreview title={scheduleArtifactTitle} content={scheduleArtifact} empty={t.empty}/>
           </Panel>
         </div>}
       </section>}
-      {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
+      {tab==='memory' && <MemoryPage t={t} memory={inv.memory} onOpen={openMemoryEntry} onDownload={downloadFile} onReveal={entry => revealFileInExplorer(entry.path, 'folder')} onCopy={copyMemoryPath} onDiscuss={discussMemoryFile} onRefresh={refreshMemoryInventory} refreshing={memoryRefreshing}/>}
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
       {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
       {tab==='usage' && <UsagePage lang={lang}/>}

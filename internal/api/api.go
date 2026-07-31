@@ -48,7 +48,11 @@ type Server struct {
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
+	server := &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
+	if cfg != nil && svc != nil {
+		svc.SetUsageDir(usageEventDir(cfg.Cfg))
+	}
+	return server
 }
 
 func (s *Server) Routes() http.Handler {
@@ -128,6 +132,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels/test", s.channelTest)
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
+	mux.HandleFunc("/api/usage/export", s.usageExport)
 	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
 	mux.HandleFunc("/api/chat/", s.chatHandler)
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
@@ -270,7 +275,18 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) buildGARuntimeHealth() ga.Health {
 	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
 	python := resolvePythonForRoot(root, s.CfgStore.Cfg.EffectivePython)
-	return ga.BuildRuntimeHealth(root, python)
+	return s.buildGARuntimeHealthForWorker(root, python)
+}
+
+func (s *Server) buildGARuntimeHealthForWorker(root, python string) ga.Health {
+	health := ga.BuildRuntimeHealth(root, python)
+	script, err := resolveChatWorkerScript()
+	if err != nil {
+		ga.ApplyChatWorkerRuntimeHealth(&health, ga.ChatWorkerRuntime{Error: err.Error()})
+		return health
+	}
+	ga.ApplyChatWorkerRuntimeHealth(&health, ga.ProbeChatWorkerRuntime(root, python, script))
+	return health
 }
 
 type tmwebdriverCheck struct {

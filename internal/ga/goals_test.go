@@ -514,6 +514,17 @@ func TestStartGoalValidatesBounds(t *testing.T) {
 	}
 }
 
+func TestHiveWorkerArgsUsesSelectedGoalModel(t *testing.T) {
+	llmNo := 7
+	args := hiveWorkerArgs("http://127.0.0.1:9000", "board-key", &llmNo)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"reflect/agent_team_worker.py", "--base_url http://127.0.0.1:9000", "--board_key board-key", "--name hive-worker-1", "--llm_no 7"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("worker args missing %q: %s", want, joined)
+		}
+	}
+}
+
 func TestStartGoalRecordsStartFailure(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("uses Windows PATHEXT-free fake python command semantics")
@@ -724,6 +735,24 @@ func TestGoalCommandEnvForcesUTF8AndState(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("PYTHONIOENCODING occurrences = %d, env=%#v", count, env)
+	}
+}
+
+func TestGoalTelemetryCommandEnvIncludesChannelAndModelContext(t *testing.T) {
+	llmNo := 7
+	env := goalTelemetryCommandEnv([]string{"PATH=x"}, `C:\tmp\goal.json`, `C:\tmp\usage_events`, "goal", "goal", "goal/with spaces", "目标说明", &llmNo)
+	values := map[string]string{}
+	for _, item := range env {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) == 2 {
+			values[parts[0]] = parts[1]
+		}
+	}
+	if values["GA_ADMIN_USAGE_DIR"] != `C:\tmp\usage_events` || values["GA_ADMIN_USAGE_CHANNEL"] != "goal" || values["GA_ADMIN_USAGE_SOURCE"] != "goal" {
+		t.Fatalf("usage context=%#v", values)
+	}
+	if values["GA_ADMIN_USAGE_SESSION_ID"] != "goalwithspaces" || values["GA_ADMIN_USAGE_SESSION_NAME"] != "目标说明" || values["GA_ADMIN_LLM_NO"] != "7" {
+		t.Fatalf("session/model context=%#v", values)
 	}
 }
 

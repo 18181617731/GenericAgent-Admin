@@ -2,6 +2,38 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.39 - 2026-07-31
+
+### User-facing changes
+- Unified Chat, Goal Mode, autonomous services, and scheduled-task model pickers into one provider/model cascade with search, complete labels, keyboard navigation, and mobile bottom-sheet behavior.
+- Scheduled tasks now expose the scheduler execution model, show the concrete GA default model when following the default, and let each task follow the scheduler or choose an explicit model.
+- Prevented changing a running scheduler's model through a misleading control; stop the scheduler first so the next start uses the saved model consistently.
+- Added responsive scheduler and task-form layout rules so provider names and model IDs do not overlap or get clipped on narrow screens.
+
+### Validation
+- Passed Go tests/build, frontend lint, frontend library tests (`209/209`), frontend UI smoke tests (`85/85`), frontend production build, and live `8787`/Tailscale API checks.
+
+## v1.0.38 - 2026-07-31
+
+### User-facing changes
+- Fixed chat sessions falling back to the default reasoning strength instead of the selected model's saved `reasoning_effort` configuration.
+- Chat model lists now expose the configured reasoning strength for each enabled provider model, including legacy provider-level settings.
+- New sessions and model switches now display and send the selected model's configured reasoning strength, while preserving explicit per-session overrides.
+
+### Validation
+- Passed Go tests and build, frontend lint, frontend library/UI tests, frontend build, and live `8787` API model/settings checks.
+
+## v1.0.37 - 2026-07-31
+
+### User-facing changes
+- Added a unified usage ledger for chat, title generation, side questions, autonomous evolution, scheduled tasks, Goal Mode, model probes, and other background model calls.
+- Usage records now show the channel, source, provider/model, reasoning effort, token breakdown, and elapsed time, with filtering and CSV export.
+- Added runtime telemetry installation and final usage flushing so automatic calls are recorded even when usage arrives in a terminal stream event.
+- Fixed scheduled-task restarts after model dispatch changes so they retain usage telemetry context.
+
+### Validation
+- Passed Go tests, frontend lint/build, frontend library tests, and real GenericAgent runtime health checks.
+
 ## v0.1.0-alpha2 - 2026-06-14
 
 ### Scope

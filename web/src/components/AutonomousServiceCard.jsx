@@ -5,7 +5,7 @@ import { autonomousServiceView } from '../lib/autonomous.js'
 
 const serviceCommand = service => Array.isArray(service?.command) ? service.command.join(' ') : (service?.command || '-')
 
-export function AutonomousServiceCard({ service, lang = 'zh', llms = [], actionState, onStart, onStop, onLogs, onAutostart, onModel }) {
+export function AutonomousServiceCard({ service, lang = 'zh', llms = [], actionState, onStart, onStop, onLogs, onAutostart, onModel, showModel = true }) {
   const zh = lang !== 'en'
   const view = autonomousServiceView(service, lang)
   const pending = actionState?.status === 'pending'
@@ -30,12 +30,12 @@ export function AutonomousServiceCard({ service, lang = 'zh', llms = [], actionS
     </div>
 
     <div className="autonomous-service-controls">
-      <div className="autonomous-model-control">
+      {showModel && <div className="autonomous-model-control">
         <span>{zh ? '执行模型' : 'Execution model'}</span>
         {service?.running
           ? <b title={modelText}>{modelText}</b>
           : <ProviderModelCascade groups={modelGroups} selectedProvider={selectedProvider} value={modelValue} showLabel={false} placement="auto" align="start" className="service-provider-cascade" onChange={value => onModel?.(service.name, value === '' ? null : Number(value))}/>}
-      </div>
+      </div>}
       <label className="autonomous-autostart"><input type="checkbox" checked={!!service?.autostart} onChange={event => onAutostart?.(service.name, event.target.checked)}/><span>{zh ? '随 GA Admin 启动' : 'Start with GA Admin'}</span></label>
       <div className="autonomous-service-actions">
         <button type="button" onClick={() => onStart?.(service.name)} disabled={pending || service?.running}><Play size={15}/>{zh ? '启动' : 'Start'}</button>

@@ -1,7 +1,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { ChatMessage } from './ChatApp.jsx'
+import { ChatFileScopeContext, ChatMessage, extractToolResultFilePath, resolveChatToolFilePath } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
 
@@ -45,7 +45,7 @@ describe('chat file attachments', () => {
 
     expect(screen.getByText('Review this')).toBeTruthy()
     expect(screen.getByText('report.pdf')).toBeTruthy()
-    expect(container.querySelector('.oa-msg-saved-paths')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files')).toBeTruthy()
     expect(container.textContent).not.toContain('[FILE:')
   })
 
@@ -63,5 +63,45 @@ describe('chat file attachments', () => {
     const download = screen.getByRole('link', { name:'下载文件 report.pdf' })
     expect(download.getAttribute('href')).toBe('/api/files/download?path=C%3A%2Ftmp%2Freport.pdf')
     expect(download.getAttribute('download')).toBe('report.pdf')
+  })
+
+  test('resolves workspace-relative tool paths within the GA root', () => {
+    const scope = {
+      workspace: 'D:\\workspace_ai\\GenericAgent\\gmsl',
+      gaRoot: 'D:\\workspace_ai\\GenericAgent',
+    }
+
+    expect(resolveChatToolFilePath('../memory/gmsl_build_fetch_sop.md', scope))
+      .toBe('D:\\workspace_ai\\GenericAgent\\memory\\gmsl_build_fetch_sop.md')
+    expect(resolveChatToolFilePath('../../outside.txt', scope)).toBe('../../outside.txt')
+  })
+
+  test('uses the absolute file path reported by a tool result', () => {
+    expect(extractToolResultFilePath('[Action] Patching file: D:\\workspace_ai\\GenericAgent\\memory\\gmsl_build_fetch_sop.md'))
+      .toBe('D:\\workspace_ai\\GenericAgent\\memory\\gmsl_build_fetch_sop.md')
+    expect(extractToolResultFilePath('[Action] Patching file: ../memory/gmsl_build_fetch_sop.md')).toBe('')
+  })
+
+  test('uses the resolved workspace path for file card downloads', () => {
+    render(
+      <ChatFileScopeContext.Provider value={{ workspace: 'D:\\workspace_ai\\GenericAgent\\gmsl', gaRoot: 'D:\\workspace_ai\\GenericAgent' }}>
+        <ChatMessage message={{ id:'a-workspace-file', role:'assistant', content:'已生成\n\n[FILE:../memory/gmsl_build_fetch_sop.md]', created_at:0 }} pending={false} onAskReply={vi.fn()} />
+      </ChatFileScopeContext.Provider>,
+    )
+
+    expect(screen.getByRole('link', { name:'下载文件 gmsl_build_fetch_sop.md' }).getAttribute('href'))
+      .toBe('/api/files/download?path=D%3A%5Cworkspace_ai%5CGenericAgent%5Cmemory%5Cgmsl_build_fetch_sop.md')
+  })
+
+  test('marks a file-changing step before the user expands it', () => {
+    const content = [
+      'LLM Running (Turn 37)',
+      '<summary>补充归档说明</summary>',
+      '🛠️ Tool: file_patch',
+      '📥 args: {"path":"../memory/gmsl_build_fetch_sop.md","old_content":"before","new_content":"after"}',
+    ].join('\n')
+    render(<ChatMessage message={{ id:'a-file-step', role:'assistant', content, created_at:0 }} pending={false} onAskReply={vi.fn()} />)
+
+    expect(screen.getByLabelText('本步骤包含文件增删改操作')).toBeTruthy()
   })
 })

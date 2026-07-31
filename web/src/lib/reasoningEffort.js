@@ -16,6 +16,18 @@ export const normalizeReasoningEffort = (value) => {
   return REASONING_EFFORT_LEVEL_SET.has(normalized) ? normalized : 'off'
 }
 
+const rawModelReasoningEffort = model => String(model?.reasoning_effort ?? model?.reasoningEffort ?? '').trim()
+
+export const modelReasoningEffort = (model, fallback = 'off') => {
+  const configured = rawModelReasoningEffort(model)
+  return normalizeReasoningEffort(configured || fallback)
+}
+
+export const modelReasoningEffortSetting = model => {
+  const configured = rawModelReasoningEffort(model)
+  return configured ? normalizeReasoningEffort(configured) : 'default'
+}
+
 const LABELS = {
   off: '默认',
   none: 'None',

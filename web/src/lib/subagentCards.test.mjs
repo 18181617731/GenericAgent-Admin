@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hasSubagentLaunch, subagentCardView, formatAgo } from './subagentCards.js'
+import { hasSubagentLaunch, subagentCardGroups, subagentCardView, formatAgo } from './subagentCards.js'
 
 test('hasSubagentLaunch detects --task launches in transcript', () => {
   assert.equal(hasSubagentLaunch([{ content: 'python agentmain.py --task sup_c_test2' }]), true)
@@ -31,4 +31,18 @@ test('formatAgo buckets', () => {
   assert.equal(formatAgo(now - 5 * 60000, now), '5分钟前')
   assert.equal(formatAgo(now - 3 * 3600000, now), '3小时前')
   assert.equal(formatAgo(now - 2 * 86400000, now), '2天前')
+})
+
+test('subagentCardGroups keeps current work visible and folds settled history', () => {
+  const now = 10 * 60 * 1000
+  const groups = subagentCardGroups([
+    { name: 'running', rounds: 1, updated_at: now - 1000 },
+    { name: 'stalled', rounds: 1, updated_at: now - 4 * 60000 },
+    { name: 'done', rounds: 2, round_ended: true, updated_at: now - 3600000 },
+    { name: 'old-stop', rounds: 1, stop_requested: true, updated_at: now - 3600000 },
+    { name: 'new-stop', rounds: 1, stop_requested: true, updated_at: now - 1000 },
+  ], now)
+
+  assert.deepEqual(groups.current.map(item => item.name), ['running', 'stalled', 'new-stop'])
+  assert.deepEqual(groups.history.map(item => item.name), ['done', 'old-stop'])
 })

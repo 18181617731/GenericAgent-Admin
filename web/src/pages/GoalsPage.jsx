@@ -3,9 +3,10 @@ import { Activity, Copy, Eye, Play, RefreshCw, Square, Target, Terminal, Trash2,
 import { copyText, formatBytes, formatDuration, formatGoalTime, goalBudgetPercent, goalTurnPercent, outputLineCount } from '../lib/format'
 import { Panel } from '../components/common'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from '../components/ModelProviderCascade.jsx'
+import { GoalWorkflowGuide } from '../components/ServicePlacement.jsx'
 import { TurnList } from '../components/turns'
 
-export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, llms = [], hive, setHive, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
+export function GoalsPage({ t, lang = 'zh', workflowServices = [], goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, llms = [], hive, setHive, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
   const goalList = goals || []
   const running = goalList.filter(g => g.running).length
   const selectedGoal = goalList.find(g => g.id === selected) || outputMeta?.goal || null
@@ -69,6 +70,7 @@ export function GoalsPage({ t, goals, objective, setObjective, budget, setBudget
       </div>
       <label className="inline-field goal-hive-toggle"><input type="checkbox" checked={!!hive} onChange={e=>setHive?.(e.target.checked)}/><span>{t.fields.goalHive}</span></label>
       <p className="muted">{t.hints.goalHiveHelp}</p>
+      <GoalWorkflowGuide services={workflowServices} lang={lang}/>
       <div className="actions goal-start-actions">
         <button className="primary" disabled={busy || !objective.trim()} onClick={onStart}><Play size={14}/>{t.start}</button>
         <button disabled={busy} onClick={onRefresh}><RefreshCw size={14}/>{t.refresh}</button>
