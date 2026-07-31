@@ -2722,7 +2722,6 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
 
   return (
     <div className="oa-model-select oa-composer-cascade" ref={ref}>
-      <span>模型</span>
       <button ref={triggerRef} type="button" disabled={disabled} title={displayModel}
         aria-label={`模型：${displayModel}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={menuId}
         onClick={toggleMenu}>
@@ -2844,7 +2843,7 @@ export function PlanTodoCard({ plan }) {
   )
 }
 
-function CustomSelect({ value, onChange, options, disabled }) {
+function CustomSelect({ value, onChange, options, disabled, ariaLabel }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()
   useEffect(() => {
@@ -2860,7 +2859,7 @@ function CustomSelect({ value, onChange, options, disabled }) {
   const displayLabel = label.includes('/') ? label.split('/').pop() : label
   return (
     <div className="oa-cselect" ref={ref}>
-      <button type="button" disabled={disabled} title={label} onClick={() => setOpen(o => !o)}>
+      <button type="button" disabled={disabled} title={label} aria-label={ariaLabel ? `${ariaLabel}: ${label}` : undefined} onClick={() => setOpen(o => !o)}>
         <span>{displayLabel}</span><ChevronDown size={13}/>
       </button>
       {open && <ul role="listbox">
@@ -4810,8 +4809,9 @@ export default function ChatApp() {
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length}
               onChange={v=>saveModel(Number(v))} />
-            <div className="oa-model-select oa-effort-select"><span>{ct('推理', 'Reasoning')}</span>
+            <div className="oa-model-select oa-effort-select">
               <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
+                ariaLabel={ct('推理', 'Reasoning')}
                 options={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: ct('默认', 'Default') } : option)} />
             </div>
             <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')} aria-label={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')}><Send size={17}/></button>
