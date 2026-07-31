@@ -1148,6 +1148,29 @@ describe('operator shell feedback', () => {
     expect(files.disabled).toBe(false)
   })
 
+  test('mobile admin navigation opens and closes without trapping off-screen controls', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async (url) => shellPayload(url))
+    render(<App />)
+
+    const files = await screen.findByRole('button', { name: /文件|Files/i })
+    const shell = document.querySelector('.app')
+    const open = screen.getByRole('button', { name: /展开管理导航|Open admin navigation/i })
+    expect(shell?.classList.contains('admin-sidebar-open')).toBe(false)
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(open)
+    expect(shell?.classList.contains('admin-sidebar-open')).toBe(true)
+    expect(open.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: /收起管理导航|Collapse admin navigation/i }))
+    expect(shell?.classList.contains('admin-sidebar-open')).toBe(false)
+
+    fireEvent.click(open)
+    fireEvent.click(files)
+    expect(shell?.classList.contains('admin-sidebar-open')).toBe(false)
+  })
+
   test('explicitly selects each theme from the picker and recovers from an invalid stored id', async () => {
     installBrowserPolyfills()
     window.localStorage.setItem('ga-admin-theme', 'removed-theme')

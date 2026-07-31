@@ -1,7 +1,8 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, Bot, Brain, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Sparkles, Target, Terminal, Trash2, UploadCloud, XCircle, Download } from 'lucide-react'
+import { Activity, Bot, Brain, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Sparkles, Target, Terminal, Trash2, UploadCloud, XCircle, Download } from 'lucide-react'
+import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { api } from './lib/api'
@@ -298,6 +299,7 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('ga-admin-language-change', { detail: nextLang }))
   }
   const [theme, setTheme] = useState(getInitialTheme)
+  const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
     localStorage.setItem('ga-admin-theme', activeTheme.id)
@@ -1191,9 +1193,24 @@ export default function App() {
         </div>
       </div>
     </div>}
-    <div ref={appScope} className={`app app-tab-${tab}`}>
-    <aside className="sidebar"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang} /></div><nav aria-label={t.mainNavigation}>{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav><button type="button" className="refresh" onClick={load} disabled={booting}><RefreshCw size={15} aria-hidden="true"/>{booting ? t.busy : t.refresh}</button><StatusNotice kind={notice?.kind} message={notice?.message} retryLabel={t.retry} dismissLabel={t.close} onRetry={notice?.kind === 'error' ? load : undefined} onDismiss={notice?.kind === 'success' ? ()=>setNotice(null) : undefined}/></aside>
-    <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+    <div ref={appScope} className={`app app-tab-${tab} ${adminSidebarOpen ? 'admin-sidebar-open' : ''}`}>
+    <button type="button" className="admin-sidebar-scrim" aria-label={lang === 'zh' ? '关闭管理导航' : 'Close admin navigation'} onClick={()=>setAdminSidebarOpen(false)} />
+    <aside id="admin-sidebar" className="sidebar">
+      <div className="admin-sidebar-heading">
+        <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
+        <button type="button" className="admin-sidebar-close" aria-label={lang === 'zh' ? '收起管理导航' : 'Collapse admin navigation'} onClick={()=>setAdminSidebarOpen(false)}><PanelLeftClose size={20} aria-hidden="true"/></button>
+      </div>
+      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang} /></div>
+      <nav aria-label={t.mainNavigation}>{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ setAdminSidebarOpen(false); if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav>
+      <button type="button" className="refresh" onClick={load} disabled={booting}><RefreshCw size={15} aria-hidden="true"/>{booting ? t.busy : t.refresh}</button>
+      <StatusNotice kind={notice?.kind} message={notice?.message} retryLabel={t.retry} dismissLabel={t.close} onRetry={notice?.kind === 'error' ? load : undefined} onDismiss={notice?.kind === 'success' ? ()=>setNotice(null) : undefined}/>
+    </aside>
+    <main className="main">
+      <div className="admin-mobile-bar">
+        <button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={()=>setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button>
+        <span>{t.appName}</span>
+      </div>
+      <header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}
