@@ -121,7 +121,7 @@ func (s *Server) prepareScheduleTaskModel(raw map[string]any) (ga.ScheduleModelD
 	if !running {
 		return patch, false, nil
 	}
-	if _, err := s.Svc.Start("reflect/scheduler.py"); err != nil {
+	if _, err := s.startServiceByName("reflect/scheduler.py", nil); err != nil {
 		return patch, false, fmt.Errorf("restart scheduler for model dispatch: %w", err)
 	}
 	return patch, true, nil

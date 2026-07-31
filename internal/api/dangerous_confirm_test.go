@@ -270,7 +270,8 @@ func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
 	}
 
 	reviewedSafe := map[string]string{
-		"/api/chat/": "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/api/chat/":        "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/api/models/probe": "provider probe also persists usage telemetry without changing model configuration",
 	}
 
 	var unreviewed []string
@@ -298,7 +299,8 @@ func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
 
 func TestReviewedSafeLocalStateMutatingRoutesStayCurrent(t *testing.T) {
 	reviewedSafe := map[string]string{
-		"/api/chat/": "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/api/chat/":        "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/api/models/probe": "provider probe also persists usage telemetry without changing model configuration",
 	}
 
 	registered, err := registeredRoutesFromSource("api.go")

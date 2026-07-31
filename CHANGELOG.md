@@ -2,6 +2,17 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.37 - 2026-07-31
+
+### User-facing changes
+- Added a unified usage ledger for chat, title generation, side questions, autonomous evolution, scheduled tasks, Goal Mode, model probes, and other background model calls.
+- Usage records now show the channel, source, provider/model, reasoning effort, token breakdown, and elapsed time, with filtering and CSV export.
+- Added runtime telemetry installation and final usage flushing so automatic calls are recorded even when usage arrives in a terminal stream event.
+- Fixed scheduled-task restarts after model dispatch changes so they retain usage telemetry context.
+
+### Validation
+- Passed Go tests, frontend lint/build, frontend library tests, and real GenericAgent runtime health checks.
+
 ## v0.1.0-alpha2 - 2026-06-14
 
 ### Scope

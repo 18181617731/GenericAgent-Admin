@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, XCircle, Download, Moon, Sun } from 'lucide-react'
+import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download, Moon, Sun } from 'lucide-react'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
@@ -9,7 +9,7 @@ import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafe
 import { clearMemoryChatDraft, queueMemoryChatDraft } from './lib/memoryChatDraft'
 import { configDraftDirty } from './lib/configDraft'
 import { gitSyncPresentation } from './lib/gitSync'
-import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, normalizeScheduleTasksPayload } from './lib/schedule'
+import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, firstScheduleTaskID, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
 import { applyFailoverConfig, applyModelOrder, applyModelAndFailoverOrder, applyProviderOrder, mergePersistedFailoverConfig, mergePersistedModelOrder, normalizeFailoverGroups, orderedModelAndFailoverRows, orderedModelRows, orderedProviderProfiles, remapFailoverGroupReferences } from './lib/modelsEditor'
 import { providerDisplayName } from './lib/modelsProvider'
@@ -80,7 +80,7 @@ export const I18N = withUpstreamI18n({
   }
 })
 
-const TaskFormEditor = ({ value, onChange, t, llms = [] }) => {
+const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 }) => {
   const text = t.tasks
   let data
   try { data = JSON.parse(value) } catch {}
@@ -100,6 +100,12 @@ const TaskFormEditor = ({ value, onChange, t, llms = [] }) => {
   const extraKeys = Object.keys(data).filter(k => !['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'].includes(k))
   const repeatOptions = ['manual','daily','weekly','every_2h','every_4h','every_6h','every_8h','every_12h','once']
   const taskModels = llms.filter(model => Number.isInteger(Number(model?.index)) && Number(model.index) >= 0)
+  const effectiveSchedulerModelNo = normalizeScheduleModelNo(schedulerModelNo)
+  const schedulerModel = taskModels.find(model => Number(model.index) === effectiveSchedulerModelNo)
+  const schedulerModelText = schedulerModel
+    ? `${schedulerModel.provider || text.unnamedProvider} · ${schedulerModel.model || schedulerModel.name || schedulerModel.label || text.unnamedModel} · #${schedulerModel.index}`
+    : `#${effectiveSchedulerModelNo}`
+  const followSchedulerLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
 
   return <div className="schedule-form-editor">
     <div className="form-field">
@@ -128,7 +134,7 @@ const TaskFormEditor = ({ value, onChange, t, llms = [] }) => {
     <div className="form-field">
       <label>{text.executionModel}</label>
       <select value={data.llm_no ?? ''} onChange={e => updateModel(e.target.value)}>
-        <option value="">{text.defaultModel}</option>
+        <option value="">{followSchedulerLabel}{t.autostart === '开机自启' ? '：' : ': '}{schedulerModelText}</option>
         {taskModels.map(model => <option key={model.index} value={model.index}>{`${model.provider || text.unnamedProvider} · ${model.model || model.name || model.label || text.unnamedModel} · #${model.index}`}</option>)}
       </select>
       <small>{text.executionModelHelp}</small>
@@ -321,7 +327,7 @@ export default function App() {
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [loadedTaskEditor, setLoadedTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [editorMode, setEditorMode] = useState('form')
   const [scheduleData, setScheduleData] = useState(null), [scheduleLoading, setScheduleLoading] = useState(false), [scheduleError, setScheduleError] = useState('')
-  const scheduleInitialLoad = useRef(false)
+  const scheduleInitialLoad = useRef(false), scheduleDefaultTaskSelected = useRef(false)
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
   const [goals, setGoals] = useState([]), [goalObjective, setGoalObjective] = useState(''), [goalBudget, setGoalBudget] = useState(480), [goalMaxTurns, setGoalMaxTurns] = useState(200), [goalLLMNo, setGoalLLMNo] = useState(''), [goalHive, setGoalHive] = useState(false), [selectedGoal, setSelectedGoal] = useState(''), [goalOutput, setGoalOutput] = useState(''), [goalOutputMeta, setGoalOutputMeta] = useState(null)
@@ -366,6 +372,10 @@ export default function App() {
   const hasUnsavedChanges = fileDirty || taskDirty || settingsDirty
   const gitSyncView = gitSyncPresentation(gitStatus)
   const scheduleSvcs = useMemo(() => scheduleServices(services), [services])
+  const schedulerModelNo = useMemo(() => {
+    const scheduler = scheduleSvcs.find(service => service.name === 'reflect/scheduler.py') || scheduleSvcs[0]
+    return normalizeScheduleModelNo(scheduler?.model_no)
+  }, [scheduleSvcs])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => autonomousServices(services), [services])
   const goalWorkflowSvcs = useMemo(() => goalWorkflowServices(services), [services])
@@ -829,10 +839,17 @@ export default function App() {
   }
   const runSearch = async () => { setBusy(true); try { const d = await api(`/api/files/search?path=${encodeURIComponent(browsePath)}&q=${encodeURIComponent(fileSearch)}&limit=80`); setSearchHits(d.hits || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
-  const loadTask = async (id) => { if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return; setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); const content = safeJson(d.raw); setTaskId(d.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const loadTask = useCallback(async (id) => { if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return; setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); const content = safeJson(d.raw); setTaskId(d.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }, [taskDirty, taskId])
   const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const createTask = async () => { const id = newTaskId.trim(); if (!id) { setMsg('Schedule task id is required'); return }; if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。创建新任务将替换当前编辑器内容，是否继续？`)) return; if (!confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return; setBusy(true); try { const payload = buildScheduleCreateRequest(id, DEFAULT_SCHEDULE_TASK); const d = await api('/api/schedule/create', { dangerous:true, method:'POST', body: JSON.stringify(payload) }); const created = d.task || DEFAULT_SCHEDULE_TASK; const content = safeJson(created.raw || payload.task); setTaskId(created.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setMsg(t.hints.taskSaved); await loadScheduleTasks(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const deleteTask = async () => { if (!taskId) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${taskId}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: taskId }) }); setMsg(t.hints.taskDeleted); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}'); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  useEffect(() => {
+    if (tab !== 'tasks' || taskSubTab !== 'scheduled' || scheduleDefaultTaskSelected.current || taskId || taskDirty) return
+    const firstID = firstScheduleTaskID(scheduleData?.tasks)
+    if (!firstID) return
+    scheduleDefaultTaskSelected.current = true
+    loadTask(firstID)
+  }, [tab, taskSubTab, taskId, taskDirty, scheduleData?.tasks, loadTask])
   const readScheduleArtifact = async (path, targetTab = 'tasks') => { setBusy(true); try { const d = await api(`/api/schedule/artifact?path=${encodeURIComponent(path)}`); setScheduleArtifactTitle(path); setScheduleArtifact(d.content || ''); setTab(targetTab); setTaskSubTab('reports') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
   const loadTitleModel = async () => {
@@ -1310,7 +1327,7 @@ export default function App() {
           <Panel title={t.lists.scheduleService}>
             <div className="service-list clean-list">
               {scheduleSvcs.length
-                ? scheduleSvcs.map(svc => <SchedulerServiceRow key={svc.name} service={svc} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
+                ? scheduleSvcs.map(svc => <SchedulerServiceRow key={svc.name} service={svc} llms={llms} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
                 : <p className="muted">{t.hints.noScheduler}</p>}
             </div>
           </Panel>
@@ -1333,7 +1350,7 @@ export default function App() {
               {scheduleLoading
                 ? <p className="muted">{t.busy}</p>
                 : tasks.length
-                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} llms={llms} t={t} onToggle={toggleTask} onEdit={loadTask}/>)
+                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} llms={llms} t={t} schedulerModelNo={schedulerModelNo} selected={taskId === (task.id || task.name)} onToggle={toggleTask} onEdit={loadTask} onDelete={deleteTask}/>)
                   : <p className="muted">{t.hints.noTasks}</p>}
             </div>
           </Panel>
@@ -1345,11 +1362,10 @@ export default function App() {
             <p className="muted">{editorMode==='json' ? t.hints.jsonHelp : t.tasks.formHelp}</p>
             {editorMode==='json'
               ? <textarea className="json-editor compact-editor" value={taskEditor} onChange={e=>setTaskEditor(e.target.value)}/>
-              : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t} llms={llms}/>}
+              : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t} llms={llms} schedulerModelNo={schedulerModelNo}/>}
             <div className="actions">
               <span className={taskDirty ? 'status-pill warn' : 'status-pill ok'}>{taskDirty ? '有未保存更改' : '编辑器已同步'}</span>
               <button onClick={saveTask} disabled={!taskDirty || (!taskId && !newTaskId)}><Save size={14}/>{t.save}</button>
-              <button onClick={deleteTask} disabled={!taskId}><XCircle size={14}/>{t.remove}</button>
             </div>
           </Panel>
           </div>

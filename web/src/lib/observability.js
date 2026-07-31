@@ -62,6 +62,10 @@ const normalizeRuntime = (runtime) => {
     ultraplanOK: runtime.ultraplan_ok === true,
     ultraplanMissing: list(runtime.ultraplan_missing),
     ultraplanError: runtime.ultraplan_error || '',
+    chatWorkerChecked: typeof runtime.chat_worker_ok === 'boolean',
+    chatWorkerOK: runtime.chat_worker_ok === true,
+    chatWorkerPath: runtime.chat_worker_path || '',
+    chatWorkerError: runtime.chat_worker_error || '',
     legacyUltraplanScripts: list(runtime.legacy_ultraplan_scripts),
     repairable: runtime.repairable === true,
     probeError: runtime.probe_error || '',
@@ -93,21 +97,25 @@ export const observabilitySummary = (snapshot) => {
   const hasCoreFiles = coreFiles.length > 0
   const runtime = snapshot.runtime
   const dependencies = list(runtime?.dependencies)
-  const healthy = snapshot.ok === true && hasCoreFiles && missingCore === 0 && runtime?.ok === true
+  const healthy = snapshot.ok === true && hasCoreFiles && missingCore === 0 && runtime?.ok === true && (!runtime?.chatWorkerChecked || runtime.chatWorkerOK)
   const incomplete = !hasCoreFiles || !runtime
   const status = healthy ? '正常' : (incomplete ? '待检查' : '需处理')
   const detail = healthy
     ? (warningCount ? `基础检查通过，另有 ${warningCount} 项提醒` : '基础检查通过，可以继续使用')
     : (incomplete ? '尚未取得核心文件清单，请刷新后确认' : `发现 ${Math.max(1, errorCount + missingCore)} 项需要处理的问题`)
+  const stats = [
+    { key: 'status', label: '系统状态', value: status, detail },
+    { key: 'python', label: '实际 Python', value: runtime ? (runtime.pythonOK ? (runtime.pythonVersion || '可用') : '不可用') : '未检查', detail: runtime?.pythonPath || runtime?.probeError || '等待运行时检查' },
+    { key: 'dependencies', label: '核心依赖', value: runtime ? `${dependencies.filter(item => item?.ok).length}/${dependencies.length}` : '未检查', detail: runtime?.missingModules?.length ? `缺少 ${runtime.missingModules.join(', ')}` : '已安装' },
+    { key: 'runtime', label: 'GA 运行检查', value: runtime ? (runtime.agentmainOK && runtime.ultraplanOK ? '通过' : '失败') : '未检查', detail: runtime ? `主程序 ${runtime.agentmainOK ? '正常' : '异常'} · UltraPlan ${runtime.ultraplanOK ? '正常' : '异常'}` : '等待实际导入' },
+  ]
+  if (runtime?.chatWorkerChecked) {
+    stats.push({ key: 'chat', label: '对话运行组件', value: runtime.chatWorkerOK ? '通过' : '失败', detail: runtime.chatWorkerOK ? (runtime.chatWorkerPath || '已完成语法与模型路由预检') : (runtime.chatWorkerError || '请重新发布管理端运行组件') })
+  }
   return {
     status,
     tone: healthy ? 'ok' : (incomplete ? 'pending' : 'warn'),
     detail,
-    stats: [
-      { key: 'status', label: '系统状态', value: status, detail },
-      { key: 'python', label: '实际 Python', value: runtime ? (runtime.pythonOK ? (runtime.pythonVersion || '可用') : '不可用') : '未检查', detail: runtime?.pythonPath || runtime?.probeError || '等待运行时检查' },
-      { key: 'dependencies', label: '核心依赖', value: runtime ? `${dependencies.filter(item => item?.ok).length}/${dependencies.length}` : '未检查', detail: runtime?.missingModules?.length ? `缺少 ${runtime.missingModules.join(', ')}` : '已安装' },
-      { key: 'runtime', label: 'GA 运行检查', value: runtime ? (runtime.agentmainOK && runtime.ultraplanOK ? '通过' : '失败') : '未检查', detail: runtime ? `主程序 ${runtime.agentmainOK ? '正常' : '异常'} · UltraPlan ${runtime.ultraplanOK ? '正常' : '异常'}` : '等待实际导入' },
-    ],
+    stats,
   }
 }

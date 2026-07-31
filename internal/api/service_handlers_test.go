@@ -256,3 +256,21 @@ func TestServiceRoutesEnforceWorkflowAndModelBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestStartAutostartServicesUsesConfiguredServiceStartup(t *testing.T) {
+	s := newServiceHandlerTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"}
+	previous := startAutostartService
+	started := []string{}
+	startAutostartService = func(_ *Server, name string) error {
+		started = append(started, name)
+		return nil
+	}
+	t.Cleanup(func() { startAutostartService = previous })
+
+	s.StartAutostartServices()
+
+	if strings.Join(started, ",") != "reflect/scheduler.py,reflect/autonomous.py" {
+		t.Fatalf("autostart services = %v", started)
+	}
+}

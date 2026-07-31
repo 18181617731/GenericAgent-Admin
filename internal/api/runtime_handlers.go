@@ -25,7 +25,9 @@ type runtimeRepairResult struct {
 }
 
 var (
-	buildRuntimeHealthForRepair = ga.BuildRuntimeHealth
+	buildRuntimeHealthForRepair = func(root, python string) ga.Health {
+		return (&Server{}).buildGARuntimeHealthForWorker(root, python)
+	}
 	runtimeRepairExecutablePath = executablePath
 )
 

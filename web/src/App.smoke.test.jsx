@@ -1120,6 +1120,34 @@ describe('usage overview page', () => {
     expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
+
+  test('queries usage records without exposing message content', async () => {
+    const recordPayload = {
+      ...payload,
+      record_total: 2,
+      record_page: 1,
+      record_page_size: 20,
+      record_total_pages: 1,
+      record_providers: ['Local provider'],
+      record_models: ['Friendly model'],
+      records: [{
+        id: 'usage-1', session_id: 'session-1', session_name: 'Session one', provider: 'Local provider', model_id: 'model-real', model_name: 'Friendly model',
+        created_at_ms: Date.now(), elapsed_ms: 1250, input_tokens: 40, cached_tokens: 4, output_tokens: 12, total_tokens: 52,
+      }],
+    }
+    const requestedUrls = []
+    globalThis.fetch = vi.fn(async url => {
+      requestedUrls.push(String(url))
+      return jsonResponse(recordPayload)
+    })
+    render(<UsagePage lang="en" />)
+    expect((await screen.findAllByText('Session one')).length).toBeGreaterThan(0)
+    fireEvent.change(screen.getByPlaceholderText('Search model, session, or ID'), { target: { value: 'Friendly model' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Query' }))
+    await waitFor(() => expect(requestedUrls.some(url => url.includes('model=Friendly+model'))).toBe(true))
+    expect((screen.getAllByText('Local provider')).length).toBeGreaterThan(0)
+    expect((screen.getAllByText('1.3 s')).length).toBeGreaterThan(0)
+  })
 })
 
 describe('operator shell feedback', () => {

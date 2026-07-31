@@ -114,6 +114,7 @@ type GoalStartOptions struct {
 	MaxTurns      int
 	LLMNo         *int
 	PythonPath    string
+	UsageDir      string
 	Hive          bool
 }
 
@@ -153,6 +154,11 @@ func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
 	if !existsFile(filepath.Join(root, "reflect", "goal_mode.py")) {
 		return GoalMeta{}, errors.New("reflect/goal_mode.py not found under GA root")
 	}
+	if existsFile(filepath.Join(root, "llmcore.py")) {
+		if _, err := EnsureUsageTelemetry(root); err != nil {
+			return GoalMeta{}, err
+		}
+	}
 	if opt.Hive {
 		return StartHiveGoal(root, opt, objective)
 	}
@@ -185,7 +191,7 @@ func StartGoal(root string, opt GoalStartOptions) (GoalMeta, error) {
 	cmd := exec.Command(windowlessPythonPath(pythonPath), args...)
 	hideChildWindow(cmd)
 	cmd.Dir = root
-	cmd.Env = goalCommandEnv(os.Environ(), statePath)
+	cmd.Env = goalTelemetryCommandEnv(os.Environ(), statePath, opt.UsageDir, "goal", "goal", id, opt.Objective, opt.LLMNo)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -852,6 +858,36 @@ func goalCommandEnv(base []string, statePath string) []string {
 	return env
 }
 
+func goalTelemetryCommandEnv(base []string, statePath, usageDir, channel, source, sessionID, sessionName string, llmNo *int) []string {
+	env := goalCommandEnv(base, statePath)
+	if strings.TrimSpace(usageDir) == "" {
+		return env
+	}
+	env = upsertEnv(env, "GA_ADMIN_USAGE_DIR", usageDir)
+	env = upsertEnv(env, "GA_ADMIN_USAGE_CHANNEL", channel)
+	env = upsertEnv(env, "GA_ADMIN_USAGE_SOURCE", source)
+	env = upsertEnv(env, "GA_ADMIN_USAGE_SESSION_ID", sanitizeEnvValue(sessionID))
+	env = upsertEnv(env, "GA_ADMIN_USAGE_SESSION_NAME", strings.TrimSpace(sessionName))
+	if llmNo != nil {
+		env = upsertEnv(env, "GA_ADMIN_LLM_NO", strconv.Itoa(*llmNo))
+	}
+	return env
+}
+
+func sanitizeEnvValue(value string) string {
+	value = strings.TrimSpace(value)
+	var builder strings.Builder
+	for _, char := range value {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-' || char == '_' {
+			builder.WriteRune(char)
+		}
+	}
+	if builder.Len() == 0 {
+		return "goal"
+	}
+	return builder.String()
+}
+
 func upsertEnv(env []string, key, value string) []string {
 	prefix := key + "="
 	for i, item := range env {
@@ -1257,7 +1293,7 @@ func StartHiveGoal(root string, opt GoalStartOptions, userObjective string) (Goa
 	masterCmd := exec.Command(windowlessPythonPath(pythonPath), masterArgs...)
 	hideChildWindow(masterCmd)
 	masterCmd.Dir = root
-	masterCmd.Env = goalCommandEnv(os.Environ(), statePath)
+	masterCmd.Env = goalTelemetryCommandEnv(os.Environ(), statePath, opt.UsageDir, "goal", "goal-hive-master", id, userObjective, opt.LLMNo)
 	masterCmd.Stdout = logFile
 	masterCmd.Stderr = logFile
 	if err := masterCmd.Start(); err != nil {
@@ -1282,6 +1318,7 @@ func StartHiveGoal(root string, opt GoalStartOptions, userObjective string) (Goa
 	workerCmd := exec.Command(windowlessPythonPath(pythonPath), workerArgs...)
 	hideChildWindow(workerCmd)
 	workerCmd.Dir = root
+	workerCmd.Env = goalTelemetryCommandEnv(os.Environ(), statePath, opt.UsageDir, "goal", "goal-hive-worker", id+"-worker", userObjective, opt.LLMNo)
 	workerCmd.Stdout = workerLog
 	workerCmd.Stderr = workerLog
 	if err := workerCmd.Start(); err != nil {

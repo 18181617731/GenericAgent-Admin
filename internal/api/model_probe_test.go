@@ -163,6 +163,40 @@ func TestModelsProbeUsesConfiguredOpenAIResponsesMode(t *testing.T) {
 	}
 }
 
+func TestModelsProbeRecordsUsageAsModelProbeChannel(t *testing.T) {
+	fixed := time.Date(2026, time.July, 15, 14, 35, 0, 0, time.FixedZone("CST", 8*60*60))
+	oldNow := modelProbeNow
+	modelProbeNow = func() time.Time { return fixed }
+	t.Cleanup(func() { modelProbeNow = oldNow })
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"2026-07-15 14:35\"}}]}\n\ndata: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4,\"total_tokens\":14}}\n\ndata: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	s := newModelTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	rr := postModelProbe(t, s, map[string]interface{}{
+		"protocol": "native_oai", "base_url": upstream.URL, "api_key": "sk-probe-test", "var_name": "native_oai_probe", "models": []string{"probe-model"},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	overview := httptest.NewRecorder()
+	s.usageOverview(overview, httptest.NewRequest(http.MethodGet, "/api/usage/overview", nil))
+	if overview.Code != http.StatusOK {
+		t.Fatalf("usage status=%d body=%s", overview.Code, overview.Body.String())
+	}
+	var response usageOverviewResponse
+	if err := json.Unmarshal(overview.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Records) != 1 || response.Records[0].Channel != "model_probe" || response.Records[0].TotalTokens != 14 || response.Records[0].ModelID != "probe-model" {
+		t.Fatalf("usage records=%+v", response.Records)
+	}
+}
+
 func postModelProbe(t *testing.T, s *Server, payload map[string]interface{}) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(payload)

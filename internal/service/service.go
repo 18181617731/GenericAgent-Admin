@@ -48,6 +48,7 @@ type LogEvent struct {
 type Manager struct {
 	GARoot          string
 	EffectivePython string
+	UsageDir        string
 	BufferLines     int
 	mu              sync.Mutex
 	procs           map[string]*runningProc
@@ -81,6 +82,12 @@ func (m *Manager) SetRoot(root string, effectivePython string, bufferLines int) 
 	if bufferLines > 0 {
 		m.BufferLines = bufferLines
 	}
+}
+
+func (m *Manager) SetUsageDir(directory string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.UsageDir = strings.TrimSpace(directory)
 }
 
 func (m *Manager) python() string {
@@ -295,7 +302,7 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 	cmd := exec.Command(s.Command[0], cmdArgs...)
 	cmd.Dir = m.GARoot
 	hideChildWindow(cmd)
-	cmd.Env = m.serviceEnv()
+	cmd.Env = m.serviceEnv(s.Name, params)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return s, err
@@ -332,10 +339,58 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 	return m.withState(s), nil
 }
 
-func (m *Manager) serviceEnv() []string {
+func (m *Manager) serviceEnv(name string, params map[string]string) []string {
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
+	usageDir := strings.TrimSpace(m.UsageDir)
+	if usageDir == "" {
+		return env
+	}
+	channel := "service"
+	switch filepath.ToSlash(name) {
+	case "reflect/scheduler.py":
+		channel = "scheduled_task"
+	case "reflect/autonomous.py":
+		channel = "autonomous"
+	case "reflect/goal_mode.py":
+		channel = "goal"
+	}
+	env = replaceEnv(env, "GA_ADMIN_USAGE_DIR", usageDir)
+	env = replaceEnv(env, "GA_ADMIN_USAGE_CHANNEL", channel)
+	env = replaceEnv(env, "GA_ADMIN_USAGE_SOURCE", filepath.ToSlash(name))
+	env = replaceEnv(env, "GA_ADMIN_USAGE_SESSION_ID", "service-"+sanitizeEnvValue(name))
+	env = replaceEnv(env, "GA_ADMIN_USAGE_SESSION_NAME", filepath.ToSlash(name))
+	if params != nil {
+		if llmNo := strings.TrimSpace(params["llm_no"]); llmNo != "" {
+			env = replaceEnv(env, "GA_ADMIN_LLM_NO", llmNo)
+		}
+	}
 	return env
+}
+
+func replaceEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for index, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			env[index] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+func sanitizeEnvValue(value string) string {
+	value = filepath.ToSlash(strings.TrimSpace(value))
+	var builder strings.Builder
+	for _, char := range value {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-' || char == '_' {
+			builder.WriteRune(char)
+		}
+	}
+	if builder.Len() == 0 {
+		return "service"
+	}
+	return builder.String()
 }
 
 const maxLogLineBytes = 1024 * 1024

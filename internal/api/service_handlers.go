@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/service"
 )
 
@@ -90,6 +93,11 @@ func (s *Server) startServiceByName(name string, params map[string]string) (serv
 				}
 				params["llm_no"] = strconv.Itoa(no)
 			}
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(s.CfgStore.Cfg.GARoot, "llmcore.py")); statErr == nil {
+		if _, err := ga.EnsureUsageTelemetry(s.CfgStore.Cfg.GARoot); err != nil {
+			return svc, err
 		}
 	}
 	return s.Svc.StartWithParams(name, params)

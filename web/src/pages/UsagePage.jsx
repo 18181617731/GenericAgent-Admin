@@ -1,37 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, BarChart3, RefreshCw } from 'lucide-react'
+import { UsageRecords } from '../components/UsageRecords'
 import { api } from '../lib/api'
-
-const formatNumber = (value, lang) => new Intl.NumberFormat(lang === 'zh' ? 'zh-CN' : 'en-US').format(Number(value) || 0)
-
-const formatTokens = (value, lang) => {
-  const n = Number(value) || 0
-  const full = formatNumber(n, lang)
-  let short
-  if (lang === 'zh') {
-    if (n >= 1e8)     short = `${+(n / 1e8).toFixed(2)}亿`
-    else if (n >= 1e4) short = `${+(n / 1e4).toFixed(2)}万`
-    else               short = full
-  } else {
-    if (n >= 1e9)     short = `${+(n / 1e9).toFixed(2)}B`
-    else if (n >= 1e6) short = `${+(n / 1e6).toFixed(2)}M`
-    else if (n >= 1e3) short = `${+(n / 1e3).toFixed(2)}K`
-    else               short = full
-  }
-  return { short, full }
-}
+import { formatNumber, formatTokens, usageQueryString } from '../lib/usage'
 
 const COPY = {
   zh: {
-    title: '累计 Token 用量', intro: '统计本机已持久化聊天会话中的模型用量，不包含聊天正文。',
-    total: '总 Token', input: '输入 Token', output: '输出 Token', sessions: '有用量会话', replies: '有用量回复',
+    title: '累计 Token 用量', intro: '汇总所有已记录的模型调用，包括对话、后台自动化、Goal、定时任务、标题生成和模型检测。',
+    total: '总 Token', input: '输入 Token', output: '输出 Token', sessions: '有用量运行', replies: '模型调用次数',
     models: '按模型', model: '模型', empty: '尚未记录到 Token 用量。',
     loading: '正在汇总会话用量…', failed: '无法加载用量总览', retry: '重试', refresh: '刷新', skipped: '个会话文件无法读取，已跳过。', unknown: '未知模型',
     heatmap: '每日活跃度', heatmapHint: '过去 52 周 · 按每日 Token 用量着色', less: '少', more: '多',
   },
   en: {
-    title: 'Cumulative token usage', intro: 'Calculated from locally persisted chat sessions. Message content is never returned.',
-    total: 'Total tokens', input: 'Input tokens', output: 'Output tokens', sessions: 'Sessions with usage', replies: 'Measured replies',
+    title: 'Cumulative token usage', intro: 'Summarizes chat, background automation, Goal Mode, scheduled tasks, title generation, and model probes.',
+    total: 'Total tokens', input: 'Input tokens', output: 'Output tokens', sessions: 'Runs with usage', replies: 'Model calls',
     models: 'By model', model: 'Model', empty: 'No token usage has been recorded yet.',
     loading: 'Aggregating session usage…', failed: 'Unable to load usage overview', retry: 'Retry', refresh: 'Refresh', skipped: 'session files could not be read and were skipped.', unknown: 'Unknown model',
     heatmap: 'Daily activity', heatmapHint: 'Past 52 weeks · colored by daily token usage', less: 'Less', more: 'More',
@@ -93,17 +76,51 @@ export function UsagePage({ lang = 'zh' }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [exportError, setExportError] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [recordFilters, setRecordFilters] = useState({ from: '', to: '', provider: '', model: '' })
+  const [recordPage, setRecordPage] = useState(1)
+  const [recordPageSize, setRecordPageSize] = useState(20)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
-    try { setData(await api('/api/usage/overview')) }
+    try { setData(await api(`/api/usage/overview?${usageQueryString(recordFilters, recordPage, recordPageSize)}`)) }
     catch (err) { setError(err instanceof Error ? err.message : String(err)) }
     finally { setLoading(false) }
-  }, [])
+  }, [recordFilters, recordPage, recordPageSize])
 
   useEffect(() => { load() }, [load])
   const n = value => formatNumber(value, lang)
   const tok = value => formatTokens(value, lang)
+  const queryRecords = (filters, page, pageSize) => {
+    setRecordFilters(filters)
+    setRecordPage(page)
+    setRecordPageSize(pageSize)
+  }
+  const exportRecords = async filters => {
+    setExporting(true)
+    setExportError('')
+    try {
+      const response = await fetch(`/api/usage/export?${usageQueryString(filters, 1, 100)}`)
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || `${response.status} ${response.statusText}`)
+      }
+      const blob = await response.blob()
+      const objectUrl = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = 'usage-records.csv'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(objectUrl)
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return <section className="usage-page" aria-busy={loading}>
     <div className="usage-intro">
@@ -123,6 +140,7 @@ export function UsagePage({ lang = 'zh' }) {
         <Metric label={c.replies} value={n(data.assistant_replies)}/>
       </div>
       {data.assistant_replies === 0 ? <div className="usage-state">{c.empty}</div> : <>
+        <UsageRecords data={data} lang={lang} onQuery={queryRecords} onExport={exportRecords} loading={loading} exporting={exporting} exportError={exportError}/>
         <UsageHeatmap daily={data.daily} lang={lang} copy={c}/>
         <section className="usage-panel"><h3>{c.models}</h3><div className="usage-table-wrap"><table><thead><tr><th>{c.model}</th><th>{c.replies}</th><th>{c.input}</th><th>{c.output}</th><th>{c.total}</th></tr></thead><tbody>{(data.models || []).map(item => <tr key={item.id}><td><strong>{item.name || c.unknown}</strong><small>{item.id}</small></td><td>{n(item.assistant_replies)}</td><td title={tok(item.totals?.input_tokens).full}>{tok(item.totals?.input_tokens).short}</td><td title={tok(item.totals?.output_tokens).full}>{tok(item.totals?.output_tokens).short}</td><td title={tok(item.totals?.total_tokens).full}><b>{tok(item.totals?.total_tokens).short}</b></td></tr>)}</tbody></table></div></section></>}
     </>}

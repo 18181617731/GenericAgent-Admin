@@ -7,6 +7,17 @@ export const DEFAULT_SCHEDULE_TASK = Object.freeze({
 
 const validTaskLLMNo = value => value !== null && value !== undefined && value !== '' && Number.isInteger(Number(value)) && Number(value) >= 0
 
+export const normalizeScheduleModelNo = (value, fallback = 0) => {
+  if (validTaskLLMNo(value)) return Number(value)
+  return validTaskLLMNo(fallback) ? Number(fallback) : 0
+}
+
+export const hasScheduleTaskModel = task => validTaskLLMNo(task?.llm_no)
+
+export const effectiveScheduleModelNo = (task, schedulerModelNo = 0) => hasScheduleTaskModel(task)
+  ? Number(task.llm_no)
+  : normalizeScheduleModelNo(schedulerModelNo)
+
 export const normalizeScheduleTasksPayload = (payload = {}) => {
   const src = payload && typeof payload === 'object' ? payload : {}
   const tasks = Array.isArray(src.tasks) ? src.tasks : []
@@ -40,3 +51,9 @@ export const buildScheduleCreateRequest = (id, task = DEFAULT_SCHEDULE_TASK) => 
   id: String(id || '').trim(),
   task: { ...DEFAULT_SCHEDULE_TASK, ...(task || {}) },
 })
+
+export const firstScheduleTaskID = (tasks = []) => {
+  if (!Array.isArray(tasks)) return ''
+  const first = tasks.find(task => task && typeof task === 'object')
+  return String(first?.id || first?.name || '').trim()
+}

@@ -738,6 +738,24 @@ func TestGoalCommandEnvForcesUTF8AndState(t *testing.T) {
 	}
 }
 
+func TestGoalTelemetryCommandEnvIncludesChannelAndModelContext(t *testing.T) {
+	llmNo := 7
+	env := goalTelemetryCommandEnv([]string{"PATH=x"}, `C:\tmp\goal.json`, `C:\tmp\usage_events`, "goal", "goal", "goal/with spaces", "目标说明", &llmNo)
+	values := map[string]string{}
+	for _, item := range env {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) == 2 {
+			values[parts[0]] = parts[1]
+		}
+	}
+	if values["GA_ADMIN_USAGE_DIR"] != `C:\tmp\usage_events` || values["GA_ADMIN_USAGE_CHANNEL"] != "goal" || values["GA_ADMIN_USAGE_SOURCE"] != "goal" {
+		t.Fatalf("usage context=%#v", values)
+	}
+	if values["GA_ADMIN_USAGE_SESSION_ID"] != "goalwithspaces" || values["GA_ADMIN_USAGE_SESSION_NAME"] != "目标说明" || values["GA_ADMIN_LLM_NO"] != "7" {
+		t.Fatalf("session/model context=%#v", values)
+	}
+}
+
 func TestTasklistAllPIDs(t *testing.T) {
 	out := []byte("\"proc.exe\",\"123\",\"Console\",\"1\",\"1,000 K\"\r\n\"x\",\"4567\",\"Console\",\"1\",\"2 K\"\r\nINFO: nothing\r\n")
 	pids := tasklistAllPIDs(out)

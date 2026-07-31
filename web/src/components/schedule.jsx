@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronRight, Eye, FileText, Play, Power, Square } from 'lucide-react'
+import { ChevronRight, Eye, FileText, Play, Power, Square, Trash2 } from 'lucide-react'
+import { effectiveScheduleModelNo, hasScheduleTaskModel } from '../lib/schedule'
 
 const taskState = (task) => {
   if (task.error || task.status === 'ERROR') return 'error'
@@ -10,14 +11,20 @@ const taskState = (task) => {
 
 const taskStateLabel = (state, t) => state === 'error' ? t.error : (state === 'enabled' ? t.enabled : t.disabled)
 
-const taskModelLabel = (task, llms, t) => {
-  if (task.llm_no === null || task.llm_no === undefined || task.llm_no === '' || !Number.isInteger(Number(task.llm_no)) || Number(task.llm_no) < 0) return t.tasks.defaultModel
-  const model = llms.find(item => Number(item?.index) === Number(task.llm_no))
-  if (!model) return `#${task.llm_no}`
-  return `${model.provider || t.tasks.unnamedProvider} · ${model.model || model.name || model.label || t.tasks.unnamedModel} · #${model.index}`
+const taskModelLabel = (task, llms, t, schedulerModelNo) => {
+  const modelNo = effectiveScheduleModelNo(task, schedulerModelNo)
+  const model = llms.find(item => Number(item?.index) === modelNo)
+  const modelText = model
+    ? `${model.provider || t.tasks.unnamedProvider} · ${model.model || model.name || model.label || t.tasks.unnamedModel} · #${model.index}`
+    : `#${modelNo}`
+  const zh = t.autostart === '开机自启'
+  const prefix = hasScheduleTaskModel(task)
+    ? (t.tasks.taskModelPrefix || (zh ? '任务指定模型' : 'Task model'))
+    : (t.tasks.schedulerModelPrefix || (zh ? '调度器实际模型' : 'Scheduler actual model'))
+  return `${prefix}${zh ? '：' : ': '}${modelText}`
 }
 
-export function TaskRow({ task, llms = [], t, onToggle, onEdit }) {
+export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, onEdit, onDelete, selected = false }) {
   const id = task.id || task.name || t.tasks.unnamed
   const state = taskState(task)
   const status = taskStateLabel(state, t)
@@ -29,7 +36,7 @@ export function TaskRow({ task, llms = [], t, onToggle, onEdit }) {
     }
   }
   return (
-    <article className={`task-row task-state-${state}`} role="button" tabIndex={0} onClick={openTask} onKeyDown={onKeyDown}>
+    <article className={`task-row task-state-${state}${selected ? ' is-selected' : ''}`} role="button" aria-pressed={selected} tabIndex={0} onClick={openTask} onKeyDown={onKeyDown}>
       <div className="task-card-head">
         <div className="task-card-title">
           <b>{id}</b>
@@ -38,9 +45,10 @@ export function TaskRow({ task, llms = [], t, onToggle, onEdit }) {
         <div className="task-card-actions">
           <span className={`task-state-badge ${state}`}>{status}</span>
           <button type="button" className="task-toggle" title={task.enabled ? t.disabled : t.enabled} aria-label={task.enabled ? t.disabled : t.enabled} onClick={event => { event.stopPropagation(); onToggle?.(id, !task.enabled) }}><Power size={15}/></button>
+          <button type="button" className="task-delete" title={`${t.remove} ${id}`} aria-label={`${t.remove} ${id}`} onClick={event => { event.stopPropagation(); onDelete?.(id) }}><Trash2 size={15}/></button>
         </div>
       </div>
-      <span className="task-model"><FileText size={14}/>{taskModelLabel(task, llms, t)}</span>
+      <span className="task-model"><FileText size={14}/>{taskModelLabel(task, llms, t, schedulerModelNo)}</span>
       {!task.enabled && state !== 'error' && <em className="muted">{t.tasks.explicitEnable}</em>}
       {task.error && <em className="err-text">{task.error}</em>}
       {task.next_hint && <em>{task.next_hint}</em>}
@@ -78,10 +86,13 @@ export function ScheduleArtifactPreview({ title, content, empty }) {
   </article>
 }
 
-export function SchedulerServiceRow({ service, t, actionState = null, onStart, onStop, onLogs, onAutostart }) {
+export function SchedulerServiceRow({ service, llms = [], t, actionState = null, onStart, onStop, onLogs, onAutostart }) {
   const running = !!service?.running
   const isPending = actionState?.status === 'pending'
   const retryAction = actionState?.action === 'stop' ? onStop : onStart
+  const modelNo = effectiveScheduleModelNo({}, service?.model_no)
+  const model = llms.find(item => Number(item?.index) === modelNo)
+  const modelText = model ? `${model.provider || t.tasks.unnamedProvider} · ${model.model || model.name || model.label || t.tasks.unnamedModel} · #${model.index}` : `#${modelNo}`
   return (
     <article className="scheduler-service-row" aria-busy={isPending || undefined}>
       <div className="scheduler-service-head">
@@ -94,7 +105,8 @@ export function SchedulerServiceRow({ service, t, actionState = null, onStart, o
       <div className="scheduler-service-controls">
         <div className="scheduler-service-facts">
           <span>PID <b>{service?.pid || '-'}</b></span>
-          <label className="toggle-inline"><input type="checkbox" checked={!!service?.autostart} onChange={event => onAutostart?.(service.name, event.target.checked)} />{t.autostart}</label>
+          <span>{t.tasks?.executionModel || '执行模型'} <b>{modelText}</b></span>
+          <label className="toggle-inline"><input type="checkbox" checked={!!service?.autostart} onChange={event => onAutostart?.(service.name, event.target.checked)} />{t.startWithAdmin || (t.autostart === '开机自启' ? '随 GA Admin 启动' : 'Start with GA Admin')}</label>
         </div>
         <div className="svc-actions">
           <button disabled={isPending || running} onClick={() => onStart(service.name)}><Play size={14}/>{t.start}</button>

@@ -57,6 +57,42 @@ func TestBuildRuntimeHealthReportsIncompatibleUltraplanAPI(t *testing.T) {
 	}
 }
 
+func TestProbeChatWorkerRuntimeRejectsMissingModelHook(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat_worker.py")
+	content := "restore_model_hooks = _install_outbound_model_hooks(agent)\ntry:\n    pass\nfinally:\n        restore_model_hooks()\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := ProbeChatWorkerRuntime(t.TempDir(), "python", path)
+
+	if runtime.OK || !strings.Contains(runtime.Error, "缺少模型路由钩子") {
+		t.Fatalf("expected missing model hook error, got %#v", runtime)
+	}
+	health := Health{OK: true, Checks: map[string]string{}, Runtime: &RuntimeHealth{OK: true}}
+	ApplyChatWorkerRuntimeHealth(&health, runtime)
+	if health.OK || health.Runtime.OK || health.Checks["chat_runtime"] != "failed" || !containsHealthItem(health.Errors, "Chat 对话运行组件") {
+		t.Fatalf("expected failed health state, got %#v", health)
+	}
+}
+
+func TestProbeChatWorkerRuntimeAcceptsCompleteModelHook(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat_worker.py")
+	content := "def _install_outbound_model_hooks(agent):\r\n    return lambda: None\r\n\r\nrestore_model_hooks = _install_outbound_model_hooks(agent)\r\ntry:\r\n    pass\r\nfinally:\r\n        restore_model_hooks()\r\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	previous := runChatWorkerCompileCheck
+	runChatWorkerCompileCheck = func(context.Context, string, string, string) (string, error) { return "", nil }
+	t.Cleanup(func() { runChatWorkerCompileCheck = previous })
+
+	runtime := ProbeChatWorkerRuntime(t.TempDir(), "python", path)
+
+	if !runtime.OK || runtime.Error != "" {
+		t.Fatalf("expected complete worker runtime, got %#v", runtime)
+	}
+}
+
 func TestRepairLegacyUltraplanScriptsIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "temp", "ultraplan_demo", "admin_chat_ultraplan.py")

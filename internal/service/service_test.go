@@ -36,6 +36,32 @@ func TestDiscoverExcludesGoalModeFromGenericReflectList(t *testing.T) {
 	}
 }
 
+func TestServiceEnvClassifiesAutomaticUsageChannels(t *testing.T) {
+	manager := NewManager(t.TempDir(), 100)
+	manager.SetUsageDir(filepath.Join(t.TempDir(), "usage_events"))
+	for _, item := range []struct {
+		name    string
+		channel string
+	}{
+		{name: "reflect/scheduler.py", channel: "scheduled_task"},
+		{name: "reflect/autonomous.py", channel: "autonomous"},
+		{name: "reflect/goal_mode.py", channel: "goal"},
+		{name: "reflect/custom.py", channel: "service"},
+	} {
+		env := manager.serviceEnv(item.name, map[string]string{"llm_no": "3"})
+		values := map[string]string{}
+		for _, entry := range env {
+			parts := strings.SplitN(entry, "=", 2)
+			if len(parts) == 2 {
+				values[parts[0]] = parts[1]
+			}
+		}
+		if values["GA_ADMIN_USAGE_CHANNEL"] != item.channel || values["GA_ADMIN_USAGE_SOURCE"] != item.name || values["GA_ADMIN_LLM_NO"] != "3" {
+			t.Fatalf("%s usage env=%#v", item.name, values)
+		}
+	}
+}
+
 func TestDiscoverClassifiesWatchdogAsGuardianWithoutAgentWrapper(t *testing.T) {
 	root := t.TempDir()
 	reflectDir := filepath.Join(root, "reflect")
