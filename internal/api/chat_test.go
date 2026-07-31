@@ -506,6 +506,35 @@ func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *test
 	}
 }
 
+func TestAnnotateChatLLMProvidersIncludesConfiguredReasoningEffort(t *testing.T) {
+	profiles := []modelconfig.Profile{
+		{
+			Name:            "Configured provider",
+			ReasoningEffort: "low",
+			ModelConfigs: []modelconfig.ModelConfig{
+				{Model: "model-max", ReasoningEffort: "max"},
+				{Model: "model-high", ReasoningEffort: "high"},
+			},
+		},
+		{
+			Name:            "Legacy provider",
+			Models:          []string{"legacy-model"},
+			ReasoningEffort: "xhigh",
+		},
+	}
+	llms := []map[string]interface{}{
+		{"index": 0, "model": "model-max"},
+		{"index": 1, "model": "model-high"},
+		{"index": 2, "model": "legacy-model"},
+	}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	if llms[0]["reasoning_effort"] != "max" || llms[1]["reasoning_effort"] != "high" || llms[2]["reasoning_effort"] != "xhigh" {
+		t.Fatalf("reasoning effort metadata=%#v", llms)
+	}
+}
+
 func TestAnnotateChatLLMProvidersIgnoresDisabledModelMetadata(t *testing.T) {
 	disabled := false
 	profiles := []modelconfig.Profile{{

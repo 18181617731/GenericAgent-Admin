@@ -12,7 +12,7 @@ import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from '
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
-import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
+import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
@@ -3399,11 +3399,16 @@ export default function ChatApp() {
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
-    const nextReasoningEffort = normalizeReasoningEffort(st.settings?.reasoning_effort)
+    const resolvedNo = nextLlms.some(model => model.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0)
+    const selectedRuntimeModel = nextLlms.find(model => model.index === resolvedNo)
+    const storedReasoningEffort = String(st.settings?.reasoning_effort || '').trim()
+    const nextReasoningEffort = storedReasoningEffort
+      ? normalizeReasoningEffort(storedReasoningEffort)
+      : modelReasoningEffort(selectedRuntimeModel)
     const nextExtraSysPrompts = Array.isArray(st.extra_sys_prompts) ? st.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : []
     const nextExtraSysPromptPresetID = String(st.extra_sys_prompt_preset_id || '').trim()
     setLlms(nextLlms)
-    setLlmNo(nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0))
+    setLlmNo(resolvedNo)
     setReasoningEffort(nextReasoningEffort)
     setExtraSysPrompts(nextExtraSysPrompts)
     setExtraSysPromptPresetID(nextExtraSysPromptPresetID)
@@ -3659,15 +3664,21 @@ export default function ChatApp() {
   const saveModel = async (next) => {
     if (next === llmNo || modelSwitching) return
     const previous = llmNo
+    const previousReasoningEffort = reasoningEffort
+    const nextModel = llms.find(model => model.index === next)
+    const nextReasoningEffort = modelReasoningEffort(nextModel)
+    const nextReasoningSetting = modelReasoningEffortSetting(nextModel)
     setLlmNo(next)
+    setReasoningEffort(nextReasoningEffort)
     if (!sid) return
     setModelSwitching(true)
     setErr('')
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: reasoningEffort }) })
+      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: nextReasoningSetting }) })
       setNotice(`模型已切换到 #${next}，下一条消息将由该模型处理`)
     } catch (e) {
       setLlmNo(previous)
+      setReasoningEffort(previousReasoningEffort)
       setErr(`模型切换失败：${e.message || String(e)}`)
     } finally {
       setModelSwitching(false)

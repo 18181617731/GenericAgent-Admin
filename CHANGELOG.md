@@ -2,6 +2,16 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.38 - 2026-07-31
+
+### User-facing changes
+- Fixed chat sessions falling back to the default reasoning strength instead of the selected model's saved `reasoning_effort` configuration.
+- Chat model lists now expose the configured reasoning strength for each enabled provider model, including legacy provider-level settings.
+- New sessions and model switches now display and send the selected model's configured reasoning strength, while preserving explicit per-session overrides.
+
+### Validation
+- Passed Go tests and build, frontend lint, frontend library/UI tests, frontend build, and live `8787` API model/settings checks.
+
 ## v1.0.37 - 2026-07-31
 
 ### User-facing changes

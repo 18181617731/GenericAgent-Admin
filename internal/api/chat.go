@@ -1397,13 +1397,14 @@ print(json.dumps(items, ensure_ascii=False))`
 }
 
 type chatProviderModel struct {
-	provider    string
-	model       string
-	displayName string
-	apiBase     string
-	protocol    string
-	order       int
-	sequence    int
+	provider        string
+	model           string
+	displayName     string
+	reasoningEffort string
+	apiBase         string
+	protocol        string
+	order           int
+	sequence        int
 }
 
 func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelconfig.Profile) {
@@ -1415,7 +1416,7 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 		if len(configs) == 0 {
 			configs = make([]modelconfig.ModelConfig, 0, len(profile.Models))
 			for _, model := range profile.Models {
-				configs = append(configs, modelconfig.ModelConfig{Model: model})
+				configs = append(configs, modelconfig.ModelConfig{Model: model, ReasoningEffort: profile.ReasoningEffort})
 			}
 		}
 		for _, config := range configs {
@@ -1431,13 +1432,14 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 				order = *config.SortOrder
 			}
 			configured = append(configured, chatProviderModel{
-				provider:    provider,
-				model:       model,
-				displayName: strings.TrimSpace(config.Name),
-				apiBase:     normalizeChatAPIBase(profile.APIBase),
-				protocol:    strings.ToLower(strings.TrimSpace(profile.Type)),
-				order:       order,
-				sequence:    sequence,
+				provider:        provider,
+				model:           model,
+				displayName:     strings.TrimSpace(config.Name),
+				reasoningEffort: normalizeChatSettings(chatSettings{ReasoningEffort: config.ReasoningEffort}).ReasoningEffort,
+				apiBase:         normalizeChatAPIBase(profile.APIBase),
+				protocol:        strings.ToLower(strings.TrimSpace(profile.Type)),
+				order:           order,
+				sequence:        sequence,
 			})
 			sequence++
 		}
@@ -1522,6 +1524,11 @@ func applyChatProviderModel(item map[string]interface{}, configured chatProvider
 		if name, ok := item["name"].(string); ok && strings.TrimSpace(name) != "" {
 			item["label"] = name
 		}
+	}
+	if configured.reasoningEffort != "" {
+		item["reasoning_effort"] = configured.reasoningEffort
+	} else {
+		delete(item, "reasoning_effort")
 	}
 }
 
