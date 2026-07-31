@@ -4,6 +4,23 @@ import { api } from '../lib/api'
 
 const formatNumber = (value, lang) => new Intl.NumberFormat(lang === 'zh' ? 'zh-CN' : 'en-US').format(Number(value) || 0)
 
+const formatTokens = (value, lang) => {
+  const n = Number(value) || 0
+  const full = formatNumber(n, lang)
+  let short
+  if (lang === 'zh') {
+    if (n >= 1e8)     short = `${+(n / 1e8).toFixed(2)}亿`
+    else if (n >= 1e4) short = `${+(n / 1e4).toFixed(2)}万`
+    else               short = full
+  } else {
+    if (n >= 1e9)     short = `${+(n / 1e9).toFixed(2)}B`
+    else if (n >= 1e6) short = `${+(n / 1e6).toFixed(2)}M`
+    else if (n >= 1e3) short = `${+(n / 1e3).toFixed(2)}K`
+    else               short = full
+  }
+  return { short, full }
+}
+
 const COPY = {
   zh: {
     title: '累计 Token 用量', intro: '统计本机已持久化聊天会话中的模型用量，不包含聊天正文。',
@@ -21,8 +38,8 @@ const COPY = {
   },
 }
 
-function Metric({ label, value, accent }) {
-  return <div className={`usage-metric${accent ? ' usage-metric-accent' : ''}`}><span>{label}</span><strong>{value}</strong></div>
+function Metric({ label, value, title, accent }) {
+  return <div className={`usage-metric${accent ? ' usage-metric-accent' : ''}`} title={title}><span>{label}</span><strong>{value}</strong></div>
 }
 
 function UsageHeatmap({ daily = [], lang, copy }) {
@@ -86,6 +103,7 @@ export function UsagePage({ lang = 'zh' }) {
 
   useEffect(() => { load() }, [load])
   const n = value => formatNumber(value, lang)
+  const tok = value => formatTokens(value, lang)
 
   return <section className="usage-page" aria-busy={loading}>
     <div className="usage-intro">
@@ -98,15 +116,15 @@ export function UsagePage({ lang = 'zh' }) {
     {!error && data && <>
       {data.skipped_sessions > 0 && <div className="usage-warning"><AlertTriangle size={16}/><span>{n(data.skipped_sessions)} {c.skipped}</span></div>}
       <div className="usage-metrics">
-        <Metric label={c.total} value={n(data.totals?.total_tokens)} accent/>
-        <Metric label={c.input} value={n(data.totals?.input_tokens)}/>
-        <Metric label={c.output} value={n(data.totals?.output_tokens)}/>
+        <Metric label={c.total} value={tok(data.totals?.total_tokens).full} title={tok(data.totals?.total_tokens).full} accent/>
+        <Metric label={c.input} value={tok(data.totals?.input_tokens).full} title={tok(data.totals?.input_tokens).full}/>
+        <Metric label={c.output} value={tok(data.totals?.output_tokens).full} title={tok(data.totals?.output_tokens).full}/>
         <Metric label={c.sessions} value={`${n(data.sessions_with_usage)} / ${n(data.session_count)}`}/>
         <Metric label={c.replies} value={n(data.assistant_replies)}/>
       </div>
       {data.assistant_replies === 0 ? <div className="usage-state">{c.empty}</div> : <>
         <UsageHeatmap daily={data.daily} lang={lang} copy={c}/>
-        <section className="usage-panel"><h3>{c.models}</h3><div className="usage-table-wrap"><table><thead><tr><th>{c.model}</th><th>{c.replies}</th><th>{c.input}</th><th>{c.output}</th><th>{c.total}</th></tr></thead><tbody>{(data.models || []).map(item => <tr key={item.id}><td><strong>{item.name || c.unknown}</strong><small>{item.id}</small></td><td>{n(item.assistant_replies)}</td><td>{n(item.totals?.input_tokens)}</td><td>{n(item.totals?.output_tokens)}</td><td><b>{n(item.totals?.total_tokens)}</b></td></tr>)}</tbody></table></div></section></>}
+        <section className="usage-panel"><h3>{c.models}</h3><div className="usage-table-wrap"><table><thead><tr><th>{c.model}</th><th>{c.replies}</th><th>{c.input}</th><th>{c.output}</th><th>{c.total}</th></tr></thead><tbody>{(data.models || []).map(item => <tr key={item.id}><td><strong>{item.name || c.unknown}</strong><small>{item.id}</small></td><td>{n(item.assistant_replies)}</td><td title={tok(item.totals?.input_tokens).full}>{tok(item.totals?.input_tokens).short}</td><td title={tok(item.totals?.output_tokens).full}>{tok(item.totals?.output_tokens).short}</td><td title={tok(item.totals?.total_tokens).full}><b>{tok(item.totals?.total_tokens).short}</b></td></tr>)}</tbody></table></div></section></>}
     </>}
   </section>
 }

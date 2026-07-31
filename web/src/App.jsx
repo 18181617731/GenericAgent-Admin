@@ -10,7 +10,7 @@ import { configDraftDirty } from './lib/configDraft'
 import { gitSyncPresentation } from './lib/gitSync'
 import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
-import { applyModelOrder, applyProviderOrder, mergePersistedModelOrder, orderedModelRows, orderedProviderProfiles } from './lib/modelsEditor'
+import { applyFailoverConfig, applyModelOrder, applyModelAndFailoverOrder, applyProviderOrder, mergePersistedFailoverConfig, mergePersistedModelOrder, normalizeFailoverGroups, orderedModelAndFailoverRows, orderedModelRows, orderedProviderProfiles, remapFailoverGroupReferences } from './lib/modelsEditor'
 import { providerDisplayName } from './lib/modelsProvider'
 import { NAV_ITEMS, TASK_SUB_TABS, parseRoute, buildRoute } from './lib/routing'
 import { emptyProfile, formatBytes, formatDuration, formatGoalTime, group, modelLabel, outputLineCount, safeJson } from './lib/format'
@@ -243,7 +243,11 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('ga-admin-language-change', { detail: nextLang }))
   }
   const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ga-admin-theme', theme) }, [theme])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('ga-admin-theme', theme)
+    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme }))
+  }, [theme])
   useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
   const t = I18N[lang] || I18N.en
   const settingsText = lang === 'zh' ? {
@@ -283,6 +287,7 @@ export default function App() {
   const [runtimeRepairing, setRuntimeRepairing] = useState(false), [runtimeRepairResult, setRuntimeRepairResult] = useState(null)
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
   const [persistedModelProfiles, setPersistedModelProfiles] = useState([])
+  const [failoverGroups, setFailoverGroups] = useState([])
   const [modelSaveStatus, setModelSaveStatus] = useState({})
   const [titleModel, setTitleModel] = useState(null)
   const [titleModelChoices, setTitleModelChoices] = useState([])
@@ -862,8 +867,10 @@ export default function App() {
         loadTitleModel(),
       ])
       const nextProfiles = orderedProviderProfiles(d.profiles || [])
+      const nextGroups = normalizeFailoverGroups(d.failover_groups || [])
       setProfiles(nextProfiles)
       setPersistedModelProfiles(nextProfiles)
+      setFailoverGroups(nextGroups)
       setModelSaveStatus({})
       setModelRevealedKeys({})
       setModelKeyBusy({})
@@ -876,7 +883,7 @@ export default function App() {
     modelImportAttempted.current = true
     importModels({ quiet: true })
   }, [tab, profiles.length])
-  const previewModels = async () => { setBusy(true); try { const d = await api('/api/models/preview', { method:'POST', body: JSON.stringify({ profiles }) }); setModelPreview(d.python || safeJson(d)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const previewModels = async () => { setBusy(true); try { const d = await api('/api/models/preview', { method:'POST', body: JSON.stringify({ profiles, failover_groups: failoverGroups }) }); setModelPreview(d.python || safeJson(d)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const isMaskedModelSecret = (value) => String(value || '').trim() === '******'
   const getModelProfileKey = (idx, profile) => profile?.client_id || `${profile?.var_name || `profile_${idx + 1}`}:${profile?.type || 'native_oai'}:${profile?.apibase || ''}:${idx}`
   const clearRevealedModelKey = (idx, profile) => {
@@ -940,15 +947,17 @@ export default function App() {
     }
   }
 
-  const persistModelProfiles = async (nextProfiles, { confirm = true, statusKeys = [] } = {}) => {
+  const persistModelProfiles = async (nextProfiles, { confirm = true, statusKeys = [], nextFailoverGroups = failoverGroups } = {}) => {
     if (confirm && !confirmDanger('models-save', lang === 'zh' ? '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？' : 'Saving model configuration updates mykey.py and may overwrite the active configuration. Continue?')) return false
     const saving = Object.fromEntries(statusKeys.map(k => [k, { status: 'saving', error: '', savedAt: null }]))
     if (statusKeys.length) setModelSaveStatus(current => ({ ...current, ...saving }))
     setBusy(true)
     try {
-      const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles: nextProfiles, overwrite_active:true }) })
+      const cleanGroups = normalizeFailoverGroups(nextFailoverGroups)
+      const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
       const cleanProfiles = nextProfiles.map(({ previous_var_name: _previousVarName, ...profile }) => profile)
       setPersistedModelProfiles(cleanProfiles)
+      setFailoverGroups(cleanGroups)
       setModelPreview(safeJson(d))
       if (statusKeys.length) {
         const saved = Object.fromEntries(statusKeys.map(k => [k, { status: 'saved', error: '', savedAt: d.updated_at || new Date().toISOString() }]))
@@ -988,11 +997,23 @@ export default function App() {
   }
 
   const saveModelOrder = async (orderedRows) => {
-    const nextPersisted = applyModelOrder(persistedModelProfiles, orderedRows)
-    const ok = await persistModelProfiles(nextPersisted, { confirm: false })
+    const { profiles: nextPersisted, failoverGroups: nextFailoverGroups } = applyModelAndFailoverOrder(
+      persistedModelProfiles,
+      failoverGroups,
+      orderedRows
+    )
+    const ok = await persistModelProfiles(nextPersisted, { confirm: false, nextFailoverGroups })
     if (!ok) return false
     setProfiles(current => mergePersistedModelOrder(current, nextPersisted))
+    setFailoverGroups(nextFailoverGroups)
     return true
+  }
+
+  const saveFailoverGroups = async (nextGroups) => {
+    return await persistModelProfiles(persistedModelProfiles, {
+      confirm: false,
+      nextFailoverGroups: nextGroups,
+    })
   }
 
   const saveProviderOrder = async (orderedProfiles) => {
@@ -1261,7 +1282,7 @@ export default function App() {
       {tab==='usage' && <UsagePage lang={lang}/>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>}
-      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
+      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page">
         <div className="logs-layout">
           <Panel title={t.lists.processes} className="logs-side">

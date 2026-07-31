@@ -95,6 +95,77 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", done)
         self.assertIn("usages", done)
 
+    def test_usage_is_published_on_cache_then_completed_at_the_same_index(self):
+        chat_worker._reset_usage()
+        capture = chat_worker._UsageCapturingStderr(mock.Mock())
+
+        capture.write("[Cache] input=1500 cached=821500\n")
+        live = self.events[-1]
+        self.assertEqual(live["type"], "turn_usage")
+        self.assertEqual(live["index"], 0)
+        self.assertEqual(live["usage"], {
+            "input_tokens": 1500,
+            "output_tokens": 0,
+            "cached_tokens": 821500,
+        })
+
+        capture.write("[Output] tokens=22100\n")
+        completed = self.events[-1]
+        self.assertEqual(completed["type"], "turn_usage")
+        self.assertEqual(completed["index"], 0)
+        self.assertEqual(completed["usage"], {
+            "input_tokens": 1500,
+            "output_tokens": 22100,
+            "cached_tokens": 821500,
+        })
+        self.assertEqual(chat_worker._snapshot_turn_usages(), [completed["usage"]])
+
+    def test_claude_cache_usage_counts_creation_and_read_in_total_input(self):
+        chat_worker._reset_usage()
+        capture = chat_worker._UsageCapturingStderr(mock.Mock())
+
+        capture.write("[Cache] input=1500 creation=1200 read=821500\n")
+
+        live = self.events[-1]
+        self.assertEqual(live["type"], "turn_usage")
+        self.assertEqual(live["usage"], {
+            "input_tokens": 824200,
+            "output_tokens": 0,
+            "cached_tokens": 821500,
+        })
+
+    def test_outbound_model_events_follow_each_mixin_fallback_attempt(self):
+        class LeafSession:
+            def __init__(self, model, result):
+                self.model = model
+                self.result = result
+
+            def raw_ask(self, messages):
+                return iter([self.result])
+
+        first = LeafSession("claude-first", "!!!Error: unavailable")
+        second = LeafSession("claude-fallback", "ok")
+        backend = SimpleNamespace(
+            history=[],
+            model="claude-first",
+            reasoning_effort=None,
+            _sessions=[first, second],
+        )
+        agent = FakeAgent()
+        agent.llmclient.backend = backend
+
+        restore = chat_worker._install_outbound_model_hooks(agent)
+        try:
+            list(first.raw_ask([]))
+            list(second.raw_ask([]))
+        finally:
+            restore()
+
+        model_ids = [event["model_id"] for event in self.events if event.get("type") == "model"]
+        self.assertEqual(model_ids, ["claude-first", "claude-fallback"])
+        self.assertNotIn("raw_ask", first.__dict__)
+        self.assertNotIn("raw_ask", second.__dict__)
+
     def test_ordinary_request_does_not_initialize_worldline(self):
         agent = FakeAgent()
         with mock.patch.object(chat_worker, "_ensure_worldline_store") as ensure:

@@ -1,6 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './chatStream.js'
+
+test('scroll follow preserves auto mode when fast content growth moves the bottom away', () => {
+  assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 320 }), 'preserve')
+  assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 321 }), 'preserve')
+})
+
+test('scroll follow pauses only for upward movement and resumes at the bottom', () => {
+  assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 300 }), 'pause')
+  assert.equal(scrollFollowAction({ nearBottom: true, previousScrollTop: 300, scrollTop: 420 }), 'resume')
+})
 
 test('resume targets the tail placeholder and never a stale empty assistant mid-history', () => {
   const stale = { id:'stale-mid', role:'assistant', content:'' }
@@ -29,13 +39,18 @@ test('recognizes only the dedicated btw command boundary', () => {
   assert.equal(isBTWCommand('question /btw later'), false)
 })
 
-test('final stream message keeps realtime usage absent from the persisted event', () => {
+test('final stream message keeps realtime usage and context absent from the persisted event', () => {
   const usage = { input_tokens: 4290, output_tokens: 118 }
   const usages = [usage]
-  const merged = mergeFinalStreamMessage({ model_id:'live-model', usage, usages }, { id:'final', content:'done' })
+  const merged = mergeFinalStreamMessage(
+    { model_id:'live-model', usage, usages, ctx_chars:3800, ctx_msgs:3 },
+    { id:'final', content:'done' },
+  )
   assert.equal(merged.model_id, 'live-model')
   assert.equal(merged.usage, usage)
   assert.equal(merged.usages, usages)
+  assert.equal(merged.ctx_chars, 3800)
+  assert.equal(merged.ctx_msgs, 3)
 })
 
 test('stream follow only stops after an empty completed replay of a finished run', () => {

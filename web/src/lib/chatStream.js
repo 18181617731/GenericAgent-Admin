@@ -4,6 +4,12 @@ export const shouldFinishStreamFollow = ({ running, replay, completed, eventCoun
   !running && replay && completed && eventCount === 0
 )
 
+export const scrollFollowAction = ({ nearBottom, previousScrollTop, scrollTop, epsilon = 1 }) => {
+  if (nearBottom) return 'resume'
+  if (Number(scrollTop) < Number(previousScrollTop) - epsilon) return 'pause'
+  return 'preserve'
+}
+
 export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   const merged = { ...finalMessage }
   if ((!merged.model_id || !String(merged.model_id).trim()) && streamed.model_id) merged.model_id = streamed.model_id
@@ -11,6 +17,8 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   if ((!Array.isArray(merged.usages) || merged.usages.length === 0) && Array.isArray(streamed.usages) && streamed.usages.length) {
     merged.usages = streamed.usages
   }
+  if (!(Number(merged.ctx_chars) > 0) && Number(streamed.ctx_chars) > 0) merged.ctx_chars = streamed.ctx_chars
+  if (!(Number(merged.ctx_msgs) > 0) && Number(streamed.ctx_msgs) > 0) merged.ctx_msgs = streamed.ctx_msgs
   return merged
 }
 
@@ -31,11 +39,23 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
     resolvers.forEach(resolve => resolve())
   }
   const scheduleNext = () => {
-    if (pending && scheduled == null) scheduled = schedule(flushFrame)
+    if (pending && scheduled == null) {
+      // Skip frame-by-frame animation when tab is in background
+      if (typeof document !== 'undefined' && document.hidden) {
+        flushNow()
+      } else {
+        scheduled = schedule(flushFrame)
+      }
+    }
   }
   const flushFrame = () => {
     scheduled = null
     if (!pending) return
+    // If tab became hidden during scheduled flush, drain immediately instead of chunking
+    if (typeof document !== 'undefined' && document.hidden) {
+      flushNow()
+      return
+    }
     // Small model deltas stay immediate; network bursts are drained across a few
     // frames so the response advances continuously instead of jumping by blocks.
     const chunkSize = pending.length <= 24 ? pending.length : Math.min(64, Math.max(4, Math.ceil(pending.length / 8)))
