@@ -37,6 +37,7 @@ vi.mock('gsap', () => {
 vi.mock('@gsap/react', () => ({ useGSAP: vi.fn() }))
 
 const appStyles = readFileSync('src/style.css', 'utf8')
+const adminMobileStyles = readFileSync('src/admin-mobile.css', 'utf8')
 
 globalThis.React = React
 
@@ -1129,6 +1130,11 @@ describe('operator shell feedback', () => {
     }
     return jsonResponse(payloads[path] ?? {})
   }
+
+  test('keeps the mobile sidebar above its scrim', () => {
+    expect(adminMobileStyles).toMatch(/\.app > \.sidebar\s*\{[^}]*z-index:\s*1001\s*!important;/s)
+    expect(adminMobileStyles).toMatch(/\.admin-sidebar-scrim\s*\{[^}]*z-index:\s*1000;/s)
+  })
 
   test('navigation exposes the selected route with native keyboard semantics', async () => {
     installBrowserPolyfills()
