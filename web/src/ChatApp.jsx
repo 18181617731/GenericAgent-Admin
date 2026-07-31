@@ -2921,6 +2921,25 @@ export default function ChatApp() {
   const [workingState, setWorkingState] = useState(null)
   const [planState, setPlanState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
+  const mobileToolsTriggerRef = useRef(null)
+  useEffect(() => {
+    if (!mobileToolsOpen) return undefined
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return
+      setMobileToolsOpen(false)
+      requestAnimationFrame(() => mobileToolsTriggerRef.current?.focus())
+    }
+    const closeAboveBreakpoint = () => {
+      if (window.innerWidth > 420) setMobileToolsOpen(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('resize', closeAboveBreakpoint)
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('resize', closeAboveBreakpoint)
+    }
+  }, [mobileToolsOpen])
   const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
@@ -4587,7 +4606,47 @@ export default function ChatApp() {
         <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title="查看/切换对话世界线分支">
           <GitBranch size={16}/>世界线{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
         </button>
+        <button
+          ref={mobileToolsTriggerRef}
+          className={`oa-icon-btn oa-mobile-tools-trigger ${mobileToolsOpen ? 'is-open' : ''}`}
+          type="button"
+          onClick={()=>setMobileToolsOpen(v=>!v)}
+          aria-label={ct('打开聊天工具', 'Open chat tools')}
+          aria-haspopup="dialog"
+          aria-expanded={mobileToolsOpen}
+          aria-controls="oa-mobile-tools-menu"
+          title={ct('上下文、世界线与配色', 'Context, timeline, and theme')}
+        ><MoreHorizontal size={18}/></button>
       </header>
+
+      {mobileToolsOpen && createPortal(<div className="oa-mobile-tools-layer">
+        <div className="oa-mobile-tools-backdrop" aria-hidden="true" onClick={()=>setMobileToolsOpen(false)} />
+        <div className="oa-mobile-tools-menu" id="oa-mobile-tools-menu" role="dialog" aria-label={ct('聊天工具', 'Chat tools')}>
+          <button
+            className={`oa-mobile-tools-item ${contextOpen ? 'is-active' : ''}`}
+            type="button"
+            disabled={!sid}
+            onClick={()=>{ setMobileToolsOpen(false); setContextOpen(v=>!v) }}
+          >
+            <PanelRightOpen size={17}/><span className="oa-mobile-tools-item-copy">{ct('上下文', 'Context')}</span><b className="oa-mobile-tools-item-badge">{rawHistory?.length || 0}</b>
+          </button>
+          <button
+            className={`oa-mobile-tools-item ${worldlineOpen ? 'is-active' : ''}`}
+            type="button"
+            disabled={!sid}
+            onClick={()=>{ setMobileToolsOpen(false); toggleWorldline() }}
+          >
+            <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{(worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
+          </button>
+          <ThemePicker
+            className="oa-mobile-tools-theme"
+            value={theme}
+            onChange={(nextTheme)=>{ setTheme(nextTheme); setMobileToolsOpen(false) }}
+            lang={chatLanguage()}
+            variant="compact"
+          />
+        </div>
+      </div>, document.body)}
 
       {contextOpen && <aside className="oa-context-drawer" aria-label={ct('模型上下文', 'Model context')}>
         <div className="oa-context-head">
