@@ -2426,10 +2426,11 @@ export const ChatMessage = memo(function ChatMessage({
           ? (<>
               {(assistantModelId || assistantTime) && (
                 <div className="oa-meta" aria-label={ct('回复信息', 'Response information')}>
+                  <span className="oa-meta-brand">GenericAgent</span>
                   {assistantModelId && (
                     <span className="oa-model-id" title={`Model ID: ${assistantModelId}`}>{assistantModelId}</span>
                   )}
-                  {assistantModelId && assistantTime && <span className="oa-meta-separator" aria-hidden="true">{'·'}</span>}
+                  {assistantTime && <span className="oa-meta-separator" aria-hidden="true">{'·'}</span>}
                   {assistantTime && (
                     <time className="oa-message-time" dateTime={assistantCreatedAt.toISOString()} title={assistantTime}>{assistantTime}</time>
                   )}
@@ -2910,6 +2911,7 @@ export default function ChatApp() {
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
+  const [sidebarSearch, setSidebarSearch] = useState('')
   const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
@@ -4450,6 +4452,16 @@ export default function ChatApp() {
   }, { scope: chatScope, dependencies: [messages.length] })
 
   const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
+  const filteredSessions = useMemo(() => {
+    if (!sidebarSearch.trim()) return sessions
+    const q = sidebarSearch.trim().toLowerCase()
+    return sessions.filter(s => (s.title || '').toLowerCase().includes(q))
+  }, [sessions, sidebarSearch])
+  const filteredProjectGroups = useMemo(() => {
+    if (!sidebarSearch.trim()) return projectSessionGroups
+    const q = sidebarSearch.trim().toLowerCase()
+    return projectSessionGroups.map(g => ({ ...g, sessions: g.sessions.filter(s => (s.title || '').toLowerCase().includes(q)) })).filter(g => g.name.toLowerCase().includes(q) || g.sessions.length > 0)
+  }, [projectSessionGroups, sidebarSearch])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
   const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
   const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
@@ -4490,7 +4502,17 @@ export default function ChatApp() {
   return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="oa-side-head">
-        <div className="oa-logo"><Bot size={18}/><span>GenericAgent</span></div>
+        <div className="oa-sidebar-search">
+          <Search size={16}/>
+          <input
+            type="text"
+            placeholder={ct('搜索会话...', 'Search sessions...')}
+            value={sidebarSearch}
+            onChange={(e)=>setSidebarSearch(e.target.value)}
+            aria-label={ct('搜索会话', 'Search sessions')}
+          />
+          {sidebarSearch && <button className="oa-search-clear" onClick={()=>setSidebarSearch('')} aria-label={ct('清除搜索', 'Clear search')}><X size={14}/></button>}
+        </div>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
       <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
@@ -4508,11 +4530,11 @@ export default function ChatApp() {
           <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
         </div>
         <div className="oa-session-list">
-          {sessions.map(renderSidebarSession)}
-          {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
+          {filteredSessions.map(renderSidebarSession)}
+          {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
       </> : <div className="oa-session-list oa-project-list">
-        {projectSessionGroups.map((group, index) => {
+        {filteredProjectGroups.map((group, index) => {
           const expanded = expandedProjectNames.has(group.name)
           const bodyId = `oa-project-sessions-${index}`
           const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
@@ -4524,7 +4546,7 @@ export default function ChatApp() {
                 else next.add(group.name)
                 return next
               })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
-                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><span className="oa-project-icon" aria-hidden="true"><FolderOpen size={14}/></span><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
+                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
               </button>
               <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
             </div>
@@ -4534,7 +4556,7 @@ export default function ChatApp() {
             </div>
           </section>
         })}
-        {!projectSessionGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{ct('暂无可用项目', 'No projects available')}</span></div>}
+        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span></div>}
       </div>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
@@ -4549,6 +4571,7 @@ export default function ChatApp() {
         <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>{ct('返回管理台', 'Back to admin')}</button>
       </div>
     </aside>
+    <div className={`oa-sidebar-backdrop ${collapsed ? '' : 'is-visible'}`} aria-hidden={collapsed} onClick={()=>setCollapsed(true)} />
 
     <main className="oa-main">
       <header className="oa-topbar">
@@ -4806,19 +4829,20 @@ export default function ChatApp() {
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={ct('添加附件', 'Add attachment')}><Paperclip size={17}/><span>{ct('附件', 'Attachments')}</span></button>
             <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title={ct('管理自定义斜杠命令', 'Manage custom slash commands')}><Sparkles size={16}/><span>{ct('命令', 'Commands')}</span></button>
             <button className={`oa-attach-btn ${extraPromptOpen || extraSysPromptPresetID ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} title={extraSysPromptPresetID ? ct(`当前预设：${activePromptPreset.name}`, `Current preset: ${activePromptPreset.name}`) : ct('选择本会话的系统提示预设', 'Choose a system-prompt preset for this session')}><Bot size={16}/><span>{ct('系统提示', 'System prompt')}{extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
-            <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
-              value={selectedModelNo} disabled={!providerGroups.length}
-              onChange={v=>saveModel(Number(v))} />
-            <div className="oa-model-select oa-effort-select">
-              <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
-                ariaLabel={ct('推理', 'Reasoning')}
-                options={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: ct('默认', 'Default') } : option)} />
+            <div className="oa-composer-primary-actions">
+              <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
+                value={selectedModelNo} disabled={!providerGroups.length}
+                onChange={v=>saveModel(Number(v))} />
+              <div className="oa-model-select oa-effort-select">
+                <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
+                  ariaLabel={ct('推理', 'Reasoning')}
+                  options={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: ct('默认', 'Default') } : option)} />
+              </div>
+              <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')} aria-label={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')}><Send size={17}/></button>
+              {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title={ct('停止生成', 'Stop generating')} aria-label={ct('停止生成', 'Stop generating')}><Square size={14}/></button>}
             </div>
-            <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')} aria-label={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')}><Send size={17}/></button>
-            {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title={ct('停止生成', 'Stop generating')} aria-label={ct('停止生成', 'Stop generating')}><Square size={14}/></button>}
           </div>
         </div>
-        <p>{ct('Enter 发送 · Shift + Enter 换行 · 回复中发送会排队', 'Enter to send · Shift + Enter for a new line · Messages queue while responding')}</p>
       </footer>
     </main>
 
