@@ -109,7 +109,7 @@ test('settings auto-title card has toggle and action field styles', () => {
   assert.match(actionRule, /justify-items\s*:\s*end/i)
   assert.match(
     css,
-    /\.settings-toggle-state\.is-on\s*\{[^}]*color\s*:\s*var\(--green\)[^}]*\}/i,
+    /\.settings-toggle-state\.is-on\s*\{[^}]*color\s*:\s*var\(--settings-success-ink\)[^}]*\}/i,
   )
   assert.match(
     css,
@@ -151,4 +151,32 @@ test('chat layout is shared instead of being coupled to the light palette', () =
   assert.ok(sharedChatRule, 'missing shared 260px chat layout')
   assert.match(sharedChatRule, /height\s*:\s*100vh/i)
   assert.match(sharedChatRule, /overflow\s*:\s*hidden/i)
+})
+
+test('theme-specific metadata and settings actions keep readable foregrounds', () => {
+  const warmChatRule = ruleBodies('.oa-chat').join('\n')
+  const lightChatRule = ruleBodies('html[data-theme="light"] .oa-chat').join('\n')
+  const darkChatRule = ruleBodies('html[data-color-scheme="dark"] .oa-chat').join('\n')
+  assert.match(warmChatRule, /--oa-faint\s*:\s*#756f66/i)
+  assert.match(lightChatRule, /--oa-faint\s*:\s*#737373/i)
+  assert.match(darkChatRule, /--oa-faint\s*:\s*#9299a4/i)
+  assert.doesNotMatch(css, /--oa-faint\s*:\s*#[0-9a-f]{7}(?![0-9a-f])/i)
+
+  const usageInlineRule = ruleBodies('.oa-usage.oa-usage-inline').join('\n')
+  const usageTotalRule = ruleBodies('.oa-usage.oa-usage-total').join('\n')
+  assert.match(usageInlineRule, /opacity\s*:\s*1/i)
+  assert.match(usageTotalRule, /opacity\s*:\s*1/i)
+  assert.match(css, /\.oa-turn-toggle:hover \.oa-usage-inline,\s*\.oa-turn-current-head:hover \.oa-usage-inline\s*\{[^}]*opacity\s*:\s*1/i)
+  assert.match(ruleBodies('.oa-usage.oa-usage-total:hover').join('\n'), /opacity\s*:\s*1/i)
+  assert.match(ruleBodies('.oa-message.user .oa-msg-meta').join('\n'), /color\s*:\s*var\(--oa-faint\)/i)
+
+  const settingsRules = ruleBodies('.settings-page').join('\n')
+  const darkSettingsRules = ruleBodies('html[data-color-scheme="dark"] .settings-page').join('\n')
+  assert.match(settingsRules, /--settings-success-ink\s*:\s*#176b3c/i)
+  assert.match(darkSettingsRules, /--settings-success-ink\s*:\s*#84e1c0/i)
+  assert.match(ruleBodies('.settings-config-status.ready').join('\n'), /color\s*:\s*var\(--settings-success-ink\)/i)
+  assert.match(ruleBodies('.settings-toggle-state.is-on').join('\n'), /color\s*:\s*var\(--settings-success-ink\)/i)
+
+  const darkSettingsPrimary = ruleBodies('html[data-color-scheme="dark"] .settings-page button.primary').join('\n')
+  assert.match(darkSettingsPrimary, /color\s*:\s*#062e25/i)
 })
