@@ -133,10 +133,18 @@ const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 })
     </div>
     <div className="form-field">
       <label>{text.executionModel}</label>
-      <select value={data.llm_no ?? ''} onChange={e => updateModel(e.target.value)}>
-        <option value="">{followSchedulerLabel}{t.autostart === '开机自启' ? '：' : ': '}{schedulerModelText}</option>
-        {taskModels.map(model => <option key={model.index} value={model.index}>{`${model.provider || text.unnamedProvider} · ${model.model || model.name || model.label || text.unnamedModel} · #${model.index}`}</option>)}
-      </select>
+      <ModelCascadePicker
+        models={taskModels}
+        value={data.llm_no ?? ''}
+        allowDefault
+        defaultLabel={`${followSchedulerLabel}${t.autostart === '开机自启' ? '：' : ': '}${schedulerModelText}`}
+        label=""
+        showLabel={false}
+        placement="auto"
+        align="start"
+        className="schedule-task-model-cascade"
+        onChange={updateModel}
+      />
       <small>{text.executionModelHelp}</small>
     </div>
     <div className="form-field">
@@ -560,7 +568,7 @@ export default function App() {
     }
   }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', t.service.autostartConfirm(name, enabled))) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const setServiceModel = async (name, llm_no) => { setBusy(true); try { const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) }); setServices(d.services || []); setMsg(t.service.modelUpdated) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const setServiceModel = async (name, llm_no) => { setBusy(true); try { const body = { name, llm_no: llm_no === '' || llm_no === null || llm_no === undefined ? null : Number(llm_no) }; const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify(body) }); setServices(d.services || []); setMsg(t.service.modelUpdated) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = (name = selected) => {
     if (!name) return
     setSelected(name)
@@ -1327,7 +1335,7 @@ export default function App() {
           <Panel title={t.lists.scheduleService}>
             <div className="service-list clean-list">
               {scheduleSvcs.length
-                ? scheduleSvcs.map(svc => <SchedulerServiceRow key={svc.name} service={svc} llms={llms} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart}/>)
+                ? scheduleSvcs.map(svc => <SchedulerServiceRow key={svc.name} service={svc} llms={llms} t={t} actionState={serviceActionStates[svc.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/> )
                 : <p className="muted">{t.hints.noScheduler}</p>}
             </div>
           </Panel>

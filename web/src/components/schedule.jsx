@@ -2,7 +2,8 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, Eye, FileText, Play, Power, Square, Trash2 } from 'lucide-react'
-import { effectiveScheduleModelNo, hasScheduleTaskModel } from '../lib/schedule'
+import { effectiveScheduleModelNo, hasScheduleTaskModel, normalizeScheduleModelNo } from '../lib/schedule'
+import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from './ModelProviderCascade.jsx'
 
 const taskState = (task) => {
   if (task.error || task.status === 'ERROR') return 'error'
@@ -86,13 +87,19 @@ export function ScheduleArtifactPreview({ title, content, empty }) {
   </article>
 }
 
-export function SchedulerServiceRow({ service, llms = [], t, actionState = null, onStart, onStop, onLogs, onAutostart }) {
+export function SchedulerServiceRow({ service, llms = [], t, actionState = null, onStart, onStop, onLogs, onAutostart, onModel }) {
   const running = !!service?.running
   const isPending = actionState?.status === 'pending'
   const retryAction = actionState?.action === 'stop' ? onStop : onStart
-  const modelNo = effectiveScheduleModelNo({}, service?.model_no)
-  const model = llms.find(item => Number(item?.index) === modelNo)
-  const modelText = model ? `${model.provider || t.tasks.unnamedProvider} · ${model.model || model.name || model.label || t.tasks.unnamedModel} · #${model.index}` : `#${modelNo}`
+  const defaultModelNo = normalizeScheduleModelNo(0)
+  const defaultModel = llms.find(item => Number(item?.index) === defaultModelNo)
+  const defaultModelText = defaultModel
+    ? `${defaultModel.provider || t.tasks.unnamedProvider} · ${defaultModel.model || defaultModel.name || defaultModel.label || t.tasks.unnamedModel} · #${defaultModel.index}`
+    : `#${defaultModelNo}`
+  const defaultLabel = `${t.tasks.schedulerDefaultLabel || t.tasks.defaultModel || 'GA default model'}: ${defaultModelText}`
+  const modelGroups = buildModelProviderGroups(llms, { defaultLabel })
+  const modelValue = service?.model_no ?? ''
+  const selectedProvider = findModelProviderValue(modelGroups, modelValue)
   return (
     <article className="scheduler-service-row" aria-busy={isPending || undefined}>
       <div className="scheduler-service-head">
@@ -105,7 +112,21 @@ export function SchedulerServiceRow({ service, llms = [], t, actionState = null,
       <div className="scheduler-service-controls">
         <div className="scheduler-service-facts">
           <span>PID <b>{service?.pid || '-'}</b></span>
-          <span>{t.tasks?.executionModel || '执行模型'} <b>{modelText}</b></span>
+          <div className="scheduler-model-control">
+            <span>{t.tasks?.executionModel || '执行模型'}</span>
+            <ProviderModelCascade
+              groups={modelGroups}
+              selectedProvider={selectedProvider}
+              value={modelValue}
+              showLabel={false}
+              placement="auto"
+              align="start"
+              className="scheduler-model-cascade"
+              disabled={isPending || running || !llms.length}
+              disabledReason={running ? (t.tasks.executionModelRunning || 'Stop the scheduler before changing its model') : ''}
+              onChange={value => onModel?.(service.name, value === '' ? null : Number(value))}
+            />
+          </div>
           <label className="toggle-inline"><input type="checkbox" checked={!!service?.autostart} onChange={event => onAutostart?.(service.name, event.target.checked)} />{t.startWithAdmin || (t.autostart === '开机自启' ? '随 GA Admin 启动' : 'Start with GA Admin')}</label>
         </div>
         <div className="svc-actions">

@@ -95,7 +95,7 @@ function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, o
     <div className="oa-cascade-body" onKeyDown={onListKeyDown}>
     <div className="oa-cascade-providers" role="listbox" aria-label="服务商">
       {groups.map(group => <button key={group.value} type="button" role="option" aria-label={group.label} aria-selected={group.value === previewGroup?.value} data-cascade-provider data-provider-value={String(group.value)} className={group.value === previewGroup?.value ? 'active' : ''}
-        onMouseEnter={() => onPreview(group.value)} onFocus={() => onPreview(group.value)} onClick={() => onPreview(group.value)}>
+        title={group.label} onMouseEnter={() => onPreview(group.value)} onFocus={() => onPreview(group.value)} onClick={() => onPreview(group.value)}>
         <span>{group.label}</span><small>{group.models.length}</small><ChevronRight size={13}/>
       </button>)}
     </div>
@@ -103,7 +103,7 @@ function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, o
       <div className="oa-cascade-heading">{previewGroup?.label || '模型'}</div>
       {previewGroup?.models.length ? previewGroup.models.map(model => <button key={String(model.value)} type="button" role="option" aria-selected={previewGroup.value === selectedProvider && String(model.value) === String(value)} data-cascade-model
         className={previewGroup.value === selectedProvider && String(model.value) === String(value) ? 'active' : ''}
-        onClick={() => onSelect(model.value)}>
+        title={model.label} onClick={() => onSelect(model.value)}>
         {previewGroup.value === selectedProvider && String(model.value) === String(value) && <Check size={12}/>}<span>{model.label}</span>
       </button>) : <div className="oa-cascade-empty" role="status"><b>{query ? '没有匹配的模型' : '尚未配置可用模型'}</b><span>{query ? '请尝试模型 ID 或服务商名称中的其他关键词。' : '请前往“模型”页面添加并保存服务商配置。'}</span></div>}
     </div>
@@ -213,7 +213,7 @@ export function ProviderModelCascade({
   const resolvedProvider = selectedProvider || findModelProviderValue(groups, value) || groups[0]?.value || ''
   const activeGroup = groups.find(group => group.value === resolvedProvider)
   const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
-  const displayModel = activeModel?.label || '未发现模型'
+  const displayModel = activeModel?.label || (groups.length ? '请选择模型' : '未配置模型')
   const displayTitle = [activeGroup?.label, displayModel].filter(Boolean).join(' · ')
   const selectModel = next => { onChange?.(next); closeMenu() }
   const toggleMenu = () => {

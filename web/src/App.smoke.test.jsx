@@ -370,6 +370,46 @@ describe('scheduled-task service controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onStart).toHaveBeenCalledWith(service.name)
   })
+
+  test('selects a scheduler model, clears it back to GA default, and locks changes while running', () => {
+    const service = { name: 'reflect/scheduler.py', kind: 'reflect', running: false, autostart: false, model_no: 2 }
+    const onModel = vi.fn()
+    const schedulerT = { ...t, nav: { logs: 'Logs' }, retry: 'Retry', serviceDesc: { scheduler: 'Scheduled task runner' } }
+    const llms = [
+      { index: 0, provider: 'Provider A', model: 'model-a' },
+      { index: 2, provider: 'Provider B', model: 'model-b' },
+    ]
+    const view = render(<SchedulerServiceRow
+      service={service}
+      llms={llms}
+      t={schedulerT}
+      onStart={vi.fn()}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+      onModel={onModel}
+    />)
+
+    const trigger = screen.getByRole('button', { name: /选择模型，当前 Provider B/ })
+    expect(trigger.textContent).toContain('model-b')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('option', { name: '默认' }))
+    fireEvent.click(screen.getByRole('option', { name: /GA default model/ }))
+    expect(onModel).toHaveBeenCalledWith(service.name, null)
+
+    view.rerender(<SchedulerServiceRow
+      service={{ ...service, running: true }}
+      llms={llms}
+      t={schedulerT}
+      onStart={vi.fn()}
+      onStop={vi.fn()}
+      onLogs={vi.fn()}
+      onAutostart={vi.fn()}
+      onModel={onModel}
+    />)
+    expect(screen.getByRole('button', { name: /选择模型/ }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: /选择模型/ }).title).toContain('Stop the scheduler')
+  })
 })
 
 describe('overview observability', () => {

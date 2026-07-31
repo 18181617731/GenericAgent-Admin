@@ -2,6 +2,17 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.39 - 2026-07-31
+
+### User-facing changes
+- Unified Chat, Goal Mode, autonomous services, and scheduled-task model pickers into one provider/model cascade with search, complete labels, keyboard navigation, and mobile bottom-sheet behavior.
+- Scheduled tasks now expose the scheduler execution model, show the concrete GA default model when following the default, and let each task follow the scheduler or choose an explicit model.
+- Prevented changing a running scheduler's model through a misleading control; stop the scheduler first so the next start uses the saved model consistently.
+- Added responsive scheduler and task-form layout rules so provider names and model IDs do not overlap or get clipped on narrow screens.
+
+### Validation
+- Passed Go tests/build, frontend lint, frontend library tests (`209/209`), frontend UI smoke tests (`85/85`), frontend production build, and live `8787`/Tailscale API checks.
+
 ## v1.0.38 - 2026-07-31
 
 ### User-facing changes
