@@ -62,26 +62,184 @@ var autonomousDecisionMu sync.Mutex
 var autonomousApprovalNow = time.Now
 
 func BuildAutonomousApprovals(root string) (AutonomousApprovalOverview, error) {
-	overview := AutonomousApprovalOverview{SchemaVersion: autonomousApprovalSchemaVersion, SourcePath: autonomousApprovalSource, GeneratedAt: autonomousApprovalNow()}
-	path, _, err := SafeResolve(root, autonomousApprovalSource)
+	overview := AutonomousApprovalOverview{SchemaVersion: autonomousApprovalSchemaVersion, SourcePath: autonomousApprovalSource, Items: make([]AutonomousApproval, 0), GeneratedAt: autonomousApprovalNow()}
+	content, sourceExists, err := readAutonomousApprovalSource(root, autonomousApprovalSource)
 	if err != nil {
 		return overview, err
 	}
-	content, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return overview, nil
+	if sourceExists {
+		overview.SourceExists = true
+		overview.Items = parseAutonomousApprovals(content)
 	}
+	todoContent, todoExists, err := readAutonomousApprovalSource(root, autonomousTodoPath)
 	if err != nil {
 		return overview, err
 	}
-	overview.SourceExists = true
-	overview.Items = parseAutonomousApprovals(string(content))
+	if todoExists {
+		overview.SourceExists = true
+		if !sourceExists {
+			overview.SourcePath = autonomousTodoPath
+		}
+		overview.Items = mergeAutonomousApprovals(overview.Items, parseAutonomousTodoApprovals(todoContent))
+	}
 	decisions, err := loadAutonomousDecisions(root)
 	if err != nil {
 		return overview, err
 	}
 	applyAutonomousDecisions(&overview, decisions)
 	return overview, nil
+}
+
+func readAutonomousApprovalSource(root, rel string) (string, bool, error) {
+	path, _, err := SafeResolve(root, rel)
+	if err != nil {
+		return "", false, err
+	}
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return string(content), true, nil
+}
+
+func mergeAutonomousApprovals(existing, additions []AutonomousApproval) []AutonomousApproval {
+	merged := append([]AutonomousApproval(nil), existing...)
+	indexes := make(map[string]int, len(merged))
+	for index, item := range merged {
+		indexes[item.ID] = index
+	}
+	for _, addition := range additions {
+		if index, ok := indexes[addition.ID]; ok {
+			merged[index] = mergeAutonomousApproval(merged[index], addition)
+			continue
+		}
+		indexes[addition.ID] = len(merged)
+		merged = append(merged, addition)
+	}
+	return merged
+}
+
+func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApproval {
+	if base.Source == "" {
+		base.Source = addition.Source
+	}
+	if base.DraftPath == "" {
+		base.DraftPath = addition.DraftPath
+	}
+	if base.Target == "" {
+		base.Target = addition.Target
+	}
+	if base.Status == "" {
+		base.Status = addition.Status
+	}
+	if base.Risk == "" {
+		base.Risk = addition.Risk
+	}
+	if base.Evidence == "" {
+		base.Evidence = addition.Evidence
+	}
+	if base.NextStep == "" {
+		base.NextStep = addition.NextStep
+	}
+	if base.Decision == "" && addition.Decision != "" {
+		base.Decision = addition.Decision
+		base.State = addition.State
+	}
+	return base
+}
+
+func parseAutonomousTodoApprovals(content string) []AutonomousApproval {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	items := make([]AutonomousApproval, 0)
+	for _, line := range lines {
+		marker, body, ok := autonomousTodoItem(line)
+		if !ok || body == "" || marker == 'x' || marker == 'X' {
+			continue
+		}
+		title, parts := autonomousTodoTitle(body)
+		if title == "" {
+			continue
+		}
+		state, decision, status := autonomousTodoState(body)
+		item := AutonomousApproval{
+			ID:        autonomousApprovalID(title),
+			Title:     title,
+			Source:    autonomousTodoPath,
+			DraftPath: autonomousTodoPath,
+			Status:    status,
+			Risk:      autonomousTodoRisk(body),
+			Evidence:  "来自 TODO.txt 的未完成条目，采用保守审批判定",
+			NextStep:  autonomousTodoNextStep(parts),
+			State:     state,
+			Decision:  decision,
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func autonomousTodoItem(line string) (rune, string, bool) {
+	clean := strings.TrimSpace(line)
+	if len(clean) < 4 || clean[0] != '[' || clean[2] != ']' {
+		return 0, "", false
+	}
+	marker := rune(clean[1])
+	if marker != ' ' && marker != 'x' && marker != 'X' {
+		return 0, "", false
+	}
+	return marker, strings.TrimSpace(clean[3:]), true
+}
+
+func autonomousTodoTitle(body string) (string, []string) {
+	parts := strings.FieldsFunc(body, func(r rune) bool { return r == '|' || r == '｜' })
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
+	}
+	parts = slicesWithoutEmptyStrings(parts)
+	if len(parts) > 1 {
+		return parts[1], parts
+	}
+	return strings.TrimSpace(body), parts
+}
+
+func slicesWithoutEmptyStrings(values []string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			filtered = append(filtered, strings.TrimSpace(value))
+		}
+	}
+	return filtered
+}
+
+func autonomousTodoState(body string) (string, string, string) {
+	if containsAny(body, "用户已批准", "已批准", "已审批") {
+		return "approved", "approved", "已批准"
+	}
+	if containsAny(body, "用户已拒绝", "已拒绝", "已驳回") {
+		return "rejected", "rejected", "已拒绝"
+	}
+	return "pending", "", "待人工复核"
+}
+
+func autonomousTodoRisk(body string) string {
+	if containsAny(body, "高风险", "删除", "源码", "写入", "修改", "覆盖") {
+		return "需人工复核"
+	}
+	if containsAny(body, "低风险", "只读", "只读检查") {
+		return "低风险，仍需确认"
+	}
+	return "未标注，需人工复核"
+}
+
+func autonomousTodoNextStep(parts []string) string {
+	if len(parts) < 3 {
+		return ""
+	}
+	return strings.Join(parts[2:], " | ")
 }
 
 func DecideAutonomousApproval(root, id, decision, note string) (AutonomousApprovalOverview, bool, error) {

@@ -68,6 +68,61 @@ func TestBuildAutonomousApprovalsParsesTrackedDrafts(t *testing.T) {
 	}
 }
 
+func TestBuildAutonomousApprovalsFallsBackToTodoQueue(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	todo := `# TODO
+[ ] 自身演进 | complete_task 待用户确认的源码变更 | 经用户批准后执行
+[ ] 未标注的候选任务 | 需要人工复核后再决定
+[x] 已完成但曾提到待用户批准 | 已归档
+[ ] 用户已批准 | 已批准任务 | 按 TODO 执行
+`
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !overview.SourceExists || overview.SourcePath != autonomousTodoPath {
+		t.Fatalf("todo fallback source = %+v", overview)
+	}
+	if overview.Pending != 2 || overview.Approved != 1 || len(overview.Items) != 3 {
+		t.Fatalf("todo fallback overview = %+v", overview)
+	}
+	if overview.Items[0].Title != "complete_task 待用户确认的源码变更" || overview.Items[0].State != "pending" {
+		t.Fatalf("todo pending item = %+v", overview.Items[0])
+	}
+}
+
+func TestApproveAutonomousTodoItemMergesQueueMarker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	todo := "[ ] 自身演进 | complete_task 需要用户确认的变更 | 用户批准后执行\n"
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil || len(overview.Items) != 1 {
+		t.Fatalf("initial todo overview = %+v err=%v", overview, err)
+	}
+	updated, queued, err := DecideAutonomousApproval(root, overview.Items[0].ID, "approved", "先执行自检")
+	if err != nil || !queued || updated.Pending != 0 || updated.Approved != 1 || len(updated.Items) != 1 {
+		t.Fatalf("approved todo overview = %+v queued=%v err=%v", updated, queued, err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(content), "ga-admin-approval:"+overview.Items[0].ID) != 1 {
+		t.Fatalf("approval marker count = %d, content=%s", strings.Count(string(content), "ga-admin-approval:"+overview.Items[0].ID), content)
+	}
+}
+
 func TestBuildAutonomousApprovalsKeepsSupersededDraftsOutOfPending(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
