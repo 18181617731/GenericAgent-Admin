@@ -2,6 +2,17 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.40 - 2026-08-02
+
+### User-facing changes
+- Autonomous approval cards now show whether an approved task is queued, completed, failed, or finished without a report, and link directly to the matched execution report.
+- Approval report matching now ignores audit documents that merely quote a TODO item, preventing false completed results.
+- Approval decisions refresh the GA inventory so newly generated autonomous reports appear without a manual page reload.
+- Fixed Windows autostart command quoting for GA roots ending in a backslash.
+
+### Validation
+- Passed `go test ./...`, frontend lint, frontend library tests (`223/223`), frontend UI smoke tests (`89/89`), Windows `build.bat`, and live browser/API checks on `http://127.0.0.1:8787/autonomous`.
+
 ## v1.0.39 - 2026-07-31
 
 ### User-facing changes

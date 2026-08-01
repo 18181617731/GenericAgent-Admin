@@ -13,3 +13,13 @@ func TestRegistryValuePinsApplicationRoot(t *testing.T) {
 		t.Fatalf("registryValue() = %q, want %q", got, want)
 	}
 }
+
+func TestRegistryValueEscapesTrailingBackslash(t *testing.T) {
+	target := `G:\ga-admin-test\ga-admin.exe`
+	root := `G:\ga-admin-test\`
+	want := `"G:\ga-admin-test\ga-admin.exe" --no-browser --app-root "G:\ga-admin-test\\"`
+
+	if got := registryValue(target, root); got != want {
+		t.Fatalf("registryValue() = %q, want %q", got, want)
+	}
+}

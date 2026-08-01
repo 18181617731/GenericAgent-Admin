@@ -153,7 +153,7 @@ func TestApproveAutonomousDraftQueuesExactlyOnce(t *testing.T) {
 	if err != nil || !queued {
 		t.Fatalf("first approve queued=%v err=%v", queued, err)
 	}
-	if updated.Approved != 1 || updated.Pending != 1 || updated.Items[0].Note != "reviewed" {
+	if updated.Approved != 1 || updated.Pending != 1 || updated.Items[0].Note != "reviewed" || updated.Items[0].ExecutionState != autonomousExecutionQueued {
 		t.Fatalf("updated overview = %+v", updated)
 	}
 	_, queued, err = DecideAutonomousApproval(root, id, "approved", "ignored repeat")
@@ -166,6 +166,108 @@ func TestApproveAutonomousDraftQueuesExactlyOnce(t *testing.T) {
 	}
 	if strings.Count(string(todo), "ga-admin-approval:"+id) != 1 || !strings.Contains(string(todo), "[ ] 用户已批准") || !strings.Contains(string(todo), "用户补充：reviewed") {
 		t.Fatalf("TODO was not queued exactly once: %s", todo)
+	}
+}
+
+func TestApprovedAutonomousTaskExposesExecutionReport(t *testing.T) {
+	root := t.TempDir()
+	writeAutonomousApprovalFixture(t, root)
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := overview.Items[0].ID
+	if _, _, err := DecideAutonomousApproval(root, id, "approved", "reviewed"); err != nil {
+		t.Fatal(err)
+	}
+	reportsRoot := filepath.Join(root, "temp", "autonomous_reports")
+	if err := os.MkdirAll(reportsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(reportsRoot, "R99_execution.md")
+	report := "# 执行报告\n\n- 审批标记：ga-admin-approval:" + id + "\n- 结论：已完成并通过验证\n"
+	if err := os.WriteFile(reportPath, []byte(report), 0644); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := updated.Items[0]
+	if item.ExecutionState != autonomousExecutionCompleted || item.ExecutionReport == nil || item.ExecutionReport.Path != "temp/autonomous_reports/R99_execution.md" {
+		t.Fatalf("execution result = %+v", item)
+	}
+	if !strings.Contains(item.ExecutionSummary, "已完成并通过验证") {
+		t.Fatalf("execution summary = %q", item.ExecutionSummary)
+	}
+}
+
+func TestApprovedAutonomousTaskReportsFailure(t *testing.T) {
+	root := t.TempDir()
+	writeAutonomousApprovalFixture(t, root)
+	overview, _ := BuildAutonomousApprovals(root)
+	if _, _, err := DecideAutonomousApproval(root, overview.Items[0].ID, "approved", ""); err != nil {
+		t.Fatal(err)
+	}
+	reportsRoot := filepath.Join(root, "temp", "autonomous_reports")
+	if err := os.MkdirAll(reportsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := "# 执行报告\n\n审批标记：ga-admin-approval:" + overview.Items[0].ID + "\nVERDICT: FAIL\n执行结果：失败，校验未通过\n"
+	if err := os.WriteFile(filepath.Join(reportsRoot, "R100_execution.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := updated.Items[0]
+	if item.ExecutionState != autonomousExecutionFailed || item.ExecutionError == "" {
+		t.Fatalf("failed execution = %+v", item)
+	}
+}
+
+func TestApprovalAuditReferenceIsNotExecutionReport(t *testing.T) {
+	root := t.TempDir()
+	writeAutonomousApprovalFixture(t, root)
+	overview, _ := BuildAutonomousApprovals(root)
+	if _, _, err := DecideAutonomousApproval(root, overview.Items[0].ID, "approved", ""); err != nil {
+		t.Fatal(err)
+	}
+	reportsRoot := filepath.Join(root, "temp", "autonomous_reports")
+	if err := os.MkdirAll(reportsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	audit := "# 审批门控复核\n\n本轮启动时 TODO 中的条目为：\n\n[ ] 用户已批准 | " + overview.Items[0].Title + " | 待执行\n\n结论：未修改源码，原实施 TODO 保持 [ ]\n"
+	if err := os.WriteFile(filepath.Join(reportsRoot, "R101_audit.md"), []byte(audit), 0644); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Items[0].ExecutionState != autonomousExecutionQueued || updated.Items[0].ExecutionReport != nil {
+		t.Fatalf("audit was incorrectly linked: %+v", updated.Items[0])
+	}
+}
+
+func TestCompletedAutonomousQueueWithoutReportIsVisible(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	title := "已批准但报告缺失"
+	id := autonomousApprovalID(title)
+	todo := "[x] 用户已批准 | " + title + " | 已执行 <!-- ga-admin-approval:" + id + " -->\n"
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil || len(overview.Items) != 1 {
+		t.Fatalf("overview = %+v err=%v", overview, err)
+	}
+	if overview.Items[0].ExecutionState != autonomousExecutionReportMissing {
+		t.Fatalf("missing report state = %+v", overview.Items[0])
 	}
 }
 

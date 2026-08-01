@@ -137,6 +137,36 @@ describe('autonomous operations page', () => {
     expect(await screen.findByText('已批准')).toBeTruthy()
   })
 
+  test('should link an approved task to its execution result', async () => {
+    installBrowserPolyfills()
+    const report = { name: 'R99_execution.md', path: 'temp/autonomous_reports/R99_execution.md', mod_time: '2026-07-28T10:00:00Z' }
+    const decided = {
+      ...pendingApproval,
+      state: 'approved',
+      decision: 'approved',
+      decided_at: '2026-07-28T09:00:00Z',
+      execution_state: 'completed',
+      execution_report: report,
+      execution_summary: '已完成并通过验证',
+    }
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') return jsonResponse({ queued: true, overview: approvalOverview([decided]) })
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview())
+      if (String(url).startsWith('/api/files/read')) return jsonResponse({ content: '# 执行完成\n\n已完成并通过验证' })
+      throw new Error(`unexpected url ${url}`)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<AutonomousPage lang="zh" reports={[report]}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: '批准并加入队列' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /已处理/ }))
+    expect(await screen.findByText('已完成')).toBeTruthy()
+    expect(screen.getByText(/已完成并通过验证/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /查看执行结果：R99_execution\.md/ }))
+    expect(await screen.findByRole('heading', { name: '执行完成' })).toBeTruthy()
+  })
+
   test('should keep rejection dialog actionable when the decision request fails', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url, options = {}) => {

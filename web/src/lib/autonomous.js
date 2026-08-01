@@ -42,6 +42,13 @@ export const splitAutonomousApprovals = (items = []) => ({
   handled: items.filter(item => item?.state !== 'pending'),
 })
 
+export const autonomousExecutionState = item => {
+  if (item?.execution_state) return item.execution_state
+  if (item?.decision === 'approved') return 'queued'
+  if (item?.decision === 'rejected') return 'not_applicable'
+  return ''
+}
+
 export const readableAutonomousDate = (value, lang = 'zh') => {
   const date = new Date(value)
   if (!value || Number.isNaN(date.getTime())) return lang === 'en' ? 'Unknown time' : '时间未知'

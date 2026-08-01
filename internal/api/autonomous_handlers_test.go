@@ -46,4 +46,7 @@ func TestAutonomousApprovalsGetAndApprove(t *testing.T) {
 	if postRR.Code != http.StatusOK || !strings.Contains(postRR.Body.String(), `"queued":true`) {
 		t.Fatalf("POST status=%d body=%s", postRR.Code, postRR.Body.String())
 	}
+	if !strings.Contains(postRR.Body.String(), `"execution_state":"queued"`) {
+		t.Fatalf("POST should expose queued execution state: %s", postRR.Body.String())
+	}
 }

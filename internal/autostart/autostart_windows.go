@@ -15,7 +15,32 @@ const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 // --no-browser suppresses the browser launch on autostart.
 // --app-root pins config.local.json to the directory used when enabling autostart.
 func registryValue(target, appRoot string) string {
-	return fmt.Sprintf(`"%s" --no-browser --app-root "%s"`, target, appRoot)
+	return fmt.Sprintf("%s --no-browser --app-root %s", quoteWindowsArgument(target), quoteWindowsArgument(appRoot))
+}
+
+func quoteWindowsArgument(value string) string {
+	var quoted strings.Builder
+	quoted.Grow(len(value) + 2)
+	quoted.WriteByte('"')
+	backslashes := 0
+	for _, char := range value {
+		if char == '\\' {
+			backslashes++
+			continue
+		}
+		if char == '"' {
+			quoted.WriteString(strings.Repeat(`\`, backslashes*2+1))
+			quoted.WriteRune(char)
+			backslashes = 0
+			continue
+		}
+		quoted.WriteString(strings.Repeat(`\`, backslashes))
+		quoted.WriteRune(char)
+		backslashes = 0
+	}
+	quoted.WriteString(strings.Repeat(`\`, backslashes*2))
+	quoted.WriteByte('"')
+	return quoted.String()
 }
 
 func StatusFor(target, appRoot string) Status {

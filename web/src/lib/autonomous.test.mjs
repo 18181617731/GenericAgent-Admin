@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousReport } from './autonomous.js'
+import { autonomousExecutionState, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousReport } from './autonomous.js'
 
 test('autonomous summary reports running services approvals and latest record', () => {
   const latest = { name: 'latest.md', mod_time: '2026-07-28T10:00:00Z' }
@@ -26,6 +26,12 @@ test('autonomous approvals keep every non-pending ledger item visible as handled
   const result = splitAutonomousApprovals(items)
   assert.equal(result.pending.length, 1)
   assert.deepEqual(result.handled, items.slice(1))
+})
+
+test('autonomous execution state defaults approved work to queued', () => {
+  assert.equal(autonomousExecutionState({ decision: 'approved' }), 'queued')
+  assert.equal(autonomousExecutionState({ decision: 'approved', execution_state: 'completed' }), 'completed')
+  assert.equal(autonomousExecutionState({ decision: 'rejected' }), 'not_applicable')
 })
 
 test('autonomous labels provide friendly service names and safe date fallback', () => {
