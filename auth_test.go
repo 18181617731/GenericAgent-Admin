@@ -65,15 +65,19 @@ func TestAuthMiddlewareDefaultCredentialAndGate(t *testing.T) {
 	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "admin", nil); got.Code != http.StatusPreconditionRequired {
 		t.Fatalf("remote request before password change = %d, want 428", got.Code)
 	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusPreconditionRequired {
-		t.Fatalf("loopback API before password change = %d, want 428", got.Code)
+	if got := authRequest(handler, http.MethodGet, "/api/config", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
+		t.Fatalf("loopback API before password change = %d, reached %v", got.Code, reached)
 	}
 	if got := authRequest(handler, http.MethodGet, "/", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
 		t.Fatalf("loopback SPA request = %d, reached %v", got.Code, reached)
 	}
 	status := authRequest(handler, http.MethodGet, "/api/auth/status", "127.0.0.1:5000", "", "", nil)
-	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":true`)) {
+	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":false`)) {
 		t.Fatalf("status = %d %s", status.Code, status.Body.String())
+	}
+	remoteStatus := authRequest(handler, http.MethodGet, "/api/auth/status", "192.168.1.2:5000", "admin", "admin", nil)
+	if remoteStatus.Code != http.StatusOK || !bytes.Contains(remoteStatus.Body.Bytes(), []byte(`"mustChangePassword":true`)) {
+		t.Fatalf("remote status = %d %s", remoteStatus.Code, remoteStatus.Body.String())
 	}
 }
 

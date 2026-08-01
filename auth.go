@@ -86,7 +86,8 @@ func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) 
 
 func (a *authManager) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isIPv4LoopbackRemote(r.RemoteAddr) && !a.authenticateRequest(r) {
+		loopback := isIPv4LoopbackRemote(r.RemoteAddr)
+		if !loopback && !a.authenticateRequest(r) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
 			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "authentication required", http.StatusUnauthorized)
@@ -101,7 +102,7 @@ func (a *authManager) middleware(next http.Handler) http.Handler {
 			a.handleChangePassword(w, r)
 			return
 		}
-		if a.passwordChangeRequired() && strings.HasPrefix(r.URL.Path, "/api/") {
+		if !loopback && a.passwordChangeRequired() && strings.HasPrefix(r.URL.Path, "/api/") {
 			writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true})
 			return
 		}
@@ -140,7 +141,8 @@ func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	writeAuthJSON(w, http.StatusOK, map[string]any{"username": a.username, "mustChangePassword": a.mustChange, "managedByEnvironment": a.external})
+	mustChange := a.mustChange && !isIPv4LoopbackRemote(r.RemoteAddr)
+	writeAuthJSON(w, http.StatusOK, map[string]any{"username": a.username, "mustChangePassword": mustChange, "managedByEnvironment": a.external})
 }
 
 type changePasswordRequest struct {
