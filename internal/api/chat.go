@@ -514,9 +514,12 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			structuredChanged = true
 		}
 		if _, ok := ev["plan"]; ok {
-			cs.Plan = chatPlanFromEvent(ev)
+			var planChanged bool
+			cs.Plan, planChanged = updateChatPlanFromEvent(cs.Plan, ev)
+			// Always echo the retained snapshot so a plan-less follow-up turn does
+			// not make the already visible card disappear in streaming clients.
 			ev["plan"] = cloneChatValue(cs.Plan)
-			structuredChanged = true
+			structuredChanged = structuredChanged || planChanged
 		}
 		isTerminalEvent := ev["type"] == "done" || ev["type"] == "error"
 		if structuredChanged && !isTerminalEvent && (token == nil || s.ownsChatRun(sid, token)) {
@@ -836,6 +839,19 @@ func chatPlanFromEvent(ev map[string]interface{}) map[string]interface{} {
 		return nil
 	}
 	return normalizeChatPlan(m)
+}
+
+// updateChatPlanFromEvent keeps the last useful session snapshot when a later
+// worker turn reports plan:null. A map (including an empty map) is an explicit
+// snapshot update; a missing or non-map value means this turn has no update.
+func updateChatPlanFromEvent(current map[string]interface{}, ev map[string]interface{}) (map[string]interface{}, bool) {
+	if _, exists := ev["plan"]; !exists {
+		return current, false
+	}
+	if next := chatPlanFromEvent(ev); next != nil {
+		return next, true
+	}
+	return current, false
 }
 
 func chatUltraPlanStateFromEvent(ev map[string]interface{}) map[string]interface{} {
