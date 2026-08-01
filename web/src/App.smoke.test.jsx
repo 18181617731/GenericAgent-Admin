@@ -24,6 +24,7 @@ globalThis.ResizeObserver = class ResizeObserver {
 }
 
 const appStyles = readFileSync('src/style.css', 'utf8')
+const adminMobileStyles = readFileSync('src/admin-mobile.css', 'utf8')
 
 globalThis.React = React
 
@@ -1231,6 +1232,11 @@ describe('operator shell feedback', () => {
     return jsonResponse(payloads[path] ?? {})
   }
 
+  test('keeps the mobile sidebar above its scrim', () => {
+    expect(adminMobileStyles).toMatch(/\.app > \.sidebar\s*\{[^}]*z-index:\s*1001\s*!important;/s)
+    expect(adminMobileStyles).toMatch(/\.admin-sidebar-scrim\s*\{[^}]*z-index:\s*1000;/s)
+  })
+
   test('navigation exposes the selected route with native keyboard semantics', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
@@ -1290,7 +1296,7 @@ describe('operator shell feedback', () => {
     expect(await screen.findByText('Version management')).toBeTruthy()
     expect(screen.getByText('Read-only observability')).toBeTruthy()
     expect(screen.getByText('GA source update')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
     expect(screen.queryByText('只读观测')).toBeNull()
     expect(screen.queryByText('版本管理')).toBeNull()
     expect(screen.queryByText('GA 源代码更新')).toBeNull()
