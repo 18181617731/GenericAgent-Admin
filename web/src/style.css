@@ -13431,7 +13431,7 @@ html[data-color-scheme="dark"] .oa-project-toggle:hover { background:rgba(16,163
 .oa-mobile-tools-trigger,
 .oa-mobile-tools-layer { display:none; }
 
-@media (max-width:420px) {
+@media (max-width:900px) {
   .oa-topbar > .theme-picker,
   .oa-topbar > .oa-context-btn { display:none; }
   .oa-topbar > .oa-mobile-tools-trigger {
@@ -13562,6 +13562,9 @@ html[data-color-scheme="dark"] .oa-project-toggle:hover { background:rgba(16,163
   .oa-mobile-tools-theme.theme-picker--compact .theme-picker-chevron {
     display:block;
   }
+}
+
+@media (max-width:420px) {
   .oa-message { width:calc(100% - 18px) !important; grid-template-columns:24px minmax(0,1fr) !important; gap:7px !important; }
   .oa-message .oa-avatar { width:24px; height:24px; }
   .oa-message .oa-bubble { font-size:13.5px; }
