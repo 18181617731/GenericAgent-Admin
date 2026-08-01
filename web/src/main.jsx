@@ -5,6 +5,7 @@ import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
+import { AuthGate } from './components/AuthGate.jsx'
 import { getInitialTheme, getTheme, isThemeId } from './themes'
 
 const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
@@ -38,9 +39,11 @@ function LocalizedRoot() {
     },
   }}>
     <ErrorBoundary>
-      <Suspense fallback={<RouteFallback label={loading} />}>
-        <Root />
-      </Suspense>
+      <AuthGate>
+        <Suspense fallback={<RouteFallback label={loading} />}>
+          <Root />
+        </Suspense>
+      </AuthGate>
     </ErrorBoundary>
   </ConfigProvider>
 }

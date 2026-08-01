@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -95,6 +96,8 @@ type launchOptions struct {
 const (
 	adminReadHeaderTimeout = 10 * time.Second
 	adminIdleTimeout       = 120 * time.Second
+	authUserEnv            = "GA_ADMIN_AUTH_USER"
+	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -104,6 +107,15 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		ReadHeaderTimeout: adminReadHeaderTimeout,
 		IdleTimeout:       adminIdleTimeout,
 	}
+}
+
+func isIPv4LoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.To4() != nil && ip.IsLoopback()
 }
 
 func parseLaunchOptions() launchOptions {

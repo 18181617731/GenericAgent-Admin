@@ -14,7 +14,7 @@ func TestNewHTTPServerSetsTimeouts(t *testing.T) {
 		t.Fatalf("Addr = %q, want %q", server.Addr, "127.0.0.1:0")
 	}
 	if server.Handler != handler {
-		t.Fatal("Handler was not preserved")
+		t.Fatal("Handler must be installed unchanged")
 	}
 	if server.ReadHeaderTimeout != adminReadHeaderTimeout {
 		t.Fatalf("ReadHeaderTimeout = %v, want %v", server.ReadHeaderTimeout, adminReadHeaderTimeout)
