@@ -180,3 +180,62 @@ test('theme-specific metadata and settings actions keep readable foregrounds', (
   const darkSettingsPrimary = ruleBodies('html[data-color-scheme="dark"] .settings-page button.primary').join('\n')
   assert.match(darkSettingsPrimary, /color\s*:\s*#062e25/i)
 })
+
+test('warm chat metadata clears AA contrast on translucent panels', () => {
+  const declaration = (body, name) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const match = body.match(new RegExp(`${escaped}\\s*:\\s*([^;]+)`, 'i'))
+    assert.ok(match, `missing ${name} declaration`)
+    return match[1].trim()
+  }
+  const color = (value) => {
+    const hex = value.match(/^#([0-9a-f]{6})$/i)
+    if (hex) {
+      const packed = Number.parseInt(hex[1], 16)
+      return { rgb: [(packed >> 16) & 255, (packed >> 8) & 255, packed & 255], alpha: 1 }
+    }
+    const rgba = value.match(/^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/i)
+    assert.ok(rgba, `unsupported CSS color: ${value}`)
+    return { rgb: rgba.slice(1, 4).map(Number), alpha: Number(rgba[4]) }
+  }
+  const over = (foreground, background) => ({
+    rgb: foreground.rgb.map((channel, index) => (
+      channel * foreground.alpha + background.rgb[index] * (1 - foreground.alpha)
+    )),
+    alpha: 1,
+  })
+  const luminance = ({ rgb }) => rgb
+    .map(channel => channel / 255)
+    .map(channel => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0)
+  const contrast = (first, second) => {
+    const values = [luminance(first), luminance(second)].sort((a, b) => b - a)
+    return (values[0] + 0.05) / (values[1] + 0.05)
+  }
+
+  const warmThemeRule = ruleBodies('html[data-theme="warm"]')
+    .find(rule => /--surface-strong\s*:/i.test(rule))
+  const warmChatRule = ruleBodies('.oa-chat')
+    .find(rule => /--oa-muted\s*:/i.test(rule))
+  const rootPaletteRule = ruleBodies(':root')
+    .find(rule => /--g-ffffffa78\s*:/i.test(rule))
+  assert.ok(warmThemeRule, 'missing warm theme surface tokens')
+  assert.ok(warmChatRule, 'missing warm chat color tokens')
+  assert.ok(rootPaletteRule, 'missing shared light alpha palette')
+
+  const resolveColor = (value) => {
+    const reference = value.match(/^var\((--[\w-]+)\)$/i)
+    return color(reference ? declaration(rootPaletteRule, reference[1]) : value)
+  }
+  const worldlineKindRule = ruleBodies('.oa-worldline-kind').join('\n')
+  assert.match(worldlineKindRule, /background\s*:\s*var\(--oa-hover\)/i)
+  assert.match(worldlineKindRule, /color\s*:\s*var\(--oa-muted\)/i)
+
+  const page = resolveColor(declaration(warmThemeRule, '--surface-strong'))
+  const drawer = over(resolveColor(declaration(warmChatRule, '--oa-panel')), page)
+  const badge = over(resolveColor(declaration(warmChatRule, '--oa-hover')), drawer)
+  const muted = resolveColor(declaration(warmChatRule, '--oa-muted'))
+  const ratio = contrast(muted, badge)
+
+  assert.ok(ratio >= 4.5, `warm muted contrast ${ratio.toFixed(2)} is below WCAG AA`)
+})
