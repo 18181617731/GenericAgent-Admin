@@ -123,7 +123,23 @@ GA_ADMIN_HEADLESS=1 ./ga-admin
 GA_ADMIN_NO_BROWSER=1 ./ga-admin
 ```
 
-无桌面服务器需要远程访问时，请把 `config.local.json` 中的 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`，并通过浏览器访问 `http://<server-ip>:<port>`。管理端适合本机或可信局域网使用；公网暴露前应额外配置认证、TLS 和访问控制。
+无桌面服务器需要远程访问时，请把 `config.local.json` 中的 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`。所有来源地址不是 IPv4 `127.0.0.0/8` 的请求都会被整站 HTTP Basic Auth 保护；启动前必须同时设置用户名和密码，否则外部请求会直接返回 `401 Unauthorized`：
+
+```bash
+GA_ADMIN_AUTH_USER=admin \
+GA_ADMIN_AUTH_PASSWORD='replace-with-a-long-random-password' \
+./ga-admin --headless
+```
+
+PowerShell 示例：
+
+```powershell
+$env:GA_ADMIN_AUTH_USER = 'admin'
+$env:GA_ADMIN_AUTH_PASSWORD = 'replace-with-a-long-random-password'
+.\ga-admin.exe --headless
+```
+
+认证覆盖页面、静态资源和全部 `/api/*` 路由。程序只按实际 TCP 来源地址判断是否为 `127.*`，不会信任客户端提供的 `X-Forwarded-For`。Basic Auth 本身不加密凭据；跨不可信网络访问时，必须在 GA Admin 前配置 HTTPS/TLS 反向代理，并限制防火墙访问来源。反向代理连接 GA Admin 时也必须携带上述 Basic Auth 凭据。
 
 ## 本地构建
 

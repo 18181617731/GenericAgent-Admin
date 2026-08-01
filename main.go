@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -98,15 +101,51 @@ type launchOptions struct {
 const (
 	adminReadHeaderTimeout = 10 * time.Second
 	adminIdleTimeout       = 120 * time.Second
+	authUserEnv            = "GA_ADMIN_AUTH_USER"
+	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
-		Handler:           handler,
+		Handler:           requireExternalAuth(handler, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv)),
 		ReadHeaderTimeout: adminReadHeaderTimeout,
 		IdleTimeout:       adminIdleTimeout,
 	}
+}
+
+func requireExternalAuth(next http.Handler, expectedUser, expectedPassword string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isIPv4LoopbackRemote(r.RemoteAddr) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		user, password, ok := r.BasicAuth()
+		configured := expectedUser != "" && expectedPassword != ""
+		if !configured || !ok || !secureEqual(user, expectedUser) || !secureEqual(password, expectedPassword) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isIPv4LoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.To4() != nil && ip.IsLoopback()
+}
+
+func secureEqual(got, expected string) bool {
+	gotHash := sha256.Sum256([]byte(got))
+	expectedHash := sha256.Sum256([]byte(expected))
+	return subtle.ConstantTimeCompare(gotHash[:], expectedHash[:]) == 1
 }
 
 func parseLaunchOptions() launchOptions {
