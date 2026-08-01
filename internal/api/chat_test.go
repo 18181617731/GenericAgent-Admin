@@ -522,6 +522,45 @@ func TestAnnotateChatLLMProvidersIgnoresDisabledModelMetadata(t *testing.T) {
 	}
 }
 
+func TestListGARuntimeLLMsSkipsMalformedClientEntries(t *testing.T) {
+	root := t.TempDir()
+	agentmain := `
+class Backend:
+    name = "valid-provider"
+    model = "valid-model"
+    config = {}
+
+class Client:
+    backend = Backend()
+
+class GenericAgent:
+    def __init__(self):
+        self.llmclients = [Client(), {"mixin_cfg": {"llm_nos": []}}]
+
+    def list_llms(self):
+        return [(0, "valid", True), (1, "BADCONFIG_MIXIN", False)]
+`
+	if err := os.WriteFile(filepath.Join(root, "agentmain.py"), []byte(agentmain), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.PythonPath = "python"
+
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
+	if err != nil {
+		t.Fatalf("listGARuntimeLLMs() error: %v", err)
+	}
+	if len(llms) != 1 {
+		t.Fatalf("listGARuntimeLLMs() returned %d entries, want one valid entry: %#v", len(llms), llms)
+	}
+	if llms[0]["index"] != float64(0) && llms[0]["index"] != 0 {
+		t.Fatalf("valid model index=%v, want 0", llms[0]["index"])
+	}
+	if llms[0]["model"] != "valid-model" {
+		t.Fatalf("valid model=%v, want valid-model", llms[0]["model"])
+	}
+}
+
 func TestMarkChatLLMActiveUsesSessionLLMNo(t *testing.T) {
 	llms := []map[string]interface{}{
 		{"index": float64(0), "active": true},

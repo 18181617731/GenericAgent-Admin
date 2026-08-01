@@ -354,6 +354,60 @@ def _snapshot_llm_no(agent):
         return None
 
 
+def _sync_usage_llm_no(agent):
+    if not os.environ.get('GA_ADMIN_USAGE_DIR'):
+        return
+    value = _snapshot_llm_no(agent)
+    if value is not None:
+        os.environ['GA_ADMIN_LLM_NO'] = str(value)
+
+
+def _install_outbound_model_hooks(agent):
+    """Emit the concrete model immediately before every routed LLM attempt."""
+    try:
+        backend = agent.llmclient.backend
+        sessions = list(getattr(backend, '_sessions', ()) or ())
+    except Exception:
+        sessions = []
+    originals = []
+    for session in sessions:
+        try:
+            original = session.raw_ask
+            had_instance_attr = 'raw_ask' in vars(session)
+            instance_value = vars(session).get('raw_ask')
+        except Exception:
+            continue
+
+        def wrapped(*args, _original=original, _session=session, **kwargs):
+            try:
+                model_id = getattr(_session, 'model', '')
+                if isinstance(model_id, str):
+                    model_id = ' '.join(model_id.split())[:256]
+                    if model_id:
+                        emit({'type': 'model', 'model_id': model_id})
+            except Exception:
+                pass
+            return _original(*args, **kwargs)
+
+        try:
+            session.raw_ask = wrapped
+            originals.append((session, had_instance_attr, instance_value))
+        except Exception:
+            continue
+
+    def restore():
+        for session, had_instance_attr, instance_value in reversed(originals):
+            try:
+                if had_instance_attr:
+                    session.raw_ask = instance_value
+                else:
+                    delattr(session, 'raw_ask')
+            except Exception:
+                pass
+
+    return restore
+
+
 def _json_clone(value, fallback):
     try:
         return json.loads(json.dumps(value, ensure_ascii=False, default=str))

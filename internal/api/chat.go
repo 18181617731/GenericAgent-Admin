@@ -1355,8 +1355,13 @@ agent = GenericAgent()
 items = []
 for idx, label, active in agent.list_llms():
     text = str(label)
-    client = agent.llmclients[int(idx)]
-    backend = client.backend
+    try:
+        client = agent.llmclients[int(idx)]
+        backend = client.get('backend') if isinstance(client, dict) else getattr(client, 'backend', None)
+    except (IndexError, KeyError, TypeError, ValueError):
+        continue
+    if backend is None:
+        continue
     name = str(getattr(backend, 'name', '') or '')
     model = str(getattr(backend, 'model', '') or '')
     provider = type(backend).__name__

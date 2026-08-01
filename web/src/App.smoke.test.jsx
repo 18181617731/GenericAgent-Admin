@@ -1286,6 +1286,34 @@ describe('operator shell feedback', () => {
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url).includes('/api/version/check'))).toHaveLength(0)
   })
 
+  test('keeps configured service domains visible when health reports a degraded runtime', async () => {
+    installBrowserPolyfills()
+    window.history.replaceState({}, '', '/autonomous')
+    const services = [
+      { name: 'reflect/scheduler.py', kind: 'reflect', running: true, model_no: 6 },
+      { name: 'reflect/autonomous.py', kind: 'reflect', running: false, model_no: 6 },
+    ]
+    globalThis.fetch = vi.fn(async url => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/config') return jsonResponse({ host: '127.0.0.1', port: 8787, ga_root: 'C:/ga' })
+      if (path === '/api/ga/health') return jsonResponse({ ok: false, root: 'C:/ga', errors: ['chat runtime failed'] })
+      if (path === '/api/autostart/status') return jsonResponse({ supported: true, enabled: true })
+      if (path === '/api/version/info') return jsonResponse({ version: 'dev' })
+      if (path === '/api/version/status') return jsonResponse({})
+      if (path === '/api/ga/inventory') return jsonResponse({ autonomous_reports: [] })
+      if (path === '/api/risk/catalog') return jsonResponse({ items: [] })
+      if (path === '/api/services') return jsonResponse({ services })
+      if (path === '/api/chat/state') return jsonResponse({ llms: [] })
+      if (path === '/api/autonomous/approvals') return jsonResponse({ source_exists: false, items: [], pending: 0 })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<App />)
+
+    expect(await screen.findByText('reflect/autonomous.py')).toBeTruthy()
+    expect(screen.queryByText('鏈彂鐜拌嚜涓昏繘鍖栨湇鍔?')).toBeNull()
+  })
+
   test('switches the complete overview shell to English without stale Chinese labels', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))

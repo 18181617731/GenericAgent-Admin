@@ -31,7 +31,7 @@ test('product usability styles preserve keyboard focus, touch targets, and reduc
   assert.match(css, /:focus-visible\s*\{[^}]*outline\s*:\s*3px/is)
   assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*min-height\s*:\s*44px/i)
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*animation-duration\s*:\s*\.001ms/i)
-  assert.match(css, /html\[data-theme="dark"\]\s+\.ga-message-banner\.is-error/i)
+  assert.match(css, /html\[data-color-scheme="dark"\]\s+\.ga-message-banner\.is-error/i)
 })
 
 test('git sync logs stay bounded and scrollable', () => {
