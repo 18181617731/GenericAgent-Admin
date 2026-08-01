@@ -10,6 +10,7 @@ import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
 import { clearMemoryChatDraft, queueMemoryChatDraft } from './lib/memoryChatDraft'
 import { configDraftDirty } from './lib/configDraft'
+import { firstRuntimeModelNo, runtimeModelDescription } from './lib/modelDefaults.js'
 import { gitSyncPresentation } from './lib/gitSync'
 import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, firstScheduleTaskID, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
@@ -105,7 +106,7 @@ const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 })
   const effectiveSchedulerModelNo = normalizeScheduleModelNo(schedulerModelNo)
   const schedulerModel = taskModels.find(model => Number(model.index) === effectiveSchedulerModelNo)
   const schedulerModelText = schedulerModel
-    ? `${schedulerModel.provider || text.unnamedProvider} · ${schedulerModel.model || schedulerModel.name || schedulerModel.label || text.unnamedModel} · #${schedulerModel.index}`
+    ? runtimeModelDescription(schedulerModel, text.unnamedModel)
     : `#${effectiveSchedulerModelNo}`
   const followSchedulerLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
 
@@ -385,8 +386,8 @@ export default function App() {
   const scheduleSvcs = useMemo(() => scheduleServices(services), [services])
   const schedulerModelNo = useMemo(() => {
     const scheduler = scheduleSvcs.find(service => service.name === 'reflect/scheduler.py') || scheduleSvcs[0]
-    return normalizeScheduleModelNo(scheduler?.model_no)
-  }, [scheduleSvcs])
+    return normalizeScheduleModelNo(scheduler?.model_no, firstRuntimeModelNo(llms))
+  }, [llms, scheduleSvcs])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => autonomousServices(services), [services])
   const goalWorkflowSvcs = useMemo(() => goalWorkflowServices(services), [services])
@@ -539,8 +540,8 @@ export default function App() {
   const validateSetupRoot = async () => { if (!confirmDanger('setup-validate-root', lang === 'zh' ? '验证并保存当前 GA 根目录？' : 'Validate and save the current GA root?')) return; setBusy(true); try { const d = await api('/api/setup/validate', { dangerous:true, method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const installGA = async () => { if (!confirmDanger('setup-install-ga', lang === 'zh' ? '安装/克隆 GenericAgent 到目标目录？会写入本地文件。' : 'Install or clone GenericAgent into the target directory? This writes local files.')) return; setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const startReflectService = (name) => {
-    const fallbackModel = llms.find(m => m?.index !== undefined && m?.index !== null)
-    setReflectLLMNo(current => current !== '' ? current : (fallbackModel?.index?.toString() || '0'))
+    const fallbackModelNo = firstRuntimeModelNo(llms)
+    setReflectLLMNo(current => current !== '' ? current : String(fallbackModelNo))
     setPendingServiceName(name)
     setShowLLMPicker(true)
   }
@@ -637,7 +638,7 @@ export default function App() {
       const objective = goalObjective.trim()
       const budgetMinutes = Number(goalBudget)
       const maxTurns = Number(goalMaxTurns)
-      const llmNo = goalLLMNo === '' ? null : Number(goalLLMNo)
+      const llmNo = goalLLMNo === '' ? (llms.length ? firstRuntimeModelNo(llms) : null) : Number(goalLLMNo)
       if (!objective) throw new Error(t.hints.goalObjectiveRequired)
       if (new TextEncoder().encode(objective).length > 16384) throw new Error(t.hints.goalObjectiveTooLarge)
       if (!Number.isInteger(budgetMinutes)) throw new Error(t.hints.goalBudgetInteger)
@@ -895,6 +896,8 @@ export default function App() {
       return titleModelChoices.map(option => ({
         providerVarName: String(option?.provider_var_name || ''),
         model: String(option?.model || ''),
+        providerName: String(option?.provider_name || option?.providerName || ''),
+        displayName: String(option?.display_name || option?.displayName || option?.label || option?.model || ''),
       }))
     }
     return orderedModelRows(persistedModelProfiles)
@@ -906,7 +909,7 @@ export default function App() {
     { value: '', label: t.titleModelFollowConversation },
     ...titleModelRows.map((row, llmNo) => ({
       value: titleModelKey({ provider_var_name: row.providerVarName, model: row.model }),
-      label: `${row.model} · ${providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
+      label: `${row.displayName || row.model} · ${row.providerName || providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}${row.displayName && row.displayName !== row.model ? ` · ${row.model}` : ''}`,
     })),
   ], [titleModelRows, t.titleModelFollowConversation])
   useEffect(() => {

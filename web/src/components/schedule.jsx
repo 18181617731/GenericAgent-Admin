@@ -2,7 +2,8 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, Eye, FileText, Play, Power, Square, Trash2 } from 'lucide-react'
-import { effectiveScheduleModelNo, hasScheduleTaskModel, normalizeScheduleModelNo } from '../lib/schedule'
+import { effectiveScheduleModelNo, hasScheduleTaskModel } from '../lib/schedule'
+import { firstRuntimeModelNo, runtimeModelDescription } from '../lib/modelDefaults.js'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from './ModelProviderCascade.jsx'
 
 const taskState = (task) => {
@@ -16,7 +17,7 @@ const taskModelLabel = (task, llms, t, schedulerModelNo) => {
   const modelNo = effectiveScheduleModelNo(task, schedulerModelNo)
   const model = llms.find(item => Number(item?.index) === modelNo)
   const modelText = model
-    ? `${model.provider || t.tasks.unnamedProvider} · ${model.model || model.name || model.label || t.tasks.unnamedModel} · #${model.index}`
+    ? runtimeModelDescription(model, t.tasks.unnamedModel)
     : `#${modelNo}`
   const zh = t.autostart === '开机自启'
   const prefix = hasScheduleTaskModel(task)
@@ -91,11 +92,9 @@ export function SchedulerServiceRow({ service, llms = [], t, actionState = null,
   const running = !!service?.running
   const isPending = actionState?.status === 'pending'
   const retryAction = actionState?.action === 'stop' ? onStop : onStart
-  const defaultModelNo = normalizeScheduleModelNo(0)
+  const defaultModelNo = firstRuntimeModelNo(llms)
   const defaultModel = llms.find(item => Number(item?.index) === defaultModelNo)
-  const defaultModelText = defaultModel
-    ? `${defaultModel.provider || t.tasks.unnamedProvider} · ${defaultModel.model || defaultModel.name || defaultModel.label || t.tasks.unnamedModel} · #${defaultModel.index}`
-    : `#${defaultModelNo}`
+  const defaultModelText = defaultModel ? runtimeModelDescription(defaultModel, `#${defaultModelNo}`) : `#${defaultModelNo}`
   const defaultLabel = `${t.tasks.schedulerDefaultLabel || t.tasks.defaultModel || 'GA default model'}: ${defaultModelText}`
   const modelGroups = buildModelProviderGroups(llms, { defaultLabel })
   const modelValue = service?.model_no ?? ''

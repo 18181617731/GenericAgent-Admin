@@ -195,9 +195,23 @@ test('orderedModelRows expands providers into the persisted global model order',
 test('orderedModelRows carries the configured provider display name', () => {
   const profiles = orderingProfiles()
   profiles[0].name = 'Acme 显示名称'
+  profiles[0].model_configs[0].name = 'Friendly alpha'
   const rows = orderedModelRows(profiles)
 
   assert.deepEqual(rows.map(row => row.providerName), ['Acme 显示名称', '', 'Acme 显示名称'])
+  assert.deepEqual(rows.map(row => row.displayName), ['Friendly alpha', 'b-one', 'a-two'])
+})
+
+test('orderedModelRows exposes model display names for failover candidates', () => {
+  const profiles = [{
+    var_name: 'provider_a',
+    name: 'Paid provider',
+    model_configs: [{ model: '12', name: 'Paid primary' }],
+  }]
+  const [row] = orderedModelRows(profiles)
+  assert.equal(row.displayName, 'Paid primary')
+  assert.equal(row.model, '12')
+  assert.equal(row.providerName, 'Paid provider')
 })
 
 test('orderedModelRows keeps legacy provider and model order without metadata', () => {

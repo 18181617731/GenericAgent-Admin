@@ -1523,8 +1523,10 @@ func applyChatProviderModel(item map[string]interface{}, configured chatProvider
 		item["model"] = configured.model
 	}
 	if configured.displayName != "" {
+		item["display_name"] = configured.displayName
 		item["label"] = configured.displayName
 	} else {
+		delete(item, "display_name")
 		// fallback to name when display_name is empty
 		if name, ok := item["name"].(string); ok && strings.TrimSpace(name) != "" {
 			item["label"] = name

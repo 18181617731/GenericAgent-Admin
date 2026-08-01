@@ -39,7 +39,7 @@ test('service actions remain dangerous-confirm guarded', () => {
 test('reflect services can start with a safe model fallback', () => {
   assert.match(common, /svc\?\.kind === 'reflect'/)
   assert.match(common, /startsWith\('reflect\/'\)/)
-  assert.match(app, /setReflectLLMNo\(current => current !== '' \? current : \(fallbackModel\?\.index\?\.toString\(\) \|\| '0'\)\)/)
+  assert.match(app, /setReflectLLMNo\(current => current !== '' \? current : String\(fallbackModelNo\)\)/)
   assert.match(app, /if \(!\/\^\\d\+\$\/\.test\(selectedLLMNo\)\)/)
   assert.match(app, /<ModelCascadePicker models=\{llms\} value=\{reflectLLMNo\}/)
   assert.match(picker, /buildModelProviderGroups\(models/)

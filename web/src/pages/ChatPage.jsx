@@ -7,6 +7,7 @@ import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from '../lib/chatTit
 import { consumeMemoryChatDraft } from '../lib/memoryChatDraft.js'
 import { TurnList } from '../components/turns'
 import { ModelCascadePicker } from '../components/ModelCascadePicker'
+import { firstRuntimeModelNo } from '../lib/modelDefaults.js'
 
 const readFileDataURL = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader()
@@ -26,7 +27,8 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
   const [sessions, setSessions] = useState([]), [sid, setSid] = useState(''), [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const [files, setFiles] = useState([])
-  const [settings, setSettings] = useState({ llm_no: 0 })
+  const [settings, setSettings] = useState({ llm_no: firstRuntimeModelNo(llms) })
+  const defaultModelNo = firstRuntimeModelNo(llms)
   const activeSidRef = useRef('')
   const memoryDraftRef = useRef(consumeMemoryChatDraft())
   const fileInputRef = useRef(null)
@@ -64,7 +66,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     activeSidRef.current = d.id
     setSid(d.id)
     setMessages(d.messages || [])
-    setSettings({ llm_no: d.settings?.llm_no || 0 })
+    setSettings({ llm_no: d.settings?.llm_no ?? defaultModelNo })
   }
   const newSession = async () => {
     if (busy) { setErr('当前正在执行，完成后可创建新会话'); return }
@@ -73,7 +75,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     setSid(d.id)
     setMessages([])
     setFiles([])
-    setSettings({ llm_no: d.settings?.llm_no || 0 })
+    setSettings({ llm_no: d.settings?.llm_no ?? defaultModelNo })
   }
   useEffect(() => {
     const initialize = async () => {

@@ -29,6 +29,7 @@ import { hasSubagentLaunch } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
 import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
+import { firstRuntimeModelNo } from './lib/modelDefaults.js'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -3420,8 +3421,9 @@ export default function ChatApp() {
     const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
     const nextLlms = st.llms || []
-    const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
-    const resolvedNo = nextLlms.some(model => model.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0)
+    const defaultNo = firstRuntimeModelNo(nextLlms)
+    const nextNo = st.settings?.llm_no ?? st.llm_no ?? defaultNo
+    const resolvedNo = nextLlms.some(model => Number(model.index) === Number(nextNo)) ? Number(nextNo) : defaultNo
     const selectedRuntimeModel = nextLlms.find(model => model.index === resolvedNo)
     const storedReasoningEffort = String(st.settings?.reasoning_effort || '').trim()
     const nextReasoningEffort = storedReasoningEffort
@@ -3468,7 +3470,7 @@ export default function ChatApp() {
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
     setPlanState(d.plan || null)
-    setLlmNo(d.settings?.llm_no || 0)
+    setLlmNo(d.settings?.llm_no ?? firstRuntimeModelNo(llms))
     setErr('')
     setNotice('')
     setMenuOpen('')
@@ -3556,7 +3558,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
+    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? firstRuntimeModelNo(llms))
     await loadChatState(d.id, openToken)
     if (projectMode) await loadSessions(d.id)
   }

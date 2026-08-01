@@ -293,7 +293,7 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
         <Alert
           type={availabilityResult.type}
           showIcon
-          message={availabilityResult.message}
+          title={availabilityResult.message}
           description={availabilityResult.description}
           className="model-availability-alert"
         />
@@ -352,7 +352,7 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
           <Alert
             type="error"
             showIcon
-            message={text.cannotFetch}
+            title={text.cannotFetch}
             description={discoveryError}
             action={<Button size="small" onClick={onDiscover}>{t.retry}</Button>}
           />
@@ -600,7 +600,7 @@ function ProfileCard({
                 patch({ apikey: event.target.value })
               }}
               placeholder={text.keyPlaceholder}
-              addonAfter={revealed ? (
+              suffix={revealed ? (
                 <Space size={2}>
                   <Button size="small" type="text" icon={<EyeOff size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>{t.hide}</Button>
                   <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)} title={text.reread} aria-label={`${text.reread} API Key`} />
@@ -630,13 +630,13 @@ function ProfileCard({
           <strong><span>3</span> {text.saveStep}</strong>
           <small>{result?.errors?.length ? text.fixBlocks : dirty ? text.dirtyHelp : text.savedHelp}</small>
         </div>
-        {saveBusy && <Alert type="info" showIcon message={text.savingProvider} description={text.savingDescription} className="model-inline-alert" />}
-        {saveOk && !dirty && <Alert type="success" showIcon message={text.savedMykey} description={text.savedDescription} className="model-inline-alert" />}
+        {saveBusy && <Alert type="info" showIcon title={text.savingProvider} description={text.savingDescription} className="model-inline-alert" />}
+        {saveOk && !dirty && <Alert type="success" showIcon title={text.savedMykey} description={text.savedDescription} className="model-inline-alert" />}
         {saveError && (
           <Alert
             type="error"
             showIcon
-            message={text.providerSaveFailed}
+            title={text.providerSaveFailed}
             description={saveState?.error || text.unknownError}
             action={<Button size="small" onClick={save} disabled={!!result?.errors?.length} loading={saveBusy}>{text.retrySave}</Button>}
             className="model-inline-alert"
@@ -646,7 +646,7 @@ function ProfileCard({
           <Alert
             type="error"
             showIcon
-            message={text.cannotSave}
+            title={text.cannotSave}
             description={<ul>{result.errors.map(key => <li key={key}>{text.errors[key] || key}</li>)}</ul>}
             className="model-inline-alert"
           />
@@ -655,7 +655,7 @@ function ProfileCard({
           <Alert
             type="warning"
             showIcon
-            message={text.beforeSave}
+            title={text.beforeSave}
             description={<ul>{result.warnings.map(key => <li key={key}>{text.errors[key] || key}</li>)}</ul>}
             className="model-inline-alert"
           />
@@ -779,7 +779,7 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
           <Input type="password" value={form.apiKey} onChange={event => patchForm({ apiKey: event.target.value })} placeholder={t.hints?.savedSecret || '填写密钥'} />
         </label>
       </div>
-      {error && <Alert className="model-inline-alert" type="error" showIcon message={error} />}
+      {error && <Alert className="model-inline-alert" type="error" showIcon title={error} />}
       <footer className="model-add-footer">
         <span>{text.addProviderFooter}</span>
         <Space>
@@ -848,8 +848,8 @@ function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, 
       ) : (
         <div className="model-order-copy">
           <code>{row.variableName}</code>
-          <strong title={row.model}>{row.model || text.missingModelId}</strong>
-          <span>{text.providerName}{text.providerName === '服务商名称' ? '：' : ': '}{providerDisplayName(row.providerVarName) || text.unnamed}</span>
+          <strong title={row.model}>{row.displayName || row.model || text.missingModelId}</strong>
+          <span>{text.providerName}{text.providerName === '服务商名称' ? '：' : ': '}{row.providerName || providerDisplayName(row.providerVarName) || text.unnamed}{row.displayName && row.displayName !== row.model ? ` · ${row.model}` : ''}</span>
         </div>
       )}
       <div className="model-order-actions">
@@ -896,8 +896,8 @@ function SortableFailoverMemberRow({ memberKey, member, memberIndex, groupIndex,
       </span>
       <span className="model-failover-priority-index">{memberIndex + 1}</span>
       <span className="model-failover-priority-copy">
-        <strong title={member.model}>{member.model}</strong>
-        <small><b>{providerDisplayName(member.provider_var_name) || member.provider_var_name}</b>{candidate?.protocol ? ` · ${candidate.protocol}` : ''}</small>
+        <strong title={candidate?.displayName || member.model}>{candidate?.displayName || member.model}</strong>
+        <small><b>{candidate?.providerName || providerDisplayName(member.provider_var_name) || member.provider_var_name}</b>{candidate?.model && candidate.displayName && candidate.model !== candidate.displayName ? ` · ${candidate.model}` : ''}{candidate?.protocol ? ` · ${candidate.protocol}` : ''}</small>
       </span>
       {!candidate && <span>{text.failoverMissingMember || 'Missing'}</span>}
       <Space size={0}>
@@ -919,7 +919,7 @@ function FailoverCandidatePicker({ candidates = [], selectedKeys, selectedFamili
     })
     return Array.from(grouped, ([value, models]) => ({
       value,
-      label: providerDisplayName(value) || value || text.unnamed,
+      label: models[0]?.providerName || providerDisplayName(value) || value || text.unnamed,
       models,
     }))
   }, [candidates, providerDisplayName, text.unnamed])
@@ -960,8 +960,8 @@ function FailoverCandidatePicker({ candidates = [], selectedKeys, selectedFamili
           const key = memberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
           const selected = selectedKeys.has(key)
           const locked = selectedFamilies.size > 0 && !selectedFamilies.has(candidate.family)
-          const providerLabel = providerDisplayName(candidate.providerVarName) || candidate.providerVarName || text.unnamed
-          const modelLabel = candidate.model || text.missingModelId
+          const providerLabel = candidate.providerName || providerDisplayName(candidate.providerVarName) || candidate.providerVarName || text.unnamed
+          const modelLabel = candidate.displayName || candidate.model || text.missingModelId
           return (
             <button
               type="button"
@@ -977,7 +977,7 @@ function FailoverCandidatePicker({ candidates = [], selectedKeys, selectedFamili
               <span className="model-failover-check">{selected ? <CheckCircle2 size={15} /> : null}</span>
               <span className="model-failover-cascade-model-copy">
                 <strong title={modelLabel}>{modelLabel}</strong>
-                <small>{candidate.protocol}</small>
+                <small>{candidate.model !== modelLabel ? `${candidate.model} · ` : ''}{providerLabel} · {candidate.protocol}</small>
               </span>
               {locked && !selected && <em>{text.failoverLocked || 'Locked'}</em>}
             </button>
@@ -1603,7 +1603,7 @@ export function Models({
       <div className="model-risk-content">
         <Alert
           type={risk.status === 'error' ? 'error' : 'info'}
-          message={risk.status === 'ready' ? text.riskReady : risk.status === 'error' ? text.riskUnavailable : text.riskEmpty}
+          title={risk.status === 'ready' ? text.riskReady : risk.status === 'error' ? text.riskUnavailable : text.riskEmpty}
           description={risk.status === 'error' ? risk.error : text.riskHelp}
         />
         {risk.items.length > 0 && (
@@ -1617,7 +1617,7 @@ export function Models({
           </div>
         )}
         {risk.missingConfirmedWriteRoutes.length > 0 && (
-          <Alert type="warning" message={text.missingGates(risk.missingConfirmedWriteRoutes.join(', '))} />
+          <Alert type="warning" title={text.missingGates(risk.missingConfirmedWriteRoutes.join(', '))} />
         )}
       </div>
     ),
@@ -1671,7 +1671,7 @@ export function Models({
         <Alert
           type="info"
           showIcon
-          message={`正在检测 ${batchProbeProgress?.completed || 0}/${batchProbeProgress?.total || configuredProbeTargetCount} 个服务商`}
+          title={`正在检测 ${batchProbeProgress?.completed || 0}/${batchProbeProgress?.total || configuredProbeTargetCount} 个服务商`}
           description={(
             <div className="model-batch-progress">
               <span>{batchProbeProgress?.current || '正在准备真实对话检测…'}</span>
@@ -1691,12 +1691,12 @@ export function Models({
           showIcon
           closable
           onClose={() => setBatchProbeResult(null)}
-          message={batchProbeResult.message}
+          title={batchProbeResult.message}
           description={batchProbeResult.description}
           className="model-page-alert"
         />
       )}
-      {hasErrors && <Alert type="error" showIcon message="存在不能保存的服务商，请在目录中选择异常项并修复。" className="model-page-alert" />}
+      {hasErrors && <Alert type="error" showIcon title="存在不能保存的服务商，请在目录中选择异常项并修复。" className="model-page-alert" />}
 
       <div className="model-workbench">
         <aside className="model-provider-rail">
@@ -1756,7 +1756,7 @@ export function Models({
           </div>
 
           {providerOrderError && (
-            <Alert type="error" showIcon message={providerOrderError} className="model-provider-order-alert" />
+            <Alert type="error" showIcon title={providerOrderError} className="model-provider-order-alert" />
           )}
 
           <button type="button" className={`model-provider-add${addOpen ? ' is-active' : ''}`} onClick={openAdd}>
@@ -1837,7 +1837,7 @@ export function Models({
           <Alert
             type="info"
             showIcon
-            message="配置会保存在当前 GA Admin 服务中"
+            title="配置会保存在当前 GA Admin 服务中"
             description="默认检测目录中的全部服务商；选择指定范围后，后续一键检测只处理已勾选的服务商。"
           />
           <Radio.Group value={probeScopeMode} onChange={event => { setProbeScopeMode(event.target.value); setProbeScopeError('') }} className="model-probe-scope-mode">
@@ -1865,14 +1865,14 @@ export function Models({
               )
             })}
           </div>
-          {probeScopeError && <Alert type="error" showIcon message={probeScopeError} />}
+          {probeScopeError && <Alert type="error" showIcon title={probeScopeError} />}
         </Modal>
       )}
 
       <Drawer
         title={text.orderTitle}
         placement="right"
-        width={620}
+        size={620}
         open={orderOpen}
         onClose={closeModelOrder}
         closable={!orderSaving}
@@ -1891,10 +1891,10 @@ export function Models({
         <Alert
           type="info"
           showIcon
-          message={text.orderInfo}
+          title={text.orderInfo}
           description={text.orderDescription}
         />
-        {orderError && <Alert type="error" showIcon message={orderError} className="model-order-error" />}
+        {orderError && <Alert type="error" showIcon title={orderError} className="model-order-error" />}
         <div className="model-order-list" role="list" aria-label={text.savedOrder}>
           {orderRows.map((row, index) => (
             <div
@@ -1942,8 +1942,8 @@ export function Models({
               )}
               <div className="model-order-copy">
                 <code>{row.variableName}</code>
-                <strong title={row.model}>{row.model || '未填写模型 ID'}</strong>
-                <span>服务商名称：{row.providerName || providerDisplayName(row.providerVarName) || '未命名'}</span>
+                <strong title={row.model}>{row.displayName || row.model || '未填写模型 ID'}</strong>
+                <span>服务商名称：{row.providerName || providerDisplayName(row.providerVarName) || '未命名'}{row.displayName && row.displayName !== row.model ? ` · ${row.model}` : ''}</span>
               </div>
               <div className="model-order-actions">
                 <Button
@@ -1973,20 +1973,20 @@ export function Models({
       <Drawer
         title={text.previewTitle}
         placement="right"
-        width={680}
+        size={680}
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
         className="model-preview-drawer"
         extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>{text.refreshPreview}</Button>}
       >
-        <Alert type="info" showIcon message={text.previewSecret} />
+        <Alert type="info" showIcon title={text.previewSecret} />
         <pre className="model-preview-pre">{modelPreview || (profiles.length ? text.generatingPreview : text.previewNeedsProvider)}</pre>
       </Drawer>
 
       <Drawer
         title={text.failoverTitle}
         placement="right"
-        width={780}
+        size={780}
         open={failoverOpen}
         onClose={closeFailover}
         closable={!failoverSaving}
@@ -2003,9 +2003,9 @@ export function Models({
         )}
       >
         <div className="model-failover-stack">
-          <Alert type="info" showIcon message={text.failoverInfo} description={text.failoverDescription} />
-          {failoverError && <Alert type="error" showIcon message={failoverError} />}
-          {!failoverError && failoverValidation && <Alert type="warning" showIcon message={failoverValidation} />}
+          <Alert type="info" showIcon title={text.failoverInfo} description={text.failoverDescription} />
+          {failoverError && <Alert type="error" showIcon title={failoverError} />}
+          {!failoverError && failoverValidation && <Alert type="warning" showIcon title={failoverValidation} />}
 
           <section className="model-failover-section">
             <div className="model-failover-section-head">
@@ -2045,7 +2045,7 @@ export function Models({
                 <label className="model-failover-name">
                   <span>{text.varName || 'Variable name'}</span>
                   <Input
-                    addonBefore={FAILOVER_VAR_PREFIX}
+                    prefix={FAILOVER_VAR_PREFIX}
                     value={failoverGroupSuffix(group.var_name)}
                     disabled={failoverSaving}
                     onChange={event => patchFailoverGroup(groupIndex, { var_name: failoverGroupVarName(event.target.value) })}
@@ -2129,13 +2129,13 @@ export function Models({
       <Drawer
         title={text.previewTitle}
         placement="right"
-        width={680}
+        size={680}
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
         className="model-preview-drawer"
         extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>{text.refreshPreview}</Button>}
       >
-        <Alert type="info" showIcon message={text.previewSecret} />
+        <Alert type="info" showIcon title={text.previewSecret} />
         <pre className="model-preview-pre">{modelPreview || (profiles.length ? text.generatingPreview : text.previewNeedsProvider)}</pre>
       </Drawer>
     </section>

@@ -10532,6 +10532,27 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
   max-height: min(78dvh, 620px);
 }
 
+/* The scheduler and task editor render their desktop menu inside a clipped panel. */
+.schedule-service-panel .panel,
+.tasks-workspace .panel:has(.schedule-task-model-cascade) {
+  overflow: visible;
+}
+.scheduler-service-row:has(.scheduler-model-cascade > button[aria-expanded="true"]),
+.schedule-form-editor:has(.schedule-task-model-cascade > button[aria-expanded="true"]) {
+  position: relative;
+  z-index: 80;
+}
+.scheduler-model-cascade,
+.schedule-task-model-cascade {
+  position: relative;
+  z-index: 40;
+  overflow: visible;
+}
+.scheduler-model-cascade .oa-cascade-menu,
+.schedule-task-model-cascade .oa-cascade-menu {
+  z-index: 1200;
+}
+
 @media (max-width:680px) {
   .oa-cascade-menu:not(.oa-cascade-modal) {
     width: min(480px, calc(100vw - 20px));

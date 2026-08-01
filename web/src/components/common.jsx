@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Activity, CircleCheckBig, Eye, PackageCheck, Play, RefreshCw, Square, Terminal, TriangleAlert, Wrench } from 'lucide-react'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
 import { observabilitySummary } from '../lib/observability.js'
+import { firstRuntimeModel, runtimeModelDescription } from '../lib/modelDefaults.js'
 
 const serviceCommand = (svc) => Array.isArray(svc?.command) ? svc.command.join(' ') : (svc?.command || '-')
 const servicePid = (svc) => svc?.pid ?? '-'
@@ -14,11 +15,13 @@ function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   const logPath = serviceLogPath(svc)
   const text = t?.service || {}
   const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
-  const modelMatch = (svc?.model_no === null || svc?.model_no === undefined) ? null : llms.find(m => m.index === svc.model_no)
-  const defaultLabel = (t && t.runModelDefault) || '默认（启动时选择）'
+  const firstModel = firstRuntimeModel(llms)
+  const baseDefaultLabel = (t && t.runModelDefault) || '默认（启动时选择）'
+  const defaultLabel = firstModel ? `${baseDefaultLabel}: ${runtimeModelDescription(firstModel)}` : baseDefaultLabel
+  const modelMatch = (svc?.model_no === null || svc?.model_no === undefined) ? null : llms.find(m => Number(m.index) === Number(svc.model_no))
   const modelText = modelMatch ? `${modelProvider(modelMatch)} · ${runtimeModelLabel(modelMatch)}` : (isReflect ? defaultLabel : null)
   const editable = isReflect && !svc?.running && typeof onModel === 'function'
-  const modelGroups = buildModelProviderGroups(llms, { defaultLabel })
+  const modelGroups = buildModelProviderGroups(llms, { defaultLabel, defaultModel: firstModel })
   const modelValue = svc.model_no ?? ''
   const selectedProvider = findModelProviderValue(modelGroups, modelValue)
   return <div className={compact ? 'service-meta service-meta-compact' : 'service-meta'}>
