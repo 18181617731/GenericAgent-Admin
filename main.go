@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"embed"
 	"flag"
 	"fmt"
@@ -55,9 +53,13 @@ func main() {
 	}
 	srv := api.New(cfgStore, svc, models, static)
 	srv.StartAutomaticChatTitleBackfill()
+	auth, err := newAuthManager(cwd, os.Getenv("GA_ADMIN_AUTH_USER"), os.Getenv("GA_ADMIN_AUTH_PASSWORD"))
+	if err != nil {
+		log.Fatalf("initialize admin authentication: %v", err)
+	}
 	addr := fmt.Sprintf("%s:%d", cfgStore.Cfg.Host, cfgStore.Cfg.Port)
 	url := "http://" + addr
-	server := newHTTPServer(addr, srv.Routes())
+	server := newHTTPServer(addr, auth.middleware(srv.Routes()))
 	go srv.StartAutostartServices()
 	go func() {
 		log.Printf("GenericAgent Admin Go listening on %s", url)
@@ -108,29 +110,10 @@ const (
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
-		Handler:           requireExternalAuth(handler, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv)),
+		Handler:           handler,
 		ReadHeaderTimeout: adminReadHeaderTimeout,
 		IdleTimeout:       adminIdleTimeout,
 	}
-}
-
-func requireExternalAuth(next http.Handler, expectedUser, expectedPassword string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isIPv4LoopbackRemote(r.RemoteAddr) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		user, password, ok := r.BasicAuth()
-		configured := expectedUser != "" && expectedPassword != ""
-		if !configured || !ok || !secureEqual(user, expectedUser) || !secureEqual(password, expectedPassword) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
-			w.Header().Set("Cache-Control", "no-store")
-			http.Error(w, "authentication required", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func isIPv4LoopbackRemote(remoteAddr string) bool {
@@ -140,12 +123,6 @@ func isIPv4LoopbackRemote(remoteAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.To4() != nil && ip.IsLoopback()
-}
-
-func secureEqual(got, expected string) bool {
-	gotHash := sha256.Sum256([]byte(got))
-	expectedHash := sha256.Sum256([]byte(expected))
-	return subtle.ConstantTimeCompare(gotHash[:], expectedHash[:]) == 1
 }
 
 func parseLaunchOptions() launchOptions {
