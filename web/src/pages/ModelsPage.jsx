@@ -37,6 +37,7 @@ import {
   addModelConfigs,
   isModelConfigEnabled,
   modelAvailabilitySummary,
+  modelConfigDisplayName,
   modelProtocolFields,
   moveOrderedItem,
   orderedFailoverRows,
@@ -140,6 +141,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
   const enabled = isModelConfigEnabled(config)
+  const displayName = modelConfigDisplayName(config)
   const availability = config.availability || 'unknown'
   const availabilityTitle = [config.availability_detail, config.availability_latency_ms ? `${config.availability_latency_ms} ms` : ''].filter(Boolean).join(' · ')
   const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
@@ -154,9 +156,9 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
             {String(index + 1).padStart(2, '0')}
           </span>
           <div className="model-config-copy">
-            {config.name && (
-              <span className="model-config-display-name" title={config.name}>
-                {config.name}
+            {displayName && (
+              <span className="model-config-display-name" title={displayName}>
+                {displayName}
               </span>
             )}
             <span className="model-config-id" title={config.model || ''}>
@@ -196,7 +198,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
           <div className="model-row-advanced-grid">
             <label className="model-field">
               <span className="model-field-label">{text.displayName || '\u663e\u793a\u540d\u79f0'}</span>
-              <Input value={config.name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder || '\u4f8b\u5982\uff1a\u4e3b\u6a21\u578b'} />
+              <Input value={displayName} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder || '\u4f8b\u5982\uff1a\u4e3b\u6a21\u578b'} />
             </label>
             <label className="model-field">
               <span className="model-field-label">{text.stream}</span>

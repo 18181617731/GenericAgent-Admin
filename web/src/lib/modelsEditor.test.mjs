@@ -9,6 +9,7 @@ import {
   profileModelConfigs,
   isModelConfigEnabled,
   modelAvailabilitySummary,
+  modelConfigDisplayName,
   reconcileModelAvailability,
   reconcileModelProbeResults,
   orderedModelRows,
@@ -212,6 +213,16 @@ test('orderedModelRows exposes model display names for failover candidates', () 
   assert.equal(row.displayName, 'Paid primary')
   assert.equal(row.model, '12')
   assert.equal(row.providerName, 'Paid provider')
+})
+
+test('modelConfigDisplayName accepts API display_name aliases before legacy name', () => {
+  assert.equal(modelConfigDisplayName({ display_name: 'API display', displayName: 'camel display', name: 'legacy name' }), 'API display')
+  assert.equal(modelConfigDisplayName({ displayName: 'camel display', name: 'legacy name' }), 'camel display')
+  assert.equal(modelConfigDisplayName({ name: 'legacy name' }), 'legacy name')
+  assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: 'native_oai_config27_2' }), '')
+  assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: '12' }), '')
+  assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: 'gpt-model' }), '')
+  assert.equal(modelConfigDisplayName({ model: 'model-id' }), '')
 })
 
 test('orderedModelRows keeps legacy provider and model order without metadata', () => {

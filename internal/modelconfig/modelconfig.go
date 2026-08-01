@@ -793,12 +793,18 @@ if isinstance(groups, dict):
         configs=[]
         seen_models=set()
         declaration_order_by_model={}
+        child_configs_by_model={}
         for child_var in child_vars:
             if not isinstance(child_var, str) or child_var not in profiles_by_var:
                 continue
-            child_model=str(profiles_by_var[child_var].get('model', '') or '').strip()
+            child_profile=profiles_by_var[child_var]
+            child_model=str(child_profile.get('model', '') or '').strip()
             if child_model and child_model not in declaration_order_by_model:
                 declaration_order_by_model[child_model]=declaration_order_by_var[child_var]
+            for child_config in model_configs_of(child_profile):
+                child_config_model=str(child_config.get('model', '') or '').strip()
+                if child_config_model and child_config_model not in child_configs_by_model:
+                    child_configs_by_model[child_config_model]=child_config
         managed_configs=meta.get('model_configs', []) if meta else []
         if isinstance(managed_configs, list) and managed_configs:
             for config in managed_configs:
@@ -807,6 +813,11 @@ if isinstance(groups, dict):
                 config=dict(config)
                 model=str(config.get('model', '')).strip()
                 if model and model not in seen_models:
+                    child_config=child_configs_by_model.get(model)
+                    if child_config and not str(config.get('name', '') or '').strip():
+                        child_name=str(child_config.get('name', '') or '').strip()
+                        if child_name:
+                            config['name']=child_name
                     if model in declaration_order_by_model:
                         config['sort_order']=declaration_order_by_model[model]
                     seen_models.add(model)

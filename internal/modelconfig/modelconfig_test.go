@@ -468,6 +468,55 @@ func TestExportImportPreservesPerModelDisplayNames(t *testing.T) {
 	}
 }
 
+func TestImportMyKeyRecoversDisplayNamesFromLegacyProviderMetadata(t *testing.T) {
+	root := t.TempDir()
+	mykey := `native_oai_config_legacy = {
+    "apikey": "sk-legacy-secret",
+    "apibase": "https://api.legacy.example/v1",
+    "model": "legacy-alpha",
+    "name": "Legacy Alpha",
+}
+
+native_oai_config_legacy_2 = {
+    "apikey": "sk-legacy-secret",
+    "apibase": "https://api.legacy.example/v1",
+    "model": "legacy-beta",
+    "name": "Legacy Beta",
+}
+
+_ga_admin_provider_groups = {
+    "native_oai_config_legacy": {
+        "children": ["native_oai_config_legacy", "native_oai_config_legacy_2"],
+        "model_configs": [
+            {"model": "legacy-alpha"},
+            {"model": "legacy-beta"},
+        ],
+        "type": "native_oai",
+        "name": "Legacy Provider",
+        "apibase": "https://api.legacy.example/v1",
+        "apikey": "sk-legacy-secret",
+    },
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(mykey), 0600); err != nil {
+		t.Fatalf("write mykey.py: %v", err)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || len(draft.Profiles[0].ModelConfigs) != 2 {
+		t.Fatalf("imported legacy profile = %#v", draft.Profiles)
+	}
+	if got := draft.Profiles[0].ModelConfigs[0].Name; got != "Legacy Alpha" {
+		t.Fatalf("first recovered display name = %q, want Legacy Alpha", got)
+	}
+	if got := draft.Profiles[0].ModelConfigs[1].Name; got != "Legacy Beta" {
+		t.Fatalf("second recovered display name = %q, want Legacy Beta", got)
+	}
+}
+
 func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"acme-chat","reasoning_effort":"low","read_timeout":120},{"model":"acme-reasoning","reasoning_effort":"high","read_timeout":600}]}]}`)

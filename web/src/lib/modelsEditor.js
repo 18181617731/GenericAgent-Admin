@@ -90,6 +90,15 @@ export const profileModelConfigs = (profile = {}) => {
   return models.map(model => ({ model, ...settings }))
 }
 
+const internalModelNameRe = /^(?:(?:native_)?(?:oai|claude)|api|config|cookie)_config[A-Za-z0-9_]*$/i
+
+export const modelConfigDisplayName = config => {
+  const model = text(config?.model)
+  const displayName = text(config?.display_name) || text(config?.displayName) || text(config?.name)
+  if (!displayName || displayName === model || /^\d+$/.test(displayName) || internalModelNameRe.test(displayName)) return ''
+  return displayName
+}
+
 export const isModelConfigEnabled = config => config?.enabled !== false
 
 export const modelAvailabilitySummary = (profile = {}) => {
@@ -210,7 +219,7 @@ export const orderedModelRows = (profiles = []) => {
         profileIndex,
         configIndex,
         model: text(config.model),
-        displayName: text(config.name) || text(config.model),
+        displayName: modelConfigDisplayName(config) || text(config.model),
         providerName: text(profile.name),
         providerVarName: text(profile.var_name),
         variableName: `${text(profile.var_name)}${configIndex ? `_${configIndex + 1}` : ''}`,
@@ -236,7 +245,7 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
         profileIndex,
         configIndex,
         model: text(config.model),
-        displayName: text(config.name) || text(config.model),
+        displayName: modelConfigDisplayName(config) || text(config.model),
         providerName: text(profile.name),
         providerVarName: text(profile.var_name),
         variableName: `${text(profile.var_name)}${configIndex ? `_${configIndex + 1}` : ''}`,
