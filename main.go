@@ -51,9 +51,13 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
+	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv))
+	if err != nil {
+		log.Fatalf("initialize admin authentication: %v", err)
+	}
 	addrs := adminListenAddresses(cfgStore.Cfg.Host, cfgStore.Cfg.Port, discoverTailscaleIPv4())
 	url := "http://" + addrs[0]
-	server := newHTTPServer(addrs[0], srv.Routes())
+	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
 	activeAddrs, err := startHTTPListeners(server, addrs)
 	if err != nil {
 		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)
