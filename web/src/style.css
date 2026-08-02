@@ -1218,6 +1218,12 @@ html[data-theme="light"] .oa-chat {
 .oa-title > span:not(.oa-workspace-badge):not(.oa-project-badge){display:none}
 .oa-title .oa-workspace-badge{display:inline-flex;align-items:center;max-width:min(520px,calc(100vw - 360px));margin-top:4px;padding:2px 8px;border-radius:999px;background:var(--n-eef7ff);color:var(--i-0969da);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .oa-title .oa-project-badge{display:inline-flex;align-items:center;max-width:min(420px,calc(100vw - 360px));margin-top:4px;padding:2px 8px;border-radius:999px;background:var(--n-f1ebff);color:var(--i-6f42c1);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+@media (min-width:721px){
+  .oa-title{display:flex;align-items:baseline;gap:8px;min-width:0;overflow:hidden}
+  .oa-title b{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .oa-title > span:not(.oa-project-badge):not(.oa-workspace-badge){flex:1 1 auto;min-width:0;margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .oa-title .oa-project-badge,.oa-title .oa-workspace-badge{flex:0 1 auto;margin-top:0}
+}
 .oa-model { font-size:18px; font-weight:600; letter-spacing:0; border-radius:10px; padding:6px 10px; }
 .oa-model:hover { background:var(--n-f3f3f3); }
 .oa-thread { background:var(--surface-strong); padding:0 0 16px; overflow-y:auto; min-height:0; scroll-behavior:auto; scrollbar-gutter:stable; }
@@ -13749,6 +13755,12 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
   background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
   box-shadow: var(--shadow);
 }
+.auth-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -12px -12px 18px 0;
+}
+.auth-toolbar .theme-picker { min-width: 0; }
 .auth-kicker {
   margin: 0 0 10px;
   color: var(--accent-text);

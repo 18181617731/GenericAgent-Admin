@@ -45,34 +45,49 @@ func TestAuthManagerRequiresEnvironmentPair(t *testing.T) {
 	}
 }
 
-func TestAuthMiddlewareDefaultCredentialAndGate(t *testing.T) {
+func TestAuthMiddlewareRequiresFirstRunSetup(t *testing.T) {
 	manager, err := newAuthManager(t.TempDir(), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if manager.initialized || manager.authenticatePassword("admin", "admin") {
+		t.Fatal("fresh app root must not expose a default credential")
+	}
+
 	reached := false
 	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusUnauthorized {
-		t.Fatalf("remote request without credentials = %d, want 401", got.Code)
+	for _, tc := range []struct {
+		name     string
+		remote   string
+		user     string
+		password string
+	}{
+		{name: "remote anonymous", remote: "192.168.1.2:5000"},
+		{name: "remote guessed default", remote: "192.168.1.2:5000", user: "admin", password: "admin"},
+		{name: "loopback anonymous", remote: "127.0.0.1:5000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := authRequest(handler, http.MethodGet, "/api/config", tc.remote, tc.user, tc.password, nil)
+			if got.Code != http.StatusPreconditionRequired {
+				t.Fatalf("request before setup = %d, want 428", got.Code)
+			}
+		})
 	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "wrong", nil); got.Code != http.StatusUnauthorized {
-		t.Fatalf("remote request with wrong credentials = %d, want 401", got.Code)
+	if reached {
+		t.Fatal("protected API reached the application before setup")
 	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "admin", nil); got.Code != http.StatusPreconditionRequired {
-		t.Fatalf("remote request before password change = %d, want 428", got.Code)
+
+	if got := authRequest(handler, http.MethodGet, "/", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
+		t.Fatalf("anonymous first-run SPA request = %d, reached %v", got.Code, reached)
 	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusPreconditionRequired {
-		t.Fatalf("loopback API before password change = %d, want 428", got.Code)
-	}
-	if got := authRequest(handler, http.MethodGet, "/", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
-		t.Fatalf("loopback SPA request = %d, reached %v", got.Code, reached)
-	}
-	status := authRequest(handler, http.MethodGet, "/api/auth/status", "127.0.0.1:5000", "", "", nil)
-	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":true`)) {
+	status := authRequest(handler, http.MethodGet, "/api/auth/status", "192.168.1.2:5000", "", "", nil)
+	if status.Code != http.StatusOK ||
+		!bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":true`)) ||
+		!bytes.Contains(status.Body.Bytes(), []byte(`"initialized":false`)) {
 		t.Fatalf("status = %d %s", status.Code, status.Body.String())
 	}
 }

@@ -1085,7 +1085,7 @@ describe('usage overview page', () => {
   test('renders aggregate and breakdown data', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(payload))
     render(<UsagePage lang="en" />)
-    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByTitle('1,545')).length).toBeGreaterThan(0)
     expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Alpha')).toBeNull()
     expect(screen.queryByText('Session details')).toBeNull()
@@ -1109,7 +1109,7 @@ describe('usage overview page', () => {
     render(<UsagePage lang="en" />)
     expect((await screen.findByRole('alert')).textContent).toMatch(/network offline/i)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByTitle('1,545')).length).toBeGreaterThan(0)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 })

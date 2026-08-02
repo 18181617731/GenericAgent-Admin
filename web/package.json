@@ -6,7 +6,7 @@
     "test": "npm run test:lib && npm run test:ui",
     "lint": "eslint .",
     "test:lib": "node scripts/run-lib-tests.mjs",
-    "test:ui": "vitest run src/*.test.jsx --environment jsdom",
+    "test:ui": "vitest run .test.jsx --environment jsdom",
     "verify": "npm run lint && npm run test:lib && npm run build"
   },
   "dependencies": {

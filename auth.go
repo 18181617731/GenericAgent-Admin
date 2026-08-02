@@ -19,7 +19,6 @@ import (
 
 const (
 	defaultAuthUser      = "admin"
-	defaultAuthPassword  = "admin"
 	authStateFilename    = "auth.local.json"
 	authHashIterations   = 210000
 	authSaltBytes        = 16
@@ -35,15 +34,16 @@ type authDiskState struct {
 }
 
 type authManager struct {
-	mu         sync.RWMutex
-	path       string
-	username   string
-	password   string
-	salt       []byte
-	hash       []byte
-	iterations int
-	mustChange bool
-	external   bool
+	mu          sync.RWMutex
+	path        string
+	username    string
+	password    string
+	salt        []byte
+	hash        []byte
+	iterations  int
+	mustChange  bool
+	initialized bool
+	external    bool
 }
 
 func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) {
@@ -54,6 +54,7 @@ func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) 
 	if envUser != "" {
 		manager.username = envUser
 		manager.password = envPassword
+		manager.initialized = true
 		manager.external = true
 		return manager, nil
 	}
@@ -73,19 +74,40 @@ func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) 
 		manager.salt = salt
 		manager.hash = hash
 		manager.iterations = state.Iterations
+		manager.initialized = true
 		return manager, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read %s: %w", authStateFilename, err)
 	}
 	manager.username = defaultAuthUser
-	manager.password = defaultAuthPassword
 	manager.mustChange = true
 	return manager, nil
 }
 
 func (a *authManager) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isStatus := r.URL.Path == "/api/auth/status"
+		isPasswordChange := r.URL.Path == "/api/auth/change-password"
+		isAPI := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/")
+
+		if a.setupRequired() {
+			switch {
+			case isStatus:
+				a.handleStatus(w, r)
+				return
+			case isPasswordChange:
+				a.handleChangePassword(w, r)
+				return
+			case isAPI:
+				writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true, "initialized": false})
+				return
+			default:
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		if !isIPv4LoopbackRemote(r.RemoteAddr) && !a.authenticateRequest(r) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
 			w.Header().Set("Cache-Control", "no-store")
@@ -93,16 +115,16 @@ func (a *authManager) middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if r.URL.Path == "/api/auth/status" {
+		if isStatus {
 			a.handleStatus(w, r)
 			return
 		}
-		if r.URL.Path == "/api/auth/change-password" {
+		if isPasswordChange {
 			a.handleChangePassword(w, r)
 			return
 		}
-		if a.passwordChangeRequired() && strings.HasPrefix(r.URL.Path, "/api/") {
-			writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true})
+		if a.passwordChangeRequired() && isAPI {
+			writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true, "initialized": true})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -116,7 +138,7 @@ func (a *authManager) authenticateRequest(r *http.Request) bool {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if !secureEqual(user, a.username) {
+	if !a.initialized || !secureEqual(user, a.username) {
 		return false
 	}
 	if a.password != "" {
@@ -124,6 +146,12 @@ func (a *authManager) authenticateRequest(r *http.Request) bool {
 	}
 	candidate := derivePasswordHash([]byte(password), a.salt, a.iterations)
 	return subtle.ConstantTimeCompare(candidate, a.hash) == 1
+}
+
+func (a *authManager) setupRequired() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return !a.initialized
 }
 
 func (a *authManager) passwordChangeRequired() bool {
@@ -140,7 +168,7 @@ func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	writeAuthJSON(w, http.StatusOK, map[string]any{"username": a.username, "mustChangePassword": a.mustChange, "managedByEnvironment": a.external})
+	writeAuthJSON(w, http.StatusOK, map[string]any{"username": a.username, "mustChangePassword": a.mustChange, "initialized": a.initialized, "managedByEnvironment": a.external})
 }
 
 type changePasswordRequest struct {
@@ -170,7 +198,7 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 		writeAuthJSON(w, http.StatusBadRequest, map[string]string{"error": "password_confirmation_mismatch"})
 		return
 	}
-	if len(req.NewPassword) < minimumAdminPassword || len(req.NewPassword) > 256 || secureEqual(req.NewPassword, defaultAuthPassword) {
+	if len(req.NewPassword) < minimumAdminPassword || len(req.NewPassword) > 256 {
 		writeAuthJSON(w, http.StatusBadRequest, map[string]any{"error": "weak_password", "minimumLength": minimumAdminPassword})
 		return
 	}
@@ -181,7 +209,7 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "managed_by_environment"})
 		return
 	}
-	if !a.passwordMatchesLocked(req.CurrentPassword) {
+	if a.initialized && !a.passwordMatchesLocked(req.CurrentPassword) {
 		writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "current_password_incorrect"})
 		return
 	}
@@ -202,7 +230,8 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 	a.hash = hash
 	a.iterations = authHashIterations
 	a.mustChange = false
-	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": false})
+	a.initialized = true
+	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": false, "initialized": true})
 }
 
 func (a *authManager) passwordMatchesLocked(password string) bool {

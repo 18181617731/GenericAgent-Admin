@@ -39,7 +39,7 @@ function LocalizedRoot() {
     },
   }}>
     <ErrorBoundary>
-      <AuthGate>
+      <AuthGate lang={lang} theme={colorMode} onThemeChange={setColorMode}>
         <Suspense fallback={<RouteFallback label={loading} />}>
           <Root />
         </Suspense>

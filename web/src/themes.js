@@ -48,7 +48,7 @@ export const THEMES = Object.freeze([
   },
 ])
 
-export const DEFAULT_THEME_ID = 'light'
+export const DEFAULT_THEME_ID = 'warm'
 
 const themeById = new Map(THEMES.map(theme => [theme.id, theme]))
 
@@ -79,7 +79,5 @@ export const applyThemeToDocument = (value, documentRef = globalThis.document) =
 export const getInitialTheme = () => {
   if (typeof window === 'undefined') return DEFAULT_THEME_ID
   const stored = window.localStorage.getItem('ga-admin-theme')
-  if (isThemeId(stored)) return stored
-  const preferredScheme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  return THEMES.find(theme => theme.colorScheme === preferredScheme)?.id || DEFAULT_THEME_ID
+  return isThemeId(stored) ? stored : DEFAULT_THEME_ID
 }
