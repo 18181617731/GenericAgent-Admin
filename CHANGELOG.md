@@ -2,6 +2,15 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.44 - 2026-08-02
+
+### User-facing changes
+- Automatically repairs a stale Windows `GenericAgent Admin` startup entry when an older packaged executable was removed, so Windows no longer tries to launch a missing target after an update.
+- Keeps the current executable and application root in the migrated startup command while preserving the no-browser startup behavior.
+
+### Validation
+- Passed Windows autostart, GA, and version tests, frontend lint/library/UI tests, frontend production build, Windows packaging, and live startup-entry/browser checks.
+
 ## v1.0.42 - 2026-08-02
 
 ### User-facing changes

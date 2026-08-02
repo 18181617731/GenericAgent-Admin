@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"genericagent-admin-go/internal/api"
+	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
@@ -39,6 +40,9 @@ func main() {
 	cfgStore := config.NewStore(cwd)
 	if err := cfgStore.Load(); err != nil {
 		log.Printf("load config: %v", err)
+	}
+	if _, err := autostart.MigrateCurrent(cwd); err != nil {
+		log.Printf("migrate autostart entry: %v", err)
 	}
 	if launch.PortSet {
 		cfgStore.Cfg.Port = launch.Port

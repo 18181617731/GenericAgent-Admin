@@ -23,3 +23,17 @@ func TestRegistryValueEscapesTrailingBackslash(t *testing.T) {
 		t.Fatalf("registryValue() = %q, want %q", got, want)
 	}
 }
+
+func TestRegistryExecutableParsesQuotedCommand(t *testing.T) {
+	value := `"C:\Program Files\GenericAgent Admin\ga-admin.exe" --no-browser --app-root "D:\GenericAgent Workspace"`
+	if got := registryExecutable(value); got != `C:\Program Files\GenericAgent Admin\ga-admin.exe` {
+		t.Fatalf("registryExecutable() = %q", got)
+	}
+}
+
+func TestRegistryExecutableParsesUnquotedCommand(t *testing.T) {
+	value := `G:\ga-admin.exe --no-browser`
+	if got := registryExecutable(value); got != `G:\ga-admin.exe` {
+		t.Fatalf("registryExecutable() = %q", got)
+	}
+}

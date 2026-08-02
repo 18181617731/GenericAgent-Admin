@@ -42,6 +42,14 @@ func DisableCurrent(appRoot string) (Status, error) {
 	return Disable(target, appRoot)
 }
 
+func MigrateCurrent(appRoot string) (Status, error) {
+	target, err := os.Executable()
+	if err != nil {
+		return Status{}, err
+	}
+	return Migrate(target, appRoot)
+}
+
 // writeFileAtomic writes data to path atomically using a temp file + rename
 func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	dir := filepath.Dir(path)

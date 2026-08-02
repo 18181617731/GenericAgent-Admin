@@ -4,6 +4,8 @@ package autostart
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
@@ -71,6 +73,46 @@ func StatusFor(target, appRoot string) Status {
 	// Exact match against the full registered command (case-insensitive)
 	s.Enabled = strings.EqualFold(val, registryValue(target, appRoot))
 	return s
+}
+
+func Migrate(target, appRoot string) (Status, error) {
+	status := StatusFor(target, appRoot)
+	if target == "" || status.Detail == "" || strings.EqualFold(status.Detail, registryValue(target, appRoot)) {
+		return status, nil
+	}
+	registeredTarget := registryExecutable(status.Detail)
+	if registeredTarget == "" {
+		return status, nil
+	}
+	if !strings.EqualFold(filepath.Base(registeredTarget), filepath.Base(target)) {
+		return status, nil
+	}
+	if !strings.EqualFold(registeredTarget, target) {
+		if _, err := os.Stat(registeredTarget); err == nil {
+			return status, nil
+		} else if !os.IsNotExist(err) {
+			return status, nil
+		}
+	}
+	return Enable(target, appRoot)
+}
+
+func registryExecutable(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "\"") {
+		if end := strings.Index(value[1:], "\""); end >= 0 {
+			return value[1 : end+1]
+		}
+		return ""
+	}
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], "\"")
 }
 
 func Enable(target, appRoot string) (Status, error) {
