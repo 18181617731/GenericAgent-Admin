@@ -181,6 +181,21 @@ test('theme-specific metadata and settings actions keep readable foregrounds', (
   assert.match(darkSettingsPrimary, /color\s*:\s*#062e25/i)
 })
 
+test('mobile turn headers hide token metadata while keeping the current status readable', () => {
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*900px\)[\s\S]*?\.oa-turn-toggle \.oa-usage-inline,\s*\.oa-turn-current-head \.oa-usage-inline\s*\{\s*display\s*:\s*none\s*;\s*\}/i,
+  )
+  assert.match(
+    css,
+    /\.oa-turn-current-head \.oa-usage-inline \+ em\s*\{\s*margin-left\s*:\s*auto\s*;\s*\}/i,
+  )
+  const inlineBaseIndex = css.indexOf('.oa-usage.oa-usage-inline {')
+  const mobileHideIndex = css.indexOf('.oa-turn-toggle .oa-usage-inline,\n  .oa-turn-current-head .oa-usage-inline { display:none; }')
+  assert.ok(inlineBaseIndex >= 0, 'missing inline usage base rule')
+  assert.ok(mobileHideIndex > inlineBaseIndex, 'mobile hide rule must follow inline usage base styles')
+})
+
 test('warm chat metadata clears AA contrast on translucent panels', () => {
   const declaration = (body, name) => {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

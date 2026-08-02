@@ -5071,6 +5071,11 @@ html[data-color-scheme="dark"] .oa-tools-act:hover:not(:disabled) { background: 
 .oa-usage.oa-usage-total svg { width:9px; height:9px; opacity:.5; }
 .oa-usage.oa-usage-total b { color:inherit; font-weight:560; }
 .oa-usage .oa-usage-label { padding-right:1px; font-size:9.5px; font-weight:520; }
+@media (max-width: 900px) {
+  .oa-turn-toggle .oa-usage-inline,
+  .oa-turn-current-head .oa-usage-inline { display:none; }
+  .oa-turn-current-head .oa-usage-inline + em { margin-left:auto; }
+}
 /* 命令抽屉 - / 前缀触发（正常文档流，在 composer 上方） */
 .oa-cmd-drawer {
   max-height: 244px;
