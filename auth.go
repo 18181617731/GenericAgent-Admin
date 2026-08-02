@@ -22,7 +22,7 @@ const (
 	authStateFilename    = "auth.local.json"
 	authHashIterations   = 210000
 	authSaltBytes        = 16
-	minimumAdminPassword = 12
+	minimumAdminPassword = 8
 	maximumAuthBodyBytes = 64 << 10
 )
 

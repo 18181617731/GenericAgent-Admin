@@ -99,7 +99,13 @@ func TestChangePasswordPersistsAndSwitchesCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-	newPassword := "correct horse battery staple"
+	weakPassword := "Abc1234"
+	weakBody := changePasswordRequest{CurrentPassword: "admin", NewPassword: weakPassword, ConfirmPassword: weakPassword}
+	weak := authRequest(handler, http.MethodPost, "/api/auth/change-password", "127.0.0.1:5000", "", "", weakBody)
+	if weak.Code != http.StatusBadRequest || !bytes.Contains(weak.Body.Bytes(), []byte(`"minimumLength":8`)) {
+		t.Fatalf("seven-character password = %d %s, want 400 with minimumLength 8", weak.Code, weak.Body.String())
+	}
+	newPassword := "Abc12345"
 	body := changePasswordRequest{CurrentPassword: "admin", NewPassword: newPassword, ConfirmPassword: newPassword}
 	changed := authRequest(handler, http.MethodPost, "/api/auth/change-password", "127.0.0.1:5000", "", "", body)
 	if changed.Code != http.StatusOK {

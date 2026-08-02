@@ -32,7 +32,7 @@ describe('AuthGate', () => {
     render(<AuthGate theme="warm"><div>Admin application</div></AuthGate>)
     expect(await screen.findByRole('heading', { name: 'Set the administrator password' })).toBeTruthy()
     expect(screen.queryByLabelText('Current password')).toBeNull()
-    expect(screen.getByLabelText('New password').minLength).toBe(12)
+    expect(screen.getByLabelText('New password').minLength).toBe(8)
 
     await user.type(screen.getByLabelText('New password'), 'A-first-password-1')
     await user.type(screen.getByLabelText('Confirm new password'), 'A-first-password-1')

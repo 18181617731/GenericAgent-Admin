@@ -25,7 +25,7 @@ const copy = {
     errors: {
       current_password_incorrect: '当前密码不正确。',
       password_confirmation_mismatch: '两次输入的密码不一致。',
-      weak_password: '请使用至少 12 个字符。',
+      weak_password: '请使用至少 8 个字符。',
       managed_by_environment: '凭据由环境变量管理。',
       invalid_request: '请检查密码字段后重试。',
       setup_required: '请先设置管理员密码。',
@@ -54,7 +54,7 @@ const copy = {
     errors: {
       current_password_incorrect: 'Current password is incorrect.',
       password_confirmation_mismatch: 'The passwords do not match.',
-      weak_password: 'Use at least 12 characters.',
+      weak_password: 'Use at least 8 characters.',
       managed_by_environment: 'Credentials are managed by environment variables.',
       invalid_request: 'Check the password fields and try again.',
       setup_required: 'Set the administrator password first.',
@@ -142,8 +142,8 @@ export function AuthGate({ children, lang = 'en', theme = 'warm', onThemeChange 
         <form onSubmit={submit}>
           <label>{text.administrator}<input value={state.username} readOnly autoComplete="username" /></label>
           {!firstSetup && <label>{text.currentPassword}<input type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" required autoFocus /></label>}
-          <label>{text.newPassword}<input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" minLength={12} required autoFocus={firstSetup} /></label>
-          <label>{text.confirmPassword}<input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={12} required /></label>
+          <label>{text.newPassword}<input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} required autoFocus={firstSetup} /></label>
+          <label>{text.confirmPassword}<input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>
           {state.error && <p className="auth-error" role="alert">{state.error}</p>}
           <button type="submit" disabled={saving}>{saving ? text.saving : (firstSetup ? text.submitSetup : text.submitChange)}</button>
         </form>
