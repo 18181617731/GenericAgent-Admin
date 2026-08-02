@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const css = readFileSync(resolve(here, '../style.css'), 'utf8')
+const css = readFileSync(resolve(here, '../style.css'), 'utf8').replace(/\r\n?/g, '\n')
 
 const ruleBodies = (selector) => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
