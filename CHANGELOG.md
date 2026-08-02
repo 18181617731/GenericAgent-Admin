@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.41 - 2026-08-02
+
+### User-facing changes
+- Configured reflection and autonomous services now start before the Admin HTTP listener is exposed, so the first page load reflects their actual running state when “Start with GA Admin” is enabled.
+
+### Validation
+- Passed targeted service autostart tests, frontend lint/library/UI tests, Windows `build.bat`, and live browser restart checks.
+
 ## v1.0.40 - 2026-08-02
 
 ### User-facing changes

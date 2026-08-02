@@ -58,11 +58,11 @@ func main() {
 	addrs := adminListenAddresses(cfgStore.Cfg.Host, cfgStore.Cfg.Port, discoverTailscaleIPv4())
 	url := "http://" + addrs[0]
 	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
+	srv.StartAutostartServices()
 	activeAddrs, err := startHTTPListeners(server, addrs)
 	if err != nil {
 		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)
 	}
-	go srv.StartAutostartServices()
 	logListenURLs(activeAddrs)
 	if launch.Headless {
 		log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
