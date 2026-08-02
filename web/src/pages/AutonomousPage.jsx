@@ -14,6 +14,10 @@ const approvalDetails = (item, copy) => [
   [copy.risk, item.risk],
   [copy.evidence, item.evidence],
   [copy.nextStep, item.next_step],
+  [copy.reviewModel, item.review_model ? `${item.review_provider ? `${item.review_provider} / ` : ''}${item.review_model}${item.review_model_no !== undefined && item.review_model_no !== null ? ` (#${item.review_model_no})` : ''}` : ''],
+  [copy.reviewDecision, item.review_decision],
+  [copy.reviewConfidence, item.review_confidence],
+  [copy.reviewReason, item.review_reason],
 ].filter(([, value]) => value)
 
 const executionPresentation = (item, copy) => {
@@ -49,6 +53,7 @@ function ApprovalCard({ item, lang, busy, reply, onReply, onApprove, onReject, o
       {item.execution_error && <p className="autonomous-execution-error">{item.execution_error}</p>}
       {item.execution_report && <button type="button" className="autonomous-execution-link" onClick={() => onOpenReport?.(item.execution_report)}>{copy.openExecutionReport}：{item.execution_report.name || item.execution_report.path}</button>}
     </div>}
+    {item.review_reports?.length > 0 && <div className="autonomous-review-reports"><span>{copy.reviewReports}</span><div>{item.review_reports.map(report => <button type="button" key={report.path} onClick={() => onOpenReport?.(report)}>{copy.openReviewReport}：{report.name || report.path}</button>)}</div></div>}
     {pending && <div className="autonomous-approval-reply"><label><span>{copy.reply}</span><textarea aria-label={copy.reply} maxLength={1000} rows={3} value={reply} onChange={event => onReply(event.target.value)}/></label><small>{copy.replyHelp}</small></div>}
     {pending && <footer>
       <button type="button" className="primary" disabled={busy} onClick={() => onApprove(item, reply)}><Check size={15}/>{copy.approve}</button>

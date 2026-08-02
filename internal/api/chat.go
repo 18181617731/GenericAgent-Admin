@@ -250,6 +250,20 @@ func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interf
 		return chatMessage{}, err
 	}
 	waited := false
+	timedOut := make(chan struct{}, 1)
+	timeout := chatWorkerTimeout(req)
+	timer := time.AfterFunc(timeout, func() {
+		select {
+		case timedOut <- struct{}{}:
+		default:
+		}
+		_ = worker.Stdin.Close()
+		_ = worker.Stdout.Close()
+		if worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+		}
+	})
+	defer timer.Stop()
 	defer func() {
 		_ = worker.Stdin.Close()
 		if !waited && worker.Cmd != nil && worker.Cmd.Process != nil {
@@ -300,12 +314,42 @@ func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interf
 			}
 		}
 		if readErr != nil {
+			select {
+			case <-timedOut:
+				return chatMessage{}, fmt.Errorf("btw worker timed out after %s", timeout.Round(time.Second))
+			default:
+			}
 			if readErr == io.EOF {
 				return chatMessage{}, fmt.Errorf("btw worker exited before response")
 			}
 			return chatMessage{}, readErr
 		}
 	}
+}
+
+func chatWorkerTimeout(req map[string]interface{}) time.Duration {
+	const defaultTimeout = 2 * time.Minute
+	value, ok := req["timeout_ms"]
+	if !ok {
+		return defaultTimeout
+	}
+	var milliseconds int64
+	switch typed := value.(type) {
+	case int:
+		milliseconds = int64(typed)
+	case int32:
+		milliseconds = int64(typed)
+	case int64:
+		milliseconds = typed
+	case float64:
+		milliseconds = int64(typed)
+	case json.Number:
+		milliseconds, _ = typed.Int64()
+	}
+	if milliseconds < 1000 || milliseconds > int64((10*time.Minute)/time.Millisecond) {
+		return defaultTimeout
+	}
+	return time.Duration(milliseconds) * time.Millisecond
 }
 
 var runOneShotBTWWorkerFunc = runOneShotBTWWorker

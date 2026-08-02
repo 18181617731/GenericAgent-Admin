@@ -14756,6 +14756,10 @@ html[data-color-scheme="dark"] .progress-bar {
 .autonomous-execution p strong { color:var(--text); }
 .autonomous-execution .autonomous-execution-error { color:#b91c1c; }
 .autonomous-execution-link { justify-self:start; min-height:30px; padding:5px 8px; border:1px solid color-mix(in srgb,var(--green) 40%,var(--border)); background:var(--surface-strong); box-shadow:none; color:var(--green); font-size:12px; }
+.autonomous-review-reports { display:grid; gap:6px; margin:0 15px 13px; padding:10px 11px; border:1px solid var(--border); border-left:3px solid #d97706; border-radius:6px; background:var(--surface-muted); }
+.autonomous-review-reports > span { color:var(--muted); font-size:12px; }
+.autonomous-review-reports > div { display:flex; flex-wrap:wrap; gap:6px; }
+.autonomous-review-reports button { min-height:29px; padding:5px 8px; border:1px solid var(--border); background:var(--surface-strong); box-shadow:none; color:var(--text); font-size:12px; text-align:left; }
 .autonomous-empty,.autonomous-report-placeholder { display:grid; min-height:130px; place-items:center; padding:20px; color:var(--muted); text-align:center; }
 .autonomous-records-pane { display:grid; gap:12px; min-width:0; }
 .autonomous-latest-result { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 18px; padding:14px 16px; border:1px solid color-mix(in srgb,var(--green) 35%,var(--border)); border-left:3px solid var(--green); border-radius:8px; background:color-mix(in srgb,var(--green) 5%,var(--surface-strong)); }

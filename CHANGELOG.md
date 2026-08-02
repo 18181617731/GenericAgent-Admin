@@ -2,6 +2,18 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.42 - 2026-08-02
+
+### User-facing changes
+- Autonomous approvals now scan `temp/autonomous_reports` in reverse, so blocked or unverifiable approval reports such as R49/R50 cannot disappear when `pending_drafts.md` is absent or stale.
+- Approval discovery scans the complete report set independently of the inventory display limit, while related reports are grouped into one review item instead of silently dropping older evidence.
+- Approval candidates retain all related reports, expose the report-backed reason and confidence, and invalidate older unverified approval decisions when a newer audit proves the approval gate is still blocked.
+- The approval page uses the selected `reflect/autonomous.py` model (falling back to the first ordered enabled model) for a bounded, read-only structured review; model failures keep the conservative human-review state and never auto-approve or modify files.
+- Model review runs with a short response window, background completion/cache, retry backoff, and worker timeout so a slow or unavailable provider cannot block the approvals page.
+
+### Validation
+- Passed targeted Go approval/API tests, frontend lint, frontend library tests, frontend UI smoke tests, and Windows packaging validation.
+
 ## v1.0.41 - 2026-08-02
 
 ### User-facing changes

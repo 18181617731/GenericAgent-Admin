@@ -1,6 +1,7 @@
 package ga
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -345,5 +346,93 @@ func TestAutonomousDecisionTimestampIsReturned(t *testing.T) {
 	}
 	if !updated.Items[0].DecidedAt.Equal(fixed) {
 		t.Fatalf("decided_at=%v want %v", updated.Items[0].DecidedAt, fixed)
+	}
+}
+
+func TestBuildAutonomousApprovalsFindsBlockedReportWithoutPendingDraft(t *testing.T) {
+	root := t.TempDir()
+	reportsRoot := filepath.Join(root, "temp", "autonomous_reports")
+	if err := os.MkdirAll(reportsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `# complete_task 双前缀最小修复实施：审批阻塞复核
+
+- 结论：BLOCKED（审批证据不可核验，未实施 memory 源码修改）
+- 原 TODO 继续待审，仍需等待用户批准
+- [ ] complete_task 双前缀最小修复实施
+`
+	if err := os.WriteFile(filepath.Join(reportsRoot, "R49_complete_task 双前缀实施审批阻塞复核.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Pending != 1 || len(overview.Items) != 1 {
+		t.Fatalf("report-only overview = %+v", overview)
+	}
+	item := overview.Items[0]
+	if item.State != "pending" || item.Decision != "" || item.CandidateSource != autonomousCandidateSourceReport || item.ReviewStatus != autonomousReviewNeedsApproval {
+		t.Fatalf("report candidate = %+v", item)
+	}
+	if item.ReviewReport == nil || item.ReviewReport.Name != "R49_complete_task 双前缀实施审批阻塞复核.md" {
+		t.Fatalf("report evidence = %+v", item.ReviewReport)
+	}
+}
+
+func TestBlockedReportInvalidatesUnverifiedTodoApproval(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp", "autonomous_reports"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	title := "complete_task 双前缀最小修复实施（承接R19·待审批后执行）"
+	id := autonomousApprovalID(title)
+	todo := "[ ] 用户已批准 | " + title + " | 执行 <!-- ga-admin-approval:" + id + " -->\n"
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ledger := `{"schema_version":1,"decisions":[{"id":"` + id + `","title":"` + title + `","decision":"approved","decided_at":"2026-08-02T00:31:03+08:00"}]}`
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousDecisionPath)), []byte(ledger), 0644); err != nil {
+		t.Fatal(err)
+	}
+	report := "# complete_task 双前缀最小修复实施：审批阻塞复核\n\n结论：BLOCKED，审批证据不可核验，未实施 memory 源码修改。\n"
+	if err := os.WriteFile(filepath.Join(root, "temp", "autonomous_reports", "R49_complete_task.md"), []byte(report), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Items) != 1 || overview.Pending != 1 || overview.Approved != 0 || overview.Items[0].State != "pending" {
+		t.Fatalf("invalidated approval overview = %+v", overview)
+	}
+}
+
+func TestBuildAutonomousApprovalsScansReportsBeyondInventoryWindow(t *testing.T) {
+	root := t.TempDir()
+	reportsRoot := filepath.Join(root, "temp", "autonomous_reports")
+	if err := os.MkdirAll(reportsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 81; index++ {
+		path := filepath.Join(reportsRoot, fmt.Sprintf("R%03d_filler.md", index))
+		if err := os.WriteFile(path, []byte("# completed report\nVERDICT: PASS\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked := filepath.Join(reportsRoot, "R49_complete_task_blocked.md")
+	if err := os.WriteFile(blocked, []byte("# complete_task blocked approval\nBLOCKED\napproval evidence is missing\n[ ] pending approval\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(blocked, old, old); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Pending != 1 || len(overview.Items) != 1 || overview.Items[0].ReviewReport == nil || overview.Items[0].ReviewReport.Path != "temp/autonomous_reports/R49_complete_task_blocked.md" {
+		t.Fatalf("full report scan missed blocked report: %+v", overview)
 	}
 }

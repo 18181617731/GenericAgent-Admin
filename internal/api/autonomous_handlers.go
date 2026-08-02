@@ -15,6 +15,7 @@ func (s *Server) autonomousApprovals(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.reviewAutonomousApprovals(&overview)
 		writeJSON(w, overview)
 	case http.MethodPost:
 		s.autonomousApprovalDecision(w, r)
@@ -38,5 +39,6 @@ func (s *Server) autonomousApprovalDecision(w http.ResponseWriter, r *http.Reque
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.reviewAutonomousApprovals(&overview)
 	writeJSON(w, map[string]interface{}{"ok": true, "queued": queued, "overview": overview})
 }

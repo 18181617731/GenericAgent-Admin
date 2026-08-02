@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,37 +29,59 @@ const (
 	autonomousExecutionNotApplicable = "not_applicable"
 )
 
+const (
+	autonomousCandidateSourceDraft  = "pending_draft"
+	autonomousCandidateSourceTodo   = "todo"
+	autonomousCandidateSourceReport = "autonomous_report"
+	autonomousReviewNeedsApproval   = "needs_approval"
+)
+
 type AutonomousApproval struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Source    string    `json:"source,omitempty"`
-	DraftPath string    `json:"draft_path,omitempty"`
-	Target    string    `json:"target,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Risk      string    `json:"risk,omitempty"`
-	Evidence  string    `json:"evidence,omitempty"`
-	NextStep  string    `json:"next_step,omitempty"`
-	State     string    `json:"state"`
-	Decision  string    `json:"decision,omitempty"`
-	Note      string    `json:"note,omitempty"`
-	DecidedAt time.Time `json:"decided_at,omitempty"`
+	ID              string    `json:"id"`
+	Title           string    `json:"title"`
+	Source          string    `json:"source,omitempty"`
+	DraftPath       string    `json:"draft_path,omitempty"`
+	CandidateSource string    `json:"candidate_source,omitempty"`
+	Target          string    `json:"target,omitempty"`
+	Status          string    `json:"status,omitempty"`
+	Risk            string    `json:"risk,omitempty"`
+	Evidence        string    `json:"evidence,omitempty"`
+	NextStep        string    `json:"next_step,omitempty"`
+	State           string    `json:"state"`
+	Decision        string    `json:"decision,omitempty"`
+	Note            string    `json:"note,omitempty"`
+	DecidedAt       time.Time `json:"decided_at,omitempty"`
 
 	ExecutionState     string     `json:"execution_state,omitempty"`
 	ExecutionReport    *Entry     `json:"execution_report,omitempty"`
 	ExecutionSummary   string     `json:"execution_summary,omitempty"`
 	ExecutionError     string     `json:"execution_error,omitempty"`
 	ExecutionUpdatedAt *time.Time `json:"execution_updated_at,omitempty"`
+
+	ReviewStatus     string  `json:"review_status,omitempty"`
+	ReviewDecision   string  `json:"review_decision,omitempty"`
+	ReviewConfidence string  `json:"review_confidence,omitempty"`
+	ReviewReason     string  `json:"review_reason,omitempty"`
+	ReviewModelNo    *int    `json:"review_model_no,omitempty"`
+	ReviewModel      string  `json:"review_model,omitempty"`
+	ReviewProvider   string  `json:"review_provider,omitempty"`
+	ReviewReport     *Entry  `json:"review_report,omitempty"`
+	ReviewReports    []Entry `json:"review_reports,omitempty"`
 }
 
 type AutonomousApprovalOverview struct {
-	SchemaVersion int                  `json:"schema_version"`
-	SourcePath    string               `json:"source_path"`
-	SourceExists  bool                 `json:"source_exists"`
-	Items         []AutonomousApproval `json:"items"`
-	Pending       int                  `json:"pending"`
-	Approved      int                  `json:"approved"`
-	Rejected      int                  `json:"rejected"`
-	GeneratedAt   time.Time            `json:"generated_at"`
+	SchemaVersion  int                  `json:"schema_version"`
+	SourcePath     string               `json:"source_path"`
+	SourceExists   bool                 `json:"source_exists"`
+	Items          []AutonomousApproval `json:"items"`
+	Pending        int                  `json:"pending"`
+	Approved       int                  `json:"approved"`
+	Rejected       int                  `json:"rejected"`
+	GeneratedAt    time.Time            `json:"generated_at"`
+	ReviewModelNo  *int                 `json:"review_model_no,omitempty"`
+	ReviewModel    string               `json:"review_model,omitempty"`
+	ReviewProvider string               `json:"review_provider,omitempty"`
+	ReviewStatus   string               `json:"review_status,omitempty"`
 }
 
 type autonomousDecision struct {
@@ -102,7 +126,9 @@ func BuildAutonomousApprovals(root string) (AutonomousApprovalOverview, error) {
 		return overview, err
 	}
 	applyAutonomousDecisions(&overview, decisions)
+	attachAutonomousReportCandidates(root, &overview)
 	attachAutonomousExecution(root, &overview)
+	recountAutonomousDecisions(&overview)
 	return overview, nil
 }
 
@@ -145,6 +171,11 @@ func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApprov
 	if base.DraftPath == "" {
 		base.DraftPath = addition.DraftPath
 	}
+	if base.CandidateSource == "" {
+		base.CandidateSource = addition.CandidateSource
+	} else if addition.CandidateSource != "" && !strings.Contains(base.CandidateSource, addition.CandidateSource) {
+		base.CandidateSource += "," + addition.CandidateSource
+	}
 	if base.Target == "" {
 		base.Target = addition.Target
 	}
@@ -175,6 +206,33 @@ func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApprov
 	if base.ExecutionUpdatedAt == nil && addition.ExecutionUpdatedAt != nil {
 		base.ExecutionUpdatedAt = addition.ExecutionUpdatedAt
 	}
+	if base.ReviewStatus == "" {
+		base.ReviewStatus = addition.ReviewStatus
+	}
+	if base.ReviewDecision == "" {
+		base.ReviewDecision = addition.ReviewDecision
+	}
+	if base.ReviewConfidence == "" {
+		base.ReviewConfidence = addition.ReviewConfidence
+	}
+	if base.ReviewReason == "" {
+		base.ReviewReason = addition.ReviewReason
+	}
+	if base.ReviewModelNo == nil && addition.ReviewModelNo != nil {
+		base.ReviewModelNo = addition.ReviewModelNo
+	}
+	if base.ReviewModel == "" {
+		base.ReviewModel = addition.ReviewModel
+	}
+	if base.ReviewProvider == "" {
+		base.ReviewProvider = addition.ReviewProvider
+	}
+	if base.ReviewReport == nil && addition.ReviewReport != nil {
+		base.ReviewReport = addition.ReviewReport
+	}
+	if len(addition.ReviewReports) > 0 {
+		base.ReviewReports = mergeAutonomousReportEntries(base.ReviewReports, addition.ReviewReports...)
+	}
 	if base.Decision == "" && addition.Decision != "" {
 		base.Decision = addition.Decision
 		base.State = addition.State
@@ -197,7 +255,9 @@ func parseAutonomousTodoApprovals(content string) []AutonomousApproval {
 		state, decision, status := autonomousTodoState(body)
 		executionState := ""
 		if strings.Contains(body, "ga-admin-approval:") {
-			if decision == "approved" {
+			if marker == 'x' || marker == 'X' {
+				executionState = autonomousExecutionReportMissing
+			} else if decision == "approved" {
 				if marker == 'x' || marker == 'X' {
 					executionState = autonomousExecutionReportMissing
 				} else {
@@ -208,17 +268,18 @@ func parseAutonomousTodoApprovals(content string) []AutonomousApproval {
 			}
 		}
 		item := AutonomousApproval{
-			ID:             autonomousApprovalID(title),
-			Title:          title,
-			Source:         autonomousTodoPath,
-			DraftPath:      autonomousTodoPath,
-			Status:         status,
-			Risk:           autonomousTodoRisk(body),
-			Evidence:       "来自 TODO.txt 的未完成条目，采用保守审批判定",
-			NextStep:       autonomousTodoNextStep(parts),
-			State:          state,
-			Decision:       decision,
-			ExecutionState: executionState,
+			ID:              autonomousApprovalID(title),
+			Title:           title,
+			Source:          autonomousTodoPath,
+			DraftPath:       autonomousTodoPath,
+			CandidateSource: autonomousCandidateSourceTodo,
+			Status:          status,
+			Risk:            autonomousTodoRisk(body),
+			Evidence:        "来自 TODO.txt 的未完成条目，采用保守审批判定",
+			NextStep:        autonomousTodoNextStep(parts),
+			State:           state,
+			Decision:        decision,
+			ExecutionState:  executionState,
 		}
 		items = append(items, item)
 	}
@@ -333,7 +394,7 @@ func parseAutonomousApprovals(content string) []AutonomousApproval {
 			if current != nil {
 				items = append(items, finishAutonomousApproval(*current))
 			}
-			current = &AutonomousApproval{ID: autonomousApprovalID(title), Title: title}
+			current = &AutonomousApproval{ID: autonomousApprovalID(title), Title: title, CandidateSource: autonomousCandidateSourceDraft}
 			continue
 		}
 		if current != nil {
@@ -421,13 +482,268 @@ func containsAny(value string, terms ...string) bool {
 	return false
 }
 
+func attachAutonomousReportCandidates(root string, overview *AutonomousApprovalOverview) {
+	reports := buildAllAutonomousReports(root)
+	for _, report := range reports {
+		if report.Kind != "file" || strings.EqualFold(report.Name, "history.txt") {
+			continue
+		}
+		path, _, err := SafeResolve(root, report.Path)
+		if err != nil {
+			continue
+		}
+		contentBytes, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		content := string(contentBytes)
+		needsApproval, invalidEvidence, reason, confidence := autonomousReportReviewSignals(content)
+		if !needsApproval {
+			continue
+		}
+		title := autonomousReportCandidateTitle(report.Name, content)
+		if title == "" {
+			continue
+		}
+		matched := -1
+		for index := range overview.Items {
+			if autonomousApprovalMatchesReport(overview.Items[index], title, content) {
+				matched = index
+				break
+			}
+		}
+		if matched >= 0 {
+			mergeAutonomousReportReview(&overview.Items[matched], report, reason, confidence, invalidEvidence)
+			continue
+		}
+		candidate := AutonomousApproval{
+			ID:               autonomousApprovalID(title),
+			Title:            title,
+			Source:           report.Path,
+			DraftPath:        report.Path,
+			CandidateSource:  autonomousCandidateSourceReport,
+			Status:           "report requires human approval",
+			Risk:             "human review required",
+			Evidence:         autonomousReportSummary(content),
+			NextStep:         "Review the report evidence, then approve or reject explicitly",
+			State:            "pending",
+			ReviewStatus:     autonomousReviewNeedsApproval,
+			ReviewDecision:   autonomousReviewNeedsApproval,
+			ReviewConfidence: confidence,
+			ReviewReason:     reason,
+			ReviewReport:     entryPointer(report),
+			ReviewReports:    []Entry{report},
+		}
+		overview.Items = mergeAutonomousApprovals(overview.Items, []AutonomousApproval{candidate})
+	}
+	if len(overview.Items) > 0 {
+		overview.SourceExists = true
+		if strings.TrimSpace(overview.SourcePath) == "" || overview.SourcePath == autonomousApprovalSource {
+			if overview.SourcePath == "" || !fileExistsForApproval(root, overview.SourcePath) {
+				overview.SourcePath = filepath.ToSlash(filepath.Join("temp", "autonomous_reports"))
+			}
+		}
+	}
+}
+
+func fileExistsForApproval(root, rel string) bool {
+	path, _, err := SafeResolve(root, rel)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
+func entryPointer(entry Entry) *Entry {
+	copy := entry
+	return &copy
+}
+
+func mergeAutonomousReportReview(item *AutonomousApproval, report Entry, reason, confidence string, invalidEvidence bool) {
+	if item == nil {
+		return
+	}
+	isNewer := item.ReviewReport == nil || report.ModTime.After(item.ReviewReport.ModTime)
+	if isNewer {
+		item.ReviewStatus = autonomousReviewNeedsApproval
+		item.ReviewDecision = autonomousReviewNeedsApproval
+		item.ReviewConfidence = confidence
+		item.ReviewReason = reason
+		item.ReviewReport = entryPointer(report)
+	}
+	item.ReviewReports = mergeAutonomousReportEntries(item.ReviewReports, report)
+	if item.CandidateSource == "" {
+		item.CandidateSource = autonomousCandidateSourceReport
+	} else if !strings.Contains(item.CandidateSource, autonomousCandidateSourceReport) {
+		item.CandidateSource += "," + autonomousCandidateSourceReport
+	}
+	if item.Source == "" {
+		item.Source = report.Path
+	}
+	if item.DraftPath == "" {
+		item.DraftPath = report.Path
+	}
+	// A newer report that explicitly says approval evidence is missing invalidates
+	// an older, unverified approval. A fresh user decision after that report is
+	// respected on the next build.
+	if invalidEvidence && (item.Decision == "" || item.DecidedAt.IsZero() || report.ModTime.After(item.DecidedAt)) {
+		item.Decision = ""
+		item.DecidedAt = time.Time{}
+		item.State = "pending"
+		item.ExecutionState = ""
+		item.ExecutionReport = nil
+		item.ExecutionSummary = ""
+		item.ExecutionError = ""
+		item.ExecutionUpdatedAt = nil
+	}
+	if item.Decision == "" {
+		item.State = "pending"
+	}
+}
+
+func mergeAutonomousReportEntries(existing []Entry, additions ...Entry) []Entry {
+	merged := append([]Entry(nil), existing...)
+	seen := make(map[string]bool, len(merged)+len(additions))
+	for _, entry := range merged {
+		seen[entry.Path] = true
+	}
+	for _, entry := range additions {
+		if entry.Path == "" || seen[entry.Path] {
+			continue
+		}
+		seen[entry.Path] = true
+		merged = append(merged, entry)
+	}
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].ModTime.After(merged[j].ModTime) })
+	if len(merged) > 12 {
+		merged = merged[:12]
+	}
+	return merged
+}
+
+func autonomousReportReviewSignals(content string) (needsApproval, invalidEvidence bool, reason, confidence string) {
+	lower := strings.ToLower(content)
+	approvalContext := containsAny(lower, "approval", "todo", "待审批", "待批准", "用户批准", "用户授权", "审批门控", "审批证据", "原实施")
+	pendingLanguage := containsAny(lower, "pending approval", "awaiting user approval", "must remain pending", "continue waiting", "待审", "待批准", "待用户批准", "待用户决策", "保留待批准", "保留为 [ ]", "保留为[ ]", "未经明确批准")
+	blocked := containsAny(lower, "blocked", "approval blocked", "审批阻塞", "阻塞复核")
+	missingEvidence := containsAny(lower,
+		"approval evidence is missing", "approval evidence cannot be verified", "approval evidence unverifiable", "not treated as approved", "must remain pending", "审批证据缺失", "审批证据不可核验", "不应视为已批准", "继续待审", "仍需等待用户批准")
+	notImplemented := containsAny(lower, "not implemented", "not changed", "未实施", "未修改源码", "未改源码", "未执行")
+	approvalContext = approvalContext || containsAny(lower, "审批", "待审批", "待批准", "用户批准", "用户授权", "审批门控", "审批证据", "原实施")
+	pendingLanguage = pendingLanguage || containsAny(lower, "待审", "待审批", "待批准", "待用户批准", "待用户决策", "保留待批准", "保留为 [ ]", "未经明确批准")
+	blocked = blocked || containsAny(lower, "阻塞", "审批阻塞", "阻塞复核")
+	missingEvidence = missingEvidence || containsAny(lower, "审批证据缺失", "审批证据不可核验", "不应视为已批准", "继续待审", "仍需等待用户批准")
+	notImplemented = notImplemented || containsAny(lower, "未实施", "未修改源码", "未改源码", "未执行")
+	uncheckedTodo := strings.Contains(content, "[ ]") && pendingLanguage
+	blockedApproval := blocked && approvalContext && (pendingLanguage || missingEvidence || notImplemented || strings.Contains(lower, "memory/"))
+	if missingEvidence || pendingLanguage || blockedApproval || uncheckedTodo {
+		parts := make([]string, 0, 3)
+		if blocked {
+			parts = append(parts, "report is blocked")
+		}
+		if missingEvidence {
+			parts = append(parts, "approval evidence is missing or unverifiable")
+		}
+		if notImplemented || uncheckedTodo {
+			parts = append(parts, "the proposed source change is not confirmed as implemented")
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "report contains an explicit approval gate")
+		}
+		return true, missingEvidence || blockedApproval && notImplemented, strings.Join(parts, "; "), "high"
+	}
+	return false, false, "", ""
+}
+
+func autonomousReportCandidateTitle(name, content string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		clean := strings.TrimSpace(line)
+		if !strings.HasPrefix(clean, "#") {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimLeft(clean, "#"))
+		if title == "" || containsAny(strings.ToLower(title), "execution report", "audit report", "history") {
+			continue
+		}
+		return title
+	}
+	base := strings.TrimSpace(strings.TrimSuffix(name, filepath.Ext(name)))
+	if underscore := strings.IndexByte(base, '_'); underscore > 1 && strings.HasPrefix(strings.ToLower(base[:underscore]), "r") {
+		allDigits := true
+		for _, r := range base[1:underscore] {
+			if !unicode.IsDigit(r) {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			base = strings.TrimSpace(base[underscore+1:])
+		}
+	}
+	return base
+}
+
+func autonomousApprovalMatchesReport(item AutonomousApproval, reportTitle, content string) bool {
+	if autonomousApprovalTitlesMatch(item.Title, reportTitle) {
+		return true
+	}
+	normalizedContent := normalizeAutonomousMatch(content)
+	for _, variant := range autonomousTitleVariants(item.Title) {
+		if len([]rune(variant)) >= 10 && strings.Contains(normalizedContent, variant) {
+			return true
+		}
+	}
+	return false
+}
+
+func autonomousApprovalTitlesMatch(left, right string) bool {
+	leftKey := autonomousApprovalTaskKey(left)
+	rightKey := autonomousApprovalTaskKey(right)
+	if leftKey == "" || rightKey == "" {
+		return false
+	}
+	if strings.Contains(leftKey, rightKey) || strings.Contains(rightKey, leftKey) {
+		return true
+	}
+	common := 0
+	leftRunes := []rune(leftKey)
+	rightRunes := []rune(rightKey)
+	for common < len(leftRunes) && common < len(rightRunes) && leftRunes[common] == rightRunes[common] {
+		common++
+	}
+	return common >= 12 && (strings.Contains(leftKey, "completetask") || strings.Contains(rightKey, "completetask"))
+}
+
+func autonomousApprovalTaskKey(title string) string {
+	clean := strings.TrimSpace(title)
+	for _, separator := range []string{"：", ":", "（", "(", "—", "- 审批", "- approval"} {
+		if index := strings.Index(clean, separator); index > 0 {
+			clean = clean[:index]
+		}
+	}
+	return normalizeAutonomousMatch(clean)
+}
+
+func recountAutonomousDecisions(overview *AutonomousApprovalOverview) {
+	if overview == nil {
+		return
+	}
+	overview.Pending = 0
+	overview.Approved = 0
+	overview.Rejected = 0
+	for _, item := range overview.Items {
+		countAutonomousDecision(overview, item.State)
+	}
+}
+
 func autonomousApprovalID(title string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(title))))
 	return fmt.Sprintf("draft-%x", sum[:6])
 }
 
 func attachAutonomousExecution(root string, overview *AutonomousApprovalOverview) {
-	reports := buildAutonomousReports(root)
+	reports := buildAllAutonomousReports(root)
 	for index := range overview.Items {
 		item := &overview.Items[index]
 		switch item.Decision {
@@ -476,6 +792,9 @@ func matchAutonomousExecutionReport(root string, reports []Entry, item Autonomou
 			continue
 		}
 		content := string(contentBytes)
+		if needsApproval, _, _, _ := autonomousReportReviewSignals(content); needsApproval {
+			continue
+		}
 		if !item.DecidedAt.IsZero() && report.ModTime.Before(item.DecidedAt) && !strings.Contains(content, marker) && !strings.Contains(strings.ToLower(report.Name), strings.ToLower(item.ID)) {
 			continue
 		}
