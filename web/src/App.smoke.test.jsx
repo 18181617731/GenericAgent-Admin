@@ -137,6 +137,35 @@ describe('autonomous operations page', () => {
     expect(await screen.findByText('已批准')).toBeTruthy()
   })
 
+  test('should render generated approval-card values in Chinese', async () => {
+    installBrowserPolyfills()
+    const englishReview = {
+      ...pendingApproval,
+      title: 'R49_complete_task approval review',
+      status: 'report requires human approval',
+      risk: 'human review required',
+      evidence: 'approval evidence is missing or unverifiable',
+      next_step: 'Review the report evidence, then approve or reject explicitly',
+      review_decision: 'needs_approval',
+      review_confidence: 'high',
+      review_reason: 'report is blocked; the proposed source change is not confirmed as implemented; model review unavailable: model review in progress; conservative rule retained',
+    }
+    globalThis.fetch = vi.fn(async url => {
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([englishReview]))
+      throw new Error(String(url))
+    })
+    render(<AutonomousPage lang="zh" reports={[]}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    expect(await screen.findByText('报告需要人工审批')).toBeTruthy()
+    expect(screen.getByText('需要人工复核')).toBeTruthy()
+    expect(screen.getByText('需要审批')).toBeTruthy()
+    expect(screen.getByText('高')).toBeTruthy()
+    expect(screen.getByText('请核查报告证据后明确批准或拒绝')).toBeTruthy()
+    expect(screen.getByText(/报告处于阻塞状态/)).toBeTruthy()
+    expect(screen.queryByText('human review required')).toBeNull()
+  })
+
   test('should link an approved task to its execution result', async () => {
     installBrowserPolyfills()
     const report = { name: 'R99_execution.md', path: 'temp/autonomous_reports/R99_execution.md', mod_time: '2026-07-28T10:00:00Z' }

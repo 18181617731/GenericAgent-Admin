@@ -5,19 +5,19 @@ import { ArrowLeft, Check, Download, RefreshCw, Search, X } from 'lucide-react'
 import { AutonomousServiceCard } from '../components/AutonomousServiceCard.jsx'
 import { api } from '../lib/api.js'
 import { confirmDanger } from '../lib/danger.js'
-import { autonomousCopy } from '../lib/autonomousCopy.js'
+import { autonomousCopy, localizeAutonomousApprovalValue } from '../lib/autonomousCopy.js'
 import { autonomousExecutionState, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousReport } from '../lib/autonomous.js'
 
-const approvalDetails = (item, copy) => [
+const approvalDetails = (item, copy, lang) => [
   [copy.source, item.source || item.draft_path],
   [copy.target, item.target],
-  [copy.risk, item.risk],
-  [copy.evidence, item.evidence],
-  [copy.nextStep, item.next_step],
+  [copy.risk, localizeAutonomousApprovalValue(item.risk, lang, 'risk')],
+  [copy.evidence, localizeAutonomousApprovalValue(item.evidence, lang, 'evidence')],
+  [copy.nextStep, localizeAutonomousApprovalValue(item.next_step, lang, 'nextStep')],
   [copy.reviewModel, item.review_model ? `${item.review_provider ? `${item.review_provider} / ` : ''}${item.review_model}${item.review_model_no !== undefined && item.review_model_no !== null ? ` (#${item.review_model_no})` : ''}` : ''],
-  [copy.reviewDecision, item.review_decision],
-  [copy.reviewConfidence, item.review_confidence],
-  [copy.reviewReason, item.review_reason],
+  [copy.reviewDecision, localizeAutonomousApprovalValue(item.review_decision, lang, 'reviewDecision')],
+  [copy.reviewConfidence, localizeAutonomousApprovalValue(item.review_confidence, lang, 'reviewConfidence')],
+  [copy.reviewReason, localizeAutonomousApprovalValue(item.review_reason, lang, 'reviewReason')],
 ].filter(([, value]) => value)
 
 const executionPresentation = (item, copy) => {
@@ -39,18 +39,18 @@ function ApprovalCard({ item, lang, busy, reply, onReply, onApprove, onReject, o
   const showExecution = !pending && (item.decision === 'approved' || execution.state)
   return <article className={`autonomous-approval is-${item.state}`}>
     <header>
-      <div><b>{item.title}</b><span>{item.status || (pending ? copy.pending : copy.handled)}</span></div>
+      <div><b>{localizeAutonomousApprovalValue(item.title, lang, 'title')}</b><span>{localizeAutonomousApprovalValue(item.status, lang, 'status') || (pending ? copy.pending : copy.handled)}</span></div>
       <em>{pending ? copy.pending : item.state === 'approved' ? (lang === 'en' ? 'Approved' : '已批准') : item.state === 'rejected' ? (lang === 'en' ? 'Rejected' : '已拒绝') : (lang === 'en' ? 'Archived' : '已归档')}</em>
     </header>
-    <dl>{approvalDetails(item, copy).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    <dl>{approvalDetails(item, copy, lang).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {!pending && (item.decided_at || item.note) && <div className="autonomous-decision-meta">
       {item.decided_at && <span>{copy.decidedAt}：{readableAutonomousDate(item.decided_at, lang)}</span>}
-      {item.note && <span>{copy.note}：{item.note}</span>}
+      {item.note && <span>{copy.note}：{localizeAutonomousApprovalValue(item.note, lang, 'note')}</span>}
     </div>}
     {showExecution && <div className={`autonomous-execution is-${execution.state || 'unknown'}`}>
       <div className="autonomous-execution-head"><span>{copy.execution}</span><b>{execution.label}</b></div>
-      {item.execution_summary && <p><strong>{copy.executionSummary}：</strong>{item.execution_summary}</p>}
-      {item.execution_error && <p className="autonomous-execution-error">{item.execution_error}</p>}
+      {item.execution_summary && <p><strong>{copy.executionSummary}：</strong>{localizeAutonomousApprovalValue(item.execution_summary, lang, 'executionSummary')}</p>}
+      {item.execution_error && <p className="autonomous-execution-error">{localizeAutonomousApprovalValue(item.execution_error, lang, 'executionError')}</p>}
       {item.execution_report && <button type="button" className="autonomous-execution-link" onClick={() => onOpenReport?.(item.execution_report)}>{copy.openExecutionReport}：{item.execution_report.name || item.execution_report.path}</button>}
     </div>}
     {item.review_reports?.length > 0 && <div className="autonomous-review-reports"><span>{copy.reviewReports}</span><div>{item.review_reports.map(report => <button type="button" key={report.path} onClick={() => onOpenReport?.(report)}>{copy.openReviewReport}：{report.name || report.path}</button>)}</div></div>}
