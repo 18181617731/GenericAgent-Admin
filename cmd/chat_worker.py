@@ -319,6 +319,44 @@ def _snapshot_model_id(agent):
         return ''
 
 
+def _finalize_incomplete_turn_usage():
+    """Seal a failed LLM attempt that emitted Cache stats but no Output line."""
+    with _USAGE_LOCK:
+        if not (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
+                or _CURRENT_USAGE['cached_tokens']):
+            return
+        turn_snapshot = dict(_CURRENT_USAGE)
+        _TURN_USAGES.append(turn_snapshot)
+        turn_index = len(_TURN_USAGES) - 1
+        _CURRENT_USAGE['input_tokens'] = 0
+        _CURRENT_USAGE['output_tokens'] = 0
+        _CURRENT_USAGE['cached_tokens'] = 0
+    try:
+        emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
+    except Exception:
+        pass
+
+
+def _track_outbound_attempt(result):
+    """Preserve an outbound stream while closing usage for transport errors."""
+    try:
+        iterator = iter(result)
+    except TypeError:
+        return result
+
+    def tracked():
+        while True:
+            try:
+                item = next(iterator)
+            except StopIteration as stop:
+                return stop.value
+            if isinstance(item, str) and item.lstrip().startswith('!!!Error:'):
+                _finalize_incomplete_turn_usage()
+            yield item
+
+    return tracked()
+
+
 def _install_outbound_model_hooks(agent):
     """Emit the concrete model immediately before every routed LLM attempt."""
     try:
@@ -344,7 +382,7 @@ def _install_outbound_model_hooks(agent):
                         emit({'type': 'model', 'model_id': model_id})
             except Exception:
                 pass
-            return _original(*args, **kwargs)
+            return _track_outbound_attempt(_original(*args, **kwargs))
 
         try:
             session.raw_ask = wrapped
