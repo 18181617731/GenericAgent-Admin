@@ -2,6 +2,16 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.45 - 2026-08-03
+
+### User-facing changes
+- Autonomous approval model reviews now reuse the retry, timeout, API mode, user-agent, and reasoning settings configured on the Models page.
+- Network failures and transient provider responses retry with exponential backoff; failed reviews retain their attempt count and next retry time, while manual re-review can retry immediately.
+- Approval cards clearly distinguish model-unavailable rule screening from model-reviewed results, show the model conclusion and plain-language reason, and keep execution status and report links visible after approval.
+
+### Validation
+- Passed Go tests, frontend library tests (`228/228`), frontend UI smoke tests (`90/90`), frontend lint, frontend production build, and staged diff checks.
+
 ## v1.0.44 - 2026-08-02
 
 ### User-facing changes
