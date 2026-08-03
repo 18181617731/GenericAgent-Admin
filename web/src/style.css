@@ -31,6 +31,7 @@ html[data-theme="warm"] {
   --accent-bg: rgba(184, 134, 11, 0.08);
   --accent-bg-strong: rgba(184, 134, 11, 0.15);
   --accent-text: #8B6508;
+  --text-on-accent: #ffffff;
   --success: #3D8B40;
   --warning: #E68A00;
   --error: #C62828;
@@ -917,9 +918,12 @@ html[data-theme="light"] {
   --border: #e5e5e5;
   --border-strong: #d9d9d9;
   --text: #0d0d0d;
+  --strong: #000000;
   --muted: #6b6b6b;
   --muted-2: #8f8f8f;
   --green: #10a37f;
+  --accent: #B8860B;
+  --text-on-accent: #ffffff;
   --code-bg: #f7f7f8;
   --code-text: #0d0d0d;
   --code-inline-bg: #f2f2f2;
@@ -3582,10 +3586,13 @@ html[data-theme="dark"] {
   --border: rgba(255, 255, 255, .15);
   --border-strong: rgba(255, 255, 255, .28);
   --text: #ececec;
+  --strong: #ffffff;
   --muted: #a6abb2;
   --muted-2: #777d85;
   --green: #19c39c;
   --red: #f0616d;
+  --accent: #19c39c;
+  --text-on-accent: #0d0f11;
   --code-bg: #20242a;
   --code-text: #ececec;
   --code-inline-bg: #24282e;
@@ -3629,6 +3636,7 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
   min-width: 0;
 }
 .theme-picker-trigger {
+  position: relative;
   width: 100%;
   min-height: 52px;
   display: grid;
@@ -3638,23 +3646,50 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
   padding: 7px 10px;
   color: var(--text);
   text-align: left;
-  background: var(--surface-muted);
+  /* Vertical wash + top hairline reads as a physical, pressable slab. */
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-strong) 92%, transparent),
+      var(--surface-muted));
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: var(--shadow-tiny);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent),
+    var(--shadow-tiny);
   cursor: pointer;
   transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 .theme-picker-trigger:hover {
   transform: translateY(-1px);
-  border-color: var(--border-strong);
-  background: var(--surface-strong);
-  box-shadow: 0 7px 18px rgba(0, 0, 0, .07);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-strong));
+  background:
+    linear-gradient(180deg,
+      var(--surface-strong),
+      color-mix(in srgb, var(--surface-strong) 70%, var(--surface-muted)));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 65%, transparent),
+    0 8px 20px -7px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 2px 6px rgba(0, 0, 0, .05);
+}
+.theme-picker-trigger:active {
+  transform: translateY(0);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .07);
+}
+/* Open state owns a look of its own, not just a flipped chevron. */
+.theme-picker-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border-strong));
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 11%, var(--surface-strong)),
+      color-mix(in srgb, var(--accent) 5%, var(--surface-muted)));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 6px 16px -8px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 .theme-picker-trigger:focus-visible,
 .theme-picker-close:focus-visible,
 .theme-picker-option:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .theme-picker-trigger-icon {
@@ -3663,10 +3698,21 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 11%, transparent);
-  border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  color: var(--accent);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      color-mix(in srgb, var(--accent) 9%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-radius: 9px;
+  transition: transform .18s ease, background .18s ease;
+}
+.theme-picker-trigger:hover .theme-picker-trigger-icon {
+  transform: scale(1.04) rotate(-6deg);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 24%, transparent),
+      color-mix(in srgb, var(--accent) 13%, transparent));
 }
 .theme-picker-trigger-copy {
   min-width: 0;
@@ -3696,21 +3742,53 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
   overflow: hidden;
   background: var(--surface-strong);
   border: 1px solid var(--border);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
 }
 .theme-picker-trigger-preview {
   width: 36px;
   height: 24px;
   grid-template-columns: repeat(3, 1fr);
   border-radius: 7px;
+  /* Inner rim keeps the three swatches reading as one inlaid chip. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 16%, transparent);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.theme-picker-trigger:hover .theme-picker-trigger-preview {
+  transform: scale(1.05);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent),
+    0 2px 6px -2px rgba(0, 0, 0, .18);
 }
 .theme-picker-trigger-preview i,
 .theme-picker-preview i { display: block; min-width: 0; }
 .theme-picker-chevron {
   color: var(--muted);
-  transition: transform .18s ease;
+  transition: transform .18s ease, color .18s ease;
 }
+.theme-picker-trigger:hover .theme-picker-chevron,
+.theme-picker-trigger[aria-expanded="true"] .theme-picker-chevron { color: var(--accent); }
 .theme-picker-trigger[aria-expanded="true"] .theme-picker-chevron { transform: rotate(180deg); }
+
+/* Dark: the light top-hairline trick has to be dialled way down. */
+html[data-color-scheme="dark"] .theme-picker-trigger {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .07),
+    0 1px 2px rgba(0, 0, 0, .3);
+}
+html[data-color-scheme="dark"] .theme-picker-trigger:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .1),
+    0 8px 20px -7px color-mix(in srgb, var(--accent) 42%, transparent),
+    0 2px 8px rgba(0, 0, 0, .35);
+}
+html[data-color-scheme="dark"] .theme-picker-trigger:active {
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .45);
+}
+/* Preserve compact variant's box-shadow: none (dark specificity 0,2,0 would override compact 0,1,1) */
+html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger,
+html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger:hover,
+html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger:active {
+  box-shadow: none;
+}
 
 .theme-picker-panel {
   position: fixed;
@@ -3874,6 +3952,15 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
   box-shadow: none;
 }
 .theme-picker--compact .theme-picker-trigger:hover { transform: none; box-shadow: var(--shadow-tiny); }
+/* Guards: the dark three-state shadows above are more specific than the
+   compact rules, so the compact variant has to opt out explicitly. */
+html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger,
+html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger:active {
+  box-shadow: none;
+}
+html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+}
 .theme-picker--compact .theme-picker-trigger-icon {
   width: 24px;
   height: 24px;
@@ -3905,7 +3992,12 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
   .theme-picker-panel { animation: none; }
   .theme-picker-trigger,
   .theme-picker-chevron,
+  .theme-picker-trigger-icon,
+  .theme-picker-trigger-preview,
   .theme-picker-option { transition: none; }
+  .theme-picker-trigger:hover { transform: none; }
+  .theme-picker-trigger:hover .theme-picker-trigger-icon,
+  .theme-picker-trigger:hover .theme-picker-trigger-preview { transform: none; }
 }
 html[data-color-scheme="dark"] .app:not(.app-tab-chat) .sidebar nav button.active,
 html[data-color-scheme="dark"] .app:not(.app-tab-chat) .sidebar nav button:hover {
@@ -13820,13 +13912,47 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
   padding: 9px 16px;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: var(--text-on-accent);
   background: var(--accent);
   font-weight: 700;
   cursor: pointer;
 }
 .auth-card button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 .auth-card button:disabled { cursor: wait; opacity: .58; }
+
+/* Restore theme-picker-trigger gradient (overridden by .auth-card button) */
+.auth-card .theme-picker-trigger {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-strong) 92%, transparent),
+      var(--surface-muted));
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-strong));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent),
+    var(--shadow-tiny);
+}
+.auth-card .theme-picker-trigger:hover {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg,
+      var(--surface-strong),
+      color-mix(in srgb, var(--surface-strong) 70%, var(--surface-muted)));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 65%, transparent),
+    0 8px 20px -7px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 2px 6px rgba(0, 0, 0, .05);
+}
+html[data-color-scheme="dark"] .auth-card .theme-picker-trigger {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent),
+    0 1px 3px rgba(0, 0, 0, .24);
+}
+html[data-color-scheme="dark"] .auth-card .theme-picker-trigger:hover {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent),
+    0 8px 20px -7px color-mix(in srgb, var(--accent) 42%, transparent),
+    0 2px 6px rgba(0, 0, 0, .28);
+}
 .auth-error { margin: 0; padding: 10px 12px; border-left: 3px solid var(--error); color: var(--error); background: color-mix(in srgb, var(--error) 8%, transparent); font-size: 13px; line-height: 1.45; }
 .auth-note { margin: 20px 0 0; color: var(--muted-2); font-size: 11px; line-height: 1.55; }
 @media (max-width: 520px) {
