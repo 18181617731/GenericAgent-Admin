@@ -90,6 +90,15 @@ export const profileModelConfigs = (profile = {}) => {
   return models.map(model => ({ model, ...settings }))
 }
 
+const internalModelNameRe = /^(?:(?:native_)?(?:oai|claude)|api|config|cookie)_config[A-Za-z0-9_]*$/i
+
+export const modelConfigDisplayName = config => {
+  const model = text(config?.model)
+  const displayName = text(config?.display_name) || text(config?.displayName) || text(config?.name)
+  if (!displayName || displayName === model || /^\d+$/.test(displayName) || internalModelNameRe.test(displayName)) return ''
+  return displayName
+}
+
 export const isModelConfigEnabled = config => config?.enabled !== false
 
 export const modelAvailabilitySummary = (profile = {}) => {
@@ -210,6 +219,7 @@ export const orderedModelRows = (profiles = []) => {
         profileIndex,
         configIndex,
         model: text(config.model),
+        displayName: modelConfigDisplayName(config) || text(config.model),
         providerName: text(profile.name),
         providerVarName: text(profile.var_name),
         variableName: `${text(profile.var_name)}${configIndex ? `_${configIndex + 1}` : ''}`,
@@ -225,7 +235,7 @@ export const orderedModelRows = (profiles = []) => {
 
 export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) => {
   let defaultOrder = 0
-  
+
   // Model rows
   const modelRows = profiles.flatMap((profile, profileIndex) => (
     profileModelConfigs(profile).map((config, configIndex) => {
@@ -235,6 +245,7 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
         profileIndex,
         configIndex,
         model: text(config.model),
+        displayName: modelConfigDisplayName(config) || text(config.model),
         providerName: text(profile.name),
         providerVarName: text(profile.var_name),
         variableName: `${text(profile.var_name)}${configIndex ? `_${configIndex + 1}` : ''}`,
@@ -245,7 +256,7 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
       return row
     })
   ))
-  
+
   // Failover group rows - place at the beginning by default (negative order)
   const failoverRows = (Array.isArray(failoverGroups) ? failoverGroups : []).map((group, groupIndex) => ({
     type: 'failover',
@@ -256,7 +267,7 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
     order: Number.isInteger(group.sort_order) ? group.sort_order : -(failoverGroups.length - groupIndex),
     defaultOrder: -(failoverGroups.length - groupIndex),
   }))
-  
+
   return [...modelRows, ...failoverRows].sort((left, right) => left.order - right.order)
 }
 
@@ -449,7 +460,7 @@ export const applyModelOrder = (profiles = [], orderedRows = []) => {
 
 export const applyModelAndFailoverOrder = (profiles = [], failoverGroups = [], orderedRows = []) => {
   const orderById = new Map(orderedRows.map((row, order) => [row.id, order]))
-  
+
   // Apply order to model configs
   const nextProfiles = profiles.map((profile, profileIndex) => withModelConfigs(
     profile,
@@ -458,13 +469,13 @@ export const applyModelAndFailoverOrder = (profiles = [], failoverGroups = [], o
       return sortOrder === undefined ? { ...config } : { ...config, sort_order: sortOrder }
     }),
   ))
-  
+
   // Apply order to failover groups
   const nextFailoverGroups = (Array.isArray(failoverGroups) ? failoverGroups : []).map((group, groupIndex) => {
     const sortOrder = orderById.get(`failover:${groupIndex}`)
     return sortOrder === undefined ? { ...group } : { ...group, sort_order: sortOrder }
   })
-  
+
   return { profiles: nextProfiles, failoverGroups: nextFailoverGroups }
 }
 

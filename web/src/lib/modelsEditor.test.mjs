@@ -9,6 +9,7 @@ import {
   profileModelConfigs,
   isModelConfigEnabled,
   modelAvailabilitySummary,
+  modelConfigDisplayName,
   reconcileModelAvailability,
   reconcileModelProbeResults,
   orderedModelRows,
@@ -195,9 +196,33 @@ test('orderedModelRows expands providers into the persisted global model order',
 test('orderedModelRows carries the configured provider display name', () => {
   const profiles = orderingProfiles()
   profiles[0].name = 'Acme 显示名称'
+  profiles[0].model_configs[0].name = 'Friendly alpha'
   const rows = orderedModelRows(profiles)
 
   assert.deepEqual(rows.map(row => row.providerName), ['Acme 显示名称', '', 'Acme 显示名称'])
+  assert.deepEqual(rows.map(row => row.displayName), ['Friendly alpha', 'b-one', 'a-two'])
+})
+
+test('orderedModelRows exposes model display names for failover candidates', () => {
+  const profiles = [{
+    var_name: 'provider_a',
+    name: 'Paid provider',
+    model_configs: [{ model: '12', name: 'Paid primary' }],
+  }]
+  const [row] = orderedModelRows(profiles)
+  assert.equal(row.displayName, 'Paid primary')
+  assert.equal(row.model, '12')
+  assert.equal(row.providerName, 'Paid provider')
+})
+
+test('modelConfigDisplayName accepts API display_name aliases before legacy name', () => {
+  assert.equal(modelConfigDisplayName({ display_name: 'API display', displayName: 'camel display', name: 'legacy name' }), 'API display')
+  assert.equal(modelConfigDisplayName({ displayName: 'camel display', name: 'legacy name' }), 'camel display')
+  assert.equal(modelConfigDisplayName({ name: 'legacy name' }), 'legacy name')
+  assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: 'native_oai_config27_2' }), '')
+  assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: '12' }), '')
+  assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: 'gpt-model' }), '')
+  assert.equal(modelConfigDisplayName({ model: 'model-id' }), '')
 })
 
 test('orderedModelRows keeps legacy provider and model order without metadata', () => {

@@ -9,11 +9,27 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type autonomousReviewLedger struct {
 	SchemaVersion int                      `json:"schema_version"`
 	Reviews       []AutonomousReviewRecord `json:"reviews"`
+}
+
+type AutonomousReviewRecord struct {
+	ID               string    `json:"id"`
+	Fingerprint      string    `json:"fingerprint,omitempty"`
+	ReviewStatus     string    `json:"review_status,omitempty"`
+	ReviewDecision   string    `json:"review_decision,omitempty"`
+	ReviewConfidence string    `json:"review_confidence,omitempty"`
+	ReviewReason     string    `json:"review_reason,omitempty"`
+	ReviewModelNo    int       `json:"review_model_no,omitempty"`
+	ReviewModel      string    `json:"review_model,omitempty"`
+	ReviewProvider   string    `json:"review_provider,omitempty"`
+	Attempts         int       `json:"attempts,omitempty"`
+	NextRetryAt      time.Time `json:"next_retry_at,omitempty"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 var autonomousReviewMu sync.Mutex
@@ -181,7 +197,10 @@ func applyAutonomousReviews(overview *AutonomousApprovalOverview, reviews []Auto
 		item.ReviewDecision = review.ReviewDecision
 		item.ReviewConfidence = review.ReviewConfidence
 		item.ReviewReason = review.ReviewReason
-		item.ReviewModelNo = review.ReviewModelNo
+		if review.ReviewModel != "" || review.ReviewProvider != "" || review.ReviewStatus != "" {
+			modelNo := review.ReviewModelNo
+			item.ReviewModelNo = &modelNo
+		}
 		item.ReviewModel = review.ReviewModel
 		item.ReviewProvider = review.ReviewProvider
 		item.ReviewAttempts = review.Attempts

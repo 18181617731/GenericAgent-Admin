@@ -567,6 +567,14 @@ func listDir(root, rel string, domain func(string, bool) string) []Entry {
 	return out
 }
 func buildAutonomousReports(root string) []Entry {
+	out := buildAllAutonomousReports(root)
+	if len(out) > 80 {
+		return out[:80]
+	}
+	return out
+}
+
+func buildAllAutonomousReports(root string) []Entry {
 	out := []Entry{}
 	for _, rel := range []string{"autonomous_reports", filepath.ToSlash(filepath.Join("temp", "autonomous_reports"))} {
 		for _, e := range listDir(root, rel, func(string, bool) string { return "autonomous-report" }) {
@@ -576,9 +584,6 @@ func buildAutonomousReports(root string) []Entry {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) })
-	if len(out) > 80 {
-		return out[:80]
-	}
 	return out
 }
 

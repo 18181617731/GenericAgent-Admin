@@ -1,4 +1,4 @@
-import { autonomousCopy } from './autonomousCopy.js'
+import { autonomousCopy, localizeAutonomousApprovalValue } from './autonomousCopy.js'
 
 const SERVICE_DETAILS = {
   'reflect/autonomous.py': {
@@ -44,15 +44,22 @@ export const splitAutonomousApprovals = (items = []) => ({
   handled: items.filter(item => item?.state !== 'pending'),
 })
 
+export const autonomousExecutionState = item => {
+  if (item?.execution_state) return item.execution_state
+  if (item?.decision === 'approved') return 'queued'
+  if (item?.decision === 'rejected') return 'not_applicable'
+  return ''
+}
+
 const approvalOutcomeValue = item => item?.expected_outcome || item?.expected_result || item?.expected_effect || item?.outcome
 
 const cleanApprovalOutcome = value => String(value || '').replace(/\s+/g, ' ').replace(/^[-*]+\s*/, '').trim()
 
 export const summarizeAutonomousApproval = (item = {}, lang = 'zh') => {
-  const explicit = cleanApprovalOutcome(approvalOutcomeValue(item))
+  const explicit = cleanApprovalOutcome(localizeAutonomousApprovalValue(approvalOutcomeValue(item), lang, 'expectedOutcome'))
   if (explicit) return explicit
   const target = cleanApprovalOutcome(item.target)
-  const nextStep = cleanApprovalOutcome(item.next_step)
+  const nextStep = cleanApprovalOutcome(localizeAutonomousApprovalValue(item.next_step, lang, 'nextStep'))
   if (lang === 'en') {
     if (target) return `After approval, the proposal will be put into ${target} so it can be reused for similar situations.`
     if (nextStep) return `After approval, the autonomous workflow will ${nextStep.charAt(0).toLowerCase()}${nextStep.slice(1)}.`
@@ -65,13 +72,13 @@ export const summarizeAutonomousApproval = (item = {}, lang = 'zh') => {
 
 const reviewReasonText = value => String(value || '').replace(/\s+/g, ' ').trim()
 
-const reviewReasonParts = (reason, copy) => {
+const reviewReasonParts = (reason, copy, lang) => {
   const text = reviewReasonText(reason)
   const parts = []
   if (/approval gate|审批门槛|明确要求.*审批/i.test(text)) parts.push(copy.reviewGate)
   if (/retry scheduled|model review scheduled|review scheduled|安排重试|审核已安排|重试/i.test(text)) parts.push(copy.reviewRetryScheduled)
   if (/conservative rule|保守规则/i.test(text)) parts.push(copy.reviewConservative)
-  if (!parts.length && text) parts.push(text)
+  if (!parts.length && text) parts.push(localizeAutonomousApprovalValue(text, lang, 'reviewReason'))
   return [...new Set(parts)]
 }
 
@@ -113,10 +120,10 @@ export const autonomousReviewView = (item = {}, lang = 'zh') => {
     badge,
     method: rulesOnly ? copy.reviewRuleFallback : kind === 'model' ? copy.reviewModelUsed : badge,
     summary,
-    basis: reviewReasonParts(reason, copy),
+    basis: reviewReasonParts(reason, copy, lang),
     model: reviewModelText(item, lang),
-    decision: decision === 'needs_approval' ? copy.reviewNoAutoApproval : decision,
-    confidence: reviewReasonText(item.review_confidence),
+    decision: decision === 'needs_approval' ? copy.reviewNoAutoApproval : localizeAutonomousApprovalValue(decision, lang, 'reviewDecision'),
+    confidence: localizeAutonomousApprovalValue(reviewReasonText(item.review_confidence), lang, 'reviewConfidence'),
     hasReviewData,
   }
 }
@@ -128,7 +135,7 @@ const approvalTargetText = (item, lang) => {
 }
 
 export const summarizeAutonomousReviewNeed = (item = {}, review = autonomousReviewView(item), lang = 'zh') => {
-  const evidence = cleanApprovalOutcome(item.evidence)
+  const evidence = cleanApprovalOutcome(localizeAutonomousApprovalValue(item.evidence, lang, 'evidence'))
   const target = approvalTargetText(item, lang)
   if (lang === 'en') {
     if (review.kind === 'unavailable') return `The review model is unavailable. The system only screened report approval markers, status, risk, and evidence with script rules; it did not make a model judgment. You must decide whether to approve it, and it must not be treated as model-approved.${target}`

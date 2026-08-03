@@ -46,4 +46,18 @@ func TestAutonomousApprovalsGetAndApprove(t *testing.T) {
 	if postRR.Code != http.StatusOK || !strings.Contains(postRR.Body.String(), `"queued":true`) {
 		t.Fatalf("POST status=%d body=%s", postRR.Code, postRR.Body.String())
 	}
+	if !strings.Contains(postRR.Body.String(), `"execution_state":"queued"`) {
+		t.Fatalf("POST should expose queued execution state: %s", postRR.Body.String())
+	}
+}
+
+func TestAutonomousModelReviewParsingIsStructuredAndConservative(t *testing.T) {
+	result := parseAutonomousReviewDecision("model preface\n{\"decision\":\"needs_approval\",\"confidence\":\"high\",\"reason\":\"approval evidence is missing\"}")
+	if result.Decision != "needs_approval" || result.Confidence != "high" || result.Reason == "" {
+		t.Fatalf("parsed review = %#v", result)
+	}
+	invalid := parseAutonomousReviewDecision("not json")
+	if invalid.Decision != "needs_approval" || invalid.Reason != "not json" {
+		t.Fatalf("invalid review should remain conservative: %#v", invalid)
+	}
 }

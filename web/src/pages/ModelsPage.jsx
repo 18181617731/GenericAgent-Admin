@@ -19,11 +19,11 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS as DndCSS } from '@dnd-kit/utilities'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
 import { emptyProfile } from '../lib/format'
 import {
   FAILOVER_VAR_PREFIX,
@@ -37,6 +37,7 @@ import {
   addModelConfigs,
   isModelConfigEnabled,
   modelAvailabilitySummary,
+  modelConfigDisplayName,
   modelProtocolFields,
   moveOrderedItem,
   orderedFailoverRows,
@@ -140,6 +141,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
   const enabled = isModelConfigEnabled(config)
+  const displayName = modelConfigDisplayName(config)
   const availability = config.availability || 'unknown'
   const availabilityTitle = [config.availability_detail, config.availability_latency_ms ? `${config.availability_latency_ms} ms` : ''].filter(Boolean).join(' · ')
   const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
@@ -154,9 +156,9 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
             {String(index + 1).padStart(2, '0')}
           </span>
           <div className="model-config-copy">
-            {config.name && (
-              <span className="model-config-display-name" title={config.name}>
-                {config.name}
+            {displayName && (
+              <span className="model-config-display-name" title={displayName}>
+                {displayName}
               </span>
             )}
             <span className="model-config-id" title={config.model || ''}>
@@ -195,8 +197,8 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
         <div className="model-row-advanced">
           <div className="model-row-advanced-grid">
             <label className="model-field">
-              <span className="model-field-label">{text.displayName}</span>
-              <Input aria-label={text.displayName} value={config.name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder} />
+              <span className="model-field-label">{text.displayName || '\u663e\u793a\u540d\u79f0'}</span>
+              <Input value={displayName} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder || '\u4f8b\u5982\uff1a\u4e3b\u6a21\u578b'} />
             </label>
             <label className="model-field">
               <span className="model-field-label">{text.stream}</span>
@@ -293,7 +295,7 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
         <Alert
           type={availabilityResult.type}
           showIcon
-          message={availabilityResult.message}
+          title={availabilityResult.message}
           description={availabilityResult.description}
           className="model-availability-alert"
         />
@@ -352,7 +354,7 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
           <Alert
             type="error"
             showIcon
-            message={text.cannotFetch}
+            title={text.cannotFetch}
             description={discoveryError}
             action={<Button size="small" onClick={onDiscover}>{t.retry}</Button>}
           />
@@ -600,7 +602,7 @@ function ProfileCard({
                 patch({ apikey: event.target.value })
               }}
               placeholder={text.keyPlaceholder}
-              addonAfter={revealed ? (
+              suffix={revealed ? (
                 <Space size={2}>
                   <Button size="small" type="text" icon={<EyeOff size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, false, profileKey)}>{t.hide}</Button>
                   <Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(idx, p, true, profileKey)} title={text.reread} aria-label={`${text.reread} API Key`} />
@@ -630,13 +632,13 @@ function ProfileCard({
           <strong><span>3</span> {text.saveStep}</strong>
           <small>{result?.errors?.length ? text.fixBlocks : dirty ? text.dirtyHelp : text.savedHelp}</small>
         </div>
-        {saveBusy && <Alert type="info" showIcon message={text.savingProvider} description={text.savingDescription} className="model-inline-alert" />}
-        {saveOk && !dirty && <Alert type="success" showIcon message={text.savedMykey} description={text.savedDescription} className="model-inline-alert" />}
+        {saveBusy && <Alert type="info" showIcon title={text.savingProvider} description={text.savingDescription} className="model-inline-alert" />}
+        {saveOk && !dirty && <Alert type="success" showIcon title={text.savedMykey} description={text.savedDescription} className="model-inline-alert" />}
         {saveError && (
           <Alert
             type="error"
             showIcon
-            message={text.providerSaveFailed}
+            title={text.providerSaveFailed}
             description={saveState?.error || text.unknownError}
             action={<Button size="small" onClick={save} disabled={!!result?.errors?.length} loading={saveBusy}>{text.retrySave}</Button>}
             className="model-inline-alert"
@@ -646,7 +648,7 @@ function ProfileCard({
           <Alert
             type="error"
             showIcon
-            message={text.cannotSave}
+            title={text.cannotSave}
             description={<ul>{result.errors.map(key => <li key={key}>{text.errors[key] || key}</li>)}</ul>}
             className="model-inline-alert"
           />
@@ -655,7 +657,7 @@ function ProfileCard({
           <Alert
             type="warning"
             showIcon
-            message={text.beforeSave}
+            title={text.beforeSave}
             description={<ul>{result.warnings.map(key => <li key={key}>{text.errors[key] || key}</li>)}</ul>}
             className="model-inline-alert"
           />
@@ -779,7 +781,7 @@ function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
           <Input type="password" value={form.apiKey} onChange={event => patchForm({ apiKey: event.target.value })} placeholder={t.hints?.savedSecret || '填写密钥'} />
         </label>
       </div>
-      {error && <Alert className="model-inline-alert" type="error" showIcon message={error} />}
+      {error && <Alert className="model-inline-alert" type="error" showIcon title={error} />}
       <footer className="model-add-footer">
         <span>{text.addProviderFooter}</span>
         <Space>
@@ -848,8 +850,8 @@ function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, 
       ) : (
         <div className="model-order-copy">
           <code>{row.variableName}</code>
-          <strong title={row.model}>{row.model || text.missingModelId}</strong>
-          <span>{text.providerName}{text.providerName === '服务商名称' ? '：' : ': '}{providerDisplayName(row.providerVarName) || text.unnamed}</span>
+          <strong title={row.model}>{row.displayName || row.model || text.missingModelId}</strong>
+          <span>{text.providerName}{text.providerName === '服务商名称' ? '：' : ': '}{row.providerName || providerDisplayName(row.providerVarName) || text.unnamed}{row.displayName && row.displayName !== row.model ? ` · ${row.model}` : ''}</span>
         </div>
       )}
       <div className="model-order-actions">
@@ -895,13 +897,95 @@ function SortableFailoverMemberRow({ memberKey, member, memberIndex, groupIndex,
         <GripVertical size={15} aria-hidden="true" />
       </span>
       <span className="model-failover-priority-index">{memberIndex + 1}</span>
-      <span><strong>{member.model}</strong><small>{providerDisplayName(member.provider_var_name) || member.provider_var_name}</small></span>
+      <span className="model-failover-priority-copy">
+        <strong title={candidate?.displayName || member.model}>{candidate?.displayName || member.model}</strong>
+        <small><b>{candidate?.providerName || providerDisplayName(member.provider_var_name) || member.provider_var_name}</b>{candidate?.model && candidate.displayName && candidate.model !== candidate.displayName ? ` · ${candidate.model}` : ''}{candidate?.protocol ? ` · ${candidate.protocol}` : ''}</small>
+      </span>
       {!candidate && <span>{text.failoverMissingMember || 'Missing'}</span>}
       <Space size={0}>
         <Button type="text" size="small" icon={<ArrowUp size={13} />} disabled={failoverSaving || memberIndex === 0} onClick={() => moveFailoverMember(groupIndex, memberIndex, memberIndex - 1)} />
         <Button type="text" size="small" icon={<ArrowDown size={13} />} disabled={failoverSaving || memberIndex === groupLength - 1} onClick={() => moveFailoverMember(groupIndex, memberIndex, memberIndex + 1)} />
         <Button danger type="text" size="small" icon={<X size={13} />} disabled={failoverSaving} onClick={() => candidate ? toggleFailoverMember(groupIndex, candidate) : patchFailoverGroup(groupIndex, { members: group.members.filter((_, i) => i !== memberIndex) })} />
       </Space>
+    </div>
+  )
+}
+
+function FailoverCandidatePicker({ candidates = [], selectedKeys, selectedFamilies, failoverSaving, onToggle, text, providerDisplayName, memberKey }) {
+  const providerGroups = useMemo(() => {
+    const grouped = new Map()
+    candidates.forEach(candidate => {
+      const providerVarName = String(candidate.providerVarName || '').trim()
+      if (!grouped.has(providerVarName)) grouped.set(providerVarName, [])
+      grouped.get(providerVarName).push(candidate)
+    })
+    return Array.from(grouped, ([value, models]) => ({
+      value,
+      label: models[0]?.providerName || providerDisplayName(value) || value || text.unnamed,
+      models,
+    }))
+  }, [candidates, providerDisplayName, text.unnamed])
+  const [previewProvider, setPreviewProvider] = useState('')
+  useEffect(() => {
+    setPreviewProvider(current => providerGroups.some(group => group.value === current) ? current : providerGroups[0]?.value || '')
+  }, [providerGroups])
+  const activeGroup = providerGroups.find(group => group.value === previewProvider) || providerGroups[0]
+
+  if (!candidates.length) return <div className="model-failover-empty">{text.failoverNoCandidates}</div>
+
+  return (
+    <div className="model-failover-cascade" aria-label={text.failoverCandidates}>
+      <div className="model-failover-cascade-providers" role="listbox" aria-label={text.providerName || 'Provider'}>
+        {providerGroups.map(group => (
+          <button
+            type="button"
+            key={group.value || 'unnamed-provider'}
+            role="option"
+            aria-selected={group.value === activeGroup?.value}
+            className={group.value === activeGroup?.value ? 'is-active' : ''}
+            onMouseEnter={() => setPreviewProvider(group.value)}
+            onFocus={() => setPreviewProvider(group.value)}
+            onClick={() => setPreviewProvider(group.value)}
+          >
+            <span title={group.label}>{group.label}</span>
+            <small>{group.models.length}</small>
+            <b aria-hidden="true">›</b>
+          </button>
+        ))}
+      </div>
+      <div className="model-failover-cascade-models" role="listbox" aria-label={activeGroup ? `${activeGroup.label} ${text.failoverCandidates}` : text.failoverCandidates}>
+        <div className="model-failover-cascade-heading">
+          <strong title={activeGroup?.label}>{activeGroup?.label || text.unnamed}</strong>
+          <span>{activeGroup?.models.length || 0} {text.models?.(activeGroup?.models.length || 0) || ''}</span>
+        </div>
+        {activeGroup?.models.map(candidate => {
+          const key = memberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
+          const selected = selectedKeys.has(key)
+          const locked = selectedFamilies.size > 0 && !selectedFamilies.has(candidate.family)
+          const providerLabel = candidate.providerName || providerDisplayName(candidate.providerVarName) || candidate.providerVarName || text.unnamed
+          const modelLabel = candidate.displayName || candidate.model || text.missingModelId
+          return (
+            <button
+              type="button"
+              key={candidate.id}
+              role="option"
+              aria-selected={selected}
+              aria-pressed={selected}
+              disabled={failoverSaving || (locked && !selected)}
+              className={`model-failover-cascade-model${selected ? ' is-selected' : ''}`}
+              title={`${providerLabel} · ${modelLabel} · ${candidate.protocol}`}
+              onClick={() => onToggle(candidate)}
+            >
+              <span className="model-failover-check">{selected ? <CheckCircle2 size={15} /> : null}</span>
+              <span className="model-failover-cascade-model-copy">
+                <strong title={modelLabel}>{modelLabel}</strong>
+                <small>{candidate.model !== modelLabel ? `${candidate.model} · ` : ''}{providerLabel} · {candidate.protocol}</small>
+              </span>
+              {locked && !selected && <em>{text.failoverLocked || 'Locked'}</em>}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -945,15 +1029,15 @@ export function Models({
   const [orderRows, setOrderRows] = useState([])
   const [orderSaving, setOrderSaving] = useState(false)
   const [orderError, setOrderError] = useState('')
-  const [dragIndex, setDragIndex] = useState(null)
-  const [repeatOrderRowId, setRepeatOrderRowId] = useState('')
-  const orderMoveSessionRef = useRef(null)
   const [failoverGroupExpanded, setFailoverGroupExpanded] = useState(new Set())
   const [failoverOpen, setFailoverOpen] = useState(false)
   const [failoverDrafts, setFailoverDrafts] = useState([])
   const [failoverSaving, setFailoverSaving] = useState(false)
   const [failoverError, setFailoverError] = useState('')
   const failoverGroupKeySeedRef = useRef(0)
+  const [dragIndex, setDragIndex] = useState(null)
+  const [repeatOrderRowId, setRepeatOrderRowId] = useState('')
+  const orderMoveSessionRef = useRef(null)
   const [providerHoldIndex, setProviderHoldIndex] = useState(null)
   const [providerDrag, setProviderDrag] = useState(null)
   const [providerOrderError, setProviderOrderError] = useState('')
@@ -1521,7 +1605,7 @@ export function Models({
       <div className="model-risk-content">
         <Alert
           type={risk.status === 'error' ? 'error' : 'info'}
-          message={risk.status === 'ready' ? text.riskReady : risk.status === 'error' ? text.riskUnavailable : text.riskEmpty}
+          title={risk.status === 'ready' ? text.riskReady : risk.status === 'error' ? text.riskUnavailable : text.riskEmpty}
           description={risk.status === 'error' ? risk.error : text.riskHelp}
         />
         {risk.items.length > 0 && (
@@ -1535,7 +1619,7 @@ export function Models({
           </div>
         )}
         {risk.missingConfirmedWriteRoutes.length > 0 && (
-          <Alert type="warning" message={text.missingGates(risk.missingConfirmedWriteRoutes.join(', '))} />
+          <Alert type="warning" title={text.missingGates(risk.missingConfirmedWriteRoutes.join(', '))} />
         )}
       </div>
     ),
@@ -1589,7 +1673,7 @@ export function Models({
         <Alert
           type="info"
           showIcon
-          message={`正在检测 ${batchProbeProgress?.completed || 0}/${batchProbeProgress?.total || configuredProbeTargetCount} 个服务商`}
+          title={`正在检测 ${batchProbeProgress?.completed || 0}/${batchProbeProgress?.total || configuredProbeTargetCount} 个服务商`}
           description={(
             <div className="model-batch-progress">
               <span>{batchProbeProgress?.current || '正在准备真实对话检测…'}</span>
@@ -1609,12 +1693,12 @@ export function Models({
           showIcon
           closable
           onClose={() => setBatchProbeResult(null)}
-          message={batchProbeResult.message}
+          title={batchProbeResult.message}
           description={batchProbeResult.description}
           className="model-page-alert"
         />
       )}
-      {hasErrors && <Alert type="error" showIcon message="存在不能保存的服务商，请在目录中选择异常项并修复。" className="model-page-alert" />}
+      {hasErrors && <Alert type="error" showIcon title="存在不能保存的服务商，请在目录中选择异常项并修复。" className="model-page-alert" />}
 
       <div className="model-workbench">
         <aside className="model-provider-rail">
@@ -1674,7 +1758,7 @@ export function Models({
           </div>
 
           {providerOrderError && (
-            <Alert type="error" showIcon message={providerOrderError} className="model-provider-order-alert" />
+            <Alert type="error" showIcon title={providerOrderError} className="model-provider-order-alert" />
           )}
 
           <button type="button" className={`model-provider-add${addOpen ? ' is-active' : ''}`} onClick={openAdd}>
@@ -1755,7 +1839,7 @@ export function Models({
           <Alert
             type="info"
             showIcon
-            message="配置会保存在当前 GA Admin 服务中"
+            title="配置会保存在当前 GA Admin 服务中"
             description="默认检测目录中的全部服务商；选择指定范围后，后续一键检测只处理已勾选的服务商。"
           />
           <Radio.Group value={probeScopeMode} onChange={event => { setProbeScopeMode(event.target.value); setProbeScopeError('') }} className="model-probe-scope-mode">
@@ -1783,14 +1867,14 @@ export function Models({
               )
             })}
           </div>
-          {probeScopeError && <Alert type="error" showIcon message={probeScopeError} />}
+          {probeScopeError && <Alert type="error" showIcon title={probeScopeError} />}
         </Modal>
       )}
 
       <Drawer
         title={text.orderTitle}
         placement="right"
-        width={620}
+        size={620}
         open={orderOpen}
         onClose={closeModelOrder}
         closable={!orderSaving}
@@ -1809,16 +1893,16 @@ export function Models({
         <Alert
           type="info"
           showIcon
-          message={text.orderInfo}
+          title={text.orderInfo}
           description={text.orderDescription}
         />
-        {orderError && <Alert type="error" showIcon message={orderError} className="model-order-error" />}
+        {orderError && <Alert type="error" showIcon title={orderError} className="model-order-error" />}
         <div className="model-order-list" role="list" aria-label={text.savedOrder}>
           {orderRows.map((row, index) => (
             <div
               key={row.id}
               role="listitem"
-              className={`model-order-row${dragIndex === index ? ' is-dragging' : ''}${repeatOrderRowId === row.id ? ' is-repeat-target' : ''}`}
+              className={`model-order-row${dragIndex === index ? ' is-dragging' : ''}${repeatOrderRowId === row.id ? ' is-repeat-target' : ''}${row.type === 'failover' ? ' is-failover' : ''}`}
               draggable={!orderSaving}
               onDragStart={event => {
                 resetOrderMoveSession()
@@ -1841,17 +1925,34 @@ export function Models({
                 <strong>{index}</strong>
                 <span>--llm-no</span>
               </div>
+              {row.type === 'failover' && (
+                <div className="model-order-copy model-order-failover">
+                  <div className="model-failover-name">
+                    <code>{row.varName}</code>
+                    <strong>{text.failoverGroup || 'Failover group'}</strong>
+                    <span>{row.members?.length || 0} {text.failoverMembers || 'members'}</span>
+                  </div>
+                  {row.members?.length > 0 && <div className="model-failover-members">
+                    {row.members.map((member, memberIndex) => (
+                      <div key={`${row.id}-${memberIndex}`} className="model-failover-member">
+                        <span className="model-failover-member-index">{memberIndex + 1}.</span>
+                        <code>{providerDisplayName(member.provider_var_name) || member.provider_var_name} · {member.model}</code>
+                      </div>
+                    ))}
+                  </div>}
+                </div>
+              )}
               <div className="model-order-copy">
                 <code>{row.variableName}</code>
-                <strong title={row.model}>{row.model || '未填写模型 ID'}</strong>
-                <span>服务商名称：{row.providerName || providerDisplayName(row.providerVarName) || '未命名'}</span>
+                <strong title={row.model}>{row.displayName || row.model || '未填写模型 ID'}</strong>
+                <span>服务商名称：{row.providerName || providerDisplayName(row.providerVarName) || '未命名'}{row.displayName && row.displayName !== row.model ? ` · ${row.model}` : ''}</span>
               </div>
               <div className="model-order-actions">
                 <Button
                   type="text"
                   size="small"
                   icon={<ArrowUp size={15} />}
-                  aria-label={`${text.moveUp} ${row.model || row.variableName}`}
+                  aria-label={`${text.moveUp} ${row.type === 'failover' ? row.varName : (row.model || row.variableName)}`}
                   title={text.moveUp}
                   disabled={orderSaving || index === 0}
                   onClick={event => moveModelOrder(row.id, -1, event)}
@@ -1860,21 +1961,34 @@ export function Models({
                   type="text"
                   size="small"
                   icon={<ArrowDown size={15} />}
-                  aria-label={`${text.moveDown} ${row.model || row.variableName}`}
+                  aria-label={`${text.moveDown} ${row.type === 'failover' ? row.varName : (row.model || row.variableName)}`}
                   title={text.moveDown}
                   disabled={orderSaving || index === orderRows.length - 1}
                   onClick={event => moveModelOrder(row.id, 1, event)}
                 />
               </div>
-                      </div>
-                    ))}
-                  </div>
+            </div>
+          ))}
+        </div>
+      </Drawer>
+
+      <Drawer
+        title={text.previewTitle}
+        placement="right"
+        size={680}
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        className="model-preview-drawer"
+        extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>{text.refreshPreview}</Button>}
+      >
+        <Alert type="info" showIcon title={text.previewSecret} />
+        <pre className="model-preview-pre">{modelPreview || (profiles.length ? text.generatingPreview : text.previewNeedsProvider)}</pre>
       </Drawer>
 
       <Drawer
         title={text.failoverTitle}
         placement="right"
-        width={780}
+        size={780}
         open={failoverOpen}
         onClose={closeFailover}
         closable={!failoverSaving}
@@ -1891,9 +2005,9 @@ export function Models({
         )}
       >
         <div className="model-failover-stack">
-          <Alert type="info" showIcon message={text.failoverInfo} description={text.failoverDescription} />
-          {failoverError && <Alert type="error" showIcon message={failoverError} />}
-          {!failoverError && failoverValidation && <Alert type="warning" showIcon message={failoverValidation} />}
+          <Alert type="info" showIcon title={text.failoverInfo} description={text.failoverDescription} />
+          {failoverError && <Alert type="error" showIcon title={failoverError} />}
+          {!failoverError && failoverValidation && <Alert type="warning" showIcon title={failoverValidation} />}
 
           <section className="model-failover-section">
             <div className="model-failover-section-head">
@@ -1933,7 +2047,7 @@ export function Models({
                 <label className="model-failover-name">
                   <span>{text.varName || 'Variable name'}</span>
                   <Input
-                    addonBefore={FAILOVER_VAR_PREFIX}
+                    prefix={FAILOVER_VAR_PREFIX}
                     value={failoverGroupSuffix(group.var_name)}
                     disabled={failoverSaving}
                     onChange={event => patchFailoverGroup(groupIndex, { var_name: failoverGroupVarName(event.target.value) })}
@@ -1945,26 +2059,16 @@ export function Models({
                   <span>{group.members.length} / {failoverCandidates.length}</span>
                 </div>
                 <p>{text.failoverCandidatesHelp}</p>
-                <div className="model-failover-candidates">
-                  {failoverCandidates.length ? failoverCandidates.map(candidate => {
-                    const key = failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
-                    const selected = selectedKeys.has(key)
-                    const locked = selectedFamilies.size > 0 && !selectedFamilies.has(candidate.family)
-                    return (
-                      <button
-                        type="button"
-                        key={candidate.id}
-                        className={`model-failover-candidate${selected ? ' is-selected' : ''}`}
-                        disabled={failoverSaving || (locked && !selected)}
-                        aria-pressed={selected}
-                        onClick={() => toggleFailoverMember(groupIndex, candidate)}
-                      >
-                        <span className="model-failover-check">{selected ? <CheckCircle2 size={15} /> : null}</span>
-                        <span><strong>{candidate.model || text.missingModelId}</strong><small>{providerDisplayName(candidate.providerVarName) || text.unnamed} · {candidate.protocol}</small></span>
-                      </button>
-                    )
-                  }) : <div className="model-failover-empty">{text.failoverNoCandidates}</div>}
-                </div>
+                <FailoverCandidatePicker
+                  candidates={failoverCandidates}
+                  selectedKeys={selectedKeys}
+                  selectedFamilies={selectedFamilies}
+                  failoverSaving={failoverSaving}
+                  onToggle={candidate => toggleFailoverMember(groupIndex, candidate)}
+                  text={text}
+                  providerDisplayName={providerDisplayName}
+                  memberKey={failoverMemberKey}
+                />
 
                 <div className="model-failover-section-head">
                   <div><span className="model-failover-kicker">B</span><strong>{text.failoverPriority}</strong></div>
@@ -2027,13 +2131,13 @@ export function Models({
       <Drawer
         title={text.previewTitle}
         placement="right"
-        width={680}
+        size={680}
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
         className="model-preview-drawer"
         extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>{text.refreshPreview}</Button>}
       >
-        <Alert type="info" showIcon message={text.previewSecret} />
+        <Alert type="info" showIcon title={text.previewSecret} />
         <pre className="model-preview-pre">{modelPreview || (profiles.length ? text.generatingPreview : text.previewNeedsProvider)}</pre>
       </Drawer>
     </section>

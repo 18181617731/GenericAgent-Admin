@@ -250,6 +250,20 @@ func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interf
 		return chatMessage{}, err
 	}
 	waited := false
+	timedOut := make(chan struct{}, 1)
+	timeout := chatWorkerTimeout(req)
+	timer := time.AfterFunc(timeout, func() {
+		select {
+		case timedOut <- struct{}{}:
+		default:
+		}
+		_ = worker.Stdin.Close()
+		_ = worker.Stdout.Close()
+		if worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+		}
+	})
+	defer timer.Stop()
 	defer func() {
 		_ = worker.Stdin.Close()
 		if !waited && worker.Cmd != nil && worker.Cmd.Process != nil {
@@ -300,12 +314,42 @@ func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interf
 			}
 		}
 		if readErr != nil {
+			select {
+			case <-timedOut:
+				return chatMessage{}, fmt.Errorf("btw worker timed out after %s", timeout.Round(time.Second))
+			default:
+			}
 			if readErr == io.EOF {
 				return chatMessage{}, fmt.Errorf("btw worker exited before response")
 			}
 			return chatMessage{}, readErr
 		}
 	}
+}
+
+func chatWorkerTimeout(req map[string]interface{}) time.Duration {
+	const defaultTimeout = 2 * time.Minute
+	value, ok := req["timeout_ms"]
+	if !ok {
+		return defaultTimeout
+	}
+	var milliseconds int64
+	switch typed := value.(type) {
+	case int:
+		milliseconds = int64(typed)
+	case int32:
+		milliseconds = int64(typed)
+	case int64:
+		milliseconds = typed
+	case float64:
+		milliseconds = int64(typed)
+	case json.Number:
+		milliseconds, _ = typed.Int64()
+	}
+	if milliseconds < 1000 || milliseconds > int64((10*time.Minute)/time.Millisecond) {
+		return defaultTimeout
+	}
+	return time.Duration(milliseconds) * time.Millisecond
 }
 
 var runOneShotBTWWorkerFunc = runOneShotBTWWorker
@@ -1371,8 +1415,13 @@ agent = GenericAgent()
 items = []
 for idx, label, active in agent.list_llms():
     text = str(label)
-    client = agent.llmclients[int(idx)]
-    backend = client.backend
+    try:
+        client = agent.llmclients[int(idx)]
+        backend = client.get('backend') if isinstance(client, dict) else getattr(client, 'backend', None)
+    except (IndexError, KeyError, TypeError, ValueError):
+        continue
+    if backend is None:
+        continue
     name = str(getattr(backend, 'name', '') or '')
     model = str(getattr(backend, 'model', '') or '')
     provider = type(backend).__name__
@@ -1534,8 +1583,10 @@ func applyChatProviderModel(item map[string]interface{}, configured chatProvider
 		item["model"] = configured.model
 	}
 	if configured.displayName != "" {
+		item["display_name"] = configured.displayName
 		item["label"] = configured.displayName
 	} else {
+		delete(item, "display_name")
 		// fallback to name when display_name is empty
 		if name, ok := item["name"].(string); ok && strings.TrimSpace(name) != "" {
 			item["label"] = name

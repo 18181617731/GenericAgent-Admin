@@ -5,6 +5,7 @@ import { Panel } from '../components/common'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from '../components/ModelProviderCascade.jsx'
 import { GoalWorkflowGuide } from '../components/ServicePlacement.jsx'
 import { TurnList } from '../components/turns'
+import { firstRuntimeModel, runtimeModelDescription } from '../lib/modelDefaults.js'
 
 export function GoalsPage({ t, lang = 'zh', workflowServices = [], goals, objective, setObjective, budget, setBudget, maxTurns, setMaxTurns, llmNo, setLLMNo, llms = [], hive, setHive, outputBytes, setOutputBytes, autoRefresh, setAutoRefresh, selected, output, outputMeta, busy, onStart, onStop, onDelete, onRefresh, onOutput, onClearOutput, setMsg }) {
   const goalList = goals || []
@@ -24,9 +25,11 @@ export function GoalsPage({ t, lang = 'zh', workflowServices = [], goals, object
   const outputLinesShown = outputMeta?.linesReturned ?? outputLineCount(output)
   const outputTotalLines = outputMeta?.totalLines ?? outputLinesShown
   const outputLimitLabel = Number(outputBytes || 0) > 0 ? formatBytes(outputBytes) : t.fields.outputDefault
+  const firstModel = firstRuntimeModel(llms)
   const selectedTurnPct = selectedGoal ? goalTurnPercent(selectedGoal) : 0
   const selectedBudgetPct = selectedGoal ? goalBudgetPercent(selectedGoal) : 0
-  const goalModelGroups = useMemo(() => buildModelProviderGroups(llms, { defaultLabel: '默认（模型顺序首位）' }), [llms])
+  const goalDefaultLabel = firstModel ? `默认模型: ${runtimeModelDescription(firstModel)}` : '默认（模型顺序首位）'
+  const goalModelGroups = useMemo(() => buildModelProviderGroups(llms, { defaultLabel: goalDefaultLabel, defaultProviderLabel: '默认模型', defaultModel: firstModel }), [firstModel, goalDefaultLabel, llms])
   const goalModelProvider = findModelProviderValue(goalModelGroups, llmNo ?? '')
 
   const copyOutput = async () => {

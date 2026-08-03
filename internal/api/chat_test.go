@@ -506,35 +506,6 @@ func TestAnnotateChatLLMProvidersKeepsModelsInOneProfileUnderOneProvider(t *test
 	}
 }
 
-func TestAnnotateChatLLMProvidersIncludesConfiguredReasoningEffort(t *testing.T) {
-	profiles := []modelconfig.Profile{
-		{
-			Name:            "Configured provider",
-			ReasoningEffort: "low",
-			ModelConfigs: []modelconfig.ModelConfig{
-				{Model: "model-max", ReasoningEffort: "max"},
-				{Model: "model-high", ReasoningEffort: "high"},
-			},
-		},
-		{
-			Name:            "Legacy provider",
-			Models:          []string{"legacy-model"},
-			ReasoningEffort: "xhigh",
-		},
-	}
-	llms := []map[string]interface{}{
-		{"index": 0, "model": "model-max"},
-		{"index": 1, "model": "model-high"},
-		{"index": 2, "model": "legacy-model"},
-	}
-
-	annotateChatLLMProviders(llms, profiles)
-
-	if llms[0]["reasoning_effort"] != "max" || llms[1]["reasoning_effort"] != "high" || llms[2]["reasoning_effort"] != "xhigh" {
-		t.Fatalf("reasoning effort metadata=%#v", llms)
-	}
-}
-
 func TestAnnotateChatLLMProvidersIgnoresDisabledModelMetadata(t *testing.T) {
 	disabled := false
 	profiles := []modelconfig.Profile{{
@@ -548,6 +519,45 @@ func TestAnnotateChatLLMProvidersIgnoresDisabledModelMetadata(t *testing.T) {
 	annotateChatLLMProviders(llms, profiles)
 	if got := llms[0]["provider"]; got != "Available provider" {
 		t.Fatalf("provider=%v want Available provider: %#v", got, llms)
+	}
+}
+
+func TestListGARuntimeLLMsSkipsMalformedClientEntries(t *testing.T) {
+	root := t.TempDir()
+	agentmain := `
+class Backend:
+    name = "valid-provider"
+    model = "valid-model"
+    config = {}
+
+class Client:
+    backend = Backend()
+
+class GenericAgent:
+    def __init__(self):
+        self.llmclients = [Client(), {"mixin_cfg": {"llm_nos": []}}]
+
+    def list_llms(self):
+        return [(0, "valid", True), (1, "BADCONFIG_MIXIN", False)]
+`
+	if err := os.WriteFile(filepath.Join(root, "agentmain.py"), []byte(agentmain), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := newGoalTestServer(t, root)
+	s.CfgStore.Cfg.PythonPath = "python"
+
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
+	if err != nil {
+		t.Fatalf("listGARuntimeLLMs() error: %v", err)
+	}
+	if len(llms) != 1 {
+		t.Fatalf("listGARuntimeLLMs() returned %d entries, want one valid entry: %#v", len(llms), llms)
+	}
+	if llms[0]["index"] != float64(0) && llms[0]["index"] != 0 {
+		t.Fatalf("valid model index=%v, want 0", llms[0]["index"])
+	}
+	if llms[0]["model"] != "valid-model" {
+		t.Fatalf("valid model=%v, want valid-model", llms[0]["model"])
 	}
 }
 

@@ -16,7 +16,9 @@ import (
 
 type chatTitleModelOption struct {
 	ProviderVarName string `json:"provider_var_name"`
+	ProviderName    string `json:"provider_name"`
 	Model           string `json:"model"`
+	DisplayName     string `json:"display_name"`
 	LLMNo           int    `json:"llm_no"`
 }
 
@@ -52,7 +54,9 @@ func orderedChatTitleModelOptions(profiles []modelconfig.Profile) []chatTitleMod
 			rows = append(rows, orderedOption{
 				chatTitleModelOption: chatTitleModelOption{
 					ProviderVarName: strings.TrimSpace(profile.VarName),
+					ProviderName:    strings.TrimSpace(profile.Name),
 					Model:           model,
+					DisplayName:     strings.TrimSpace(modelConfig.Name),
 				},
 				order:    order,
 				sequence: sequence,
@@ -69,6 +73,9 @@ func orderedChatTitleModelOptions(profiles []modelconfig.Profile) []chatTitleMod
 	options := make([]chatTitleModelOption, len(rows))
 	for i, row := range rows {
 		row.LLMNo = i
+		if row.DisplayName == "" {
+			row.DisplayName = row.Model
+		}
 		options[i] = row.chatTitleModelOption
 	}
 	return options

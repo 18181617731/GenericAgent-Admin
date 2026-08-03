@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
 import { modelLabel } from '../lib/format'
+import { orderedRuntimeModels } from '../lib/modelDefaults.js'
 import { filterModelProviderGroups, modelGroupStats } from '../lib/ux'
 
 const DEFAULT_PROVIDER_VALUE = '__ga_default_provider__'
@@ -17,6 +18,10 @@ export const modelProvider = model => {
 }
 
 export const runtimeModelLabel = model => {
+  const displayName = String(model?.display_name || model?.displayName || '').trim()
+  if (displayName) return displayName
+  const configuredLabel = String(model?.label || '').trim()
+  if (configuredLabel) return configuredLabel
   const modelName = String(model?.model || '').trim()
   if (modelName) return modelName
   const label = modelLabel(model)
@@ -26,13 +31,13 @@ export const runtimeModelLabel = model => {
 export function buildModelProviderGroups(models = [], options = {}) {
   const { defaultLabel = '', defaultProviderLabel = '默认' } = options
   const groups = new Map()
-  models.forEach(model => {
+  orderedRuntimeModels(models).forEach(model => {
     const provider = modelProvider(model)
     if (!groups.has(provider)) groups.set(provider, [])
     groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model) })
   })
   const result = Array.from(groups, ([provider, providerModels]) => ({ value: provider, label: provider, models: providerModels }))
-  if (defaultLabel) result.unshift({ value: DEFAULT_PROVIDER_VALUE, label: defaultProviderLabel, models: [{ value: '', label: defaultLabel }] })
+  if (defaultLabel) result.unshift({ value: DEFAULT_PROVIDER_VALUE, label: defaultProviderLabel, models: [{ value: '', label: defaultLabel, model: options.defaultModel || null }] })
   return result
 }
 

@@ -32,6 +32,39 @@ type autonomousReviewDecision struct {
 	Reason     string `json:"reason"`
 }
 
+func (s *Server) reviewAutonomousApprovals(overview *ga.AutonomousApprovalOverview) {
+	if s == nil || overview == nil || s.CfgStore == nil {
+		return
+	}
+	model, err := s.resolveAutonomousReviewModel()
+	if err != nil {
+		overview.ReviewStatus = "not_configured"
+		return
+	}
+	modelNo := model.LLMNo
+	overview.ReviewModelNo = &modelNo
+	overview.ReviewModel = autonomousReviewModelName(model)
+	overview.ReviewProvider = model.Provider
+	if overview.ReviewStatus == "" {
+		overview.ReviewStatus = "configured"
+	}
+	for index := range overview.Items {
+		item := &overview.Items[index]
+		if item.State != "pending" {
+			continue
+		}
+		if item.ReviewModelNo == nil {
+			item.ReviewModelNo = &modelNo
+		}
+		if strings.TrimSpace(item.ReviewModel) == "" {
+			item.ReviewModel = autonomousReviewModelName(model)
+		}
+		if strings.TrimSpace(item.ReviewProvider) == "" {
+			item.ReviewProvider = model.Provider
+		}
+	}
+}
+
 func (s *Server) autonomousApprovalReview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -68,6 +101,7 @@ func (s *Server) autonomousApprovalReview(w http.ResponseWriter, r *http.Request
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.reviewAutonomousApprovals(&updated)
 	writeJSON(w, map[string]interface{}{"ok": true, "reviewed": len(results), "results": results, "overview": updated})
 }
 
@@ -109,7 +143,7 @@ func (s *Server) reviewAutonomousApproval(item ga.AutonomousApproval, force bool
 		return s.saveAutonomousReviewFailure(record, modelErr)
 	}
 	record.ReviewModelNo = model.LLMNo
-	record.ReviewModel = model.Config.Model
+	record.ReviewModel = autonomousReviewModelName(model)
 	record.ReviewProvider = model.Provider
 	reply, requestErr := runAutonomousReviewRequest(context.Background(), model, item)
 	if requestErr != nil {
@@ -219,13 +253,21 @@ func inheritAutonomousModelConfig(config modelconfig.ModelConfig, profile modelc
 	return config
 }
 
+func autonomousReviewModelName(model autonomousReviewModel) string {
+	if name := strings.TrimSpace(model.Config.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(model.Config.Model)
+}
+
 func runAutonomousReviewRequest(ctx context.Context, model autonomousReviewModel, item ga.AutonomousApproval) (modelProbeReply, error) {
 	options := normalizeModelProbeOptions(model.Options)
-	endpoints, err := modelProbeEndpoints(model.Profile.APIBase, isClaudeModel(model.Profile.Type), options.APIMode)
+	isClaude := isClaudeModel(model.Profile.Type)
+	endpoints, err := modelProbeEndpoints(model.Profile.APIBase, isClaude, options.APIMode)
 	if err != nil {
 		return modelProbeReply{}, err
 	}
-	payload, err := autonomousReviewPayload(model.Config.Model, isClaudeModel(model.Profile.Type), options, item)
+	payload, err := autonomousReviewPayload(model.Config.Model, isClaude, options, item)
 	if err != nil {
 		return modelProbeReply{}, err
 	}
@@ -233,10 +275,10 @@ func runAutonomousReviewRequest(ctx context.Context, model autonomousReviewModel
 	defer client.CloseIdleConnections()
 	var lastErr error
 	for _, endpoint := range endpoints {
-		for _, headers := range modelDiscoveryAuthHeaders(model.Profile.APIKey, isClaudeModel(model.Profile.Type)) {
-			headers = modelProbeRequestHeaders(headers, options, isClaudeModel(model.Profile.Type))
+		for _, headers := range modelDiscoveryAuthHeaders(model.Profile.APIKey, isClaude) {
+			headers = modelProbeRequestHeaders(headers, options, isClaude)
 			for attempt := 0; attempt <= options.MaxRetries; attempt++ {
-				reply, status, requestErr := requestModelProbe(ctx, client, endpoint, headers, payload, isClaudeModel(model.Profile.Type), options.APIMode)
+				reply, status, requestErr := requestModelProbe(ctx, client, endpoint, headers, payload, isClaude, options.APIMode)
 				if requestErr == nil && status >= 200 && status < 300 && strings.TrimSpace(reply.Text) != "" {
 					return reply, nil
 				}
@@ -305,13 +347,17 @@ func parseAutonomousReviewDecision(text string) autonomousReviewDecision {
 		}
 	}
 	decision.Decision = normalizeReviewDecision(decision.Decision)
-	if decision.Confidence == "" {
+	decision.Confidence = strings.ToLower(strings.TrimSpace(decision.Confidence))
+	if decision.Confidence != "low" && decision.Confidence != "medium" && decision.Confidence != "high" {
 		decision.Confidence = "medium"
 	}
 	if decision.Reason == "" {
 		decision.Reason = "模型未给出明确理由，仍需人工确认"
 	}
 	decision.Reason = redactProbeDetail(decision.Reason, "")
+	if len([]rune(decision.Reason)) > 500 {
+		decision.Reason = string([]rune(decision.Reason)[:500])
+	}
 	return decision
 }
 

@@ -2,6 +2,7 @@ import React from 'react'
 import { ChevronDown, CircleHelp, Eye, Play, Square } from 'lucide-react'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
 import { autonomousServiceView } from '../lib/autonomous.js'
+import { firstRuntimeModel, runtimeModelDescription } from '../lib/modelDefaults.js'
 
 const serviceCommand = service => Array.isArray(service?.command) ? service.command.join(' ') : (service?.command || '-')
 
@@ -9,11 +10,16 @@ export function AutonomousServiceCard({ service, lang = 'zh', llms = [], actionS
   const zh = lang !== 'en'
   const view = autonomousServiceView(service, lang)
   const pending = actionState?.status === 'pending'
-  const modelGroups = buildModelProviderGroups(llms, { defaultLabel: zh ? '默认模型' : 'Default model' })
+  const firstModel = firstRuntimeModel(llms)
+  const defaultLabel = firstModel
+    ? `${zh ? '默认模型' : 'Default model'}: ${runtimeModelDescription(firstModel)}`
+    : (zh ? '默认模型' : 'Default model')
+  const modelGroups = buildModelProviderGroups(llms, { defaultLabel, defaultProviderLabel: zh ? '默认模型' : 'Default model', defaultModel: firstModel })
   const modelValue = service?.model_no ?? ''
   const selectedProvider = findModelProviderValue(modelGroups, modelValue)
-  const modelMatch = modelValue === '' ? null : llms.find(model => model.index === modelValue)
+  const modelMatch = modelValue === '' ? null : llms.find(model => Number(model.index) === Number(modelValue))
   const modelText = modelMatch ? `${modelProvider(modelMatch)} · ${runtimeModelLabel(modelMatch)}` : (zh ? '默认模型' : 'Default model')
+  const resolvedModelText = modelMatch ? modelText : defaultLabel
   const retry = actionState?.action === 'stop' ? onStop : onStart
 
   return <article className={`autonomous-service ${service?.running ? 'is-running' : 'is-stopped'}`} aria-busy={pending || undefined}>
@@ -33,7 +39,7 @@ export function AutonomousServiceCard({ service, lang = 'zh', llms = [], actionS
       {showModel && <div className="autonomous-model-control">
         <span>{zh ? '执行模型' : 'Execution model'}</span>
         {service?.running
-          ? <b title={modelText}>{modelText}</b>
+          ? <b title={resolvedModelText}>{resolvedModelText}</b>
           : <ProviderModelCascade groups={modelGroups} selectedProvider={selectedProvider} value={modelValue} showLabel={false} placement="auto" align="start" className="service-provider-cascade" onChange={value => onModel?.(service.name, value === '' ? null : Number(value))}/>}
       </div>}
       <label className="autonomous-autostart"><input type="checkbox" checked={!!service?.autostart} onChange={event => onAutostart?.(service.name, event.target.checked)}/><span>{zh ? '随 GA Admin 启动' : 'Start with GA Admin'}</span></label>

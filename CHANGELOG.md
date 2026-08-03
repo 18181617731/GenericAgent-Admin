@@ -2,6 +2,46 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.44 - 2026-08-02
+
+### User-facing changes
+- Automatically repairs a stale Windows `GenericAgent Admin` startup entry when an older packaged executable was removed, so Windows no longer tries to launch a missing target after an update.
+- Keeps the current executable and application root in the migrated startup command while preserving the no-browser startup behavior.
+
+### Validation
+- Passed Windows autostart, GA, and version tests, frontend lint/library/UI tests, frontend production build, Windows packaging, and live startup-entry/browser checks.
+
+## v1.0.42 - 2026-08-02
+
+### User-facing changes
+- Autonomous approvals now scan `temp/autonomous_reports` in reverse, so blocked or unverifiable approval reports such as R49/R50 cannot disappear when `pending_drafts.md` is absent or stale.
+- Approval discovery scans the complete report set independently of the inventory display limit, while related reports are grouped into one review item instead of silently dropping older evidence.
+- Approval candidates retain all related reports, expose the report-backed reason and confidence, and invalidate older unverified approval decisions when a newer audit proves the approval gate is still blocked.
+- The approval page uses the selected `reflect/autonomous.py` model (falling back to the first ordered enabled model) for a bounded, read-only structured review; model failures keep the conservative human-review state and never auto-approve or modify files.
+- Model review runs with a short response window, background completion/cache, retry backoff, and worker timeout so a slow or unavailable provider cannot block the approvals page.
+
+### Validation
+- Passed targeted Go approval/API tests, frontend lint, frontend library tests, frontend UI smoke tests, and Windows packaging validation.
+
+## v1.0.41 - 2026-08-02
+
+### User-facing changes
+- Configured reflection and autonomous services now start before the Admin HTTP listener is exposed, so the first page load reflects their actual running state when “Start with GA Admin” is enabled.
+
+### Validation
+- Passed targeted service autostart tests, frontend lint/library/UI tests, Windows `build.bat`, and live browser restart checks.
+
+## v1.0.40 - 2026-08-02
+
+### User-facing changes
+- Autonomous approval cards now show whether an approved task is queued, completed, failed, or finished without a report, and link directly to the matched execution report.
+- Approval report matching now ignores audit documents that merely quote a TODO item, preventing false completed results.
+- Approval decisions refresh the GA inventory so newly generated autonomous reports appear without a manual page reload.
+- Fixed Windows autostart command quoting for GA roots ending in a backslash.
+
+### Validation
+- Passed `go test ./...`, frontend lint, frontend library tests (`223/223`), frontend UI smoke tests (`89/89`), Windows `build.bat`, and live browser/API checks on `http://127.0.0.1:8787/autonomous`.
+
 ## v1.0.39 - 2026-07-31
 
 ### User-facing changes

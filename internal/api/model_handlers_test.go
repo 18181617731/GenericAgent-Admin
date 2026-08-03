@@ -24,6 +24,25 @@ func newModelTestServer(t *testing.T, gaRoot string) *Server {
 	return New(cfg, service.NewManager(cfg.Cfg.GARoot, cfg.Cfg.BufferLines), models, nil)
 }
 
+func TestOrderedChatTitleModelOptionsExposeProviderAndDisplayNames(t *testing.T) {
+	order := 0
+	options := orderedChatTitleModelOptions([]modelconfig.Profile{{
+		VarName: "native_oai_config_paid",
+		Name:    "自费帅 API",
+		ModelConfigs: []modelconfig.ModelConfig{{
+			Model:     "12",
+			Name:      "自费帅主模型",
+			SortOrder: &order,
+		}},
+	}})
+	if len(options) != 1 {
+		t.Fatalf("options=%#v, want one option", options)
+	}
+	if options[0].ProviderName != "自费帅 API" || options[0].DisplayName != "自费帅主模型" || options[0].Model != "12" || options[0].LLMNo != 0 {
+		t.Fatalf("option=%#v, want provider/display/model/index metadata", options[0])
+	}
+}
+
 func TestModelsRawAndPreviewMethodContracts(t *testing.T) {
 	s := newModelTestServer(t, t.TempDir())
 	h := s.Routes()

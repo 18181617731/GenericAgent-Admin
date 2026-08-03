@@ -101,7 +101,7 @@ afterEach(() => {
 
 const pendingApproval = {
   id: 'draft-one', title: '补充自主操作 SOP', state: 'pending', status: '待批未落地',
-  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档', expected_outcome: '以后遇到同类问题可以直接参考这份方案',
+  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
 }
 
 const approvalOverview = (items = [pendingApproval]) => ({
@@ -126,7 +126,6 @@ describe('autonomous operations page', () => {
     render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
 
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
-    expect(screen.getByText('以后遇到同类问题可以直接参考这份方案')).toBeTruthy()
     fireEvent.change(screen.getByRole('textbox', { name: '审批意见或补充要求（可选）' }), { target: { value: '先验证，再执行' } })
     fireEvent.click(screen.getByRole('button', { name: '批准并加入队列' }))
 
@@ -138,91 +137,63 @@ describe('autonomous operations page', () => {
     expect(await screen.findByText('已批准')).toBeTruthy()
   })
 
-  test('explains when an approval card used rules because model review was unavailable', async () => {
+  test('should render generated approval-card values in Chinese', async () => {
     installBrowserPolyfills()
-    const fallback = {
+    const englishReview = {
       ...pendingApproval,
-      review_status: 'fallback',
+      title: 'R49_complete_task approval review',
+      status: 'report requires human approval',
+      risk: 'human review required',
+      evidence: 'approval evidence is missing or unverifiable',
+      next_step: 'Review the report evidence, then approve or reject explicitly',
       review_decision: 'needs_approval',
       review_confidence: 'high',
-      review_reason: 'report contains an explicit approval gate; model review unavailable: model review unavailable; retry scheduled; conservative rule retained',
-      review_model_no: 12,
-      review_model: 'gpt-5.6-luna',
-      review_provider: '自费帅API gpt',
+      review_reason: 'report is blocked; the proposed source change is not confirmed as implemented; model review unavailable: model review in progress; conservative rule retained',
     }
     globalThis.fetch = vi.fn(async url => {
-      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([fallback]))
-      throw new Error(`unexpected url ${url}`)
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([englishReview]))
+      throw new Error(String(url))
     })
     render(<AutonomousPage lang="zh" reports={[]}/>)
 
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
-    expect(screen.getByText('模型审核不可用')).toBeTruthy()
-    expect(screen.getByText('仅规则筛选（未经过模型判断）')).toBeTruthy()
-    expect(screen.getByText(/不是模型审核通过的结果/)).toBeTruthy()
-    expect(screen.getByText('为什么需要你审核')).toBeTruthy()
-    expect(screen.getByText(/没有做模型判断/)).toBeTruthy()
-    expect(screen.getByText('未自动批准')).toBeTruthy()
+    expect(await screen.findByText('报告需要人工审批')).toBeTruthy()
+    expect(screen.getByText('需要人工复核')).toBeTruthy()
+    expect(screen.getByText('需要审批')).toBeTruthy()
+    expect(screen.getByText('高')).toBeTruthy()
+    expect(screen.getByText('请核查报告证据后明确批准或拒绝')).toBeTruthy()
+    expect(screen.getByText(/报告处于阻塞状态/)).toBeTruthy()
+    expect(screen.queryByText('human review required')).toBeNull()
   })
 
-  test('selects all pending drafts and approves them sequentially', async () => {
+  test('should link an approved task to its execution result', async () => {
     installBrowserPolyfills()
-    const items = [pendingApproval, { ...pendingApproval, id: 'draft-two', title: '补充发布检查清单' }]
-    let currentItems = items
+    const report = { name: 'R99_execution.md', path: 'temp/autonomous_reports/R99_execution.md', mod_time: '2026-07-28T10:00:00Z' }
+    const decided = {
+      ...pendingApproval,
+      state: 'approved',
+      decision: 'approved',
+      decided_at: '2026-07-28T09:00:00Z',
+      execution_state: 'completed',
+      execution_report: report,
+      execution_summary: '已完成并通过验证',
+    }
     globalThis.fetch = vi.fn(async (url, options = {}) => {
-      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') {
-        const body = JSON.parse(options.body)
-        currentItems = currentItems.map(item => item.id === body.id ? { ...item, state: body.decision, decision: body.decision } : item)
-        return jsonResponse({ queued: body.decision === 'approved', overview: approvalOverview(currentItems) })
-      }
-      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview(currentItems))
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') return jsonResponse({ queued: true, overview: approvalOverview([decided]) })
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview())
+      if (String(url).startsWith('/api/files/read')) return jsonResponse({ content: '# 执行完成\n\n已完成并通过验证' })
       throw new Error(`unexpected url ${url}`)
     })
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    const setMessage = vi.fn()
-    render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/> )
+    render(<AutonomousPage lang="zh" reports={[report]}/>)
 
-    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (2)' }))
-    fireEvent.click(screen.getByRole('button', { name: '全选待审批' }))
-    expect(screen.getAllByRole('checkbox', { name: /选择：/ })).toHaveLength(2)
-    expect(screen.getAllByRole('checkbox', { name: /选择：/ }).every(input => input.checked)).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '批量批准并加入队列' }))
-
-    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('已处理 2 项待审批', 'success'))
-    const posts = globalThis.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')
-    expect(posts).toHaveLength(2)
-    expect(posts.map(([, options]) => JSON.parse(options.body).id)).toEqual(['draft-one', 'draft-two'])
-  })
-
-  test('rejects a manually selected group with one shared reason', async () => {
-    installBrowserPolyfills()
-    const items = [pendingApproval, { ...pendingApproval, id: 'draft-two', title: '补充发布检查清单' }]
-    let currentItems = items
-    globalThis.fetch = vi.fn(async (url, options = {}) => {
-      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') {
-        const body = JSON.parse(options.body)
-        currentItems = currentItems.map(item => item.id === body.id ? { ...item, state: body.decision, decision: body.decision, note: body.note } : item)
-        return jsonResponse({ queued: false, overview: approvalOverview(currentItems) })
-      }
-      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview(currentItems))
-      throw new Error(`unexpected url ${url}`)
-    })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    const setMessage = vi.fn()
-    render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
-
-    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (2)' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择：补充自主操作 SOP' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择：补充发布检查清单' }))
-    fireEvent.click(screen.getByRole('button', { name: '批量拒绝' }))
-    expect(screen.getByRole('dialog', { name: '拒绝 2 项待审批' })).toBeTruthy()
-    fireEvent.change(screen.getByRole('textbox', { name: '拒绝原因（可选）' }), { target: { value: '先补充证据再处理' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认拒绝' }))
-
-    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('已处理 2 项待审批', 'success'))
-    const posts = globalThis.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')
-    expect(posts).toHaveLength(2)
-    expect(posts.every(([, options]) => JSON.parse(options.body).note === '先补充证据再处理')).toBe(true)
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: '批准并加入队列' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /已处理/ }))
+    expect(await screen.findByText('已完成')).toBeTruthy()
+    expect(screen.getByText(/已完成并通过验证/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /查看执行结果：R99_execution\.md/ }))
+    expect(await screen.findByRole('heading', { name: '执行完成' })).toBeTruthy()
   })
 
   test('should keep rejection dialog actionable when the decision request fails', async () => {
@@ -746,6 +717,30 @@ describe('Models provider editor', () => {
     expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true', 'true'])
     expect(groups[2].querySelector('.model-failover-group-body')).toBeTruthy()
   })
+
+  test('groups failover candidates by provider and keeps the full model identity visible', () => {
+    installBrowserPolyfills()
+    render(
+      <ModelsHarness
+        failoverGroups={[{
+          var_name: 'mixin_config_primary',
+          members: [{ provider_var_name: validModelProfile.var_name, model: validModelProfile.model }],
+          max_retries: 10,
+          base_delay: 0.5,
+        }]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6545\u969c\u8f6c\u79fb' }))
+    fireEvent.click(document.querySelector('.model-failover-group-toggle'))
+
+    const provider = document.querySelector('.model-failover-cascade-providers button')
+    expect(provider?.textContent).toContain('demo')
+    expect(document.querySelector('.model-failover-cascade-heading strong')?.textContent).toBe('demo')
+    const model = document.querySelector('.model-failover-cascade-model')
+    expect(model?.textContent).toContain('demo-model')
+    expect(model?.getAttribute('title')).toContain('demo · demo-model · native_oai')
+  })
 })
 
 
@@ -1222,7 +1217,7 @@ describe('usage overview page', () => {
   test('renders aggregate and breakdown data', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(payload))
     render(<UsagePage lang="en" />)
-    expect((await screen.findAllByTitle('1,545')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
     expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Alpha')).toBeNull()
     expect(screen.queryByText('Session details')).toBeNull()
@@ -1246,7 +1241,7 @@ describe('usage overview page', () => {
     render(<UsagePage lang="en" />)
     expect((await screen.findByRole('alert')).textContent).toMatch(/network offline/i)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect((await screen.findAllByTitle('1,545')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
@@ -1348,6 +1343,34 @@ describe('operator shell feedback', () => {
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/version/status', expect.anything()))
     await waitFor(() => expect(screen.queryByText('SHOULD_HIDE_STALE_PROGRESS')).toBeNull())
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url).includes('/api/version/check'))).toHaveLength(0)
+  })
+
+  test('keeps configured service domains visible when health reports a degraded runtime', async () => {
+    installBrowserPolyfills()
+    window.history.replaceState({}, '', '/autonomous')
+    const services = [
+      { name: 'reflect/scheduler.py', kind: 'reflect', running: true, model_no: 6 },
+      { name: 'reflect/autonomous.py', kind: 'reflect', running: false, model_no: 6 },
+    ]
+    globalThis.fetch = vi.fn(async url => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/config') return jsonResponse({ host: '127.0.0.1', port: 8787, ga_root: 'C:/ga' })
+      if (path === '/api/ga/health') return jsonResponse({ ok: false, root: 'C:/ga', errors: ['chat runtime failed'] })
+      if (path === '/api/autostart/status') return jsonResponse({ supported: true, enabled: true })
+      if (path === '/api/version/info') return jsonResponse({ version: 'dev' })
+      if (path === '/api/version/status') return jsonResponse({})
+      if (path === '/api/ga/inventory') return jsonResponse({ autonomous_reports: [] })
+      if (path === '/api/risk/catalog') return jsonResponse({ items: [] })
+      if (path === '/api/services') return jsonResponse({ services })
+      if (path === '/api/chat/state') return jsonResponse({ llms: [] })
+      if (path === '/api/autonomous/approvals') return jsonResponse({ source_exists: false, items: [], pending: 0 })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<App />)
+
+    expect(await screen.findByText('reflect/autonomous.py')).toBeTruthy()
+    expect(screen.queryByText('鏈彂鐜拌嚜涓昏繘鍖栨湇鍔?')).toBeNull()
   })
 
   test('switches the complete overview shell to English without stale Chinese labels', async () => {

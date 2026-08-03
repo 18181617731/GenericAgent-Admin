@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"genericagent-admin-go/internal/api"
+	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
@@ -40,6 +41,9 @@ func main() {
 	if err := cfgStore.Load(); err != nil {
 		log.Printf("load config: %v", err)
 	}
+	if _, err := autostart.MigrateCurrent(cwd); err != nil {
+		log.Printf("migrate autostart entry: %v", err)
+	}
 	if launch.PortSet {
 		cfgStore.Cfg.Port = launch.Port
 	}
@@ -51,14 +55,18 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
+	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv))
+	if err != nil {
+		log.Fatalf("initialize admin authentication: %v", err)
+	}
 	addrs := adminListenAddresses(cfgStore.Cfg.Host, cfgStore.Cfg.Port, discoverTailscaleIPv4())
 	url := "http://" + addrs[0]
-	server := newHTTPServer(addrs[0], srv.Routes())
+	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
+	srv.StartAutostartServices()
 	activeAddrs, err := startHTTPListeners(server, addrs)
 	if err != nil {
 		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)
 	}
-	go srv.StartAutostartServices()
 	logListenURLs(activeAddrs)
 	if launch.Headless {
 		log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)

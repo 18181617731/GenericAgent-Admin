@@ -34,6 +34,10 @@ func StatusFor(target, appRoot string) Status {
 	return s
 }
 
+func Migrate(target, appRoot string) (Status, error) {
+	return StatusFor(target, appRoot), nil
+}
+
 func Enable(target, appRoot string) (Status, error) {
 	if target == "" {
 		return Status{Supported: true}, fmt.Errorf("empty executable path")

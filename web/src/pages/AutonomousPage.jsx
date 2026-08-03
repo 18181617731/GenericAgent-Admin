@@ -5,28 +5,45 @@ import { ArrowLeft, Check, Download, RefreshCw, Search, X } from 'lucide-react'
 import { AutonomousServiceCard } from '../components/AutonomousServiceCard.jsx'
 import { api } from '../lib/api.js'
 import { confirmDanger } from '../lib/danger.js'
-import { autonomousCopy } from '../lib/autonomousCopy.js'
-import { autonomousReviewView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousApproval, summarizeAutonomousReport, summarizeAutonomousReviewNeed } from '../lib/autonomous.js'
+import { autonomousCopy, localizeAutonomousApprovalValue } from '../lib/autonomousCopy.js'
+import { autonomousExecutionState, autonomousReviewView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousApproval, summarizeAutonomousReport, summarizeAutonomousReviewNeed } from '../lib/autonomous.js'
 
-const approvalDetails = (item, copy) => [
+const approvalDetails = (item, copy, lang) => [
   [copy.source, item.source || item.draft_path],
   [copy.target, item.target],
-  [copy.risk, item.risk],
-  [copy.evidence, item.evidence],
-  [copy.nextStep, item.next_step],
+  [copy.risk, localizeAutonomousApprovalValue(item.risk, lang, 'risk')],
+  [copy.evidence, localizeAutonomousApprovalValue(item.evidence, lang, 'evidence')],
+  [copy.nextStep, localizeAutonomousApprovalValue(item.next_step, lang, 'nextStep')],
+  [copy.reviewModel, item.review_model ? `${item.review_provider ? `${item.review_provider} / ` : ''}${item.review_model}${item.review_model_no !== undefined && item.review_model_no !== null ? ` (#${item.review_model_no})` : ''}` : ''],
+  [copy.reviewDecision, localizeAutonomousApprovalValue(item.review_decision, lang, 'reviewDecision')],
+  [copy.reviewReason, localizeAutonomousApprovalValue(item.review_reason, lang, 'reviewReason')],
 ].filter(([, value]) => value)
 
-function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, onApprove, onReject }) {
+const executionPresentation = (item, copy) => {
+  const state = autonomousExecutionState(item)
+  const labels = {
+    queued: copy.executionQueued,
+    completed: copy.executionCompleted,
+    failed: copy.executionFailed,
+    report_missing: copy.executionReportMissing,
+    not_applicable: copy.executionNotApplicable,
+  }
+  return { state, label: labels[state] || copy.executionUnknown }
+}
+
+function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, onApprove, onReject, onOpenReport }) {
   const copy = autonomousCopy(lang)
   const pending = item.state === 'pending'
   const review = autonomousReviewView(item, lang)
+  const execution = executionPresentation(item, copy)
+  const showExecution = !pending && (item.decision === 'approved' || execution.state)
   return <article className={`autonomous-approval is-${item.state}${selected ? ' is-selected' : ''}`}>
     <header>
       <div className="autonomous-approval-heading">
         {pending && <label className="autonomous-approval-select">
           <input type="checkbox" checked={selected} aria-label={`${copy.selectItem}：${item.title}`} onChange={event => onSelect?.(item.id, event.target.checked)}/>
         </label>}
-        <div><b>{item.title}</b><span>{item.status || (pending ? copy.pending : copy.handled)}</span></div>
+        <div><b>{localizeAutonomousApprovalValue(item.title, lang, 'title')}</b><span>{localizeAutonomousApprovalValue(item.status, lang, 'status') || (pending ? copy.pending : copy.handled)}</span></div>
       </div>
       <em>{pending ? copy.pending : item.state === 'approved' ? (lang === 'en' ? 'Approved' : '已批准') : item.state === 'rejected' ? (lang === 'en' ? 'Rejected' : '已拒绝') : (lang === 'en' ? 'Archived' : '已归档')}</em>
     </header>
@@ -48,11 +65,18 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
       <strong>{copy.expectedOutcome}</strong>
       <p>{summarizeAutonomousApproval(item, lang)}</p>
     </section>
-    <dl>{approvalDetails(item, copy).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    <dl>{approvalDetails(item, copy, lang).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {!pending && (item.decided_at || item.note) && <div className="autonomous-decision-meta">
       {item.decided_at && <span>{copy.decidedAt}：{readableAutonomousDate(item.decided_at, lang)}</span>}
-      {item.note && <span>{copy.note}：{item.note}</span>}
+      {item.note && <span>{copy.note}：{localizeAutonomousApprovalValue(item.note, lang, 'note')}</span>}
     </div>}
+    {showExecution && <div className={`autonomous-execution is-${execution.state || 'unknown'}`}>
+      <div className="autonomous-execution-head"><span>{copy.execution}</span><b>{execution.label}</b></div>
+      {item.execution_summary && <p><strong>{copy.executionSummary}：</strong>{localizeAutonomousApprovalValue(item.execution_summary, lang, 'executionSummary')}</p>}
+      {item.execution_error && <p className="autonomous-execution-error">{localizeAutonomousApprovalValue(item.execution_error, lang, 'executionError')}</p>}
+      {item.execution_report && <button type="button" className="autonomous-execution-link" aria-label={`${copy.openExecutionReport}：${item.execution_report.name || item.execution_report.path}`} onClick={() => onOpenReport?.(item.execution_report)}>{copy.openExecutionReport}：{item.execution_report.name || item.execution_report.path}</button>}
+    </div>}
+    {item.review_reports?.length > 0 && <div className="autonomous-review-reports"><span>{copy.reviewReports}</span><div>{item.review_reports.map(report => <button type="button" key={report.path} onClick={() => onOpenReport?.(report)}>{copy.openReviewReport}：{report.name || report.path}</button>)}</div></div>}
     {pending && <div className="autonomous-approval-reply"><label><span>{copy.reply}</span><textarea aria-label={copy.reply} maxLength={1000} rows={3} value={reply} onChange={event => onReply(event.target.value)}/></label><small>{copy.replyHelp}</small></div>}
     {pending && <footer>
       <button type="button" className="primary" disabled={busy} onClick={() => onApprove(item, reply)}><Check size={15}/>{copy.approve}</button>
@@ -61,7 +85,7 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
   </article>
 }
 
-function ApprovalPane({ overview, lang, busyIDs, reviewBusy, onReview, onApprove, onReject, onApproveMany, onRejectMany }) {
+function ApprovalPane({ overview, lang, busyIDs, reviewBusy, onReview, onApprove, onReject, onApproveMany, onRejectMany, onOpenReport }) {
   const copy = autonomousCopy(lang)
   const [mode, setMode] = useState('pending')
   const [replies, setReplies] = useState({})
@@ -95,11 +119,11 @@ function ApprovalPane({ overview, lang, busyIDs, reviewBusy, onReview, onApprove
     </div>}
     {!overview?.source_exists && <div className="autonomous-empty">{copy.noLedger}</div>}
     {overview?.source_exists && !items.length && <div className="autonomous-empty">{mode === 'pending' ? copy.noPending : copy.noHandled}</div>}
-    <div className="autonomous-approval-list">{items.map(item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyIDs.has(item.id)} selected={selectedIDs.includes(item.id)} reply={replies[item.id] || ''} onReply={value => setReplies(current => ({ ...current, [item.id]: value }))} onSelect={toggleSelected} onApprove={onApprove} onReject={onReject}/>)}</div>
+    <div className="autonomous-approval-list">{items.map(item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyIDs.has(item.id)} selected={selectedIDs.includes(item.id)} reply={replies[item.id] || ''} onReply={value => setReplies(current => ({ ...current, [item.id]: value }))} onSelect={toggleSelected} onApprove={onApprove} onReject={onReject} onOpenReport={onOpenReport}/>)}</div>
   </div>
 }
 
-function ReportPane({ reports, lang }) {
+function ReportPane({ reports, lang, initialReport }) {
   const copy = autonomousCopy(lang)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(null)
@@ -108,13 +132,16 @@ function ReportPane({ reports, lang }) {
   const [latest, setLatest] = useState({ status: 'idle', summary: '' })
   const visibleReports = useMemo(() => filterAutonomousReports(reports, query), [reports, query])
   const latestReport = useMemo(() => latestAutonomousReport(reports), [reports])
-  const openReport = async report => {
+  const openReport = useCallback(async report => {
     setSelected(report); setStatus('loading'); setContent('')
     try {
       const result = await api(`/api/files/read?path=${encodeURIComponent(report.path)}`)
       setContent(result.content || ''); setStatus('ready')
     } catch (error) { setContent(error.message); setStatus('error') }
-  }
+  }, [])
+  useEffect(() => {
+    if (initialReport?.path) openReport(initialReport)
+  }, [initialReport, openReport])
   useEffect(() => {
     let active = true
     if (!latestReport) { setLatest({ status: 'empty', summary: '' }); return () => { active = false } }
@@ -153,6 +180,7 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
   const [loading, setLoading] = useState(true)
   const [busyIDs, setBusyIDs] = useState(new Set())
   const [reviewBusy, setReviewBusy] = useState(false)
+  const [reportToOpen, setReportToOpen] = useState(null)
   const [rejecting, setRejecting] = useState(null)
   const [rejectNote, setRejectNote] = useState('')
   const loadApprovals = useCallback(async () => {
@@ -231,8 +259,9 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
       onReject={(item, note) => { setRejecting({ items: [item] }); setRejectNote(note) }}
       onApproveMany={entries => decideMany(entries, 'approved')}
       onRejectMany={items => { setRejecting({ items }); setRejectNote('') }}
+      onOpenReport={report => { setReportToOpen({ ...report, open_token: Date.now() }); setTab('records') }}
     />}
-    {tab === 'records' && <ReportPane reports={reports} lang={lang}/>}
+    {tab === 'records' && <ReportPane reports={reports} lang={lang} initialReport={reportToOpen}/>}
     {rejecting && <div className="autonomous-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRejecting(null) }}><div className="autonomous-dialog" role="dialog" aria-modal="true" aria-labelledby="autonomous-reject-title"><header><b id="autonomous-reject-title">{rejecting.items.length === 1 ? `${copy.reject}：${rejecting.items[0].title}` : copy.rejectManyTitle(rejecting.items.length)}</b><button type="button" aria-label={copy.cancel} onClick={() => setRejecting(null)}><X size={18}/></button></header><label>{copy.rejectNote}<textarea maxLength={1000} value={rejectNote} onChange={event => setRejectNote(event.target.value)}/></label><footer><button type="button" className="secondary" onClick={() => setRejecting(null)}>{copy.cancel}</button><button type="button" className="danger" disabled={busyIDs.size > 0} onClick={() => decideMany(rejecting.items.map(item => ({ item, note: rejectNote })), 'rejected')}>{copy.confirmReject}</button></footer></div></div>}
   </section>
 }

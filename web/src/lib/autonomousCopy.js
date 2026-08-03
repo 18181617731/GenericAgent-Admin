@@ -16,8 +16,9 @@ const COPY = {
     reviewModelUsedSummary: '审核模型已正常参与判断，下面同时保留模型结论和置信度，最终是否执行仍由你确认。',
     reviewPendingSummary: '审核模型尚未给出结果，当前卡片暂时不能视为模型审核通过。',
     reviewManualSummary: '当前卡片需要人工确认，页面没有可用的模型审核结论。',
-    reviewBasis: '系统依据', reviewDecision: '模型结论', reviewConfidence: '置信度', reviewModel: '审核模型', reviewNoAutoApproval: '未自动批准', reviewRetryScheduled: '重新审核时会再次尝试', reviewGate: '报告明确要求人工审批', reviewConservative: '暂时按保守规则保留为待审批',
+    reviewBasis: '系统依据', reviewDecision: '模型结论', reviewConfidence: '置信度', reviewModel: '审核模型', reviewReason: '审核原因', reviewNoAutoApproval: '未自动批准', reviewRetryScheduled: '重新审核时会再次尝试', reviewGate: '报告明确要求人工审批', reviewConservative: '暂时按保守规则保留为待审批',
     source: '来自哪里', target: '会改哪里', risk: '风险大小', evidence: '为什么要处理', nextStep: '批准后做什么', expectedOutcome: '完成后会怎样', decidedAt: '处理时间', note: '备注',
+    execution: '执行状态', executionQueued: '已排队，等待自主服务执行', executionCompleted: '已完成', executionFailed: '执行失败', executionReportMissing: '执行已结束，但报告缺失', executionNotApplicable: '无需执行', executionUnknown: '等待执行状态', executionSummary: '执行摘要', openExecutionReport: '查看执行结果', reviewReports: '关联审核报告', openReviewReport: '查看报告',
     reportSearch: '搜索执行记录', reportCount: count => `${count} 条记录`, noReports: '没有匹配的执行记录', selectReport: '选择左侧记录查看详情',
     backToReports: '返回记录列表', download: '下载原文件', loading: '正在加载', loadFailed: '读取失败',
     latestResult: '最近执行结果', reportReady: '已生成报告', openReport: '查看完整记录', noResult: '报告已生成，打开完整记录查看执行详情。',
@@ -39,12 +40,110 @@ const COPY = {
     reviewModelUsedSummary: 'The review model participated normally. The model decision and confidence are shown below, but you still decide whether it should run.',
     reviewPendingSummary: 'The review model has not returned a result yet, so this card must not be treated as model-approved.',
     reviewManualSummary: 'This card requires manual confirmation; no usable model-review result is available.',
-    reviewBasis: 'System basis', reviewDecision: 'Model decision', reviewConfidence: 'Confidence', reviewModel: 'Review model', reviewNoAutoApproval: 'Not auto-approved', reviewRetryScheduled: 'Will try again on re-review', reviewGate: 'The report explicitly requires human approval', reviewConservative: 'Kept pending under conservative rules',
+    reviewBasis: 'System basis', reviewDecision: 'Model decision', reviewConfidence: 'Confidence', reviewModel: 'Review model', reviewReason: 'Review reason', reviewNoAutoApproval: 'Not auto-approved', reviewRetryScheduled: 'Will try again on re-review', reviewGate: 'The report explicitly requires human approval', reviewConservative: 'Kept pending under conservative rules',
     source: 'Where it came from', target: 'What it changes', risk: 'Risk level', evidence: 'Why it matters', nextStep: 'What happens next', expectedOutcome: 'What you will get', decidedAt: 'Decided', note: 'Note',
+    execution: 'Execution', executionQueued: 'Queued; waiting for the autonomous service', executionCompleted: 'Completed', executionFailed: 'Execution failed', executionReportMissing: 'Finished, but the report is missing', executionNotApplicable: 'Not applicable', executionUnknown: 'Waiting for execution status', executionSummary: 'Execution summary', openExecutionReport: 'View execution result', reviewReports: 'Related reports', openReviewReport: 'Open report',
     reportSearch: 'Search execution records', reportCount: count => `${count} records`, noReports: 'No matching execution records', selectReport: 'Select a record to view details',
     backToReports: 'Back to records', download: 'Download original', loading: 'Loading', loadFailed: 'Could not load',
     latestResult: 'Latest result', reportReady: 'Report ready', openReport: 'Open full record', noResult: 'The report is ready. Open the full record for execution details.',
   },
+}
+
+const APPROVAL_EXACT_ZH = {
+  status: {
+    'report requires human approval': '报告需要人工审批',
+    'human review required': '需要人工复核',
+    'pending approval': '待审批',
+    'awaiting user approval': '等待用户审批',
+    needs_approval: '需要审批',
+    not_required: '无需审批',
+    uncertain: '无法确定',
+    pending: '待审批',
+    approved: '已批准',
+    rejected: '已拒绝',
+    closed: '已关闭',
+    tracked: '已跟踪',
+  },
+  risk: {
+    'human review required': '需要人工复核',
+    'high risk': '高风险',
+    high_risk: '高风险',
+    medium_risk: '中风险',
+    low_risk: '低风险',
+    requires_human_review: '需要人工复核',
+    needs_approval: '需要审批',
+    high: '高',
+    medium: '中',
+    low: '低',
+    review: '需复核',
+  },
+  reviewDecision: {
+    needs_approval: '需要审批',
+    not_required: '无需审批',
+    uncertain: '无法确定',
+  },
+  reviewConfidence: {
+    high: '高',
+    medium: '中',
+    low: '低',
+  },
+  executionSummary: {
+    completed: '已完成',
+    failed: '执行失败',
+    queued: '已排队',
+  },
+  executionError: {
+    'execution failed': '执行失败',
+    'report is missing': '报告缺失',
+    'service is not running': '服务未运行',
+  },
+}
+
+const APPROVAL_PHRASES_ZH = [
+  ['report is blocked', '报告处于阻塞状态'],
+  ['approval evidence is missing or unverifiable', '审批证据缺失或无法核验'],
+  ['approval evidence cannot be verified', '审批证据无法核验'],
+  ['approval evidence is missing', '审批证据缺失'],
+  ['the proposed source change is not confirmed as implemented', '拟议源码变更尚未确认实施'],
+  ['model review unavailable', '模型审核不可用'],
+  ['model review in progress', '模型审核进行中'],
+  ['model review scheduled', '模型审核已排队'],
+  ['model review timed out after', '模型审核超时，耗时'],
+  ['model omitted this report', '模型未返回该报告的审核结果'],
+  ['GA runtime is not available', 'GA 运行时不可用'],
+  ['model review failed', '模型审核失败'],
+  ['retry scheduled', '已安排重试'],
+  ['conservative rule retained', '已保留保守规则'],
+  ['model review batch limit reached', '已达到模型审核批次上限'],
+  ['report contains an explicit approval gate', '报告包含明确的审批门槛'],
+  ['review the report evidence, then approve or reject explicitly', '请核查报告证据后明确批准或拒绝'],
+  ['report requires human approval', '报告需要人工审批'],
+  ['human review required', '需要人工复核'],
+  ['pending approval', '待审批'],
+  ['awaiting user approval', '等待用户审批'],
+  ['needs_approval', '需要审批'],
+  ['not_required', '无需审批'],
+  ['uncertain', '无法确定'],
+]
+
+const APPROVAL_TITLE_PHRASES_ZH = [
+  ['complete_task', '完成任务'],
+  ['autonomous approval report', '自主审批报告'],
+  ['approval', '审批'],
+  ['blocked', '阻塞'],
+  ['review', '复核'],
+  ['report', '报告'],
+]
+
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+export const localizeAutonomousApprovalValue = (value, lang = 'zh', field = '') => {
+  if (value === null || value === undefined || lang === 'en') return value
+  const text = String(value)
+  const exact = APPROVAL_EXACT_ZH[field]?.[text.trim().toLowerCase()]
+  if (exact) return exact
+  const phrases = field === 'title' ? [...APPROVAL_PHRASES_ZH, ...APPROVAL_TITLE_PHRASES_ZH] : APPROVAL_PHRASES_ZH
+  return phrases.reduce((result, [source, target]) => result.replace(new RegExp(escapeRegExp(source), 'gi'), target), text)
 }
 
 export const autonomousCopy = lang => COPY[lang === 'en' ? 'en' : 'zh']

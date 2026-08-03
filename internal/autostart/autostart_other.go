@@ -15,6 +15,10 @@ func StatusFor(target, appRoot string) Status {
 	}
 }
 
+func Migrate(target, appRoot string) (Status, error) {
+	return StatusFor(target, appRoot), nil
+}
+
 func Enable(target, appRoot string) (Status, error) {
 	return StatusFor(target, appRoot), errUnsupported
 }

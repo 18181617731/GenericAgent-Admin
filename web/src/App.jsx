@@ -3,11 +3,14 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
+import { applyThemeToDocument, getInitialTheme } from './themes'
+import ThemePicker from './ThemePicker'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
 import { clearMemoryChatDraft, queueMemoryChatDraft } from './lib/memoryChatDraft'
 import { configDraftDirty } from './lib/configDraft'
+import { firstRuntimeModelNo, runtimeModelDescription } from './lib/modelDefaults.js'
 import { gitSyncPresentation } from './lib/gitSync'
 import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, firstScheduleTaskID, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
@@ -27,7 +30,6 @@ import {
 import { withUpstreamI18n } from './lib/i18nIntegration'
 import { dashboardSummary } from './lib/dashboard'
 import { autonomousServices, goalWorkflowServices, guardianServices, scheduleServices } from './lib/serviceDomains'
-import { applyThemeToDocument, getInitialTheme } from './themes'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { ScheduleArtifactPreview, ScheduleReportTree, SchedulerServiceRow, TaskRow } from './components/schedule'
@@ -36,7 +38,6 @@ import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
 import { EnvironmentGuardianSection } from './components/ServicePlacement.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
-import ThemePicker from './ThemePicker'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
@@ -105,7 +106,7 @@ const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 })
   const effectiveSchedulerModelNo = normalizeScheduleModelNo(schedulerModelNo)
   const schedulerModel = taskModels.find(model => Number(model.index) === effectiveSchedulerModelNo)
   const schedulerModelText = schedulerModel
-    ? `${schedulerModel.provider || text.unnamedProvider} · ${schedulerModel.model || schedulerModel.name || schedulerModel.label || text.unnamedModel} · #${schedulerModel.index}`
+    ? runtimeModelDescription(schedulerModel, text.unnamedModel)
     : `#${effectiveSchedulerModelNo}`
   const followSchedulerLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
 
@@ -166,13 +167,8 @@ const OverviewPage = ({
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
   updateGASource, autostart, toggleAutostart, root, overview, gitSyncView,
   repairGARuntime, runtimeRepairing, runtimeRepairResult, onServiceStart, onServiceStop, onServiceLogs, onServiceAutostart,
-  onNavigate, onNavigateTaskSubTab,
 }) => {
   const text = t.overview
-  const openRelated = (handler, title) => ({
-    onClick: handler,
-    title,
-  })
   const versionMessage = versionStatus?.error || (versionStatus?.stage === 'queued'
     ? text.updateQueued
     : (versionStatus?.message || versionStatus?.stage))
@@ -180,10 +176,10 @@ const OverviewPage = ({
 
   return <section className="overview-page">
     <div className="stats overview-stats">
-      <Stat label={text.serviceControl} value={overview.managedServices ? text.availableCount(overview.managedServices) : text.notLoaded} detail={overview.managedServices ? text.serviceControlHelp : text.loadingServices} icon={<Server/>} {...openRelated(() => onNavigate?.('channels'), lang === 'zh' ? '查看通道与服务' : 'View channels and services')}/>
-      <Stat label={text.backgroundServices} value={overview.runningServices ? text.runningCount(overview.runningServices) : text.allIdle} detail={overview.runningServices ? text.runningHelp : text.noBackgroundServices} tone={overview.runningServices ? 'ok' : ''} icon={<Activity/>} {...openRelated(() => onNavigate?.('logs'), lang === 'zh' ? '查看服务日志' : 'View service logs')}/>
-      <Stat label={text.scheduledTasks} value={overview.enabledTasks ? text.enabledCount(overview.enabledTasks) : text.noneEnabled} detail={overview.taskCount ? text.totalTasks(overview.taskCount) : text.createTaskHelp} tone={overview.enabledTasks ? 'ok' : ''} icon={<CalendarClock/>} {...openRelated(() => onNavigate?.('tasks'), lang === 'zh' ? '查看定时任务' : 'View scheduled tasks')}/>
-      <Stat label={text.scheduleAlerts} value={overview.taskErrors ? text.errorCount(overview.taskErrors) : (overview.overdueTasks ? text.overdueCount(overview.overdueTasks) : text.nothingPending)} detail={overview.taskErrors || overview.overdueTasks ? text.reviewTasks : text.scheduleHealthy} tone={overview.taskErrors || overview.overdueTasks ? 'warn' : 'ok'} icon={<CheckCircle2/>} {...openRelated(() => onNavigateTaskSubTab?.('reports'), lang === 'zh' ? '查看定时任务执行记录' : 'View scheduled-task reports')}/>
+      <Stat label={text.serviceControl} value={overview.managedServices ? text.availableCount(overview.managedServices) : text.notLoaded} detail={overview.managedServices ? text.serviceControlHelp : text.loadingServices} icon={<Server/>}/>
+      <Stat label={text.backgroundServices} value={overview.runningServices ? text.runningCount(overview.runningServices) : text.allIdle} detail={overview.runningServices ? text.runningHelp : text.noBackgroundServices} tone={overview.runningServices ? 'ok' : ''} icon={<Activity/>}/>
+      <Stat label={text.scheduledTasks} value={overview.enabledTasks ? text.enabledCount(overview.enabledTasks) : text.noneEnabled} detail={overview.taskCount ? text.totalTasks(overview.taskCount) : text.createTaskHelp} tone={overview.enabledTasks ? 'ok' : ''} icon={<CalendarClock/>}/>
+      <Stat label={text.scheduleAlerts} value={overview.taskErrors ? text.errorCount(overview.taskErrors) : (overview.overdueTasks ? text.overdueCount(overview.overdueTasks) : text.nothingPending)} detail={overview.taskErrors || overview.overdueTasks ? text.reviewTasks : text.scheduleHealthy} tone={overview.taskErrors || overview.overdueTasks ? 'warn' : 'ok'} icon={<CheckCircle2/>}/>
     </div>
 
     <ObservabilityCard
@@ -390,8 +386,8 @@ export default function App() {
   const scheduleSvcs = useMemo(() => scheduleServices(services), [services])
   const schedulerModelNo = useMemo(() => {
     const scheduler = scheduleSvcs.find(service => service.name === 'reflect/scheduler.py') || scheduleSvcs[0]
-    return normalizeScheduleModelNo(scheduler?.model_no)
-  }, [scheduleSvcs])
+    return normalizeScheduleModelNo(scheduler?.model_no, firstRuntimeModelNo(llms))
+  }, [llms, scheduleSvcs])
   const frontendSvcs = useMemo(() => group(services, s => s.kind === 'frontend'), [services])
   const reflectSvcs = useMemo(() => autonomousServices(services), [services])
   const goalWorkflowSvcs = useMemo(() => goalWorkflowServices(services), [services])
@@ -478,7 +474,7 @@ export default function App() {
       const visibleVersionStatus = (vstat?.id || vstat?.stage) && !shouldHideCompletedVersionProgress(vstat, ver?.version) ? vstat : null
       setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setVersionStatus(visibleVersionStatus)
       await readObservability(h).catch(e => { setObservability(null); setObservabilityError(e.message) })
-      if (!h?.ok) {
+      if (!h?.ok && !h?.root) {
         setServices([]); setLogs([]); setFileList([])
         return
       }
@@ -544,8 +540,8 @@ export default function App() {
   const validateSetupRoot = async () => { if (!confirmDanger('setup-validate-root', lang === 'zh' ? '验证并保存当前 GA 根目录？' : 'Validate and save the current GA root?')) return; setBusy(true); try { const d = await api('/api/setup/validate', { dangerous:true, method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const installGA = async () => { if (!confirmDanger('setup-install-ga', lang === 'zh' ? '安装/克隆 GenericAgent 到目标目录？会写入本地文件。' : 'Install or clone GenericAgent into the target directory? This writes local files.')) return; setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const startReflectService = (name) => {
-    const fallbackModel = llms.find(m => m?.index !== undefined && m?.index !== null)
-    setReflectLLMNo(current => current !== '' ? current : (fallbackModel?.index?.toString() || '0'))
+    const fallbackModelNo = firstRuntimeModelNo(llms)
+    setReflectLLMNo(current => current !== '' ? current : String(fallbackModelNo))
     setPendingServiceName(name)
     setShowLLMPicker(true)
   }
@@ -642,7 +638,7 @@ export default function App() {
       const objective = goalObjective.trim()
       const budgetMinutes = Number(goalBudget)
       const maxTurns = Number(goalMaxTurns)
-      const llmNo = goalLLMNo === '' ? null : Number(goalLLMNo)
+      const llmNo = goalLLMNo === '' ? (llms.length ? firstRuntimeModelNo(llms) : null) : Number(goalLLMNo)
       if (!objective) throw new Error(t.hints.goalObjectiveRequired)
       if (new TextEncoder().encode(objective).length > 16384) throw new Error(t.hints.goalObjectiveTooLarge)
       if (!Number.isInteger(budgetMinutes)) throw new Error(t.hints.goalBudgetInteger)
@@ -900,6 +896,8 @@ export default function App() {
       return titleModelChoices.map(option => ({
         providerVarName: String(option?.provider_var_name || ''),
         model: String(option?.model || ''),
+        providerName: String(option?.provider_name || option?.providerName || ''),
+        displayName: String(option?.display_name || option?.displayName || option?.label || option?.model || ''),
       }))
     }
     return orderedModelRows(persistedModelProfiles)
@@ -911,7 +909,7 @@ export default function App() {
     { value: '', label: t.titleModelFollowConversation },
     ...titleModelRows.map((row, llmNo) => ({
       value: titleModelKey({ provider_var_name: row.providerVarName, model: row.model }),
-      label: `${row.model} · ${providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
+      label: `${row.displayName || row.model} · ${row.providerName || providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}${row.displayName && row.displayName !== row.model ? ` · ${row.model}` : ''}`,
     })),
   ], [titleModelRows, t.titleModelFollowConversation])
   useEffect(() => {
@@ -1261,8 +1259,6 @@ export default function App() {
     onServiceStop={name=>serviceAction(name, 'stop')}
     onServiceLogs={viewServiceLogs}
     onServiceAutostart={toggleServiceAutostart}
-    onNavigate={navigateTo}
-    onNavigateTaskSubTab={navigateTaskSubTab}
   />
 
   return <>
@@ -1285,7 +1281,7 @@ export default function App() {
       <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
     </aside>
-    <main className="main" aria-label={t.nav[tab]}><header className="app-page-header"><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+    <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}
@@ -1402,9 +1398,9 @@ export default function App() {
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
       {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
       {tab==='usage' && <UsagePage lang={lang}/>}
-      {tab==='goals' && <GoalsPage t={t} lang={lang} workflowServices={goalWorkflowSvcs} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
+      {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>}
-      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveProviderOrder={saveProviderOrder} failoverGroups={failoverGroups} onSaveFailoverGroups={saveFailoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
+      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
       {tab==='logs' && <section className="logs-page">
         <div className="logs-layout">
           <Panel title={t.lists.processes} className="logs-side">
