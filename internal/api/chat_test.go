@@ -2048,6 +2048,120 @@ func TestChatPlanFromEventNormalizesPlanOnly(t *testing.T) {
 	}
 }
 
+func TestUpdateChatPlanFromEventRetainsSnapshotUntilExplicitUpdate(t *testing.T) {
+	current := map[string]interface{}{
+		"items": []interface{}{map[string]interface{}{"content": "approved step", "status": "open"}},
+		"done":  float64(0), "total": float64(1), "complete": false,
+	}
+
+	got, changed := updateChatPlanFromEvent(current, map[string]interface{}{"plan": nil})
+	if changed || got["total"] != float64(1) {
+		t.Fatalf("plan:null replaced current snapshot: changed=%v plan=%#v", changed, got)
+	}
+	got, changed = updateChatPlanFromEvent(got, map[string]interface{}{"type": "done"})
+	if changed || got["total"] != float64(1) {
+		t.Fatalf("missing plan replaced current snapshot: changed=%v plan=%#v", changed, got)
+	}
+
+	got, changed = updateChatPlanFromEvent(got, map[string]interface{}{"plan": map[string]interface{}{
+		"items": []interface{}{map[string]interface{}{"content": "[\u2713] approved step", "status": "open"}},
+	}})
+	if !changed || got["done"] != float64(1) || got["complete"] != true {
+		t.Fatalf("explicit plan update was not applied: changed=%v plan=%#v", changed, got)
+	}
+}
+
+func TestChatPlanSnapshotSurvivesPlanNullFollowUpTurn(t *testing.T) {
+	old := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			decoder := json.NewDecoder(stdinR)
+			encoder := json.NewEncoder(stdoutW)
+			for turn := 1; turn <= 2; turn++ {
+				var request map[string]interface{}
+				if err := decoder.Decode(&request); err != nil {
+					return
+				}
+				event := map[string]interface{}{
+					"type": "done",
+					"message": map[string]interface{}{
+						"role": "assistant", "content": fmt.Sprintf("answer %d", turn),
+					},
+				}
+				if turn == 1 {
+					event["plan"] = map[string]interface{}{
+						"objective": "Ship the dashboard",
+						"items":     []interface{}{map[string]interface{}{"content": "Implement inspector", "status": "open"}},
+					}
+				} else {
+					event["plan"] = nil
+				}
+				if err := encoder.Encode(event); err != nil {
+					return
+				}
+				var bindRequest map[string]interface{}
+				if err := decoder.Decode(&bindRequest); err != nil {
+					return
+				}
+				if bindRequest["op"] != "worldline" || bindRequest["action"] != "bind" {
+					return
+				}
+				if err := encoder.Encode(map[string]interface{}{"type": "worldline"}); err != nil {
+					return
+				}
+			}
+		}()
+		return &chatWorker{SID: "plan-lifecycle", Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() { startChatWorkerFunc = old }()
+
+	s := newGoalTestServer(t, t.TempDir())
+	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	h := s.Routes()
+	post := func(prompt string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{"prompt": prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/chat/plan-lifecycle", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("prompt %q status=%d body=%s", prompt, rr.Code, rr.Body.String())
+		}
+		return rr
+	}
+
+	first := post("make a plan")
+	if !strings.Contains(first.Body.String(), `"objective":"Ship the dashboard"`) {
+		t.Fatalf("first stream missing plan snapshot: %s", first.Body.String())
+	}
+	second := post("confirmed, execute it")
+	if !strings.Contains(second.Body.String(), `"objective":"Ship the dashboard"`) || strings.Contains(second.Body.String(), `"plan":null`) {
+		t.Fatalf("follow-up stream did not retain plan snapshot: %s", second.Body.String())
+	}
+
+	stored, err := loadChatSession(s.CfgStore.Cfg, "plan-lifecycle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Plan["objective"] != "Ship the dashboard" || stored.Plan["total"] != float64(1) {
+		t.Fatalf("stored plan was lost after follow-up: %#v", stored.Plan)
+	}
+
+	reloadRR := httptest.NewRecorder()
+	h.ServeHTTP(reloadRR, httptest.NewRequest(http.MethodGet, "/api/chat/session/plan-lifecycle", nil))
+	if reloadRR.Code != http.StatusOK || !strings.Contains(reloadRR.Body.String(), `"objective":"Ship the dashboard"`) {
+		t.Fatalf("reloaded session missing retained plan: status=%d body=%s", reloadRR.Code, reloadRR.Body.String())
+	}
+}
+
 func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Cfg.ChatDataDir = t.TempDir()

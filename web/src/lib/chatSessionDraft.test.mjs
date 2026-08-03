@@ -91,7 +91,7 @@ test('main chat wires reactive draft badges into persistence, sending, and delet
   assert.match(main, /const \[draftSessionIds, setDraftSessionIds\]/)
   assert.equal(main.match(/className="oa-session-draft-badge"/g)?.length, 2)
   assert.match(style, /\.oa-session-title \.oa-session-draft-badge/)
-  assert.match(style, /html\[data-theme="dark"\] \.oa-session-title \.oa-session-draft-badge/)
+  assert.match(style, /html\[data-color-scheme="dark"\] \.oa-session-title \.oa-session-draft-badge/)
 
   const openSession = functionBlock(main, '  const openSession = async', '  const loadSessions = async')
   assert.match(openSession, /loadChatSessionDraft\(id\)/)

@@ -5,6 +5,8 @@ import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
+import { AuthGate } from './components/AuthGate.jsx'
+import { getInitialTheme, getTheme, isThemeId } from './themes'
 
 const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
 const Root = lazy(() => (isChat ? import('./ChatApp.jsx') : import('./App.jsx')))
@@ -13,34 +15,35 @@ const storedLanguage = () => localStorage.getItem('ga-admin-lang-explicit') === 
 
 function LocalizedRoot() {
   const [lang, setLang] = useState(storedLanguage)
-  const [colorMode, setColorMode] = useState(() => document.documentElement.dataset.theme || localStorage.getItem('ga-admin-theme') || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+  const [colorMode, setColorMode] = useState(getInitialTheme)
   useEffect(() => {
     const onLanguageChange = event => setLang(event.detail === 'en' ? 'en' : 'zh')
     window.addEventListener('ga-admin-language-change', onLanguageChange)
     return () => window.removeEventListener('ga-admin-language-change', onLanguageChange)
   }, [])
   useEffect(() => {
-    const onThemeChange = event => setColorMode(event.detail === 'dark' ? 'dark' : 'light')
+    const onThemeChange = event => setColorMode(current => isThemeId(event.detail) ? event.detail : current)
     window.addEventListener('ga-admin-theme-change', onThemeChange)
     return () => window.removeEventListener('ga-admin-theme-change', onThemeChange)
   }, [])
   const loading = lang === 'en' ? 'Loading interface…' : '正在加载界面…'
-  const dark = colorMode === 'dark'
+  const activeTheme = getTheme(colorMode)
+  const algorithm = antdTheme[`${activeTheme.antdAlgorithm}Algorithm`] || antdTheme.defaultAlgorithm
   return <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={{
-    algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    algorithm,
     token: {
       colorPrimary: '#10a37f',
       borderRadius: 10,
       fontFamily: 'Inter, system-ui, sans-serif',
-      colorBgBase: dark ? '#191c21' : '#ffffff',
-      colorTextBase: dark ? '#ececf1' : '#171717',
-      colorBorder: dark ? '#343a42' : 'rgba(23, 23, 23, .14)',
+      ...activeTheme.antdToken,
     },
   }}>
     <ErrorBoundary>
-      <Suspense fallback={<RouteFallback label={loading} />}>
-        <Root />
-      </Suspense>
+      <AuthGate lang={lang} theme={colorMode} onThemeChange={setColorMode}>
+        <Suspense fallback={<RouteFallback label={loading} />}>
+          <Root />
+        </Suspense>
+      </AuthGate>
     </ErrorBoundary>
   </ConfigProvider>
 }

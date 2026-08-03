@@ -24,6 +24,7 @@ globalThis.ResizeObserver = class ResizeObserver {
 }
 
 const appStyles = readFileSync('src/style.css', 'utf8')
+const adminMobileStyles = readFileSync('src/admin-mobile.css', 'utf8')
 
 globalThis.React = React
 
@@ -1133,7 +1134,7 @@ describe('usage overview page', () => {
   test('renders aggregate and breakdown data', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(payload))
     render(<UsagePage lang="en" />)
-    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByTitle('1,545')).length).toBeGreaterThan(0)
     expect((screen.getAllByText('gpt-5')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Alpha')).toBeNull()
     expect(screen.queryByText('Session details')).toBeNull()
@@ -1157,7 +1158,7 @@ describe('usage overview page', () => {
     render(<UsagePage lang="en" />)
     expect((await screen.findByRole('alert')).textContent).toMatch(/network offline/i)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect((await screen.findAllByText('1,545')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByTitle('1,545')).length).toBeGreaterThan(0)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
@@ -1206,6 +1207,11 @@ describe('operator shell feedback', () => {
     }
     return jsonResponse(payloads[path] ?? {})
   }
+
+  test('keeps the mobile sidebar above its scrim', () => {
+    expect(adminMobileStyles).toMatch(/\.app > \.sidebar\s*\{[^}]*z-index:\s*1001\s*!important;/s)
+    expect(adminMobileStyles).toMatch(/\.admin-sidebar-scrim\s*\{[^}]*z-index:\s*1000;/s)
+  })
 
   test('navigation exposes the selected route with native keyboard semantics', async () => {
     installBrowserPolyfills()
@@ -1266,7 +1272,7 @@ describe('operator shell feedback', () => {
     expect(await screen.findByText('Version management')).toBeTruthy()
     expect(screen.getByText('Read-only observability')).toBeTruthy()
     expect(screen.getByText('GA source update')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
     expect(screen.queryByText('只读观测')).toBeNull()
     expect(screen.queryByText('版本管理')).toBeNull()
     expect(screen.queryByText('GA 源代码更新')).toBeNull()

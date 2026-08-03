@@ -1,5 +1,7 @@
 import React, { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { applyThemeToDocument, getInitialTheme } from './themes'
+import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
@@ -2756,7 +2758,7 @@ function CustomSelect({ value, onChange, options, disabled, native = false, aria
   </select>
   return (
     <div className="oa-cselect" ref={ref}>
-      <button type="button" disabled={disabled} title={label} onClick={() => setOpen(o => !o)}>
+      <button type="button" disabled={disabled} title={label} aria-label={ariaLabel ? `${ariaLabel}: ${label}` : undefined} onClick={() => setOpen(o => !o)}>
         <span>{displayLabel}</span><ChevronDown size={13}/>
       </button>
       {open && <ul role="listbox">
@@ -2774,11 +2776,11 @@ function CustomSelect({ value, onChange, options, disabled, native = false, aria
 
 export default function ChatApp() {
   // Theme state: sync with localStorage and system preference
-  const [theme, setTheme] = useState(() => localStorage.getItem('ga-admin-theme') || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+  const [theme, setTheme] = useState(getInitialTheme)
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    localStorage.setItem('ga-admin-theme', theme)
-    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme }))
+    const activeTheme = applyThemeToDocument(theme)
+    localStorage.setItem('ga-admin-theme', activeTheme.id)
+    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: activeTheme.id }))
   }, [theme])
 
   useEffect(() => {
@@ -2807,6 +2809,7 @@ export default function ChatApp() {
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
+  const [sidebarSearch, setSidebarSearch] = useState('')
   const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
@@ -2816,6 +2819,25 @@ export default function ChatApp() {
   const [workingState, setWorkingState] = useState(null)
   const [planState, setPlanState] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
+  const mobileToolsTriggerRef = useRef(null)
+  useEffect(() => {
+    if (!mobileToolsOpen) return undefined
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return
+      setMobileToolsOpen(false)
+      requestAnimationFrame(() => mobileToolsTriggerRef.current?.focus())
+    }
+    const closeAboveBreakpoint = () => {
+      if (window.innerWidth > 420) setMobileToolsOpen(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('resize', closeAboveBreakpoint)
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('resize', closeAboveBreakpoint)
+    }
+  }, [mobileToolsOpen])
   const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
@@ -4411,6 +4433,16 @@ export default function ChatApp() {
   }, { scope: chatScope, dependencies: [messages.length] })
 
   const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
+  const filteredSessions = useMemo(() => {
+    if (!sidebarSearch.trim()) return sessions
+    const q = sidebarSearch.trim().toLowerCase()
+    return sessions.filter(s => (s.title || '').toLowerCase().includes(q))
+  }, [sessions, sidebarSearch])
+  const filteredProjectGroups = useMemo(() => {
+    if (!sidebarSearch.trim()) return projectSessionGroups
+    const q = sidebarSearch.trim().toLowerCase()
+    return projectSessionGroups.map(g => ({ ...g, sessions: g.sessions.filter(s => (s.title || '').toLowerCase().includes(q)) })).filter(g => g.name.toLowerCase().includes(q) || g.sessions.length > 0)
+  }, [projectSessionGroups, sidebarSearch])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
   const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
   const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
@@ -4452,7 +4484,17 @@ export default function ChatApp() {
     <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="oa-side-head">
-        <div className="oa-logo"><Bot size={18}/><span>GenericAgent</span></div>
+        <div className="oa-sidebar-search">
+          <Search size={16}/>
+          <input
+            type="text"
+            placeholder={ct('搜索会话...', 'Search sessions...')}
+            value={sidebarSearch}
+            onChange={(e)=>setSidebarSearch(e.target.value)}
+            aria-label={ct('搜索会话', 'Search sessions')}
+          />
+          {sidebarSearch && <button className="oa-search-clear" onClick={()=>setSidebarSearch('')} aria-label={ct('清除搜索', 'Clear search')}><X size={14}/></button>}
+        </div>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
       <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
@@ -4462,11 +4504,11 @@ export default function ChatApp() {
           <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
         </div>
         <div className="oa-session-list">
-          {sessions.map(renderSidebarSession)}
-          {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
+          {filteredSessions.map(renderSidebarSession)}
+          {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
       </> : <div className="oa-session-list oa-project-list">
-        {projectSessionGroups.map((group, index) => {
+        {filteredProjectGroups.map((group, index) => {
           const expanded = expandedProjectNames.has(group.name)
           const bodyId = `oa-project-sessions-${index}`
           const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
@@ -4478,7 +4520,7 @@ export default function ChatApp() {
                 else next.add(group.name)
                 return next
               })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
-                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><span className="oa-project-icon" aria-hidden="true"><FolderOpen size={14}/></span><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
+                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
               </button>
               <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
             </div>
@@ -4488,7 +4530,7 @@ export default function ChatApp() {
             </div>
           </section>
         })}
-        {!projectSessionGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{ct('暂无可用项目', 'No projects available')}</span></div>}
+        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span></div>}
       </div>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
@@ -4518,7 +4560,47 @@ export default function ChatApp() {
         <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title="查看/切换对话世界线分支">
           <GitBranch size={16}/>世界线{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
         </button>
+        <button
+          ref={mobileToolsTriggerRef}
+          className={`oa-icon-btn oa-mobile-tools-trigger ${mobileToolsOpen ? 'is-open' : ''}`}
+          type="button"
+          onClick={()=>setMobileToolsOpen(v=>!v)}
+          aria-label={ct('打开聊天工具', 'Open chat tools')}
+          aria-haspopup="dialog"
+          aria-expanded={mobileToolsOpen}
+          aria-controls="oa-mobile-tools-menu"
+          title={ct('上下文、世界线与配色', 'Context, timeline, and theme')}
+        ><MoreHorizontal size={18}/></button>
       </header>
+
+      {mobileToolsOpen && createPortal(<div className="oa-mobile-tools-layer">
+        <div className="oa-mobile-tools-backdrop" aria-hidden="true" onClick={()=>setMobileToolsOpen(false)} />
+        <div className="oa-mobile-tools-menu" id="oa-mobile-tools-menu" role="dialog" aria-label={ct('聊天工具', 'Chat tools')}>
+          <button
+            className={`oa-mobile-tools-item ${contextOpen ? 'is-active' : ''}`}
+            type="button"
+            disabled={!sid}
+            onClick={()=>{ setMobileToolsOpen(false); setContextOpen(v=>!v) }}
+          >
+            <PanelRightOpen size={17}/><span className="oa-mobile-tools-item-copy">{ct('上下文', 'Context')}</span><b className="oa-mobile-tools-item-badge">{rawHistory?.length || 0}</b>
+          </button>
+          <button
+            className={`oa-mobile-tools-item ${worldlineOpen ? 'is-active' : ''}`}
+            type="button"
+            disabled={!sid}
+            onClick={()=>{ setMobileToolsOpen(false); toggleWorldline() }}
+          >
+            <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{(worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
+          </button>
+          <ThemePicker
+            className="oa-mobile-tools-theme"
+            value={theme}
+            onChange={(nextTheme)=>{ setTheme(nextTheme); setMobileToolsOpen(false) }}
+            lang={chatLanguage()}
+            variant="compact"
+          />
+        </div>
+      </div>, document.body)}
 
       {contextOpen && <aside className="oa-context-drawer" aria-label={ct('模型上下文', 'Model context')}>
         <div className="oa-context-head">
@@ -4723,7 +4805,6 @@ export default function ChatApp() {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        <p>{ct('Enter 发送 · Shift + Enter 换行 · 回复中发送会排队', 'Enter to send · Shift + Enter for a new line · Messages queue while responding')}</p>
       </footer>
     </main>
 
