@@ -1583,7 +1583,7 @@ function ToolCallBlock({ call, onAskReply }) {
   return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${isFileTool ? 'oa-tool-file' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
       <span className="oa-tool-icon">{isAskUser ? <CircleHelp size={14} /> : isFileTool ? '📁' : '🛠️'}</span>
-      <span>{isAskUser ? 'Ask user' : 'Tool'}</span>
+      {!isAskUser && <span>Tool</span>}
       <b>{toolName}</b>
       {fileName && <em className="oa-tool-file-name">{fileName}</em>}
       {resultStatus && <em>{resultStatus}</em>}
