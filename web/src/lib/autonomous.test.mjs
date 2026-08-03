@@ -28,6 +28,18 @@ test('autonomous approvals keep every non-pending ledger item visible as handled
   assert.deepEqual(result.handled, items.slice(1))
 })
 
+test('autonomous handled approvals are grouped by decision status', () => {
+  const approved = { id: 'approved', state: 'approved' }
+  const rejected = { id: 'rejected', state: 'rejected' }
+  const archived = { id: 'archived', state: 'closed' }
+  const result = splitAutonomousApprovals([approved, rejected, archived])
+  assert.deepEqual(result.handledGroups.map(group => ({ key: group.key, ids: group.items.map(item => item.id) })), [
+    { key: 'approved', ids: ['approved'] },
+    { key: 'rejected', ids: ['rejected'] },
+    { key: 'archived', ids: ['archived'] },
+  ])
+})
+
 test('approval outcome summaries prefer explicit text and explain fallback outcomes plainly', () => {
   assert.equal(summarizeAutonomousApproval({ expected_outcome: '以后可以直接照着执行' }), '以后可以直接照着执行')
   assert.equal(summarizeAutonomousApproval({ target: 'memory/example.md' }), '批准后会把相关方案整理到 memory/example.md，以后遇到同类问题时可以直接参考。')

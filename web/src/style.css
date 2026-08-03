@@ -14726,6 +14726,21 @@ html[data-color-scheme="dark"] .progress-bar {
 .autonomous-filter-tabs button.active { background:var(--surface-muted); color:var(--text); }
 .autonomous-filter-tabs button span { display:inline-flex; justify-content:center; min-width:20px; margin-left:6px; padding:1px 5px; border-radius:999px; background:var(--surface-strong); font-size:11px; }
 .autonomous-approval-list { display:grid; gap:10px; }
+.autonomous-approval-groups { display:grid; gap:8px; }
+.autonomous-approval-groups-help { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
+.autonomous-approval-group-list { display:grid; gap:8px; }
+.autonomous-approval-group { border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); overflow:hidden; }
+.autonomous-approval-group > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:52px; padding:9px 12px; cursor:pointer; list-style:none; }
+.autonomous-approval-group > summary::-webkit-details-marker { display:none; }
+.autonomous-approval-group > summary:focus-visible { outline:2px solid var(--green); outline-offset:-2px; }
+.autonomous-approval-group-heading { display:flex; align-items:center; gap:8px; min-width:0; }
+.autonomous-approval-group-heading > svg { flex:0 0 auto; color:var(--muted); transition:transform .18s ease; }
+.autonomous-approval-group.is-expanded > summary .autonomous-approval-group-heading > svg { transform:rotate(180deg); }
+.autonomous-approval-group-heading > span { display:grid; gap:2px; min-width:0; }
+.autonomous-approval-group-heading b { color:var(--text); font-size:13px; }
+.autonomous-approval-group-heading small { overflow-wrap:anywhere; color:var(--muted); font-size:11px; line-height:1.4; }
+.autonomous-approval-group > summary > strong { display:inline-flex; align-items:center; justify-content:center; min-width:26px; padding:3px 8px; border-radius:999px; background:var(--surface-strong); color:var(--text); font-size:12px; font-variant-numeric:tabular-nums; }
+.autonomous-approval-group > .autonomous-approval-list { padding:0 8px 8px; }
 .autonomous-approval { border:1px solid var(--border); border-left:3px solid var(--border-strong); border-radius:8px; background:var(--surface-strong); overflow:hidden; }
 .autonomous-approval.is-pending { border-left-color:#d97706; }
 .autonomous-approval.is-approved { border-left-color:var(--green); }
@@ -14855,6 +14870,10 @@ html[data-color-scheme="dark"] .progress-bar {
   .autonomous-approval dl div { grid-template-columns:68px minmax(0,1fr); }
   .autonomous-approval footer { display:grid; grid-template-columns:1fr; padding:10px 12px 12px; }
   .autonomous-approval-reply { padding-right:12px; padding-left:12px; }
+  .autonomous-approval-group > summary { align-items:flex-start; padding:10px 11px; }
+  .autonomous-approval-group-heading { align-items:flex-start; }
+  .autonomous-approval-group-heading small { max-width:calc(100vw - 105px); }
+  .autonomous-approval-group > .autonomous-approval-list { padding-right:6px; padding-left:6px; }
   .goal-workflow-row { grid-template-columns:22px minmax(0,1fr); }
   .goal-workflow-row em { grid-column:2; justify-self:start; }
   .goal-workflow-note { padding-left:0; }

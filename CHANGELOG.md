@@ -2,6 +2,15 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.47 - 2026-08-03
+
+### User-facing changes
+- 修复 Windows `run.bat` 因前端锁文件缺少 `@emnapi/core` 和 `@emnapi/runtime` 条目而无法执行 `npm ci` 的问题。
+- 自主进化页面的已处理审批记录按状态分类并支持折叠查看，保持批量审批结果清晰可追踪。
+
+### Validation
+- Passed frontend lint, library tests (`229/229`), UI smoke tests (`92/92`), frontend production build, clean `npm ci`, Windows `run.bat`, and HTTP startup checks on `127.0.0.1:8787` and the Tailscale interface.
+
 ## v1.0.46 - 2026-08-03
 
 ### User-facing changes

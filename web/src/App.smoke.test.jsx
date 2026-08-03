@@ -134,7 +134,33 @@ describe('autonomous operations page', () => {
     expect(post?.[1]?.headers?.['X-GA-Confirm']).toBe('dangerous')
     expect(JSON.parse(post?.[1]?.body)).toEqual({ id: 'draft-one', decision: 'approved', note: '先验证，再执行' })
     fireEvent.click(screen.getByRole('tab', { name: /已处理/ }))
-    expect(await screen.findByText('已批准')).toBeTruthy()
+    expect((await screen.findAllByText('已批准')).length).toBeGreaterThan(0)
+  })
+
+  test('should group handled approvals and toggle individual status groups', async () => {
+    installBrowserPolyfills()
+    const approved = { ...pendingApproval, id: 'approved-one', title: '已批准任务', state: 'approved', decision: 'approved', execution_state: 'completed' }
+    const rejected = { ...pendingApproval, id: 'rejected-one', title: '已拒绝任务', state: 'rejected', decision: 'rejected' }
+    const archived = { ...pendingApproval, id: 'archived-one', title: '历史归档任务', state: 'closed' }
+    globalThis.fetch = vi.fn(async url => {
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([approved, rejected, archived]))
+      throw new Error(`unexpected url ${url}`)
+    })
+    render(<AutonomousPage lang="zh" reports={[]}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /已处理/ }))
+    const summaries = () => Array.from(document.querySelectorAll('.autonomous-approval-group > summary'))
+    const approvedSummary = summaries().find(summary => summary.textContent.includes('已批准'))
+    const rejectedSummary = summaries().find(summary => summary.textContent.includes('已拒绝'))
+    expect(summaries()).toHaveLength(3)
+    expect(approvedSummary?.closest('details')?.open).toBe(true)
+    expect(rejectedSummary?.closest('details')?.open).toBe(false)
+
+    fireEvent.click(rejectedSummary)
+    await waitFor(() => expect(rejectedSummary?.closest('details')?.open).toBe(true))
+    fireEvent.click(rejectedSummary)
+    await waitFor(() => expect(rejectedSummary?.closest('details')?.open).toBe(false))
   })
 
   test('should show live bulk approval progress and retry failed items', async () => {

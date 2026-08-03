@@ -39,10 +39,21 @@ export const filterAutonomousReports = (reports = [], query = '') => {
   return reports.filter(report => `${report?.name || ''} ${report?.path || ''}`.toLocaleLowerCase().includes(needle))
 }
 
-export const splitAutonomousApprovals = (items = []) => ({
-  pending: items.filter(item => item?.state === 'pending'),
-  handled: items.filter(item => item?.state !== 'pending'),
-})
+const handledApprovalGroupKeys = ['approved', 'rejected', 'archived']
+
+const handledApprovalGroupKey = item => {
+  const state = String(item?.state || item?.decision || '').trim().toLowerCase()
+  return handledApprovalGroupKeys.includes(state) ? state : 'archived'
+}
+
+export const splitAutonomousApprovals = (items = []) => {
+  const pending = items.filter(item => item?.state === 'pending')
+  const handled = items.filter(item => item?.state !== 'pending')
+  const handledGroups = handledApprovalGroupKeys
+    .map(key => ({ key, items: handled.filter(item => handledApprovalGroupKey(item) === key) }))
+    .filter(group => group.items.length > 0)
+  return { pending, handled, handledGroups }
+}
 
 export const autonomousExecutionState = item => {
   if (item?.execution_state) return item.execution_state

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, RefreshCw, Search, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, ChevronDown, Download, RefreshCw, Search, X } from 'lucide-react'
 import { AutonomousServiceCard } from '../components/AutonomousServiceCard.jsx'
 import { api } from '../lib/api.js'
 import { confirmDanger } from '../lib/danger.js'
@@ -111,6 +111,40 @@ function BulkProgressPanel({ progress, copy, lang, onRetryFailed, onClear }) {
   </section>
 }
 
+function ApprovalCardList({ items, lang, busyIDs, selectedIDs, replies, onReply, onSelect, onApprove, onReject, onOpenReport }) {
+  return <div className="autonomous-approval-list">{items.map(item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyIDs.has(item.id)} selected={selectedIDs.includes(item.id)} reply={replies[item.id] || ''} onReply={value => onReply(item.id, value)} onSelect={onSelect} onApprove={onApprove} onReject={onReject} onOpenReport={onOpenReport}/>)}</div>
+}
+
+function HandledApprovalGroups({ groups, copy, cardProps }) {
+  const [expandedKeys, setExpandedKeys] = useState(() => groups[0]?.key ? [groups[0].key] : [])
+  useEffect(() => {
+    setExpandedKeys(current => {
+      const availableKeys = new Set(groups.map(group => group.key))
+      const preservedKeys = current.filter(key => availableKeys.has(key))
+      return preservedKeys.length || groups.length === 0 ? preservedKeys : [groups[0].key]
+    })
+  }, [groups])
+  return <section className="autonomous-approval-groups" aria-label={copy.handledGroupsHelp}>
+    <p className="autonomous-approval-groups-help">{copy.handledGroupsHelp}</p>
+    <div className="autonomous-approval-group-list">
+      {groups.map(group => {
+        const detail = copy.handledGroups[group.key] || copy.handledGroups.archived
+        const expanded = expandedKeys.includes(group.key)
+        return <details key={group.key} className={`autonomous-approval-group${expanded ? ' is-expanded' : ''}`} open={expanded} onToggle={event => {
+          const isOpen = event.currentTarget?.open
+          setExpandedKeys(current => isOpen ? [...new Set([...current, group.key])] : current.filter(key => key !== group.key))
+        }}>
+          <summary>
+            <span className="autonomous-approval-group-heading"><ChevronDown size={16}/><span><b>{detail.label}</b><small>{detail.description}</small></span></span>
+            <strong>{group.items.length}</strong>
+          </summary>
+          <ApprovalCardList items={group.items} {...cardProps}/>
+        </details>
+      })}
+    </div>
+  </section>
+}
+
 function ApprovalPane({ overview, lang, busyIDs, reviewBusy, bulkProgress, onReview, onApprove, onReject, onApproveMany, onRejectMany, onRetryFailed, onClearBulkProgress, onOpenReport }) {
   const copy = autonomousCopy(lang)
   const [mode, setMode] = useState('pending')
@@ -126,6 +160,17 @@ function ApprovalPane({ overview, lang, busyIDs, reviewBusy, bulkProgress, onRev
   }, [groups.pending])
   const toggleSelected = (id, checked) => setSelectedIDs(current => checked ? [...new Set([...current, id])] : current.filter(itemID => itemID !== id))
   const toggleAll = () => setSelectedIDs(allSelected ? [] : groups.pending.map(item => item.id))
+  const cardProps = {
+    lang,
+    busyIDs,
+    selectedIDs,
+    replies,
+    onReply: (id, value) => setReplies(current => ({ ...current, [id]: value })),
+    onSelect: toggleSelected,
+    onApprove,
+    onReject,
+    onOpenReport,
+  }
   return <div className="autonomous-approvals-pane">
     <div className="autonomous-callout"><b>{lang === 'en' ? 'Approval boundary' : '审批边界'}</b><span>{copy.approvalIntro}</span></div>
     <div className="autonomous-filter-tabs" role="tablist" aria-label={copy.approvals}>
@@ -146,7 +191,7 @@ function ApprovalPane({ overview, lang, busyIDs, reviewBusy, bulkProgress, onRev
     <BulkProgressPanel progress={bulkProgress} copy={copy} lang={lang} onRetryFailed={onRetryFailed} onClear={onClearBulkProgress}/>
     {!overview?.source_exists && <div className="autonomous-empty">{copy.noLedger}</div>}
     {overview?.source_exists && !items.length && <div className="autonomous-empty">{mode === 'pending' ? copy.noPending : copy.noHandled}</div>}
-    <div className="autonomous-approval-list">{items.map(item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyIDs.has(item.id)} selected={selectedIDs.includes(item.id)} reply={replies[item.id] || ''} onReply={value => setReplies(current => ({ ...current, [item.id]: value }))} onSelect={toggleSelected} onApprove={onApprove} onReject={onReject} onOpenReport={onOpenReport}/>)}</div>
+    {mode === 'handled' ? <HandledApprovalGroups groups={groups.handledGroups} copy={copy} cardProps={cardProps}/> : <ApprovalCardList items={items} {...cardProps}/>}
   </div>
 }
 
