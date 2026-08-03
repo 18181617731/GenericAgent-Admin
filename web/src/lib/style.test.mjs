@@ -196,6 +196,22 @@ test('mobile turn headers hide token metadata while keeping the current status r
   assert.ok(mobileHideIndex > inlineBaseIndex, 'mobile hide rule must follow inline usage base styles')
 })
 
+test('chat markdown tables use explicit warm, light, and dark palette tokens', () => {
+  for (const selector of ['html[data-theme="warm"]', 'html[data-theme="light"]', 'html[data-theme="dark"]']) {
+    const themeRules = ruleBodies(selector).filter(rule => /--chat-table-border\s*:/i.test(rule))
+    assert.ok(themeRules.length > 0, `missing chat table tokens for ${selector}`)
+    assert.match(themeRules.join('\n'), /--chat-table-header-bg\s*:/i)
+  }
+
+  const wrapRule = ruleBodies('.oa-table-wrap').join('\n')
+  const cellRule = ruleBodies('.oa-md-table th,.oa-md-table td').join('\n')
+  const headerRule = ruleBodies('.oa-md-table th').join('\n')
+  assert.match(wrapRule, /border\s*:\s*1px\s+solid\s+var\(--chat-table-border\)/i)
+  assert.match(cellRule, /border-right\s*:\s*1px\s+solid\s+var\(--chat-table-border\)/i)
+  assert.match(cellRule, /border-bottom\s*:\s*1px\s+solid\s+var\(--chat-table-border\)/i)
+  assert.match(headerRule, /background\s*:\s*var\(--chat-table-header-bg\)/i)
+})
+
 test('warm chat metadata clears AA contrast on translucent panels', () => {
   const declaration = (body, name) => {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
