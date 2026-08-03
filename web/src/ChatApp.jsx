@@ -2421,6 +2421,32 @@ export const ChatMessage = memo(function ChatMessage({
     }
   }
 
+  // 助手消息把操作按钮排进正文末尾的页脚，与「总计」同一行；用户消息保留气泡外悬浮布局
+  const metaNode = (
+    <div className="oa-msg-meta">
+      {ageText && <span className="oa-msg-age" title={ageText}><Clock3 size={11}/>{ageText}</span>}
+      {copyErr  && <span className="oa-copy-err">{copyErr}</span>}
+      <button type="button" className="oa-icon-btn oa-copy-btn"
+        onClick={copyContent} title={ct('复制', 'Copy')} aria-label={ct('复制消息', 'Copy message')}>
+        {copied ? <Check size={13}/> : <Copy size={13}/>}
+      </button>
+      {m.role === 'user' && !pending && onEditResend && (
+        <button type="button" className="oa-icon-btn oa-message-edit-trigger"
+          onClick={startMessageEdit} disabled={editDisabled}
+          title={editDisabled ? ct('对话运行中，请等待完成后再编辑', 'Wait for the running conversation to finish before editing') : ct('编辑并重新发送', 'Edit and resend')} aria-label={ct('编辑并重新发送', 'Edit and resend')}>
+          <Edit3 size={13}/>
+        </button>
+      )}
+      {m.role === 'user' && !pending && onAskReply && (
+        <button type="button" className="oa-icon-btn oa-ask-reply-btn"
+          onClick={() => onAskReply(m.content)}
+          title={ct('以此为上下文继续提问', 'Continue from this context')} aria-label={ct('以此继续', 'Continue from here')}>
+          <MessageSquarePlus size={13}/>
+        </button>
+      )}
+    </div>
+  )
+
   return (
     <article className={`oa-message ${m.role} ${pending ? 'pending' : ''} ${editing ? 'oa-message-editing' : ''} ${isBTW ? 'oa-message-btw' : ''}`} data-id={m.id}>
       <div className="oa-msg-body">
@@ -2498,7 +2524,12 @@ export const ChatMessage = memo(function ChatMessage({
                   </div>)}
             </>)
         }
-        {showUsageRow && <UsageRow u={usageTotal} elapsedMs={elapsedMs} live={pending} label={ct('总计', 'Total')} className="oa-usage-total" ctxChars={m.ctx_chars || 0} ctxMsgs={m.ctx_msgs || 0} />}
+        {m.role === 'assistant'
+          ? (<div className="oa-msg-footer">
+              {showUsageRow && <UsageRow u={usageTotal} elapsedMs={elapsedMs} live={pending} label={ct('总计', 'Total')} className="oa-usage-total" ctxChars={m.ctx_chars || 0} ctxMsgs={m.ctx_msgs || 0} />}
+              {metaNode}
+            </div>)
+          : null}
       </div>
 
       {m.role === 'assistant' && (
@@ -2507,28 +2538,7 @@ export const ChatMessage = memo(function ChatMessage({
 
       {m.goal_state && <GoalStatusCard state={m.goal_state} pending={pending} />}
 
-      <div className="oa-msg-meta">
-        {ageText && <span className="oa-msg-age" title={ageText}><Clock3 size={11}/>{ageText}</span>}
-        {copyErr  && <span className="oa-copy-err">{copyErr}</span>}
-        <button type="button" className="oa-icon-btn oa-copy-btn"
-          onClick={copyContent} title={ct('复制', 'Copy')} aria-label={ct('复制消息', 'Copy message')}>
-          {copied ? <Check size={13}/> : <Copy size={13}/>}
-        </button>
-        {m.role === 'user' && !pending && onEditResend && (
-          <button type="button" className="oa-icon-btn oa-message-edit-trigger"
-            onClick={startMessageEdit} disabled={editDisabled}
-            title={editDisabled ? ct('对话运行中，请等待完成后再编辑', 'Wait for the running conversation to finish before editing') : ct('编辑并重新发送', 'Edit and resend')} aria-label={ct('编辑并重新发送', 'Edit and resend')}>
-            <Edit3 size={13}/>
-          </button>
-        )}
-        {m.role === 'user' && !pending && onAskReply && (
-          <button type="button" className="oa-icon-btn oa-ask-reply-btn"
-            onClick={() => onAskReply(m.content)}
-            title={ct('以此为上下文继续提问', 'Continue from this context')} aria-label={ct('以此继续', 'Continue from here')}>
-            <MessageSquarePlus size={13}/>
-          </button>
-        )}
-      </div>
+      {m.role === 'user' ? metaNode : null}
     </article>
   )
 })

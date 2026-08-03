@@ -14125,3 +14125,48 @@ html[data-color-scheme="dark"] .auth-card .theme-picker-trigger:hover {
   .auth-gate { align-items: start; padding: 18px 12px; }
   .auth-card { padding: 24px 18px; }
 }
+
+/*  ============================================================
+    Assistant footer: the "Total" usage row and the message
+    actions (copy / continue) share one baseline at the end of
+    the reply, so the reply body no longer reserves a 36px
+    gutter for a floating action column.
+    ============================================================ */
+.oa-message.assistant .oa-msg-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  padding-top: 7px;
+  min-width: 0;
+}
+.oa-message.assistant .oa-msg-footer:has(> .oa-usage) {
+  border-top: 1px solid color-mix(in srgb, var(--oa-line, var(--n-ececec)) 52%, transparent);
+}
+.oa-message.assistant .oa-msg-footer:empty { display: none; }
+.oa-message.assistant .oa-msg-footer > .oa-usage.oa-usage-total {
+  flex: 1 1 auto;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.oa-message.assistant .oa-msg-footer > .oa-msg-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer:has(> .oa-usage) {
+  border-color: var(--oa-line);
+}
+html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .oa-usage.oa-usage-total {
+  border-top: 0;
+}
+
+/* The launcher gutter is gone: ultraplan / goal cards go back to one column. */
+.oa-message.assistant:has(> .oa-message-ultraplan),
+.oa-message.assistant:has(> .oa-goalcard) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
