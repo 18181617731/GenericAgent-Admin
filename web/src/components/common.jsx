@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Activity, CircleCheckBig, Eye, PackageCheck, Play, RefreshCw, Square, Terminal, TriangleAlert, Wrench } from 'lucide-react'
+import { Activity, ChevronRight, CircleCheckBig, Eye, PackageCheck, Play, RefreshCw, Square, Terminal, TriangleAlert, Wrench } from 'lucide-react'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
 import { observabilitySummary } from '../lib/observability.js'
 
@@ -43,11 +43,14 @@ function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
   </div>
 }
 
-export function Stat({ label, value, detail = '', tone = '', icon }) {
-  return <div className={`stat${tone ? ` is-${tone}` : ''}`}>
+export function Stat({ label, value, detail = '', tone = '', icon, onClick, title }) {
+  const content = <>
     <div>{icon}</div>
     <div className="stat-content"><span>{label}</span><b>{value}</b>{detail && <small>{detail}</small>}</div>
-  </div>
+    {onClick && <ChevronRight className="stat-link-icon" aria-hidden="true"/>}
+  </>
+  if (!onClick) return <div className={`stat${tone ? ` is-${tone}` : ''}`}>{content}</div>
+  return <button type="button" className={`stat stat-link${tone ? ` is-${tone}` : ''}`} onClick={onClick} title={title} aria-label={`${label}: ${value}`}>{content}</button>
 }
 export function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
 export function EntryList({ items = [], empty }) { return <div className="entry-list">{items.length ? items.map((e, i) => <div className="entry" key={`${e.path || e.name}-${i}`}><b>{e.name || e.path}</b><span>{e.path}{e.kind ? ` - ${e.kind}` : ''}{e.size ? ` - ${e.size} B` : ''}</span></div>) : <p className="muted">{empty}</p>}</div> }

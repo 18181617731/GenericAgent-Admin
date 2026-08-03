@@ -1,13 +1,22 @@
 package ga
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+type autonomousReviewLedger struct {
+	SchemaVersion int                      `json:"schema_version"`
+	Reviews       []AutonomousReviewRecord `json:"reviews"`
+}
+
+var autonomousReviewMu sync.Mutex
 
 func loadAutonomousDecisions(root string) ([]autonomousDecision, error) {
 	path, _, err := SafeResolve(root, autonomousDecisionPath)
@@ -85,6 +94,99 @@ func appendAutonomousDecision(root string, decision autonomousDecision) error {
 		return err
 	}
 	return writeFileAtomic(path, append(b, '\n'), 0644)
+}
+
+func AutonomousApprovalFingerprint(item AutonomousApproval) string {
+	value := strings.Join([]string{item.Title, item.Source, item.DraftPath, item.Target, item.Status, item.Risk, item.Evidence, item.NextStep, item.ExpectedOutcome}, "\n")
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func loadAutonomousReviews(root string) ([]AutonomousReviewRecord, error) {
+	autonomousReviewMu.Lock()
+	defer autonomousReviewMu.Unlock()
+	return loadAutonomousReviewsUnlocked(root)
+}
+
+func loadAutonomousReviewsUnlocked(root string) ([]AutonomousReviewRecord, error) {
+	path, _, err := SafeResolve(root, autonomousReviewPath)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ledger autonomousReviewLedger
+	if err := json.Unmarshal(b, &ledger); err != nil {
+		return nil, fmt.Errorf("read autonomous approval reviews: %w", err)
+	}
+	if ledger.SchemaVersion > autonomousApprovalSchemaVersion {
+		return nil, fmt.Errorf("unsupported autonomous review schema_version %d", ledger.SchemaVersion)
+	}
+	return ledger.Reviews, nil
+}
+
+func LoadAutonomousReviews(root string) ([]AutonomousReviewRecord, error) {
+	return loadAutonomousReviews(root)
+}
+
+func SaveAutonomousReview(root string, record AutonomousReviewRecord) error {
+	autonomousReviewMu.Lock()
+	defer autonomousReviewMu.Unlock()
+	reviews, err := loadAutonomousReviewsUnlocked(root)
+	if err != nil {
+		return err
+	}
+	replaced := false
+	for index := range reviews {
+		if reviews[index].ID == record.ID {
+			reviews[index] = record
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		reviews = append(reviews, record)
+	}
+	b, err := json.MarshalIndent(autonomousReviewLedger{SchemaVersion: autonomousApprovalSchemaVersion, Reviews: reviews}, "", "  ")
+	if err != nil {
+		return err
+	}
+	path, _, err := SafeResolve(root, autonomousReviewPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureWriteParentWithinRoot(root, path); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, append(b, '\n'), 0644)
+}
+
+func applyAutonomousReviews(overview *AutonomousApprovalOverview, reviews []AutonomousReviewRecord) {
+	byID := make(map[string]AutonomousReviewRecord, len(reviews))
+	for _, review := range reviews {
+		byID[review.ID] = review
+	}
+	for index := range overview.Items {
+		review, ok := byID[overview.Items[index].ID]
+		if !ok || (review.Fingerprint != "" && review.Fingerprint != AutonomousApprovalFingerprint(overview.Items[index])) {
+			continue
+		}
+		item := &overview.Items[index]
+		item.ReviewStatus = review.ReviewStatus
+		item.ReviewDecision = review.ReviewDecision
+		item.ReviewConfidence = review.ReviewConfidence
+		item.ReviewReason = review.ReviewReason
+		item.ReviewModelNo = review.ReviewModelNo
+		item.ReviewModel = review.ReviewModel
+		item.ReviewProvider = review.ReviewProvider
+		item.ReviewAttempts = review.Attempts
+		item.ReviewNextRetryAt = review.NextRetryAt
+	}
 }
 
 func queueApprovedAutonomousTask(root string, item AutonomousApproval, note string) (bool, error) {

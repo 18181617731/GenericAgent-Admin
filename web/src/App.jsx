@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download, Moon, Sun } from 'lucide-react'
+import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
@@ -27,6 +27,7 @@ import {
 import { withUpstreamI18n } from './lib/i18nIntegration'
 import { dashboardSummary } from './lib/dashboard'
 import { autonomousServices, goalWorkflowServices, guardianServices, scheduleServices } from './lib/serviceDomains'
+import { applyThemeToDocument, getInitialTheme } from './themes'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
 import { ScheduleArtifactPreview, ScheduleReportTree, SchedulerServiceRow, TaskRow } from './components/schedule'
@@ -35,6 +36,7 @@ import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
 import { EnvironmentGuardianSection } from './components/ServicePlacement.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
+import ThemePicker from './ThemePicker'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
@@ -164,8 +166,13 @@ const OverviewPage = ({
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
   updateGASource, autostart, toggleAutostart, root, overview, gitSyncView,
   repairGARuntime, runtimeRepairing, runtimeRepairResult, onServiceStart, onServiceStop, onServiceLogs, onServiceAutostart,
+  onNavigate, onNavigateTaskSubTab,
 }) => {
   const text = t.overview
+  const openRelated = (handler, title) => ({
+    onClick: handler,
+    title,
+  })
   const versionMessage = versionStatus?.error || (versionStatus?.stage === 'queued'
     ? text.updateQueued
     : (versionStatus?.message || versionStatus?.stage))
@@ -173,10 +180,10 @@ const OverviewPage = ({
 
   return <section className="overview-page">
     <div className="stats overview-stats">
-      <Stat label={text.serviceControl} value={overview.managedServices ? text.availableCount(overview.managedServices) : text.notLoaded} detail={overview.managedServices ? text.serviceControlHelp : text.loadingServices} icon={<Server/>}/>
-      <Stat label={text.backgroundServices} value={overview.runningServices ? text.runningCount(overview.runningServices) : text.allIdle} detail={overview.runningServices ? text.runningHelp : text.noBackgroundServices} tone={overview.runningServices ? 'ok' : ''} icon={<Activity/>}/>
-      <Stat label={text.scheduledTasks} value={overview.enabledTasks ? text.enabledCount(overview.enabledTasks) : text.noneEnabled} detail={overview.taskCount ? text.totalTasks(overview.taskCount) : text.createTaskHelp} tone={overview.enabledTasks ? 'ok' : ''} icon={<CalendarClock/>}/>
-      <Stat label={text.scheduleAlerts} value={overview.taskErrors ? text.errorCount(overview.taskErrors) : (overview.overdueTasks ? text.overdueCount(overview.overdueTasks) : text.nothingPending)} detail={overview.taskErrors || overview.overdueTasks ? text.reviewTasks : text.scheduleHealthy} tone={overview.taskErrors || overview.overdueTasks ? 'warn' : 'ok'} icon={<CheckCircle2/>}/>
+      <Stat label={text.serviceControl} value={overview.managedServices ? text.availableCount(overview.managedServices) : text.notLoaded} detail={overview.managedServices ? text.serviceControlHelp : text.loadingServices} icon={<Server/>} {...openRelated(() => onNavigate?.('channels'), lang === 'zh' ? '查看通道与服务' : 'View channels and services')}/>
+      <Stat label={text.backgroundServices} value={overview.runningServices ? text.runningCount(overview.runningServices) : text.allIdle} detail={overview.runningServices ? text.runningHelp : text.noBackgroundServices} tone={overview.runningServices ? 'ok' : ''} icon={<Activity/>} {...openRelated(() => onNavigate?.('logs'), lang === 'zh' ? '查看服务日志' : 'View service logs')}/>
+      <Stat label={text.scheduledTasks} value={overview.enabledTasks ? text.enabledCount(overview.enabledTasks) : text.noneEnabled} detail={overview.taskCount ? text.totalTasks(overview.taskCount) : text.createTaskHelp} tone={overview.enabledTasks ? 'ok' : ''} icon={<CalendarClock/>} {...openRelated(() => onNavigate?.('tasks'), lang === 'zh' ? '查看定时任务' : 'View scheduled tasks')}/>
+      <Stat label={text.scheduleAlerts} value={overview.taskErrors ? text.errorCount(overview.taskErrors) : (overview.overdueTasks ? text.overdueCount(overview.overdueTasks) : text.nothingPending)} detail={overview.taskErrors || overview.overdueTasks ? text.reviewTasks : text.scheduleHealthy} tone={overview.taskErrors || overview.overdueTasks ? 'warn' : 'ok'} icon={<CheckCircle2/>} {...openRelated(() => onNavigateTaskSubTab?.('reports'), lang === 'zh' ? '查看定时任务执行记录' : 'View scheduled-task reports')}/>
     </div>
 
     <ObservabilityCard
@@ -1254,6 +1261,8 @@ export default function App() {
     onServiceStop={name=>serviceAction(name, 'stop')}
     onServiceLogs={viewServiceLogs}
     onServiceAutostart={toggleServiceAutostart}
+    onNavigate={navigateTo}
+    onNavigateTaskSubTab={navigateTaskSubTab}
   />
 
   return <>
@@ -1271,12 +1280,12 @@ export default function App() {
     <div ref={appScope} className={`app app-tab-${tab}`} aria-busy={booting || busy || versionBusy || undefined}>
     <aside className="sidebar">
       <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
-      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><button type="button" className="theme-toggle" title={theme === 'dark' ? t.switchToLight : t.switchToDark} onClick={()=>setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? t.switchToLight : t.switchToDark}>{theme === 'dark' ? <Sun size={15} aria-hidden="true"/> : <Moon size={15} aria-hidden="true"/>}</button></div>
+      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/></div>
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{t.nav[tab]}</span><ChevronDown size={17}/></button>
       <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
     </aside>
-    <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+    <main className="main" aria-label={t.nav[tab]}><header className="app-page-header"><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}

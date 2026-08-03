@@ -101,7 +101,7 @@ afterEach(() => {
 
 const pendingApproval = {
   id: 'draft-one', title: '补充自主操作 SOP', state: 'pending', status: '待批未落地',
-  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
+  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档', expected_outcome: '以后遇到同类问题可以直接参考这份方案',
 }
 
 const approvalOverview = (items = [pendingApproval]) => ({
@@ -126,6 +126,7 @@ describe('autonomous operations page', () => {
     render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
 
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    expect(screen.getByText('以后遇到同类问题可以直接参考这份方案')).toBeTruthy()
     fireEvent.change(screen.getByRole('textbox', { name: '审批意见或补充要求（可选）' }), { target: { value: '先验证，再执行' } })
     fireEvent.click(screen.getByRole('button', { name: '批准并加入队列' }))
 
@@ -135,6 +136,93 @@ describe('autonomous operations page', () => {
     expect(JSON.parse(post?.[1]?.body)).toEqual({ id: 'draft-one', decision: 'approved', note: '先验证，再执行' })
     fireEvent.click(screen.getByRole('tab', { name: /已处理/ }))
     expect(await screen.findByText('已批准')).toBeTruthy()
+  })
+
+  test('explains when an approval card used rules because model review was unavailable', async () => {
+    installBrowserPolyfills()
+    const fallback = {
+      ...pendingApproval,
+      review_status: 'fallback',
+      review_decision: 'needs_approval',
+      review_confidence: 'high',
+      review_reason: 'report contains an explicit approval gate; model review unavailable: model review unavailable; retry scheduled; conservative rule retained',
+      review_model_no: 12,
+      review_model: 'gpt-5.6-luna',
+      review_provider: '自费帅API gpt',
+    }
+    globalThis.fetch = vi.fn(async url => {
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([fallback]))
+      throw new Error(`unexpected url ${url}`)
+    })
+    render(<AutonomousPage lang="zh" reports={[]}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    expect(screen.getByText('模型审核不可用')).toBeTruthy()
+    expect(screen.getByText('仅规则筛选（未经过模型判断）')).toBeTruthy()
+    expect(screen.getByText(/不是模型审核通过的结果/)).toBeTruthy()
+    expect(screen.getByText('为什么需要你审核')).toBeTruthy()
+    expect(screen.getByText(/没有做模型判断/)).toBeTruthy()
+    expect(screen.getByText('未自动批准')).toBeTruthy()
+  })
+
+  test('selects all pending drafts and approves them sequentially', async () => {
+    installBrowserPolyfills()
+    const items = [pendingApproval, { ...pendingApproval, id: 'draft-two', title: '补充发布检查清单' }]
+    let currentItems = items
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        currentItems = currentItems.map(item => item.id === body.id ? { ...item, state: body.decision, decision: body.decision } : item)
+        return jsonResponse({ queued: body.decision === 'approved', overview: approvalOverview(currentItems) })
+      }
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview(currentItems))
+      throw new Error(`unexpected url ${url}`)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const setMessage = vi.fn()
+    render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/> )
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (2)' }))
+    fireEvent.click(screen.getByRole('button', { name: '全选待审批' }))
+    expect(screen.getAllByRole('checkbox', { name: /选择：/ })).toHaveLength(2)
+    expect(screen.getAllByRole('checkbox', { name: /选择：/ }).every(input => input.checked)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '批量批准并加入队列' }))
+
+    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('已处理 2 项待审批', 'success'))
+    const posts = globalThis.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')
+    expect(posts).toHaveLength(2)
+    expect(posts.map(([, options]) => JSON.parse(options.body).id)).toEqual(['draft-one', 'draft-two'])
+  })
+
+  test('rejects a manually selected group with one shared reason', async () => {
+    installBrowserPolyfills()
+    const items = [pendingApproval, { ...pendingApproval, id: 'draft-two', title: '补充发布检查清单' }]
+    let currentItems = items
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        currentItems = currentItems.map(item => item.id === body.id ? { ...item, state: body.decision, decision: body.decision, note: body.note } : item)
+        return jsonResponse({ queued: false, overview: approvalOverview(currentItems) })
+      }
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview(currentItems))
+      throw new Error(`unexpected url ${url}`)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const setMessage = vi.fn()
+    render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (2)' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择：补充自主操作 SOP' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择：补充发布检查清单' }))
+    fireEvent.click(screen.getByRole('button', { name: '批量拒绝' }))
+    expect(screen.getByRole('dialog', { name: '拒绝 2 项待审批' })).toBeTruthy()
+    fireEvent.change(screen.getByRole('textbox', { name: '拒绝原因（可选）' }), { target: { value: '先补充证据再处理' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认拒绝' }))
+
+    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('已处理 2 项待审批', 'success'))
+    const posts = globalThis.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')
+    expect(posts).toHaveLength(2)
+    expect(posts.every(([, options]) => JSON.parse(options.body).note === '先补充证据再处理')).toBe(true)
   })
 
   test('should keep rejection dialog actionable when the decision request fails', async () => {

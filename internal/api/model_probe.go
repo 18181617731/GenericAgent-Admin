@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -14,13 +15,31 @@ import (
 )
 
 const (
-	maxModelProbeCount  = 50
-	modelProbeWorkers   = 3
-	modelProbeTimeout   = 45 * time.Second
-	modelProbeBodyLimit = 1 << 20
+	maxModelProbeCount              = 50
+	modelProbeWorkers               = 3
+	modelProbeBodyLimit             = 1 << 20
+	modelProbeDefaultMaxRetries     = 3
+	modelProbeDefaultReadTimeout    = 300
+	modelProbeDefaultConnectTimeout = 5
+	modelProbeRetryBaseDelay        = 500 * time.Millisecond
+	modelProbeRetryMaxDelay         = 30 * time.Second
 )
 
 var modelProbeNow = time.Now
+var modelProbeRetryDelay = func(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	if attempt > 6 {
+		attempt = 6
+	}
+	delay := modelProbeRetryBaseDelay * time.Duration(1<<attempt)
+	if delay > modelProbeRetryMaxDelay {
+		return modelProbeRetryMaxDelay
+	}
+	return delay
+}
+var modelProbeSleep = time.After
 
 var modelProbeTimePattern = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\b`)
 
@@ -154,6 +173,7 @@ func probeModel(ctx context.Context, baseURL, apiKey, model string, options mode
 	started := time.Now()
 	result = modelProbeResult{ID: model, Status: "request_failed"}
 	defer func() { result.LatencyMS = time.Since(started).Milliseconds() }()
+	options = normalizeModelProbeOptions(options)
 	expected := now.Format("2006-01-02 15:04")
 	endpoints, err := modelProbeEndpoints(baseURL, isClaude, options.APIMode)
 	if err != nil {
@@ -161,36 +181,82 @@ func probeModel(ctx context.Context, baseURL, apiKey, model string, options mode
 		return result
 	}
 	body := modelProbePayload(model, expected, isClaude, options)
-	client := &http.Client{Timeout: modelProbeTimeout}
+	client := modelProbeHTTPClient(options)
+	defer client.CloseIdleConnections()
 	for _, endpoint := range endpoints {
 		for _, headers := range modelDiscoveryAuthHeaders(apiKey, isClaude) {
 			headers = modelProbeRequestHeaders(headers, options, isClaude)
-			reply, status, err := requestModelProbe(ctx, client, endpoint, headers, body, isClaude, options.APIMode)
-			if err != nil {
-				result.Detail = redactProbeDetail(err.Error(), apiKey)
-				continue
-			}
-			if status < 200 || status >= 300 {
-				result.Detail = redactProbeDetail(fmt.Sprintf("HTTP %d: %s", status, reply.Text), apiKey)
-				continue
-			}
-			result.usage = reply.Usage
-			result.effort = options.ReasoningEffort
-			if !validModelProbeAnswer(reply.Text, expected) {
-				result.Status = "invalid_answer"
-				result.Detail = "模型已响应，但未正确回答北京时间"
+			for attempt := 0; attempt <= options.MaxRetries; attempt++ {
+				reply, status, requestErr := requestModelProbe(ctx, client, endpoint, headers, body, isClaude, options.APIMode)
+				if requestErr != nil {
+					result.Detail = redactProbeDetail(requestErr.Error(), apiKey)
+					if attempt < options.MaxRetries && waitModelProbeRetry(ctx, attempt) {
+						continue
+					}
+					break
+				}
+				if status < 200 || status >= 300 {
+					result.Detail = redactProbeDetail(fmt.Sprintf("HTTP %d: %s", status, reply.Text), apiKey)
+					if attempt < options.MaxRetries && retryableModelProbeStatus(status) && waitModelProbeRetry(ctx, attempt) {
+						continue
+					}
+					break
+				}
+				result.usage = reply.Usage
+				result.effort = options.ReasoningEffort
+				if !validModelProbeAnswer(reply.Text, expected) {
+					result.Status = "invalid_answer"
+					result.Detail = "模型已响应，但未正确回答北京时间"
+					return result
+				}
+				result.Available = true
+				result.Status = "available"
+				result.Detail = "真实对话验证通过：" + expected
 				return result
 			}
-			result.Available = true
-			result.Status = "available"
-			result.Detail = "真实对话验证通过：" + expected
-			return result
 		}
 	}
 	if result.Detail == "" {
 		result.Detail = "模型没有返回可用响应"
 	}
 	return result
+}
+
+func normalizeModelProbeOptions(options modelProbeOptions) modelProbeOptions {
+	if options.MaxRetries < 0 {
+		options.MaxRetries = 0
+	}
+	if !options.Configured && options.MaxRetries == 0 {
+		options.MaxRetries = modelProbeDefaultMaxRetries
+	}
+	if options.ReadTimeout <= 0 {
+		options.ReadTimeout = modelProbeDefaultReadTimeout
+	}
+	if options.ConnectTimeout <= 0 {
+		options.ConnectTimeout = modelProbeDefaultConnectTimeout
+	}
+	return options
+}
+
+func modelProbeHTTPClient(options modelProbeOptions) *http.Client {
+	options = normalizeModelProbeOptions(options)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: time.Duration(options.ConnectTimeout) * time.Second}).DialContext
+	return &http.Client{Transport: transport, Timeout: time.Duration(options.ReadTimeout) * time.Second}
+}
+
+func retryableModelProbeStatus(status int) bool {
+	return status == http.StatusConflict || status == http.StatusRequestTimeout || status == http.StatusTooEarly || status == http.StatusTooManyRequests || status >= 500
+}
+
+func waitModelProbeRetry(ctx context.Context, attempt int) bool {
+	delay := modelProbeSleep(modelProbeRetryDelay(attempt))
+	select {
+	case <-ctx.Done():
+		return false
+	case <-delay:
+		return true
+	}
 }
 
 func validModelProbeAnswer(reply, expected string) bool {
@@ -242,8 +308,7 @@ func modelProbePayload(model, expected string, isClaude bool, options modelProbe
 		payload = map[string]interface{}{"model": model, "stream": true, "instructions": system, "input": user, "max_output_tokens": 64}
 	} else {
 		payload = map[string]interface{}{"model": model, "stream": true, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}}
-		modelName := strings.ToLower(model)
-		if strings.HasPrefix(modelName, "gpt-5") || strings.HasPrefix(modelName, "o1") || strings.HasPrefix(modelName, "o2") || strings.HasPrefix(modelName, "o3") || strings.HasPrefix(modelName, "o4") {
+		if modelProbeUsesMaxCompletionTokens(model) {
 			payload["max_completion_tokens"] = 64
 		} else {
 			payload["max_tokens"] = 64
@@ -260,6 +325,11 @@ func modelProbePayload(model, expected string, isClaude bool, options modelProbe
 	}
 	body, _ := json.Marshal(payload)
 	return body
+}
+
+func modelProbeUsesMaxCompletionTokens(model string) bool {
+	modelName := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(modelName, "gpt-5") || strings.HasPrefix(modelName, "o1") || strings.HasPrefix(modelName, "o2") || strings.HasPrefix(modelName, "o3") || strings.HasPrefix(modelName, "o4")
 }
 
 func modelProbeProtocol(protocol string) (bool, error) {
