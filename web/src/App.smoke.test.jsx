@@ -137,6 +137,49 @@ describe('autonomous operations page', () => {
     expect(await screen.findByText('已批准')).toBeTruthy()
   })
 
+  test('should show live bulk approval progress and retry failed items', async () => {
+    installBrowserPolyfills()
+    const first = { ...pendingApproval, id: 'draft-one', title: '第一项自主任务' }
+    const second = { ...pendingApproval, id: 'draft-two', title: '第二项自主任务' }
+    let resolveFirst
+    let resolveSecond
+    let secondAttempts = 0
+    const firstResponse = new Promise(resolve => { resolveFirst = resolve })
+    const secondResponse = new Promise(resolve => { resolveSecond = resolve })
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        if (body.id === first.id) return firstResponse
+        secondAttempts += 1
+        if (secondAttempts === 1) return secondResponse
+        return jsonResponse({ queued: true, overview: approvalOverview([]) })
+      }
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([first, second]))
+      throw new Error(`unexpected url ${url}`)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<AutonomousPage lang="zh" reports={[]} />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (2)' }))
+    fireEvent.click(screen.getByRole('button', { name: '全选待审批' }))
+    fireEvent.click(screen.getByRole('button', { name: '批量批准并加入队列' }))
+
+    expect(await screen.findByRole('status', { name: '批量处理进度' })).toBeTruthy()
+    expect(screen.getByText('已处理 0 / 2 项')).toBeTruthy()
+    resolveFirst(jsonResponse({ queued: true, overview: approvalOverview([second]) }))
+    await waitFor(() => expect(screen.getByText('已处理 1 / 2 项')).toBeTruthy())
+    expect(screen.getByText('成功 1 项')).toBeTruthy()
+    resolveSecond({ ok: false, status: 500, statusText: 'Server Error', text: async () => JSON.stringify({ error: '第二项校验失败' }) })
+    await waitFor(() => expect(screen.getByText('失败原因：第二项校验失败')).toBeTruthy())
+    expect(screen.getByText('失败 1 项')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '重试失败项（1）' }))
+
+    await waitFor(() => expect(screen.getByText('已处理 1 / 1 项')).toBeTruthy())
+    expect(screen.getByText('成功 1 项')).toBeTruthy()
+    expect(screen.queryByText('失败原因：第二项校验失败')).toBeNull()
+    expect(secondAttempts).toBe(2)
+  })
+
   test('should render generated approval-card values in Chinese', async () => {
     installBrowserPolyfills()
     const englishReview = {

@@ -2,6 +2,16 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.46 - 2026-08-03
+
+### User-facing changes
+- Batch approval now shows live progress, processed totals, success and failure counts, the current item, and scrollable per-item results instead of leaving users with an indefinite waiting message.
+- Failed approval items remain visible with their failure reason and can be retried as a batch after the initial operation finishes.
+- Batch progress controls are responsive on mobile and prevent duplicate refresh or batch actions while processing.
+
+### Validation
+- Passed frontend lint, library tests (`228/228`), UI smoke tests (`91/91`), frontend production build, and focused batch approval progress coverage.
+
 ## v1.0.45 - 2026-08-03
 
 ### User-facing changes

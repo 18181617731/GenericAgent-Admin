@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowLeft, Check, Download, RefreshCw, Search, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, RefreshCw, Search, X } from 'lucide-react'
 import { AutonomousServiceCard } from '../components/AutonomousServiceCard.jsx'
 import { api } from '../lib/api.js'
 import { confirmDanger } from '../lib/danger.js'
@@ -85,7 +85,33 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
   </article>
 }
 
-function ApprovalPane({ overview, lang, busyIDs, reviewBusy, onReview, onApprove, onReject, onApproveMany, onRejectMany, onOpenReport }) {
+function BulkProgressPanel({ progress, copy, lang, onRetryFailed, onClear }) {
+  if (!progress) return null
+  const percent = progress.total ? Math.round((progress.completed / progress.total) * 100) : 0
+  const failedItems = progress.results.filter(result => result.status === 'failed')
+  return <section className={`autonomous-bulk-progress is-${progress.running ? 'running' : 'complete'}${failedItems.length ? ' has-failures' : ''}`} role="status" aria-live="polite" aria-label={copy.bulkProgressTitle}>
+    <header className="autonomous-bulk-progress-head">
+      <div><b>{copy.bulkProgressTitle}</b><span>{progress.running ? copy.bulkProgressWorking : copy.bulkProgressFinished}</span></div>
+      {!progress.running && <button type="button" className="autonomous-bulk-progress-close" aria-label={copy.closeProgress} onClick={onClear}><X size={16}/></button>}
+    </header>
+    <div className="autonomous-bulk-progress-summary"><strong>{copy.bulkProgressCount(progress.completed, progress.total)}</strong><span>{copy.bulkProgressPercent(percent)}</span></div>
+    <progress max={progress.total} value={progress.completed} aria-label={copy.bulkProgressCount(progress.completed, progress.total)}/>
+    <div className="autonomous-bulk-progress-stats">
+      <span className="is-success"><CheckCircle2 size={14}/>{copy.bulkProgressSuccess(progress.successCount)}</span>
+      <span className="is-failed"><AlertCircle size={14}/>{copy.bulkProgressFailed(progress.failedCount)}</span>
+    </div>
+    {progress.currentTitle && <p className="autonomous-bulk-progress-current"><span>{progress.running ? copy.bulkProgressCurrent : copy.bulkProgressLast}</span><b>{localizeAutonomousApprovalValue(progress.currentTitle, lang, 'title')}</b></p>}
+    {progress.results.length > 0 && <div className="autonomous-bulk-progress-details">
+      <div className="autonomous-bulk-progress-details-head"><b>{copy.bulkProgressDetails}</b><span>{progress.results.length}</span></div>
+      <ul>{progress.results.map(result => <li className={`is-${result.status}`} key={`${result.id}-${result.attempt}`}>
+        {result.status === 'success' ? <CheckCircle2 size={15}/> : <AlertCircle size={15}/>}<div><b>{localizeAutonomousApprovalValue(result.title, lang, 'title')}</b><span>{result.status === 'success' ? (result.queued ? copy.bulkProgressQueued : copy.bulkProgressRecorded) : `${copy.bulkProgressError}：${result.error}`}</span></div>
+      </li>)}</ul>
+    </div>}
+    {!progress.running && failedItems.length > 0 && <button type="button" className="secondary autonomous-bulk-progress-retry" onClick={() => onRetryFailed?.(failedItems)}><RefreshCw size={15}/>{copy.retryFailed(failedItems.length)}</button>}
+  </section>
+}
+
+function ApprovalPane({ overview, lang, busyIDs, reviewBusy, bulkProgress, onReview, onApprove, onReject, onApproveMany, onRejectMany, onRetryFailed, onClearBulkProgress, onOpenReport }) {
   const copy = autonomousCopy(lang)
   const [mode, setMode] = useState('pending')
   const [replies, setReplies] = useState({})
@@ -117,6 +143,7 @@ function ApprovalPane({ overview, lang, busyIDs, reviewBusy, onReview, onApprove
         <button type="button" className="secondary" disabled={busyIDs.size > 0} onClick={() => onRejectMany?.(selectedItems)}><X size={15}/>{copy.rejectMany}</button>
       </div>}
     </div>}
+    <BulkProgressPanel progress={bulkProgress} copy={copy} lang={lang} onRetryFailed={onRetryFailed} onClear={onClearBulkProgress}/>
     {!overview?.source_exists && <div className="autonomous-empty">{copy.noLedger}</div>}
     {overview?.source_exists && !items.length && <div className="autonomous-empty">{mode === 'pending' ? copy.noPending : copy.noHandled}</div>}
     <div className="autonomous-approval-list">{items.map(item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyIDs.has(item.id)} selected={selectedIDs.includes(item.id)} reply={replies[item.id] || ''} onReply={value => setReplies(current => ({ ...current, [item.id]: value }))} onSelect={toggleSelected} onApprove={onApprove} onReject={onReject} onOpenReport={onOpenReport}/>)}</div>
@@ -180,6 +207,7 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
   const [loading, setLoading] = useState(true)
   const [busyIDs, setBusyIDs] = useState(new Set())
   const [reviewBusy, setReviewBusy] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState(null)
   const [reportToOpen, setReportToOpen] = useState(null)
   const [rejecting, setRejecting] = useState(null)
   const [rejectNote, setRejectNote] = useState('')
@@ -204,28 +232,37 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
       setMessage?.(`${copy.reviewFailed}：${error.message}`, 'error')
     } finally { setReviewBusy(false) }
   }
-  const decideMany = async (entries, decision, sharedNote = '') => {
+  const decideMany = async (entries, decision, sharedNote = '', options = {}) => {
     const normalizedEntries = entries.filter(entry => entry?.item?.id).map(entry => ({ ...entry, note: entry.note ?? sharedNote }))
     if (!normalizedEntries.length) return
+    const showProgress = options.forceProgress || normalizedEntries.length > 1
     const action = decision === 'approved' ? copy.approve : copy.confirmReject
     const confirmText = normalizedEntries.length > 1
       ? (decision === 'approved' ? copy.approveManyConfirm(normalizedEntries.length) : copy.rejectManyConfirm(normalizedEntries.length))
-      : `${action}“${normalizedEntries[0].item.title}”？`
+      : (options.confirmText || `${action}“${normalizedEntries[0].item.title}”？`)
     if (!confirmDanger('autonomous-approval', confirmText)) return
     setBusyIDs(new Set(normalizedEntries.map(entry => entry.item.id)))
-    if (normalizedEntries.length > 1) setMessage?.(copy.bulkProcessing(normalizedEntries.length), 'pending')
+    setBulkProgress(showProgress ? { running: true, decision, total: normalizedEntries.length, completed: 0, successCount: 0, failedCount: 0, currentTitle: normalizedEntries[0].item.title, results: [] } : null)
     let latestOverview = approvals
     let completed = 0
+    let failed = 0
     let queued = 0
     let lastError = ''
     try {
       for (const entry of normalizedEntries) {
+        if (showProgress) setBulkProgress(current => current ? { ...current, currentTitle: entry.item.title } : current)
         try {
           const result = await api('/api/autonomous/approvals', { dangerous: true, method: 'POST', body: JSON.stringify({ id: entry.item.id, decision, note: entry.note }) })
           latestOverview = result.overview || latestOverview
           completed += 1
           if (result.queued) queued += 1
-        } catch (error) { lastError = error.message }
+          setApprovals(latestOverview)
+          if (showProgress) setBulkProgress(current => current ? { ...current, completed: current.completed + 1, successCount: current.successCount + 1, results: [...current.results, { id: entry.item.id, title: entry.item.title, status: 'success', queued: Boolean(result.queued), entry, attempt: current.results.length + 1 }] } : current)
+        } catch (error) {
+          failed += 1
+          lastError = error.message
+          if (showProgress) setBulkProgress(current => current ? { ...current, completed: current.completed + 1, failedCount: current.failedCount + 1, results: [...current.results, { id: entry.item.id, title: entry.item.title, status: 'failed', error: error.message, entry, attempt: current.results.length + 1 }] } : current)
+        }
       }
       setApprovals(latestOverview)
       if (completed === normalizedEntries.length) {
@@ -233,11 +270,19 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
         const message = normalizedEntries.length === 1
           ? (queued ? copy.approvalQueued : copy.approvalRecorded)
           : copy.bulkSuccess(completed)
-        setMessage?.(message, 'success')
+        if (!showProgress) setMessage?.(message, 'success')
       } else {
-        setMessage?.(copy.bulkPartial(completed, normalizedEntries.length, lastError || copy.approvalFailed), 'error')
+        if (!showProgress) setMessage?.(copy.bulkPartial(completed, normalizedEntries.length, lastError || copy.approvalFailed), 'error')
       }
-    } finally { setBusyIDs(new Set()) }
+    } finally {
+      setBusyIDs(new Set())
+      if (showProgress) setBulkProgress(current => current ? { ...current, running: false, completed: completed + failed } : current)
+    }
+  }
+  const retryBulkFailures = failedItems => {
+    const entries = failedItems.map(result => result.entry).filter(Boolean)
+    if (!entries.length || !bulkProgress) return
+    decideMany(entries, bulkProgress.decision, '', { forceProgress: true, confirmText: copy.retryFailedConfirm(entries.length) })
   }
   const tabs = [['services', copy.services], ['approvals', `${copy.approvals}${summary.pending ? ` (${summary.pending})` : ''}`], ['records', copy.records]]
   return <section className="autonomous-page">
@@ -247,18 +292,21 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
       <div><span>{copy.reportStat}</span><b>{summary.reports}</b></div>
       <div><span>{copy.latestStat}</span><b className="is-date">{summary.latestReport ? readableAutonomousDate(summary.latestReport.mod_time, lang) : copy.noRecent}</b></div>
     </div>
-    <div className="autonomous-toolbar"><div className="autonomous-tabs" role="tablist">{tabs.map(([id, label]) => <button type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} key={id} onClick={() => setTab(id)}>{label}</button>)}</div><button type="button" className="autonomous-refresh" disabled={loading} onClick={refresh}><RefreshCw className={loading ? 'spin' : ''} size={16}/>{copy.refresh}</button></div>
+    <div className="autonomous-toolbar"><div className="autonomous-tabs" role="tablist">{tabs.map(([id, label]) => <button type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} key={id} onClick={() => setTab(id)}>{label}</button>)}</div><button type="button" className="autonomous-refresh" disabled={loading || bulkProgress?.running} onClick={refresh}><RefreshCw className={loading || bulkProgress?.running ? 'spin' : ''} size={16}/>{copy.refresh}</button></div>
     {tab === 'services' && <div className="autonomous-services-pane"><div className="autonomous-callout"><b>{lang === 'en' ? 'How services work' : '服务说明'}</b><span>{copy.serviceIntro}</span></div><div className="autonomous-service-grid">{services.length ? services.map(service => <AutonomousServiceCard key={service.name} service={service} lang={lang} llms={llms} actionState={actionStates[service.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onModel={onModel}/>) : <div className="autonomous-empty">{lang === 'en' ? 'No autonomous service was found' : '未发现自主进化服务'}</div>}</div></div>}
     {tab === 'approvals' && <ApprovalPane
       overview={approvals}
       lang={lang}
       busyIDs={busyIDs}
       reviewBusy={reviewBusy}
+      bulkProgress={bulkProgress}
       onReview={reviewPending}
       onApprove={(item, note) => decideMany([{ item, note }], 'approved')}
       onReject={(item, note) => { setRejecting({ items: [item] }); setRejectNote(note) }}
       onApproveMany={entries => decideMany(entries, 'approved')}
       onRejectMany={items => { setRejecting({ items }); setRejectNote('') }}
+      onRetryFailed={retryBulkFailures}
+      onClearBulkProgress={() => setBulkProgress(null)}
       onOpenReport={report => { setReportToOpen({ ...report, open_token: Date.now() }); setTab('records') }}
     />}
     {tab === 'records' && <ReportPane reports={reports} lang={lang} initialReport={reportToOpen}/>}
