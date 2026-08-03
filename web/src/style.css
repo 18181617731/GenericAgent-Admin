@@ -3577,7 +3577,7 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
    overrides both :root blocks via source order. Surfaces & body
    text were refactored to tokens, so most UI adapts automatically.
    ============================================================ */
-html[data-theme="dark"] {
+html[data-color-scheme="dark"] {
   --bg: #0d0f11;
   --bg-soft: #15181b;
   --surface: #1b1e22;
@@ -4043,6 +4043,15 @@ html[data-color-scheme="dark"] .hit,
 html[data-color-scheme="dark"] .status-pill.running,
 html[data-color-scheme="dark"] .oa-banner { background: rgba(25, 195, 156, .14) !important; }
 html[data-color-scheme="dark"] .oa-tool-result pre { color: #8fe6cd !important; }
+/* turn-node timeline dots */
+html[data-color-scheme="dark"] .oa-run-dot {
+  background: var(--ink-ok);
+  box-shadow: 0 0 0 4px rgba(52, 216, 176, 0.14);
+}
+html[data-color-scheme="dark"] .oa-turn-node::before {
+  border-color: rgba(52, 216, 176, 0.6);
+  box-shadow: 0 0 0 3px var(--surface-strong);
+}
 /* warning / ask-user (amber family) */
 html[data-color-scheme="dark"] .goal-output-meta span,
 html[data-color-scheme="dark"] .oa-tool-ask-user .oa-tool-head,
