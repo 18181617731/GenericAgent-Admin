@@ -117,6 +117,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/services/autostart", s.requireDangerousConfirm(s.serviceAutostart))
 	mux.HandleFunc("/api/services/model", s.requireDangerousConfirm(s.serviceModel))
 	mux.HandleFunc("/api/autonomous/approvals", s.requireDangerousConfirm(s.autonomousApprovals))
+	mux.HandleFunc("/api/autonomous/approvals/review", s.requireDangerousConfirm(s.autonomousApprovalReview))
 	mux.HandleFunc("/api/logs/", s.logs)
 	mux.HandleFunc("/api/ga/processes", s.gaProcesses)
 	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.killGAProcess))
@@ -193,6 +194,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/services/autostart", Level: "reversible", Action: "toggle_service_autostart", Reason: "changes Admin-Go service autostart list"},
 	{Path: "/api/services/model", Level: "reversible", Action: "set_service_model", Reason: "changes the persisted model used to launch a reflect/autonomous service"},
 	{Path: "/api/autonomous/approvals", Level: "reversible", Action: "decide_autonomous_approval", Reason: "records a user approval decision; approved items are queued once in GA temp/TODO.txt for SOP-governed execution"},
+	{Path: "/api/autonomous/approvals/review", Level: "reversible", Action: "review_autonomous_approval", Reason: "sends pending autonomous proposals to the configured review model; does not approve or execute them"},
 	{Path: "/api/tmwebdriver/repair", Level: "reversible", Action: "start_tmwebdriver_master", Reason: "starts a persistent TMWebDriver master process on localhost:18766"},
 	{Path: "/api/tmwebdriver/install-deps", Level: "dangerous", Action: "install_tmwebdriver_deps", Reason: "runs pip install with Tsinghua PyPI mirror for TMWebDriver dependencies"},
 	{Path: "/api/ga/git-mirror", Level: "reversible", Action: "configure_git_mirror", Reason: "updates global git insteadOf mirror for github.com URLs"},

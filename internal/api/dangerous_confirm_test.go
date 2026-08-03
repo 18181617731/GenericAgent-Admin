@@ -1093,6 +1093,7 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/services/autostart", `{}`},
 		{http.MethodPost, "/api/services/model", `{}`},
 		{http.MethodPost, "/api/autonomous/approvals", `{}`},
+		{http.MethodPost, "/api/autonomous/approvals/review", `{}`},
 		{http.MethodPost, "/api/models/export", `{}`},
 		{http.MethodPut, "/api/models/title-model", `{"invalid_payload":true}`},
 		{http.MethodPut, "/api/channels", `{}`},

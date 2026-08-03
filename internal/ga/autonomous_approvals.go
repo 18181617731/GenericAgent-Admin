@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ const autonomousApprovalSchemaVersion = 1
 const (
 	autonomousApprovalSource = "temp/pending_drafts.md"
 	autonomousDecisionPath   = "temp/autonomous_approval_decisions.json"
+	autonomousReviewPath     = "temp/autonomous_approval_reviews.json"
 	autonomousTodoPath       = "temp/TODO.txt"
 )
 
@@ -47,6 +49,7 @@ type AutonomousApproval struct {
 	Risk            string    `json:"risk,omitempty"`
 	Evidence        string    `json:"evidence,omitempty"`
 	NextStep        string    `json:"next_step,omitempty"`
+	ExpectedOutcome string    `json:"expected_outcome,omitempty"`
 	State           string    `json:"state"`
 	Decision        string    `json:"decision,omitempty"`
 	Note            string    `json:"note,omitempty"`
@@ -58,15 +61,17 @@ type AutonomousApproval struct {
 	ExecutionError     string     `json:"execution_error,omitempty"`
 	ExecutionUpdatedAt *time.Time `json:"execution_updated_at,omitempty"`
 
-	ReviewStatus     string  `json:"review_status,omitempty"`
-	ReviewDecision   string  `json:"review_decision,omitempty"`
-	ReviewConfidence string  `json:"review_confidence,omitempty"`
-	ReviewReason     string  `json:"review_reason,omitempty"`
-	ReviewModelNo    *int    `json:"review_model_no,omitempty"`
-	ReviewModel      string  `json:"review_model,omitempty"`
-	ReviewProvider   string  `json:"review_provider,omitempty"`
-	ReviewReport     *Entry  `json:"review_report,omitempty"`
-	ReviewReports    []Entry `json:"review_reports,omitempty"`
+	ReviewStatus      string    `json:"review_status,omitempty"`
+	ReviewDecision    string    `json:"review_decision,omitempty"`
+	ReviewConfidence  string    `json:"review_confidence,omitempty"`
+	ReviewReason      string    `json:"review_reason,omitempty"`
+	ReviewModelNo     *int      `json:"review_model_no,omitempty"`
+	ReviewModel       string    `json:"review_model,omitempty"`
+	ReviewProvider    string    `json:"review_provider,omitempty"`
+	ReviewReport      *Entry    `json:"review_report,omitempty"`
+	ReviewReports     []Entry   `json:"review_reports,omitempty"`
+	ReviewAttempts    int       `json:"review_attempts,omitempty"`
+	ReviewNextRetryAt time.Time `json:"review_next_retry_at,omitempty"`
 }
 
 type AutonomousApprovalOverview struct {
@@ -127,6 +132,11 @@ func BuildAutonomousApprovals(root string) (AutonomousApprovalOverview, error) {
 	}
 	applyAutonomousDecisions(&overview, decisions)
 	attachAutonomousReportCandidates(root, &overview)
+	reviews, err := loadAutonomousReviews(root)
+	if err != nil {
+		return overview, err
+	}
+	applyAutonomousReviews(&overview, reviews)
 	attachAutonomousExecution(root, &overview)
 	recountAutonomousDecisions(&overview)
 	return overview, nil
@@ -190,6 +200,9 @@ func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApprov
 	}
 	if base.NextStep == "" {
 		base.NextStep = addition.NextStep
+	}
+	if base.ExpectedOutcome == "" {
+		base.ExpectedOutcome = addition.ExpectedOutcome
 	}
 	if addition.ExecutionState != "" {
 		base.ExecutionState = addition.ExecutionState
@@ -442,6 +455,24 @@ func applyAutonomousApprovalField(item *AutonomousApproval, line string) {
 		item.Evidence = value
 	case "下一步":
 		item.NextStep = value
+	case "预期效果", "预期结果", "预期影响":
+		item.ExpectedOutcome = value
+	case "审核状态":
+		item.ReviewStatus = value
+	case "审核结论":
+		item.ReviewDecision = value
+	case "审核置信度":
+		item.ReviewConfidence = value
+	case "审核原因":
+		item.ReviewReason = value
+	case "审核模型编号":
+		if modelNo, err := strconv.Atoi(value); err == nil && modelNo >= 0 {
+			item.ReviewModelNo = &modelNo
+		}
+	case "审核模型":
+		item.ReviewModel = value
+	case "审核服务商":
+		item.ReviewProvider = value
 	}
 }
 

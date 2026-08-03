@@ -1,450 +1,373 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"os"
-	"path/filepath"
+	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/modelconfig"
 )
 
-type autonomousReviewModel struct {
-	LLMNo       int
-	Provider    string
-	Model       string
-	DisplayName string
-}
-
-type autonomousModelReview struct {
-	Decision   string
-	Confidence string
-	Reason     string
-	Err        string
-}
-
-type autonomousReviewModelOption struct {
-	autonomousReviewModel
-	order    int
-	sequence int
-}
-
-const maxAutonomousModelReviewReports = 8
-
-const autonomousReviewQuickWait = 1200 * time.Millisecond
-
-const autonomousReviewWorkerTimeout = 18 * time.Second
-
-const autonomousReviewRetryDelay = 30 * time.Second
-
-var (
-	autonomousReviewCacheMu       sync.Mutex
-	autonomousReviewCache         = map[string]autonomousModelReview{}
-	autonomousReviewInFlight      = map[string]bool{}
-	autonomousReviewRetryAfter    = map[string]time.Time{}
-	runAutonomousReviewWorkerFunc = func(cfg config.AppConfig, sid string, req map[string]interface{}) (chatMessage, error) {
-		return runOneShotBTWWorkerFunc(cfg, sid, req)
-	}
+const (
+	maxAutonomousReviewItems = 30
+	autonomousReviewCooldown = 30 * time.Second
 )
+
+type autonomousReviewModel struct {
+	LLMNo    int
+	Provider string
+	Profile  modelconfig.Profile
+	Config   modelconfig.ModelConfig
+	Options  modelProbeOptions
+}
+
+type autonomousReviewDecision struct {
+	Decision   string `json:"decision"`
+	Confidence string `json:"confidence"`
+	Reason     string `json:"reason"`
+}
 
 func (s *Server) reviewAutonomousApprovals(overview *ga.AutonomousApprovalOverview) {
 	if s == nil || overview == nil || s.CfgStore == nil {
 		return
 	}
-	model, ok := s.autonomousReviewModel()
-	if !ok {
+	model, err := s.resolveAutonomousReviewModel()
+	if err != nil {
 		overview.ReviewStatus = "not_configured"
 		return
 	}
 	modelNo := model.LLMNo
 	overview.ReviewModelNo = &modelNo
-	overview.ReviewModel = model.DisplayName
-	if overview.ReviewModel == "" {
-		overview.ReviewModel = model.Model
-	}
+	overview.ReviewModel = autonomousReviewModelName(model)
 	overview.ReviewProvider = model.Provider
-	overview.ReviewStatus = "fallback"
-	pending := make([]int, 0)
+	if overview.ReviewStatus == "" {
+		overview.ReviewStatus = "configured"
+	}
 	for index := range overview.Items {
 		item := &overview.Items[index]
 		if item.State != "pending" {
 			continue
 		}
-		item.ReviewModelNo = &modelNo
-		item.ReviewModel = model.DisplayName
-		if item.ReviewModel == "" {
-			item.ReviewModel = model.Model
+		if item.ReviewModelNo == nil {
+			item.ReviewModelNo = &modelNo
 		}
-		item.ReviewProvider = model.Provider
-		if item.ReviewReport == nil {
-			if item.ReviewStatus == "" {
-				item.ReviewStatus = "rule_fallback"
-			}
-			continue
+		if strings.TrimSpace(item.ReviewModel) == "" {
+			item.ReviewModel = autonomousReviewModelName(model)
 		}
-		pending = append(pending, index)
-	}
-	if len(pending) > maxAutonomousModelReviewReports {
-		for _, index := range pending[maxAutonomousModelReviewReports:] {
-			overview.Items[index].ReviewStatus = "fallback"
-			overview.Items[index].ReviewReason = strings.TrimSpace(strings.Join([]string{overview.Items[index].ReviewReason, "model review batch limit reached; conservative rule retained"}, "; "))
+		if strings.TrimSpace(item.ReviewProvider) == "" {
+			item.ReviewProvider = model.Provider
 		}
-		pending = pending[:maxAutonomousModelReviewReports]
-	}
-	results := s.autonomousModelReviews(model, overview.Items, pending)
-	hadModelResult := false
-	hadModelPending := false
-	hadModelUnavailable := false
-	for _, index := range pending {
-		item := &overview.Items[index]
-		result := results[item.ID]
-		if result.Err != "" {
-			if strings.Contains(result.Err, "scheduled") || strings.Contains(result.Err, "in progress") {
-				hadModelPending = true
-			} else if strings.Contains(result.Err, "unavailable") || strings.Contains(result.Err, "timed out") {
-				hadModelUnavailable = true
-			}
-			item.ReviewStatus = "fallback"
-			item.ReviewReason = strings.TrimSpace(strings.Join([]string{item.ReviewReason, "model review unavailable: " + result.Err}, "; "))
-			continue
-		}
-		if result.Decision != "" {
-			item.ReviewDecision = result.Decision
-		}
-		if result.Confidence != "" {
-			item.ReviewConfidence = result.Confidence
-		}
-		if result.Reason != "" {
-			item.ReviewReason = result.Reason
-		}
-		item.ReviewStatus = "model_reviewed"
-		hadModelResult = true
-	}
-	if hadModelResult {
-		overview.ReviewStatus = "model_reviewed"
-	} else if hadModelPending {
-		overview.ReviewStatus = "model_review_pending"
-	} else if hadModelUnavailable {
-		overview.ReviewStatus = "model_review_fallback"
 	}
 }
 
-func (s *Server) autonomousReviewModel() (autonomousReviewModel, bool) {
-	if s == nil || s.CfgStore == nil {
-		return autonomousReviewModel{}, false
+func (s *Server) autonomousApprovalReview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
 	}
-	cfg := s.CfgStore.Cfg
-	preferred := 0
-	if cfg.ServiceModels != nil {
-		if value, exists := cfg.ServiceModels["reflect/autonomous.py"]; exists && value >= 0 {
-			preferred = value
-		}
+	var request struct {
+		ID  string   `json:"id"`
+		IDs []string `json:"ids"`
 	}
-	draft, err := s.loadModelsFromOfficialMyKey(false)
+	if err := decode(r, &request); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	overview, err := ga.BuildAutonomousApprovals(s.CfgStore.Cfg.GARoot)
 	if err != nil {
-		return autonomousReviewModel{}, false
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	options := orderedAutonomousReviewModelOptions(draft.Profiles)
-	if len(options) == 0 {
-		return autonomousReviewModel{}, false
+	items := autonomousReviewTargets(overview.Items, request.ID, request.IDs)
+	if len(items) > maxAutonomousReviewItems {
+		items = items[:maxAutonomousReviewItems]
 	}
-	if preferred >= len(options) {
-		preferred = 0
+	results := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		record, reviewErr := s.reviewAutonomousApproval(item, true)
+		result := map[string]interface{}{"id": item.ID, "status": record.ReviewStatus, "attempts": record.Attempts}
+		if reviewErr != nil {
+			result["error"] = reviewErr.Error()
+		}
+		results = append(results, result)
 	}
-	selected := options[preferred]
-	selected.LLMNo = preferred
-	return selected.autonomousReviewModel, true
+	updated, err := ga.BuildAutonomousApprovals(s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.reviewAutonomousApprovals(&updated)
+	writeJSON(w, map[string]interface{}{"ok": true, "reviewed": len(results), "results": results, "overview": updated})
 }
 
-func orderedAutonomousReviewModelOptions(profiles []modelconfig.Profile) []autonomousReviewModelOption {
-	options := make([]autonomousReviewModelOption, 0)
+func autonomousReviewTargets(items []ga.AutonomousApproval, id string, ids []string) []ga.AutonomousApproval {
+	selected := map[string]bool{}
+	if strings.TrimSpace(id) != "" {
+		selected[strings.TrimSpace(id)] = true
+	}
+	for _, value := range ids {
+		if value = strings.TrimSpace(value); value != "" {
+			selected[value] = true
+		}
+	}
+	targets := make([]ga.AutonomousApproval, 0, len(items))
+	for _, item := range items {
+		if item.State != "pending" || (len(selected) > 0 && !selected[item.ID]) {
+			continue
+		}
+		targets = append(targets, item)
+	}
+	return targets
+}
+
+func (s *Server) reviewAutonomousApproval(item ga.AutonomousApproval, force bool) (ga.AutonomousReviewRecord, error) {
+	records, err := ga.LoadAutonomousReviews(s.CfgStore.Cfg.GARoot)
+	if err != nil {
+		return ga.AutonomousReviewRecord{}, err
+	}
+	record := findAutonomousReviewRecord(records, item.ID)
+	if !force && !record.NextRetryAt.IsZero() && time.Now().Before(record.NextRetryAt) {
+		return record, nil
+	}
+	record.ID = item.ID
+	record.Fingerprint = ga.AutonomousApprovalFingerprint(item)
+	record.Attempts++
+	record.UpdatedAt = time.Now()
+	model, modelErr := s.resolveAutonomousReviewModel()
+	if modelErr != nil {
+		return s.saveAutonomousReviewFailure(record, modelErr)
+	}
+	record.ReviewModelNo = model.LLMNo
+	record.ReviewModel = autonomousReviewModelName(model)
+	record.ReviewProvider = model.Provider
+	reply, requestErr := runAutonomousReviewRequest(context.Background(), model, item)
+	if requestErr != nil {
+		return s.saveAutonomousReviewFailure(record, requestErr)
+	}
+	decision := parseAutonomousReviewDecision(reply.Text)
+	record.ReviewStatus = "model"
+	record.ReviewDecision = decision.Decision
+	record.ReviewConfidence = decision.Confidence
+	record.ReviewReason = decision.Reason
+	record.NextRetryAt = time.Time{}
+	record.UpdatedAt = time.Now()
+	return record, ga.SaveAutonomousReview(s.CfgStore.Cfg.GARoot, record)
+}
+
+func findAutonomousReviewRecord(records []ga.AutonomousReviewRecord, id string) ga.AutonomousReviewRecord {
+	for _, record := range records {
+		if record.ID == id {
+			return record
+		}
+	}
+	return ga.AutonomousReviewRecord{}
+}
+
+func (s *Server) saveAutonomousReviewFailure(record ga.AutonomousReviewRecord, err error) (ga.AutonomousReviewRecord, error) {
+	record.ReviewStatus = "fallback"
+	record.ReviewDecision = "needs_approval"
+	record.ReviewConfidence = "high"
+	record.ReviewReason = fmt.Sprintf("本轮审核调用失败，已按模型页面配置完成重试；这是第 %d 轮审核：%s；下次重新审核时会再次尝试", record.Attempts, redactProbeDetail(err.Error(), ""))
+	record.NextRetryAt = time.Now().Add(autonomousReviewCooldown)
+	record.UpdatedAt = time.Now()
+	return record, ga.SaveAutonomousReview(s.CfgStore.Cfg.GARoot, record)
+}
+
+func (s *Server) resolveAutonomousReviewModel() (autonomousReviewModel, error) {
+	draft, err := s.loadModelsFromOfficialMyKey(true)
+	if err != nil {
+		return autonomousReviewModel{}, err
+	}
+	models := orderedAutonomousReviewModels(draft.Profiles)
+	if len(models) == 0 {
+		return autonomousReviewModel{}, fmt.Errorf("没有可用于审核的已启用模型")
+	}
+	desired := -1
+	if s.CfgStore.Cfg.ServiceModels != nil {
+		desired = s.CfgStore.Cfg.ServiceModels["reflect/autonomous.py"]
+	}
+	if desired >= 0 {
+		for _, model := range models {
+			if model.LLMNo == desired {
+				return model, nil
+			}
+		}
+	}
+	return models[0], nil
+}
+
+func orderedAutonomousReviewModels(profiles []modelconfig.Profile) []autonomousReviewModel {
+	models := make([]autonomousReviewModel, 0)
 	sequence := 0
 	for _, profile := range profiles {
-		configs := profile.ModelConfigs
-		if len(configs) == 0 {
-			models := profile.Models
-			if len(models) == 0 && strings.TrimSpace(profile.Model) != "" {
-				models = []string{profile.Model}
-			}
-			configs = make([]modelconfig.ModelConfig, 0, len(models))
-			for _, model := range models {
-				configs = append(configs, modelconfig.ModelConfig{Model: model})
-			}
-		}
-		for _, config := range configs {
+		for _, rawConfig := range probeProfileModelConfigs(profile) {
+			config := inheritAutonomousModelConfig(rawConfig, profile)
 			if !modelconfig.ModelConfigEnabled(config) || strings.TrimSpace(config.Model) == "" {
 				continue
 			}
-			order := math.MaxInt
+			order := sequence
 			if config.SortOrder != nil {
 				order = *config.SortOrder
 			}
-			model := strings.TrimSpace(config.Model)
-			display := strings.TrimSpace(config.Name)
-			if display == "" {
-				display = model
+			options := modelProbeOptions{
+				MaxRetries:     firstProbeIntAllowZero(config.MaxRetries, modelProbeDefaultMaxRetries),
+				ReadTimeout:    firstProbeInt(config.ReadTimeout, modelProbeDefaultReadTimeout),
+				ConnectTimeout: firstProbeInt(config.ConnectTimeout, modelProbeDefaultConnectTimeout),
+				APIMode:        config.APIMode, UserAgent: config.UserAgent, ReasoningEffort: config.ReasoningEffort, Configured: true,
 			}
-			options = append(options, autonomousReviewModelOption{
-				autonomousReviewModel: autonomousReviewModel{
-					Provider:    chatProviderDisplayName(profile),
-					Model:       model,
-					DisplayName: display,
-				},
-				order: order, sequence: sequence,
-			})
+			models = append(models, autonomousReviewModel{Provider: chatProviderDisplayName(profile), Profile: profile, Config: config, Options: options, LLMNo: order})
 			sequence++
 		}
 	}
-	sort.SliceStable(options, func(i, j int) bool {
-		if options[i].order != options[j].order {
-			return options[i].order < options[j].order
-		}
-		return options[i].sequence < options[j].sequence
-	})
-	return options
+	sort.SliceStable(models, func(i, j int) bool { return models[i].LLMNo < models[j].LLMNo })
+	for index := range models {
+		models[index].LLMNo = index
+	}
+	return models
 }
 
-func (s *Server) autonomousModelReviews(model autonomousReviewModel, items []ga.AutonomousApproval, indexes []int) map[string]autonomousModelReview {
-	results := make(map[string]autonomousModelReview, len(indexes))
-	if s == nil || s.CfgStore == nil {
-		return results
+func inheritAutonomousModelConfig(config modelconfig.ModelConfig, profile modelconfig.Profile) modelconfig.ModelConfig {
+	if config.MaxRetries == nil {
+		config.MaxRetries = profile.MaxRetries
 	}
-	uncached := make([]int, 0, len(indexes))
-	texts := make([]string, 0, len(indexes))
-	keys := make(map[int]string, len(indexes))
-	for _, index := range indexes {
-		item := items[index]
-		if item.ReviewReport == nil {
-			results[item.ID] = autonomousModelReview{Err: "report context is unavailable"}
-			continue
-		}
-		key := strings.Join([]string{s.CfgStore.Cfg.GARoot, fmt.Sprint(model.LLMNo), item.ReviewReport.Path, item.ReviewReport.ModTime.UTC().Format(time.RFC3339Nano)}, "|")
-		keys[index] = key
-		autonomousReviewCacheMu.Lock()
-		cached, ok := autonomousReviewCache[key]
-		inFlight := autonomousReviewInFlight[key]
-		retryAfter := autonomousReviewRetryAfter[key]
-		autonomousReviewCacheMu.Unlock()
-		if ok {
-			results[item.ID] = cached
-			continue
-		}
-		if inFlight {
-			results[item.ID] = autonomousModelReview{Err: "model review in progress; conservative rule retained"}
-			continue
-		}
-		if !retryAfter.IsZero() && time.Now().Before(retryAfter) {
-			results[item.ID] = autonomousModelReview{Err: "model review unavailable; retry scheduled; conservative rule retained"}
-			continue
-		}
-		path, _, err := ga.SafeResolve(s.CfgStore.Cfg.GARoot, item.ReviewReport.Path)
-		if err != nil {
-			results[item.ID] = autonomousModelReview{Err: err.Error()}
-			continue
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			results[item.ID] = autonomousModelReview{Err: err.Error()}
-			continue
-		}
-		text := string(content)
-		if len([]rune(text)) > 5000 {
-			text = string([]rune(text)[:5000]) + "\n[report truncated]"
-		}
-		uncached = append(uncached, index)
-		texts = append(texts, item.ID+"\nTITLE: "+item.Title+"\nREPORT:\n"+text)
+	if config.ReadTimeout == nil {
+		config.ReadTimeout = profile.ReadTimeout
 	}
-	if len(uncached) == 0 {
-		return results
+	if config.ConnectTimeout == nil {
+		config.ConnectTimeout = profile.ConnectTimeout
 	}
-	if _, err := os.Stat(filepath.Join(s.CfgStore.Cfg.GARoot, "agentmain.py")); err != nil {
-		for _, index := range uncached {
-			results[items[index].ID] = autonomousModelReview{Err: "GA runtime is not available"}
-		}
-		return results
+	if config.UserAgent == "" {
+		config.UserAgent = profile.UserAgent
 	}
-	batchKeys := make([]string, 0, len(uncached))
-	for _, index := range uncached {
-		batchKeys = append(batchKeys, keys[index])
+	if config.APIMode == "" {
+		config.APIMode = profile.APIMode
 	}
-	batchKey := strings.Join(batchKeys, "\x00")
-	autonomousReviewCacheMu.Lock()
-	if autonomousReviewInFlight[batchKey] {
-		autonomousReviewCacheMu.Unlock()
-		for _, index := range uncached {
-			results[items[index].ID] = autonomousModelReview{Err: "model review in progress; conservative rule retained"}
-		}
-		return results
+	if config.ReasoningEffort == "" {
+		config.ReasoningEffort = profile.ReasoningEffort
 	}
-	autonomousReviewInFlight[batchKey] = true
-	for _, key := range batchKeys {
-		autonomousReviewInFlight[key] = true
-	}
-	autonomousReviewCacheMu.Unlock()
+	return config
+}
 
-	prompt := "Review these autonomous-evolution reports for approval gating. Do not approve, reject, modify files, or execute anything. Determine only whether a human approval is still required. Return JSON only as an array of objects with id, decision (needs_approval|not_required|uncertain), confidence (high|medium|low), and a short reason. If approval evidence is missing, the task is blocked, or the source change is not confirmed, choose needs_approval.\n\n" + strings.Join(texts, "\n\n--- REPORT ---\n\n")
-	done := make(chan map[string]autonomousModelReview, 1)
-	go func() {
-		batchResults := make(map[string]autonomousModelReview, len(uncached))
-		workerResult := make(chan struct {
-			message chatMessage
-			err     error
-		}, 1)
-		go func() {
-			message, err := runAutonomousReviewWorkerFunc(s.CfgStore.Cfg, "autonomous-review", map[string]interface{}{
-				"op":         "btw",
-				"prompt":     "/btw " + prompt,
-				"llm_no":     model.LLMNo,
-				"ga_root":    s.CfgStore.Cfg.GARoot,
-				"timeout_ms": 15000,
-			})
-			workerResult <- struct {
-				message chatMessage
-				err     error
-			}{message: message, err: err}
-		}()
-		var message chatMessage
-		var err error
-		select {
-		case result := <-workerResult:
-			message, err = result.message, result.err
-		case <-time.After(autonomousReviewWorkerTimeout):
-			err = fmt.Errorf("model review timed out after %s", autonomousReviewWorkerTimeout.Round(time.Second))
-		}
-		if err != nil {
-			for _, index := range uncached {
-				batchResults[items[index].ID] = autonomousModelReview{Err: err.Error()}
+func autonomousReviewModelName(model autonomousReviewModel) string {
+	if name := strings.TrimSpace(model.Config.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(model.Config.Model)
+}
+
+func runAutonomousReviewRequest(ctx context.Context, model autonomousReviewModel, item ga.AutonomousApproval) (modelProbeReply, error) {
+	options := normalizeModelProbeOptions(model.Options)
+	isClaude := isClaudeModel(model.Profile.Type)
+	endpoints, err := modelProbeEndpoints(model.Profile.APIBase, isClaude, options.APIMode)
+	if err != nil {
+		return modelProbeReply{}, err
+	}
+	payload, err := autonomousReviewPayload(model.Config.Model, isClaude, options, item)
+	if err != nil {
+		return modelProbeReply{}, err
+	}
+	client := modelProbeHTTPClient(options)
+	defer client.CloseIdleConnections()
+	var lastErr error
+	for _, endpoint := range endpoints {
+		for _, headers := range modelDiscoveryAuthHeaders(model.Profile.APIKey, isClaude) {
+			headers = modelProbeRequestHeaders(headers, options, isClaude)
+			for attempt := 0; attempt <= options.MaxRetries; attempt++ {
+				reply, status, requestErr := requestModelProbe(ctx, client, endpoint, headers, payload, isClaude, options.APIMode)
+				if requestErr == nil && status >= 200 && status < 300 && strings.TrimSpace(reply.Text) != "" {
+					return reply, nil
+				}
+				if requestErr != nil {
+					lastErr = requestErr
+				} else {
+					lastErr = fmt.Errorf("HTTP %d: %s", status, reply.Text)
+				}
+				if attempt < options.MaxRetries && (requestErr != nil || retryableModelProbeStatus(status)) && waitModelProbeRetry(ctx, attempt) {
+					continue
+				}
+				break
 			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("审核模型没有返回内容")
+	}
+	return modelProbeReply{}, fmt.Errorf("审核模型请求失败：%s", redactProbeDetail(lastErr.Error(), model.Profile.APIKey))
+}
+
+func isClaudeModel(protocol string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(protocol)), "claude")
+}
+
+func autonomousReviewPayload(model string, isClaude bool, options modelProbeOptions, item ga.AutonomousApproval) ([]byte, error) {
+	system := "你是 GenericAgent Admin 的自主任务审核器。你只能提供风险与执行建议，不能替用户批准或执行任务。只输出 JSON：{\"decision\":\"approved|rejected|needs_approval\",\"confidence\":\"low|medium|high\",\"reason\":\"用大白话说明理由\"}。"
+	input, err := json.Marshal(map[string]string{"title": item.Title, "target": item.Target, "status": item.Status, "risk": item.Risk, "evidence": item.Evidence, "next_step": item.NextStep, "expected_outcome": item.ExpectedOutcome})
+	if err != nil {
+		return nil, err
+	}
+	user := "请审核下面这项待审批建议，重点判断风险、证据是否充分、批准后是否可控。不要调用工具，不要修改文件。\n" + string(input)
+	var payload map[string]interface{}
+	if isClaude {
+		payload = map[string]interface{}{"model": model, "max_tokens": 512, "stream": false, "system": system, "messages": []map[string]string{{"role": "user", "content": user}}}
+	} else if normalizeModelProbeAPIMode(options.APIMode) == "responses" {
+		payload = map[string]interface{}{"model": model, "stream": false, "instructions": system, "input": user, "max_output_tokens": 512}
+	} else {
+		payload = map[string]interface{}{"model": model, "stream": false, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}}
+		if modelProbeUsesMaxCompletionTokens(model) {
+			payload["max_completion_tokens"] = 512
 		} else {
-			parsed := parseAutonomousModelReviews(message.Content)
-			for _, index := range uncached {
-				item := items[index]
-				result, ok := parsed[item.ID]
-				if !ok {
-					result = autonomousModelReview{Err: "model omitted this report"}
-				}
-				batchResults[item.ID] = result
-			}
-		}
-		autonomousReviewCacheMu.Lock()
-		for _, index := range uncached {
-			item := items[index]
-			result := batchResults[item.ID]
-			if result.Err == "" {
-				if key := keys[index]; key != "" {
-					autonomousReviewCache[key] = result
-					autonomousReviewRetryAfter = withoutAutonomousReviewMapKey(autonomousReviewRetryAfter, key)
-				}
-			} else if key := keys[index]; key != "" {
-				autonomousReviewRetryAfter[key] = time.Now().Add(autonomousReviewRetryDelay)
-			}
-		}
-		autonomousReviewInFlight = withoutAutonomousReviewMapKey(autonomousReviewInFlight, batchKey)
-		for _, key := range batchKeys {
-			autonomousReviewInFlight = withoutAutonomousReviewMapKey(autonomousReviewInFlight, key)
-		}
-		autonomousReviewCacheMu.Unlock()
-		done <- batchResults
-	}()
-	timer := time.NewTimer(autonomousReviewQuickWait)
-	defer timer.Stop()
-	select {
-	case batchResults := <-done:
-		for _, index := range uncached {
-			results[items[index].ID] = batchResults[items[index].ID]
-		}
-	case <-timer.C:
-		for _, index := range uncached {
-			results[items[index].ID] = autonomousModelReview{Err: "model review scheduled; conservative rule retained"}
+			payload["max_tokens"] = 512
 		}
 	}
-	return results
+	if effort := strings.TrimSpace(options.ReasoningEffort); effort != "" && effort != "off" {
+		if isClaude {
+			payload["output_config"] = map[string]string{"effort": effort}
+		} else if normalizeModelProbeAPIMode(options.APIMode) == "responses" {
+			payload["reasoning"] = map[string]string{"effort": effort}
+		} else {
+			payload["reasoning_effort"] = effort
+		}
+	}
+	return json.Marshal(payload)
 }
 
-func withoutAutonomousReviewMapKey[K comparable, V any](values map[K]V, key K) map[K]V {
-	if _, ok := values[key]; !ok {
-		return values
-	}
-	result := make(map[K]V, len(values)-1)
-	for candidate, value := range values {
-		if candidate != key {
-			result[candidate] = value
+func parseAutonomousReviewDecision(text string) autonomousReviewDecision {
+	text = strings.TrimSpace(text)
+	decision := autonomousReviewDecision{Decision: "needs_approval", Confidence: "medium", Reason: text}
+	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
+	if start >= 0 && end > start {
+		var parsed autonomousReviewDecision
+		if json.Unmarshal([]byte(text[start:end+1]), &parsed) == nil {
+			decision = parsed
 		}
 	}
-	return result
-}
-
-func parseAutonomousModelReviews(content string) map[string]autonomousModelReview {
-	result := make(map[string]autonomousModelReview)
-	content = strings.TrimSpace(content)
-	for _, start := range []byte{'[', '{'} {
-		if index := strings.IndexByte(content, start); index >= 0 {
-			decoder := json.NewDecoder(strings.NewReader(content[index:]))
-			if start == '[' {
-				var list []struct {
-					ID string `json:"id"`
-					autonomousModelReview
-				}
-				if err := decoder.Decode(&list); err == nil && len(list) > 0 {
-					for _, item := range list {
-						if strings.TrimSpace(item.ID) != "" {
-							result[item.ID] = normalizeAutonomousModelReview(item.autonomousModelReview)
-						}
-					}
-					return result
-				}
-				continue
-			}
-			var envelope struct {
-				ID      string `json:"id"`
-				Reviews []struct {
-					ID string `json:"id"`
-					autonomousModelReview
-				} `json:"reviews"`
-				autonomousModelReview
-			}
-			if err := decoder.Decode(&envelope); err == nil {
-				if len(envelope.Reviews) > 0 {
-					for _, item := range envelope.Reviews {
-						if strings.TrimSpace(item.ID) != "" {
-							result[item.ID] = normalizeAutonomousModelReview(item.autonomousModelReview)
-						}
-					}
-					return result
-				}
-				if strings.TrimSpace(envelope.ID) != "" {
-					result[envelope.ID] = normalizeAutonomousModelReview(envelope.autonomousModelReview)
-					return result
-				}
-			}
-		}
+	decision.Decision = normalizeReviewDecision(decision.Decision)
+	decision.Confidence = strings.ToLower(strings.TrimSpace(decision.Confidence))
+	if decision.Confidence != "low" && decision.Confidence != "medium" && decision.Confidence != "high" {
+		decision.Confidence = "medium"
 	}
-	return result
+	if decision.Reason == "" {
+		decision.Reason = "模型未给出明确理由，仍需人工确认"
+	}
+	decision.Reason = redactProbeDetail(decision.Reason, "")
+	if len([]rune(decision.Reason)) > 500 {
+		decision.Reason = string([]rune(decision.Reason)[:500])
+	}
+	return decision
 }
 
-func normalizeAutonomousModelReview(result autonomousModelReview) autonomousModelReview {
-	result.Decision = strings.ToLower(strings.TrimSpace(result.Decision))
-	switch result.Decision {
-	case "needs_approval", "not_required", "uncertain":
+func normalizeReviewDecision(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "approved", "approve", "通过", "建议批准":
+		return "approved"
+	case "rejected", "reject", "拒绝", "建议拒绝":
+		return "rejected"
 	default:
-		result.Decision = "uncertain"
+		return "needs_approval"
 	}
-	result.Confidence = strings.ToLower(strings.TrimSpace(result.Confidence))
-	switch result.Confidence {
-	case "high", "medium", "low":
-	default:
-		result.Confidence = "low"
-	}
-	result.Reason = strings.TrimSpace(result.Reason)
-	if len([]rune(result.Reason)) > 500 {
-		result.Reason = string([]rune(result.Reason)[:500])
-	}
-	return result
 }

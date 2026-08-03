@@ -55,25 +55,18 @@ test('applying a theme synchronizes palette and shared color-scheme attributes',
   assert.equal(documentRef.documentElement.dataset.colorScheme, fallback.colorScheme)
 })
 
-test('initial theme honors storage, then resolves system preference through metadata', () => {
+test('initial theme honors valid storage and otherwise uses the product default', () => {
   const previousWindow = globalThis.window
-  const darkTheme = THEMES.find(theme => theme.colorScheme === 'dark')
-  const lightTheme = THEMES.find(theme => theme.colorScheme === 'light')
-  assert.ok(darkTheme)
-  assert.ok(lightTheme)
 
   try {
     globalThis.window = {
       localStorage: { getItem: () => 'warm' },
-      matchMedia: () => ({ matches: true }),
+      matchMedia: () => { throw new Error('system preference must not override the product default') },
     }
     assert.equal(getInitialTheme(), 'warm')
 
     globalThis.window.localStorage.getItem = () => 'missing'
-    assert.equal(getInitialTheme(), darkTheme.id)
-
-    globalThis.window.matchMedia = () => ({ matches: false })
-    assert.equal(getInitialTheme(), lightTheme.id)
+    assert.equal(getInitialTheme(), DEFAULT_THEME_ID)
   } finally {
     if (previousWindow === undefined) delete globalThis.window
     else globalThis.window = previousWindow

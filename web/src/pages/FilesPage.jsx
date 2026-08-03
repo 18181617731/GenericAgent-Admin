@@ -233,9 +233,6 @@ export function FilesPage({
               <button type="button" className={contentMode === 'edit' ? 'active' : ''} aria-pressed={contentMode === 'edit'} onClick={() => setContentMode('edit')}><Pencil size={14}/>编辑</button>
             </div>}
           </div>
-          {(hasFilePath || fileContent) && markdownFile && contentMode === 'preview' &&
-            <MarkdownPreview content={fileContent}/>
-          }
           <div className="files-target-row">
             <input aria-label="当前文件路径" value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="输入要读取或保存的文件路径"/>
             <button type="button" onClick={() => guardedReadFile(filePath)} disabled={!hasFilePath || busy}><FileText size={15}/>{t.read}</button>
@@ -252,8 +249,15 @@ export function FilesPage({
           <div className={`file-save-review ${retargeted ? 'bad' : dirty ? 'warn' : 'ok'}`} role="status" aria-live="polite">
             {saveReview}
           </div>
-          {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>{text.noFileLoaded}</b><span>{text.noFileLoadedHelp}</span></div>}
-          {(hasFilePath || fileContent) && (!markdownFile || contentMode === 'edit') && <textarea aria-label={text.editorLabel} className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>}
+          <div className="files-preview-content">
+            {(hasFilePath || fileContent) && markdownFile && contentMode === 'preview' &&
+              <MarkdownPreview content={fileContent}/>
+            }
+            {!hasFilePath && !fileContent && <div className="empty-card files-editor-empty" role="status"><b>{text.noFileLoaded}</b><span>{text.noFileLoadedHelp}</span></div>}
+            {(hasFilePath || fileContent) && (!markdownFile || contentMode === 'edit') && (
+              <textarea aria-label={text.editorLabel} className="file-editor" value={fileContent} onChange={e => setFileContent(e.target.value)} placeholder={t.empty}/>
+            )}
+          </div>
         </Panel>
       </div>
     </section>

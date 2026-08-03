@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthGate } from './components/AuthGate.jsx'
 
@@ -22,11 +22,51 @@ describe('AuthGate', () => {
     expect(await screen.findByText('Admin application')).toBeTruthy()
   })
 
+  test('sets the first administrator password without asking for a current credential', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ username: 'admin', mustChangePassword: true, initialized: false }))
+      .mockResolvedValueOnce(response({ ok: true, mustChangePassword: false, initialized: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<AuthGate theme="warm"><div>Admin application</div></AuthGate>)
+    expect(await screen.findByRole('heading', { name: 'Set the administrator password' })).toBeTruthy()
+    expect(screen.queryByLabelText('Current password')).toBeNull()
+    expect(screen.getByLabelText('New password').minLength).toBe(8)
+
+    await user.type(screen.getByLabelText('New password'), 'A-first-password-1')
+    await user.type(screen.getByLabelText('Confirm new password'), 'A-first-password-1')
+    await user.click(screen.getByRole('button', { name: 'Set password' }))
+
+    expect(await screen.findByText('Admin application')).toBeTruthy()
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/auth/change-password', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ currentPassword: '', newPassword: 'A-first-password-1', confirmPassword: 'A-first-password-1' }),
+    }))
+  })
+
+  test('localizes first-run setup and exposes the appearance picker portal', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ username: 'admin', mustChangePassword: true, initialized: false })))
+    const onThemeChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(<AuthGate lang="zh" theme="warm" onThemeChange={onThemeChange}><div>Admin application</div></AuthGate>)
+    expect(await screen.findByRole('heading', { name: '设置管理员密码' })).toBeTruthy()
+    expect(screen.getByLabelText('新密码')).toBeTruthy()
+    expect(screen.queryByLabelText('当前密码')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /外观.*暖色/ }))
+    const dialog = await screen.findByRole('dialog', { name: '选择外观' })
+    expect(document.body.contains(dialog)).toBe(true)
+    await user.click(within(dialog).getByRole('radio', { name: /浅色/ }))
+    expect(onThemeChange).toHaveBeenCalledWith('light')
+  })
+
   test('blocks the application and validates password confirmation', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ username: 'admin', mustChangePassword: true })))
     const user = userEvent.setup()
     render(<AuthGate><div>Admin application</div></AuthGate>)
-    expect(await screen.findByRole('heading', { name: /change the default password/i })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: /change the administrator password/i })).toBeTruthy()
     expect(screen.queryByText('Admin application')).toBeNull()
 
     await user.type(screen.getByLabelText('Current password'), 'admin')
@@ -55,6 +95,6 @@ describe('AuthGate', () => {
       method: 'POST',
       body: JSON.stringify({ currentPassword: 'admin', newPassword: 'A-long-new-password-1', confirmPassword: 'A-long-new-password-1' }),
     }))
-    await waitFor(() => expect(screen.queryByRole('heading', { name: /change the default password/i })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /change the administrator password/i })).toBeNull())
   })
 })

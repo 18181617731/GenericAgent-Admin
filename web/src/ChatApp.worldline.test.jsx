@@ -51,7 +51,7 @@ describe('worldline restore-point chooser', () => {
     ], current_path:['node-1','node-2'] }
     render(<WorldlinePanel state={state} loading={false} switchingId={null} disabled={false}
       onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={vi.fn()}/>)
-    const badges = screen.getAllByText('外部改动')
+    const badges = screen.getAllByLabelText('外部改动')
     expect(badges.length).toBe(1)
     expect(badges[0].title).toContain('notes.txt')
   })

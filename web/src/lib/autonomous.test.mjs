@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { autonomousExecutionState, autonomousHandledProgress, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousReport } from './autonomous.js'
+import { autonomousExecutionState, autonomousHandledProgress, autonomousReviewView, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousApproval, summarizeAutonomousReport, summarizeAutonomousReviewNeed } from './autonomous.js'
 
 test('autonomous summary reports running services approvals and latest record', () => {
   const latest = { name: 'latest.md', mod_time: '2026-07-28T10:00:00Z' }
@@ -36,17 +36,59 @@ test('autonomous handled approvals are grouped by execution progress', () => {
   const rejected = { id: 'rejected', state: 'rejected', decision: 'rejected' }
   const result = splitAutonomousApprovals([queued, archived, missing, failed, rejected])
   assert.equal(autonomousHandledProgress(queued), 'queued')
-  assert.deepEqual(result.handledGroups.queued, [queued])
-  assert.deepEqual(result.handledGroups.completed, [archived])
-  assert.deepEqual(result.handledGroups.report_missing, [missing])
-  assert.deepEqual(result.handledGroups.failed, [failed])
-  assert.deepEqual(result.handledGroups.not_applicable, [rejected])
+  assert.deepEqual(result.handledGroups.map(group => [group.key, group.items]), [
+    ['queued', [queued]],
+    ['completed', [archived]],
+    ['report_missing', [missing]],
+    ['failed', [failed]],
+    ['not_applicable', [rejected]],
+  ])
 })
 
 test('autonomous execution state defaults approved work to queued', () => {
   assert.equal(autonomousExecutionState({ decision: 'approved' }), 'queued')
   assert.equal(autonomousExecutionState({ decision: 'approved', execution_state: 'completed' }), 'completed')
   assert.equal(autonomousExecutionState({ decision: 'rejected' }), 'not_applicable')
+})
+
+test('approval outcome summaries prefer explicit text and explain fallback outcomes plainly', () => {
+  assert.equal(summarizeAutonomousApproval({ expected_outcome: '以后可以直接照着执行' }), '以后可以直接照着执行')
+  assert.equal(summarizeAutonomousApproval({ target: 'memory/example.md' }), '批准后会把相关方案整理到 memory/example.md，以后遇到同类问题时可以直接参考。')
+  assert.match(summarizeAutonomousApproval({ next_step: 'Add the reference and generate a report' }, 'en'), /After approval, the autonomous workflow will add/)
+})
+
+test('autonomous handled approvals expose progress groups in stable order', () => {
+  const result = splitAutonomousApprovals([
+    { id: 'unknown', state: 'closed' },
+    { id: 'rejected', state: 'rejected', decision: 'rejected' },
+    { id: 'queued', state: 'approved', decision: 'approved' },
+  ])
+  assert.deepEqual(result.handledGroups.map(group => ({ key: group.key, ids: group.items.map(item => item.id) })), [
+    { key: 'queued', ids: ['queued'] },
+    { key: 'not_applicable', ids: ['rejected'] },
+    { key: 'unknown', ids: ['unknown'] },
+  ])
+})
+
+test('autonomous review view makes model-unavailable fallback explicit', () => {
+  const review = autonomousReviewView({
+    review_status: 'fallback',
+    review_decision: 'needs_approval',
+    review_confidence: 'high',
+    review_reason: 'report contains an explicit approval gate; model review unavailable: model review unavailable; retry scheduled; conservative rule retained',
+    review_model_no: 12,
+    review_model: 'gpt-5.6-luna',
+    review_provider: '自费帅API gpt',
+  })
+  assert.equal(review.kind, 'unavailable')
+  assert.equal(review.method, '仅规则筛选（未经过模型判断）')
+  assert.equal(review.badge, '模型审核不可用')
+  assert.equal(review.decision, '未自动批准')
+  assert.match(review.summary, /不是模型审核通过/)
+  assert.deepEqual(review.basis, ['报告明确要求人工审批', '重新审核时会再次尝试', '暂时按保守规则保留为待审批'])
+  assert.match(summarizeAutonomousReviewNeed({ target: 'memory/autonomous_sop.md' }, review), /脚本规则筛选/)
+  assert.match(summarizeAutonomousReviewNeed({ target: 'memory/autonomous_sop.md' }, review), /没有做模型判断/)
+  assert.match(summarizeAutonomousReviewNeed({ target: 'memory/autonomous_sop.md' }, review), /人工决定批准还是拒绝/)
 })
 
 test('autonomous labels provide friendly service names and safe date fallback', () => {

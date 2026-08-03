@@ -7,6 +7,10 @@ import (
 )
 
 type modelProbeOptions struct {
+	MaxRetries      int    `json:"max_retries,omitempty"`
+	ReadTimeout     int    `json:"read_timeout,omitempty"`
+	ConnectTimeout  int    `json:"connect_timeout,omitempty"`
+	Configured      bool   `json:"-"`
 	APIMode         string `json:"api_mode,omitempty"`
 	UserAgent       string `json:"user_agent,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
@@ -22,6 +26,10 @@ func (s *Server) resolveModelProbeOptions(varName string, requested map[string]m
 				}
 				for _, config := range probeProfileModelConfigs(profile) {
 					result[config.Model] = modelProbeOptions{
+						MaxRetries:      firstProbeIntAllowZero(config.MaxRetries, profile.MaxRetries, modelProbeDefaultMaxRetries),
+						ReadTimeout:     firstProbeInt(config.ReadTimeout, profile.ReadTimeout, modelProbeDefaultReadTimeout),
+						ConnectTimeout:  firstProbeInt(config.ConnectTimeout, profile.ConnectTimeout, modelProbeDefaultConnectTimeout),
+						Configured:      true,
 						APIMode:         firstProbeValue(config.APIMode, profile.APIMode),
 						UserAgent:       firstProbeValue(config.UserAgent, profile.UserAgent),
 						ReasoningEffort: firstProbeValue(config.ReasoningEffort, profile.ReasoningEffort),
@@ -32,6 +40,15 @@ func (s *Server) resolveModelProbeOptions(varName string, requested map[string]m
 	}
 	for model, options := range requested {
 		current := result[model]
+		if options.MaxRetries > 0 {
+			current.MaxRetries = options.MaxRetries
+		}
+		if options.ReadTimeout > 0 {
+			current.ReadTimeout = options.ReadTimeout
+		}
+		if options.ConnectTimeout > 0 {
+			current.ConnectTimeout = options.ConnectTimeout
+		}
 		if strings.TrimSpace(options.APIMode) != "" {
 			current.APIMode = options.APIMode
 		}
@@ -95,4 +112,36 @@ func firstProbeValue(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstProbeInt(values ...interface{}) int {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case *int:
+			if typed != nil && *typed > 0 {
+				return *typed
+			}
+		case int:
+			if typed > 0 {
+				return typed
+			}
+		}
+	}
+	return 0
+}
+
+func firstProbeIntAllowZero(values ...interface{}) int {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case *int:
+			if typed != nil && *typed >= 0 {
+				return *typed
+			}
+		case int:
+			if typed >= 0 {
+				return typed
+			}
+		}
+	}
+	return 0
 }

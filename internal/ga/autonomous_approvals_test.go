@@ -22,6 +22,14 @@ const autonomousApprovalFixture = `# pending_drafts
 - 核查证据：目标不存在
 - 风险：低。纯文档变更
 - 下一步：用户批准后写入 memory
+- 预期效果：以后遇到同类问题可以直接按这份方案处理
+- 审核状态：fallback
+- 审核结论：needs_approval
+- 审核置信度：high
+- 审核原因：模型审核不可用；暂时按保守规则保留为待审批
+- 审核模型编号：12
+- 审核模型：gpt-5.6-luna
+- 审核服务商：自费帅API gpt
 
 ## 2. github_push_sop 引用工具
 - 来源：R66
@@ -61,7 +69,7 @@ func TestBuildAutonomousApprovalsParsesTrackedDrafts(t *testing.T) {
 		t.Fatalf("overview = %+v", overview)
 	}
 	first := overview.Items[0]
-	if first.Title != "daily_git_conflict_sop_DRAFT" || first.State != "pending" || first.Target != "memory/daily_git_conflict_sop.md" {
+	if first.Title != "daily_git_conflict_sop_DRAFT" || first.State != "pending" || first.Target != "memory/daily_git_conflict_sop.md" || first.ExpectedOutcome != "以后遇到同类问题可以直接按这份方案处理" || first.ReviewStatus != "fallback" || first.ReviewDecision != "needs_approval" || first.ReviewModelNo == nil || *first.ReviewModelNo != 12 || first.ReviewModel != "gpt-5.6-luna" {
 		t.Fatalf("first approval = %+v", first)
 	}
 	if overview.Items[2].State != "closed" {

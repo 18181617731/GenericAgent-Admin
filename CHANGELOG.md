@@ -2,14 +2,43 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.48 - 2026-08-03
+
+### User-facing changes
+- 已处理的自主进化审批记录改为按执行进展分组：已加入 `TODO` 等待执行、已完成并归档、已完成但缺少归档文件、执行失败以及已拒绝不执行。
+- 每个进展分组显示数量和说明，保留远端已有的批量审批、审核模型和执行报告能力，用户可以直接判断任务当前所处阶段。
+
+### Validation
+- Passed frontend lint, library tests, UI smoke tests, frontend production build, Windows packaging, and live browser/API checks.
+
+## v1.0.47 - 2026-08-03
+
+### User-facing changes
+- 修复 Windows `run.bat` 因前端锁文件缺少 `@emnapi/core` 和 `@emnapi/runtime` 条目而无法执行 `npm ci` 的问题。
+- 自主进化页面的已处理审批记录按状态分类并支持折叠查看，保持批量审批结果清晰可追踪。
+
+### Validation
+- Passed frontend lint, library tests (`229/229`), UI smoke tests (`92/92`), frontend production build, clean `npm ci`, Windows `run.bat`, and HTTP startup checks on `127.0.0.1:8787` and the Tailscale interface.
+
+## v1.0.46 - 2026-08-03
+
+### User-facing changes
+- Batch approval now shows live progress, processed totals, success and failure counts, the current item, and scrollable per-item results instead of leaving users with an indefinite waiting message.
+- Failed approval items remain visible with their failure reason and can be retried as a batch after the initial operation finishes.
+- Batch progress controls are responsive on mobile and prevent duplicate refresh or batch actions while processing.
+
+### Validation
+- Passed frontend lint, library tests (`228/228`), UI smoke tests (`91/91`), frontend production build, and focused batch approval progress coverage.
+
 ## v1.0.45 - 2026-08-03
 
 ### User-facing changes
-- 已处理的自主进化审批记录按执行进展分组展示：已加入 `TODO` 等待执行、已完成并归档、已完成但缺少归档文件、执行失败以及已拒绝不执行。
-- 每个进展分组显示数量和说明，审批记录不再只按“已批准/已拒绝”分类，用户可以直接判断任务当前所处阶段。
+- Autonomous approval model reviews now reuse the retry, timeout, API mode, user-agent, and reasoning settings configured on the Models page.
+- Network failures and transient provider responses retry with exponential backoff; failed reviews retain their attempt count and next retry time, while manual re-review can retry immediately.
+- Approval cards clearly distinguish model-unavailable rule screening from model-reviewed results, show the model conclusion and plain-language reason, and keep execution status and report links visible after approval.
 
 ### Validation
-- Passed frontend lint, 228 library tests, 90 UI smoke tests, frontend production build, Windows packaging, and live browser/API checks.
+- Passed Go tests, frontend library tests (`228/228`), frontend UI smoke tests (`90/90`), frontend lint, frontend production build, and staged diff checks.
 
 ## v1.0.44 - 2026-08-02
 
