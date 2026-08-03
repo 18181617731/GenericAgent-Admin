@@ -37,16 +37,25 @@ export const filterAutonomousReports = (reports = [], query = '') => {
   return reports.filter(report => `${report?.name || ''} ${report?.path || ''}`.toLocaleLowerCase().includes(needle))
 }
 
-export const splitAutonomousApprovals = (items = []) => ({
-  pending: items.filter(item => item?.state === 'pending'),
-  handled: items.filter(item => item?.state !== 'pending'),
-})
-
 export const autonomousExecutionState = item => {
   if (item?.execution_state) return item.execution_state
   if (item?.decision === 'approved') return 'queued'
   if (item?.decision === 'rejected') return 'not_applicable'
   return ''
+}
+
+export const autonomousHandledProgress = item => {
+  const state = autonomousExecutionState(item)
+  if (state === 'queued' || state === 'completed' || state === 'report_missing' || state === 'failed' || state === 'not_applicable') return state
+  return item?.decision === 'approved' ? 'queued' : 'unknown'
+}
+
+export const splitAutonomousApprovals = (items = []) => {
+  const pending = items.filter(item => item?.state === 'pending')
+  const handled = items.filter(item => item?.state !== 'pending')
+  const handledGroups = { queued: [], completed: [], report_missing: [], failed: [], not_applicable: [], unknown: [] }
+  handled.forEach(item => handledGroups[autonomousHandledProgress(item)].push(item))
+  return { pending, handled, handledGroups }
 }
 
 export const readableAutonomousDate = (value, lang = 'zh') => {

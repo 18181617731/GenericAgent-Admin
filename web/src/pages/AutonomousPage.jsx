@@ -68,6 +68,8 @@ function ApprovalPane({ overview, lang, busyID, onApprove, onReject, onOpenRepor
   const [replies, setReplies] = useState({})
   const groups = splitAutonomousApprovals(overview?.items || [])
   const items = groups[mode]
+  const progressGroups = Object.entries(copy.handledProgress).map(([id, label]) => ({ id, label, items: groups.handledGroups?.[id] || [] })).filter(group => group.items.length > 0)
+  const renderCard = item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyID === item.id} reply={replies[item.id] || ''} onReply={value => setReplies(current => ({ ...current, [item.id]: value }))} onApprove={onApprove} onReject={onReject} onOpenReport={onOpenReport}/>
   return <div className="autonomous-approvals-pane">
     <div className="autonomous-callout"><b>{lang === 'en' ? 'Approval boundary' : '审批边界'}</b><span>{copy.approvalIntro}</span></div>
     <div className="autonomous-filter-tabs" role="tablist" aria-label={copy.approvals}>
@@ -76,7 +78,14 @@ function ApprovalPane({ overview, lang, busyID, onApprove, onReject, onOpenRepor
     </div>
     {!overview?.source_exists && <div className="autonomous-empty">{copy.noLedger}</div>}
     {overview?.source_exists && !items.length && <div className="autonomous-empty">{mode === 'pending' ? copy.noPending : copy.noHandled}</div>}
-    <div className="autonomous-approval-list">{items.map(item => <ApprovalCard key={item.id} item={item} lang={lang} busy={busyID === item.id} reply={replies[item.id] || ''} onReply={value => setReplies(current => ({ ...current, [item.id]: value }))} onApprove={onApprove} onReject={onReject} onOpenReport={onOpenReport}/>)}</div>
+    {mode === 'pending' && <div className="autonomous-approval-list">{items.map(renderCard)}</div>}
+    {mode === 'handled' && <div className="autonomous-handled-progress">
+      <div className="autonomous-handled-progress-intro"><b>{copy.handledProgressTitle}</b><span>{copy.handledProgressIntro}</span></div>
+      {progressGroups.map(group => <section className={`autonomous-progress-group is-${group.id}`} key={group.id}>
+        <header><b>{group.label}</b><span>{group.items.length}</span></header>
+        <div className="autonomous-approval-list">{group.items.map(renderCard)}</div>
+      </section>)}
+    </div>}
   </div>
 }
 

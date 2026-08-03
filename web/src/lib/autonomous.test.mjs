@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { autonomousExecutionState, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousReport } from './autonomous.js'
+import { autonomousExecutionState, autonomousHandledProgress, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousReport } from './autonomous.js'
 
 test('autonomous summary reports running services approvals and latest record', () => {
   const latest = { name: 'latest.md', mod_time: '2026-07-28T10:00:00Z' }
@@ -26,6 +26,21 @@ test('autonomous approvals keep every non-pending ledger item visible as handled
   const result = splitAutonomousApprovals(items)
   assert.equal(result.pending.length, 1)
   assert.deepEqual(result.handled, items.slice(1))
+})
+
+test('autonomous handled approvals are grouped by execution progress', () => {
+  const queued = { id: 'queued', state: 'approved', decision: 'approved', execution_state: 'queued' }
+  const archived = { id: 'archived', state: 'approved', decision: 'approved', execution_state: 'completed', execution_report: { path: 'temp/autonomous_reports/R1.md' } }
+  const missing = { id: 'missing', state: 'approved', decision: 'approved', execution_state: 'report_missing' }
+  const failed = { id: 'failed', state: 'approved', decision: 'approved', execution_state: 'failed' }
+  const rejected = { id: 'rejected', state: 'rejected', decision: 'rejected' }
+  const result = splitAutonomousApprovals([queued, archived, missing, failed, rejected])
+  assert.equal(autonomousHandledProgress(queued), 'queued')
+  assert.deepEqual(result.handledGroups.queued, [queued])
+  assert.deepEqual(result.handledGroups.completed, [archived])
+  assert.deepEqual(result.handledGroups.report_missing, [missing])
+  assert.deepEqual(result.handledGroups.failed, [failed])
+  assert.deepEqual(result.handledGroups.not_applicable, [rejected])
 })
 
 test('autonomous execution state defaults approved work to queued', () => {

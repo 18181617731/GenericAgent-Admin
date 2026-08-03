@@ -2,6 +2,15 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.45 - 2026-08-03
+
+### User-facing changes
+- 已处理的自主进化审批记录按执行进展分组展示：已加入 `TODO` 等待执行、已完成并归档、已完成但缺少归档文件、执行失败以及已拒绝不执行。
+- 每个进展分组显示数量和说明，审批记录不再只按“已批准/已拒绝”分类，用户可以直接判断任务当前所处阶段。
+
+### Validation
+- Passed frontend lint, 228 library tests, 90 UI smoke tests, frontend production build, Windows packaging, and live browser/API checks.
+
 ## v1.0.44 - 2026-08-02
 
 ### User-facing changes

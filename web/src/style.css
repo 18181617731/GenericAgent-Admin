@@ -14725,6 +14725,18 @@ html[data-color-scheme="dark"] .progress-bar {
 .autonomous-filter-tabs button { min-height:36px; border-color:transparent; background:transparent; box-shadow:none; color:var(--muted); }
 .autonomous-filter-tabs button.active { background:var(--surface-muted); color:var(--text); }
 .autonomous-filter-tabs button span { display:inline-flex; justify-content:center; min-width:20px; margin-left:6px; padding:1px 5px; border-radius:999px; background:var(--surface-strong); font-size:11px; }
+.autonomous-handled-progress { display:grid; gap:12px; }
+.autonomous-handled-progress-intro { display:grid; gap:3px; padding:11px 14px; border:1px solid color-mix(in srgb,var(--green) 28%,var(--border)); border-left:3px solid var(--green); border-radius:7px; background:color-mix(in srgb,var(--green) 5%,var(--surface-strong)); }
+.autonomous-handled-progress-intro b { font-size:13px; }
+.autonomous-handled-progress-intro span { color:var(--muted); font-size:12px; line-height:1.5; }
+.autonomous-progress-group { display:grid; gap:8px; }
+.autonomous-progress-group > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; border:1px solid var(--border); border-radius:7px; background:var(--surface-muted); }
+.autonomous-progress-group > header b { font-size:13px; }
+.autonomous-progress-group > header span { display:inline-flex; min-width:22px; justify-content:center; padding:2px 7px; border-radius:999px; background:var(--surface-strong); color:var(--muted); font-size:11px; }
+.autonomous-progress-group.is-queued > header { border-left:3px solid #d97706; }
+.autonomous-progress-group.is-completed > header { border-left:3px solid var(--green); }
+.autonomous-progress-group.is-report_missing > header,.autonomous-progress-group.is-failed > header { border-left:3px solid #dc2626; }
+.autonomous-progress-group.is-not_applicable > header { border-left:3px solid var(--muted); }
 .autonomous-approval-list { display:grid; gap:10px; }
 .autonomous-approval { border:1px solid var(--border); border-left:3px solid var(--border-strong); border-radius:8px; background:var(--surface-strong); overflow:hidden; }
 .autonomous-approval.is-pending { border-left-color:#d97706; }
