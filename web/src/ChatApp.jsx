@@ -2182,7 +2182,8 @@ const extractSavedFilePaths = (content = '') => Array.from(
   (match) => match[1].trim(),
 ).filter(Boolean)
 
-const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.output_tokens || 0) > 0 || (u.cached_tokens || 0) > 0)
+const cacheReadTokens = (u) => u?.cache_read_tokens ?? u?.cached_tokens ?? 0
+const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.cache_creation_tokens || 0) > 0 || cacheReadTokens(u) > 0 || (u.output_tokens || 0) > 0)
 const formatElapsedMs = (ms = 0) => {
   const safe = Math.max(0, Number(ms) || 0)
   if (safe < 1000) return `${Math.max(0.1, safe / 1000).toFixed(1)}s`
@@ -2218,7 +2219,8 @@ const UsageRow = ({ u, label, className, elapsedMs = 0, live = false, ctxChars =
     {label && <span className="oa-usage-label">{label}</span>}
     {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? ct('实时耗时', 'Live elapsed time') : ct('耗时', 'Elapsed time')}><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1.5A4.5 4.5 0 1 1 8 11a4.5 4.5 0 0 1 0-7.5z"/><path d="M7.5 4.5h1v3.65l2.2 1.3-.5.9L7.5 9V4.5z"/></svg>{ct('耗时', 'Time')} <b>{formatElapsedMs(elapsedMs)}</b></span>}
     {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct('输入 tokens', 'Input tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{formatTokens(u.input_tokens)}</b></span>}
-    {u?.cached_tokens > 0 && <span className="oa-usage-cache" title={ct('缓存 tokens', 'Cached tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>{ct('缓存', 'Cached')} <b>{formatTokens(u.cached_tokens)}</b></span>}
+    {u?.cache_creation_tokens > 0 && <span className="oa-usage-cache-write" title={ct('缓存写入 tokens', 'Cache creation tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 1v9m0 0 3-3m-3 3L5 7M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存写入', 'Cache write')} <b>{formatTokens(u.cache_creation_tokens)}</b></span>}
+    {cacheReadTokens(u) > 0 && <span className="oa-usage-cache-read" title={ct('缓存读取 tokens', 'Cache read tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 15V6m0 0 3 3M8 6 5 9M3 3h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存读取', 'Cache read')} <b>{formatTokens(cacheReadTokens(u))}</b></span>}
     {u?.output_tokens > 0 && <span className="oa-usage-out" title={ct('输出 tokens', 'Output tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>{ct('输出', 'Output')} <b>{formatTokens(u.output_tokens)}</b></span>}
     {hasCtx && <span className="oa-usage-ctx" title={ct(
       `AI 当前记住了 ${ctxMsgs} 条对话消息${ctxChars > 0 ? `，约 ${formatTokens(ctxChars)} 字` : ''}。上下文越长记忆越多，超出上限时旧消息会被自动裁剪。`,
@@ -2232,9 +2234,10 @@ const sumUsages = (usages) => {
   if (!Array.isArray(usages) || !usages.length) return null
   return usages.reduce((acc, u) => ({
     input_tokens: acc.input_tokens + (u?.input_tokens || 0),
-    cached_tokens: acc.cached_tokens + (u?.cached_tokens || 0),
+    cache_creation_tokens: acc.cache_creation_tokens + (u?.cache_creation_tokens || 0),
+    cache_read_tokens: acc.cache_read_tokens + cacheReadTokens(u),
     output_tokens: acc.output_tokens + (u?.output_tokens || 0),
-  }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
+  }), { input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, output_tokens: 0 })
 }
 
 export const CommandResultCard = memo(function CommandResultCard({ result = {} }) {
@@ -2379,7 +2382,7 @@ export const ChatMessage = memo(function ChatMessage({
   const assistantCreatedAt = m.role === 'assistant' ? dateFromTimestamp(m.created_at) : null
   const assistantTime = assistantCreatedAt?.toLocaleString() || ''
   const turnUsages = Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : [])
-  const hasUsage = turnUsages.some(u => u && (u.input_tokens > 0 || u.cached_tokens > 0 || u.output_tokens > 0))
+  const hasUsage = turnUsages.some(usageHasTokens)
   const usageTotal = hasUsage ? sumUsages(turnUsages) : null
   const elapsedMs = getElapsedMs(m, clockNow)
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0 || m.ctx_chars > 0 || m.ctx_msgs > 0)

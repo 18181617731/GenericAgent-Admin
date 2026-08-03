@@ -103,6 +103,8 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(live["index"], 0)
         self.assertEqual(live["usage"], {
             "input_tokens": 1500,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
             "output_tokens": 0,
             "cached_tokens": 821500,
         })
@@ -113,6 +115,8 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(completed["index"], 0)
         self.assertEqual(completed["usage"], {
             "input_tokens": 1500,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
             "output_tokens": 22100,
             "cached_tokens": 821500,
         })
@@ -127,9 +131,11 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         live = self.events[-1]
         self.assertEqual(live["type"], "turn_usage")
         self.assertEqual(live["usage"], {
-            "input_tokens": 824200,
+            "input_tokens": 1500,
+            "cache_creation_tokens": 1200,
+            "cache_read_tokens": 821500,
             "output_tokens": 0,
-            "cached_tokens": 821500,
+            "cached_tokens": 0,
         })
 
     def test_transport_error_attempt_seals_usage_before_fallback(self):
@@ -175,8 +181,8 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             restore()
 
         self.assertEqual(chat_worker._snapshot_turn_usages(), [
-            {"input_tokens": 200, "output_tokens": 0, "cached_tokens": 80},
-            {"input_tokens": 400, "output_tokens": 30, "cached_tokens": 160},
+            {"input_tokens": 100, "cache_creation_tokens": 20, "cache_read_tokens": 80, "output_tokens": 0, "cached_tokens": 0},
+            {"input_tokens": 200, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30, "cached_tokens": 0},
         ])
         usage_events = [event for event in self.events if event.get("type") == "turn_usage"]
         self.assertEqual(usage_events[-2]["index"], 1)

@@ -246,6 +246,40 @@ func TestNormalizedMessageUsagePrefersUsagesOverZeroUsage(t *testing.T) {
 	}
 }
 
+func TestNormalizedMessageUsageIncludesModernCacheCategoriesInInput(t *testing.T) {
+	message := chatMessage{
+		Role:    "assistant",
+		ModelID: "claude-modern",
+		Usages: []map[string]int{
+			{"input_tokens": 100, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30},
+		},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 300 || totals.OutputTokens != 30 || totals.TotalTokens != 330 {
+		t.Fatalf("totals=%+v want input=300 output=30 total=330", totals)
+	}
+	if totals.Other["cache_creation_tokens"] != 40 || totals.Other["cache_read_tokens"] != 160 {
+		t.Fatalf("other=%+v want cache creation=40 read=160", totals.Other)
+	}
+}
+
+func TestNormalizedMessageUsageDoesNotDoubleCountLegacyCachedTokens(t *testing.T) {
+	message := chatMessage{
+		Role:  "assistant",
+		Usage: map[string]int{"input_tokens": 100, "cached_tokens": 80, "output_tokens": 30},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 100 || totals.TotalTokens != 130 {
+		t.Fatalf("totals=%+v want legacy input=100 total=130", totals)
+	}
+}
+
 func TestNormalizedMessageUsageFallsBackToLegacyUsage(t *testing.T) {
 	message := chatMessage{
 		Role:    "assistant",

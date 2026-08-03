@@ -94,7 +94,13 @@ _PROTOCOL_STDOUT = _isolate_protocol_stdout()
 # GA core's _record_usage prints lines like "[Cache] input=N cached=M" and "[Output] tokens=N".
 # We parse these to accumulate usage stats for the current turn.
 _USAGE_LOCK = threading.Lock()
-_CURRENT_USAGE = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
+_CURRENT_USAGE = {
+    'input_tokens': 0,
+    'cache_creation_tokens': 0,
+    'cache_read_tokens': 0,
+    'output_tokens': 0,
+    'cached_tokens': 0,  # Legacy input/cached protocol only.
+}
 # Per-internal-turn usage snapshots for the current request. GA core prints a
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
 # "[Output]" line marks the end of one turn, so we snapshot and reset there.
@@ -122,8 +128,8 @@ class _UsageCapturingStderr:
         with _USAGE_LOCK:
             usage_changed = False
             # Legacy GA emits input/cached, while newer Claude sessions emit
-            # input/creation/read. Claude's billable input is the sum of all
-            # three fields; only cache reads count as cached input.
+            # input/creation/read. Preserve those modern fields separately so the UI
+            # can distinguish uncached input, cache writes, and cache reads.
             cache_line = re.search(r'\[Cache\][^\r\n]*', text)
             if cache_line:
                 fields = {
@@ -131,13 +137,14 @@ class _UsageCapturingStderr:
                     for key, value in re.findall(r'(input|cached|creation|read)=(\d+)', cache_line.group(0))
                 }
                 if 'input' in fields:
+                    _CURRENT_USAGE['input_tokens'] = fields['input']
                     if 'creation' in fields or 'read' in fields:
-                        _CURRENT_USAGE['input_tokens'] = (
-                            fields['input'] + fields.get('creation', 0) + fields.get('read', 0)
-                        )
-                        _CURRENT_USAGE['cached_tokens'] = fields.get('read', 0)
+                        _CURRENT_USAGE['cache_creation_tokens'] = fields.get('creation', 0)
+                        _CURRENT_USAGE['cache_read_tokens'] = fields.get('read', 0)
+                        _CURRENT_USAGE['cached_tokens'] = 0
                     else:
-                        _CURRENT_USAGE['input_tokens'] = fields['input']
+                        _CURRENT_USAGE['cache_creation_tokens'] = 0
+                        _CURRENT_USAGE['cache_read_tokens'] = 0
                         if 'cached' in fields:
                             _CURRENT_USAGE['cached_tokens'] = fields['cached']
                     usage_changed = True
@@ -150,6 +157,8 @@ class _UsageCapturingStderr:
                 _TURN_USAGES.append(turn_snapshot)
                 turn_index = len(_TURN_USAGES) - 1
                 _CURRENT_USAGE['input_tokens'] = 0
+                _CURRENT_USAGE['cache_creation_tokens'] = 0
+                _CURRENT_USAGE['cache_read_tokens'] = 0
                 _CURRENT_USAGE['output_tokens'] = 0
                 _CURRENT_USAGE['cached_tokens'] = 0
                 # Replace the live Cache snapshot at the same index with this
@@ -197,6 +206,8 @@ def _reset_usage():
     """Clear usage accumulator for a new request."""
     with _USAGE_LOCK:
         _CURRENT_USAGE['input_tokens'] = 0
+        _CURRENT_USAGE['cache_creation_tokens'] = 0
+        _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
         _TURN_USAGES.clear()
@@ -218,7 +229,8 @@ def _snapshot_turn_usages():
     with _USAGE_LOCK:
         usages = [dict(u) for u in _TURN_USAGES]
         if (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
-                or _CURRENT_USAGE['cached_tokens']):
+                or _CURRENT_USAGE['cache_creation_tokens']
+                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
             usages.append(dict(_CURRENT_USAGE))
         return usages
 
@@ -323,12 +335,15 @@ def _finalize_incomplete_turn_usage():
     """Seal a failed LLM attempt that emitted Cache stats but no Output line."""
     with _USAGE_LOCK:
         if not (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
-                or _CURRENT_USAGE['cached_tokens']):
+                or _CURRENT_USAGE['cache_creation_tokens']
+                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
             return
         turn_snapshot = dict(_CURRENT_USAGE)
         _TURN_USAGES.append(turn_snapshot)
         turn_index = len(_TURN_USAGES) - 1
         _CURRENT_USAGE['input_tokens'] = 0
+        _CURRENT_USAGE['cache_creation_tokens'] = 0
+        _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
     try:
