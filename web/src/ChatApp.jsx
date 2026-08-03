@@ -1586,7 +1586,6 @@ function ToolCallBlock({ call, onAskReply }) {
       <span>{isAskUser ? 'Ask user' : 'Tool'}</span>
       <b>{toolName}</b>
       {fileName && <em className="oa-tool-file-name">{fileName}</em>}
-      {isAskUser && <strong className="oa-ask-headline">{askSummary}</strong>}
       {resultStatus && <em>{resultStatus}</em>}
       {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? ct(`${askPayload.candidates.length} 个选项`, `${askPayload.candidates.length} options`) : ct('等待回复', 'Waiting for reply')}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />

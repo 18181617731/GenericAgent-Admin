@@ -1653,7 +1653,6 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255
 .oa-tool-ask-user .oa-tool-icon{background:transparent;border-color:var(--ask-line);color:var(--ask-accent);box-shadow:none}
 .oa-tool-ask-user .oa-tool-head b{color:var(--ask-ink)}
 .oa-tool-ask-user .oa-tool-head em{color:var(--ask-ink);background:var(--ask-tint);border:1px solid var(--ask-line);border-radius:999px;padding:1px 8px;font-weight:600}
-.oa-ask-headline{min-width:0;flex:1;color:var(--text);font-size:13px;font-weight:600;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .oa-ask-panel{background:var(--surface-strong);padding:14px;border-top:1px solid var(--ask-line)}
 .oa-ask-banner{display:flex;align-items:flex-start;gap:10px;padding:0 0 12px;border:0;border-bottom:1px dashed var(--ask-line);border-radius:0;background:none;box-shadow:none}
 .oa-ask-avatar{width:26px;height:26px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;background:var(--ask-tint-strong);border:1px solid var(--ask-line);color:var(--ask-accent);font-weight:650;box-shadow:none}
