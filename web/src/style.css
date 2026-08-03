@@ -13650,6 +13650,7 @@ html[data-color-scheme="dark"] .oa-project-toggle:hover { background:rgba(16,163
     padding:14px 0;
   }
   .oa-message.user .oa-bubble { max-width:100%; }
+  .oa-turn-stack-head { margin-left:0; width:100%; }
   .oa-bubble,
   .oa-content,
   .oa-md,
@@ -13845,6 +13846,7 @@ html[data-color-scheme="dark"] .oa-project-toggle:hover { background:rgba(16,163
   .oa-composer { border-radius:18px; padding-left:10px; }
   .oa-composer-bar { gap:3px; }
   .oa-model-select { flex-basis:132px; }
+  .oa-turn-stack-head { margin-left:0; width:100%; }
 }
 
 
