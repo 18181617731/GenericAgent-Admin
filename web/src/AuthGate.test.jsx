@@ -22,6 +22,28 @@ describe('AuthGate', () => {
     expect(await screen.findByText('Admin application')).toBeTruthy()
   })
 
+  test('exposes working language and theme controls during first-time setup', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ username: 'admin', mustChangePassword: true, initialized: false })))
+    const user = userEvent.setup()
+    const onLanguageChange = vi.fn()
+    const onThemeChange = vi.fn()
+
+    const { rerender } = render(<AuthGate lang="en" theme="warm" onLanguageChange={onLanguageChange} onThemeChange={onThemeChange}><div>Admin application</div></AuthGate>)
+    await screen.findByRole('heading', { name: 'Set the administrator password' })
+
+    const language = screen.getByRole('group', { name: 'Language' })
+    await user.click(within(language).getByRole('button', { name: '中' }))
+    expect(onLanguageChange).toHaveBeenCalledWith('zh')
+
+    rerender(<AuthGate lang="zh" theme="warm" onLanguageChange={onLanguageChange} onThemeChange={onThemeChange}><div>Admin application</div></AuthGate>)
+    expect(screen.getByRole('heading', { name: '设置管理员密码' })).toBeTruthy()
+    expect(within(screen.getByRole('group', { name: '语言' })).getByRole('button', { name: '中' }).getAttribute('aria-pressed')).toBe('true')
+
+    await user.click(screen.getByRole('button', { name: /外观/ }))
+    await user.click((await screen.findByText('深色')).closest('button'))
+    expect(onThemeChange).toHaveBeenCalledWith('dark')
+  })
+
   test('sets the first administrator password without asking for a current credential', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ username: 'admin', mustChangePassword: true, initialized: false }))
