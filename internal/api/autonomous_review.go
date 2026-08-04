@@ -30,6 +30,7 @@ type autonomousReviewDecision struct {
 	Decision   string `json:"decision"`
 	Confidence string `json:"confidence"`
 	Reason     string `json:"reason"`
+	Problem    string `json:"problem"`
 }
 
 func (s *Server) reviewAutonomousApprovals(overview *ga.AutonomousApprovalOverview) {
@@ -101,7 +102,6 @@ func (s *Server) autonomousApprovalReview(w http.ResponseWriter, r *http.Request
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.reviewAutonomousApprovals(&updated)
 	writeJSON(w, map[string]interface{}{"ok": true, "reviewed": len(results), "results": results, "overview": updated})
 }
 
@@ -154,6 +154,9 @@ func (s *Server) reviewAutonomousApproval(item ga.AutonomousApproval, force bool
 	record.ReviewDecision = decision.Decision
 	record.ReviewConfidence = decision.Confidence
 	record.ReviewReason = decision.Reason
+	if decision.Problem != "" {
+		record.ReviewProblem = decision.Problem
+	}
 	record.NextRetryAt = time.Time{}
 	record.UpdatedAt = time.Now()
 	return record, ga.SaveAutonomousReview(s.CfgStore.Cfg.GARoot, record)
@@ -305,8 +308,8 @@ func isClaudeModel(protocol string) bool {
 }
 
 func autonomousReviewPayload(model string, isClaude bool, options modelProbeOptions, item ga.AutonomousApproval) ([]byte, error) {
-	system := "你是 GenericAgent Admin 的自主任务审核器。你只能提供风险与执行建议，不能替用户批准或执行任务。只输出 JSON：{\"decision\":\"approved|rejected|needs_approval\",\"confidence\":\"low|medium|high\",\"reason\":\"用大白话说明理由\"}。"
-	input, err := json.Marshal(map[string]string{"title": item.Title, "target": item.Target, "status": item.Status, "risk": item.Risk, "evidence": item.Evidence, "next_step": item.NextStep, "expected_outcome": item.ExpectedOutcome})
+	system := "你是 GenericAgent Admin 的自主任务审核器。你只能提供风险与执行建议，不能替用户批准或执行任务。只输出 JSON：{\"decision\":\"approved|rejected|needs_approval\",\"confidence\":\"low|medium|high\",\"reason\":\"用大白话说明理由\",\"problem\":\"用中文大白话概括这项任务具体要解决的问题，20至80字，不要只复述批准动作\"}。problem 必须结合任务标题、目标、状态、证据和下一步生成，不能使用“尚未落地或尚未确认的问题”这类泛化句。"
+	input, err := json.Marshal(map[string]string{"title": item.Title, "source": item.Source, "candidate_source": item.CandidateSource, "problem": item.Problem, "target": item.Target, "status": item.Status, "risk": item.Risk, "evidence": item.Evidence, "next_step": item.NextStep, "expected_outcome": item.ExpectedOutcome})
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +361,20 @@ func parseAutonomousReviewDecision(text string) autonomousReviewDecision {
 	if len([]rune(decision.Reason)) > 500 {
 		decision.Reason = string([]rune(decision.Reason)[:500])
 	}
+	decision.Problem = normalizeAutonomousReviewProblem(decision.Problem)
 	return decision
+}
+
+func normalizeAutonomousReviewProblem(value string) string {
+	problem := strings.Join(strings.Fields(value), " ")
+	problem = strings.TrimSpace(problem)
+	for _, prefix := range []string{"问题：", "要解决的问题：", "问题:", "Problem:", "problem:"} {
+		problem = strings.TrimSpace(strings.TrimPrefix(problem, prefix))
+	}
+	if len([]rune(problem)) > 160 {
+		problem = string([]rune(problem)[:160])
+	}
+	return redactProbeDetail(problem, "")
 }
 
 func normalizeReviewDecision(value string) string {

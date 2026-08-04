@@ -63,6 +63,7 @@ func main() {
 	url := "http://" + addrs[0]
 	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
 	srv.StartAutostartServices()
+	srv.StartAutonomousMaintenance()
 	activeAddrs, err := startHTTPListeners(server, addrs)
 	if err != nil {
 		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)

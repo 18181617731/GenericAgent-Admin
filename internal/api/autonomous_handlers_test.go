@@ -52,8 +52,8 @@ func TestAutonomousApprovalsGetAndApprove(t *testing.T) {
 }
 
 func TestAutonomousModelReviewParsingIsStructuredAndConservative(t *testing.T) {
-	result := parseAutonomousReviewDecision("model preface\n{\"decision\":\"needs_approval\",\"confidence\":\"high\",\"reason\":\"approval evidence is missing\"}")
-	if result.Decision != "needs_approval" || result.Confidence != "high" || result.Reason == "" {
+	result := parseAutonomousReviewDecision("model preface\n{\"decision\":\"needs_approval\",\"confidence\":\"high\",\"reason\":\"approval evidence is missing\",\"problem\":\"补充缺失的审批证据，避免方案无法核验就被执行\"}")
+	if result.Decision != "needs_approval" || result.Confidence != "high" || result.Reason == "" || result.Problem != "补充缺失的审批证据，避免方案无法核验就被执行" {
 		t.Fatalf("parsed review = %#v", result)
 	}
 	invalid := parseAutonomousReviewDecision("not json")

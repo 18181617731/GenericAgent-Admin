@@ -2,6 +2,17 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.51 - 2026-08-04
+
+### User-facing changes
+- 待审批列表按真实审批状态过滤，自动排除已完成、无需审批和已失效的项目，避免用户重复处理。
+- 待审批卡片增加“要解决什么问题”、审批场景和文件/配置/验证提示；报告包含多个方案时展示候选方案及推荐项。
+- 无法可靠细分审批场景的项目明确标记为“需要人工确认”，并保留审批上下文，减少用户对审核依据的疑惑。
+- 定期清理历史执行完成文件，避免临时报告长期堆积影响查看和磁盘空间。
+
+### Validation
+- Passed `go test ./...`, frontend library tests (`234/234`), UI smoke tests (`94/94`), frontend lint, frontend production build, and Windows `build.bat` packaging.
+
 ## v1.0.50 - 2026-08-04
 
 ### User-facing changes

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -42,6 +43,8 @@ type Server struct {
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
 	titleBackfillStarted    bool
+	autonomousCleanupStop   chan struct{}
+	autonomousCleanupOnce   sync.Once
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
@@ -53,6 +56,39 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 		svc.SetUsageDir(usageEventDir(cfg.Cfg))
 	}
 	return server
+}
+
+func (s *Server) StartAutonomousMaintenance() {
+	if s == nil || s.CfgStore == nil {
+		return
+	}
+	s.autonomousCleanupOnce.Do(func() {
+		s.autonomousCleanupStop = make(chan struct{})
+		go s.autonomousReportCleanupLoop()
+	})
+}
+
+func (s *Server) autonomousReportCleanupLoop() {
+	cleanup := func() {
+		root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+		if root == "" {
+			return
+		}
+		if _, err := ga.CleanupAutonomousReports(root, ga.DefaultAutonomousReportRetention); err != nil {
+			log.Printf("autonomous report cleanup: %v", err)
+		}
+	}
+	cleanup()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			cleanup()
+		case <-s.autonomousCleanupStop:
+			return
+		}
+	}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -1026,6 +1062,10 @@ func (s *Server) StopManagedServices() {
 func (s *Server) ShutdownCleanup() {
 	if s == nil {
 		return
+	}
+	if s.autonomousCleanupStop != nil {
+		close(s.autonomousCleanupStop)
+		s.autonomousCleanupStop = nil
 	}
 	s.StopManagedServices()
 	if s.ReactApp != nil {

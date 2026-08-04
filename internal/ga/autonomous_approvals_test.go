@@ -16,6 +16,7 @@ const autonomousApprovalFixture = `# pending_drafts
 
 ## 1. daily_git_conflict_sop_DRAFT
 - 来源：R37
+- 要解决的问题：避免冲突处理方案只停留在报告中，实际执行时没有统一依据
 - 草案位置：temp/daily_git_conflict_sop_DRAFT.md
 - 落地目标：memory/daily_git_conflict_sop.md
 - **状态：待批未落地**
@@ -69,11 +70,71 @@ func TestBuildAutonomousApprovalsParsesTrackedDrafts(t *testing.T) {
 		t.Fatalf("overview = %+v", overview)
 	}
 	first := overview.Items[0]
-	if first.Title != "daily_git_conflict_sop_DRAFT" || first.State != "pending" || first.Target != "memory/daily_git_conflict_sop.md" || first.ExpectedOutcome != "以后遇到同类问题可以直接按这份方案处理" || first.ReviewStatus != "fallback" || first.ReviewDecision != "needs_approval" || first.ReviewModelNo == nil || *first.ReviewModelNo != 12 || first.ReviewModel != "gpt-5.6-luna" {
+	if first.Title != "daily_git_conflict_sop_DRAFT" || first.State != "pending" || first.Target != "memory/daily_git_conflict_sop.md" || first.Problem != "避免冲突处理方案只停留在报告中，实际执行时没有统一依据" || first.ExpectedOutcome != "以后遇到同类问题可以直接按这份方案处理" || first.ReviewStatus != "fallback" || first.ReviewDecision != "needs_approval" || first.ReviewModelNo == nil || *first.ReviewModelNo != 12 || first.ReviewModel != "gpt-5.6-luna" {
 		t.Fatalf("first approval = %+v", first)
 	}
 	if overview.Items[2].State != "closed" {
 		t.Fatalf("closed item = %+v", overview.Items[2])
+	}
+}
+
+func TestBuildAutonomousApprovalsReusesModelProblemSummary(t *testing.T) {
+	root := t.TempDir()
+	writeAutonomousApprovalFixture(t, root)
+	initial, err := BuildAutonomousApprovals(root)
+	if err != nil || len(initial.Items) == 0 {
+		t.Fatalf("initial overview = %+v err=%v", initial, err)
+	}
+	problem := "补充冲突处理的统一落地方案，避免后续提交继续因处理方式不一致而失败"
+	if err := SaveAutonomousReview(root, AutonomousReviewRecord{
+		ID:            initial.Items[0].ID,
+		Fingerprint:   AutonomousApprovalFingerprint(initial.Items[0]),
+		ReviewStatus:  "model",
+		ReviewProblem: problem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Items[0].Problem != problem {
+		t.Fatalf("problem=%q want %q", updated.Items[0].Problem, problem)
+	}
+}
+
+func TestAutonomousReviewContextExtractsChoicesAndTags(t *testing.T) {
+	content := `# 复核报告
+
+## 待审建议（均为可选）
+### 建议 A：健康检查增强（代码改进，需批准）
+增加目标检查，避免误报。
+### 建议 B：主上游切换（配置变更，需批准）
+将上游地址切换到验活通过的地址。
+### 建议 C：观察上游是否恢复（无需立即操作）
+观察一到两天，恢复则无需切换。
+`
+	options := extractAutonomousReviewOptions(content)
+	if len(options) != 3 || options[0].Key != "A" || options[1].Key != "B" || options[2].Key != "C" {
+		t.Fatalf("options=%+v", options)
+	}
+	if options[0].Recommended || options[1].Recommended || options[2].Recommended {
+		t.Fatalf("unexpected recommendation markers: %+v", options)
+	}
+	if options[1].Summary != "将上游地址切换到验活通过的地址。" {
+		t.Fatalf("option summary=%q", options[1].Summary)
+	}
+	candidateOptions := extractAutonomousReviewOptions("### [候选A·推荐] scanner_utils.py\n封装扫描能力。\n")
+	if len(candidateOptions) != 1 || candidateOptions[0].Key != "A" || !candidateOptions[0].Recommended {
+		t.Fatalf("candidate options=%+v", candidateOptions)
+	}
+	item := AutonomousApproval{Title: "上游健康检查", Status: "待审批", NextStep: "用户批准后执行", ReviewReason: "report contains an explicit approval gate"}
+	tags := autonomousReviewTags(item, content, options)
+	if !containsAny(strings.Join(tags, " "), "choice") || !containsAny(strings.Join(tags, " "), "config_change") || !containsAny(strings.Join(tags, " "), "verification") {
+		t.Fatalf("tags=%v", tags)
+	}
+	if autonomousReviewFocus(tags) != "报告给出了多个可选方案，批准前需要确认采用哪一个方案。" {
+		t.Fatalf("focus=%q", autonomousReviewFocus(tags))
 	}
 }
 
@@ -147,6 +208,88 @@ func TestBuildAutonomousApprovalsKeepsSupersededDraftsOutOfPending(t *testing.T)
 	}
 	if overview.Pending != 0 || len(overview.Items) != 1 || overview.Items[0].State != "closed" {
 		t.Fatalf("superseded overview = %+v", overview)
+	}
+}
+
+func TestBuildAutonomousApprovalsFiltersCompletedAndNotRequiredItems(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	source := `# pending_drafts
+
+## 1. 已完成的历史任务
+- 状态：已完成并通过验证
+- 下一步：无
+
+## 2. 无需审批的例行检查
+- 状态：无需审批
+- 下一步：直接执行
+
+## 3. 仍需人工确认的任务
+- 状态：待批未落地
+- 下一步：用户批准后执行
+`
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousApprovalSource)), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Pending != 1 || len(overview.Items) != 3 {
+		t.Fatalf("filtered overview = %+v", overview)
+	}
+	if overview.Items[0].State != "closed" || overview.Items[1].State != autonomousApprovalNotRequired || overview.Items[2].State != "pending" {
+		t.Fatalf("filtered states = %#v", overview.Items)
+	}
+}
+
+func TestBuildAutonomousApprovalsUsesCompletedReportToCloseStalePendingItem(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp", "autonomous_reports"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	title := "历史任务已完成但台账未更新"
+	source := "## 1. " + title + "\n- 状态：待批未落地\n- 下一步：用户批准后执行\n"
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousApprovalSource)), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	report := "# " + title + "\n\nVERDICT: PASS\n\n结论：已完成并通过验证\n"
+	if err := os.WriteFile(filepath.Join(root, "temp", "autonomous_reports", "R200_completed.md"), []byte(report), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Pending != 0 || len(overview.Items) != 1 {
+		t.Fatalf("completed report overview = %+v", overview)
+	}
+	item := overview.Items[0]
+	if item.State != "closed" || item.ExecutionState != autonomousExecutionCompleted || item.ExecutionReport == nil {
+		t.Fatalf("completed report item = %+v", item)
+	}
+}
+
+func TestBuildAutonomousApprovalsFiltersTodoItemsWithoutApprovalNeed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	todo := "# TODO\n[ ] 例行检查 | 无需审批即可执行\n[ ] 历史任务 | 已完成并通过验证\n[ ] 待确认任务 | 用户批准后执行\n"
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := BuildAutonomousApprovals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Pending != 1 || len(overview.Items) != 3 {
+		t.Fatalf("todo filtered overview = %+v", overview)
+	}
+	if overview.Items[0].State != autonomousApprovalNotRequired || overview.Items[1].State != "closed" || overview.Items[2].State != "pending" {
+		t.Fatalf("todo filtered states = %#v", overview.Items)
 	}
 }
 

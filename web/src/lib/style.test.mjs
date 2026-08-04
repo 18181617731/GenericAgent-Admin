@@ -50,10 +50,10 @@ test('autonomous execution records stay uniformly left aligned', () => {
   assert.match(reportButtonRule, /text-align\s*:\s*left\s*!important/i)
 })
 
-test('autonomous approvals expose readable outcomes and mobile bulk actions', () => {
+test('autonomous approvals expose readable problem summaries and mobile bulk actions', () => {
   const toolbarRule = ruleBodies('.autonomous-approval-toolbar').join('\n')
   assert.match(toolbarRule, /flex-wrap\s*:\s*wrap/i)
-  assert.match(css, /\.autonomous-approval-outcome\s*\{[^}]*border-left\s*:\s*3px/i)
+  assert.match(css, /\.autonomous-approval-problem\s*\{[^}]*border-left\s*:\s*3px/i)
   assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.autonomous-approval-bulk-actions\s*\{[^}]*display\s*:\s*grid/i)
 })
 

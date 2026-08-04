@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ const (
 	autonomousCandidateSourceTodo   = "todo"
 	autonomousCandidateSourceReport = "autonomous_report"
 	autonomousReviewNeedsApproval   = "needs_approval"
+	autonomousApprovalNotRequired   = "not_required"
 )
 
 type AutonomousApproval struct {
@@ -45,6 +47,7 @@ type AutonomousApproval struct {
 	DraftPath       string    `json:"draft_path,omitempty"`
 	CandidateSource string    `json:"candidate_source,omitempty"`
 	Target          string    `json:"target,omitempty"`
+	Problem         string    `json:"problem,omitempty"`
 	Status          string    `json:"status,omitempty"`
 	Risk            string    `json:"risk,omitempty"`
 	Evidence        string    `json:"evidence,omitempty"`
@@ -61,17 +64,27 @@ type AutonomousApproval struct {
 	ExecutionError     string     `json:"execution_error,omitempty"`
 	ExecutionUpdatedAt *time.Time `json:"execution_updated_at,omitempty"`
 
-	ReviewStatus      string    `json:"review_status,omitempty"`
-	ReviewDecision    string    `json:"review_decision,omitempty"`
-	ReviewConfidence  string    `json:"review_confidence,omitempty"`
-	ReviewReason      string    `json:"review_reason,omitempty"`
-	ReviewModelNo     *int      `json:"review_model_no,omitempty"`
-	ReviewModel       string    `json:"review_model,omitempty"`
-	ReviewProvider    string    `json:"review_provider,omitempty"`
-	ReviewReport      *Entry    `json:"review_report,omitempty"`
-	ReviewReports     []Entry   `json:"review_reports,omitempty"`
-	ReviewAttempts    int       `json:"review_attempts,omitempty"`
-	ReviewNextRetryAt time.Time `json:"review_next_retry_at,omitempty"`
+	ReviewStatus      string                   `json:"review_status,omitempty"`
+	ReviewDecision    string                   `json:"review_decision,omitempty"`
+	ReviewConfidence  string                   `json:"review_confidence,omitempty"`
+	ReviewReason      string                   `json:"review_reason,omitempty"`
+	ReviewModelNo     *int                     `json:"review_model_no,omitempty"`
+	ReviewModel       string                   `json:"review_model,omitempty"`
+	ReviewProvider    string                   `json:"review_provider,omitempty"`
+	ReviewReport      *Entry                   `json:"review_report,omitempty"`
+	ReviewReports     []Entry                  `json:"review_reports,omitempty"`
+	ReviewAttempts    int                      `json:"review_attempts,omitempty"`
+	ReviewNextRetryAt time.Time                `json:"review_next_retry_at,omitempty"`
+	ReviewTags        []string                 `json:"review_tags,omitempty"`
+	ReviewFocus       string                   `json:"review_focus,omitempty"`
+	ReviewOptions     []AutonomousReviewOption `json:"review_options,omitempty"`
+}
+
+type AutonomousReviewOption struct {
+	Key         string `json:"key"`
+	Title       string `json:"title"`
+	Summary     string `json:"summary,omitempty"`
+	Recommended bool   `json:"recommended,omitempty"`
 }
 
 type AutonomousApprovalOverview struct {
@@ -131,13 +144,17 @@ func BuildAutonomousApprovals(root string) (AutonomousApprovalOverview, error) {
 		return overview, err
 	}
 	applyAutonomousDecisions(&overview, decisions)
-	attachAutonomousReportCandidates(root, &overview)
+	reports := buildAllAutonomousReports(root)
+	contents := loadAutonomousReportContents(root, reports)
+	attachAutonomousReportCandidates(root, &overview, reports, contents)
 	reviews, err := loadAutonomousReviews(root)
 	if err != nil {
 		return overview, err
 	}
 	applyAutonomousReviews(&overview, reviews)
-	attachAutonomousExecution(root, &overview)
+	attachAutonomousExecution(&overview, reports, contents)
+	reconcileAutonomousApprovalStates(&overview, reports, contents)
+	enrichAutonomousReviewContexts(&overview, contents)
 	recountAutonomousDecisions(&overview)
 	return overview, nil
 }
@@ -188,6 +205,9 @@ func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApprov
 	}
 	if base.Target == "" {
 		base.Target = addition.Target
+	}
+	if base.Problem == "" {
+		base.Problem = addition.Problem
 	}
 	if base.Status == "" {
 		base.Status = addition.Status
@@ -340,6 +360,12 @@ func autonomousTodoState(body string) (string, string, string) {
 	if containsAny(body, "用户已拒绝", "已拒绝", "已驳回") {
 		return "rejected", "rejected", "已拒绝"
 	}
+	if autonomousApprovalTextHasNoApproval(body) {
+		return autonomousApprovalNotRequired, "", "无需审批"
+	}
+	if autonomousApprovalTextHasCompletion(body) {
+		return "closed", "", "已完成"
+	}
 	return "pending", "", "待人工复核"
 }
 
@@ -447,6 +473,8 @@ func applyAutonomousApprovalField(item *AutonomousApproval, line string) {
 		item.DraftPath = value
 	case "落地目标":
 		item.Target = value
+	case "要解决的问题", "解决的问题", "问题", "背景", "目的":
+		item.Problem = value
 	case "状态":
 		item.Status = value
 	case "风险":
@@ -492,7 +520,15 @@ func autonomousMarkdownField(line string) (string, string, bool) {
 }
 
 func finishAutonomousApproval(item AutonomousApproval) AutonomousApproval {
-	stateText := item.Status + " " + item.NextStep
+	if autonomousApprovalNotRequiredForItem(item) {
+		item.State = autonomousApprovalNotRequired
+		return item
+	}
+	if autonomousApprovalStatusCompleted(item) {
+		item.State = "closed"
+		return item
+	}
+	stateText := strings.Join([]string{item.Status, item.NextStep, item.ReviewStatus, item.ReviewDecision, item.ReviewReason}, " ")
 	switch {
 	case containsAny(stateText, "已落地", "被替代", "废弃", "作废", "已归档"):
 		item.State = "closed"
@@ -504,6 +540,45 @@ func finishAutonomousApproval(item AutonomousApproval) AutonomousApproval {
 	return item
 }
 
+func autonomousApprovalTextHasNoApproval(values ...string) bool {
+	text := strings.ToLower(strings.Join(values, " "))
+	text = strings.ReplaceAll(text, "_", " ")
+	return containsAny(text,
+		"no approval required", "approval not required", "no human approval", "no human review", "no review needed", "not required", "not applicable",
+		"无需审批", "无需人工审批", "不需要审批", "不需审批", "无须审批", "无需审核", "无需人工审核", "不需要审核", "不需审核", "无须审核",
+		"无需人工复核", "不需要人工复核", "无需用户确认", "不需要用户确认", "无需批准", "不需要批准")
+}
+
+func autonomousApprovalTextHasCompletion(values ...string) bool {
+	text := strings.ToLower(strings.Join(values, " "))
+	text = strings.ReplaceAll(text, "complete_task", "")
+	if containsAny(text, "未完成", "尚未完成", "未实施", "未落地", "未执行", "not completed", "not implemented", "unfinished", "pending") {
+		return false
+	}
+	return containsAny(text,
+		"已完成", "执行完成", "完成并通过", "已执行", "已落地", "已实施", "已归档", "已关闭", "已通过", "通过验证",
+		"completed", "done", "finished", "implemented", "landed", "archived", "closed", "passed", "successful", "obsolete", "superseded")
+}
+
+func autonomousApprovalNotRequiredForItem(item AutonomousApproval) bool {
+	if autonomousApprovalReviewRequiresDecision(item) {
+		return false
+	}
+	return autonomousApprovalTextHasNoApproval(item.Title, item.Status, item.NextStep, item.ReviewStatus, item.ReviewDecision, item.ReviewReason)
+}
+
+func autonomousApprovalReviewRequiresDecision(item AutonomousApproval) bool {
+	text := strings.ToLower(strings.Join([]string{item.ReviewStatus, item.ReviewDecision, item.ReviewReason}, " "))
+	text = strings.ReplaceAll(text, "_", " ")
+	return containsAny(text,
+		"needs approval", "pending approval", "awaiting user approval", "approval gate", "approval evidence", "report is blocked", "model review unavailable",
+		"需要审批", "待审批", "待批准", "等待用户审批", "审批门槛", "审批证据", "报告处于阻塞状态", "模型审核不可用")
+}
+
+func autonomousApprovalStatusCompleted(item AutonomousApproval) bool {
+	return autonomousApprovalTextHasCompletion(item.Status)
+}
+
 func containsAny(value string, terms ...string) bool {
 	for _, term := range terms {
 		if strings.Contains(value, term) {
@@ -513,21 +588,43 @@ func containsAny(value string, terms ...string) bool {
 	return false
 }
 
-func attachAutonomousReportCandidates(root string, overview *AutonomousApprovalOverview) {
-	reports := buildAllAutonomousReports(root)
+func loadAutonomousReportContents(root string, reports []Entry) map[string]string {
+	contents := make(map[string]string, len(reports))
 	for _, report := range reports {
 		if report.Kind != "file" || strings.EqualFold(report.Name, "history.txt") {
 			continue
 		}
-		path, _, err := SafeResolve(root, report.Path)
-		if err != nil {
+		content, ok := readListedAutonomousReport(root, report.Path)
+		if ok {
+			contents[report.Path] = content
+		}
+	}
+	return contents
+}
+
+func readListedAutonomousReport(root, rel string) (string, bool) {
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		return "", false
+	}
+	path := filepath.Join(root, clean)
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	return string(data), err == nil
+}
+
+func attachAutonomousReportCandidates(root string, overview *AutonomousApprovalOverview, reports []Entry, contents map[string]string) {
+	for _, report := range reports {
+		if report.Kind != "file" || strings.EqualFold(report.Name, "history.txt") {
 			continue
 		}
-		contentBytes, err := os.ReadFile(path)
-		if err != nil {
+		content, ok := contents[report.Path]
+		if !ok {
 			continue
 		}
-		content := string(contentBytes)
 		needsApproval, invalidEvidence, reason, confidence := autonomousReportReviewSignals(content)
 		if !needsApproval {
 			continue
@@ -687,6 +784,160 @@ func autonomousReportReviewSignals(content string) (needsApproval, invalidEviden
 	return false, false, "", ""
 }
 
+var autonomousReviewOptionHeading = regexp.MustCompile(`^(?:#{2,6}\s*)?(?:\[(?:候选|方案|选项|建议|路径|选择)\s*([A-Za-z0-9一二三四五六七八九十]+)[^\]]*\]\s*(.+)|(?:建议|方案|选项|候选|路径|选择)\s*([A-Za-z0-9一二三四五六七八九十]+)\s*(?:[:：-]\s*|\s+)(.+))$`)
+
+func enrichAutonomousReviewContexts(overview *AutonomousApprovalOverview, contents map[string]string) {
+	if overview == nil {
+		return
+	}
+	for index := range overview.Items {
+		item := &overview.Items[index]
+		content := autonomousReviewContent(*item, contents)
+		options := extractAutonomousReviewOptions(content)
+		tags := autonomousReviewTags(*item, content, options)
+		item.ReviewOptions = options
+		item.ReviewTags = tags
+		item.ReviewFocus = autonomousReviewFocus(tags)
+	}
+}
+
+func autonomousReviewContent(item AutonomousApproval, contents map[string]string) string {
+	if item.ReviewReport != nil {
+		if content := contents[item.ReviewReport.Path]; content != "" {
+			return content
+		}
+	}
+	for _, report := range item.ReviewReports {
+		if content := contents[report.Path]; content != "" {
+			return content
+		}
+	}
+	return ""
+}
+
+func extractAutonomousReviewOptions(content string) []AutonomousReviewOption {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	options := make([]AutonomousReviewOption, 0, 4)
+	seen := map[string]bool{}
+	for index, line := range lines {
+		key, title, recommended, ok := parseAutonomousReviewOptionHeading(line)
+		if !ok {
+			continue
+		}
+		identity := strings.ToLower(key + "|" + title)
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		option := AutonomousReviewOption{Key: key, Title: title, Recommended: recommended}
+		for next := index + 1; next < len(lines); next++ {
+			if _, _, _, nextOption := parseAutonomousReviewOptionHeading(lines[next]); nextOption {
+				break
+			}
+			candidate := cleanAutonomousReviewText(lines[next])
+			if candidate == "" || strings.HasPrefix(candidate, "#") || strings.HasPrefix(candidate, "---") || strings.HasPrefix(candidate, "|") {
+				continue
+			}
+			option.Summary = candidate
+			break
+		}
+		options = append(options, option)
+		if len(options) >= 5 {
+			break
+		}
+	}
+	return options
+}
+
+func parseAutonomousReviewOptionHeading(line string) (string, string, bool, bool) {
+	matches := autonomousReviewOptionHeading.FindStringSubmatch(strings.TrimSpace(line))
+	if len(matches) == 0 {
+		return "", "", false, false
+	}
+	key, title := matches[1], matches[2]
+	if key == "" {
+		key, title = matches[3], matches[4]
+	}
+	title = cleanAutonomousReviewText(title)
+	if key == "" || title == "" {
+		return "", "", false, false
+	}
+	return strings.ToUpper(key), title, strings.Contains(strings.ToLower(matches[0]), "推荐") || strings.Contains(strings.ToLower(matches[0]), "recommend"), true
+}
+
+func cleanAutonomousReviewText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.Trim(value, " -*_`")
+	value = strings.ReplaceAll(value, "**", "")
+	value = strings.ReplaceAll(value, "`", "")
+	if len([]rune(value)) > 180 {
+		value = string([]rune(value)[:180])
+	}
+	return strings.TrimSpace(value)
+}
+
+func autonomousReviewTags(item AutonomousApproval, content string, options []AutonomousReviewOption) []string {
+	metadata := strings.ToLower(strings.Join([]string{item.Title, item.Target, item.Status, item.Risk, item.Evidence, item.NextStep, item.ReviewReason}, " "))
+	allText := strings.ToLower(metadata + " " + content)
+	tags := make([]string, 0, 5)
+	if len(options) > 0 {
+		tags = append(tags, "choice")
+	}
+	if containsAny(allText, "blocked", "approval blocked", "审批阻塞", "阻塞复核", "审批证据缺失", "审批证据不可核验", "无法核验", "仍需等待用户批准") {
+		tags = append(tags, "blocked")
+	}
+	if containsAny(metadata, "源码", "代码", "开发", "实现", "修复", "补全", "新增", "修改", "删除", "写入", "部署", "工具", ".py", ".go", ".js", ".ts") {
+		tags = append(tags, "file_change")
+	}
+	if containsAny(metadata, "配置变更", "配置切换", "切换", "调度", "参数", "环境变量", "上游", ".json", ".yaml", ".yml", ".toml", ".ini") {
+		tags = append(tags, "config_change")
+	}
+	if containsAny(metadata, "验证", "实测", "验收", "诊断", "检查", "benchmark", "health", "健康") {
+		tags = append(tags, "verification")
+	}
+	if containsAny(metadata, "sop", "文档", "记忆", "memory", "规范", "手册", ".md", ".txt") {
+		tags = append(tags, "documentation")
+	}
+	if containsAny(metadata, "观察", "只读", "探测", "监测") && !containsAny(metadata, "修改", "写入", "部署") {
+		tags = append(tags, "observation")
+	}
+	if autonomousApprovalTextHasCompletion(item.Status) {
+		tags = append(tags, "completed")
+	}
+	if len(tags) == 0 {
+		tags = append(tags, "manual")
+	}
+	return uniqueNonEmptyStrings(tags)
+}
+
+func autonomousReviewFocus(tags []string) string {
+	if containsAny(strings.Join(tags, " "), "choice") {
+		return "报告给出了多个可选方案，批准前需要确认采用哪一个方案。"
+	}
+	if containsAny(strings.Join(tags, " "), "blocked") {
+		return "报告存在阻塞或审批证据不足，需先确认是否继续处理。"
+	}
+	if containsAny(strings.Join(tags, " "), "file_change") && containsAny(strings.Join(tags, " "), "config_change") {
+		return "这项建议同时涉及文件或代码与运行配置变更，需确认变更范围。"
+	}
+	if containsAny(strings.Join(tags, " "), "file_change") {
+		return "这项建议可能修改文件或代码，需确认是否允许落地。"
+	}
+	if containsAny(strings.Join(tags, " "), "config_change") {
+		return "这项建议会改变运行配置或调度参数，需确认是否切换。"
+	}
+	if containsAny(strings.Join(tags, " "), "verification") {
+		return "这项建议主要用于验证、实测或健康检查，需确认是否继续执行。"
+	}
+	if containsAny(strings.Join(tags, " "), "documentation") {
+		return "这项建议主要完善 SOP、记忆或项目文档，需确认是否写入。"
+	}
+	if containsAny(strings.Join(tags, " "), "observation") {
+		return "这项建议以只读观察或环境探测为主，不应直接修改文件。"
+	}
+	return "请确认是否允许自主服务按报告中的下一步继续处理。"
+}
+
 func autonomousReportCandidateTitle(name, content string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
 		clean := strings.TrimSpace(line)
@@ -773,8 +1024,7 @@ func autonomousApprovalID(title string) string {
 	return fmt.Sprintf("draft-%x", sum[:6])
 }
 
-func attachAutonomousExecution(root string, overview *AutonomousApprovalOverview) {
-	reports := buildAllAutonomousReports(root)
+func attachAutonomousExecution(overview *AutonomousApprovalOverview, reports []Entry, contents map[string]string) {
 	for index := range overview.Items {
 		item := &overview.Items[index]
 		switch item.Decision {
@@ -788,7 +1038,7 @@ func attachAutonomousExecution(root string, overview *AutonomousApprovalOverview
 		default:
 			continue
 		}
-		if report, content, ok := matchAutonomousExecutionReport(root, reports, *item); ok {
+		if report, content, ok := matchAutonomousExecutionReport(reports, contents, *item); ok {
 			item.ExecutionReport = report
 			reportTime := report.ModTime
 			item.ExecutionUpdatedAt = &reportTime
@@ -804,7 +1054,59 @@ func attachAutonomousExecution(root string, overview *AutonomousApprovalOverview
 	}
 }
 
-func matchAutonomousExecutionReport(root string, reports []Entry, item AutonomousApproval) (*Entry, string, bool) {
+func reconcileAutonomousApprovalStates(overview *AutonomousApprovalOverview, reports []Entry, contents map[string]string) {
+	if overview == nil {
+		return
+	}
+	for index := range overview.Items {
+		item := &overview.Items[index]
+		if item.State != "pending" || item.Decision != "" {
+			continue
+		}
+		if item.ReviewReport != nil {
+			continue
+		}
+		if autonomousApprovalNotRequiredForItem(*item) {
+			item.State = autonomousApprovalNotRequired
+			item.ExecutionState = autonomousExecutionNotApplicable
+			continue
+		}
+		if item.ExecutionState == autonomousExecutionCompleted {
+			item.State = "closed"
+			continue
+		}
+		if report, content, ok := matchAutonomousExecutionReport(reports, contents, *item); ok && autonomousReportConfirmsCompletion(content) && reportIsCurrentForApproval(*item, report) {
+			item.State = "closed"
+			item.ExecutionState = autonomousExecutionCompleted
+			item.ExecutionReport = report
+			item.ExecutionSummary = autonomousReportSummary(content)
+			item.ExecutionError = ""
+			reportTime := report.ModTime
+			item.ExecutionUpdatedAt = &reportTime
+			continue
+		}
+		if autonomousApprovalStatusCompleted(*item) && !autonomousApprovalReviewRequiresDecision(*item) {
+			item.State = "closed"
+		}
+	}
+}
+
+func reportIsCurrentForApproval(item AutonomousApproval, report *Entry) bool {
+	return report != nil && (item.ReviewReport == nil || !report.ModTime.Before(item.ReviewReport.ModTime))
+}
+
+func autonomousReportConfirmsCompletion(content string) bool {
+	if needsApproval, _, _, _ := autonomousReportReviewSignals(content); needsApproval {
+		return false
+	}
+	lower := strings.ToLower(content)
+	return containsAny(lower,
+		"verdict: pass", "verdict：pass", "result: success", "result：success", "outcome: success", "outcome：success",
+		"执行结果：成功", "执行结果:成功", "执行结果：完成", "执行结果:完成", "结论：已完成", "结论:已完成", "已完成并通过验证", "通过验证",
+		"completed successfully", "successfully completed")
+}
+
+func matchAutonomousExecutionReport(reports []Entry, contents map[string]string, item AutonomousApproval) (*Entry, string, bool) {
 	marker := "ga-admin-approval:" + item.ID
 	variants := autonomousTitleVariants(item.Title)
 	var best *Entry
@@ -814,15 +1116,10 @@ func matchAutonomousExecutionReport(root string, reports []Entry, item Autonomou
 		if report.Kind != "file" || strings.EqualFold(report.Name, "history.txt") {
 			continue
 		}
-		path, _, err := SafeResolve(root, report.Path)
-		if err != nil {
+		content, ok := contents[report.Path]
+		if !ok {
 			continue
 		}
-		contentBytes, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		content := string(contentBytes)
 		if needsApproval, _, _, _ := autonomousReportReviewSignals(content); needsApproval {
 			continue
 		}

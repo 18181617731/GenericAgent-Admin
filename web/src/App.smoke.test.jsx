@@ -101,7 +101,7 @@ afterEach(() => {
 
 const pendingApproval = {
   id: 'draft-one', title: '补充自主操作 SOP', state: 'pending', status: '待批未落地',
-  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
+  source: 'R37', target: 'memory/autonomous_sop.md', problem: '避免自主操作方案只停留在报告里，实际执行时没有统一依据', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
 }
 
 const approvalOverview = (items = [pendingApproval]) => ({
@@ -161,6 +161,27 @@ describe('autonomous operations page', () => {
     await waitFor(() => expect(rejectedSummary?.closest('details')?.open).toBe(true))
     fireEvent.click(rejectedSummary)
     await waitFor(() => expect(rejectedSummary?.closest('details')?.open).toBe(false))
+  })
+
+  test('should exclude completed and no-approval items from the pending view', async () => {
+    installBrowserPolyfills()
+    const completed = { ...pendingApproval, id: 'completed-stale', title: '已完成但台账未更新', status: '已完成并通过验证' }
+    const noApproval = { ...pendingApproval, id: 'no-approval', title: '无需审批的例行检查', status: '无需审批' }
+    const current = { ...pendingApproval, id: 'still-pending', title: '仍需人工确认' }
+    globalThis.fetch = vi.fn(async url => {
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([completed, noApproval, current]))
+      throw new Error(`unexpected url ${url}`)
+    })
+    render(<AutonomousPage lang="zh" reports={[]}/> )
+
+    expect(await screen.findByRole('tab', { name: '待审批 (1)' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: '待审批 (1)' }))
+    expect(await screen.findByText('仍需人工确认')).toBeTruthy()
+    expect(screen.queryByText('已完成但台账未更新')).toBeNull()
+    expect(screen.queryByText('无需审批的例行检查')).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: /已处理/ }))
+    expect(await screen.findByText('已完成但台账未更新')).toBeTruthy()
+    expect(await screen.findByText('无需审批的例行检查')).toBeTruthy()
   })
 
   test('should show live bulk approval progress and retry failed items', async () => {
@@ -228,10 +249,11 @@ describe('autonomous operations page', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
     expect(await screen.findByText('报告需要人工审批')).toBeTruthy()
     expect(screen.getByText('需要人工复核')).toBeTruthy()
-    expect(screen.getByText('需要审批')).toBeTruthy()
+    expect(screen.getByText('未自动批准')).toBeTruthy()
     expect(screen.getByText('高')).toBeTruthy()
-    expect(screen.getByText('请核查报告证据后明确批准或拒绝')).toBeTruthy()
+    expect(screen.queryByText('请核查报告证据后明确批准或拒绝')).toBeNull()
     expect(screen.getByText(/报告处于阻塞状态/)).toBeTruthy()
+    expect(screen.getByText('避免自主操作方案只停留在报告里，实际执行时没有统一依据')).toBeTruthy()
     expect(screen.queryByText('human review required')).toBeNull()
   })
 
