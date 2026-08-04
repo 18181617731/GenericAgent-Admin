@@ -60,6 +60,12 @@ The goal is not to replace GenericAgent, but to consolidate local GA runtime sta
 
 ---
 
+## 📈 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Fwind43/GenericAgent-Admin&type=Date)](https://star-history.com/#Fwind43/GenericAgent-Admin&Date)
+
+---
+
 ## 🚀 Quick Start
 
 > ⚠️ **Prerequisites:** Python 3.11+ (for GenericAgent), Node.js 18+ / Go 1.22+ (for development builds)
@@ -281,6 +287,12 @@ This project is used internally within the GenericAgent ecosystem. For external 
 | ⚙️ **模型配置** | 添加模型的向导，测试端点，管理配置文件 |
 | 🔧 **设置** | 应用配置、认证、ga_root 路径 |
 | 📄 **日志查看器** | 尾随 worker 日志，搜索历史 |
+
+---
+
+## 📈 Star 历史
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Fwind43/GenericAgent-Admin&type=Date)](https://star-history.com/#Fwind43/GenericAgent-Admin&Date)
 
 ---
 
