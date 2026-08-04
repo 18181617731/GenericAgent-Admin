@@ -2,7 +2,7 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
-## v1.0.48 - 2026-08-04
+## v1.0.49 - 2026-08-04
 
 ### User-facing changes
 - 总览页移除重复的“服务控制”和“调度提醒”卡片，只保留后台服务与定时任务，并支持直接跳转到对应页面。
