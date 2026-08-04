@@ -93,6 +93,37 @@ const (
 	maxUpdateChecksumBytes = 1 << 20
 )
 
+// retryHTTPRequest retries an HTTP operation with exponential backoff.
+// It attempts up to 3 times with delays of 1s, 2s between attempts.
+func retryHTTPRequest(ctx context.Context, operation string, fn func() error) error {
+	const maxAttempts = 3
+	var lastErr error
+	
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		lastErr = fn()
+		if lastErr == nil {
+			return nil
+		}
+		
+		// Don't retry on context cancellation
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %w", operation, ctx.Err())
+		}
+		
+		if attempt < maxAttempts {
+			delay := time.Duration(attempt) * time.Second
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return fmt.Errorf("%s: %w", operation, ctx.Err())
+			}
+		}
+	}
+	
+	return fmt.Errorf("%s failed after %d attempts: %w", operation, maxAttempts, lastErr)
+}
+
+
 type BuildInfo struct {
 	Version                 string `json:"version"`
 	Commit                  string `json:"commit"`
@@ -966,19 +997,10 @@ exec "$OLD" "$@"
 }
 
 func fetchLatest(ctx context.Context) (rel *Release, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoLatestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create github release request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "ga-admin-updater")
-	resp, err := updateHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close github release response: %w", closeErr)
+	err = retryHTTPRequest(ctx, "fetch latest release", func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoLatestURL, nil)
+		if err != nil {
+			return fmt.Errorf("create github release request: %w", err)
 		}
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

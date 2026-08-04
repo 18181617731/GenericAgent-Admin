@@ -1526,3 +1526,46 @@ func TestNormalizeStatusAfterRestartLeavesCurrentProcessRestarting(t *testing.T)
 		t.Fatalf("current process restarting status should remain running, got %+v", got)
 	}
 }
+
+// TestCheckRealNetwork verifies the timeout fix with real GitHub API.
+// Skip in CI to avoid flakiness; run manually with: go test -v -run TestCheckRealNetwork
+func TestCheckRealNetwork(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real network test in short mode")
+	}
+	
+	// Configure proxy if available
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:7897")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+	
+	SetRepoURL("https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest")
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	
+	t.Log("Fetching real GitHub release metadata with proxy...")
+	start := time.Now()
+	result, err := Check(ctx)
+	elapsed := time.Since(start)
+	
+	if err != nil {
+		t.Fatalf("Check failed after %.1fs: %v", elapsed.Seconds(), err)
+	}
+	
+	t.Logf("✓ Check succeeded in %.1fs", elapsed.Seconds())
+	t.Logf("  Current: %s", result.Current.Version)
+	if result.Latest != nil {
+		t.Logf("  Latest: %s", result.Latest.TagName)
+	}
+	t.Logf("  Update: %v", result.Update)
+	
+	if result.Latest == nil {
+		t.Fatal("Latest release should not be nil")
+	}
+	if result.Latest.TagName == "" {
+		t.Fatal("Latest TagName should not be empty")
+	}
+	if !strings.HasPrefix(result.Latest.TagName, "v") && !strings.HasPrefix(result.Latest.TagName, "0.") {
+		t.Fatalf("Latest version has unexpected format: %s", result.Latest.TagName)
+	}
+}

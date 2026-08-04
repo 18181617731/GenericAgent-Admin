@@ -1,48 +1,43 @@
+<div align="center">
+
 # GenericAgent Admin Go
 
-GenericAgent Admin Go 是 GenericAgent 的桌面级管理面板：Go 后端负责进程、文件、配置、更新和系统集成，React/Vite 前端提供控制台界面，最终可打包为单个 `ga-admin`/`ga-admin.exe` 分发。它的目标不是替代 GenericAgent，而是把本机 GA 的运行状态、任务入口、模型配置、团队协作和桌面辅助能力收拢到一个可维护的管理界面。
+**Desktop Management Panel for GenericAgent**
 
-## 面向普通用户的阅读路径
+*Go backend + React frontend · Single executable · Cross-platform*
 
-- Ordinary-user non-chat quickstart and acceptance matrix: `docs/USER_QUICKSTART.md`.
+<p>
+  <a href="https://github.com/Fwind43/GenericAgent-Admin"><img src="https://img.shields.io/badge/Repository-GenericAgent--Admin-181717?style=flat-square&logo=github" alt="Repository"/></a>
+  <a href="https://github.com/Fwind43/GenericAgent-Admin/releases/latest"><img src="https://img.shields.io/badge/Download-Latest_Release-00A67E?style=flat-square" alt="Latest Release"/></a>
+  <a href="https://github.com/Lsdefine/GenericAgent"><img src="https://img.shields.io/badge/Upstream-GenericAgent-EA4335?style=flat-square" alt="GenericAgent"/></a>
+</p>
 
-如果你只想安装或使用管理面板，建议先读：**能做什么**、**快速开始**、**Linux / 无桌面环境启动**、**配置与私密文件**、**常用验证**、**故障排查**。Goal/Hive、TMWebDriver、发布流程和本地打包属于管理员/维护者能力；它们不影响日常启动、聊天、文件浏览和模型配置。
+**[English](#-english) · [中文](#-中文)**
 
-## 能做什么
+</div>
 
-### 日常用户能力
+> 📌 **Requires:** This admin panel manages local **[GenericAgent](https://github.com/Lsdefine/GenericAgent)** instances. Install GenericAgent first.
 
-- **一键管理 GA 服务**：发现并启动 `reflect/*.py`、`frontends/*app.py`、任务型服务与 Streamlit 前端，查看 stdout/stderr，支持停止单个服务或停止全部服务。
-- **原生 Chat 面板**：复用 GenericAgent 的模型配置与 `cmd/chat_worker.py`，支持流式回复、会话导航、文件/图片上传、复制与多轮对话；聊天流内提供文件改动汇总卡（可整卡折叠、逐文件展开 diff）、子代理运行状态卡与会话世界线（worldline）视图。
+---
 
-### 管理员 / 维护者能力
+<a id="-english"></a>
 
-- **Goal 模式**：通过 `reflect/goal_mode.py` 启动长期目标，设置预算、最大轮次、LLM 编号，查看状态文件、日志路径、运行时长、剩余预算和截断后的输出尾部。
-- **Hive 模式**：管理端使用 GA 官方 Goal/Hive 逻辑；协作看板由 GA 根目录的 `assets/agent_bbs.py` 按需外置启动，Admin 不内置 BBS 服务或 worker 协议。
-- **文件与任务编辑**：在 GA 根目录内安全浏览、搜索、tail、编辑文本文件，并为保存/删除操作生成备份。
-- **模型配置向导**：首次安装无需随包提供私有 `mykey.py`；可在页面填写 API Base、Model、API Key，预览后写回生成 `mykey.py`，草稿保存在 `model_profiles.json`。
-- **TMWebDriver 监控**：检查浏览器自动化环境、`18766` master 端口、Python 依赖和 `tmwd_cdp_bridge` 扩展路径，并提供依赖安装、启动/修复入口。
-- **更新辅助**：支持一键配置/关闭 GitHub `insteadOf` 镜像，网络受限时可配合自更新、源码拉取和发布流程使用。
-- **Windows 桌面集成**：托盘菜单、开机自启、桌面宠物、窗口显示/隐藏和常用动作触发。
-- **自更新能力**：展示构建版本、提交与时间；按 GitHub Release 资产约定下载 `ga-admin-<tag>-<goos>-<goarch>.zip` 与 `.sha256` 进行更新。
+## 🌟 Overview
 
-- **界面体验**：支持浅色/深色主题切换（顶栏开关，偏好持久化到 `localStorage`，并跟随系统 `prefers-color-scheme`）；按路由/页面做代码分割并提供骨架屏加载反馈；侧边导航与头部补充 `aria-current`/`aria-pressed`/`role=status` 等无障碍语义。
+**GenericAgent Admin Go** is a desktop management panel for GenericAgent. A Go backend handles processes, files, configuration, updates, and system integration, while a React/Vite frontend provides a control console. It packages into a single `ga-admin` / `ga-admin.exe` executable.
 
-## 界面模块
+The goal is not to replace GenericAgent, but to consolidate local GA runtime state, task entry points, model configuration, team collaboration, and desktop assistance into a maintainable UI.
 
-| 模块 | 说明 |
-| --- | --- |
-| 总览 | 运行状态、风险摘要、最近报告和 TMWebDriver 状态。 |
-| Chat | GA 原生聊天界面，支持流式输出、上传、复制、会话导航与 worker 调用。 |
-| 文件 | 限定在 GA 根目录内的文本文件浏览、搜索、tail、编辑和备份保存。 |
-| 任务 | 普通任务、批处理入口、任务型服务、`sche_tasks` 定时任务与服务生命周期管理。 |
-| Hive 模式 | 复用 GA 官方 Goal/Hive 流程；如需多 worker 协作，请在 GA 根目录外置启动 `assets/agent_bbs.py`，Admin 不提供内置 BBS。 |
-| 记忆 / 通道 / 自主进化 / 定时 | 面向 GenericAgent 现有目录与脚本的管理入口。 |
-| Goal 模式 | 长目标启动、停止、日志查看、状态追踪和输出读取上限控制。 |
-| 模型 | `mykey.py` 首次生成、模型草稿、API Key 保存与导出。 |
-| 配置 / 日志 | GA 根目录、端口、缓冲行数、Python 路径、服务日志等基础配置。 |
+### 📑 Table of Contents
 
-## 目录约定
+- [Key Features](#-key-features)
+- [Quick Start](#-quick-start)
+- [Core Capabilities](#-core-capabilities)
+- [Development](#-development)
+- [Release](#-release)
+- [Documentation](#-documentation)
+- [Upstream](#-upstream)
+- [License](#-license)
 
 ```text
 GenericAgent-Admin-Go/
@@ -59,7 +54,7 @@ GenericAgent-Admin-Go/
 └─ dist/                           # 本地构建输出，不提交
 ```
 
-## 快速开始
+### For Human Users
 
 ### Windows 一键启动
 
@@ -74,58 +69,98 @@ run.bat
 
 程序启动后默认打开 `http://127.0.0.1:8787`。如果当前电脑已连接 Tailscale，程序还会自动发现活动网卡上属于 `100.64.0.0/10` 的 Tailscale IPv4，并同时监听 `http://<Tailscale-IP>:8787`；不需要硬编码某台电脑的地址，也不会因此监听普通 WLAN/LAN 地址。首次使用在页面中选择已有 GenericAgent 根目录即可，不需要预先创建 `config.local.json`。
 
-### 1. 准备 GenericAgent
+```
+ga-admin-windows-amd64.zip
+ga-admin-linux-amd64.tar.gz
+ga-admin-darwin-amd64.tar.gz  (macOS Intel)
+ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
+```
 
-管理端默认控制本机已有 GenericAgent 目录。第一次启动后可以在页面配置 GA 根目录；也可以先创建 `config.local.json`：
+Extract and create `config.local.json` in the same directory:
 
 ```json
 {
-  "ga_root": "C:/path/to/GenericAgent",
+  "ga_root": "E:/Work/GenericAgent",
   "host": "127.0.0.1",
-  "port": 8787,
-  "log_tail_lines": 200,
-  "buffer_lines": 1000,
-  "python_path": "",
-  "service_autostart": []
+  "port": 8787
 }
 ```
 
-`python_path` 留空时会自动查找 GA 根目录下的虚拟环境解释器（Windows: `.venv/Scripts/python.exe`、`venv/Scripts/python.exe`；Linux/macOS: `.venv/bin/python`、`venv/bin/python`）。未找到虚拟环境时，Windows 回退到 `python`，Linux/macOS 回退到 `python3`；如果 GA 有固定虚拟环境，建议填写该解释器路径。
+**Windows:** Double-click `ga-admin.exe` or run `ga-admin.exe --no-browser` for headless mode.  
+**Linux/macOS:** Run `./ga-admin` or `./ga-admin --no-browser`.
 
-### 2. 安装前端依赖
+Open `http://127.0.0.1:8787` in your browser.
 
-```bat
-cd /d C:\path\to\GenericAgent-Admin-Go
-npm.cmd --prefix web install
-```
+#### Method 2 — Local Development Build
 
-### 3. 开发运行
-
-```bat
-npm.cmd --prefix web run build
+```bash
+cd GenericAgent-Admin-Go
+npm --prefix web install
+npm --prefix web run build
 go run .
 ```
 
-打开：
+Open `http://127.0.0.1:8787`.
 
-```text
-http://127.0.0.1:8787
+---
+
+## 🎯 Core Capabilities
+
+### For Daily Users
+
+- **Service Management:** Start/stop worker, monitor logs, check process status
+- **Chat Interface:** `/chat` entrypoint with streaming, usage tracking, model switching
+
+### For Administrators
+
+- **Goal Mode:** Persistent goals (JSON), BBS team board, sync UI
+- **File Operations:** Browse GA root, edit skills/SOPs/configs, create/rename/delete
+- **Models:** Add/test/remove model profiles, wizard UI
+- **Updates:** Check GitHub Releases, download & apply platform-specific packages
+
+### For Developers
+
+- **Frontend:** React 18 + Vite 6, code-split routes, theme toggle, accessibility
+- **Backend:** Go 1.22+, embedded web assets (`//go:embed web/dist`), subprocess lifecycle
+- **Build:** Single-executable distribution, GitHub Actions CI/CD for 6 platforms
+- **Test:** `npm run verify` (lint + test:lib + build), `go test ./...`
+
+---
+
+## 🛠️ Development
+
+### CLI Flags
+
+- `--headless` / `--server-only` / `--no-browser`: Run without opening browser
+- `--app-root <path>`: Override GA root directory (default: from `config.local.json`)
+- `--port <port>`: Override HTTP port (default: 8787)
+
+### Environment Variables
+
+- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`: HTTP Basic Auth for non-localhost access
+
+### Configuration
+
+Place `config.local.json` in the executable directory:
+
+```json
+{
+  "ga_root": "/path/to/GenericAgent",
+  "host": "127.0.0.1",
+  "port": 8787,
+  "service_autostart": ["worker"],
+  "slash_commands": [
+    {"cmd": "/plan", "desc": "Call plan_worker.py for multi-step planning"}
+  ]
+}
 ```
 
 同一 tailnet 中的其他设备可使用启动日志显示的 Tailscale URL 访问，例如 `http://100.x.y.z:8787`。如果本机或 tailnet ACL 阻止入站连接，需要为该端口放行 Tailscale 私有网络流量；不要将管理端口直接暴露到公网。
 
 前端开发时也可以在 `web/` 下运行 Vite dev server；正式 Go 程序使用 `web/dist` 的 embed 产物。
 
-## Linux / 无桌面环境启动
+The repository ignores:
 
-GA Admin 支持 Linux server-only/headless 运行。Linux 下如果没有检测到 `DISPLAY`、`WAYLAND_DISPLAY` 或 `MIR_SOCKET`，程序会自动进入 headless 模式：只启动 Go HTTP 服务，不打开浏览器、不启动系统托盘。
-
-也可以显式指定：
-
-```bash
-./ga-admin --headless
-# 或
-GA_ADMIN_HEADLESS=1 ./ga-admin
 ```
 
 如果只是有桌面但不想自动打开浏览器：
@@ -224,69 +259,36 @@ README.txt            # 简短运行说明
 
 ```text
 config.local.json
+*.local.json
 model_profiles.json
 dist/
 *.exe
 web/node_modules/
+/temp/
+/release/
+*.pid
+*.log
 ```
 
-请不要把真实 API Key、Token 或本机绝对私密路径提交到仓库。
+### Validation Before Commit
 
-## Goal 模式细节
+Run at least:
 
-Goal 模式由后端调用：
-
-```text
-python agentmain.py --reflect reflect/goal_mode.py
-```
-
-启动时会注入：
-
-- `GOAL_STATE=temp/goal_admin_<id>.json`
-- stdout/stderr 追加到 `temp/goal_admin_<id>.log`
-
-输出读取接口会返回 `truncated`、`bytes_returned`、`total_bytes`、`requested_bytes`、`max_bytes`、`default_bytes_used`、`max_bytes_capped` 等字段，用于区分默认读取、用户指定读取、截断和 1MiB 安全上限。
-
-## Hive / 外置协作
-
-GA Admin 不内置 BBS 服务，也不暴露 `/api/bbs/*` 或根路径 worker 兼容接口。多 worker 协作请使用 GA 官方 Hive 流程：在 GA 根目录按需启动 `assets/agent_bbs.py --cwd temp/hive_<目标短名> --port <PORT> --key <BOARD_KEY>`，通过 `/readme?key=<BOARD_KEY>` 获取协议，并用 `agentmain.py --reflect reflect/agent_team_worker.py --base_url http://127.0.0.1:<PORT> --board_key <BOARD_KEY>` 启动 worker。
-
-## TMWebDriver 监控
-
-首页会调用 `/api/tmwebdriver/status` 检查：
-
-- 浏览器自动化 master 端口 `18766` 是否监听。
-- `requests`、`bottle`、`simple-websocket-server` 等 Python 依赖是否可 import，并展示可复制的安装命令。
-- `tmwd_cdp_bridge` 扩展路径是否存在。
-- 当前环境缺口和建议修复动作。
-
-当依赖缺失时，可通过页面“安装依赖”按钮或 `/api/tmwebdriver/install-deps` 使用清华 PyPI 镜像安装 TMWebDriver 运行依赖；当 master 端口未监听时，可通过页面按钮或 `/api/tmwebdriver/repair` 启动 master。上述写入/执行类接口均需要危险确认，修复接口只负责启动 master，不会停止浏览器进程。
-
-## GitHub 镜像 / 更新辅助
-
-总览页提供 GitHub 镜像开关，可通过 `/api/ga/git-mirror` 写入或移除全局 git `url.<mirror>.insteadOf https://github.com/` 配置。默认镜像前缀为 `https://gh-proxy.com/https://github.com/`，用于网络受限时辅助源码同步、依赖拉取和 Release 更新。
-
-
-## 常用验证
-
-提交前建议至少执行：
-
-```bat
-npm.cmd --prefix web test -- --run
-npm.cmd --prefix web run build
-gofmt -w main.go tray.go tray_linux.go internal
+```bash
+npm --prefix web run verify    # lint + test:lib + build
 go test ./...
 go build ./...
 git diff --check
 ```
 
-说明：
+**Notes:**
+- `npm run verify` runs `lint + test:lib + build` (skips `test:ui`)
+- `web/src/lib/*.test.mjs` are auto-discovered by `npm run test:lib`
+- Test files do not need `package.json` registration
 
-- `npm.cmd --prefix web run build` 会刷新 `web/dist`，Go 后端通过 `embed` 打包该目录。
-- `go test ./...` 覆盖 API、配置、进程管理、Goal、文件安全、版本更新等后端测试。
-- `git diff --check` 用于拦截尾随空格和补丁格式问题。
+---
 
-## 发布流程
+## 📦 Release
 
 1. 确认工作区只包含本次要发布的改动。
 2. 执行前端测试、前端构建、Go 测试、Go 构建和 `git diff --check`。
@@ -305,7 +307,14 @@ git diff --check
 - 发布提交只包含应用代码、构建脚本、文档、测试和必要资源，不包含本地验证产物、临时备份或排查文件。
 - 发布目标分支为 `main`，目标 tag 为 `v1.0.0`。
 
-## 故障排查
+```
+ga-admin-windows-amd64.zip
+ga-admin-windows-arm64.zip
+ga-admin-linux-amd64.tar.gz
+ga-admin-linux-arm64.tar.gz
+ga-admin-darwin-amd64.tar.gz
+ga-admin-darwin-arm64.tar.gz
+```
 
 - 页面打开但功能为空：先检查 `config.local.json` 的 `ga_root` 是否指向真实 GenericAgent 根目录。
 - Chat 无响应：确认 `cmd/chat_worker.py` 与 `cmd/frontends/worldline.py` 在发布包中存在，且 GA Python 环境可 import 所需依赖。
@@ -313,22 +322,255 @@ git diff --check
 - 自更新找不到资产：确认 Release 资产名严格匹配 `ga-admin-<tag>-<goos>-<goarch>.zip`，并带有同名 `.sha256`。
 - TMWebDriver 不就绪：先使用页面“安装依赖”补齐 `requests`、`bottle`、`simple-websocket-server`，再使用“修复/启动”按钮检查 `18766` 端口和扩展目录。
 
-## 安全边界
+---
 
-- 写入、删除、停止进程、保存模型密钥等危险操作要求前端显式确认，后端接口使用 `X-GA-Confirm: dangerous` 保护。
-- 文件操作限制在配置的 GA 根目录内，避免越权访问本机其他目录。
-- `mykey.py`、真实 API Key、Token、Cookie 等私密文件不应提交、不应随发布包分发。
-- 管理端适合在本机或可信局域网使用；如需公网暴露，应额外增加认证、TLS 和访问控制。
+## 📄 Documentation
 
-## Local packaging checklist
+- User-focused quickstart: [`docs/USER_QUICKSTART.md`](docs/USER_QUICKSTART.md) (Chinese)
+- Knowledge base: [`docs/knowledge_base.md`](docs/knowledge_base.md)
+- Developer experience: [`docs/secondary_dev_experience.md`](docs/secondary_dev_experience.md)
 
-Before creating a local Windows package or a release asset:
+---
 
 - Run the normal validation gates first; `build.bat` only installs/builds the web app and compiles `dist\ga-admin.exe`, it is not a substitute for tests.
 - Keep `cmd\chat_worker.py` and `cmd\frontends\worldline.py` beside the executable in packaged builds; the worker also embeds a compressed compatibility copy for upgrades from legacy installers.
 - Confirm local-only secrets such as `config.local.json`, `mykey.py`, `.env`, and `*.key` files are not present in the working tree, `dist`, or release assets.
 - After an approved publication, verify the update flow from the Admin UI so the asset name and sha256 sidecar are both discoverable.
 
-## License
+This project manages local **[GenericAgent](https://github.com/Lsdefine/GenericAgent)** instances. GA Admin requires a GenericAgent installation to function.
 
-本项目随 GenericAgent 生态内部使用；如需对外分发，请先确认上游 GenericAgent 与依赖项目的许可要求。
+---
+
+## 📄 License
+
+This project is used internally within the GenericAgent ecosystem. For external distribution, confirm upstream GenericAgent and dependency project license requirements first.
+
+---
+
+<a id="-中文"></a>
+
+## 🌟 项目简介
+
+**GenericAgent Admin Go** 是 GenericAgent 的桌面管理面板。Go 后端负责进程、文件、配置、更新和系统集成，React/Vite 前端提供控制台界面。打包为单个 `ga-admin` / `ga-admin.exe` 可执行文件。
+
+目标不是替代 GenericAgent，而是将本地 GA 运行状态、任务入口、模型配置、团队协作和桌面辅助整合到一个可维护的 UI 中。
+
+### 📑 目录
+
+- [核心特性](#-核心特性)
+- [快速开始](#-快速开始)
+- [核心功能](#-核心功能)
+- [开发](#-开发)
+- [发布](#-发布)
+- [文档](#-文档)
+- [上游项目](#-上游项目)
+- [许可](#-许可)
+
+---
+
+## 📋 核心特性
+
+| 特性 | 说明 |
+| :--- | :--- |
+| 📊 **仪表盘** | 服务状态概览、最近活动、系统统计 |
+| 💬 **原生聊天** | `/chat` 入口的聊天界面，流式响应，用量跟踪，模型切换 |
+| 📝 **文件编辑器** | 浏览 GA 根目录，编辑技能/SOP/配置，语法高亮，文件树 |
+| 📋 **任务管理** | 服务（启动/停止 worker）、计划任务、Goal 运行、自主报告 |
+| 🧠 **记忆浏览器** | 查看/搜索全局和项目记忆 |
+| 📡 **通道监控** | 活动通道、消息日志 |
+| 🤖 **自主模式** | 后台任务执行 |
+| 📈 **用量跟踪** | 每个模型的 Token/成本统计 |
+| 🎯 **Goal 模式** | 启动/停止长时间运行的目标，查看日志/状态 |
+| ⚙️ **模型配置** | 添加模型的向导，测试端点，管理配置文件 |
+| 🔧 **设置** | 应用配置、认证、ga_root 路径 |
+| 📄 **日志查看器** | 尾随 worker 日志，搜索历史 |
+
+---
+
+## 📈 Star 历史
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Fwind43/GenericAgent-Admin&type=Date)](https://star-history.com/#Fwind43/GenericAgent-Admin&Date)
+
+---
+
+## 🚀 快速开始
+
+> ⚠️ **前置要求：** Python 3.11+（用于 GenericAgent），Node.js 18+ / Go 1.22+（用于开发构建）
+
+### 给 LLM Agent 看的
+
+获取安装指南并照做：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fwind43/GenericAgent-Admin/main/README.md
+```
+
+### 给人类用户看的
+
+#### 方法一 — 下载发布包 *（推荐）*
+
+从 [GitHub Releases](https://github.com/Fwind43/GenericAgent-Admin/releases/latest) 下载平台特定包：
+
+```
+ga-admin-windows-amd64.zip
+ga-admin-linux-amd64.tar.gz
+ga-admin-darwin-amd64.tar.gz  (macOS Intel)
+ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
+```
+
+解压后在同目录创建 `config.local.json`：
+
+```json
+{
+  "ga_root": "E:/Work/GenericAgent",
+  "host": "127.0.0.1",
+  "port": 8787
+}
+```
+
+**Windows：** 双击 `ga-admin.exe` 或运行 `ga-admin.exe --no-browser`（无头模式）。  
+**Linux/macOS：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`。
+
+浏览器打开 `http://127.0.0.1:8787`。
+
+#### 方法二 — 本地开发构建
+
+```bash
+cd GenericAgent-Admin-Go
+npm --prefix web install
+npm --prefix web run build
+go run .
+```
+
+浏览器打开 `http://127.0.0.1:8787`。
+
+---
+
+## 🎯 核心功能
+
+### 面向日常用户
+
+- **服务管理：** 启动/停止 worker，监控日志，检查进程状态
+- **聊天界面：** `/chat` 入口，流式响应，用量跟踪，模型切换
+
+### 面向管理员
+
+- **Goal 模式：** 持久化目标（JSON），BBS 团队看板，同步 UI
+- **文件操作：** 浏览 GA 根目录，编辑技能/SOP/配置，创建/重命名/删除
+- **模型管理：** 添加/测试/移除模型配置文件，向导 UI
+- **更新：** 检查 GitHub Releases，下载并应用平台特定包
+
+### 面向开发者
+
+- **前端：** React 18 + Vite 6，路由代码分割，主题切换，无障碍
+- **后端：** Go 1.22+，嵌入 web 资源（`//go:embed web/dist`），子进程生命周期
+- **构建：** 单可执行文件分发，GitHub Actions CI/CD 支持 6 平台
+- **测试：** `npm run verify`（lint + test:lib + build），`go test ./...`
+
+---
+
+## 🛠️ 开发
+
+### CLI 参数
+
+- `--headless` / `--server-only` / `--no-browser`：无浏览器模式运行
+- `--app-root <路径>`：覆盖 GA 根目录（默认从 `config.local.json` 读取）
+- `--port <端口>`：覆盖 HTTP 端口（默认 8787）
+
+### 环境变量
+
+- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`：非 localhost 访问的 HTTP Basic Auth
+
+### 配置
+
+在可执行文件目录放置 `config.local.json`：
+
+```json
+{
+  "ga_root": "/path/to/GenericAgent",
+  "host": "127.0.0.1",
+  "port": 8787,
+  "service_autostart": ["worker"],
+  "slash_commands": [
+    {"cmd": "/plan", "desc": "调用 plan_worker.py 进行多步规划"}
+  ]
+}
+```
+
+参见 `config.example.json` 获取所有可用选项。
+
+仓库忽略：
+
+```
+config.local.json
+*.local.json
+model_profiles.json
+dist/
+*.exe
+web/node_modules/
+/temp/
+/release/
+*.pid
+*.log
+```
+
+### 提交前验证
+
+至少运行：
+
+```bash
+npm --prefix web run verify    # lint + test:lib + build
+go test ./...
+go build ./...
+git diff --check
+```
+
+**注意：**
+- `npm run verify` 运行 `lint + test:lib + build`（跳过 `test:ui`）
+- `web/src/lib/*.test.mjs` 由 `npm run test:lib` 自动发现
+- 测试文件无需 `package.json` 注册
+
+---
+
+## 📦 发布
+
+1. **验证清洁状态：** 无未提交更改，所有测试通过
+2. **运行验证：** `npm --prefix web run verify && go test ./...`
+3. **提交并打标签：** `git commit -am "release: v0.x.x"` → `git tag v0.x.x`
+4. **推送：** `git push origin main --tags`
+
+GitHub Actions 将构建 6 个平台包并附加到发布：
+
+```
+ga-admin-windows-amd64.zip
+ga-admin-windows-arm64.zip
+ga-admin-linux-amd64.tar.gz
+ga-admin-linux-arm64.tar.gz
+ga-admin-darwin-amd64.tar.gz
+ga-admin-darwin-arm64.tar.gz
+```
+
+每个包包含：
+- 平台特定可执行文件（`ga-admin` / `ga-admin.exe`）
+- `config.example.json` 模板
+- 版本元数据（构建时通过 `-ldflags` 注入）
+
+---
+
+## 📄 文档
+
+- 用户快速开始：[`docs/USER_QUICKSTART.md`](docs/USER_QUICKSTART.md)（中文）
+- 知识库：[`docs/knowledge_base.md`](docs/knowledge_base.md)
+- 二次开发体验：[`docs/secondary_dev_experience.md`](docs/secondary_dev_experience.md)
+
+---
+
+## 🔗 上游项目
+
+本项目管理本地 **[GenericAgent](https://github.com/Lsdefine/GenericAgent)** 实例。GA Admin 需要 GenericAgent 安装才能运行。
+
+---
+
+## 📄 许可
+
+本项目在 GenericAgent 生态系统内部使用。如需外部分发，请先确认上游 GenericAgent 及依赖项目的许可要求。
