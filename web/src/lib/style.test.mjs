@@ -113,3 +113,28 @@ test('approval review status separates unavailable models from rule-only screeni
   assert.match(css, /\.autonomous-approval-review-meta\s*\{[^}]*display\s*:\s*flex/i)
   assert.match(css, /\.autonomous-approval-reason\s*\{[^}]*border-left\s*:\s*3px/i)
 })
+
+test('chat context and worldline buttons inherit every theme palette', () => {
+  const base = ruleBodies('.oa-context-btn').join('\n')
+  const badge = ruleBodies('.oa-context-btn span').join('\n')
+  const hover = ruleBodies('.oa-context-btn:hover:not(:disabled)').join('\n')
+  const open = ruleBodies('.oa-context-btn.is-open').join('\n')
+  const openBadge = ruleBodies('.oa-context-btn.is-open span').join('\n')
+  const disabled = ruleBodies('.oa-context-btn:disabled').join('\n')
+
+  assert.match(base, /background\s*:\s*var\(--oa-panel\)/i)
+  assert.match(base, /border\s*:\s*1px\s+solid\s+var\(--oa-line-strong\)/i)
+  assert.match(base, /color\s*:\s*var\(--oa-text\)/i)
+  assert.match(badge, /background\s*:\s*var\(--oa-hover\)/i)
+  assert.match(badge, /color\s*:\s*var\(--oa-muted\)/i)
+  assert.match(hover, /background\s*:\s*var\(--oa-hover\)/i)
+  assert.match(open, /background\s*:\s*var\(--oa-text\)/i)
+  assert.match(open, /color\s*:\s*var\(--oa-panel\)/i)
+  assert.match(openBadge, /background\s*:\s*var\(--oa-panel\)/i)
+  assert.match(openBadge, /color\s*:\s*var\(--oa-text\)/i)
+  assert.match(disabled, /opacity\s*:/i)
+
+  const componentRules = [base, badge, hover, open, openBadge, disabled].join('\n')
+  assert.doesNotMatch(componentRules, /(?:#(?:000|111|fff)(?:fff)?\b|var\(--(?:d-|n-ffffff|i-111111|i-222222))/i)
+  assert.doesNotMatch(css, /html\[data-color-scheme="dark"\][^{]*\.oa-context-btn/i)
+})

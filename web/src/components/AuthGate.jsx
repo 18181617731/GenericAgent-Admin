@@ -20,6 +20,7 @@ const copy = {
     submitSetup: '设置密码',
     submitChange: '设置新密码',
     note: '如果您从其他设备连接，更新后请使用新密码重新认证。',
+    language: '\u8bed\u8a00',
     requestFailed: '认证检查失败',
     updateFailed: '密码更新失败',
     errors: {
@@ -49,6 +50,7 @@ const copy = {
     submitSetup: 'Set password',
     submitChange: 'Set new password',
     note: 'If you connected from another device, authenticate again with the new password after this update.',
+    language: 'Language',
     requestFailed: 'Authentication check failed',
     updateFailed: 'Password update failed',
     errors: {
@@ -70,7 +72,7 @@ async function readJSON(response) {
   }
 }
 
-export function AuthGate({ children, lang = 'en', theme = 'warm', onThemeChange }) {
+export function AuthGate({ children, lang = 'en', theme = 'warm', onLanguageChange, onThemeChange }) {
   const text = copy[lang] || copy.en
   const [state, setState] = useState({ loading: true, mustChange: false, initialized: true, username: 'admin', error: '' })
   const [currentPassword, setCurrentPassword] = useState('')
@@ -135,7 +137,13 @@ export function AuthGate({ children, lang = 'en', theme = 'warm', onThemeChange 
   return (
     <main className="auth-gate">
       <section className="auth-card" aria-labelledby="auth-title">
-        <div className="auth-toolbar"><ThemePicker value={theme} onChange={onThemeChange} lang={lang} variant="compact" /></div>
+        <div className="auth-toolbar">
+          <div className="auth-language" role="group" aria-label={text.language}>
+            <button type="button" aria-pressed={lang === 'zh'} onClick={() => onLanguageChange?.('zh')}>中</button>
+            <button type="button" aria-pressed={lang === 'en'} onClick={() => onLanguageChange?.('en')}>EN</button>
+          </div>
+          <ThemePicker value={theme} onChange={onThemeChange} lang={lang} variant="compact" />
+        </div>
         <p className="auth-kicker">{firstSetup ? text.kickerSetup : text.kickerChange}</p>
         <h1 id="auth-title">{firstSetup ? text.titleSetup : text.titleChange}</h1>
         <p className="auth-copy">{firstSetup ? text.introSetup : text.introChange}</p>

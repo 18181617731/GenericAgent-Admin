@@ -6,7 +6,7 @@ import enUS from 'antd/locale/en_US'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
-import { getInitialTheme, getTheme, isThemeId } from './themes'
+import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
 
 const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
 const Root = lazy(() => (isChat ? import('./ChatApp.jsx') : import('./App.jsx')))
@@ -26,6 +26,19 @@ function LocalizedRoot() {
     window.addEventListener('ga-admin-theme-change', onThemeChange)
     return () => window.removeEventListener('ga-admin-theme-change', onThemeChange)
   }, [])
+  useEffect(() => {
+    const activeTheme = applyThemeToDocument(colorMode)
+    localStorage.setItem('ga-admin-theme', activeTheme.id)
+  }, [colorMode])
+  useEffect(() => {
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
+  }, [lang])
+  const chooseLanguage = nextLanguage => {
+    const activeLanguage = nextLanguage === 'en' ? 'en' : 'zh'
+    localStorage.setItem('ga-admin-lang-explicit', '1')
+    localStorage.setItem('ga-admin-lang', activeLanguage)
+    setLang(activeLanguage)
+  }
   const loading = lang === 'en' ? 'Loading interface…' : '正在加载界面…'
   const activeTheme = getTheme(colorMode)
   const algorithm = antdTheme[`${activeTheme.antdAlgorithm}Algorithm`] || antdTheme.defaultAlgorithm
@@ -39,7 +52,7 @@ function LocalizedRoot() {
     },
   }}>
     <ErrorBoundary>
-      <AuthGate lang={lang} theme={colorMode} onThemeChange={setColorMode}>
+      <AuthGate lang={lang} theme={colorMode} onLanguageChange={chooseLanguage} onThemeChange={setColorMode}>
         <Suspense fallback={<RouteFallback label={loading} />}>
           <Root />
         </Suspense>
