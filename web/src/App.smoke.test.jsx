@@ -1383,6 +1383,20 @@ describe('operator shell feedback', () => {
     expect(files.disabled).toBe(false)
   })
 
+  test('overview hides duplicate cards and keeps actionable summary cards', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async url => shellPayload(url))
+    render(<App />)
+
+    const scheduledCard = await screen.findByRole('button', { name: /定时任务:/ })
+    expect(document.querySelectorAll('.overview-stats .stat-link')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: /服务控制:/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /调度提醒:/ })).toBeNull()
+    expect(scheduledCard.className).toContain('stat-link')
+    fireEvent.click(scheduledCard)
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
+  })
+
   test('hides an applied update status without repeatedly checking GitHub', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async url => {

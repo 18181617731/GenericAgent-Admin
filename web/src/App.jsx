@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bot, Brain, CalendarClock, CheckCircle2, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
+import { Activity, BarChart3, Bot, Brain, CalendarClock, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
@@ -167,6 +167,7 @@ const OverviewPage = ({
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
   updateGASource, autostart, toggleAutostart, root, overview, gitSyncView,
   repairGARuntime, runtimeRepairing, runtimeRepairResult, onServiceStart, onServiceStop, onServiceLogs, onServiceAutostart,
+  onNavigate, onNavigateTaskSubTab,
 }) => {
   const text = t.overview
   const versionMessage = versionStatus?.error || (versionStatus?.stage === 'queued'
@@ -176,10 +177,8 @@ const OverviewPage = ({
 
   return <section className="overview-page">
     <div className="stats overview-stats">
-      <Stat label={text.serviceControl} value={overview.managedServices ? text.availableCount(overview.managedServices) : text.notLoaded} detail={overview.managedServices ? text.serviceControlHelp : text.loadingServices} icon={<Server/>}/>
-      <Stat label={text.backgroundServices} value={overview.runningServices ? text.runningCount(overview.runningServices) : text.allIdle} detail={overview.runningServices ? text.runningHelp : text.noBackgroundServices} tone={overview.runningServices ? 'ok' : ''} icon={<Activity/>}/>
-      <Stat label={text.scheduledTasks} value={overview.enabledTasks ? text.enabledCount(overview.enabledTasks) : text.noneEnabled} detail={overview.taskCount ? text.totalTasks(overview.taskCount) : text.createTaskHelp} tone={overview.enabledTasks ? 'ok' : ''} icon={<CalendarClock/>}/>
-      <Stat label={text.scheduleAlerts} value={overview.taskErrors ? text.errorCount(overview.taskErrors) : (overview.overdueTasks ? text.overdueCount(overview.overdueTasks) : text.nothingPending)} detail={overview.taskErrors || overview.overdueTasks ? text.reviewTasks : text.scheduleHealthy} tone={overview.taskErrors || overview.overdueTasks ? 'warn' : 'ok'} icon={<CheckCircle2/>}/>
+      <Stat label={text.backgroundServices} value={overview.runningServices ? text.runningCount(overview.runningServices) : text.allIdle} detail={overview.runningServices ? text.runningHelp : text.noBackgroundServices} tone={overview.runningServices ? 'ok' : ''} icon={<Activity/>} onClick={() => onNavigate?.('logs')} title={text.cardLinks.backgroundServices}/>
+      <Stat label={text.scheduledTasks} value={overview.enabledTasks ? text.enabledCount(overview.enabledTasks) : text.noneEnabled} detail={overview.taskCount ? text.totalTasks(overview.taskCount) : text.createTaskHelp} tone={overview.enabledTasks ? 'ok' : ''} icon={<CalendarClock/>} onClick={() => onNavigateTaskSubTab?.('scheduled')} title={text.cardLinks.scheduledTasks}/>
     </div>
 
     <ObservabilityCard
@@ -1181,6 +1180,7 @@ export default function App() {
     if (!TASK_SUB_TABS.includes(nextSubTab)) return
     dismissMessage()
     pushRoute('tasks', nextSubTab)
+    setTab('tasks')
     setTaskSubTab(nextSubTab)
   }
 
@@ -1259,6 +1259,8 @@ export default function App() {
     onServiceStop={name=>serviceAction(name, 'stop')}
     onServiceLogs={viewServiceLogs}
     onServiceAutostart={toggleServiceAutostart}
+    onNavigate={navigateTo}
+    onNavigateTaskSubTab={navigateTaskSubTab}
   />
 
   return <>
@@ -1281,7 +1283,7 @@ export default function App() {
       <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
     </aside>
-    <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+    <main className="main"><header className="app-page-header"><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}

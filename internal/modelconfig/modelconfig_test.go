@@ -48,6 +48,24 @@ func TestProfileAcceptsLegacyStringFakeCCSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestModelConfigAcceptsLegacyFloatLatency(t *testing.T) {
+	var config ModelConfig
+	if err := json.Unmarshal([]byte(`{"model":"legacy-model","availability_latency_ms":1203503.0}`), &config); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if config.AvailabilityLatencyMS != 1203503 {
+		t.Fatalf("AvailabilityLatencyMS = %d, want 1203503", config.AvailabilityLatencyMS)
+	}
+
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if string(encoded) != `{"model":"legacy-model","availability_latency_ms":1203503}` {
+		t.Fatalf("normalized JSON = %s", encoded)
+	}
+}
+
 func TestStoreSaveCreatesRootAndLoadsMaskedSecrets(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing", "models")
 	store := NewStore(root)

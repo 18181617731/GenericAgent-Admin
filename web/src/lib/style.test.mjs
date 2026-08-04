@@ -101,6 +101,7 @@ test('file preview expands into the remaining page height', () => {
 test('overview metrics expose visible and keyboard-friendly navigation affordances', () => {
   const linkRule = ruleBodies('.overview-page .overview-stats .stat-link').join('\n')
   assert.match(linkRule, /cursor\s*:\s*pointer/i)
+  assert.match(css, /\.overview-page \.overview-stats\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,/i)
   assert.match(css, /\.overview-page \.overview-stats \.stat-link-icon\s*\{[^}]*position\s*:\s*absolute/i)
   assert.match(css, /\.app:not\(\.app-tab-chat\) \.app-page-header\s*\{\s*display\s*:\s*none/i)
 })

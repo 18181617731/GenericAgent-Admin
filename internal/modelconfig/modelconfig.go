@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,6 +80,54 @@ type ModelConfig struct {
 	FailoverBaseDelay     *float64               `json:"failover_base_delay,omitempty"`
 	FailoverSpringBack    *int                   `json:"failover_spring_back,omitempty"`
 	Extra                 map[string]interface{} `json:"extra,omitempty"`
+}
+
+func parseLegacyInt64(data []byte) (int64, error) {
+	numericText := strings.TrimSpace(string(data))
+	if numericText == "" || numericText == "null" {
+		return 0, nil
+	}
+	if strings.HasPrefix(numericText, `"`) {
+		var textValue string
+		if err := json.Unmarshal(data, &textValue); err != nil {
+			return 0, err
+		}
+		numericText = strings.TrimSpace(textValue)
+	}
+	if parsed, err := strconv.ParseInt(numericText, 10, 64); err == nil {
+		return parsed, nil
+	}
+	parsedFloat, err := strconv.ParseFloat(numericText, 64)
+	if err != nil || math.IsNaN(parsedFloat) || math.IsInf(parsedFloat, 0) {
+		return 0, fmt.Errorf("invalid integer value %q", numericText)
+	}
+	roundedText := strconv.FormatFloat(math.Round(parsedFloat), 'f', -1, 64)
+	parsed, err := strconv.ParseInt(roundedText, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("integer value out of range %q", numericText)
+	}
+	return parsed, nil
+}
+
+func (config *ModelConfig) UnmarshalJSON(data []byte) error {
+	type modelConfigAlias ModelConfig
+	var payload struct {
+		*modelConfigAlias
+		AvailabilityLatencyMS json.RawMessage `json:"availability_latency_ms"`
+	}
+	payload.modelConfigAlias = (*modelConfigAlias)(config)
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	if len(payload.AvailabilityLatencyMS) == 0 || string(payload.AvailabilityLatencyMS) == "null" {
+		return nil
+	}
+	latency, err := parseLegacyInt64(payload.AvailabilityLatencyMS)
+	if err != nil {
+		return fmt.Errorf("availability_latency_ms: %w", err)
+	}
+	config.AvailabilityLatencyMS = latency
+	return nil
 }
 
 func ModelConfigEnabled(config ModelConfig) bool {
