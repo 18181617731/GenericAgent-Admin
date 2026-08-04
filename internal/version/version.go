@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -44,10 +45,24 @@ func updateHTTPTransport() http.RoundTripper {
 		return &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			ResponseHeaderTimeout: updateResponseHeaderTimeout,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout: 30 * time.Second,
 		}
 	}
 	clone := tr.Clone()
 	clone.ResponseHeaderTimeout = updateResponseHeaderTimeout
+	if clone.DialContext == nil {
+		clone.DialContext = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
+	if clone.TLSHandshakeTimeout == 0 {
+		clone.TLSHandshakeTimeout = 30 * time.Second
+	}
 	return clone
 }
 
@@ -56,6 +71,37 @@ const (
 	maxUpdatePackageBytes  = 256 << 20
 	maxUpdateChecksumBytes = 1 << 20
 )
+
+// retryHTTPRequest retries an HTTP operation with exponential backoff.
+// It attempts up to 3 times with delays of 1s, 2s between attempts.
+func retryHTTPRequest(ctx context.Context, operation string, fn func() error) error {
+	const maxAttempts = 3
+	var lastErr error
+	
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		lastErr = fn()
+		if lastErr == nil {
+			return nil
+		}
+		
+		// Don't retry on context cancellation
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %w", operation, ctx.Err())
+		}
+		
+		if attempt < maxAttempts {
+			delay := time.Duration(attempt) * time.Second
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return fmt.Errorf("%s: %w", operation, ctx.Err())
+			}
+		}
+	}
+	
+	return fmt.Errorf("%s failed after %d attempts: %w", operation, maxAttempts, lastErr)
+}
+
 
 type BuildInfo struct {
 	Version                 string `json:"version"`
@@ -632,40 +678,44 @@ exec "$OLD" "$@"
 }
 
 func fetchLatest(ctx context.Context) (rel *Release, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoLatestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create github release request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "ga-admin-updater")
-	resp, err := updateHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close github release response: %w", closeErr)
+	err = retryHTTPRequest(ctx, "fetch latest release", func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoLatestURL, nil)
+		if err != nil {
+			return fmt.Errorf("create github release request: %w", err)
 		}
-	}()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("github release check failed: %s %s", resp.Status, strings.TrimSpace(string(b)))
-	}
-	var out Release
-	if resp.ContentLength > maxUpdateMetadataBytes {
-		return nil, fmt.Errorf("github release metadata too large: %d bytes exceeds limit %d", resp.ContentLength, maxUpdateMetadataBytes)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxUpdateMetadataBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(b)) > maxUpdateMetadataBytes {
-		return nil, fmt.Errorf("github release metadata too large: exceeds limit %d", maxUpdateMetadataBytes)
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "ga-admin-updater")
+		resp, err := updateHTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("close github release response: %w", closeErr)
+			}
+		}()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+			return fmt.Errorf("github release check failed: %s %s", resp.Status, strings.TrimSpace(string(b)))
+		}
+		var out Release
+		if resp.ContentLength > maxUpdateMetadataBytes {
+			return fmt.Errorf("github release metadata too large: %d bytes exceeds limit %d", resp.ContentLength, maxUpdateMetadataBytes)
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, maxUpdateMetadataBytes+1))
+		if err != nil {
+			return err
+		}
+		if int64(len(b)) > maxUpdateMetadataBytes {
+			return fmt.Errorf("github release metadata too large: exceeds limit %d", maxUpdateMetadataBytes)
+		}
+		if err := json.Unmarshal(b, &out); err != nil {
+			return err
+		}
+		rel = &out
+		return nil
+	})
+	return rel, err
 }
 
 func selectAssets(rel Release) (*Asset, *Asset) {
@@ -714,33 +764,36 @@ func splitVer(s string) [3]int {
 }
 
 func download(ctx context.Context, url, dest string, maxBytes int64) (err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("create download request: %w", err)
-	}
-	resp, err := updateHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close download response: %w", closeErr)
+	err = retryHTTPRequest(ctx, "download "+url, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("create download request: %w", err)
 		}
-	}()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download failed: %s", resp.Status)
-	}
-	if maxBytes > 0 && resp.ContentLength > maxBytes {
-		return fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
-	}
-	r := resp.Body
-	if maxBytes > 0 {
-		r = http.MaxBytesReader(nil, resp.Body, maxBytes)
-	}
-	if err := writeStreamAtomic(dest, r, 0600); err != nil {
-		return fmt.Errorf("write download file: %w", err)
-	}
-	return nil
+		resp, err := updateHTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("close download response: %w", closeErr)
+			}
+		}()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("download failed: %s", resp.Status)
+		}
+		if maxBytes > 0 && resp.ContentLength > maxBytes {
+			return fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
+		}
+		r := resp.Body
+		if maxBytes > 0 {
+			r = http.MaxBytesReader(nil, resp.Body, maxBytes)
+		}
+		if err := writeStreamAtomic(dest, r, 0600); err != nil {
+			return fmt.Errorf("write download file: %w", err)
+		}
+		return nil
+	})
+	return err
 }
 
 func writeStreamAtomic(path string, r io.Reader, perm os.FileMode) (err error) {
