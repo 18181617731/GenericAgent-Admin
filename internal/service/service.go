@@ -37,6 +37,7 @@ type runningProc struct {
 	cmd       *exec.Cmd
 	ret       *int
 	startedAt time.Time
+	stopping  bool
 }
 
 type LogEvent struct {
@@ -54,7 +55,14 @@ type Manager struct {
 	procs           map[string]*runningProc
 	buffers         map[string][]string
 	subscribers     map[string]map[chan LogEvent]struct{}
+	externalPIDs    map[string]int
+	externalPIDsAt  time.Time
 }
+
+const (
+	serviceRestartGrace     = 500 * time.Millisecond
+	externalProcessStateTTL = 2 * time.Second
+)
 
 func NewManager(gaRoot string, bufferLines int) *Manager {
 	return NewManagerWithPython(gaRoot, "", bufferLines)
@@ -71,6 +79,7 @@ func NewManagerWithPython(gaRoot string, effectivePython string, bufferLines int
 		procs:           map[string]*runningProc{},
 		buffers:         map[string][]string{},
 		subscribers:     map[string]map[chan LogEvent]struct{}{},
+		externalPIDs:    map[string]int{},
 	}
 }
 
@@ -79,6 +88,8 @@ func (m *Manager) SetRoot(root string, effectivePython string, bufferLines int) 
 	defer m.mu.Unlock()
 	m.GARoot = root
 	m.EffectivePython = strings.TrimSpace(effectivePython)
+	m.externalPIDs = map[string]int{}
+	m.externalPIDsAt = time.Time{}
 	if bufferLines > 0 {
 		m.BufferLines = bufferLines
 	}
@@ -106,6 +117,26 @@ func (m *Manager) python() string {
 		}
 	}
 	return "python"
+}
+
+func serviceExecutable(executable string) string {
+	if runtime.GOOS != "windows" {
+		return executable
+	}
+	base := strings.ToLower(filepath.Base(executable))
+	if base == "python.exe" || base == "python3.exe" {
+		windowless := filepath.Join(filepath.Dir(executable), "pythonw.exe")
+		if existsFile(windowless) {
+			return windowless
+		}
+		return executable
+	}
+	if base == "python" || base == "python3" {
+		if windowless, err := exec.LookPath(base + "w"); err == nil {
+			return windowless
+		}
+	}
+	return executable
 }
 
 func excluded(name string) bool {
@@ -196,8 +227,16 @@ func (m *Manager) Discover() []ServiceInfo {
 			out = append(out, ServiceInfo{Name: rel, Kind: "frontend", Command: cmd, WorkDir: m.GARoot})
 		}
 	}
+	externalPIDs := m.externalServicePIDs(out)
 	for i := range out {
 		out[i] = m.withState(out[i])
+		if !out[i].Running {
+			if pid := externalPIDs[out[i].Name]; pid > 0 {
+				out[i].Running = true
+				out[i].PID = &pid
+				out[i].ReturnCode = nil
+			}
+		}
 	}
 	return out
 }
@@ -225,6 +264,33 @@ func (m *Manager) withState(s ServiceInfo) ServiceInfo {
 		}
 	}
 	return s
+}
+
+func (m *Manager) externalServicePIDs(services []ServiceInfo) map[string]int {
+	now := time.Now()
+	m.mu.Lock()
+	if !m.externalPIDsAt.IsZero() && now.Sub(m.externalPIDsAt) < externalProcessStateTTL {
+		result := cloneServicePIDs(m.externalPIDs)
+		m.mu.Unlock()
+		return result
+	}
+	m.mu.Unlock()
+
+	scanned := m.scanExternalServicePIDs(services)
+	m.mu.Lock()
+	m.externalPIDs = scanned
+	m.externalPIDsAt = now
+	result := cloneServicePIDs(scanned)
+	m.mu.Unlock()
+	return result
+}
+
+func cloneServicePIDs(source map[string]int) map[string]int {
+	result := make(map[string]int, len(source))
+	for name, pid := range source {
+		result[name] = pid
+	}
+	return result
 }
 
 func (m *Manager) Find(name string) (ServiceInfo, bool) {
@@ -268,6 +334,10 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 	if !SupportsManualLifecycle(s) {
 		return s, ErrWorkflowManaged
 	}
+	s.Running = false
+	s.PID = nil
+	s.ReturnCode = nil
+	s.StartedAt = ""
 	m.mu.Lock()
 	if p, ok := m.procs[name]; ok && p.cmd.Process != nil && p.ret == nil {
 		pid := p.cmd.Process.Pid
@@ -297,9 +367,9 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 		}
 		m.mu.Unlock()
 		// Give singleton locks/ports a short moment to be released before starting the managed instance.
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(serviceRestartGrace)
 	}
-	cmd := exec.Command(s.Command[0], cmdArgs...)
+	cmd := exec.Command(serviceExecutable(s.Command[0]), cmdArgs...)
 	cmd.Dir = m.GARoot
 	hideChildWindow(cmd)
 	cmd.Env = m.serviceEnv(s.Name, params)
@@ -331,6 +401,9 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 		}
 		m.mu.Lock()
 		if p := m.procs[name]; p != nil {
+			if p.stopping {
+				code = 0
+			}
 			p.ret = &code
 		}
 		m.appendLocked(name, fmt.Sprintf("[process exited rc=%d]", code))
@@ -499,32 +572,58 @@ func (m *Manager) Subscribe(name string, lines int) ([]string, <-chan LogEvent, 
 }
 
 func (m *Manager) Stop(name string) error {
-	if _, ok := m.Find(name); !ok {
+	s, ok := m.Find(name)
+	if !ok {
 		return errors.New("service not found")
 	}
 	m.mu.Lock()
 	p := m.procs[name]
-	if p == nil || p.cmd.Process == nil || p.ret != nil {
+	managedPID := 0
+	if p != nil && p.cmd.Process != nil && p.ret == nil {
+		managedPID = p.cmd.Process.Pid
+	}
+	if managedPID <= 0 || !processAlive(managedPID) {
 		m.mu.Unlock()
+		if s.Running {
+			_, err := m.stopConflictingService(s)
+			return err
+		}
 		return nil
 	}
-	pid := p.cmd.Process.Pid
+	pid := managedPID
+	p.stopping = true
 	m.appendLocked(name, fmt.Sprintf("[admin] stopping pid %d", pid))
 	m.mu.Unlock()
 
 	if pid <= 0 {
+		m.mu.Lock()
+		p.stopping = false
+		m.mu.Unlock()
 		return errors.New("invalid process pid")
 	}
 	if !processAlive(pid) {
 		m.mu.Lock()
+		if current := m.procs[name]; current == p {
+			code := 0
+			p.ret = &code
+		}
 		m.appendLocked(name, fmt.Sprintf("[admin] pid %d is already stopped", pid))
 		m.mu.Unlock()
 		return nil
 	}
-	if err := p.cmd.Process.Kill(); err != nil {
+	if err := stopManagedProcess(s.Kind, pid); err != nil {
 		if !processAlive(pid) {
+			m.mu.Lock()
+			if current := m.procs[name]; current == p {
+				code := 0
+				p.ret = &code
+			}
+			m.mu.Unlock()
 			return nil
 		}
+		m.mu.Lock()
+		p.stopping = false
+		m.mu.Unlock()
 		return err
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -532,9 +631,16 @@ func (m *Manager) Stop(name string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if processAlive(pid) {
+		m.mu.Lock()
+		p.stopping = false
+		m.mu.Unlock()
 		return fmt.Errorf("process %d still alive after stop", pid)
 	}
 	m.mu.Lock()
+	if current := m.procs[name]; current == p {
+		code := 0
+		p.ret = &code
+	}
 	m.appendLocked(name, fmt.Sprintf("[admin] stopped pid %d", pid))
 	m.mu.Unlock()
 	return nil

@@ -2,6 +2,17 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.50 - 2026-08-04
+
+### User-facing changes
+- 修复 Windows 服务看护器启动后无法稳定拉起 scheduler/autonomous 的问题，启动前会清理旧看护器及其子进程树，避免端口冲突和重复实例。
+- 服务看护器及其托管服务优先使用 `pythonw.exe` 和无窗口进程标志启动，避免反复弹出终端窗口。
+- 管理端识别看护器实际拉起的外部服务状态，页面状态与 `45762/45763` 端口和真实进程保持一致。
+- 停止看护器时同步停止其托管服务，主动停止记录为正常结束，避免页面显示误导性的失败返回码。
+
+### Validation
+- Passed `go test ./...`, frontend lint, library tests (`232/232`), UI smoke tests (`93/93`), Windows `build.bat`, and live watchdog recovery, stop, duplicate-start, port, and hidden-window checks.
+
 ## v1.0.49 - 2026-08-04
 
 ### User-facing changes
