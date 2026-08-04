@@ -39,27 +39,26 @@ export const filterAutonomousReports = (reports = [], query = '') => {
   return reports.filter(report => `${report?.name || ''} ${report?.path || ''}`.toLocaleLowerCase().includes(needle))
 }
 
-const handledApprovalGroupKeys = ['approved', 'rejected', 'archived']
-
-const handledApprovalGroupKey = item => {
-  const state = String(item?.state || item?.decision || '').trim().toLowerCase()
-  return handledApprovalGroupKeys.includes(state) ? state : 'archived'
-}
-
-export const splitAutonomousApprovals = (items = []) => {
-  const pending = items.filter(item => item?.state === 'pending')
-  const handled = items.filter(item => item?.state !== 'pending')
-  const handledGroups = handledApprovalGroupKeys
-    .map(key => ({ key, items: handled.filter(item => handledApprovalGroupKey(item) === key) }))
-    .filter(group => group.items.length > 0)
-  return { pending, handled, handledGroups }
-}
-
 export const autonomousExecutionState = item => {
   if (item?.execution_state) return item.execution_state
   if (item?.decision === 'approved') return 'queued'
   if (item?.decision === 'rejected') return 'not_applicable'
   return ''
+}
+
+export const autonomousHandledProgress = item => {
+  const state = autonomousExecutionState(item)
+  if (state === 'queued' || state === 'completed' || state === 'report_missing' || state === 'failed' || state === 'not_applicable') return state
+  return item?.decision === 'approved' ? 'queued' : 'unknown'
+}
+
+export const splitAutonomousApprovals = (items = []) => {
+  const pending = items.filter(item => item?.state === 'pending')
+  const handled = items.filter(item => item?.state !== 'pending')
+  const handledGroups = ['queued', 'completed', 'report_missing', 'failed', 'not_applicable', 'unknown']
+    .map(key => ({ key, items: handled.filter(item => autonomousHandledProgress(item) === key) }))
+    .filter(group => group.items.length > 0)
+  return { pending, handled, handledGroups }
 }
 
 const approvalOutcomeValue = item => item?.expected_outcome || item?.expected_result || item?.expected_effect || item?.outcome
