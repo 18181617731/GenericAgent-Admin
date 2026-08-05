@@ -173,6 +173,14 @@ def install_python_runtime(stage: Path, python_version: str):
     
     say(f"Python runtime installed at {py_home}")
     
+    # DEBUG: List python/ contents to verify structure
+    say(f"DEBUG: Contents of {py_home}:")
+    if py_home.exists():
+        for item in sorted(py_home.rglob("*"))[:20]:  # Limit to first 20 items
+            say(f"  {item.relative_to(py_home)}")
+    else:
+        say(f"  ERROR: {py_home} does not exist!")
+    
     # On Unix, create python3 symlink if it doesn't exist (bootstrap.py expects it)
     if platform.system() != "Windows":
         bin_dir = py_home / "bin"
