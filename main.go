@@ -41,6 +41,12 @@ func main() {
 	if err := cfgStore.Load(); err != nil {
 		log.Printf("load config: %v", err)
 	}
+	// Portable bundle auto-init: detect and run bootstrap.py to populate config
+	if !cfgStore.Cfg.BootstrapDone {
+		if err := tryPortableAutoInit(cwd, cfgStore); err != nil {
+			log.Printf("portable auto-init: %v", err)
+		}
+	}
 	if launch.PortSet {
 		cfgStore.Cfg.Port = launch.Port
 	}
@@ -227,4 +233,58 @@ func openBrowser(url string) {
 	}
 	hideChildWindow(cmd)
 	_ = cmd.Start()
+}
+
+// tryPortableAutoInit detects portable bundle environment and runs bootstrap.py
+// to populate config with correct paths. Returns nil if not portable or on success.
+func tryPortableAutoInit(cwd string, store *config.Store) error {
+	// Check for portable bundle markers
+	bootstrapPy := filepath.Join(cwd, "bootstrap.py")
+	gaRoot := filepath.Join(cwd, "GenericAgent")
+	
+	if _, err := os.Stat(bootstrapPy); os.IsNotExist(err) {
+		return nil // Not a portable bundle
+	}
+	if _, err := os.Stat(gaRoot); os.IsNotExist(err) {
+		return nil // Not a portable bundle
+	}
+	
+	log.Printf("portable bundle detected; running bootstrap auto-init")
+	
+	// Find bundled Python interpreter
+	var pythonExe string
+	if runtime.GOOS == "windows" {
+		pythonExe = filepath.Join(cwd, "python", "python.exe")
+	} else {
+		pythonExe = filepath.Join(cwd, "python", "bin", "python3")
+	}
+	
+	if _, err := os.Stat(pythonExe); os.IsNotExist(err) {
+		return fmt.Errorf("bundled python not found at %s", pythonExe)
+	}
+	
+	// Run bootstrap.py with bundled Python
+	cmd := exec.Command(pythonExe, bootstrapPy)
+	cmd.Dir = cwd
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("bootstrap.py output:\n%s", string(output))
+		return fmt.Errorf("bootstrap.py failed: %w", err)
+	}
+	
+	log.Printf("bootstrap.py completed successfully")
+	
+	// Reload config to pick up bootstrap-populated paths
+	if err := store.Load(); err != nil {
+		return fmt.Errorf("reload config after bootstrap: %w", err)
+	}
+	
+	// Mark bootstrap as done
+	store.Cfg.BootstrapDone = true
+	if err := store.Save(store.Cfg); err != nil {
+		return fmt.Errorf("save bootstrap_done flag: %w", err)
+	}
+	
+	log.Printf("portable auto-init completed: ga_root=%s", store.Cfg.GARoot)
+	return nil
 }
