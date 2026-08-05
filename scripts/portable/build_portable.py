@@ -42,11 +42,18 @@ PYTHON_VERSION = "3.12.7"
 
 
 def say(msg: str):
-    print(f"[portable] {msg}", flush=True)
+    # Handle Windows cp1252 encoding issues with Unicode characters
+    try:
+        print(f"[portable] {msg}", flush=True)
+    except UnicodeEncodeError:
+        print(f"[portable] {msg.encode('ascii', errors='replace').decode('ascii')}", flush=True)
 
 
 def die(msg: str):
-    print(f"[portable] ERROR: {msg}", file=sys.stderr, flush=True)
+    try:
+        print(f"[portable] ERROR: {msg}", file=sys.stderr, flush=True)
+    except UnicodeEncodeError:
+        print(f"[portable] ERROR: {msg.encode('ascii', errors='replace').decode('ascii')}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
@@ -140,7 +147,11 @@ def install_python_runtime(stage: Path, python_version: str):
     py_exe = py_stage / py_exe_name
     
     if py_exe.exists():
-        py_stage.rename(py_home)
+        # Direct python.exe found, use copytree for consistent behavior
+        if py_home.exists():
+            shutil.rmtree(py_home)
+        shutil.copytree(py_stage, py_home, symlinks=True)
+        shutil.rmtree(py_stage)
     else:
         # Find the actual nested directory (search recursively)
         found_py = None
@@ -156,8 +167,11 @@ def install_python_runtime(stage: Path, python_version: str):
         
         if found_py:
             say(f"Found Python at {found_py}")
-            found_py.rename(py_home)
-            # Clean up remaining stage directory
+            # Use copytree + rmtree instead of move to avoid Windows filesystem quirks
+            if py_home.exists():
+                shutil.rmtree(py_home)
+            shutil.copytree(found_py, py_home, symlinks=True)
+            # Clean up stage directory after successful copy
             if py_stage.exists():
                 shutil.rmtree(py_stage)
         else:
@@ -169,6 +183,77 @@ def install_python_runtime(stage: Path, python_version: str):
             die(f"Could not find {py_exe_name} in uv Python install")
     
     say(f"Python runtime installed at {py_home}")
+    
+    # DEBUG: List python/ contents to verify structure
+    say(f"DEBUG: Contents of {py_home}:")
+    if py_home.exists():
+        for item in sorted(py_home.rglob("*"))[:20]:  # Limit to first 20 items
+            say(f"  {item.relative_to(py_home)}")
+    else:
+        say(f"  ERROR: {py_home} does not exist!")
+    
+    # On Unix, create python3 symlink if it doesn't exist (bootstrap.py expects it)
+    if platform.system() != "Windows":
+        bin_dir = py_home / "bin"
+        python3_link = bin_dir / "python3"
+        
+        if not python3_link.exists():
+            if not bin_dir.exists():
+                say(f"WARNING: {bin_dir} does not exist, cannot create python3 symlink")
+            else:
+                # List all files in bin/ for debugging
+                bin_contents = sorted([f.name for f in bin_dir.iterdir()])
+                say(f"bin/ contents: {', '.join(bin_contents[:10])}")
+                
+                # Find python3.x executable (e.g., python3.12)
+                candidates = [f for f in bin_dir.glob("python3.*") if f.is_file()]
+                say(f"Found {len(candidates)} python3.* candidates")
+                
+                for candidate in candidates:
+                    if os.access(candidate, os.X_OK):
+                        # Use relative path for symlink target
+                        python3_link.symlink_to(candidate.name)
+                        say(f"Created symlink: python3 -> {candidate.name}")
+                        break
+                else:
+                    say(f"WARNING: No executable python3.* found in {bin_dir}")
+
+
+def resolve_bundled_python(stage: Path, target_platform: str) -> Path:
+    """Resolve the bundled base interpreter inside <stage>/python.
+
+    Layout contract (must match scripts/portable/bootstrap.py):
+      Windows: python\\python.exe
+      Unix:    python/bin/python3
+    uv's standalone builds keep the interpreter under bin/ on Unix, so a flat
+    <stage>/python/python does not exist there.
+    """
+    py_home = stage / "python"
+    if target_platform == "windows":
+        candidates = [py_home / "python.exe"]
+    else:
+        candidates = [
+            py_home / "bin" / "python3",
+            py_home / "bin" / "python",
+            py_home / "python3",
+            py_home / "python",
+        ]
+
+    for cand in candidates:
+        if cand.exists():
+            say(f"Bundled interpreter: {cand}")
+            return cand
+
+    say(f"ERROR: no interpreter found under {py_home}. Candidates tried:")
+    for cand in candidates:
+        say(f"  {cand}")
+    say(f"Actual contents of {py_home}:")
+    if py_home.exists():
+        for item in sorted(py_home.rglob("*"))[:60]:
+            say(f"  {item.relative_to(py_home)}")
+    else:
+        say("  <missing>")
+    die("bundled Python interpreter not found")
 
 
 def create_venv_and_install_deps(ga_root: Path, python_exe: Path):
@@ -247,24 +332,27 @@ def copy_binary(dist_dir: Path, stage: Path, target_platform: str):
     say(f"Copied {bin_name} to {dest}")
 
 
-def run_bootstrap_check(stage: Path, target_platform: str):
-    """Run bootstrap.py once to verify the bundle."""
-    ga_root = stage / "GenericAgent"
-    bootstrap_py = ga_root / "bootstrap.py"
-    
-    if not bootstrap_py.exists():
-        die(f"bootstrap.py not found at {bootstrap_py}")
-    
-    # Determine venv python
-    venv_path = ga_root / ".venv"
-    if target_platform == "windows":
-        venv_py = venv_path / "Scripts" / "python.exe"
-    else:
-        venv_py = venv_path / "bin" / "python"
-    
-    say("Running bootstrap self-check")
-    run_cmd([str(venv_py), str(bootstrap_py)])
-    say("Bootstrap check passed")
+# DISABLED: Running bootstrap at build time pollutes config.local.json with CI paths.
+# Bootstrap should only run on first user launch to populate paths correctly.
+#
+# def run_bootstrap_check(stage: Path, target_platform: str):
+#     """Run bootstrap.py once to verify the bundle."""
+#     ga_root = stage / "GenericAgent"
+#     bootstrap_py = ga_root / "bootstrap.py"
+#     
+#     if not bootstrap_py.exists():
+#         die(f"bootstrap.py not found at {bootstrap_py}")
+#     
+#     # Determine venv python
+#     venv_path = ga_root / ".venv"
+#     if target_platform == "windows":
+#         venv_py = venv_path / "Scripts" / "python.exe"
+#     else:
+#         venv_py = venv_path / "bin" / "python"
+#     
+#     say("Running bootstrap self-check")
+#     run_cmd([str(venv_py), str(bootstrap_py)])
+#     say("Bootstrap check passed")
 
 
 def write_source_info(stage: Path, repo_owner: str, repo_name: str, ref: str, source_method: str):
@@ -321,11 +409,20 @@ def main():
     ga_root = stage / "GenericAgent"
     download_ga_source(args.ga_ref, ga_root)
     
-    # 2. Install Python runtime
+    # 1b. Copy portable bootstrap beside GenericAgent (the published layout).
+    # bootstrap.py also recognizes older artifacts that nested it in GA root.
+    bootstrap_src = repo_root / "scripts" / "portable" / "bootstrap.py"
+    bootstrap_dst = stage / "bootstrap.py"
+    if not bootstrap_src.exists():
+        die(f"bootstrap.py not found at {bootstrap_src}")
+    shutil.copy2(bootstrap_src, bootstrap_dst)
+    say(f"Copied bootstrap.py -> {bootstrap_dst}")
+    
+    # 2. Install Python runtime beside GenericAgent
     install_python_runtime(stage, args.python_version)
     
     # 3. Create venv and install deps
-    python_exe = stage / "python" / ("python.exe" if args.platform == "windows" else "python")
+    python_exe = resolve_bundled_python(stage, args.platform)
     create_venv_and_install_deps(ga_root, python_exe)
     
     # 4. Write config
@@ -335,8 +432,22 @@ def main():
     dist_dir = repo_root / "dist"
     copy_binary(dist_dir, stage, args.platform)
     
-    # 6. Bootstrap check
-    run_bootstrap_check(stage, args.platform)
+    # 5b. Copy chat_worker.py from ga-admin repo to stage/cmd/
+    cmd_dir = stage / "cmd"
+    cmd_dir.mkdir(exist_ok=True)
+    
+    chat_worker_src = repo_root / "cmd" / "chat_worker.py"
+    chat_worker_dst = cmd_dir / "chat_worker.py"
+    
+    if not chat_worker_src.exists():
+        die(f"chat_worker.py not found at {chat_worker_src}")
+    
+    shutil.copy2(chat_worker_src, chat_worker_dst)
+    say(f"Copied chat_worker.py -> {chat_worker_dst}")
+    
+    # 6. Bootstrap check - REMOVED to prevent CI path pollution in config
+    # Bootstrap will run on first user launch to populate paths correctly
+    # run_bootstrap_check(stage, args.platform)
     
     # 7. Write provenance
     write_source_info(stage, GA_REPO_OWNER, GA_REPO_NAME, args.ga_ref, "codeload archive")
