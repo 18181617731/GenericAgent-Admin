@@ -171,6 +171,43 @@ def install_python_runtime(stage: Path, python_version: str):
     say(f"Python runtime installed at {py_home}")
 
 
+def resolve_bundled_python(stage: Path, target_platform: str) -> Path:
+    """Resolve the bundled base interpreter inside <stage>/python.
+
+    Layout contract (must match scripts/portable/bootstrap.py):
+      Windows: python\\python.exe
+      Unix:    python/bin/python3
+    uv's standalone builds keep the interpreter under bin/ on Unix, so a flat
+    <stage>/python/python does not exist there.
+    """
+    py_home = stage / "python"
+    if target_platform == "windows":
+        candidates = [py_home / "python.exe"]
+    else:
+        candidates = [
+            py_home / "bin" / "python3",
+            py_home / "bin" / "python",
+            py_home / "python3",
+            py_home / "python",
+        ]
+
+    for cand in candidates:
+        if cand.exists():
+            say(f"Bundled interpreter: {cand}")
+            return cand
+
+    say(f"ERROR: no interpreter found under {py_home}. Candidates tried:")
+    for cand in candidates:
+        say(f"  {cand}")
+    say(f"Actual contents of {py_home}:")
+    if py_home.exists():
+        for item in sorted(py_home.rglob("*"))[:60]:
+            say(f"  {item.relative_to(py_home)}")
+    else:
+        say("  <missing>")
+    die("bundled Python interpreter not found")
+
+
 def create_venv_and_install_deps(ga_root: Path, python_exe: Path):
     """Create venv inside GA root and install deps from pyproject.toml + extras."""
     venv_path = ga_root / ".venv"
@@ -325,7 +362,7 @@ def main():
     install_python_runtime(stage, args.python_version)
     
     # 3. Create venv and install deps
-    python_exe = stage / "python" / ("python.exe" if args.platform == "windows" else "python")
+    python_exe = resolve_bundled_python(stage, args.platform)
     create_venv_and_install_deps(ga_root, python_exe)
     
     # 4. Write config

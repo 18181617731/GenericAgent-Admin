@@ -197,9 +197,13 @@ jobs:
           - goos: windows
             goarch: amd64
             runner: windows-latest
+          # arm64 bundles must build on native arm64 runners: uv installs a
+          # standalone interpreter for the HOST arch, and the venv/pip step
+          # executes it. Cross-arch hosts would ship an x86_64 interpreter
+          # inside an arm64 bundle (and fail to run it at all).
           - goos: windows
             goarch: arm64
-            runner: windows-latest
+            runner: windows-11-arm
           - goos: darwin
             goarch: amd64
             runner: macos-13
@@ -211,7 +215,7 @@ jobs:
             runner: ubuntu-latest
           - goos: linux
             goarch: arm64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
