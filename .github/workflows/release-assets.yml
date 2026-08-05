@@ -237,3 +237,71 @@ jobs:
             ga-admin-portable-*.*
           fail_on_unmatched_files: true
           overwrite_files: true
+
+  finalize-release:
+    name: Finalize Release
+    runs-on: ubuntu-latest
+    needs: [build, build-portable]
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Generate release body
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          repo='${{ github.repository }}'
+          
+          # Generate download table
+          cat > release-body.md <<'EOF'
+          ## 📥 Downloads
+
+          | Platform | Architecture | Binary | Portable Bundle |
+          |----------|--------------|--------|-----------------|
+          EOF
+          
+          # Windows
+          echo "| **Windows** | x86-64 | [ga-admin-windows-amd64.exe](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-windows-amd64.zip) | [ga-admin-portable-windows-amd64-${tag}.zip](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-windows-amd64-${tag}.zip) |" >> release-body.md
+          echo "| | ARM64 | [ga-admin-windows-arm64.exe](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-windows-arm64.zip) | [ga-admin-portable-windows-arm64-${tag}.zip](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-windows-arm64-${tag}.zip) |" >> release-body.md
+          
+          # Linux
+          echo "| **Linux** | x86-64 | [ga-admin-linux-amd64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-linux-amd64.zip) | [ga-admin-portable-linux-amd64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-linux-amd64-${tag}.tar.gz) |" >> release-body.md
+          echo "| | ARM64 | [ga-admin-linux-arm64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-linux-arm64.zip) | [ga-admin-portable-linux-arm64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-linux-arm64-${tag}.tar.gz) |" >> release-body.md
+          
+          # macOS
+          echo "| **macOS** | x86-64 (Intel) | [ga-admin-darwin-amd64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-darwin-amd64.zip) | [ga-admin-portable-darwin-amd64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-darwin-amd64-${tag}.tar.gz) |" >> release-body.md
+          echo "| | ARM64 (Apple Silicon) | [ga-admin-darwin-arm64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-darwin-arm64.zip) | [ga-admin-portable-darwin-arm64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-darwin-arm64-${tag}.tar.gz) |" >> release-body.md
+          
+          # Add description
+          cat >> release-body.md <<'EOF'
+
+          **Binary**: Single executable file, requires Python 3.8+ and GenericAgent source code on your system.  
+          **Portable Bundle**: Complete standalone package with GA source code + Python 3.12.7 + venv, ready to run after extraction.
+
+          ---
+
+          ## 📝 Changelog
+
+          EOF
+          
+          # Extract changelog from commits since last tag
+          last_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$last_tag" ]; then
+            echo "**Changes since ${last_tag}:**" >> release-body.md
+            echo "" >> release-body.md
+            git log ${last_tag}..HEAD --pretty=format:"- %s (%h)" --no-merges >> release-body.md
+          else
+            echo "Initial release." >> release-body.md
+          fi
+          
+          cat release-body.md
+
+      - name: Update release body
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          body_path: release-body.md
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-alpha') || contains(inputs.tag || github.ref_name, '-beta') || contains(inputs.tag || github.ref_name, '-rc') || contains(inputs.tag || github.ref_name, '-preview') }}
+          overwrite_files: false
