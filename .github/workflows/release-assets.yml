@@ -331,7 +331,7 @@ jobs:
           echo "| | ARM64 | [ga-admin-linux-arm64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-linux-arm64.zip) | [ga-admin-portable-linux-arm64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-linux-arm64-${tag}.tar.gz) |" >> release-body.md
           
           # macOS
-          echo "| **macOS** | x86-64 (Intel) | [ga-admin-darwin-amd64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-darwin-amd64.zip) | [ga-admin-portable-darwin-amd64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-darwin-amd64-${tag}.tar.gz) |" >> release-body.md
+          echo "| **macOS** | x86-64 (Intel) | [ga-admin-darwin-amd64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-darwin-amd64.zip) | Not available |" >> release-body.md
           echo "| | ARM64 (Apple Silicon) | [ga-admin-darwin-arm64](https://github.com/${repo}/releases/download/${tag}/ga-admin-${tag}-darwin-arm64.zip) | [ga-admin-portable-darwin-arm64-${tag}.tar.gz](https://github.com/${repo}/releases/download/${tag}/ga-admin-portable-darwin-arm64-${tag}.tar.gz) |" >> release-body.md
           
           # Add description
