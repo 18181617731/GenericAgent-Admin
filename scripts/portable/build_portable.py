@@ -332,24 +332,27 @@ def copy_binary(dist_dir: Path, stage: Path, target_platform: str):
     say(f"Copied {bin_name} to {dest}")
 
 
-def run_bootstrap_check(stage: Path, target_platform: str):
-    """Run bootstrap.py once to verify the bundle."""
-    ga_root = stage / "GenericAgent"
-    bootstrap_py = ga_root / "bootstrap.py"
-    
-    if not bootstrap_py.exists():
-        die(f"bootstrap.py not found at {bootstrap_py}")
-    
-    # Determine venv python
-    venv_path = ga_root / ".venv"
-    if target_platform == "windows":
-        venv_py = venv_path / "Scripts" / "python.exe"
-    else:
-        venv_py = venv_path / "bin" / "python"
-    
-    say("Running bootstrap self-check")
-    run_cmd([str(venv_py), str(bootstrap_py)])
-    say("Bootstrap check passed")
+# DISABLED: Running bootstrap at build time pollutes config.local.json with CI paths.
+# Bootstrap should only run on first user launch to populate paths correctly.
+#
+# def run_bootstrap_check(stage: Path, target_platform: str):
+#     """Run bootstrap.py once to verify the bundle."""
+#     ga_root = stage / "GenericAgent"
+#     bootstrap_py = ga_root / "bootstrap.py"
+#     
+#     if not bootstrap_py.exists():
+#         die(f"bootstrap.py not found at {bootstrap_py}")
+#     
+#     # Determine venv python
+#     venv_path = ga_root / ".venv"
+#     if target_platform == "windows":
+#         venv_py = venv_path / "Scripts" / "python.exe"
+#     else:
+#         venv_py = venv_path / "bin" / "python"
+#     
+#     say("Running bootstrap self-check")
+#     run_cmd([str(venv_py), str(bootstrap_py)])
+#     say("Bootstrap check passed")
 
 
 def write_source_info(stage: Path, repo_owner: str, repo_name: str, ref: str, source_method: str):
@@ -428,8 +431,9 @@ def main():
     dist_dir = repo_root / "dist"
     copy_binary(dist_dir, stage, args.platform)
     
-    # 6. Bootstrap check
-    run_bootstrap_check(stage, args.platform)
+    # 6. Bootstrap check - REMOVED to prevent CI path pollution in config
+    # Bootstrap will run on first user launch to populate paths correctly
+    # run_bootstrap_check(stage, args.platform)
     
     # 7. Write provenance
     write_source_info(stage, GA_REPO_OWNER, GA_REPO_NAME, args.ga_ref, "codeload archive")
