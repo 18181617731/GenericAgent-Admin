@@ -22,10 +22,21 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+# Canonical bundles place bootstrap.py beside GenericAgent/.  A short-lived
+# cross-platform builder placed it inside GenericAgent/ instead, so retain
+# compatibility with those artifacts while preferring the published layout.
+if os.path.isdir(os.path.join(ROOT, "GenericAgent")):
+    BUNDLE_ROOT = ROOT
+    GA_ROOT = os.path.join(ROOT, "GenericAgent")
+elif os.path.basename(ROOT).lower() == "genericagent":
+    BUNDLE_ROOT = os.path.dirname(ROOT)
+    GA_ROOT = ROOT
+else:
+    BUNDLE_ROOT = ROOT
+    GA_ROOT = os.path.join(ROOT, "GenericAgent")
 PY_HOME = os.path.join(ROOT, "python")
-GA_ROOT = os.path.join(ROOT, "GenericAgent")
 VENV_DIR = os.path.join(GA_ROOT, ".venv")
-CONFIG = os.path.join(ROOT, "config.local.json")
+CONFIG = os.path.join(BUNDLE_ROOT, "config.local.json")
 
 IS_WIN = os.name == "nt"
 BASE_PY = os.path.join(PY_HOME, "python.exe" if IS_WIN else os.path.join("bin", "python3"))
@@ -175,7 +186,9 @@ def main() -> int:
         return 2
     fix_pyvenv_cfg()
     fix_config()
-    verify()
+    if not verify():
+        log("FATAL bundled venv verification failed")
+        return 3
     return 0
 
 

@@ -409,19 +409,20 @@ def main():
     ga_root = stage / "GenericAgent"
     download_ga_source(args.ga_ref, ga_root)
     
-    # 1b. Copy portable-specific bootstrap.py into GA source tree
+    # 1b. Copy portable bootstrap beside GenericAgent (the published layout).
+    # bootstrap.py also recognizes older artifacts that nested it in GA root.
     bootstrap_src = repo_root / "scripts" / "portable" / "bootstrap.py"
-    bootstrap_dst = ga_root / "bootstrap.py"
+    bootstrap_dst = stage / "bootstrap.py"
     if not bootstrap_src.exists():
         die(f"bootstrap.py not found at {bootstrap_src}")
     shutil.copy2(bootstrap_src, bootstrap_dst)
     say(f"Copied bootstrap.py -> {bootstrap_dst}")
     
-    # 2. Install Python runtime
-    install_python_runtime(ga_root, args.python_version)
+    # 2. Install Python runtime beside GenericAgent
+    install_python_runtime(stage, args.python_version)
     
     # 3. Create venv and install deps
-    python_exe = resolve_bundled_python(ga_root, args.platform)
+    python_exe = resolve_bundled_python(stage, args.platform)
     create_venv_and_install_deps(ga_root, python_exe)
     
     # 4. Write config
