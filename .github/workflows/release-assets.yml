@@ -19,9 +19,61 @@ permissions:
   contents: write
 
 jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Release boundary preflight
+        id: meta
+        shell: bash
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::This release workflow must run with a semantic version tag such as v0.1.1, v0.1.1-fix1, or v0.1.1-rc1; got '$tag'."
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm_overwrite_assets }}" != "true" ]; then
+            echo "::error::Manual dispatch requires confirm_overwrite_assets=true because upload uses --clobber."
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Release boundary accepted for ${tag}; asset upload uses --clobber."
+
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      # Single point of release creation. All build jobs only upload assets,
+      # otherwise the parallel matrix races and GitHub returns
+      # "Validation Failed: Release already_exists" plus duplicate drafts.
+      - name: Create release if absent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ steps.meta.outputs.tag }}'
+          prerelease_flag=''
+          case "$tag" in
+            *-alpha*|*-beta*|*-rc*|*-preview*) prerelease_flag='--prerelease' ;;
+          esac
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; ensuring flags are correct."
+            if [ -n "$prerelease_flag" ]; then
+              gh release edit "$tag" --draft=false --prerelease
+            else
+              gh release edit "$tag" --draft=false --latest
+            fi
+          else
+            gh release create "$tag" --title "$tag" --notes "Assets are being uploaded..." $prerelease_flag
+          fi
+
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
+    needs: prepare-release
     strategy:
       fail-fast: false
       matrix:
@@ -52,20 +104,6 @@ jobs:
             cgo: '0'
 
     steps:
-      - name: Release boundary preflight
-        shell: bash
-        run: |
-          tag='${{ inputs.tag || github.ref_name }}'
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::This release workflow must run with a semantic version tag such as v0.1.1, v0.1.1-fix1, or v0.1.1-rc1; got '$tag'."
-            exit 1
-          fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm_overwrite_assets }}" != "true" ]; then
-            echo "::error::Manual dispatch requires confirm_overwrite_assets=true because upload uses overwrite_files=true."
-            exit 1
-          fi
-          echo "::notice::Release boundary accepted for ${tag}; upload step uses overwrite_files=true."
-
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
@@ -142,15 +180,12 @@ jobs:
           retention-days: 1
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          prerelease: ${{ contains(inputs.tag || github.ref_name, '-alpha') || contains(inputs.tag || github.ref_name, '-beta') || contains(inputs.tag || github.ref_name, '-rc') || contains(inputs.tag || github.ref_name, '-preview') }}
-          files: |
-            package/*.zip
-            package/*.sha256
-          fail_on_unmatched_files: true
-          overwrite_files: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          gh release upload "$tag" package/*.zip package/*.sha256 --clobber --repo '${{ github.repository }}'
 
   build-portable:
     name: Build portable bundle (${{ matrix.goos }}-${{ matrix.goarch }})
@@ -229,14 +264,18 @@ jobs:
           sha256sum "${tarName}" | awk '{print $1 "  " $2}' > "${tarName}.sha256"
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          prerelease: ${{ contains(inputs.tag || github.ref_name, '-alpha') || contains(inputs.tag || github.ref_name, '-beta') || contains(inputs.tag || github.ref_name, '-rc') || contains(inputs.tag || github.ref_name, '-preview') }}
-          files: |
-            ga-admin-portable-*.*
-          fail_on_unmatched_files: true
-          overwrite_files: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          shopt -s nullglob
+          files=(ga-admin-portable-*.zip ga-admin-portable-*.tar.gz ga-admin-portable-*.sha256)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No portable bundle artifacts found"
+            exit 1
+          fi
+          gh release upload "$tag" "${files[@]}" --clobber --repo '${{ github.repository }}'
 
   finalize-release:
     name: Finalize Release
