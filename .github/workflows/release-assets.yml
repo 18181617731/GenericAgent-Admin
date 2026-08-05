@@ -238,6 +238,7 @@ jobs:
           path: dist/
 
       - name: Build portable bundle
+        shell: bash
         run: |
           python scripts/portable/build_portable.py \
             --platform ${{ matrix.goos }} \
