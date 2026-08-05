@@ -42,11 +42,18 @@ PYTHON_VERSION = "3.12.7"
 
 
 def say(msg: str):
-    print(f"[portable] {msg}", flush=True)
+    # Handle Windows cp1252 encoding issues with Unicode characters
+    try:
+        print(f"[portable] {msg}", flush=True)
+    except UnicodeEncodeError:
+        print(f"[portable] {msg.encode('ascii', errors='replace').decode('ascii')}", flush=True)
 
 
 def die(msg: str):
-    print(f"[portable] ERROR: {msg}", file=sys.stderr, flush=True)
+    try:
+        print(f"[portable] ERROR: {msg}", file=sys.stderr, flush=True)
+    except UnicodeEncodeError:
+        print(f"[portable] ERROR: {msg.encode('ascii', errors='replace').decode('ascii')}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
