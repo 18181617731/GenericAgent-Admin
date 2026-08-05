@@ -175,16 +175,29 @@ def install_python_runtime(stage: Path, python_version: str):
     
     # On Unix, create python3 symlink if it doesn't exist (bootstrap.py expects it)
     if platform.system() != "Windows":
-        python3_link = py_home / "bin" / "python3"
+        bin_dir = py_home / "bin"
+        python3_link = bin_dir / "python3"
+        
         if not python3_link.exists():
-            # Find python3.x executable
-            bin_dir = py_home / "bin"
-            if bin_dir.exists():
-                for candidate in bin_dir.glob("python3.*"):
-                    if candidate.is_file() and os.access(candidate, os.X_OK):
+            if not bin_dir.exists():
+                say(f"WARNING: {bin_dir} does not exist, cannot create python3 symlink")
+            else:
+                # List all files in bin/ for debugging
+                bin_contents = sorted([f.name for f in bin_dir.iterdir()])
+                say(f"bin/ contents: {', '.join(bin_contents[:10])}")
+                
+                # Find python3.x executable (e.g., python3.12)
+                candidates = [f for f in bin_dir.glob("python3.*") if f.is_file()]
+                say(f"Found {len(candidates)} python3.* candidates")
+                
+                for candidate in candidates:
+                    if os.access(candidate, os.X_OK):
+                        # Use relative path for symlink target
                         python3_link.symlink_to(candidate.name)
                         say(f"Created symlink: python3 -> {candidate.name}")
                         break
+                else:
+                    say(f"WARNING: No executable python3.* found in {bin_dir}")
 
 
 def resolve_bundled_python(stage: Path, target_platform: str) -> Path:
