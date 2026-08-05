@@ -431,6 +431,14 @@ def main():
     dist_dir = repo_root / "dist"
     copy_binary(dist_dir, stage, args.platform)
     
+    # 5b. Copy chat_worker.py from ga-admin repo to stage root
+    chat_worker_src = repo_root / "cmd" / "chat_worker.py"
+    chat_worker_dst = stage / "chat_worker.py"
+    if not chat_worker_src.exists():
+        die(f"chat_worker.py not found at {chat_worker_src}")
+    shutil.copy2(chat_worker_src, chat_worker_dst)
+    say(f"Copied chat_worker.py -> {chat_worker_dst}")
+    
     # 6. Bootstrap check - REMOVED to prevent CI path pollution in config
     # Bootstrap will run on first user launch to populate paths correctly
     # run_bootstrap_check(stage, args.platform)
