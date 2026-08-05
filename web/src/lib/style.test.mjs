@@ -49,6 +49,19 @@ test('mobile feedback stays in document flow and model actions use two columns',
   )
 })
 
+test('mobile chat topbar and notification filters stay inside the iPhone viewport', () => {
+  assert.match(
+    css,
+    /@media\s*\(max-width:680px\)[\s\S]*?\.oa-topbar\s*\{[^}]*grid-template-columns\s*:\s*76px\s+minmax\(0,1fr\)\s+36px\s+36px/i,
+  )
+  assert.match(css, /\.oa-topbar\s*>\s*\.oa-context-btn\s*\{[^}]*display\s*:\s*none\s*!important/i)
+  assert.match(css, /\.oa-mobile-tools-layer\s*\{[^}]*position\s*:\s*fixed[^}]*z-index\s*:\s*1000/i)
+  assert.match(
+    css,
+    /@media\s*\(max-width:680px\)[\s\S]*?\.notification-filter-scroll\s*\{[^}]*display\s*:\s*grid[^}]*grid-template-columns\s*:\s*repeat\(2,/i,
+  )
+})
+
 test('git sync logs stay bounded and scrollable', () => {
   const logRule = ruleBodies('.mini-log')[0]
   assert.match(logRule, /max-height\s*:\s*280px/i)
