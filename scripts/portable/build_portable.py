@@ -156,7 +156,10 @@ def install_python_runtime(stage: Path, python_version: str):
         
         if found_py:
             say(f"Found Python at {found_py}")
-            found_py.rename(py_home)
+            # Use shutil.move for cross-directory rename on Windows
+            if py_home.exists():
+                shutil.rmtree(py_home)
+            shutil.move(str(found_py), str(py_home))
             # Clean up remaining stage directory
             if py_stage.exists():
                 shutil.rmtree(py_stage)
