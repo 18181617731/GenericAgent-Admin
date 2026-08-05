@@ -185,12 +185,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag='${{ inputs.tag || github.ref_name }}'
-          gh release upload "$tag" package/*.zip package/*.sha256 --clobber --repo '${{ github.repository }}'
+          # Retry upload with exponential backoff to handle concurrent upload races
+          max_attempts=5
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            if gh release upload "$tag" package/*.zip package/*.sha256 --clobber --repo '${{ github.repository }}'; then
+              echo "Upload succeeded on attempt $((attempt + 1))"
+              exit 0
+            fi
+            attempt=$((attempt + 1))
+            if [ $attempt -lt $max_attempts ]; then
+              sleep_time=$((2 ** attempt))
+              echo "Upload failed, retrying in ${sleep_time}s (attempt $attempt/$max_attempts)..."
+              sleep $sleep_time
+            fi
+          done
+          echo "Upload failed after $max_attempts attempts"
+          exit 1
 
   build-portable:
     name: Build portable bundle (${{ matrix.goos }}-${{ matrix.goarch }})
     runs-on: ${{ matrix.runner }}
     needs: build
+    if: ${{ always() && contains(needs.build.result, 'success') }}
     strategy:
       matrix:
         include:
