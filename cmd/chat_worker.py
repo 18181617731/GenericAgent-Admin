@@ -156,8 +156,8 @@ class _UsageCapturingStderr:
         with _USAGE_LOCK:
             usage_changed = False
             # Legacy GA emits input/cached, while newer Claude sessions emit
-            # input/creation/read. Preserve those modern fields separately so the UI
-            # can distinguish uncached input, cache writes, and cache reads.
+            # input/creation/read. Normalize both formats into cache-read tokens;
+            # cached in the legacy protocol means tokens read from the cache.
             cache_line = re.search(r'\[Cache\][^\r\n]*', text)
             if cache_line:
                 fields = {
@@ -169,12 +169,12 @@ class _UsageCapturingStderr:
                     if 'creation' in fields or 'read' in fields:
                         _CURRENT_USAGE['cache_creation_tokens'] = fields.get('creation', 0)
                         _CURRENT_USAGE['cache_read_tokens'] = fields.get('read', 0)
-                        _CURRENT_USAGE['cached_tokens'] = 0
                     else:
                         _CURRENT_USAGE['cache_creation_tokens'] = 0
-                        _CURRENT_USAGE['cache_read_tokens'] = 0
-                        if 'cached' in fields:
-                            _CURRENT_USAGE['cached_tokens'] = fields['cached']
+                        _CURRENT_USAGE['cache_read_tokens'] = fields.get('cached', 0)
+                    # Retain the legacy response field as an always-zero alias.
+                    # Old persisted sessions are handled by the frontend fallback.
+                    _CURRENT_USAGE['cached_tokens'] = 0
                     usage_changed = True
             # [Output] tokens=456  -- marks the end of one internal LLM turn.
             m = re.search(r'\[Output\]\s+tokens=(\d+)', text)

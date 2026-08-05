@@ -106,9 +106,9 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(live["usage"], {
             "input_tokens": 1500,
             "cache_creation_tokens": 0,
-            "cache_read_tokens": 0,
+            "cache_read_tokens": 821500,
             "output_tokens": 0,
-            "cached_tokens": 821500,
+            "cached_tokens": 0,
         })
 
         capture.write("[Output] tokens=22100\n")
@@ -118,9 +118,9 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(completed["usage"], {
             "input_tokens": 1500,
             "cache_creation_tokens": 0,
-            "cache_read_tokens": 0,
+            "cache_read_tokens": 821500,
             "output_tokens": 22100,
-            "cached_tokens": 821500,
+            "cached_tokens": 0,
         })
         self.assertEqual(chat_worker._snapshot_turn_usages(), [completed["usage"]])
 

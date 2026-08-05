@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
@@ -2220,7 +2221,6 @@ const extractSavedFilePaths = (content = '') => Array.from(
   (match) => match[1].trim(),
 ).filter(Boolean)
 
-const cacheReadTokens = (u) => u?.cache_read_tokens ?? u?.cached_tokens ?? 0
 const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.cache_creation_tokens || 0) > 0 || cacheReadTokens(u) > 0 || (u.output_tokens || 0) > 0)
 const formatElapsedMs = (ms = 0) => {
   const safe = Math.max(0, Number(ms) || 0)
