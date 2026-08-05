@@ -431,11 +431,16 @@ def main():
     dist_dir = repo_root / "dist"
     copy_binary(dist_dir, stage, args.platform)
     
-    # 5b. Copy chat_worker.py from ga-admin repo to stage root
+    # 5b. Copy chat_worker.py from ga-admin repo to stage/cmd/
+    cmd_dir = stage / "cmd"
+    cmd_dir.mkdir(exist_ok=True)
+    
     chat_worker_src = repo_root / "cmd" / "chat_worker.py"
-    chat_worker_dst = stage / "chat_worker.py"
+    chat_worker_dst = cmd_dir / "chat_worker.py"
+    
     if not chat_worker_src.exists():
         die(f"chat_worker.py not found at {chat_worker_src}")
+    
     shutil.copy2(chat_worker_src, chat_worker_dst)
     say(f"Copied chat_worker.py -> {chat_worker_dst}")
     
