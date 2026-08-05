@@ -140,7 +140,11 @@ def install_python_runtime(stage: Path, python_version: str):
     py_exe = py_stage / py_exe_name
     
     if py_exe.exists():
-        py_stage.rename(py_home)
+        # Direct python.exe found, use copytree for consistent behavior
+        if py_home.exists():
+            shutil.rmtree(py_home)
+        shutil.copytree(py_stage, py_home, symlinks=True)
+        shutil.rmtree(py_stage)
     else:
         # Find the actual nested directory (search recursively)
         found_py = None
@@ -156,11 +160,11 @@ def install_python_runtime(stage: Path, python_version: str):
         
         if found_py:
             say(f"Found Python at {found_py}")
-            # Use shutil.move for cross-directory rename on Windows
+            # Use copytree + rmtree instead of move to avoid Windows filesystem quirks
             if py_home.exists():
                 shutil.rmtree(py_home)
-            shutil.move(str(found_py), str(py_home))
-            # Clean up remaining stage directory
+            shutil.copytree(found_py, py_home, symlinks=True)
+            # Clean up stage directory after successful copy
             if py_stage.exists():
                 shutil.rmtree(py_stage)
         else:
