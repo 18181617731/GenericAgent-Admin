@@ -239,8 +239,8 @@ func openBrowser(url string) {
 // to populate config with correct paths. Returns nil if not portable or on success.
 func tryPortableAutoInit(cwd string, store *config.Store) error {
 	// Check for portable bundle markers
-	bootstrapPy := filepath.Join(cwd, "bootstrap.py")
 	gaRoot := filepath.Join(cwd, "GenericAgent")
+	bootstrapPy := filepath.Join(gaRoot, "bootstrap.py")
 	
 	if _, err := os.Stat(bootstrapPy); os.IsNotExist(err) {
 		return nil // Not a portable bundle
@@ -254,9 +254,9 @@ func tryPortableAutoInit(cwd string, store *config.Store) error {
 	// Find bundled Python interpreter
 	var pythonExe string
 	if runtime.GOOS == "windows" {
-		pythonExe = filepath.Join(cwd, "python", "python.exe")
+		pythonExe = filepath.Join(gaRoot, "python", "python.exe")
 	} else {
-		pythonExe = filepath.Join(cwd, "python", "bin", "python3")
+		pythonExe = filepath.Join(gaRoot, "python", "bin", "python3")
 	}
 	
 	if _, err := os.Stat(pythonExe); os.IsNotExist(err) {
