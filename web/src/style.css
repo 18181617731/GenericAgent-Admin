@@ -5659,8 +5659,13 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 .oa-cascade-providers,
 .oa-cascade-models {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   max-height: 280px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   padding: 2px;
 }
 .oa-cascade-providers { border-right: 1px solid rgba(0,0,0,.07); padding-right: 6px; }
@@ -5721,17 +5726,18 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
     z-index: 25;
   }
   .oa-composer .oa-composer-cascade {
-    position: static;
+    position: relative;
     flex: 1 1 150px;
     width: auto;
     max-width: 100%;
     margin-left: 0;
-    z-index: auto;
+    z-index: 26;
   }
   .oa-cascade-menu {
     left: 0;
     right: 0;
     width: auto;
+    z-index: 100;
   }
 }
 
