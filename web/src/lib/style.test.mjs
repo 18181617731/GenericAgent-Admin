@@ -34,6 +34,21 @@ test('product usability styles preserve keyboard focus, touch targets, and reduc
   assert.match(css, /html\[data-theme="dark"\]\s+\.ga-message-banner\.is-error/i)
 })
 
+test('mobile feedback stays in document flow and model actions use two columns', () => {
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*680px\)[\s\S]*?\.global-feedback\s*\{[^}]*position\s*:\s*relative[^}]*width\s*:\s*auto[^}]*padding\s*:\s*8px\s+8px\s+8px\s+13px/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*620px\)[\s\S]*?\.models-page\s+\.model-config-toolbar\s*\{[^}]*flex-direction\s*:\s*column/i,
+  )
+  assert.match(
+    css,
+    /\.models-page\s+\.model-config-toolbar\s*>\s*\.ant-space\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,/i,
+  )
+})
+
 test('git sync logs stay bounded and scrollable', () => {
   const logRule = ruleBodies('.mini-log')[0]
   assert.match(logRule, /max-height\s*:\s*280px/i)

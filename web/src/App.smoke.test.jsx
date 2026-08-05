@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage, I18N } from './App.jsx'
-import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
+import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, WorldlinePanel } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
@@ -2013,6 +2013,9 @@ describe('mobile chat session navigation', () => {
 
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('First chat'))
+    expect(document.querySelectorAll('.oa-sidebar .oa-session-row')).toHaveLength(sessions.length)
+    expect(screen.getByText('历史会话')).toBeTruthy()
+    expect(screen.queryByText('最近对话')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name:'展开侧栏' }))
     const second = screen.getByRole('button', { name:/Second chat/ })
     fireEvent.click(second)
@@ -2021,6 +2024,59 @@ describe('mobile chat session navigation', () => {
     expect(document.querySelector('.oa-sidebar')?.classList.contains('collapsed')).toBe(true)
     expect(screen.queryByRole('button', { name:'关闭侧栏' })).toBeNull()
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === '/api/chat/session/two')).toHaveLength(1)
+  }, 15000)
+})
+
+describe('chat worldline controls', () => {
+  const worldline = {
+    schema_version: 1,
+    available: true,
+    root_id: 'root',
+    head: 'left',
+    current_path: ['root', 'left'],
+    nodes: [
+      { id: 'root', title: '起点', parent_id: null, mapping_status: 'unmapped', ordinal: 0 },
+      { id: 'left', title: '当前分支', parent_id: 'root', mapping_status: 'mapped', ordinal: 0 },
+      { id: 'right', title: '另一分支', parent_id: 'root', mapping_status: 'mapped', ordinal: 1 },
+    ],
+  }
+
+  test('shows a loading explanation before worldline data arrives', () => {
+    render(<WorldlinePanel state={null} loading switchingId="" disabled={false} onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={vi.fn()} />)
+    expect(screen.getByText('正在初始化并读取当前会话的世界线…')).toBeTruthy()
+    expect(screen.getByText('正在读取世界线数据')).toBeTruthy()
+  })
+
+  test('lists branches and switches a mapped node', () => {
+    const onSwitch = vi.fn()
+    render(<WorldlinePanel state={worldline} loading={false} switchingId="" disabled={false} onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={onSwitch} />)
+    expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy()
+    expect(screen.getByText('当前分支')).toBeTruthy()
+    expect(screen.getByText('另一分支')).toBeTruthy()
+    expect(screen.getByText('仅记录')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '切换' }))
+    expect(onSwitch).toHaveBeenCalledWith('right')
+  })
+
+  test('activates the current session before loading worldline state', async () => {
+    const sessions = [{ id: 'worldline-session', title: 'Worldline chat', count: 2, updated_at: '2026-08-05T10:00:00Z' }]
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands: [] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands: [] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path === '/api/chat/session/worldline-session') return jsonResponse({ ...sessions[0], messages: [], raw_history: [], history_info: [], settings: { llm_no: 0, tools_mode: 'official' } })
+      if (path === '/api/chat/state/worldline-session') return jsonResponse({ llms: [], settings: { llm_no: 0, tools_mode: 'official' } })
+      if (path === '/api/chat/worldline/worldline-session?activate=true') return jsonResponse(worldline)
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    Element.prototype.scrollIntoView = vi.fn()
+    render(<ChatApp />)
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Worldline chat'))
+    fireEvent.click(screen.getByRole('button', { name: '查看和切换对话世界线' }))
+    await waitFor(() => expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy())
+    expect(globalThis.fetch.mock.calls.some(([url]) => String(url) === '/api/chat/worldline/worldline-session?activate=true')).toBe(true)
   }, 15000)
 })
 

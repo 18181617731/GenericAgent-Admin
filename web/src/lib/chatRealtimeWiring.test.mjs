@@ -22,3 +22,12 @@ test('follows interrupted streams with an event cursor', () => {
   assert.match(source, /followChatStream\(res, pendingId/)
   assert.match(source, /followChatStream\(res, pending\.id/)
 })
+
+test('primes completion audio on send and publishes notification after queued work drains', () => {
+  const primeIndex = source.indexOf('primeChatCompletionTone()')
+  const queueIndex = source.indexOf('const next = popQueued()', primeIndex)
+  const notifyIndex = source.indexOf('if (streamCompleted) publishNotification(', queueIndex)
+  assert.ok(primeIndex >= 0)
+  assert.ok(queueIndex > primeIndex)
+  assert.ok(notifyIndex > queueIndex)
+})

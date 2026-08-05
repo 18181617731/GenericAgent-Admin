@@ -170,6 +170,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/usage/export", s.usageExport)
+	mux.HandleFunc("/api/chat/search", s.chatSearch)
 	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
 	mux.HandleFunc("/api/chat/", s.chatHandler)
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.

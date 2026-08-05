@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bot, Brain, CalendarClock, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
+import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
@@ -38,6 +38,9 @@ import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
 import { EnvironmentGuardianSection } from './components/ServicePlacement.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
+import { NotificationCenter } from './components/NotificationUI.jsx'
+import { collectNotificationEvents, buildNotificationSnapshot } from './lib/notificationMonitor.js'
+import { publishNotification } from './lib/notifications.js'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
@@ -47,6 +50,7 @@ const Models = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.M
 const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })))
 const AutonomousPage = lazy(() => import('./pages/AutonomousPage').then(m => ({ default: m.AutonomousPage })))
 const MemoryPage = lazy(() => import('./pages/MemoryPage').then(m => ({ default: m.MemoryPage })))
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage').then(m => ({ default: m.NotificationsPage })))
 
 gsap.registerPlugin(useGSAP)
 
@@ -56,8 +60,8 @@ export const I18N = withUpstreamI18n({
   zh: {
     appName: 'GA Admin', autostart: '开机自启', autostartService: '自启动', backup: '写操作会自动备份', browse: '选择目录', busy: '执行中', cancel: '取消', checkEnv: '检查 Python / Git', clear: '清空', close: '关闭', copy: '复制', create: '创建', delete: '删除', disableAutostart: '关闭自启', disabled: '停用', download: '下载', empty: '暂无', enableAutostart: '开启自启', enabled: '启用', envMissing: '环境缺失', envReady: '环境已就绪', error: '错误', hide: '隐藏', installDone: 'GA 已安装并配置', installGA: '安装 GA', installPath: '安装目录', language: '语言', loading: '加载中…', logs: '日志', mainNavigation: '主导航', read: '读取', ready: '就绪', refresh: '刷新', remove: '删除', retry: '重试', root: 'GenericAgent 根目录', running: '运行中', save: '保存', saveTitleModel: '保存标题模型', search: '搜索', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', setupOk: 'GA 路径已配置', setupTitle: '首次配置 GenericAgent', show: '显示', start: '启动', stop: '停止', stopped: '已停止', switchTheme: '切换主题', tagline: 'GenericAgent 本地管理面板', tail: '尾读', titleModel: '对话标题模型', titleModelDisabled: '禁用自动标题生成', titleModelFollowConversation: '跟随当前对话模型', titleModelHelp: '新会话和旧会话的标题生成使用此模型，可与对话模型不同。', titleModelSaved: '标题模型设置已保存', unsupported: '不支持', validateRoot: '验证并使用',
     serviceDesc: { scheduler: '定时任务调度器：每 120 秒扫描 sche_tasks/ 中的任务，按 once/daily/weekly/every_Nh 等周期到期触发，并归档 L4 会话记录。', autonomous: '自主待机驱动：每 30 分钟检测一次，当用户离开超过 30 分钟，便提示智能体按自动化 SOP 自行推进任务。' },
-    nav: { overview: '总览', chat: '对话', files: '文件', tasks: '定时任务', memory: '记忆', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
-    desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '管理 sche_tasks 定时任务、调度服务和执行记录。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '管理反思与自主运行服务，查看自主进化报告。', usage: '汇总本地对话的 Token 用量、模型分布和每日活动。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 中的模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
+    nav: { overview: '总览', chat: '对话', notifications: '消息通知', files: '文件', tasks: '定时任务', memory: '记忆', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
+    desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', notifications: '集中查看后台执行结果，并配置站内、浏览器和声音提醒。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '管理 sche_tasks 定时任务、调度服务和执行记录。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '管理反思与自主运行服务，查看自主进化报告。', usage: '汇总本地对话的 Token 用量、模型分布和每日活动。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 中的模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
     cards: { processes: '进程', running: '运行中', stopped: '已停止', memoryLayers: '记忆层', sopTools: 'SOP/工具', schedule: '定时任务', enabledTasks: '已启用', reports: '报告', coreFiles: '核心文件', reflect: '反思脚本', health: 'GA 健康', capabilities: '能力', risks: '风险', version: '版本管理' },
     lists: { serviceGroups: '服务域', coreFiles: '核心文件', reflect: 'Reflect / Autonomous', frontends: '前端 / 通道', memory: '记忆层级', sop: 'SOP 与工具', scheduleService: '调度服务', frontendServices: '前端服务', reflectServices: '反思与自主服务', reflectScripts: '反思脚本', scheduledTasks: '定时任务', recentReports: '执行记录', processes: '进程', generatedPreview: '记录详情', riskHints: '接管提示', autostart: '开机自启', capabilities: '能力地图', readiness: '运行前检查', fileList: '文件列表', filePreview: '文件预览', searchResults: '搜索结果', editor: '编辑器' },
     hints: { rootSaved: 'GA 根目录已保存', fileSaved: '文件已保存并备份旧文件', taskSaved: '任务已保存并备份旧文件', taskDeleted: '任务已删除并备份', taskToggled: '任务状态已更新', modelsSaved: 'mykey.py 已备份并保存', savedSecret: '已保存；输入新值可替换', secret: 'API Key / Token', noFrontend: '未发现前端服务', noReflect: '未发现反思或自主服务', noScheduler: '未发现 reflect/scheduler.py 调度服务', noTasks: '暂无 sche_tasks/*.json', noLogs: '暂无日志', previewHelp: '点击“预览”查看配置；点击“保存”会先备份再更新 GA 的 mykey.py。', modelSource: '来源', secretHidden: '已隐藏真实密钥', addProfile: '新增 Profile', preview: '预览', writeMykey: '保存 mykey.py', filePath: '相对路径', searchText: '搜索文本', tailLines: '尾部行数', newTaskId: 'new_task', jsonHelp: 'JSON 需为对象；保存/删除会生成 .bak 时间戳。', autostartEnabled: '已开启：用户登录后自动启动 GA Admin。', autostartDisabled: '未开启：需要手动启动 GA Admin。', autostartUnsupported: '当前平台暂不支持自动注册。', autostartChanged: '开机自启状态已更新', goalObjectiveRequired: '目标不能为空', goalObjectiveTooLarge: '目标超过 16384 字节', goalBudgetInteger: '预算分钟必须是整数', goalBudgetPositive: '预算分钟必须大于 0', goalBudgetTooLarge: '预算分钟不能超过 43200', goalTurnsInteger: '最大轮次必须是整数', goalTurnsNonNegative: '最大轮次不能为负数', goalTurnsTooLarge: '最大轮次不能超过 10000', goalLLMInteger: 'LLM # 必须是整数', goalLLMNonNegative: 'LLM # 不能为负数', goalPythonHelp: 'Python 留空时自动选择：GA 根目录 .venv、venv、uv 缓存解释器、PATH python/python3；填写后按该路径启动并记录到 Goal 状态。', goalHiveHelp: 'Hive 模式会按 GA 官方逻辑启动 Goal Master、临时 BBS 与一个 worker；GA Admin 只做上层管理。', goalStarted: 'Goal 已启动', goalStopped: 'Goal 已停止', goalDeleted: 'Goal 已删除', goalDeleteConfirm: '确定删除 Goal {id}？会删除状态和日志文件；运行中的目标请先停止。', goalDeleteRunning: '运行中的 Goal 不能删除，请先停止。', goalStopConfirm: '确认停止 Goal {id}？将按可用控制级别停止。', goalStopExactConfirm: '确认停止 Admin Goal {id}？将仅终止该 Goal 记录的精确 PID {pid}。', goalStopSoftConfirm: '确认软停止外部 Goal {id}？不会杀进程，只写入状态文件 stopped_by_admin，让 Goal 循环自行退出。', goalOutputTruncated: '仅显示输出尾部，前面内容已截断', goalOutputCapped: '请求字节数超过后端上限，已按上限读取', goalOutputDefault: '未指定读取字节数，已使用默认值', goalOutputBytesInteger: '输出字节数必须是整数', goalOutputBytesNonNegative: '输出字节数不能为负数', goalOutputBytesTooLarge: '输出字节数不能超过 1048576', goalOutputCopied: '输出已复制', goalOutputCleared: '输出已清空', goalOutputLogMissing: '日志文件尚未创建，当前无可读取输出' },
@@ -70,8 +74,8 @@ export const I18N = withUpstreamI18n({
   en: {
     appName: 'GA Admin', tagline: 'GenericAgent local management workspace', root: 'GenericAgent root', setupTitle: 'First-time GenericAgent setup', setupDesc: 'Select an existing GA root, or install GA into a new directory.', validateRoot: 'Validate & use', installGA: 'Install GA', installPath: 'Install path', setupOk: 'GA root configured', installDone: 'GA installed and configured', browse: 'Choose directory', checkEnv: 'Check Python / Git', envReady: 'Environment ready', envMissing: 'Environment missing', save: 'Save', refresh: 'Refresh', busy: 'Busy', ready: 'Ready', error: 'Error', empty: 'Empty', enabled: 'Enabled', disabled: 'Disabled', start: 'Start', stop: 'Stop', running: 'Running', stopped: 'Stopped', language: 'Language', copy: 'Copy', clear: 'Clear', delete: 'Delete', show: 'Show', hide: 'Hide', search: 'Search', read: 'Read', create: 'Create', remove: 'Delete', backup: 'writes create backups', autostart: 'Autostart', enableAutostart: 'Enable autostart', disableAutostart: 'Disable autostart', unsupported: 'Unsupported', titleModel: 'Chat title model', titleModelDisabled: 'Disable automatic title generation', titleModelHelp: 'Use this model for new and existing chat titles, independently of the conversation model.', titleModelFollowConversation: 'Follow the current conversation model', saveTitleModel: 'Save title model', titleModelSaved: 'Title model setting saved', tail: 'Tail', download: 'Download', autostartService: 'Autostart', logs: 'Logs', close: 'Close', cancel: 'Cancel', retry: 'Retry', loading: 'Loading…', mainNavigation: 'Main navigation', switchTheme: 'Switch theme',
     serviceDesc: { scheduler: 'Scheduled-task runner: scans sche_tasks/ every 120s and fires tasks when their once/daily/weekly/every_Nh cadence is due, also archiving L4 session logs.', autonomous: 'Idle autonomy driver: checks every 30 min and, once the user has been away for over 30 min, prompts the agent to advance tasks on its own per the automation SOP.' },
-    nav: { overview: 'Overview', chat: 'Chat', files: 'Files', tasks: 'Scheduled tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Goal Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
-    desc: { overview: 'Understand and take over GA lifecycle by native domains.', chat: 'GA native conversation, uploads and streaming UI migrated from reactapp.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Manage sche_tasks schedules, the scheduler service, and execution records.', memory: 'Layered memory, SOPs and utility indexes.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Manage reflection and autonomous services and review their reports.', usage: 'Summarize local chat token usage, model distribution, and daily activity.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Configure GA root, Python, chat data directory, and Chat Python proxy.', logs: 'Process state and output logs.' },
+    nav: { overview: 'Overview', chat: 'Chat', notifications: 'Notifications', files: 'Files', tasks: 'Scheduled tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Goal Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
+    desc: { overview: 'Understand and take over GA lifecycle by native domains.', chat: 'GA native conversation, uploads and streaming UI migrated from reactapp.', notifications: 'Review background results and configure in-app, browser, and sound alerts.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Manage sche_tasks schedules, the scheduler service, and execution records.', memory: 'Layered memory, SOPs and utility indexes.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Manage reflection and autonomous services and review their reports.', usage: 'Summarize local chat token usage, model distribution, and daily activity.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Configure GA root, Python, chat data directory, and Chat Python proxy.', logs: 'Process state and output logs.' },
     cards: { processes: 'Processes', running: 'Running', stopped: 'Stopped', memoryLayers: 'Memory layers', sopTools: 'SOP/tools', schedule: 'Scheduled jobs', enabledTasks: 'Enabled', reports: 'Reports', coreFiles: 'Core files', reflect: 'Reflect scripts', health: 'GA health', capabilities: 'Capabilities', risks: 'Risks' },
     lists: { serviceGroups: 'Service domains', coreFiles: 'Core files', reflect: 'Reflect / Autonomous', frontends: 'Frontends / Channels', memory: 'Memory layers', sop: 'SOPs and tools', scheduleService: 'Scheduler service', frontendServices: 'Frontend services', reflectServices: 'Reflection and autonomous services', reflectScripts: 'Reflect scripts', scheduledTasks: 'Scheduled tasks', recentReports: 'Execution records', processes: 'Processes', generatedPreview: 'Record details', riskHints: 'Takeover hints', autostart: 'Autostart', capabilities: 'Capability map', readiness: 'Readiness', fileList: 'Files', filePreview: 'Preview', searchResults: 'Search results', editor: 'Editor' },
     hints: { rootSaved: 'GA root saved', fileSaved: 'File saved with backup', taskSaved: 'Task saved with backup', taskDeleted: 'Task deleted with backup', taskToggled: 'Task state updated', modelsSaved: 'mykey.py backed up and written', savedSecret: 'Saved; type a new value to replace', secret: 'API Key / Token', noFrontend: 'No frontend service found', noReflect: 'No reflection or autonomous service found', noScheduler: 'reflect/scheduler.py was not found', noTasks: 'No sche_tasks/*.json', noLogs: 'No logs', previewHelp: 'Preview generated config; writing mykey.py backs up first.', modelSource: 'Source', secretHidden: 'Real secret hidden', addProfile: 'Add profile', preview: 'Preview', writeMykey: 'Write mykey.py', filePath: 'relative path', searchText: 'search text', tailLines: 'tail lines', newTaskId: 'new_task', jsonHelp: 'JSON must be an object; save/delete creates timestamped .bak.', autostartEnabled: 'Enabled: GA Admin starts automatically after user login.', autostartDisabled: 'Disabled: GA Admin must be started manually.', autostartUnsupported: 'Autostart registration is not supported on this platform.', autostartChanged: 'Autostart status updated', goalObjectiveRequired: 'Objective is required', goalObjectiveTooLarge: 'Objective exceeds 16384 bytes', goalBudgetInteger: 'Budget minutes must be an integer', goalBudgetPositive: 'Budget minutes must be positive', goalBudgetTooLarge: 'Budget minutes exceeds 43200', goalTurnsInteger: 'Max turns must be an integer', goalTurnsNonNegative: 'Max turns must be non-negative', goalTurnsTooLarge: 'Max turns cannot exceed 10000', goalLLMInteger: 'LLM # must be an integer', goalLLMNonNegative: 'LLM # cannot be negative', goalPythonHelp: 'Leave Python empty to auto-select GA root .venv, venv, uv cached interpreter, then PATH python/python3; a custom path is used for launch and recorded in Goal state.', goalHiveHelp: 'Hive mode starts the Goal Master, a temporary BBS, and one worker using the official GA flow; GA Admin only manages it from above.', goalStarted: 'Goal started', goalStopped: 'Goal stopped', goalDeleted: 'Goal deleted', goalDeleteConfirm: 'Delete Goal {id}? This removes state and log files; stop running goals first.', goalDeleteRunning: 'Running goals cannot be deleted; stop it first.', goalStopConfirm: 'Stop Goal {id}? GA Admin will use the available control level.', goalStopExactConfirm: 'Stop Admin Goal {id}? Only the exact PID {pid} recorded for this Goal will be terminated.', goalStopSoftConfirm: 'Soft-stop external Goal {id}? This will not kill the process; it only writes stopped_by_admin to the state file so the Goal loop can exit itself.', goalOutputTruncated: 'Showing tail only; earlier output was truncated', goalOutputCapped: 'Requested bytes exceeded backend limit; reading at the cap', goalOutputDefault: 'No byte limit specified; using default', goalOutputBytesInteger: 'Output bytes must be an integer', goalOutputBytesNonNegative: 'Output bytes cannot be negative', goalOutputBytesTooLarge: 'Output bytes cannot exceed 1048576', goalOutputCopied: 'Output copied', goalOutputCleared: 'Output cleared', goalOutputLogMissing: 'Log file has not been created yet; no output is available' },
@@ -348,6 +352,7 @@ export default function App() {
   const modelImportAttempted = useRef(false)
   const [llms, setLLMs] = useState([]), [reflectLLMNo, setReflectLLMNo] = useState(''), [showLLMPicker, setShowLLMPicker] = useState(false), [pendingServiceName, setPendingServiceName] = useState('')
   const appScope = useRef(null)
+  const notificationMonitorRef = useRef({ snapshot: null, busy: false })
   const versionRestartGraceUntil = useRef(0)
   const versionUpdateNeedsReload = useRef(false)
   const versionObservedRunning = useRef(false)
@@ -497,6 +502,35 @@ export default function App() {
     } finally { setBooting(false) }
   }
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!health?.root) return undefined
+    notificationMonitorRef.current = { snapshot: null, busy: false }
+    let active = true
+    const poll = async () => {
+      if (!active || notificationMonitorRef.current.busy) return
+      notificationMonitorRef.current.busy = true
+      try {
+        const [schedule, goals, approvals, inventory] = await Promise.all([
+          api('/api/schedule/tasks'),
+          api('/api/goals/list'),
+          api('/api/autonomous/approvals'),
+          api('/api/ga/inventory'),
+        ])
+        if (!active) return
+        const current = buildNotificationSnapshot({ schedule, goals: goals?.goals || [], approvals, inventory })
+        const events = collectNotificationEvents(notificationMonitorRef.current.snapshot, current)
+        notificationMonitorRef.current.snapshot = current
+        events.forEach(event => publishNotification(event))
+      } catch {
+        // A transient polling failure must not create a false execution alert.
+      } finally {
+        notificationMonitorRef.current.busy = false
+      }
+    }
+    poll()
+    const timer = window.setInterval(poll, 15000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [health?.root])
   useEffect(() => {
     if (tab === 'goals' && health?.ok) { loadGoals().catch(e => setMsg(e.message)); loadLLMs() }
     if (tab === 'chat' && health?.ok && !llms.length) loadLLMs()
@@ -1183,6 +1217,14 @@ export default function App() {
     setTab('tasks')
     setTaskSubTab(nextSubTab)
   }
+  const openNotification = item => {
+    const route = String(item?.route || 'notifications').replace(/^\/+/, '').split('/')[0]
+    if (route === 'tasks' && item?.subtab) {
+      navigateTaskSubTab(item.subtab)
+      return
+    }
+    navigateTo(route || 'notifications')
+  }
 
   useEffect(() => {
     const route = buildRoute(tab, taskSubTab)
@@ -1283,11 +1325,13 @@ export default function App() {
       <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
     </aside>
-    <main className="main"><header className="app-page-header"><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+    <main className="main"><header className="app-page-header"><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header>
+      <GlobalFeedback message={msg} tone={notice?.kind === 'pending' ? 'progress' : notice?.kind} onDismiss={dismissMessage} onRetry={notice?.kind === 'error' ? refreshApp : undefined} retryLabel={t.retry} placement={tab === 'chat' ? 'top' : 'bottom'}/>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands} llms={llms}/>}
+      {tab==='notifications' && <NotificationsPage lang={lang} onOpen={openNotification}/>}
       {tab==='control' && <section>
         <div className="stats">
           <Stat label={t.cards.health} value={health?.ok ? 'OK' : 'FAIL'} icon={<ShieldAlert/>}/>
@@ -1451,10 +1495,9 @@ export default function App() {
           </Panel>
         </div>
       </section>}        </Suspense>
-      </ErrorBoundary>
+  </ErrorBoundary>
     </main>
   </div>
-      <GlobalFeedback message={msg} tone={notice?.kind === 'pending' ? 'progress' : notice?.kind} onDismiss={dismissMessage} onRetry={notice?.kind === 'error' ? refreshApp : undefined} retryLabel={t.retry} placement={tab === 'chat' ? 'top' : 'bottom'}/>
       {mobileNavOpen && <div className="mobile-nav-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setMobileNavOpen(false) }}>
         <section className="mobile-nav-sheet" role="dialog" aria-modal="true" aria-label="页面导航">
           <header><div><b>前往功能页面</b><span>{t.nav[tab]}</span></div><button type="button" onClick={()=>setMobileNavOpen(false)} aria-label="关闭导航"><X size={18}/></button></header>
@@ -1564,4 +1607,4 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   </section>
 }
 
-function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, files:<FileCode2 size={16}/>, tasks:<CalendarClock size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, usage:<BarChart3 size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }
+function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, notifications:<Bell size={16}/>, files:<FileCode2 size={16}/>, tasks:<CalendarClock size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, usage:<BarChart3 size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }

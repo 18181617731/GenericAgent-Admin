@@ -31,17 +31,23 @@ import { chatErrorPresentation } from './lib/chatErrors.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
 import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
 import { firstRuntimeModelNo } from './lib/modelDefaults.js'
+import { clearSessionSearchHistory, loadSessionSearchHistory, saveSessionSearchHistory, sessionSearchScopeOptions } from './lib/chatSessionSearch.js'
+import { primeChatCompletionTone } from './lib/chatCompletionTone.js'
+import { publishNotification } from './lib/notifications.js'
+import { NotificationCenter } from './components/NotificationUI.jsx'
+import SessionSearchDialog from './components/SessionSearchDialog.jsx'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
 gsap.registerPlugin(useGSAP)
 
-const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches
-const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 560px)').matches
+const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)')?.matches
+const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 560px)')?.matches
 const chatLanguage = () => typeof localStorage !== 'undefined' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 const ct = (zh, en) => chatLanguage() === 'en' ? en : zh
 const chatLocale = () => chatLanguage() === 'en' ? 'en-US' : 'zh-CN'
+const ChatFeatureHelp = ({ text }) => <span className="oa-chat-help" aria-hidden="true" data-tooltip={text} title={text}><CircleHelp size={13}/></span>
 export const ChatFileScopeContext = createContext({ workspace: '', gaRoot: '' })
 
 const timestampMs = (v) => {
@@ -2433,21 +2439,35 @@ export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClo
   </aside>
 }
 
+export function worldlineUnavailableMessage(state) {
+  const rawReason = String(state?.degraded_reason || '').trim()
+  const reason = rawReason.toLowerCase()
+  if (!rawReason || reason === 'missing' || reason === 'inactive') {
+    return ct('当前会话还没有可用的世界线记录。完成一轮成功对话后，系统会自动创建节点。', 'No worldline records are available for this chat yet. A node will be created after a completed reply.')
+  }
+  if (reason === 'malformed' || reason === 'legacy') {
+    return ct('当前会话的世界线记录格式异常或版本较旧，请刷新后重试。', 'This chat’s worldline data is invalid or from an older version. Refresh and try again.')
+  }
+  return ct(`世界线暂不可用：${rawReason}`, `Worldline is temporarily unavailable: ${rawReason}`)
+}
+
 export function WorldlinePanel({ state, loading, switchingId, disabled, onClose, onRefresh, onSwitch }) {
   const rows = useMemo(() => buildWorldlineRows(state?.nodes, state?.current_path, state?.head), [state])
   const branchCount = rows.filter(row => !row.onPath).length
-  const unavailable = !state || state.available === false
+  const hasState = Boolean(state)
+  const unavailable = hasState && state.available === false
   return <aside className="oa-context-drawer oa-worldline-drawer" aria-label="世界线分支">
     <div className="oa-context-head">
-      <div><b>世界线</b><span>{unavailable ? '当前会话暂无世界线数据' : `共 ${rows.length} 个节点 · ${branchCount} 个分支节点`}</span></div>
+      <div><b>世界线</b><span>{!hasState && loading ? '正在读取世界线数据' : unavailable ? '当前会话暂无世界线数据' : `共 ${rows.length} 个节点 · ${branchCount} 个分支节点`}</span></div>
       <div className="oa-context-actions"><button type="button" onClick={onRefresh} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button><button type="button" onClick={onClose} aria-label="关闭世界线"><X size={15}/></button></div>
     </div>
-    {unavailable && <div className="oa-worldline-empty">{state?.degraded_reason || '还没有世界线记录，发送一条消息后再试。'}</div>}
-    {!unavailable && rows.length === 0 && <div className="oa-worldline-empty">{loading ? '加载中…' : '暂无节点'}</div>}
-    {!unavailable && rows.length > 0 && <div className="oa-worldline-list">{rows.map(row => <div key={row.node.id} className={`oa-worldline-row${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`} style={{ '--wl-level':row.level }}>
+    {!hasState && <div className="oa-worldline-empty">{loading ? '正在初始化并读取当前会话的世界线…' : '还没有世界线记录，发送一条消息后再试。'}</div>}
+    {unavailable && <div className="oa-worldline-empty">{worldlineUnavailableMessage(state)}</div>}
+    {hasState && !unavailable && rows.length === 0 && <div className="oa-worldline-empty">{loading ? '加载中…' : '暂无节点'}</div>}
+    {hasState && !unavailable && rows.length > 0 && <div className="oa-worldline-list">{rows.map(row => <div key={row.node.id} className={`oa-worldline-row${row.onPath ? ' on-path' : ''}${row.isCurrent ? ' is-current' : ''}`} style={{ '--wl-level':row.level }}>
       <span className="oa-worldline-dot" aria-hidden="true"/>
-      <div className="oa-worldline-info"><b title={row.node.title || row.node.id}>{row.node.title || `节点 ${String(row.node.id).slice(0, 8)}`}</b><span>{row.node.untracked_changes && <em className="oa-worldline-untracked">外部改动</em>}{row.node.created_at ? ` · ${fmtTime(row.node.created_at)}` : ''}</span></div>
-      {row.isCurrent ? <em className="oa-worldline-current">当前</em> : <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId} onClick={()=>onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button>}
+      <div className="oa-worldline-info"><b title={row.node.title || row.node.id}>{row.node.title || `节点 ${String(row.node.id).slice(0, 8)}`}</b><span>{row.node.untracked_changes && <em className="oa-worldline-untracked" aria-label="外部改动" title={Array.isArray(row.node.untracked_files) && row.node.untracked_files.length ? `外部改动文件：${row.node.untracked_files.join('、')}` : '该节点包含未追踪的外部改动'}>外部改动</em>}{row.node.created_at ? ` · ${fmtTime(row.node.created_at)}` : ''}</span></div>
+      {row.isCurrent ? <em className="oa-worldline-current">当前</em> : row.node.mapping_status === 'mapped' ? <button type="button" className="oa-worldline-switch" disabled={disabled || !!switchingId} onClick={()=>onSwitch(row.node.id)}>{switchingId === row.node.id ? '切换中…' : '切换'}</button> : <em className="oa-worldline-unmapped" title="该节点没有可恢复的对话映射">仅记录</em>}
     </div>)}</div>}
     {state?.truncated && <div className="oa-worldline-empty">节点过多，已截断显示。</div>}
   </aside>
@@ -2813,6 +2833,13 @@ export default function ChatApp() {
   const [projects, setProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
   const [sidebarSearch, setSidebarSearch] = useState('')
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
+  const [sessionSearchQuery, setSessionSearchQuery] = useState('')
+  const [sessionSearchScope, setSessionSearchScope] = useState('all')
+  const [sessionSearchHistory, setSessionSearchHistory] = useState(() => loadSessionSearchHistory())
+  const [sessionSearchResults, setSessionSearchResults] = useState([])
+  const [sessionSearchLoading, setSessionSearchLoading] = useState(false)
+  const [sessionSearchError, setSessionSearchError] = useState('')
   const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
@@ -2902,6 +2929,8 @@ export default function ChatApp() {
   const fileRef = useRef(null)
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
+  const sessionSearchTriggerRef = useRef(null)
+  const sessionSearchRequestRef = useRef(0)
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
   const runSeqRef = useRef(0)
@@ -2971,6 +3000,7 @@ export default function ChatApp() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined
     const mq = window.matchMedia('(max-width: 900px)')
+    if (!mq) return undefined
     const syncCollapsed = () => setCollapsed(mq.matches)
     syncCollapsed()
     mq.addEventListener?.('change', syncCollapsed)
@@ -2984,6 +3014,7 @@ export default function ChatApp() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined
     const mq = window.matchMedia('(max-width: 560px)')
+    if (!mq) return undefined
     const sync = () => setIsMobile(mq.matches)
     sync()
     mq.addEventListener?.('change', sync)
@@ -3383,6 +3414,8 @@ export default function ChatApp() {
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
     streamAbortRef.current = ctrl
+    let streamCompleted = false
+    let streamError = null
     let pendingId = `resume-${Date.now()}`
     // Resolve the placeholder id up-front: `followChatStream` below reads `pendingId` right
     // after `await fetch`, which may win the race against the state updater.
@@ -3402,6 +3435,7 @@ export default function ChatApp() {
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
       await followChatStream(res, pendingId, '', id, ctrl.signal)
+      streamCompleted = true
       if (isActiveSession(id)) {
         const list = await loadSessions(id)
         const currentSession = list.find(session => session.id === id)
@@ -3410,11 +3444,16 @@ export default function ChatApp() {
         }
       }
     } catch (e) {
+      streamError = e
       if (e.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
     } finally {
       if (streamAbortRef.current === ctrl) {
         streamAbortRef.current = null
-        if (isActiveSession(id)) { setBusy(false); setStreamingSid('') }
+        if (isActiveSession(id)) {
+          if (streamCompleted) publishNotification({ category: 'chat', level: 'success', title: '对话已完成', message: `会话 ${id} 已完成回复。`, route: 'chat', dedupeKey: `chat:${id}:${pendingId}:done` })
+          else if (streamError?.name !== 'AbortError' && streamError) publishNotification({ category: 'chat', level: 'error', title: '对话执行失败', message: `会话 ${id} 执行失败：${streamError.message || streamError}`, route: 'chat', dedupeKey: `chat:${id}:${pendingId}:error` })
+          setBusy(false); setStreamingSid('')
+        }
       }
     }
   }
@@ -3487,7 +3526,7 @@ export default function ChatApp() {
     const token = ++worldlineSeqRef.current
     setWorldlineLoading(true)
     try {
-      const d = await api(`/api/chat/worldline/${id}`)
+      const d = await api(`/api/chat/worldline/${id}?activate=true`)
       if (token === worldlineSeqRef.current && activeSidRef.current === id) setWorldlineState({ sessionID:id, ...d })
     } catch (error) {
       if (token === worldlineSeqRef.current) setWorldlineState({ sessionID:id, available:false, degraded_reason:error?.message || String(error) })
@@ -3528,6 +3567,67 @@ export default function ChatApp() {
     openSession(id).catch(error => setErr(error?.message || String(error)))
     if (isNarrowChatViewport()) setCollapsed(true)
   }
+
+  const openSessionSearch = () => {
+    setSidebarSearch('')
+    setSessionSearchError('')
+    setSessionSearchOpen(true)
+  }
+
+  const closeSessionSearch = () => {
+    setSessionSearchOpen(false)
+    setSessionSearchQuery('')
+    setSessionSearchScope('all')
+    setSessionSearchResults([])
+    setSessionSearchError('')
+    window.requestAnimationFrame?.(() => sessionSearchTriggerRef.current?.focus())
+  }
+
+  const submitSessionSearch = () => {
+    const query = sessionSearchQuery.trim()
+    if (!query) return
+    setSessionSearchHistory(saveSessionSearchHistory({ query, scope: sessionSearchScope }))
+  }
+
+  const selectSessionSearchHistory = entry => {
+    setSessionSearchQuery(entry?.query || '')
+    setSessionSearchScope(entry?.scope || 'all')
+    setSessionSearchError('')
+  }
+
+  const selectSessionSearchResult = id => {
+    closeSessionSearch()
+    selectSidebarSession(id)
+  }
+
+  useEffect(() => {
+    const query = sessionSearchQuery.trim()
+    const requestID = ++sessionSearchRequestRef.current
+    if (!sessionSearchOpen || !query) {
+      setSessionSearchResults([])
+      setSessionSearchLoading(false)
+      return undefined
+    }
+    setSessionSearchLoading(true)
+    setSessionSearchError('')
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: query, scope: sessionSearchScope, limit: '60' })
+      api(`/api/chat/search?${params.toString()}`)
+        .then(data => {
+          if (requestID !== sessionSearchRequestRef.current) return
+          setSessionSearchResults(Array.isArray(data?.results) ? data.results : [])
+        })
+        .catch(error => {
+          if (requestID !== sessionSearchRequestRef.current) return
+          setSessionSearchResults([])
+          setSessionSearchError(error?.message || ct('搜索失败，请稍后重试。', 'Search failed. Try again.'))
+        })
+        .finally(() => {
+          if (requestID === sessionSearchRequestRef.current) setSessionSearchLoading(false)
+        })
+    }, 180)
+    return () => window.clearTimeout(timer)
+  }, [sessionSearchOpen, sessionSearchQuery, sessionSearchScope])
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
@@ -4008,11 +4108,14 @@ export default function ChatApp() {
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
     const targetSessionID = item.sessionId || sid
+    primeChatCompletionTone()
     setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
     let id = targetSessionID
     let commandPatch = null
     let optimistic = null
     let pending = null
+    let streamCompleted = false
+    let runError = null
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -4055,7 +4158,9 @@ export default function ChatApp() {
         return [...xs.slice(0, cutIdx), optimistic, pending]
       })
       commandPatch = await followChatStream(res, pending.id, clientUserID, id, ctrl.signal)
+      streamCompleted = true
     } catch (e) {
+      runError = e
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
     } finally {
@@ -4105,6 +4210,8 @@ export default function ChatApp() {
         setNotice(ct(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`, `Continuing queued messages (${Math.max(queuedRef.current.length, 0)} remaining)`))
         setTimeout(() => runSend(next), 0)
       } else {
+        if (streamCompleted) publishNotification({ category: 'chat', level: 'success', title: '对话已完成', message: `会话 ${id} 已完成回复。`, route: 'chat', dedupeKey: `chat:${id}:${pending?.id || runToken}:done` })
+        else if (runError?.name !== 'AbortError' && runError) publishNotification({ category: 'chat', level: 'error', title: '对话执行失败', message: `会话 ${id || '新会话'} 执行失败：${runError.message || runError}`, route: 'chat', dedupeKey: `chat:${id || 'new'}:${pending?.id || runToken}:error` })
         activeRunRef.current = false
         setBusy(false)
         setStreamingSid('')
@@ -4439,6 +4546,8 @@ export default function ChatApp() {
   }, { scope: chatScope, dependencies: [messages.length] })
 
   const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
+  const sessionSearchScopes = sessionSearchScopeOptions(chatLanguage())
+  const recentSearchSessions = sessions.slice(0, 8)
   const filteredSessions = useMemo(() => {
     if (!sidebarSearch.trim()) return sessions
     const q = sidebarSearch.trim().toLowerCase()
@@ -4468,6 +4577,8 @@ export default function ChatApp() {
       setErr(ct('复制失败，请手动选择 JSON', 'Copy failed; select the JSON manually'))
     }
   }
+  const contextHelpText = ct('查看本次对话实际发给模型的上下文快照，包括原始历史、工作状态等；这不是长期记忆。', 'View the context snapshot actually sent to the model, including raw history and working state. This is not long-term memory.')
+  const worldlineHelpText = ct('查看当前对话的分支历史。选择可切换的节点后，会恢复该节点对应的对话和工作区状态；对话运行中不能切换。', 'View conversation branches. Switching to a mapped node restores its conversation and workspace state; switching is disabled while a reply is running.')
 
   const renderSidebarSession = session => <div key={session.id} className={`oa-session-row ${session.id === sid ? 'active' : ''} ${session.running ? 'is-running' : ''}`}>
     {editing === session.id ? <div className="oa-rename">
@@ -4490,48 +4601,27 @@ export default function ChatApp() {
     <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="oa-side-head">
-        <div className="oa-sidebar-search">
+        <div className="oa-sidebar-search" onClick={openSessionSearch}>
           <Search size={16}/>
           <input
             type="text"
             placeholder={ct('搜索会话...', 'Search sessions...')}
-            value={sidebarSearch}
-            onChange={(e)=>setSidebarSearch(e.target.value)}
+            value=""
+            readOnly
+            ref={sessionSearchTriggerRef}
+            onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openSessionSearch() }}
             aria-label={ct('搜索会话', 'Search sessions')}
+            aria-haspopup="dialog"
           />
-          {sidebarSearch && <button className="oa-search-clear" onClick={()=>setSidebarSearch('')} aria-label={ct('清除搜索', 'Clear search')}><X size={14}/></button>}
         </div>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
       <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
-      <div className="oa-session-manager-head" aria-hidden="true">
+      <div className="oa-session-manager-head">
         <span className="oa-session-manager-title">{ct('历史会话', 'History')} <small>{sessions.length}</small></span>
         <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
       </div>
-      <div className="oa-session-list" aria-hidden="true">
-        {sessions.map(s => <div key={s.id} className={`oa-session-row ${s.id===sid?'active':''} ${s.running?'is-running':''}`}>
-          {editing === s.id ? <div className="oa-rename">
-            <input value={draftTitle} autoFocus onChange={e=>setDraftTitle(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveRename(s.id); if(e.key==='Escape') setEditing('') }}/>
-            <button onClick={()=>saveRename(s.id)}><Check size={14}/></button><button onClick={()=>setEditing('')}><X size={14}/></button>
-          </div> : <button type="button" className="oa-session" onClick={()=>selectSidebarSession(s.id)} title={shortTitle(s)}>
-            <span className="oa-session-title" title={shortTitle(s)}>{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b></span>
-            <small><Clock3 size={11}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
-          </button>}
-          {editing !== s.id && <button className={`oa-session-more ${menuOpen === s.id ? 'is-open' : ''}`} onClick={(e)=>{
-            e.stopPropagation()
-            if (menuOpen === s.id) { setMenuOpen(''); setMenuPos(null); return }
-            const r = e.currentTarget.getBoundingClientRect()
-            setMenuPos({ top: Math.max(8, r.top - 78), left: Math.max(8, r.right - 136) })
-            setMenuOpen(s.id)
-          }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16}/></button>}
-        </div>)}
-        {!sessions.length && <div className="oa-empty-list">{ct('暂无历史会话', 'No session history')}</div>}
-      </div>
       {sidebarTab === 'history' ? <>
-        <div className="oa-session-manager-head">
-          <span className="oa-session-manager-title">{ct('最近对话', 'Recent chats')}</span>
-          <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
-        </div>
         <div className="oa-session-list">
           {filteredSessions.map(renderSidebarSession)}
           {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
@@ -4583,13 +4673,13 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
         <div className="oa-title"><b title={current ? shortTitle(current) : '新对话'}>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
-        <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title="查看发给模型的 raw_history">
-          <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span>
+        <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={contextHelpText} aria-label={ct('查看模型上下文', 'View model context')}>
+          <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span><ChatFeatureHelp text={contextHelpText}/>
         </button>
-        <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title="查看/切换对话世界线分支">
-          <GitBranch size={16}/>世界线{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
+        <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title={worldlineHelpText} aria-label={ct('查看和切换对话世界线', 'View and switch conversation branches')}>
+          <GitBranch size={16}/><span className="oa-context-label">世界线</span>{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}<ChatFeatureHelp text={worldlineHelpText}/>
         </button>
-        <button
+         <button
           ref={mobileToolsTriggerRef}
           className={`oa-icon-btn oa-mobile-tools-trigger ${mobileToolsOpen ? 'is-open' : ''}`}
           type="button"
@@ -4599,7 +4689,8 @@ export default function ChatApp() {
           aria-expanded={mobileToolsOpen}
           aria-controls="oa-mobile-tools-menu"
           title={ct('上下文、世界线与配色', 'Context, timeline, and theme')}
-        ><MoreHorizontal size={18}/></button>
+         ><MoreHorizontal size={18}/></button>
+         <NotificationCenter lang={chatLanguage()} />
       </header>
 
       {mobileToolsOpen && createPortal(<div className="oa-mobile-tools-layer">
@@ -4837,6 +4928,26 @@ export default function ChatApp() {
       </footer>
     </main>
 
+    <SessionSearchDialog
+      open={sessionSearchOpen}
+      lang={chatLanguage()}
+      query={sessionSearchQuery}
+      scope={sessionSearchScope}
+      scopes={sessionSearchScopes}
+      history={sessionSearchHistory}
+      recentSessions={recentSearchSessions}
+      results={sessionSearchResults}
+      loading={sessionSearchLoading}
+      error={sessionSearchError}
+      currentSessionID={sid}
+      onQueryChange={value => setSessionSearchQuery(value)}
+      onScopeChange={value => setSessionSearchScope(value)}
+      onSubmit={submitSessionSearch}
+      onSelectHistory={selectSessionSearchHistory}
+      onClearHistory={() => setSessionSearchHistory(clearSessionSearchHistory())}
+      onSelectSession={selectSessionSearchResult}
+      onClose={closeSessionSearch}
+    />
     {worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
