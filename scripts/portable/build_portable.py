@@ -142,12 +142,30 @@ def install_python_runtime(stage: Path, python_version: str):
     if py_exe.exists():
         py_stage.rename(py_home)
     else:
-        # Find the actual nested directory
-        nested = next(py_stage.iterdir(), None)
-        if nested and nested.is_dir() and (nested / py_exe_name).exists():
-            nested.rename(py_home)
-            py_stage.rmdir()
+        # Find the actual nested directory (search recursively)
+        found_py = None
+        for root, dirs, files in os.walk(py_stage):
+            root_path = Path(root)
+            if py_exe_name in files:
+                # Check if this is a bin/ subdirectory (common on Unix)
+                if root_path.name == "bin":
+                    found_py = root_path.parent
+                else:
+                    found_py = root_path
+                break
+        
+        if found_py:
+            say(f"Found Python at {found_py}")
+            found_py.rename(py_home)
+            # Clean up remaining stage directory
+            if py_stage.exists():
+                shutil.rmtree(py_stage)
         else:
+            # Debug: list py_stage contents
+            say(f"ERROR: Could not find {py_exe_name} in uv Python install")
+            say(f"Contents of {py_stage}:")
+            for item in py_stage.rglob("*"):
+                say(f"  {item.relative_to(py_stage)}")
             die(f"Could not find {py_exe_name} in uv Python install")
     
     say(f"Python runtime installed at {py_home}")
