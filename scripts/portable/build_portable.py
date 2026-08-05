@@ -364,7 +364,7 @@ def main():
     if not bootstrap_src.exists():
         die(f"bootstrap.py not found at {bootstrap_src}")
     shutil.copy2(bootstrap_src, bootstrap_dst)
-    say(f"Copied bootstrap.py → {bootstrap_dst}")
+    say(f"Copied bootstrap.py -> {bootstrap_dst}")
     
     # 2. Install Python runtime
     install_python_runtime(stage, args.python_version)
