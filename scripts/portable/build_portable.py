@@ -22,8 +22,9 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-# Core dependencies installed into the venv
-CORE_DEPS = [
+# Extra LLM dependencies not in GA's pyproject.toml
+# GA base deps (requests/bs4/bottle/websocket/aiohttp) will be installed via pip install -e
+EXTRA_LLM_DEPS = [
     "anthropic==0.39.0",
     "httpx==0.27.2",
     "playwright==1.48.0",
@@ -153,7 +154,7 @@ def install_python_runtime(stage: Path, python_version: str):
 
 
 def create_venv_and_install_deps(ga_root: Path, python_exe: Path):
-    """Create venv inside GA root and install core deps."""
+    """Create venv inside GA root and install deps from pyproject.toml + extras."""
     venv_path = ga_root / ".venv"
     say(f"Creating venv at {venv_path}")
     
@@ -168,11 +169,19 @@ def create_venv_and_install_deps(ga_root: Path, python_exe: Path):
     if not venv_py.exists():
         die(f"venv python not found at {venv_py}")
     
-    say(f"Installing core deps: {', '.join(CORE_DEPS)}")
+    # Upgrade pip
+    say("Upgrading pip")
     run_cmd([str(venv_py), "-m", "pip", "install", "--upgrade", "pip", "--quiet", "--disable-pip-version-check"])
-    run_cmd([str(venv_py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check"] + CORE_DEPS)
     
-    say("Core dependencies installed")
+    # Install GA in editable mode (installs dependencies from pyproject.toml)
+    say(f"Installing GenericAgent and its dependencies from pyproject.toml")
+    run_cmd([str(venv_py), "-m", "pip", "install", "-e", str(ga_root), "--quiet", "--disable-pip-version-check"])
+    
+    # Install extra LLM dependencies
+    say(f"Installing extra LLM deps: {', '.join(EXTRA_LLM_DEPS)}")
+    run_cmd([str(venv_py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check"] + EXTRA_LLM_DEPS)
+    
+    say("All dependencies installed")
 
 
 def write_config(stage: Path):
