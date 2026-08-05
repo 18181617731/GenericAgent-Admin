@@ -134,11 +134,10 @@ jobs:
           cd package
           python -c "import hashlib, pathlib; [p.with_suffix(p.suffix + '.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\\n', encoding='utf-8') for p in pathlib.Path('.').glob('*.zip')]"
 
-      - name: Upload Windows AMD64 artifact for portable build
-        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
+      - name: Upload build artifact for portable build
         uses: actions/upload-artifact@v4
         with:
-          name: ga-admin-windows-amd64
+          name: ga-admin-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
           retention-days: 1
 
@@ -154,45 +153,87 @@ jobs:
           overwrite_files: true
 
   build-portable:
-    name: Build portable bundle
-    runs-on: windows-latest
+    name: Build portable bundle (${{ matrix.goos }}-${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
     needs: build
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+          - goos: windows
+            goarch: arm64
+            runner: windows-latest
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-          fetch-depth: 0  # Need full history for git describe in build_portable.ps1
+          fetch-depth: 0  # Need full history for git describe
 
-      - name: Download Windows AMD64 artifact
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ga-admin-windows-amd64
+          name: ga-admin-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
 
       - name: Build portable bundle
+        run: |
+          python scripts/portable/build_portable.py \
+            --platform ${{ matrix.goos }} \
+            --arch ${{ matrix.goarch }} \
+            --out-dir portable-out \
+            --skip-build
+
+      - name: Package bundle (Windows)
+        if: matrix.goos == 'windows'
         shell: powershell
         run: |
-          $outDir = "portable-out"
-          & scripts/portable/build_portable.ps1 -OutDir $outDir -SkipBuild
-          
-          # Script outputs ga-admin-portable-{version} under $outDir
-          $bundleDir = Get-ChildItem -Path $outDir -Directory | Select-Object -First 1
-          if (-not $bundleDir) { throw "No bundle directory found in $outDir" }
-          
-          $bundleName = $bundleDir.Name
-          $zipName = "${bundleName}.zip"
+          $bundleDir = Get-ChildItem -Path portable-out -Directory | Select-Object -First 1
+          if (-not $bundleDir) { throw "No bundle found" }
+          $zipName = "$($bundleDir.Name).zip"
           Compress-Archive -Path $bundleDir.FullName -DestinationPath $zipName -Force
           $hash = (Get-FileHash $zipName -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "${zipName}.sha256" -Value "$hash  $zipName" -NoNewline
 
-      - name: Upload portable bundle to GitHub Release
+      - name: Package bundle (Unix)
+        if: matrix.goos != 'windows'
+        run: |
+          cd portable-out
+          bundleDir=$(ls -d */ | head -n1 | sed 's#/##')
+          if [ -z "$bundleDir" ]; then echo "No bundle found"; exit 1; fi
+          tarName="${bundleDir}.tar.gz"
+          tar -czf "../${tarName}" "$bundleDir"
+          cd ..
+          sha256sum "${tarName}" | awk '{print $1 "  " $2}' > "${tarName}.sha256"
+
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           prerelease: ${{ contains(inputs.tag || github.ref_name, '-alpha') || contains(inputs.tag || github.ref_name, '-beta') || contains(inputs.tag || github.ref_name, '-rc') }}
           files: |
-            ga-admin-portable-*.zip
-            ga-admin-portable-*.zip.sha256
+            ga-admin-portable-*.*
           fail_on_unmatched_files: true
           overwrite_files: true
