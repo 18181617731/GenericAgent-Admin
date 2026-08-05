@@ -172,6 +172,19 @@ def install_python_runtime(stage: Path, python_version: str):
             die(f"Could not find {py_exe_name} in uv Python install")
     
     say(f"Python runtime installed at {py_home}")
+    
+    # On Unix, create python3 symlink if it doesn't exist (bootstrap.py expects it)
+    if platform.system() != "Windows":
+        python3_link = py_home / "bin" / "python3"
+        if not python3_link.exists():
+            # Find python3.x executable
+            bin_dir = py_home / "bin"
+            if bin_dir.exists():
+                for candidate in bin_dir.glob("python3.*"):
+                    if candidate.is_file() and os.access(candidate, os.X_OK):
+                        python3_link.symlink_to(candidate.name)
+                        say(f"Created symlink: python3 -> {candidate.name}")
+                        break
 
 
 def resolve_bundled_python(stage: Path, target_platform: str) -> Path:
