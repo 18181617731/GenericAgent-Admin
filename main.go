@@ -55,7 +55,7 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
-	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv))
+	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv), os.Getenv(authEnabledEnv))
 	if err != nil {
 		log.Fatalf("initialize admin authentication: %v", err)
 	}
@@ -107,6 +107,7 @@ const (
 	adminIdleTimeout       = 120 * time.Second
 	authUserEnv            = "GA_ADMIN_AUTH_USER"
 	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
+	authEnabledEnv         = "GA_ADMIN_AUTH_ENABLED"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

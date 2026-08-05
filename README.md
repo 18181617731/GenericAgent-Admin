@@ -137,7 +137,9 @@ Open `http://127.0.0.1:8787`.
 
 ### Environment Variables
 
-- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`: HTTP Basic Auth for non-localhost access
+- Authentication is disabled by default, so localhost, LAN, and Tailscale access do not require a login.
+- `GA_ADMIN_AUTH_ENABLED=1`: Enable HTTP Basic Auth for non-localhost access.
+- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`: Optional environment-managed credentials; providing both also enables authentication.
 
 ### Configuration
 
@@ -171,11 +173,11 @@ The repository ignores:
 GA_ADMIN_NO_BROWSER=1 ./ga-admin
 ```
 
-无桌面服务器需要远程访问时，请把 `config.local.json` 中的 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`。未配置环境托管凭据且应用数据目录中没有 `auth.local.json` 时，程序不会创建默认密码；首次打开会要求直接为管理员 `admin` 设置至少 8 个字符的密码。完成设置前，除认证状态和密码设置接口外，其他 `/api/*` 请求都会返回 `428 Precondition Required`。请只在可信网络中暴露尚未初始化的实例，并立即完成首次设置；无人值守或不便安全完成首次设置时，应改用下述环境变量预先配置凭据。
+无桌面服务器需要远程访问时，请把 `config.local.json` 中的 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`。默认不开启 HTTP Basic Auth，因此本机、局域网和 Tailscale 地址都可以直接打开管理页面，不需要输入账号密码。已有的 `auth.local.json` 只有在显式启用认证后才会读取。
 
 设置后的凭据以加盐 PBKDF2 哈希保存到应用数据目录的 `auth.local.json`，不会保存明文密码。不要把这个本地状态文件提交到版本库；备份或迁移应用数据时应将它视为敏感文件。设置或改密会立即使旧凭据失效；从其他设备通过 HTTP Basic Auth 访问时，需要使用当前密码重新认证。
 
-如果希望由部署环境托管凭据，可以同时设置以下两个变量。两者必须成对提供；只设置其中一个时程序会拒绝启动。环境托管模式不会写入本地密码文件，也不显示首次改密页面：
+如果需要重新启用认证，可以设置 `GA_ADMIN_AUTH_ENABLED=1`；如果希望由部署环境托管凭据，也可以同时设置以下两个变量，提供凭据会自动启用认证。两个凭据变量必须成对提供；只设置其中一个时程序会拒绝启动。环境托管模式不会写入本地密码文件，也不显示首次改密页面：
 
 ```bash
 GA_ADMIN_AUTH_USER=admin \
@@ -191,7 +193,7 @@ $env:GA_ADMIN_AUTH_PASSWORD = 'replace-with-a-long-random-password'
 .\ga-admin.exe --headless
 ```
 
-所有来源地址不是 IPv4 `127.0.0.0/8` 的请求都会被整站 HTTP Basic Auth 保护，覆盖页面、静态资源和全部 `/api/*` 路由。首次设置阶段仅认证状态、密码设置接口和用于呈现设置页的前端资源可匿名访问；其他 `/api/*` 仍会被门禁阻止。本机回环访问不要求 Basic Auth。程序只按实际 TCP 来源地址判断是否为 `127.*`，不会信任客户端提供的 `X-Forwarded-For`。Basic Auth 本身不加密凭据；跨不可信网络访问时，必须在 GA Admin 前配置 HTTPS/TLS 反向代理，并限制防火墙访问来源。反向代理连接 GA Admin 时也必须携带有效的 Basic Auth 凭据。
+启用认证后，所有来源地址不是 IPv4 `127.0.0.0/8` 的请求都会被整站 HTTP Basic Auth 保护，覆盖页面、静态资源和全部 `/api/*` 路由。本机回环访问不要求 Basic Auth。程序只按实际 TCP 来源地址判断是否为 `127.*`，不会信任客户端提供的 `X-Forwarded-For`。Basic Auth 本身不加密凭据；跨不可信网络访问时，必须在 GA Admin 前配置 HTTPS/TLS 反向代理，并限制防火墙访问来源。反向代理连接 GA Admin 时也必须携带有效的 Basic Auth 凭据。
 
 ## 本地构建
 
@@ -479,7 +481,9 @@ go run .
 
 ### 环境变量
 
-- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`：非 localhost 访问的 HTTP Basic Auth
+- 默认关闭认证，本机、局域网和 Tailscale 访问无需登录。
+- `GA_ADMIN_AUTH_ENABLED=1`：启用非 localhost 访问的 HTTP Basic Auth。
+- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`：可选的环境托管凭据；同时提供两个变量也会自动启用认证。
 
 ### 配置
 

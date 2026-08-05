@@ -2,6 +2,17 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.52 - 2026-08-05
+
+### User-facing changes
+- 默认关闭 HTTP Basic Auth，本机、局域网和 Tailscale 地址可以直接访问，不再被历史密码阻塞。
+- 保留可选认证能力，可通过 `GA_ADMIN_AUTH_ENABLED=1` 或同时配置 `GA_ADMIN_AUTH_USER` 与 `GA_ADMIN_AUTH_PASSWORD` 重新启用。
+- 认证状态接口明确返回当前是否启用认证，关闭认证时改密接口给出明确的 `auth_disabled` 提示。
+- 修复 Windows 发布工作流的构建任务依赖配置，确保新版本标签可以正常生成发布包。
+
+### Validation
+- Passed `go test ./...`, frontend lint, library tests (`234/234`), frontend production build, authentication UI tests (`6/6`), Windows `build.bat`, and live HTTP checks on localhost and the detected Tailscale interface.
+
 ## v1.0.51 - 2026-08-04
 
 ### User-facing changes
