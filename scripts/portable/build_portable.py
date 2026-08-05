@@ -358,6 +358,14 @@ def main():
     ga_root = stage / "GenericAgent"
     download_ga_source(args.ga_ref, ga_root)
     
+    # 1b. Copy portable-specific bootstrap.py into GA source tree
+    bootstrap_src = repo_root / "scripts" / "portable" / "bootstrap.py"
+    bootstrap_dst = ga_root / "bootstrap.py"
+    if not bootstrap_src.exists():
+        die(f"bootstrap.py not found at {bootstrap_src}")
+    shutil.copy2(bootstrap_src, bootstrap_dst)
+    say(f"Copied bootstrap.py → {bootstrap_dst}")
+    
     # 2. Install Python runtime
     install_python_runtime(stage, args.python_version)
     
