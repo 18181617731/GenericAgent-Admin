@@ -37,7 +37,7 @@ VENV_PY = (
 
 
 def log(msg: str) -> None:
-    print("[bootstrap] " + msg, flush=True)
+    print("[bootstrap] " + msg, file=sys.stderr, flush=True)
 
 
 def fix_pyvenv_cfg() -> bool:
