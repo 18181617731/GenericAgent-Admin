@@ -408,10 +408,10 @@ def main():
     say(f"Copied bootstrap.py -> {bootstrap_dst}")
     
     # 2. Install Python runtime
-    install_python_runtime(stage, args.python_version)
+    install_python_runtime(ga_root, args.python_version)
     
     # 3. Create venv and install deps
-    python_exe = resolve_bundled_python(stage, args.platform)
+    python_exe = resolve_bundled_python(ga_root, args.platform)
     create_venv_and_install_deps(ga_root, python_exe)
     
     # 4. Write config
