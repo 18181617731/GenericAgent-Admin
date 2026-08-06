@@ -58,12 +58,18 @@ describe('InstancesPage', () => {
 
     await screen.findByRole('heading', { name: 'Primary' })
     await user.click(screen.getByRole('button', { name: 'One-click add' }))
+    expect(screen.getByRole('heading', { name: 'Choose the new instance ID' })).not.toBeNull()
+    expect(screen.queryByLabelText('Display name')).toBeNull()
+    expect(screen.queryByLabelText('GenericAgent root')).toBeNull()
+    await user.type(screen.getByLabelText('Instance ID'), 'genericagent')
+    await user.click(screen.getByRole('button', { name: 'Start creating' }))
 
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('[install_instance]'))
     const [url, options] = globalThis.fetch.mock.calls[1]
     expect(url).toBe('/api/instances/install')
     expect(options.method).toBe('POST')
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
+    expect(JSON.parse(options.body)).toEqual({ id: 'genericagent' })
 
     const installedHeading = await screen.findByRole('heading', { name: 'GenericAgent' })
     const installedCard = installedHeading.closest('article')
@@ -72,7 +78,7 @@ describe('InstancesPage', () => {
     expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(true)
     expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(true)
     expect(within(installedCard).getByRole('button', { name: 'Delete' }).disabled).toBe(false)
-    expect(screen.getByRole('button', { name: 'One-click add' }).getAttribute('aria-busy')).toBe('false')
+    expect(screen.getByRole('button', { name: 'One-click add' }).disabled).toBe(false)
     expect(screen.getByText('Instance added and initializing in the background')).not.toBeNull()
 
     await waitFor(() => expect(within(installedCard).getByText('Ready')).not.toBeNull(), { timeout: 3000 })

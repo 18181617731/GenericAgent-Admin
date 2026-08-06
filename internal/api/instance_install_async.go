@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"genericagent-admin-go/internal/config"
@@ -184,15 +183,14 @@ func (s *Server) automaticInstanceDestination(instance config.InstanceConfig) (s
 }
 
 func isAutomaticInstanceID(id string) bool {
-	id = strings.TrimSpace(id)
-	if id == automaticInstanceBaseID {
-		return true
-	}
-	prefix := automaticInstanceBaseID + "-"
-	if !strings.HasPrefix(id, prefix) {
+	if id == "" || len(id) > 64 || id != strings.TrimSpace(id) {
 		return false
 	}
-	suffix := strings.TrimPrefix(id, prefix)
-	sequence, err := strconv.Atoi(suffix)
-	return err == nil && sequence >= 2 && strconv.Itoa(sequence) == suffix
+	for i, r := range id {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || i > 0 && (r == '-' || r == '_' || r == '.') {
+			continue
+		}
+		return false
+	}
+	return true
 }

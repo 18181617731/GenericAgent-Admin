@@ -24,10 +24,14 @@ type instanceInstallResponse struct {
 	ArchiveURL        string                  `json:"archive_url"`
 }
 
-func installInstanceForTest(t *testing.T, h http.Handler) instanceInstallResponse {
+func installInstanceForTest(t *testing.T, h http.Handler, id string) instanceInstallResponse {
 	t.Helper()
+	body, err := json.Marshal(instanceInstallRequest{ID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/instances/install", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/install", strings.NewReader(string(body)))
 	markDangerous(req)
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -112,9 +116,9 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 	}
 
 	h := s.Routes()
-	first := installInstanceForTest(t, h)
+	first := installInstanceForTest(t, h, "genericagent")
 	firstDest := waitTestSignal(t, started, "first download")
-	second := installInstanceForTest(t, h)
+	second := installInstanceForTest(t, h, "genericagent-2")
 	secondDest := waitTestSignal(t, started, "second download")
 
 	wantFirst := filepath.Join(s.CfgStore.Root, "genericagent")
@@ -126,21 +130,18 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		if result.Instance.InitStatus != config.InstanceInitStatusInitializing || result.Instance.InitError != "" {
 			t.Errorf("%s response state=%q error=%q", label, result.Instance.InitStatus, result.Instance.InitError)
 		}
-		if result.ArchiveURL != genericAgentArchiveURL {
-			t.Errorf("%s archive_url=%q want %q", label, result.ArchiveURL, genericAgentArchiveURL)
-		}
 	}
-	if first.Instance.ID != "genericagent" || first.Instance.Name != "GenericAgent" || first.Instance.GARoot != wantFirst {
+	if first.Instance.ID != "genericagent" || first.Instance.Name != "genericagent" || first.Instance.GARoot != wantFirst {
 		t.Errorf("first instance=%+v", first.Instance)
 	}
-	if second.Instance.ID != "genericagent-2" || second.Instance.Name != "GenericAgent 2" || second.Instance.GARoot != wantSecond {
+	if second.Instance.ID != "genericagent-2" || second.Instance.Name != "genericagent-2" || second.Instance.GARoot != wantSecond {
 		t.Errorf("second instance=%+v", second.Instance)
 	}
 	if firstDest != wantFirst || secondDest != wantSecond {
 		t.Errorf("download destinations=(%q, %q) want (%q, %q)", firstDest, secondDest, wantFirst, wantSecond)
 	}
-	if first.DefaultInstanceID != "genericagent" || second.DefaultInstanceID != "genericagent" {
-		t.Errorf("default ids=(%q, %q) want genericagent", first.DefaultInstanceID, second.DefaultInstanceID)
+	if first.DefaultInstanceID != "" || second.DefaultInstanceID != "genericagent" {
+		t.Errorf("default ids=(%q, %q) want empty then genericagent", first.DefaultInstanceID, second.DefaultInstanceID)
 	}
 	if got := len(second.Items); got != 2 {
 		t.Errorf("second response items=%d want 2", got)
@@ -213,7 +214,7 @@ func TestInstanceInstallFailurePersistsFailedStateAndCleansPartialFiles(t *testi
 		}
 	}
 
-	response := installInstanceForTest(t, s.Routes())
+	response := installInstanceForTest(t, s.Routes(), "genericagent")
 	partialDest := waitTestSignal(t, started, "failed download start")
 	if response.Instance.InitStatus != config.InstanceInitStatusInitializing {
 		t.Fatalf("response state=%q want initializing", response.Instance.InitStatus)
@@ -260,7 +261,7 @@ func TestInstanceDeleteCancelsBackgroundInstall(t *testing.T) {
 		return "", ctx.Err()
 	}
 
-	response := installInstanceForTest(t, s.Routes())
+	response := installInstanceForTest(t, s.Routes(), "genericagent")
 	dest := waitTestSignal(t, started, "download start")
 	body := strings.NewReader(`{"id":"` + response.Instance.ID + `"}`)
 	rr := httptest.NewRecorder()
@@ -306,7 +307,7 @@ func TestInstanceInstallResumesAfterServerRestart(t *testing.T) {
 		firstServer.stopInstanceInstalls()
 		downloadAndExtractGenericAgentArchive = oldDownload
 	})
-	response := installInstanceForTest(t, firstServer.Routes())
+	response := installInstanceForTest(t, firstServer.Routes(), "genericagent")
 	firstDest := waitTestSignal(t, started, "initial download")
 	firstServer.stopInstanceInstalls()
 	if got := instanceFromStoreForTest(t, firstServer, response.Instance.ID).InitStatus; got != config.InstanceInitStatusInitializing {
@@ -435,7 +436,7 @@ func TestInstanceUpdateRejectsInitializingInstance(t *testing.T) {
 		return "", ctx.Err()
 	}
 
-	response := installInstanceForTest(t, s.Routes())
+	response := installInstanceForTest(t, s.Routes(), "genericagent")
 	waitTestSignal(t, started, "download start")
 	changed := response.Instance
 	changed.Name = "Changed During Install"

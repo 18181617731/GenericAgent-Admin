@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +10,10 @@ import (
 )
 
 type instanceIDRequest struct {
+	ID string `json:"id"`
+}
+
+type instanceInstallRequest struct {
 	ID string `json:"id"`
 }
 
@@ -25,17 +28,50 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusServiceUnavailable, "instance installer is shutting down")
 		return
 	}
+	var req instanceInstallRequest
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := req.ID
+	if !isAutomaticInstanceID(id) {
+		bad(w, http.StatusBadRequest, "id must be 1-64 characters, start with a letter or number, and contain only letters, numbers, '.', '_' or '-'")
+		return
+	}
 
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
 
 	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
-	instance, dest, err := nextAutomaticInstance(cfg, s.CfgStore.Root)
+	for _, current := range cfg.Instances {
+		if current.ID == id {
+			bad(w, http.StatusConflict, "instance id already exists: "+id)
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(current.Name), id) {
+			bad(w, http.StatusConflict, "instance name already exists: "+id)
+			return
+		}
+	}
+
+	instance := config.InstanceConfig{
+		ID:              id,
+		Name:            id,
+		GARoot:          filepath.Join(s.CfgStore.Root, id),
+		PythonPath:      cfg.PythonPath,
+		EffectivePython: cfg.EffectivePython,
+		InitStatus:      config.InstanceInitStatusInitializing,
+	}
+	dest, err := s.automaticInstanceDestination(instance)
 	if err != nil {
-		bad(w, http.StatusInternalServerError, err.Error())
+		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := os.Mkdir(dest, 0755); err != nil {
+		if os.IsExist(err) {
+			bad(w, http.StatusConflict, "instance destination already exists: "+dest)
+			return
+		}
 		bad(w, http.StatusInternalServerError, "create instance directory: "+err.Error())
 		return
 	}
@@ -45,63 +81,27 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 			_ = os.RemoveAll(dest)
 		}
 	}()
-
-	instance.InitStatus = config.InstanceInitStatusInitializing
-	instance.InitError = ""
 	cfg.Instances = append(cfg.Instances, instance)
-	if len(cfg.Instances) == 1 {
-		cfg.DefaultInstanceID = instance.ID
+	if err := s.CfgStore.Save(cfg); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	if err := s.saveConfigAndReconcile(cfg); err != nil {
-		bad(w, http.StatusBadRequest, err.Error())
+	if !s.startInstanceInstall(instance) {
+		cfg.Instances = cfg.Instances[:len(cfg.Instances)-1]
+		if err := s.CfgStore.Save(cfg); err != nil {
+			bad(w, http.StatusInternalServerError, "instance installer is shutting down; roll back config: "+err.Error())
+			return
+		}
+		bad(w, http.StatusServiceUnavailable, "instance installer is shutting down")
 		return
 	}
 	keepInstall = true
-	instance, _ = s.CfgStore.Snapshot().Instance(instance.ID)
 	writeJSON(w, map[string]interface{}{
 		"ok":                  true,
-		"items":               s.CfgStore.Snapshot().Instances,
-		"default_instance_id": s.CfgStore.Snapshot().DefaultInstanceID,
+		"items":               cfg.Instances,
+		"default_instance_id": cfg.DefaultInstanceID,
 		"instance":            instance,
-		"archive_url":         genericAgentArchiveURL,
 	})
-	if !s.startInstanceInstall(instance) {
-		go s.failInstanceInstall(instance, "instance installer is shutting down")
-	}
-}
-
-func nextAutomaticInstance(cfg config.AppConfig, adminRoot string) (config.InstanceConfig, string, error) {
-	for sequence := 1; ; sequence++ {
-		id := automaticInstanceBaseID
-		name := "GenericAgent"
-		if sequence > 1 {
-			id = fmt.Sprintf("%s-%d", automaticInstanceBaseID, sequence)
-			name = fmt.Sprintf("GenericAgent %d", sequence)
-		}
-		used := false
-		for _, current := range cfg.Instances {
-			if current.ID == id || strings.EqualFold(strings.TrimSpace(current.Name), name) {
-				used = true
-				break
-			}
-		}
-		if used {
-			continue
-		}
-		dest := filepath.Join(adminRoot, id)
-		if _, err := os.Lstat(dest); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
-			return config.InstanceConfig{}, "", fmt.Errorf("inspect instance destination: %w", err)
-		}
-		return config.InstanceConfig{
-			ID:              id,
-			Name:            name,
-			GARoot:          dest,
-			PythonPath:      cfg.PythonPath,
-			EffectivePython: cfg.EffectivePython,
-		}, dest, nil
-	}
 }
 
 func (s *Server) instancesList(w http.ResponseWriter, r *http.Request) {
