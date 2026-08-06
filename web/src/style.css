@@ -5734,9 +5734,12 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
     z-index: 26;
   }
   .oa-cascade-menu {
-    left: 0;
-    right: 0;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(57px + env(safe-area-inset-bottom, 0px));
     width: auto;
+    max-width: none;
     z-index: 100;
   }
 }
