@@ -2749,6 +2749,8 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
               aria-pressed={group.value === previewGroup?.value}
               aria-current={group.value === selectedProvider ? 'true' : undefined}
               onMouseEnter={() => setPreviewProvider(group.value)}
+              onPointerEnter={() => setPreviewProvider(group.value)}
+              onPointerDown={e => { e.stopPropagation(); setPreviewProvider(group.value) }}
               onFocus={() => setPreviewProvider(group.value)}
               onClick={() => setPreviewProvider(group.value)}>
               <span>{group.label}</span><ChevronRight size={13} />

@@ -942,7 +942,7 @@ describe('chat model cascade', () => {
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
 
     fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Beta' }))
     fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
 
     expect(onChange).toHaveBeenCalledWith('b-1')
