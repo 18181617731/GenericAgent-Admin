@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -9,6 +10,14 @@ import (
 
 	"genericagent-admin-go/internal/config"
 )
+
+type chatInstanceNotFoundError struct {
+	instanceID string
+}
+
+func (e *chatInstanceNotFoundError) Error() string {
+	return fmt.Sprintf("instance %q not found", e.instanceID)
+}
 
 // chatRuntime owns all mutable in-memory chat state for one GA instance.
 // Keeping the mutexes with the maps prevents request-scoped Server copies from
@@ -55,6 +64,39 @@ func requestedInstanceID(r *http.Request) string {
 	return instanceID
 }
 
+func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *chatRuntime) *Server {
+	clone := &Server{
+		CfgStore:                cfgStore,
+		Svc:                     s.Svc,
+		InstanceManagers:        s.InstanceManagers,
+		Models:                  s.Models,
+		Static:                  s.Static,
+		ReactApp:                s.ReactApp,
+		ChatMu:                  s.ChatMu,
+		SessionMu:               s.SessionMu,
+		UsageMu:                 s.UsageMu,
+		ConfigMu:                s.ConfigMu,
+		ChatRuns:                s.ChatRuns,
+		ChatWorkers:             s.ChatWorkers,
+		ChatTitleJobs:           s.ChatTitleJobs,
+		ChatRuntimes:            s.ChatRuntimes,
+		BaseCfgStore:            baseStore,
+		titleBackfillStarted:    s.titleBackfillStarted,
+		chatSessionMutationHook: s.chatSessionMutationHook,
+		chatExactSaveHook:       s.chatExactSaveHook,
+		chatWorldlineRPCHook:    s.chatWorldlineRPCHook,
+	}
+	if runtime != nil {
+		clone.ChatMu = &runtime.chatMu
+		clone.SessionMu = &runtime.sessionMu
+		clone.UsageMu = &runtime.usageMu
+		clone.ChatRuns = runtime.runs
+		clone.ChatWorkers = runtime.workers
+		clone.ChatTitleJobs = runtime.titleJobs
+	}
+	return clone
+}
+
 func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) {
 	baseStore := s.BaseCfgStore
 	if baseStore == nil {
@@ -65,20 +107,18 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 	}
 
 	instanceID := requestedInstanceID(r)
-	instance, ok := baseStore.Cfg.Instance(instanceID)
+	instance, ok := baseStore.Snapshot().Instance(instanceID)
 	if !ok {
 		// Preserve the legacy single-instance test/server setup, which has no
 		// instance registry yet.
-		if instanceID == "" && len(baseStore.Cfg.Instances) == 0 {
-			clone := *s
-			clone.BaseCfgStore = baseStore
-			return &clone, "", nil
+		if instanceID == "" && len(baseStore.Snapshot().Instances) == 0 {
+			return s.chatRequestServer(s.CfgStore, baseStore, nil), "", nil
 		}
-		return nil, instanceID, fmt.Errorf("instance %q not found", instanceID)
+		return nil, instanceID, &chatInstanceNotFoundError{instanceID: instanceID}
 	}
 	instanceID = instance.ID
 
-	cfg := baseStore.Cfg
+	cfg := baseStore.Snapshot()
 	cfg.GARoot = instance.GARoot
 	cfg.PythonPath = instance.PythonPath
 	cfg.EffectivePython = instance.EffectivePython
@@ -87,12 +127,15 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 		// The migrated legacy instance keeps both the legacy data directory and
 		// in-memory runtime. This prevents a first config save from moving an
 		// active legacy chat into instances/default halfway through its lifetime.
-		cfg.ChatDataDir = baseStore.Cfg.ChatDataDir
+		cfg.ChatDataDir = baseStore.Snapshot().ChatDataDir
 		runtimeID = ""
 	} else {
-		cfg.ChatDataDir = filepath.Join(baseStore.Cfg.ChatDataDir, "instances", instanceID)
+		cfg.ChatDataDir = filepath.Join(baseStore.Snapshot().ChatDataDir, "instances", instanceID)
 	}
-	instanceStore := &config.Store{Root: baseStore.Root, Cfg: cfg}
+	instanceStore, err := config.NewRuntimeStore(baseStore.Root, cfg)
+	if err != nil {
+		return nil, instanceID, fmt.Errorf("prepare runtime config for instance %q: %w", instanceID, err)
+	}
 
 	registry := s.ChatRuntimes
 	if registry == nil {
@@ -100,23 +143,19 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 		s.ChatRuntimes = registry
 	}
 	runtime := registry.runtime(runtimeID)
-	clone := *s
-	clone.CfgStore = instanceStore
-	clone.BaseCfgStore = baseStore
-	clone.ChatMu = &runtime.chatMu
-	clone.SessionMu = &runtime.sessionMu
-	clone.UsageMu = &runtime.usageMu
-	clone.ChatRuns = runtime.runs
-	clone.ChatWorkers = runtime.workers
-	clone.ChatTitleJobs = runtime.titleJobs
-	return &clone, instanceID, nil
+	return s.chatRequestServer(instanceStore, baseStore, runtime), instanceID, nil
 }
 
 func (s *Server) withChatInstance(next func(*Server, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		chatServer, instanceID, err := s.chatServerForRequest(r)
 		if err != nil {
-			bad(w, http.StatusNotFound, err.Error())
+			status := http.StatusInternalServerError
+			var notFound *chatInstanceNotFoundError
+			if errors.As(err, &notFound) {
+				status = http.StatusNotFound
+			}
+			bad(w, status, err.Error())
 			return
 		}
 		setResolvedInstanceHeader(w, instanceID)

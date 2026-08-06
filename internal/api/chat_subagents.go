@@ -153,12 +153,12 @@ func collectSubagentStatus(root, name string) subagentStatus {
 // chatSubagents serves GET /api/chat/subagents/{sid}: status of subagent
 // task dirs referenced by the session transcript.
 func (s *Server) chatSubagents(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		bad(w, 404, "session not found")
 		return
 	}
-	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	out := []subagentStatus{}
 	if root != "" {
 		for _, name := range extractSubagentTaskNames(cs.Messages) {

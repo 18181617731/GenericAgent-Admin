@@ -8,88 +8,161 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"genericagent-admin-go/internal/config"
 )
 
-func TestInstanceInstallDownloadsRegistersAndAllocatesUniqueDestination(t *testing.T) {
+type instanceInstallResponse struct {
+	OK                bool                    `json:"ok"`
+	Items             []config.InstanceConfig `json:"items"`
+	DefaultInstanceID string                  `json:"default_instance_id"`
+	Instance          config.InstanceConfig   `json:"instance"`
+	ArchiveURL        string                  `json:"archive_url"`
+}
+
+func installInstanceForTest(t *testing.T, h http.Handler) instanceInstallResponse {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/install", nil)
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("install status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var response instanceInstallResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode install response: %v; body=%s", err, rr.Body.String())
+	}
+	return response
+}
+
+func waitTestSignal(t *testing.T, ch <-chan string, label string) string {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+		return ""
+	}
+}
+
+func waitInstanceInstallTasksForTest(t *testing.T, s *Server) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		s.instanceInstallWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for instance install tasks")
+	}
+}
+
+func writeValidGenericAgentFixture(dest string) error {
+	if err := os.MkdirAll(filepath.Join(dest, "assets"), 0755); err != nil {
+		return err
+	}
+	for _, rel := range []string{"agentmain.py", "llmcore.py", filepath.Join("assets", "tools_schema.json")} {
+		if err := os.WriteFile(filepath.Join(dest, rel), []byte("# fixture\n"), 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func instanceFromStoreForTest(t *testing.T, s *Server, id string) config.InstanceConfig {
+	t.Helper()
+	s.ConfigMu.Lock()
+	defer s.ConfigMu.Unlock()
+	instance, ok := s.CfgStore.Snapshot().Instance(id)
+	if !ok {
+		t.Fatalf("instance %q not found in %+v", id, s.CfgStore.Snapshot().Instances)
+	}
+	return instance
+}
+
+func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *testing.T) {
 	s := newConfigTestServer(t)
 	oldDownload := downloadAndExtractGenericAgentArchive
-	t.Cleanup(func() { downloadAndExtractGenericAgentArchive = oldDownload })
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
 
-	var destinations []string
+	started := make(chan string, 2)
+	release := make(chan struct{})
 	downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
+		started <- dest
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return "", ctx.Err()
 		}
-		destinations = append(destinations, dest)
-		if err := os.MkdirAll(filepath.Join(dest, "assets"), 0755); err != nil {
+		if err := writeValidGenericAgentFixture(dest); err != nil {
 			return "", err
-		}
-		for _, rel := range []string{"agentmain.py", "llmcore.py", filepath.Join("assets", "tools_schema.json")} {
-			if err := os.WriteFile(filepath.Join(dest, rel), []byte("# fixture\n"), 0644); err != nil {
-				return "", err
-			}
 		}
 		return "fixture archive extracted", nil
 	}
 
 	h := s.Routes()
-	for i := 0; i < 2; i++ {
-		rr := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/instances/install", nil)
-		markDangerous(req)
-		h.ServeHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("install %d status=%d body=%s", i+1, rr.Code, rr.Body.String())
+	first := installInstanceForTest(t, h)
+	firstDest := waitTestSignal(t, started, "first download")
+	second := installInstanceForTest(t, h)
+	secondDest := waitTestSignal(t, started, "second download")
+
+	wantFirst := filepath.Join(s.CfgStore.Root, "genericagent")
+	wantSecond := filepath.Join(s.CfgStore.Root, "genericagent-2")
+	for label, result := range map[string]instanceInstallResponse{"first": first, "second": second} {
+		if !result.OK {
+			t.Errorf("%s response ok=false: %+v", label, result)
 		}
-		var response struct {
-			ArchiveURL      string `json:"archive_url"`
-			DefaultInstance string `json:"default_instance_id"`
+		if result.Instance.InitStatus != config.InstanceInitStatusInitializing || result.Instance.InitError != "" {
+			t.Errorf("%s response state=%q error=%q", label, result.Instance.InitStatus, result.Instance.InitError)
 		}
-		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-			t.Fatalf("decode install %d response: %v", i+1, err)
+		if result.ArchiveURL != genericAgentArchiveURL {
+			t.Errorf("%s archive_url=%q want %q", label, result.ArchiveURL, genericAgentArchiveURL)
 		}
-		if response.ArchiveURL != genericAgentArchiveURL {
-			t.Fatalf("archive_url=%q want %q", response.ArchiveURL, genericAgentArchiveURL)
+	}
+	if first.Instance.ID != "genericagent" || first.Instance.Name != "GenericAgent" || first.Instance.GARoot != wantFirst {
+		t.Errorf("first instance=%+v", first.Instance)
+	}
+	if second.Instance.ID != "genericagent-2" || second.Instance.Name != "GenericAgent 2" || second.Instance.GARoot != wantSecond {
+		t.Errorf("second instance=%+v", second.Instance)
+	}
+	if firstDest != wantFirst || secondDest != wantSecond {
+		t.Errorf("download destinations=(%q, %q) want (%q, %q)", firstDest, secondDest, wantFirst, wantSecond)
+	}
+	if first.DefaultInstanceID != "genericagent" || second.DefaultInstanceID != "genericagent" {
+		t.Errorf("default ids=(%q, %q) want genericagent", first.DefaultInstanceID, second.DefaultInstanceID)
+	}
+	if got := len(second.Items); got != 2 {
+		t.Errorf("second response items=%d want 2", got)
+	}
+	for _, path := range []string{wantFirst, wantSecond} {
+		if st, err := os.Stat(path); err != nil || !st.IsDir() {
+			t.Errorf("reserved destination %q: stat=%v err=%v", path, st, err)
 		}
-		if response.DefaultInstance != automaticInstanceBaseID {
-			t.Fatalf("default_instance_id=%q want %q", response.DefaultInstance, automaticInstanceBaseID)
+	}
+	for _, id := range []string{"genericagent", "genericagent-2"} {
+		if got := instanceFromStoreForTest(t, s, id).InitStatus; got != config.InstanceInitStatusInitializing {
+			t.Errorf("persisted %s state=%q want initializing", id, got)
 		}
 	}
 
-	wantDestinations := []string{
-		filepath.Join(s.CfgStore.Root, "instances", "genericagent"),
-		filepath.Join(s.CfgStore.Root, "instances", "genericagent-2"),
-	}
-	if len(destinations) != len(wantDestinations) {
-		t.Fatalf("destinations=%v want %v", destinations, wantDestinations)
-	}
-	for i, want := range wantDestinations {
-		if destinations[i] != want {
-			t.Errorf("destination %d=%q want %q", i, destinations[i], want)
+	close(release)
+	waitInstanceInstallTasksForTest(t, s)
+	for _, id := range []string{"genericagent", "genericagent-2"} {
+		instance := instanceFromStoreForTest(t, s, id)
+		if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
+			t.Errorf("completed %s state=%q error=%q", id, instance.InitStatus, instance.InitError)
 		}
-		if _, err := os.Stat(want); err != nil {
-			t.Errorf("installed destination %q: %v", want, err)
-		}
-	}
-	if got := s.CfgStore.Cfg.Instances; len(got) != 2 {
-		t.Fatalf("instances=%v want 2 entries", got)
-	} else {
-		if got[0].ID != "genericagent" || got[0].Name != "GenericAgent" {
-			t.Errorf("first instance=%+v", got[0])
-		}
-		if got[1].ID != "genericagent-2" || got[1].Name != "GenericAgent 2" {
-			t.Errorf("second instance=%+v", got[1])
-		}
-		for i := range got {
-			wantRoot := wantDestinations[i]
-			if got[i].GARoot != wantRoot {
-				t.Errorf("instance %d ga_root=%q want %q", i, got[i].GARoot, wantRoot)
-			}
-		}
-	}
-	if s.CfgStore.Cfg.DefaultInstanceID != "genericagent" {
-		t.Errorf("default instance=%q want genericagent", s.CfgStore.Cfg.DefaultInstanceID)
 	}
 }
 
@@ -97,7 +170,10 @@ func TestInstanceInstallRequiresDangerousConfirmation(t *testing.T) {
 	s := newConfigTestServer(t)
 	called := false
 	oldDownload := downloadAndExtractGenericAgentArchive
-	t.Cleanup(func() { downloadAndExtractGenericAgentArchive = oldDownload })
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
 	downloadAndExtractGenericAgentArchive = func(context.Context, string) (string, error) {
 		called = true
 		return "", errors.New("must not run")
@@ -114,70 +190,279 @@ func TestInstanceInstallRequiresDangerousConfirmation(t *testing.T) {
 	}
 }
 
-func TestInstanceInstallFailureRemovesPartialDestination(t *testing.T) {
+func TestInstanceInstallFailurePersistsFailedStateAndCleansPartialFiles(t *testing.T) {
 	s := newConfigTestServer(t)
 	oldDownload := downloadAndExtractGenericAgentArchive
-	t.Cleanup(func() { downloadAndExtractGenericAgentArchive = oldDownload })
-	var partialDest string
-	downloadAndExtractGenericAgentArchive = func(_ context.Context, dest string) (string, error) {
-		partialDest = dest
-		if err := os.MkdirAll(dest, 0755); err != nil {
-			return "", err
-		}
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
+
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
 		if err := os.WriteFile(filepath.Join(dest, "partial.zip"), []byte("partial"), 0644); err != nil {
 			return "", err
 		}
-		return "", errors.New("network interrupted")
+		started <- dest
+		select {
+		case <-release:
+			return "", errors.New("network interrupted")
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
 
+	response := installInstanceForTest(t, s.Routes())
+	partialDest := waitTestSignal(t, started, "failed download start")
+	if response.Instance.InitStatus != config.InstanceInitStatusInitializing {
+		t.Fatalf("response state=%q want initializing", response.Instance.InitStatus)
+	}
+	if got := instanceFromStoreForTest(t, s, response.Instance.ID).InitStatus; got != config.InstanceInitStatusInitializing {
+		t.Fatalf("persisted state before release=%q want initializing", got)
+	}
+
+	close(release)
+	waitInstanceInstallTasksForTest(t, s)
+	instance := instanceFromStoreForTest(t, s, response.Instance.ID)
+	if instance.InitStatus != config.InstanceInitStatusFailed {
+		t.Errorf("state=%q want failed", instance.InitStatus)
+	}
+	if !strings.Contains(instance.InitError, "network interrupted") {
+		t.Errorf("init_error=%q does not contain network failure", instance.InitError)
+	}
+	entries, err := os.ReadDir(partialDest)
+	if err != nil {
+		t.Fatalf("read cleaned destination: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("cleaned destination contains %v", entries)
+	}
+}
+
+func TestInstanceDeleteCancelsBackgroundInstall(t *testing.T) {
+	s := newConfigTestServer(t)
+	oldDownload := downloadAndExtractGenericAgentArchive
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
+
+	started := make(chan string, 1)
+	cancelled := make(chan string, 1)
+	downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
+		if err := os.WriteFile(filepath.Join(dest, "partial.zip"), []byte("partial"), 0644); err != nil {
+			return "", err
+		}
+		started <- dest
+		<-ctx.Done()
+		cancelled <- dest
+		return "", ctx.Err()
+	}
+
+	response := installInstanceForTest(t, s.Routes())
+	dest := waitTestSignal(t, started, "download start")
+	body := strings.NewReader(`{"id":"` + response.Instance.ID + `"}`)
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/instances/install", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/instances/delete", body)
 	markDangerous(req)
 	s.Routes().ServeHTTP(rr, req)
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusBadGateway, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if partialDest == "" {
-		t.Fatal("download stub was not called")
+	if got := waitTestSignal(t, cancelled, "download cancellation"); got != dest {
+		t.Errorf("cancelled destination=%q want %q", got, dest)
 	}
-	if _, err := os.Stat(partialDest); !os.IsNotExist(err) {
-		t.Fatalf("partial destination still exists or could not be inspected: %v", err)
+	if _, ok := s.CfgStore.Snapshot().Instance(response.Instance.ID); ok {
+		t.Fatalf("deleted instance remains in config: %+v", s.CfgStore.Snapshot().Instances)
 	}
-	if len(s.CfgStore.Cfg.Instances) != 0 || s.CfgStore.Cfg.DefaultInstanceID != "" {
-		t.Fatalf("config changed after failed install: %+v", s.CfgStore.Cfg)
+	if s.CfgStore.Snapshot().DefaultInstanceID != "" {
+		t.Errorf("default instance=%q want empty", s.CfgStore.Snapshot().DefaultInstanceID)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "partial.zip")); !os.IsNotExist(err) {
+		t.Errorf("partial file remains after cancellation: %v", err)
 	}
 }
 
-func TestDownloadGenericAgentArchiveWithFallbackUsesPrimary(t *testing.T) {
-	var urls []string
-	download := func(_ context.Context, archiveURL, dest string) (string, error) {
-		urls = append(urls, archiveURL)
-		if dest != "target" {
-			t.Fatalf("dest=%q want target", dest)
+func TestInstanceInstallResumesAfterServerRestart(t *testing.T) {
+	oldDownload := downloadAndExtractGenericAgentArchive
+	var calls atomic.Int32
+	started := make(chan string, 2)
+	downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
+		call := calls.Add(1)
+		started <- dest
+		if call == 1 {
+			<-ctx.Done()
+			return "", ctx.Err()
 		}
-		return "primary extracted", nil
+		if err := writeValidGenericAgentFixture(dest); err != nil {
+			return "", err
+		}
+		return "resumed fixture extracted", nil
 	}
 
-	out, err := downloadGenericAgentArchiveWithFallback(context.Background(), "target", download)
-	if err != nil {
-		t.Fatalf("download error: %v", err)
+	firstServer := newConfigTestServer(t)
+	t.Cleanup(func() {
+		firstServer.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
+	response := installInstanceForTest(t, firstServer.Routes())
+	firstDest := waitTestSignal(t, started, "initial download")
+	firstServer.stopInstanceInstalls()
+	if got := instanceFromStoreForTest(t, firstServer, response.Instance.ID).InitStatus; got != config.InstanceInitStatusInitializing {
+		t.Fatalf("state after shutdown=%q want initializing", got)
 	}
-	if out != "primary extracted" {
-		t.Fatalf("output=%q", out)
+
+	reloaded := config.NewStore(firstServer.CfgStore.Root)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("reload config: %v", err)
 	}
-	if len(urls) != 1 || urls[0] != genericAgentArchiveURL {
-		t.Fatalf("urls=%v want primary only", urls)
+	resumedServer := New(reloaded, nil, firstServer.Models, nil)
+	t.Cleanup(resumedServer.stopInstanceInstalls)
+	secondDest := waitTestSignal(t, started, "resumed download")
+	if secondDest != firstDest {
+		t.Errorf("resumed destination=%q want %q", secondDest, firstDest)
+	}
+	waitInstanceInstallTasksForTest(t, resumedServer)
+	instance := instanceFromStoreForTest(t, resumedServer, response.Instance.ID)
+	if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
+		t.Fatalf("resumed state=%q error=%q", instance.InitStatus, instance.InitError)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("download calls=%d want 2", calls.Load())
 	}
 }
 
-func TestDownloadGenericAgentArchiveWithFallbackUsesCodeload(t *testing.T) {
+func TestResumedInstallRefusesUnmanagedRoot(t *testing.T) {
+	oldDownload := downloadAndExtractGenericAgentArchive
+	var calls atomic.Int32
+	downloadAndExtractGenericAgentArchive = func(context.Context, string) (string, error) {
+		calls.Add(1)
+		return "", errors.New("must not download")
+	}
+	t.Cleanup(func() { downloadAndExtractGenericAgentArchive = oldDownload })
+
+	store := config.NewStore(t.TempDir())
+	unmanaged := t.TempDir()
+	marker := filepath.Join(unmanaged, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.Snapshot()
+	cfg.Instances = []config.InstanceConfig{{
+		ID:         "genericagent",
+		Name:       "GenericAgent",
+		GARoot:     unmanaged,
+		InitStatus: config.InstanceInitStatusInitializing,
+	}}
+	cfg.DefaultInstanceID = "genericagent"
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("save unsafe fixture: %v", err)
+	}
+
+	s := New(store, nil, nil, nil)
+	t.Cleanup(s.stopInstanceInstalls)
+	waitInstanceInstallTasksForTest(t, s)
+	if calls.Load() != 0 {
+		t.Errorf("download called %d times for unmanaged root", calls.Load())
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "keep" {
+		t.Fatalf("unmanaged marker changed: data=%q err=%v", data, err)
+	}
+	instance := instanceFromStoreForTest(t, s, "genericagent")
+	if instance.InitStatus != config.InstanceInitStatusFailed || !strings.Contains(instance.InitError, "unmanaged instance path") {
+		t.Fatalf("unsafe resumed state=%q error=%q", instance.InitStatus, instance.InitError)
+	}
+}
+
+func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
+	s := newConfigTestServer(t)
+	root := t.TempDir()
+	h := s.Routes()
+	createBody, err := json.Marshal(config.InstanceConfig{
+		ID:         "manual",
+		Name:       "Manual",
+		GARoot:     root,
+		InitStatus: config.InstanceInitStatusInitializing,
+		InitError:  "client supplied",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/create", strings.NewReader(string(createBody)))
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	created := instanceFromStoreForTest(t, s, "manual")
+	if created.InitStatus != "" || created.InitError != "" {
+		t.Fatalf("create accepted client install state: %+v", created)
+	}
+
+	created.Name = "Updated"
+	created.InitStatus = config.InstanceInitStatusFailed
+	created.InitError = "client overwrite"
+	updateBody, err := json.Marshal(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/instances/update", strings.NewReader(string(updateBody)))
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	updated := instanceFromStoreForTest(t, s, "manual")
+	if updated.Name != "Updated" || updated.InitStatus != "" || updated.InitError != "" {
+		t.Fatalf("updated instance=%+v", updated)
+	}
+}
+
+func TestInstanceUpdateRejectsInitializingInstance(t *testing.T) {
+	s := newConfigTestServer(t)
+	oldDownload := downloadAndExtractGenericAgentArchive
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
+	started := make(chan string, 1)
+	downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
+		started <- dest
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	response := installInstanceForTest(t, s.Routes())
+	waitTestSignal(t, started, "download start")
+	changed := response.Instance
+	changed.Name = "Changed During Install"
+	body, err := json.Marshal(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/instances/update", strings.NewReader(string(body)))
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("update status=%d want=%d body=%s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+	if got := instanceFromStoreForTest(t, s, response.Instance.ID).Name; got != response.Instance.Name {
+		t.Errorf("name changed while initializing: %q", got)
+	}
+}
+
+func TestDownloadGenericAgentArchiveWithFallbackRetriesPrimaryTimeout(t *testing.T) {
 	var urls []string
 	primaryHadDeadline := false
-	fallbackHadDeadline := false
-	download := func(ctx context.Context, archiveURL, _ string) (string, error) {
-		urls = append(urls, archiveURL)
+	fallbackHadDeadline := true
+	download := func(ctx context.Context, url, _ string) (string, error) {
+		urls = append(urls, url)
 		_, hasDeadline := ctx.Deadline()
-		if archiveURL == genericAgentArchiveURL {
+		if len(urls) == 1 {
 			primaryHadDeadline = hasDeadline
 			return "", context.DeadlineExceeded
 		}

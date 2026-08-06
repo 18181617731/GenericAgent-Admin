@@ -56,7 +56,7 @@ func findExtraSystemPromptPreset(items []config.ExtraSystemPromptPreset, id stri
 
 func (s *Server) extraSystemPromptPresets(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		writeJSON(w, map[string]interface{}{"presets": s.CfgStore.Cfg.ExtraSystemPromptPresets})
+		writeJSON(w, map[string]interface{}{"presets": s.CfgStore.Snapshot().ExtraSystemPromptPresets})
 		return
 	}
 	if r.Method != http.MethodPut {
@@ -77,11 +77,11 @@ func (s *Server) extraSystemPromptPresets(w http.ResponseWriter, r *http.Request
 	}
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.ExtraSystemPromptPresets = presets
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"presets": s.CfgStore.Cfg.ExtraSystemPromptPresets})
+	writeJSON(w, map[string]interface{}{"presets": s.CfgStore.Snapshot().ExtraSystemPromptPresets})
 }

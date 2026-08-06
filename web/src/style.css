@@ -14721,8 +14721,16 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
   white-space: nowrap;
 }
 .instance-card header code { color: var(--muted); font: 11px/1.3 var(--mono); }
-.instance-default-badge {
-  align-self: start;
+.instance-card-badges {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.instance-default-badge,
+.instance-status-badge {
   border: 1px solid color-mix(in srgb, var(--instances-accent) 28%, var(--instances-line));
   border-radius: var(--radius-card, 8px);
   background: var(--instances-accent-soft);
@@ -14733,7 +14741,19 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
   padding: 4px 7px;
   font-size: 11px;
   font-weight: 750;
+  white-space: nowrap;
 }
+.instance-status-badge.is-initializing {
+  border-color: color-mix(in srgb, #d28b21 35%, var(--instances-line));
+  background: color-mix(in srgb, #d28b21 11%, transparent);
+  color: #9b6210;
+}
+.instance-status-badge.is-failed {
+  border-color: color-mix(in srgb, var(--danger, #d13c3c) 38%, var(--instances-line));
+  background: color-mix(in srgb, var(--danger, #d13c3c) 9%, transparent);
+  color: var(--danger, #b92f2f);
+}
+.instance-card.has-init-failed { border-color: color-mix(in srgb, var(--danger, #d13c3c) 32%, var(--instances-line)); }
 .instance-card dl { margin: 0; padding: 5px 16px 8px; }
 .instance-card dl > div {
   display: grid;
@@ -14753,6 +14773,23 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.instance-init-error {
+  display: grid;
+  gap: 4px;
+  margin: 0 16px 12px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger, #d13c3c) 30%, var(--instances-line));
+  border-radius: var(--radius-card, 8px);
+  background: color-mix(in srgb, var(--danger, #d13c3c) 7%, transparent);
+  color: var(--danger, #b92f2f);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.instance-init-error span {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--mono);
 }
 .instance-card > footer {
   display: flex;
@@ -14790,7 +14827,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   .instances-install-button { grid-column: 1 / -1; }
   .instance-editor { padding: 15px 13px; }
   .instance-card > header { grid-template-columns: auto minmax(0, 1fr); }
-  .instance-default-badge { grid-column: 2; justify-self: start; }
+  .instance-card-badges { grid-column: 2; align-items: flex-start; }
   .instance-card dl > div { grid-template-columns: 1fr; gap: 4px; }
   .instance-card dd { text-align: left; }
   .instance-card > footer { flex-wrap: wrap; }

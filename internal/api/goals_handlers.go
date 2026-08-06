@@ -44,7 +44,7 @@ func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
 		}
 		req.BudgetSeconds = req.BudgetMinutes * 60
 	}
-	meta, err := ga.StartGoal(s.CfgStore.Cfg.GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: s.CfgStore.Cfg.PythonPath, Hive: req.Hive})
+	meta, err := ga.StartGoal(s.CfgStore.Snapshot().GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: s.CfgStore.Snapshot().PythonPath, Hive: req.Hive})
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -57,7 +57,7 @@ func (s *Server) goalsList(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	items, err := ga.ListGoals(s.CfgStore.Cfg.GARoot)
+	items, err := ga.ListGoals(s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -93,7 +93,7 @@ func (s *Server) goalsStop(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	meta, err := ga.StopGoal(s.CfgStore.Cfg.GARoot, req.ID, req.PID)
+	meta, err := ga.StopGoal(s.CfgStore.Snapshot().GARoot, req.ID, req.PID)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -115,7 +115,7 @@ func (s *Server) goalsDelete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	if err := ga.DeleteGoal(s.CfgStore.Cfg.GARoot, req.ID); err != nil {
+	if err := ga.DeleteGoal(s.CfgStore.Snapshot().GARoot, req.ID); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) goalsOutput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	result, err := ga.GoalOutput(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("id"), maxBytes)
+	result, err := ga.GoalOutput(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("id"), maxBytes)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

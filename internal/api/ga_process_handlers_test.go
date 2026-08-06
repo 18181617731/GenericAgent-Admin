@@ -13,9 +13,9 @@ import (
 
 func newGAProcessHandlerTestServer(t *testing.T) *Server {
 	t.Helper()
-	cfg := &config.Store{Root: t.TempDir(), Cfg: config.Default()}
+	cfg := newTestConfigStore(t, t.TempDir(), config.Default())
 	models := modelconfig.NewStore(t.TempDir())
-	return New(cfg, service.NewManager(cfg.Cfg.GARoot, cfg.Cfg.BufferLines), models, nil)
+	return New(cfg, service.NewManager(cfg.Snapshot().GARoot, cfg.Snapshot().BufferLines), models, nil)
 }
 
 func TestGAProcessMutationsRejectTrailingJSON(t *testing.T) {

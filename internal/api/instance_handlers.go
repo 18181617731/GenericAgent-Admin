@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"genericagent-admin-go/internal/config"
-	"genericagent-admin-go/internal/ga"
 )
 
 type instanceIDRequest struct {
@@ -22,39 +21,33 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !s.instanceInstallsAvailable() {
+		bad(w, http.StatusServiceUnavailable, "instance installer is shutting down")
+		return
+	}
 
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
 
-	cfg := cloneConfigWithInstances(s.CfgStore.Cfg)
-	instancesDir := filepath.Join(s.CfgStore.Root, "instances")
-	if err := os.MkdirAll(instancesDir, 0755); err != nil {
-		bad(w, http.StatusInternalServerError, "create instances directory: "+err.Error())
-		return
-	}
-	instance, dest, err := nextAutomaticInstance(cfg, instancesDir)
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
+	instance, dest, err := nextAutomaticInstance(cfg, s.CfgStore.Root)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
+	if err := os.Mkdir(dest, 0755); err != nil {
+		bad(w, http.StatusInternalServerError, "create instance directory: "+err.Error())
+		return
+	}
 	keepInstall := false
 	defer func() {
 		if !keepInstall {
 			_ = os.RemoveAll(dest)
 		}
 	}()
-	_, err = downloadAndExtractGenericAgentArchive(r.Context(), dest)
-	if err != nil {
-		bad(w, http.StatusBadGateway, "download GenericAgent archive: "+err.Error())
-		return
-	}
-	instance.GARoot = filepath.Clean(dest)
-	if health := ga.BuildHealth(instance.GARoot); !health.OK {
-		bad(w, http.StatusUnprocessableEntity, "downloaded GenericAgent is invalid: "+strings.Join(health.Errors, ", "))
-		return
-	}
 
+	instance.InitStatus = config.InstanceInitStatusInitializing
+	instance.InitError = ""
 	cfg.Instances = append(cfg.Instances, instance)
 	if len(cfg.Instances) == 1 {
 		cfg.DefaultInstanceID = instance.ID
@@ -64,16 +57,20 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keepInstall = true
+	instance, _ = s.CfgStore.Snapshot().Instance(instance.ID)
 	writeJSON(w, map[string]interface{}{
 		"ok":                  true,
-		"items":               s.CfgStore.Cfg.Instances,
-		"default_instance_id": s.CfgStore.Cfg.DefaultInstanceID,
+		"items":               s.CfgStore.Snapshot().Instances,
+		"default_instance_id": s.CfgStore.Snapshot().DefaultInstanceID,
 		"instance":            instance,
 		"archive_url":         genericAgentArchiveURL,
 	})
+	if !s.startInstanceInstall(instance) {
+		go s.failInstanceInstall(instance, "instance installer is shutting down")
+	}
 }
 
-func nextAutomaticInstance(cfg config.AppConfig, instancesDir string) (config.InstanceConfig, string, error) {
+func nextAutomaticInstance(cfg config.AppConfig, adminRoot string) (config.InstanceConfig, string, error) {
 	for sequence := 1; ; sequence++ {
 		id := automaticInstanceBaseID
 		name := "GenericAgent"
@@ -91,7 +88,7 @@ func nextAutomaticInstance(cfg config.AppConfig, instancesDir string) (config.In
 		if used {
 			continue
 		}
-		dest := filepath.Join(instancesDir, id)
+		dest := filepath.Join(adminRoot, id)
 		if _, err := os.Lstat(dest); err == nil {
 			continue
 		} else if !os.IsNotExist(err) {
@@ -113,8 +110,8 @@ func (s *Server) instancesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"items":               s.CfgStore.Cfg.Instances,
-		"default_instance_id": s.CfgStore.Cfg.DefaultInstanceID,
+		"items":               s.CfgStore.Snapshot().Instances,
+		"default_instance_id": s.CfgStore.Snapshot().DefaultInstanceID,
 	})
 }
 
@@ -129,6 +126,10 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	instance.ID = strings.TrimSpace(instance.ID)
+	// Initialization state is owned by the server. Manual instance creation
+	// cannot impersonate or enqueue an automatic installation.
+	instance.InitStatus = ""
+	instance.InitError = ""
 	if instance.ID == "" {
 		bad(w, http.StatusBadRequest, "instance id is required")
 		return
@@ -136,7 +137,7 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := cloneConfigWithInstances(s.CfgStore.Cfg)
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
 	for _, current := range cfg.Instances {
 		if current.ID == instance.ID {
 			bad(w, http.StatusConflict, "instance id already exists")
@@ -151,7 +152,7 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeInstanceMutationResult(w, s.CfgStore.Cfg)
+	writeInstanceMutationResult(w, s.CfgStore.Snapshot())
 }
 
 func (s *Server) instanceUpdate(w http.ResponseWriter, r *http.Request) {
@@ -172,10 +173,19 @@ func (s *Server) instanceUpdate(w http.ResponseWriter, r *http.Request) {
 
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := cloneConfigWithInstances(s.CfgStore.Cfg)
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
 	found := false
 	for i := range cfg.Instances {
 		if cfg.Instances[i].ID == instance.ID {
+			current := cfg.Instances[i]
+			if strings.EqualFold(strings.TrimSpace(current.InitStatus), config.InstanceInitStatusInitializing) {
+				bad(w, http.StatusConflict, "instance is initializing")
+				return
+			}
+			// Initialization state is server-owned and cannot be overwritten by
+			// an instance metadata update.
+			instance.InitStatus = current.InitStatus
+			instance.InitError = current.InitError
 			cfg.Instances[i] = instance
 			found = true
 			break
@@ -189,7 +199,7 @@ func (s *Server) instanceUpdate(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeInstanceMutationResult(w, s.CfgStore.Cfg)
+	writeInstanceMutationResult(w, s.CfgStore.Snapshot())
 }
 
 func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
@@ -209,8 +219,7 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.ConfigMu.Lock()
-	defer s.ConfigMu.Unlock()
-	cfg := cloneConfigWithInstances(s.CfgStore.Cfg)
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
 	kept := make([]config.InstanceConfig, 0, len(cfg.Instances))
 	found := false
 	for _, instance := range cfg.Instances {
@@ -221,10 +230,12 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 		kept = append(kept, instance)
 	}
 	if !found {
+		s.ConfigMu.Unlock()
 		bad(w, http.StatusNotFound, "instance not found")
 		return
 	}
 	if req.ID == cfg.DefaultInstanceID && len(kept) > 0 {
+		s.ConfigMu.Unlock()
 		bad(w, http.StatusConflict, "set another default instance before deleting the current default")
 		return
 	}
@@ -236,10 +247,19 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 		cfg.EffectivePython = ""
 	}
 	if err := s.saveConfigAndReconcile(cfg); err != nil {
+		s.ConfigMu.Unlock()
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeInstanceMutationResult(w, s.CfgStore.Cfg)
+	s.ConfigMu.Unlock()
+
+	// Persist the removal before cancelling. The worker may be waiting for
+	// ConfigMu to publish its final state, so waiting while holding that lock
+	// would deadlock. Once removed, a late state publication is a no-op.
+	if done := s.cancelInstanceInstall(req.ID); done != nil {
+		<-done
+	}
+	writeInstanceMutationResult(w, s.CfgStore.Snapshot())
 }
 
 func (s *Server) instanceSetDefault(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +276,7 @@ func (s *Server) instanceSetDefault(w http.ResponseWriter, r *http.Request) {
 
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := cloneConfigWithInstances(s.CfgStore.Cfg)
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
 	found := false
 	for _, instance := range cfg.Instances {
 		if instance.ID == req.ID {
@@ -273,7 +293,7 @@ func (s *Server) instanceSetDefault(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeInstanceMutationResult(w, s.CfgStore.Cfg)
+	writeInstanceMutationResult(w, s.CfgStore.Snapshot())
 }
 
 func cloneConfigWithInstances(cfg config.AppConfig) config.AppConfig {

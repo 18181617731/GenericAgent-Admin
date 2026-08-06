@@ -45,8 +45,8 @@ func TestStoreSaveCreatesRootAndWritesLoadableConfig(t *testing.T) {
 	}
 
 	reloaded := NewStore(root)
-	if reloaded.Cfg.Port != cfg.Port || reloaded.Cfg.LogTailLines != cfg.LogTailLines {
-		t.Fatalf("unexpected reloaded config: %#v", reloaded.Cfg)
+	if reloaded.Snapshot().Port != cfg.Port || reloaded.Snapshot().LogTailLines != cfg.LogTailLines {
+		t.Fatalf("unexpected reloaded config: %#v", reloaded.Snapshot())
 	}
 }
 
@@ -81,8 +81,8 @@ func TestStorePersistsIndependentChatTitleModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded := NewStore(root)
-	if reloaded.Cfg.ChatTitleModel == nil || *reloaded.Cfg.ChatTitleModel != *cfg.ChatTitleModel {
-		t.Fatalf("chat title model was not persisted: %#v", reloaded.Cfg.ChatTitleModel)
+	if reloaded.Snapshot().ChatTitleModel == nil || *reloaded.Snapshot().ChatTitleModel != *cfg.ChatTitleModel {
+		t.Fatalf("chat title model was not persisted: %#v", reloaded.Snapshot().ChatTitleModel)
 	}
 
 	cfg.ChatTitleModel = &ChatTitleModelRef{ProviderVarName: "native_oai_config2", Model: "gpt-title", LLMNo: -1}
@@ -96,15 +96,15 @@ func TestStoreLoadRejectsInvalidPersistedConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "config.local.json"), []byte(`{"port":-1}`), 0644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	store := &Store{Root: root, Cfg: Default()}
-	before := store.Cfg
+	store := &Store{Root: root, cfg: Default()}
+	before := store.Snapshot()
 
 	err := store.Load()
 	if err == nil || !strings.Contains(err.Error(), "port must be between") {
 		t.Fatalf("Load() err = %v, want port validation error", err)
 	}
-	if !reflect.DeepEqual(store.Cfg, before) {
-		t.Fatalf("Load() mutated cfg on validation error: got %#v want %#v", store.Cfg, before)
+	if !reflect.DeepEqual(store.Snapshot(), before) {
+		t.Fatalf("Load() mutated cfg on validation error: got %#v want %#v", store.Snapshot(), before)
 	}
 }
 
@@ -113,28 +113,28 @@ func TestStoreLoadRejectsInvalidRuntimeBounds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "config.local.json"), []byte(`{"log_tail_lines":-1,"buffer_lines":-1}`), 0644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	store := &Store{Root: root, Cfg: Default()}
+	store := &Store{Root: root, cfg: Default()}
 
 	err := store.Load()
 	if err == nil || !strings.Contains(err.Error(), "log_tail_lines must be positive") {
 		t.Fatalf("Load() err = %v, want log tail validation error", err)
 	}
-	if store.Cfg.LogTailLines != Default().LogTailLines || store.Cfg.BufferLines != Default().BufferLines {
-		t.Fatalf("Load() applied invalid runtime bounds: %#v", store.Cfg)
+	if store.Snapshot().LogTailLines != Default().LogTailLines || store.Snapshot().BufferLines != Default().BufferLines {
+		t.Fatalf("Load() applied invalid runtime bounds: %#v", store.Snapshot())
 	}
 }
 
 func TestBootstrapConfigDefaultsAndEffectivePythonPersistence(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)
-	if store.Cfg.GARoot != "" {
-		t.Fatalf("default ga_root=%q, want empty for first-run bootstrap", store.Cfg.GARoot)
+	if store.Snapshot().GARoot != "" {
+		t.Fatalf("default ga_root=%q, want empty for first-run bootstrap", store.Snapshot().GARoot)
 	}
-	if store.Cfg.BootstrapDone {
+	if store.Snapshot().BootstrapDone {
 		t.Fatalf("bootstrap_done default should be false")
 	}
-	if store.Cfg.EffectivePython != "" {
-		t.Fatalf("default effective_python=%q, want empty", store.Cfg.EffectivePython)
+	if store.Snapshot().EffectivePython != "" {
+		t.Fatalf("default effective_python=%q, want empty", store.Snapshot().EffectivePython)
 	}
 
 	py := filepath.Join(root, "python.exe")
@@ -151,11 +151,11 @@ func TestBootstrapConfigDefaultsAndEffectivePythonPersistence(t *testing.T) {
 	}
 
 	reloaded := NewStore(root)
-	if !reloaded.Cfg.BootstrapDone {
-		t.Fatalf("bootstrap_done was not persisted: %#v", reloaded.Cfg)
+	if !reloaded.Snapshot().BootstrapDone {
+		t.Fatalf("bootstrap_done was not persisted: %#v", reloaded.Snapshot())
 	}
-	if reloaded.Cfg.EffectivePython != py {
-		t.Fatalf("effective_python=%q, want python_path %q", reloaded.Cfg.EffectivePython, py)
+	if reloaded.Snapshot().EffectivePython != py {
+		t.Fatalf("effective_python=%q, want python_path %q", reloaded.Snapshot().EffectivePython, py)
 	}
 }
 
@@ -184,10 +184,10 @@ func TestStoreLoadMigratesLegacyConfigToDefaultInstance(t *testing.T) {
 	}
 
 	store := NewStore(appRoot)
-	if store.Cfg.DefaultInstanceID != "default" || len(store.Cfg.Instances) != 1 {
-		t.Fatalf("legacy config was not migrated: %#v", store.Cfg)
+	if store.Snapshot().DefaultInstanceID != "default" || len(store.Snapshot().Instances) != 1 {
+		t.Fatalf("legacy config was not migrated: %#v", store.Snapshot())
 	}
-	instance := store.Cfg.Instances[0]
+	instance := store.Snapshot().Instances[0]
 	if instance.ID != "default" || instance.Name != "Default" || instance.GARoot != gaRoot {
 		t.Fatalf("unexpected migrated instance: %#v", instance)
 	}
@@ -223,13 +223,13 @@ func TestStoreRoundTripsInstanceRegistryAndLegacyMirror(t *testing.T) {
 	}
 
 	reloaded := NewStore(appRoot)
-	if reloaded.Cfg.DefaultInstanceID != "beta" || len(reloaded.Cfg.Instances) != 2 {
-		t.Fatalf("unexpected registry after reload: %#v", reloaded.Cfg)
+	if reloaded.Snapshot().DefaultInstanceID != "beta" || len(reloaded.Snapshot().Instances) != 2 {
+		t.Fatalf("unexpected registry after reload: %#v", reloaded.Snapshot())
 	}
-	if reloaded.Cfg.GARoot != rootB || reloaded.Cfg.PythonPath != pythonB || reloaded.Cfg.EffectivePython != pythonB {
-		t.Fatalf("legacy fields do not mirror selected instance: %#v", reloaded.Cfg)
+	if reloaded.Snapshot().GARoot != rootB || reloaded.Snapshot().PythonPath != pythonB || reloaded.Snapshot().EffectivePython != pythonB {
+		t.Fatalf("legacy fields do not mirror selected instance: %#v", reloaded.Snapshot())
 	}
-	instance, ok := reloaded.Cfg.Instance("")
+	instance, ok := reloaded.Snapshot().Instance("")
 	if !ok || instance.ID != "beta" {
 		t.Fatalf("default instance lookup = %#v, %v", instance, ok)
 	}
@@ -316,16 +316,16 @@ func TestStoreChatDataDirDefaultsToStoreRoot(t *testing.T) {
 	want := filepath.Join(root, "data")
 
 	store := NewStore(root)
-	if got := store.Cfg.ChatDataDir; got != want {
+	if got := store.Snapshot().ChatDataDir; got != want {
 		t.Fatalf("NewStore() chat_data_dir = %q, want %q", got, want)
 	}
 
-	cfg := store.Cfg
+	cfg := store.Snapshot()
 	cfg.ChatDataDir = ""
 	if err := store.Save(cfg); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	if got := store.Cfg.ChatDataDir; got != want {
+	if got := store.Snapshot().ChatDataDir; got != want {
 		t.Fatalf("Save() normalized chat_data_dir = %q, want %q", got, want)
 	}
 
@@ -333,7 +333,95 @@ func TestStoreChatDataDirDefaultsToStoreRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded := NewStore(root)
-	if got := reloaded.Cfg.ChatDataDir; got != want {
+	if got := reloaded.Snapshot().ChatDataDir; got != want {
 		t.Fatalf("Load() normalized chat_data_dir = %q, want %q", got, want)
 	}
+}
+
+func configWithReferenceFields(t *testing.T, store *Store) AppConfig {
+	t.Helper()
+	gaRoot := filepath.Join(t.TempDir(), "ga-root")
+	if err := os.MkdirAll(gaRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.Snapshot()
+	cfg.GARoot = gaRoot
+	cfg.DefaultInstanceID = "alpha"
+	cfg.Instances = []InstanceConfig{{ID: "alpha", Name: "Alpha", GARoot: gaRoot}}
+	cfg.ServiceAutostart = []string{"svc-a"}
+	cfg.ServiceModels = map[string]int{"svc-a": 3}
+	cfg.ChatTitleModel = &ChatTitleModelRef{Model: "title-model", LLMNo: 4}
+	cfg.SlashCommands = []SlashCommandItem{{Cmd: "/probe", Desc: "Probe", Content: "original command"}}
+	cfg.ExtraSystemPromptPresets = []ExtraSystemPromptPreset{{ID: "probe", Name: "Probe", Content: "original preset"}}
+	return cfg
+}
+
+func mutateConfigReferenceFields(cfg *AppConfig) {
+	cfg.Instances[0].Name = "mutated instance"
+	cfg.ServiceAutostart[0] = "mutated service"
+	cfg.ServiceModels["svc-a"] = 99
+	cfg.ServiceModels["new-service"] = 100
+	cfg.ChatTitleModel.Model = "mutated title model"
+	cfg.SlashCommands[0].Content = "mutated command"
+	cfg.ExtraSystemPromptPresets[0].Content = "mutated preset"
+}
+
+func requireConfigEqual(t *testing.T, got, want AppConfig) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("config changed through an alias\ngot:  %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestStoreSnapshotDoesNotAliasReferenceFields(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.Save(configWithReferenceFields(t, store)); err != nil {
+		t.Fatal(err)
+	}
+	want := store.Snapshot()
+	leaked := store.Snapshot()
+
+	mutateConfigReferenceFields(&leaked)
+
+	requireConfigEqual(t, store.Snapshot(), want)
+}
+
+func TestStoreSaveDoesNotRetainInputAliases(t *testing.T) {
+	store := NewStore(t.TempDir())
+	input := configWithReferenceFields(t, store)
+	if err := store.Save(input); err != nil {
+		t.Fatal(err)
+	}
+	want := store.Snapshot()
+
+	mutateConfigReferenceFields(&input)
+
+	requireConfigEqual(t, store.Snapshot(), want)
+}
+
+func TestStoreUpdateRuntimeIsAtomicAndDoesNotPublishAliases(t *testing.T) {
+	store := NewStore(t.TempDir())
+	input := configWithReferenceFields(t, store)
+	var callbackView *AppConfig
+	if err := store.UpdateRuntime(func(current *AppConfig) {
+		*current = input
+		callbackView = current
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := store.Snapshot()
+
+	mutateConfigReferenceFields(callbackView)
+	mutateConfigReferenceFields(&input)
+	requireConfigEqual(t, store.Snapshot(), want)
+
+	beforeRejectedUpdate := store.Snapshot()
+	err := store.UpdateRuntime(func(current *AppConfig) {
+		current.ServiceModels["svc-a"] = 101
+		current.Port = -1
+	})
+	if err == nil {
+		t.Fatal("UpdateRuntime() expected validation error")
+	}
+	requireConfigEqual(t, store.Snapshot(), beforeRejectedUpdate)
 }

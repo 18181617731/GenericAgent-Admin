@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -33,26 +34,26 @@ func TestChatInstanceLegacyRuntimeAndDataDirSurviveDefaultMigration(t *testing.T
 		t.Fatalf("initial instance ID = %q, want legacy empty ID", beforeID)
 	}
 	wantDataDir := filepath.Join(appRoot, "data")
-	if got := before.CfgStore.Cfg.ChatDataDir; got != wantDataDir {
+	if got := before.CfgStore.Snapshot().ChatDataDir; got != wantDataDir {
 		t.Fatalf("initial chat data dir = %q, want %q", got, wantDataDir)
 	}
 	before.ChatTitleJobs["legacy-job"] = true
 	legacyRuntime := before.ChatMu
 
-	cfg := store.Cfg
+	cfg := store.Snapshot()
 	cfg.GARoot = gaRoot
 	if err := store.Save(cfg); err != nil {
 		t.Fatalf("Save() migration error = %v", err)
 	}
-	if store.Cfg.DefaultInstanceID != "default" || len(store.Cfg.Instances) != 1 {
-		t.Fatalf("Save() did not synthesize default instance: %#v", store.Cfg)
+	if store.Snapshot().DefaultInstanceID != "default" || len(store.Snapshot().Instances) != 1 {
+		t.Fatalf("Save() did not synthesize default instance: %#v", store.Snapshot())
 	}
 
 	after, afterID := mustChatServerForRequest(t, server, "/api/chat/sessions")
 	if afterID != "default" {
 		t.Fatalf("migrated instance ID = %q, want default", afterID)
 	}
-	if got := after.CfgStore.Cfg.ChatDataDir; got != wantDataDir {
+	if got := after.CfgStore.Snapshot().ChatDataDir; got != wantDataDir {
 		t.Fatalf("migrated chat data dir = %q, want stable %q", got, wantDataDir)
 	}
 	if after.ChatMu != legacyRuntime {
@@ -74,7 +75,7 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	}
 
 	store := config.NewStore(appRoot)
-	cfg := store.Cfg
+	cfg := store.Snapshot()
 	cfg.GARoot = defaultRoot
 	cfg.DefaultInstanceID = "default"
 	cfg.Instances = []config.InstanceConfig{
@@ -93,10 +94,10 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	}
 	baseDataDir := filepath.Join(appRoot, "data")
 	betaDataDir := filepath.Join(baseDataDir, "instances", "beta")
-	if got := defaultServer.CfgStore.Cfg.ChatDataDir; got != baseDataDir {
+	if got := defaultServer.CfgStore.Snapshot().ChatDataDir; got != baseDataDir {
 		t.Fatalf("default data dir = %q, want %q", got, baseDataDir)
 	}
-	if got := betaServer.CfgStore.Cfg.ChatDataDir; got != betaDataDir {
+	if got := betaServer.CfgStore.Snapshot().ChatDataDir; got != betaDataDir {
 		t.Fatalf("beta data dir = %q, want %q", got, betaDataDir)
 	}
 	if defaultServer.ChatMu == betaServer.ChatMu {
@@ -109,7 +110,7 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	defaultRuntime := defaultServer.ChatMu
 	betaRuntime := betaServer.ChatMu
 
-	next := store.Cfg
+	next := store.Snapshot()
 	next.DefaultInstanceID = "beta"
 	if err := store.Save(next); err != nil {
 		t.Fatalf("Save(default=beta) error = %v", err)
@@ -121,17 +122,29 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	if selectedID != "beta" {
 		t.Fatalf("implicit instance ID = %q, want beta", selectedID)
 	}
-	if defaultAgain.CfgStore.Cfg.ChatDataDir != baseDataDir || defaultAgain.ChatMu != defaultRuntime {
-		t.Fatalf("literal default ownership changed after default switch: dir=%q", defaultAgain.CfgStore.Cfg.ChatDataDir)
+	if defaultAgain.CfgStore.Snapshot().ChatDataDir != baseDataDir || defaultAgain.ChatMu != defaultRuntime {
+		t.Fatalf("literal default ownership changed after default switch: dir=%q", defaultAgain.CfgStore.Snapshot().ChatDataDir)
 	}
-	if betaAgain.CfgStore.Cfg.ChatDataDir != betaDataDir || betaAgain.ChatMu != betaRuntime {
-		t.Fatalf("literal beta ownership changed after default switch: dir=%q", betaAgain.CfgStore.Cfg.ChatDataDir)
+	if betaAgain.CfgStore.Snapshot().ChatDataDir != betaDataDir || betaAgain.ChatMu != betaRuntime {
+		t.Fatalf("literal beta ownership changed after default switch: dir=%q", betaAgain.CfgStore.Snapshot().ChatDataDir)
 	}
-	if selected.CfgStore.Cfg.ChatDataDir != betaDataDir || selected.ChatMu != betaRuntime {
-		t.Fatalf("implicit selection did not use beta ownership: dir=%q", selected.CfgStore.Cfg.ChatDataDir)
+	if selected.CfgStore.Snapshot().ChatDataDir != betaDataDir || selected.ChatMu != betaRuntime {
+		t.Fatalf("implicit selection did not use beta ownership: dir=%q", selected.CfgStore.Snapshot().ChatDataDir)
 	}
 	if !defaultAgain.ChatTitleJobs["default-only"] || betaAgain.ChatTitleJobs["default-only"] {
 		t.Fatal("runtime state isolation changed after switching the default instance")
+	}
+}
+
+func TestChatInstanceRouteReturnsNotFoundForUnknownInstance(t *testing.T) {
+	server := New(config.NewStore(t.TempDir()), nil, nil, nil)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/chat/sessions?instance_id=missing", nil)
+
+	server.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusNotFound, rr.Body.String())
 	}
 }
 

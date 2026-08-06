@@ -99,7 +99,7 @@ func resolveChatTitleModel(ref *config.ChatTitleModelRef, options []chatTitleMod
 }
 
 func (s *Server) reconcileChatTitleModel(profiles []modelconfig.Profile) error {
-	current := s.CfgStore.Cfg.ChatTitleModel
+	current := s.CfgStore.Snapshot().ChatTitleModel
 	if current == nil {
 		return nil
 	}
@@ -112,7 +112,7 @@ func (s *Server) reconcileChatTitleModel(profiles []modelconfig.Profile) error {
 	}
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.ChatTitleModel = resolved
 	return s.CfgStore.Save(cfg)
 }
@@ -125,7 +125,7 @@ func (s *Server) modelsTitleModel(w http.ResponseWriter, r *http.Request) {
 	}
 	options := orderedChatTitleModelOptions(d.Profiles)
 	if r.Method == http.MethodGet {
-		resolved, _ := resolveChatTitleModel(s.CfgStore.Cfg.ChatTitleModel, options)
+		resolved, _ := resolveChatTitleModel(s.CfgStore.Snapshot().ChatTitleModel, options)
 		writeJSON(w, map[string]interface{}{"model": resolved, "options": options})
 		return
 	}
@@ -146,7 +146,7 @@ func (s *Server) modelsTitleModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ConfigMu.Lock()
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.ChatTitleModel = resolved
 	err = s.CfgStore.Save(cfg)
 	s.ConfigMu.Unlock()
@@ -164,7 +164,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "failover_groups": d.FailoverGroups, "updated_at": d.UpdatedAt, "source": modelconfig.SourceStatus(s.CfgStore.Cfg.GARoot)})
+		writeJSON(w, map[string]interface{}{"profiles": d.Profiles, "failover_groups": d.FailoverGroups, "updated_at": d.UpdatedAt, "source": modelconfig.SourceStatus(s.CfgStore.Snapshot().GARoot)})
 		return
 	}
 	if r.Method == "PUT" {
@@ -184,7 +184,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		if _, err := modelconfig.ExportWithFailoverGroups(s.CfgStore.Cfg.GARoot, profiles, p.FailoverGroups, true); err != nil {
+		if _, err := modelconfig.ExportWithFailoverGroups(s.CfgStore.Snapshot().GARoot, profiles, p.FailoverGroups, true); err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
@@ -220,7 +220,7 @@ func (s *Server) modelsRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loadModelsFromOfficialMyKey(reveal bool) (modelconfig.Draft, error) {
-	return modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, reveal)
+	return modelconfig.ImportMyKeyWithPython(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath, reveal)
 }
 
 func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]modelconfig.Profile, error) {
@@ -230,10 +230,10 @@ func (s *Server) mergeModelSecretsForWrite(profiles []modelconfig.Profile) ([]mo
 func (s *Server) mergeModelSecretsForWriteByPreviousVar(profiles []modelconfig.Profile, previousVarNames []string) ([]modelconfig.Profile, error) {
 	merged := make([]modelconfig.Profile, len(profiles))
 	copy(merged, profiles)
-	if s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Cfg.GARoot) == "" {
+	if s == nil || s.CfgStore == nil || strings.TrimSpace(s.CfgStore.Snapshot().GARoot) == "" {
 		return merged, nil
 	}
-	imported, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
+	imported, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath, true)
 	if err != nil {
 		return merged, nil
 	}
@@ -429,8 +429,8 @@ func (s *Server) resolveModelDiscoveryAPIKey(r *http.Request) (string, error) {
 	if varName == "" {
 		return apiKey, nil
 	}
-	if s != nil && s.CfgStore != nil && strings.TrimSpace(s.CfgStore.Cfg.GARoot) != "" {
-		d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, true)
+	if s != nil && s.CfgStore != nil && strings.TrimSpace(s.CfgStore.Snapshot().GARoot) != "" {
+		d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath, true)
 		if err != nil {
 			return "", err
 		}
@@ -529,7 +529,7 @@ func (s *Server) modelsImportMyKey(w http.ResponseWriter, r *http.Request) {
 	if (p.Reveal || p.Save) && !requireDangerousHeader(w, r) {
 		return
 	}
-	d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath, p.Reveal)
+	d, err := modelconfig.ImportMyKeyWithPython(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath, p.Reveal)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -577,7 +577,7 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	res, err := modelconfig.ExportWithFailoverGroups(s.CfgStore.Cfg.GARoot, profiles, p.FailoverGroups, p.OverwriteActive)
+	res, err := modelconfig.ExportWithFailoverGroups(s.CfgStore.Snapshot().GARoot, profiles, p.FailoverGroups, p.OverwriteActive)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

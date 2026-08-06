@@ -11,13 +11,13 @@ func (s *Server) scheduleTasks(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	writeJSON(w, ga.BuildSchedule(s.CfgStore.Cfg.GARoot))
+	writeJSON(w, ga.BuildSchedule(s.CfgStore.Snapshot().GARoot))
 }
 
 func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		raw, id, err := ga.ReadTask(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("id"))
+		raw, id, err := ga.ReadTask(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("id"))
 		if err != nil {
 			bad(w, 400, err.Error())
 			return
@@ -37,7 +37,7 @@ func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 		if taskRaw == nil {
 			taskRaw = req.Raw
 		}
-		t, err := ga.SaveTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
+		t, err := ga.SaveTask(s.CfgStore.Snapshot().GARoot, req.ID, taskRaw)
 		if err != nil {
 			bad(w, 400, err.Error())
 			return
@@ -53,7 +53,7 @@ func (s *Server) scheduleArtifact(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	content, entry, err := ga.ReadScheduleArtifact(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), 256*1024)
+	content, entry, err := ga.ReadScheduleArtifact(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("path"), 256*1024)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -79,7 +79,7 @@ func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
 	if taskRaw == nil {
 		taskRaw = req.Raw
 	}
-	t, err := ga.CreateTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
+	t, err := ga.CreateTask(s.CfgStore.Snapshot().GARoot, req.ID, taskRaw)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -105,7 +105,7 @@ func (s *Server) scheduleDelete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "empty id")
 		return
 	}
-	if err := ga.DeleteTask(s.CfgStore.Cfg.GARoot, req.ID); err != nil {
+	if err := ga.DeleteTask(s.CfgStore.Snapshot().GARoot, req.ID); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Server) scheduleToggle(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
-	task, err := ga.ToggleTask(s.CfgStore.Cfg.GARoot, req.ID, req.Enabled)
+	task, err := ga.ToggleTask(s.CfgStore.Snapshot().GARoot, req.ID, req.Enabled)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

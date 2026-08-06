@@ -41,7 +41,7 @@ func TestExtraSystemPromptPresetsRoutePersistsReplaceSet(t *testing.T) {
 	}
 
 	reloaded := config.NewStore(store.Root)
-	got := reloaded.Cfg.ExtraSystemPromptPresets
+	got := reloaded.Snapshot().ExtraSystemPromptPresets
 	want := []config.ExtraSystemPromptPreset{{ID: "review", Name: "Review", Content: "Check carefully."}}
 	if len(got) != 1 || got[0] != want[0] {
 		t.Fatalf("reloaded presets=%#v want=%#v", got, want)
@@ -51,8 +51,10 @@ func TestExtraSystemPromptPresetsRoutePersistsReplaceSet(t *testing.T) {
 func TestExtraSystemPromptPresetsRejectInvalidReplaceWithoutMutation(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	s.CfgStore.Root = t.TempDir()
-	s.CfgStore.Cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{{ID: "keep", Name: "Keep", Content: "Keep me"}}
-	if err := s.CfgStore.Save(s.CfgStore.Cfg); err != nil {
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{{ID: "keep", Name: "Keep", Content: "Keep me"}}
+	})
+	if err := s.CfgStore.Save(s.CfgStore.Snapshot()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -64,17 +66,21 @@ func TestExtraSystemPromptPresetsRejectInvalidReplaceWithoutMutation(t *testing.
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	reloaded := config.NewStore(s.CfgStore.Root)
-	if got := reloaded.Cfg.ExtraSystemPromptPresets; len(got) != 1 || got[0].ID != "keep" {
+	if got := reloaded.Snapshot().ExtraSystemPromptPresets; len(got) != 1 || got[0].ID != "keep" {
 		t.Fatalf("invalid replace mutated config: %#v", got)
 	}
 }
 
 func TestChatSaveSettingsPresetBindingAndCompatibilitySemantics(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	s.CfgStore.Cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{
-		{ID: "review", Name: "Review", Content: "Review this carefully."},
-	}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{
+			{ID: "review", Name: "Review", Content: "Review this carefully."},
+		}
+	})
 
 	save := func(body string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -86,7 +92,7 @@ func TestChatSaveSettingsPresetBindingAndCompatibilitySemantics(t *testing.T) {
 	}
 	load := func() chatSession {
 		t.Helper()
-		cs, err := loadChatSession(s.CfgStore.Cfg, "preset-session")
+		cs, err := loadChatSession(s.CfgStore.Snapshot(), "preset-session")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +117,9 @@ func TestChatSaveSettingsPresetBindingAndCompatibilitySemantics(t *testing.T) {
 	}
 
 	// Deleting a global preset does not rewrite historical session identity/snapshot.
-	s.CfgStore.Cfg.ExtraSystemPromptPresets = nil
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ExtraSystemPromptPresets = nil
+	})
 	orphan := load()
 	if orphan.ExtraSysPromptPresetID != "review" || len(orphan.ExtraSysPrompts) != 1 || orphan.ExtraSysPrompts[0] != "Review this carefully." {
 		t.Fatalf("deleted preset did not preserve orphan snapshot: %#v", orphan)
@@ -128,8 +136,12 @@ func TestChatSaveSettingsPresetBindingAndCompatibilitySemantics(t *testing.T) {
 
 func TestChatSaveSettingsLegacyPromptsOverridePresetID(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	s.CfgStore.Cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{{ID: "review", Name: "Review", Content: "Preset"}}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{{ID: "review", Name: "Review", Content: "Preset"}}
+	})
 
 	payload, err := json.Marshal(map[string]interface{}{
 		"llm_no":                     0,
@@ -146,7 +158,7 @@ func TestChatSaveSettingsLegacyPromptsOverridePresetID(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, "legacy-session")
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), "legacy-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,8 +169,12 @@ func TestChatSaveSettingsLegacyPromptsOverridePresetID(t *testing.T) {
 
 func TestChatSaveSettingsRejectsUnknownPresetWithoutMutation(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	s.CfgStore.Cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{{ID: "known", Name: "Known", Content: "Known snapshot"}}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ExtraSystemPromptPresets = []config.ExtraSystemPromptPreset{{ID: "known", Name: "Known", Content: "Known snapshot"}}
+	})
 
 	seed := httptest.NewRequest(http.MethodPost, "/api/chat/settings/unknown-session", strings.NewReader(`{"llm_no":0,"extra_sys_prompt_preset_id":"known"}`))
 	seed.Header.Set("Content-Type", "application/json")
@@ -175,7 +191,7 @@ func TestChatSaveSettingsRejectsUnknownPresetWithoutMutation(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("unknown status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, "unknown-session")
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), "unknown-session")
 	if err != nil {
 		t.Fatal(err)
 	}

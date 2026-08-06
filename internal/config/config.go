@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 type SlashCommandItem struct {
@@ -35,7 +36,15 @@ type InstanceConfig struct {
 	GARoot          string `json:"ga_root"`
 	PythonPath      string `json:"python_path,omitempty"`
 	EffectivePython string `json:"effective_python,omitempty"`
+	InitStatus      string `json:"init_status,omitempty"`
+	InitError       string `json:"init_error,omitempty"`
 }
+
+const (
+	InstanceInitStatusInitializing = "initializing"
+	InstanceInitStatusReady        = "ready"
+	InstanceInitStatusFailed       = "failed"
+)
 
 type AppConfig struct {
 	GARoot                   string                    `json:"ga_root"`
@@ -157,6 +166,12 @@ func Validate(cfg AppConfig) error {
 				return fmt.Errorf("duplicate instance name %q", name)
 			}
 			seenNames[nameKey] = struct{}{}
+			status := strings.ToLower(strings.TrimSpace(instance.InitStatus))
+			switch status {
+			case "", InstanceInitStatusInitializing, InstanceInitStatusReady, InstanceInitStatusFailed:
+			default:
+				return fmt.Errorf("%s.init_status must be %q, %q or %q", prefix, InstanceInitStatusInitializing, InstanceInitStatusReady, InstanceInitStatusFailed)
+			}
 			root := strings.TrimSpace(instance.GARoot)
 			if root == "" {
 				return fmt.Errorf("%s.ga_root is required", prefix)
@@ -292,13 +307,91 @@ func Default() AppConfig {
 
 type Store struct {
 	Root string
-	Cfg  AppConfig
+
+	mu  sync.RWMutex
+	cfg AppConfig
 }
 
 func NewStore(root string) *Store {
-	s := &Store{Root: root, Cfg: defaultForRoot(root)}
+	s := &Store{Root: root, cfg: defaultForRoot(root)}
 	_ = s.Load()
 	return s
+}
+
+// NewRuntimeStore creates an in-memory store from cfg without reading from or
+// writing to disk. It is useful for request-scoped derived configurations.
+func NewRuntimeStore(root string, cfg AppConfig) (*Store, error) {
+	cfg = normalize(cloneAppConfig(cfg), root)
+	if err := Validate(cfg); err != nil {
+		return nil, err
+	}
+	return &Store{Root: root, cfg: cloneAppConfig(cfg)}, nil
+}
+
+// Snapshot returns a deep copy of the currently published configuration.
+// Callers may freely mutate the returned value without aliasing Store state.
+func (s *Store) Snapshot() AppConfig {
+	if s == nil {
+		return AppConfig{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneAppConfig(s.cfg)
+}
+
+// UpdateRuntime atomically updates the in-memory configuration without
+// persisting it. It is intended for process-local overrides such as CLI flags.
+func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
+	if s == nil {
+		return fmt.Errorf("config store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg := cloneAppConfig(s.cfg)
+	if update != nil {
+		update(&cfg)
+	}
+	cfg = normalize(cfg, s.Root)
+	if err := Validate(cfg); err != nil {
+		return err
+	}
+	s.cfg = cloneAppConfig(cfg)
+	return nil
+}
+
+func cloneAppConfig(cfg AppConfig) AppConfig {
+	if cfg.Instances != nil {
+		cloned := make([]InstanceConfig, len(cfg.Instances))
+		copy(cloned, cfg.Instances)
+		cfg.Instances = cloned
+	}
+	if cfg.ServiceAutostart != nil {
+		cloned := make([]string, len(cfg.ServiceAutostart))
+		copy(cloned, cfg.ServiceAutostart)
+		cfg.ServiceAutostart = cloned
+	}
+	if cfg.ServiceModels != nil {
+		cloned := make(map[string]int, len(cfg.ServiceModels))
+		for name, llmNo := range cfg.ServiceModels {
+			cloned[name] = llmNo
+		}
+		cfg.ServiceModels = cloned
+	}
+	if cfg.ChatTitleModel != nil {
+		cloned := *cfg.ChatTitleModel
+		cfg.ChatTitleModel = &cloned
+	}
+	if cfg.SlashCommands != nil {
+		cloned := make([]SlashCommandItem, len(cfg.SlashCommands))
+		copy(cloned, cfg.SlashCommands)
+		cfg.SlashCommands = cloned
+	}
+	if cfg.ExtraSystemPromptPresets != nil {
+		cloned := make([]ExtraSystemPromptPreset, len(cfg.ExtraSystemPromptPresets))
+		copy(cloned, cfg.ExtraSystemPromptPresets)
+		cfg.ExtraSystemPromptPresets = cloned
+	}
+	return cfg
 }
 
 func (s *Store) path() string { return filepath.Join(s.Root, "config.local.json") }
@@ -349,6 +442,8 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		instance.GARoot = strings.TrimSpace(instance.GARoot)
 		instance.PythonPath = strings.TrimSpace(instance.PythonPath)
 		instance.EffectivePython = effectiveInstancePython(instance)
+		instance.InitStatus = strings.ToLower(strings.TrimSpace(instance.InitStatus))
+		instance.InitError = strings.TrimSpace(instance.InitError)
 		instances = append(instances, instance)
 	}
 	if len(instances) == 0 && cfg.GARoot != "" {
@@ -431,6 +526,12 @@ func (cfg AppConfig) Instance(id string) (InstanceConfig, bool) {
 }
 
 func (s *Store) Load() error {
+	if s == nil {
+		return fmt.Errorf("config store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	data, err := os.ReadFile(s.path())
 	if err != nil {
 		return nil
@@ -443,12 +544,18 @@ func (s *Store) Load() error {
 	if err := Validate(cfg); err != nil {
 		return err
 	}
-	s.Cfg = cfg
+	s.cfg = cloneAppConfig(cfg)
 	return nil
 }
 
 func (s *Store) Save(cfg AppConfig) error {
-	cfg = normalize(cfg, s.Root)
+	if s == nil {
+		return fmt.Errorf("config store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg = normalize(cloneAppConfig(cfg), s.Root)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
@@ -459,7 +566,7 @@ func (s *Store) Save(cfg AppConfig) error {
 	if err := writeFileAtomic(s.path(), data, 0644); err != nil {
 		return err
 	}
-	s.Cfg = cfg
+	s.cfg = cloneAppConfig(cfg)
 	return nil
 }
 

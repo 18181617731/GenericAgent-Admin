@@ -35,9 +35,13 @@ func TestNormalizeChatSettingsPreservesOfficialReasoningEffortLevels(t *testing.
 func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	// Title generation defaults to disabled, so opt in for this test.
-	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
+	})
 	cs := chatSession{
 		ID:          "title-success",
 		Title:       "请帮我同步上游并解决冲突",
@@ -48,7 +52,7 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 			{ID: "a1", Role: "assistant", Content: "已完成同步并保留本地修改", CreatedAt: 2},
 		},
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,7 +76,7 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 	var stored chatSession
 	deadline := time.Now().Add(time.Second)
 	for {
-		stored, _ = loadChatSession(s.CfgStore.Cfg, cs.ID)
+		stored, _ = loadChatSession(s.CfgStore.Snapshot(), cs.ID)
 		if stored.TitleSource == chatTitleSourceGenerated || time.Now().After(deadline) {
 			break
 		}
@@ -86,13 +90,17 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
-	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{
-		Enable:          true,
-		ProviderVarName: "native_oai_config2",
-		Model:           "title-model",
-		LLMNo:           7,
-	}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatTitleModel = &config.ChatTitleModelRef{
+			Enable:          true,
+			ProviderVarName: "native_oai_config2",
+			Model:           "title-model",
+			LLMNo:           7,
+		}
+	})
 	cs := chatSession{
 		ID:       "legacy-title",
 		Title:    "同步上游更新",
@@ -104,7 +112,7 @@ func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
 			{ID: "a2", Role: "assistant", Content: "会使用独立模型生成", CreatedAt: 4},
 		},
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,9 +151,13 @@ func TestManualChatTitleGenerationEndpointIsNotExposed(t *testing.T) {
 func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	// Title generation defaults to disabled, so opt in for this test.
-	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
+	})
 	legacy := chatSession{
 		ID:       "legacy-default-title",
 		Title:    "第一句话作为旧标题",
@@ -167,7 +179,7 @@ func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testi
 		},
 	}
 	for _, session := range []chatSession{legacy, custom} {
-		if err := saveChatSessionLocked(s.CfgStore.Cfg, session); err != nil {
+		if err := saveChatSessionLocked(s.CfgStore.Snapshot(), session); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -195,7 +207,7 @@ func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testi
 	deadline := time.Now().Add(time.Second)
 	var stored chatSession
 	for {
-		stored, _ = loadChatSession(s.CfgStore.Cfg, legacy.ID)
+		stored, _ = loadChatSession(s.CfgStore.Snapshot(), legacy.ID)
 		if stored.TitleSource == chatTitleSourceGenerated || time.Now().After(deadline) {
 			break
 		}
@@ -204,7 +216,7 @@ func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testi
 	if stored.Title != "旧会话自动标题" || stored.TitleSource != chatTitleSourceGenerated {
 		t.Fatalf("legacy title was not backfilled: %+v", stored)
 	}
-	preserved, err := loadChatSession(s.CfgStore.Cfg, custom.ID)
+	preserved, err := loadChatSession(s.CfgStore.Snapshot(), custom.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,9 +232,13 @@ func TestChatTitleBackfillAutomaticallyGeneratesOnlyLegacyDefaultTitles(t *testi
 func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	// Title generation defaults to disabled, so opt in for this test.
-	s.CfgStore.Cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatTitleModel = &config.ChatTitleModelRef{Enable: true}
+	})
 	cs := chatSession{
 		ID:          "title-manual-race",
 		Title:       "第一句话",
@@ -232,7 +248,7 @@ func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 			{ID: "a1", Role: "assistant", Content: "第一轮回答", CreatedAt: 2},
 		},
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -253,11 +269,11 @@ func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 		t.Fatal("title worker was not called")
 	}
 	s.SessionMu.Lock()
-	latest, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	latest, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID)
 	if err == nil {
 		latest.Title = "我自己的标题"
 		latest.TitleSource = chatTitleSourceManual
-		err = saveChatSessionLocked(s.CfgStore.Cfg, latest)
+		err = saveChatSessionLocked(s.CfgStore.Snapshot(), latest)
 	}
 	s.SessionMu.Unlock()
 	if err != nil {
@@ -275,7 +291,7 @@ func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,14 +303,16 @@ func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 func TestChatTerminalSavePreservesManualRename(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	latest := chatSession{
 		ID:          "title-terminal-race",
 		Title:       "手动标题",
 		TitleSource: chatTitleSourceManual,
 		Messages:    []chatMessage{{ID: "u1", Role: "user", Content: "第一句话"}},
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, latest); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
 		t.Fatal(err)
 	}
 	staleWorkerCopy := latest
@@ -305,7 +323,7 @@ func TestChatTerminalSavePreservesManualRename(t *testing.T) {
 	if err := s.saveChatSessionMerged(staleWorkerCopy); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, latest.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), latest.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +607,9 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	h := s.Routes()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-a", strings.NewReader(`{"prompt":"hello","settings":{"llm_no":0},"client_user_id":"u1"}`))
@@ -603,7 +623,7 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 		t.Fatalf("expected streamed worker error, got %q", rr.Body.String())
 	}
 
-	cs, err := loadChatSession(s.CfgStore.Cfg, "session-a")
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), "session-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +638,9 @@ func TestChatPostPropagatesLLMNoZeroAndPersistsWorkerStartError(t *testing.T) {
 func TestChatProjectModeCommandLifecycleAndPreservesMemory(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	h := s.Routes()
 
 	projectDir := filepath.Join(root, "temp", "projects", "alpha")
@@ -651,7 +673,7 @@ func TestChatProjectModeCommandLifecycleAndPreservesMemory(t *testing.T) {
 	if !strings.Contains(activate.Body.String(), `"project_mode":"alpha"`) {
 		t.Fatalf("activation stream missing project mode: %s", activate.Body.String())
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, "project-session")
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), "project-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +692,7 @@ func TestChatProjectModeCommandLifecycleAndPreservesMemory(t *testing.T) {
 	if !strings.Contains(status.Body.String(), "alpha") {
 		t.Fatalf("status response missing active project: %s", status.Body.String())
 	}
-	if got, err := loadChatSession(s.CfgStore.Cfg, "project-session"); err != nil || got.ProjectMode != "alpha" {
+	if got, err := loadChatSession(s.CfgStore.Snapshot(), "project-session"); err != nil || got.ProjectMode != "alpha" {
 		t.Fatalf("status changed persisted project mode: mode=%q err=%v", got.ProjectMode, err)
 	}
 
@@ -678,7 +700,7 @@ func TestChatProjectModeCommandLifecycleAndPreservesMemory(t *testing.T) {
 	if !strings.Contains(disable.Body.String(), `"project_mode":""`) {
 		t.Fatalf("disable stream missing cleared project mode: %s", disable.Body.String())
 	}
-	cs, err = loadChatSession(s.CfgStore.Cfg, "project-session")
+	cs, err = loadChatSession(s.CfgStore.Snapshot(), "project-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -704,7 +726,9 @@ func TestChatProjectModeRejectsUnsafeNames(t *testing.T) {
 
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	body := strings.NewReader(`{"prompt":"/project ../escape"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/project-unsafe", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -713,7 +737,7 @@ func TestChatProjectModeRejectsUnsafeNames(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, "project-unsafe")
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), "project-unsafe")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -757,7 +781,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	defer func() { startChatWorkerFunc = old }()
 
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	seedRawHistory := []map[string]interface{}{
 		{"role": "user", "content": []map[string]interface{}{{"type": "text", "text": "first question"}}},
 		{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "search", "content": "tool data"}}},
@@ -770,7 +796,7 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
 		},
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
 		t.Fatal(err)
 	}
 
@@ -832,7 +858,7 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"ctx_chars":3800`) || !strings.Contains(rr.Body.String(), `"ctx_msgs":3`) {
 		t.Fatalf("stream terminal message missing context stats: %s", rr.Body.String())
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, "session-hist")
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), "session-hist")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -896,7 +922,9 @@ func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
 	defer func() { startChatWorkerFunc = old }()
 
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	seedRawHistory := []map[string]interface{}{
 		{"role": "user", "content": []map[string]interface{}{{"type": "text", "text": "first question"}}},
 		{"role": "assistant", "content": []map[string]interface{}{{"type": "tool_result", "tool_name": "search", "content": "tool data"}}},
@@ -908,7 +936,7 @@ func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
 			{ID: "a0", Role: "assistant", Content: "first answer", CreatedAt: 2},
 		},
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
 		t.Fatal(err)
 	}
 
@@ -929,7 +957,7 @@ func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
 		t.Fatalf("stream unexpectedly leaked raw history: %s", rr.Body.String())
 	}
 
-	stored, err := loadChatSession(s.CfgStore.Cfg, "session-eof")
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), "session-eof")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -974,7 +1002,7 @@ func TestChatNewSessionDoesNotPersistDraftUntilFirstSend(t *testing.T) {
 	if created.ID == "" {
 		t.Fatal("new session response has empty id")
 	}
-	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Snapshot(), created.ID)); !os.IsNotExist(err) {
 		t.Fatalf("draft session was persisted before first message: %v", err)
 	}
 
@@ -995,7 +1023,7 @@ func TestChatNewSessionDoesNotPersistDraftUntilFirstSend(t *testing.T) {
 	if sendRR.Code != http.StatusOK {
 		t.Fatalf("send status=%d body=%s", sendRR.Code, sendRR.Body.String())
 	}
-	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); err != nil {
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Snapshot(), created.ID)); err != nil {
 		t.Fatalf("session was not persisted by first send: %v", err)
 	}
 
@@ -1017,7 +1045,9 @@ func TestChatSessionsIncludesDiscoveredProjects(t *testing.T) {
 		}
 	}
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	h := s.Routes()
 
 	rr := httptest.NewRecorder()
@@ -1042,7 +1072,9 @@ func TestChatNewSessionForProjectPersistsMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	h := s.Routes()
 
 	rr := httptest.NewRecorder()
@@ -1059,7 +1091,7 @@ func TestChatNewSessionForProjectPersistsMode(t *testing.T) {
 	if created.ID == "" || created.ProjectMode != "alpha" {
 		t.Fatalf("created=%+v", created)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, created.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), created.ID)
 	if err != nil {
 		t.Fatalf("load persisted session: %v", err)
 	}
@@ -1088,7 +1120,9 @@ func TestChatNewSessionRejectsUnknownProject(t *testing.T) {
 func TestChatFirstImmediateCommandPersistsSessionWithoutHistory(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	h := s.Routes()
 
 	newRR := httptest.NewRecorder()
@@ -1111,10 +1145,10 @@ func TestChatFirstImmediateCommandPersistsSessionWithoutHistory(t *testing.T) {
 	if !strings.Contains(helpRR.Body.String(), `"type":"command_result"`) {
 		t.Fatalf("missing command result: %s", helpRR.Body.String())
 	}
-	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, created.ID)); err != nil {
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Snapshot(), created.ID)); err != nil {
 		t.Fatalf("session was not persisted by first immediate command: %v", err)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, created.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1309,7 +1343,9 @@ func TestSaveChatUploadsCleansPartialFilesOnLaterFailure(t *testing.T) {
 
 func TestChatSaveSettingsRejectsMalformedJSON(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/session-bad", strings.NewReader(`{"llm_no":`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -1319,14 +1355,16 @@ func TestChatSaveSettingsRejectsMalformedJSON(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
 	}
-	if _, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, "session-bad")); !os.IsNotExist(err) {
+	if _, err := os.Stat(chatSessionPath(s.CfgStore.Snapshot(), "session-bad")); !os.IsNotExist(err) {
 		t.Fatalf("malformed settings request should not create session file, stat err=%v", err)
 	}
 }
 
 func TestChatSaveSettingsPersistsValidJSON(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/settings/session-ok", strings.NewReader(`{"llm_no":3,"extra_sys_prompts":["  be concise  "," ","cite sources"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -1336,7 +1374,7 @@ func TestChatSaveSettingsPersistsValidJSON(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, "session-ok")
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), "session-ok")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1377,10 +1415,18 @@ func TestChatSessionsReportsUnwritableDataDir(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
 	blocked := filepath.Join(t.TempDir(), "blocked")
+	if err := os.MkdirAll(blocked, 0755); err != nil {
+		t.Fatal(err)
+	}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = blocked
+	})
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(blocked, []byte("not a dir"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	s.CfgStore.Cfg.ChatDataDir = blocked
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil)
@@ -1407,11 +1453,13 @@ func TestLoadChatSessionReportsCorruptJSON(t *testing.T) {
 
 func TestChatGetSessionReportsCorruptJSON(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755); err != nil {
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Snapshot()), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(chatSessionPath(s.CfgStore.Cfg, "bad-json"), []byte("{"), 0644); err != nil {
+	if err := os.WriteFile(chatSessionPath(s.CfgStore.Snapshot(), "bad-json"), []byte("{"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1433,12 +1481,20 @@ func TestChatSessionsReportsMigrationCreateDirError(t *testing.T) {
 		t.Fatal(err)
 	}
 	chatDataPath := filepath.Join(t.TempDir(), "chat-data-file")
-	if err := os.WriteFile(chatDataPath, []byte("not a directory"), 0644); err != nil {
+	if err := os.MkdirAll(chatDataPath, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	s := newGoalTestServer(t, gaRoot)
-	s.CfgStore.Cfg.ChatDataDir = chatDataPath
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = chatDataPath
+	})
+	if err := os.RemoveAll(chatDataPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(chatDataPath, []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil)
 	s.Routes().ServeHTTP(rr, req)
@@ -1551,7 +1607,9 @@ func TestChatWriteRoutesWithUnsafeIDsStayInsideChatDataDir(t *testing.T) {
 	gaRoot := t.TempDir()
 	chatDataDirRoot := t.TempDir()
 	s := newGoalTestServer(t, gaRoot)
-	s.CfgStore.Cfg.ChatDataDir = chatDataDirRoot
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = chatDataDirRoot
+	})
 	h := s.Routes()
 	for _, tc := range []struct {
 		name   string
@@ -1573,7 +1631,7 @@ func TestChatWriteRoutesWithUnsafeIDsStayInsideChatDataDir(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(chatDataDirRoot, "outside.json")); !os.IsNotExist(err) {
 				t.Fatalf("unsafe route wrote outside chat session dir: err=%v", err)
 			}
-			entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
+			entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Snapshot()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1583,21 +1641,23 @@ func TestChatWriteRoutesWithUnsafeIDsStayInsideChatDataDir(t *testing.T) {
 			if strings.Contains(entries[0].Name(), "outside") || strings.Contains(entries[0].Name(), "..") {
 				t.Fatalf("unsafe id leaked into file name: %q", entries[0].Name())
 			}
-			_ = os.Remove(filepath.Join(chatSessionDir(s.CfgStore.Cfg), entries[0].Name()))
+			_ = os.Remove(filepath.Join(chatSessionDir(s.CfgStore.Snapshot()), entries[0].Name()))
 		})
 	}
 }
 
 func TestChatFileRouteUsesBaseNameOnly(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	if err := os.MkdirAll(chatUploadDir(s.CfgStore.Cfg), 0755); err != nil {
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	if err := os.MkdirAll(chatUploadDir(s.CfgStore.Snapshot()), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(chatUploadDir(s.CfgStore.Cfg), "safe.txt"), []byte("safe upload"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(chatUploadDir(s.CfgStore.Snapshot()), "safe.txt"), []byte("safe upload"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	outsideDir := filepath.Dir(chatUploadDir(s.CfgStore.Cfg))
+	outsideDir := filepath.Dir(chatUploadDir(s.CfgStore.Snapshot()))
 	if err := os.WriteFile(filepath.Join(outsideDir, "outside.txt"), []byte("outside"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1619,10 +1679,12 @@ func TestChatFileRouteUsesBaseNameOnly(t *testing.T) {
 
 func TestChatBTWPreservesMainResultThatFinishesFirst(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	base := chatMessage{ID: "base", Role: "user", Content: "main question"}
 	originalRaw := []map[string]interface{}{{"role": "user", "content": "raw main question"}}
-	if err := saveChatSession(s.CfgStore.Cfg, chatSession{
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{
 		ID:         "btw-first",
 		Title:      "main question",
 		Messages:   []chatMessage{base},
@@ -1673,7 +1735,7 @@ func TestChatBTWPreservesMainResultThatFinishesFirst(t *testing.T) {
 	if response.Message.Kind != "btw" || response.Message.SideQuestion != "side question" {
 		t.Fatalf("response btw metadata=%#v", response.Message)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, "btw-first")
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), "btw-first")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1697,29 +1759,31 @@ func TestChatBTWPreservesMainResultThatFinishesFirst(t *testing.T) {
 
 func TestSaveChatSessionMergedPreservesBTWThatFinishesFirst(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	base := chatMessage{ID: "base", Role: "user", Content: "main question"}
 	initial := chatSession{ID: "main-last", Messages: []chatMessage{base}}
-	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 		t.Fatal(err)
 	}
-	staleMain, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	staleMain, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	latest, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	latest.Messages = append(latest.Messages, chatMessage{ID: "btw", Role: "assistant", Content: "side result"})
-	if err := saveChatSession(s.CfgStore.Cfg, latest); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), latest); err != nil {
 		t.Fatal(err)
 	}
 	staleMain.Messages = append(staleMain.Messages, chatMessage{ID: "main", Role: "assistant", Content: "main result"})
 	if err := s.saveChatSessionMerged(staleMain); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1736,7 +1800,9 @@ func TestSaveChatSessionMergedPreservesBTWThatFinishesFirst(t *testing.T) {
 
 func TestChatBTWRejectsEmptyQuestionWithoutStartingWorker(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	old := runOneShotBTWWorkerFunc
 	defer func() { runOneShotBTWWorkerFunc = old }()
 	calls := 0
@@ -1954,7 +2020,9 @@ func TestChatPlanSnapshotSurvivesPlanNullFollowUpTurn(t *testing.T) {
 	defer func() { startChatWorkerFunc = old }()
 
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	h := s.Routes()
 	post := func(prompt string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -1981,7 +2049,7 @@ func TestChatPlanSnapshotSurvivesPlanNullFollowUpTurn(t *testing.T) {
 		t.Fatalf("follow-up stream did not retain plan snapshot: %s", second.Body.String())
 	}
 
-	stored, err := loadChatSession(s.CfgStore.Cfg, "plan-lifecycle")
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), "plan-lifecycle")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1998,7 +2066,9 @@ func TestChatPlanSnapshotSurvivesPlanNullFollowUpTurn(t *testing.T) {
 
 func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	textPart := func(text string) []interface{} {
 		return []interface{}{map[string]interface{}{"type": "text", "text": text}}
 	}
@@ -2025,7 +2095,7 @@ func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 			{"role": "assistant", "content": textPart("future answer")},
 		},
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, source); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), source); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2044,7 +2114,7 @@ func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 	if response.ID == "" || response.ID == source.ID {
 		t.Fatalf("fork ID=%q source=%q", response.ID, source.ID)
 	}
-	fork, err := loadChatSession(s.CfgStore.Cfg, response.ID)
+	fork, err := loadChatSession(s.CfgStore.Snapshot(), response.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2066,7 +2136,7 @@ func TestChatForkSessionUsesExactRawHistoryAndPreservesSource(t *testing.T) {
 	if len(fork.HistoryInfo) != 0 || fork.Working != nil {
 		t.Fatalf("future state leaked: history_info=%#v working=%#v", fork.HistoryInfo, fork.Working)
 	}
-	storedSource, err := loadChatSession(s.CfgStore.Cfg, source.ID)
+	storedSource, err := loadChatSession(s.CfgStore.Snapshot(), source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2087,9 +2157,11 @@ func TestChatForkSessionLegacyAndRawMismatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newGoalTestServer(t, t.TempDir())
-			s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+			updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+				cfg.ChatDataDir = t.TempDir()
+			})
 			source := chatSession{ID: "fork-case", Messages: []chatMessage{{ID: "target", Role: "user", Content: "selected"}}, RawHistory: tc.raw}
-			if err := saveChatSession(s.CfgStore.Cfg, source); err != nil {
+			if err := saveChatSession(s.CfgStore.Snapshot(), source); err != nil {
 				t.Fatal(err)
 			}
 			body := strings.NewReader(`{"message_id":"target"}`)
@@ -2115,11 +2187,13 @@ func TestChatForkSessionLegacyAndRawMismatch(t *testing.T) {
 
 func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
 	h := s.Routes()
 
-	if s.CfgStore.Cfg.ChatDefaultLLMNo != 0 {
-		t.Fatalf("precondition: chat_default_llm_no=%d want 0", s.CfgStore.Cfg.ChatDefaultLLMNo)
+	if s.CfgStore.Snapshot().ChatDefaultLLMNo != 0 {
+		t.Fatalf("precondition: chat_default_llm_no=%d want 0", s.CfgStore.Snapshot().ChatDefaultLLMNo)
 	}
 
 	// Pick model #4 in an existing session.
@@ -2132,7 +2206,7 @@ func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
 	}
 
 	// The pick is remembered in config so it survives across sessions.
-	if got := s.CfgStore.Cfg.ChatDefaultLLMNo; got != 4 {
+	if got := s.CfgStore.Snapshot().ChatDefaultLLMNo; got != 4 {
 		t.Fatalf("chat_default_llm_no=%d want 4", got)
 	}
 
@@ -2151,7 +2225,7 @@ func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
 	}
 
 	// Loading a session that has no file on disk yet keeps the same default.
-	cs, err := loadChatSession(s.CfgStore.Cfg, created.ID)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), created.ID)
 	if err != nil {
 		t.Fatalf("load fresh session: %v", err)
 	}

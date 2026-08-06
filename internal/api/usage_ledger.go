@@ -127,22 +127,22 @@ func migrateUsageLedger(cfg config.AppConfig) (usageLedger, int, error) {
 func (s *Server) loadOrMigrateUsageLedger() (usageLedger, int, error) {
 	s.UsageMu.Lock()
 	defer s.UsageMu.Unlock()
-	ledger, err := readUsageLedger(s.CfgStore.Cfg)
+	ledger, err := readUsageLedger(s.CfgStore.Snapshot())
 	if err == nil {
 		return ledger, 0, nil
 	}
 	if !os.IsNotExist(err) {
 		return usageLedger{}, 0, err
 	}
-	return migrateUsageLedger(s.CfgStore.Cfg)
+	return migrateUsageLedger(s.CfgStore.Snapshot())
 }
 
 func (s *Server) recordSessionUsage(cs chatSession) error {
 	s.UsageMu.Lock()
 	defer s.UsageMu.Unlock()
-	ledger, err := readUsageLedger(s.CfgStore.Cfg)
+	ledger, err := readUsageLedger(s.CfgStore.Snapshot())
 	if os.IsNotExist(err) {
-		ledger, _, err = migrateUsageLedger(s.CfgStore.Cfg)
+		ledger, _, err = migrateUsageLedger(s.CfgStore.Snapshot())
 	}
 	if err != nil {
 		return err
@@ -171,5 +171,5 @@ func (s *Server) recordSessionUsage(cs chatSession) error {
 	if !changed {
 		return nil
 	}
-	return writeUsageLedger(s.CfgStore.Cfg, ledger)
+	return writeUsageLedger(s.CfgStore.Snapshot(), ledger)
 }

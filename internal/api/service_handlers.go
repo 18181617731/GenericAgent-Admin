@@ -27,10 +27,10 @@ func (s *Server) services(w http.ResponseWriter, r *http.Request) {
 func (s *Server) servicesWithAutostart(manager *service.Manager) []service.ServiceInfo {
 	items := manager.Discover()
 	auto := map[string]bool{}
-	for _, name := range s.CfgStore.Cfg.ServiceAutostart {
+	for _, name := range s.CfgStore.Snapshot().ServiceAutostart {
 		auto[name] = true
 	}
-	models := s.CfgStore.Cfg.ServiceModels
+	models := s.CfgStore.Snapshot().ServiceModels
 	for i := range items {
 		items[i].Autostart = auto[items[i].Name]
 		if models != nil {
@@ -93,7 +93,7 @@ func (s *Server) startServiceWithManager(manager *service.Manager, name string, 
 		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
 	}
 	if params == nil || strings.TrimSpace(params["llm_no"]) == "" {
-		if models := s.CfgStore.Cfg.ServiceModels; models != nil {
+		if models := s.CfgStore.Snapshot().ServiceModels; models != nil {
 			if no, ok := models[name]; ok {
 				if params == nil {
 					params = map[string]string{}
@@ -163,7 +163,7 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 404, "service not found")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	seen := map[string]bool{}
 	next := []string{}
 	for _, name := range cfg.ServiceAutostart {
@@ -206,7 +206,7 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 404, "service not found")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	models := map[string]int{}
 	for k, v := range cfg.ServiceModels {
 		models[k] = v
@@ -257,7 +257,7 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requestedLogLines(r *http.Request) (int, error) {
-	lines := s.CfgStore.Cfg.LogTailLines
+	lines := s.CfgStore.Snapshot().LogTailLines
 	raw := strings.TrimSpace(r.URL.Query().Get("lines"))
 	if raw == "" {
 		return lines, nil

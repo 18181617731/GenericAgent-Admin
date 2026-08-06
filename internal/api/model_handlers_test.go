@@ -19,9 +19,11 @@ import (
 func newModelTestServer(t *testing.T, gaRoot string) *Server {
 	t.Helper()
 	cfg := config.NewStore(t.TempDir())
-	cfg.Cfg.GARoot = gaRoot
+	updateTestConfig(t, cfg, func(cfg *config.AppConfig) {
+		cfg.GARoot = gaRoot
+	})
 	models := modelconfig.NewStore(t.TempDir())
-	return New(cfg, service.NewManager(cfg.Cfg.GARoot, cfg.Cfg.BufferLines), models, nil)
+	return New(cfg, service.NewManager(cfg.Snapshot().GARoot, cfg.Snapshot().BufferLines), models, nil)
 }
 
 func TestModelsRawAndPreviewMethodContracts(t *testing.T) {
@@ -81,7 +83,7 @@ func TestModelsTitleModelPersistsStableReferenceAndReconcilesOrder(t *testing.T)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if got := s.CfgStore.Cfg.ChatTitleModel; got == nil || got.LLMNo != 1 || got.Model != "title-model" {
+	if got := s.CfgStore.Snapshot().ChatTitleModel; got == nil || got.LLMNo != 1 || got.Model != "title-model" {
 		t.Fatalf("saved title model=%#v, want resolved llm_no 1", got)
 	}
 
@@ -90,7 +92,7 @@ func TestModelsTitleModelPersistsStableReferenceAndReconcilesOrder(t *testing.T)
 	if err := s.reconcileChatTitleModel(profiles); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.CfgStore.Cfg.ChatTitleModel; got == nil || got.LLMNo != 0 {
+	if got := s.CfgStore.Snapshot().ChatTitleModel; got == nil || got.LLMNo != 0 {
 		t.Fatalf("reconciled title model=%#v, want llm_no 0", got)
 	}
 
@@ -98,8 +100,8 @@ func TestModelsTitleModelPersistsStableReferenceAndReconcilesOrder(t *testing.T)
 	if err := s.reconcileChatTitleModel(profiles); err != nil {
 		t.Fatal(err)
 	}
-	if s.CfgStore.Cfg.ChatTitleModel != nil {
-		t.Fatalf("deleted model should clear selection: %#v", s.CfgStore.Cfg.ChatTitleModel)
+	if s.CfgStore.Snapshot().ChatTitleModel != nil {
+		t.Fatalf("deleted model should clear selection: %#v", s.CfgStore.Snapshot().ChatTitleModel)
 	}
 }
 

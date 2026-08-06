@@ -77,18 +77,18 @@ const (
 func retryHTTPRequest(ctx context.Context, operation string, fn func() error) error {
 	const maxAttempts = 3
 	var lastErr error
-	
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		lastErr = fn()
 		if lastErr == nil {
 			return nil
 		}
-		
+
 		// Don't retry on context cancellation
 		if ctx.Err() != nil {
 			return fmt.Errorf("%s: %w", operation, ctx.Err())
 		}
-		
+
 		if attempt < maxAttempts {
 			delay := time.Duration(attempt) * time.Second
 			select {
@@ -98,10 +98,9 @@ func retryHTTPRequest(ctx context.Context, operation string, fn func() error) er
 			}
 		}
 	}
-	
+
 	return fmt.Errorf("%s failed after %d attempts: %w", operation, maxAttempts, lastErr)
 }
-
 
 type BuildInfo struct {
 	Version                 string `json:"version"`

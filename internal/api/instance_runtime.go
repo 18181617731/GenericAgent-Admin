@@ -175,20 +175,20 @@ func sameRuntimePath(a, b string) bool {
 
 func (s *Server) saveConfigAndReconcile(next config.AppConfig) error {
 	if s.InstanceManagers == nil {
-		s.InstanceManagers = newInstanceManagerRegistry(s.CfgStore.Cfg, s.Svc)
+		s.InstanceManagers = newInstanceManagerRegistry(s.CfgStore.Snapshot(), s.Svc)
 	}
 	if err := s.InstanceManagers.validateTransition(next); err != nil {
 		return err
 	}
-	previous := s.CfgStore.Cfg
+	previous := s.CfgStore.Snapshot()
 	if err := s.CfgStore.Save(next); err != nil {
 		return err
 	}
-	manager, err := s.InstanceManagers.reconcile(s.CfgStore.Cfg)
+	manager, err := s.InstanceManagers.reconcile(s.CfgStore.Snapshot())
 	if err != nil {
 		rollbackErr := s.CfgStore.Save(previous)
 		if rollbackErr == nil {
-			_, _ = s.InstanceManagers.reconcile(s.CfgStore.Cfg)
+			_, _ = s.InstanceManagers.reconcile(s.CfgStore.Snapshot())
 		}
 		if rollbackErr != nil {
 			return fmt.Errorf("apply instance runtime: %v (config rollback failed: %v)", err, rollbackErr)

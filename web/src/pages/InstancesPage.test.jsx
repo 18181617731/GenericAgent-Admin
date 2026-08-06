@@ -31,20 +31,26 @@ describe('InstancesPage', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/instances', expect.objectContaining({ headers: expect.any(Object) }))
   })
 
-  it('confirms one-click add and sends the dangerous confirmation header', async () => {
-    const installed = {
+  it('adds an initializing instance immediately and polls it to ready', async () => {
+    const initializing = {
       default_instance_id: 'primary',
-      items: [...initialPayload.items, { id: 'genericagent', name: 'GenericAgent', ga_root: 'C:/admin/instances/genericagent', effective_python: 'python' }],
+      items: [...initialPayload.items, {
+        id: 'genericagent',
+        name: 'GenericAgent',
+        ga_root: 'C:/admin/genericagent',
+        effective_python: 'python',
+        init_status: 'initializing',
+      }],
     }
-    let finishInstall
+    const ready = {
+      ...initializing,
+      items: initializing.items.map(item => item.id === 'genericagent' ? { ...item, init_status: 'ready' } : item),
+    }
+    let listCalls = 0
     globalThis.fetch = vi.fn((url) => {
-      if (url === '/api/instances') return reply(initialPayload)
-      return new Promise(resolve => { finishInstall = () => resolve({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        text: async () => JSON.stringify(installed),
-      }) })
+      if (url === '/api/instances/install') return reply(initializing)
+      listCalls += 1
+      return reply(listCalls === 1 ? initialPayload : ready)
     })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
@@ -54,17 +60,64 @@ describe('InstancesPage', () => {
     await user.click(screen.getByRole('button', { name: 'One-click add' }))
 
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('[install_instance]'))
-    const pendingButton = screen.getByRole('button', { name: 'Downloading and adding\u2026' })
-    expect(pendingButton.disabled).toBe(true)
-    expect(pendingButton.getAttribute('aria-busy')).toBe('true')
     const [url, options] = globalThis.fetch.mock.calls[1]
     expect(url).toBe('/api/instances/install')
     expect(options.method).toBe('POST')
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
 
-    finishInstall()
-    expect(await screen.findByRole('heading', { name: 'GenericAgent' })).not.toBeNull()
-    expect(screen.getByText('GenericAgent downloaded and added')).not.toBeNull()
+    const installedHeading = await screen.findByRole('heading', { name: 'GenericAgent' })
+    const installedCard = installedHeading.closest('article')
+    expect(within(installedCard).getByText('Initializing')).not.toBeNull()
+    expect(within(installedCard).getByText('C:/admin/genericagent')).not.toBeNull()
+    expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(true)
+    expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(true)
+    expect(within(installedCard).getByRole('button', { name: 'Delete' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'One-click add' }).getAttribute('aria-busy')).toBe('false')
+    expect(screen.getByText('Instance added and initializing in the background')).not.toBeNull()
+
+    await waitFor(() => expect(within(installedCard).getByText('Ready')).not.toBeNull(), { timeout: 3000 })
+    expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(false)
+    expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(false)
+    expect(listCalls).toBe(2)
+  })
+
+  it('shows initialization failure details and stops polling', async () => {
+    const initializing = {
+      default_instance_id: 'primary',
+      items: [...initialPayload.items, {
+        id: 'genericagent',
+        name: 'GenericAgent',
+        ga_root: 'C:/admin/genericagent',
+        effective_python: 'python',
+        init_status: 'initializing',
+      }],
+    }
+    const failed = {
+      ...initializing,
+      items: initializing.items.map(item => item.id === 'genericagent' ? {
+        ...item,
+        init_status: 'failed',
+        init_error: 'download failed: test network unavailable',
+      } : item),
+    }
+    let listCalls = 0
+    globalThis.fetch = vi.fn(() => {
+      listCalls += 1
+      return reply(listCalls === 1 ? initializing : failed)
+    })
+    render(<InstancesPage lang="en" />)
+
+    const installedHeading = await screen.findByRole('heading', { name: 'GenericAgent' })
+    const installedCard = installedHeading.closest('article')
+    expect(within(installedCard).getByText('Initializing')).not.toBeNull()
+    await waitFor(() => expect(within(installedCard).getByText('Initialization failed')).not.toBeNull(), { timeout: 3000 })
+    expect(within(installedCard).getByText('download failed: test network unavailable')).not.toBeNull()
+    expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(false)
+    expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(false)
+
+    const callsAfterFailure = listCalls
+    await new Promise(resolve => window.setTimeout(resolve, 1400))
+    expect(listCalls).toBe(callsAfterFailure)
   })
 
   it('confirms creation and sends the dangerous confirmation header', async () => {

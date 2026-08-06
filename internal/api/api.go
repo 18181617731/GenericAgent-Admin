@@ -48,20 +48,27 @@ type Server struct {
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
+	instanceInstallMu       sync.Mutex
+	instanceInstallWG       sync.WaitGroup
+	instanceInstallTasks    map[string]*instanceInstallTask
+	instanceInstallsClosing bool
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
 	chatRuntimes := newChatRuntimeRegistry()
 	defaultRuntime := chatRuntimes.runtime("")
-	return &Server{
+	s := &Server{
 		CfgStore: cfg, BaseCfgStore: cfg, Svc: svc,
-		InstanceManagers: newInstanceManagerRegistry(cfg.Cfg, svc),
+		InstanceManagers: newInstanceManagerRegistry(cfg.Snapshot(), svc),
 		Models:           models, Static: static, ReactApp: newReactAppBridge(),
 		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
 		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
 		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
+		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
+	s.resumeInstanceInstalls()
+	return s
 }
 
 func (s *Server) Routes() http.Handler {
@@ -266,8 +273,8 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	h := ga.BuildHealth(s.CfgStore.Cfg.GARoot)
-	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Cfg, "services": s.Svc.Summary(), "health": h})
+	h := ga.BuildHealth(s.CfgStore.Snapshot().GARoot)
+	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Snapshot(), "services": s.Svc.Summary(), "health": h})
 }
 
 func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +282,7 @@ func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, ga.BuildInventory(s.CfgStore.Cfg.GARoot))
+	writeJSON(w, ga.BuildInventory(s.CfgStore.Snapshot().GARoot))
 }
 
 func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +290,7 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, ga.BuildHealth(s.CfgStore.Cfg.GARoot))
+	writeJSON(w, ga.BuildHealth(s.CfgStore.Snapshot().GARoot))
 }
 
 type tmwebdriverCheck struct {
@@ -324,12 +331,12 @@ func (s *Server) tmwebdriverInstallDeps(w http.ResponseWriter, r *http.Request) 
 		bad(w, 405, "method not allowed")
 		return
 	}
-	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if gaRoot == "" {
 		bad(w, 400, "ga_root is empty")
 		return
 	}
-	python := resolvePythonForRoot(gaRoot, s.CfgStore.Cfg.PythonPath)
+	python := resolvePythonForRoot(gaRoot, s.CfgStore.Snapshot().PythonPath)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	args := buildTMWebDriverInstallArgs(defaultPipIndexURL)
@@ -478,11 +485,11 @@ func (s *Server) tmwebdriverRepair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startTMWebDriverMaster() (int, []string, error) {
-	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if gaRoot == "" {
 		return 0, nil, errors.New("ga_root is empty")
 	}
-	python := resolvePythonForRoot(gaRoot, s.CfgStore.Cfg.PythonPath)
+	python := resolvePythonForRoot(gaRoot, s.CfgStore.Snapshot().PythonPath)
 	code := "from TMWebDriver import TMWebDriver; TMWebDriver()"
 	cmd := exec.Command(python, "-c", code)
 	cmd.Dir = gaRoot
@@ -520,7 +527,7 @@ func resolvePythonForRoot(gaRoot, configured string) string {
 }
 
 func (s *Server) buildTMWebDriverStatus() tmwebdriverStatusResponse {
-	return buildTMWebDriverStatusForConfig(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath)
+	return buildTMWebDriverStatusForConfig(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath)
 }
 
 func buildTMWebDriverStatusForConfig(gaRoot, configuredPython string) tmwebdriverStatusResponse {
@@ -975,7 +982,7 @@ func (s *Server) reactAppStart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	if err := s.ReactApp.start(s.CfgStore.Cfg.GARoot); err != nil {
+	if err := s.ReactApp.start(s.CfgStore.Snapshot().GARoot); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
@@ -993,7 +1000,7 @@ func (s *Server) reactAppStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.ReactApp.snapshot())
 }
 func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
-	if err := s.ReactApp.start(s.CfgStore.Cfg.GARoot); err != nil {
+	if err := s.ReactApp.start(s.CfgStore.Snapshot().GARoot); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
@@ -1020,6 +1027,7 @@ func (s *Server) ShutdownCleanup() {
 	if s == nil {
 		return
 	}
+	s.stopInstanceInstalls()
 	s.StopManagedServices()
 	if s.ReactApp != nil {
 		_ = s.ReactApp.stop()
