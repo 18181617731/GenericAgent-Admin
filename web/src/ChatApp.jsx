@@ -33,6 +33,7 @@ import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
 import { firstRuntimeModelNo } from './lib/modelDefaults.js'
 import { clearSessionSearchHistory, loadSessionSearchHistory, saveSessionSearchHistory, sessionSearchScopeOptions } from './lib/chatSessionSearch.js'
 import { primeChatCompletionTone } from './lib/chatCompletionTone.js'
+import { buildChatNotification, latestUserPrompt } from './lib/chatNotification.js'
 import { publishNotification } from './lib/notifications.js'
 import { NotificationCenter } from './components/NotificationUI.jsx'
 import SessionSearchDialog from './components/SessionSearchDialog.jsx'
@@ -3417,6 +3418,7 @@ export default function ChatApp() {
     let streamCompleted = false
     let streamError = null
     let pendingId = `resume-${Date.now()}`
+    let sessionForNotification = null
     // Resolve the placeholder id up-front: `followChatStream` below reads `pendingId` right
     // after `await fetch`, which may win the race against the state updater.
     const knownId = pickResumePlaceholderId(messagesRef.current)
@@ -3439,6 +3441,7 @@ export default function ChatApp() {
       if (isActiveSession(id)) {
         const list = await loadSessions(id)
         const currentSession = list.find(session => session.id === id)
+        sessionForNotification = currentSession
         if (shouldPollGeneratedTitle(currentSession)) {
           void pollGeneratedChatTitle({ sessionId:id, loadSessions, isActive:isActiveSession }).catch(()=>{})
         }
@@ -3450,8 +3453,8 @@ export default function ChatApp() {
       if (streamAbortRef.current === ctrl) {
         streamAbortRef.current = null
         if (isActiveSession(id)) {
-          if (streamCompleted) publishNotification({ category: 'chat', level: 'success', title: '对话已完成', message: `会话 ${id} 已完成回复。`, route: 'chat', dedupeKey: `chat:${id}:${pendingId}:done` })
-          else if (streamError?.name !== 'AbortError' && streamError) publishNotification({ category: 'chat', level: 'error', title: '对话执行失败', message: `会话 ${id} 执行失败：${streamError.message || streamError}`, route: 'chat', dedupeKey: `chat:${id}:${pendingId}:error` })
+          if (streamCompleted) publishNotification({ category: 'chat', level: 'success', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: latestUserPrompt(messagesRef.current), status: 'completed', lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id}:${pendingId}:done` })
+          else if (streamError?.name !== 'AbortError' && streamError) publishNotification({ category: 'chat', level: 'error', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: latestUserPrompt(messagesRef.current), status: 'failed', error: streamError.message || streamError, lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id}:${pendingId}:error` })
           setBusy(false); setStreamingSid('')
         }
       }
@@ -4101,6 +4104,9 @@ export default function ChatApp() {
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
+    // Keep this as the first synchronous side effect of a send click so iOS
+    // can authorize the later completion sound after the stream finishes.
+    primeChatCompletionTone()
     const runToken = ++runSeqRef.current
     const openToken = openSeqRef.current
     const ctrl = new AbortController()
@@ -4108,14 +4114,15 @@ export default function ChatApp() {
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
     const targetSessionID = item.sessionId || sid
-    primeChatCompletionTone()
     setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
     let id = targetSessionID
     let commandPatch = null
     let optimistic = null
     let pending = null
+    let notificationPrompt = text
     let streamCompleted = false
     let runError = null
+    let sessionForNotification = null
     try {
       if (!id) {
         const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -4134,6 +4141,7 @@ export default function ChatApp() {
       setAutoFollow(true); setShowFollow(false)
       const fileNote = files.length ? `\n\n[附件]\n${files.map((file) => `- ${uploadFileName(file)}`).join('\n')}` : ''
       const attachmentPrompt = text || ct('请处理这些附件', 'Please process these attachments')
+      notificationPrompt = attachmentPrompt
       optimistic = { id:clientUserID, role:'user', content:attachmentPrompt + fileNote, files, created_at:Math.floor(Date.now()/1000) }
       const selectedLLMNo = item.llmNo ?? llmNo
       pending = { id:`a-${Date.now()}`, role:'assistant', content:'', llm_no:selectedLLMNo, created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }
@@ -4173,6 +4181,7 @@ export default function ChatApp() {
         const refreshedSessions = await loadSessions(id).catch(()=>[])
         await openSession(id, false).catch(()=>{})
         const refreshedSession = refreshedSessions.find(session => session.id === id)
+        sessionForNotification = refreshedSession
         if (shouldPollGeneratedTitle(refreshedSession)) {
           void pollGeneratedChatTitle({ sessionId:id, loadSessions, isActive:isActiveSession }).catch(()=>{})
         }
@@ -4210,8 +4219,8 @@ export default function ChatApp() {
         setNotice(ct(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`, `Continuing queued messages (${Math.max(queuedRef.current.length, 0)} remaining)`))
         setTimeout(() => runSend(next), 0)
       } else {
-        if (streamCompleted) publishNotification({ category: 'chat', level: 'success', title: '对话已完成', message: `会话 ${id} 已完成回复。`, route: 'chat', dedupeKey: `chat:${id}:${pending?.id || runToken}:done` })
-        else if (runError?.name !== 'AbortError' && runError) publishNotification({ category: 'chat', level: 'error', title: '对话执行失败', message: `会话 ${id || '新会话'} 执行失败：${runError.message || runError}`, route: 'chat', dedupeKey: `chat:${id || 'new'}:${pending?.id || runToken}:error` })
+        if (streamCompleted) publishNotification({ category: 'chat', level: 'success', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: notificationPrompt || latestUserPrompt(messagesRef.current), status: 'completed', lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id}:${pending?.id || runToken}:done` })
+        else if (runError?.name !== 'AbortError' && runError) publishNotification({ category: 'chat', level: 'error', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: notificationPrompt || latestUserPrompt(messagesRef.current), status: 'failed', error: runError.message || runError, lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id || 'new'}:${pending?.id || runToken}:error` })
         activeRunRef.current = false
         setBusy(false)
         setStreamingSid('')

@@ -135,6 +135,8 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
       return
     }
     if ((!text && files.length === 0) || busy) return
+    // iOS only grants asynchronous completion audio after this user action unlocks it.
+    primeChatCompletionTone()
     let cur = activeSidRef.current || sid
     if (!cur) {
       const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -142,7 +144,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
       activeSidRef.current = d.id
       setSid(cur)
     }
-    setPrompt(''); setErr(''); setBusy(true); primeChatCompletionTone()
+    setPrompt(''); setErr(''); setBusy(true)
     const user = { id: `u-${Date.now()}`, role:'user', content: text || '[附件]', files: files.map(({ dataURL, ...meta }) => meta), created_at: Math.floor(Date.now()/1000) }
     const assistant = { id: `a-${Date.now()}`, role:'assistant', content:'', created_at: Math.floor(Date.now()/1000) }
     setMessages(ms => [...ms, user, assistant])

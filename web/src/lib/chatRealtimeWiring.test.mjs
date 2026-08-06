@@ -30,4 +30,6 @@ test('primes completion audio on send and publishes notification after queued wo
   assert.ok(primeIndex >= 0)
   assert.ok(queueIndex > primeIndex)
   assert.ok(notifyIndex > queueIndex)
+  assert.match(source, /buildChatNotification\(\{ session: sessionForNotification, sessionId: id, prompt: notificationPrompt/)
+  assert.doesNotMatch(source, /message:\s*`会话 \$\{id\} 已完成回复。`/)
 })

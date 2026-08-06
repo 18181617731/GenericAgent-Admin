@@ -56,10 +56,31 @@ test('mobile chat topbar and notification filters stay inside the iPhone viewpor
   )
   assert.match(css, /\.oa-topbar\s*>\s*\.oa-context-btn\s*\{[^}]*display\s*:\s*none\s*!important/i)
   assert.match(css, /\.oa-mobile-tools-layer\s*\{[^}]*position\s*:\s*fixed[^}]*z-index\s*:\s*1000/i)
+  assert.match(css, /\.oa-mobile-picker-backdrop\s*\{[^}]*box-sizing\s*:\s*border-box[^}]*padding-bottom\s*:\s*max\(4px,\s*env\(safe-area-inset-bottom\)\)/i)
   assert.match(
     css,
     /@media\s*\(max-width:680px\)[\s\S]*?\.notification-filter-scroll\s*\{[^}]*display\s*:\s*grid[^}]*grid-template-columns\s*:\s*repeat\(2,/i,
   )
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-topbar\s*\{[^}]*overflow-x\s*:\s*visible\s*!important[^}]*overflow-y\s*:\s*visible\s*!important/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.notification-popover\s*\{[^}]*z-index\s*:\s*1200/i)
+})
+
+test('mobile density pass keeps the shell compact without shrinking touch controls into text', () => {
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.sidebar,[\s\S]*?grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+104px\s+36px/i)
+  assert.match(css, /\.brand,[\s\S]*?\.app:not\(\.app-tab-chat\)\s+\.brand\s*\{[^}]*display:none/i)
+  assert.match(css, /\.mobile-nav-trigger\s*\{[^}]*grid-column:1[^}]*grid-row:1/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.main,[\s\S]*?padding:8px\s+6px/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.stat\s*\{[^}]*min-height:64px/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.panel,[\s\S]*?padding:10px/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-main\s*\{[^}]*--oa-topbar-h:48px/i)
+  assert.match(css, /\.sidebar\s+\.theme-picker-trigger-copy,[\s\S]*?\.theme-picker--compact\s+\.theme-picker-trigger\s*>\s*svg:last-child\s*\{\s*display:none/i)
+  assert.match(css, /\.overview-page\s+\.overview-stats\s+\.stat\s*\{[^}]*min-height:64px[^}]*padding:8px\s+9px/i)
+  assert.match(css, /\.overview-page\s*>\s*\.observability-card,[\s\S]*?padding:10px/i)
+  assert.match(css, /\.schedule-stats\s*\{[^}]*grid-template-columns:repeat\(4,/i)
+  assert.match(css, /\.channel-hero\s*>\s*div:first-child\s*\{\s*display:none/i)
+  assert.match(css, /\.channel-toolbar\s+\.actions\s*\{[^}]*grid-template-columns:repeat\(2,/i)
+  assert.match(css, /\.usage-metrics\s*\{[^}]*grid-template-columns:repeat\(2,/i)
+  assert.match(css, /\.log-actions\s*\{[^}]*grid-template-columns:repeat\(2,/i)
 })
 
 test('git sync logs stay bounded and scrollable', () => {

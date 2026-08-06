@@ -37,4 +37,10 @@ describe('notifications page', () => {
     await waitFor(() => expect(screen.getByText('通知设置已保存')).toBeTruthy())
     expect(loadNotifications()).toHaveLength(1)
   })
+
+  test('shows an immediate explanation when browser notification permission is unavailable', async () => {
+    render(<NotificationsPage lang="zh" onOpen={vi.fn()}/>)
+    fireEvent.click(screen.getByRole('button', { name: '允许浏览器通知' }))
+    expect(await screen.findByText('当前浏览器不支持')).toBeTruthy()
+  })
 })

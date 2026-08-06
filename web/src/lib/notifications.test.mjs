@@ -3,12 +3,15 @@ import assert from 'node:assert/strict'
 import {
   NOTIFICATION_ITEMS_KEY,
   NOTIFICATION_SETTINGS_KEY,
+  browserNotificationCapability,
   clearReadNotifications,
   isNotificationQuietHours,
   loadNotifications,
   loadNotificationSettings,
   markAllNotificationsRead,
   publishNotification,
+  registerNotificationServiceWorker,
+  requestBrowserNotificationPermission,
   saveNotificationSettings,
 } from './notifications.js'
 
@@ -55,4 +58,49 @@ test('read operations update and remove only the intended records', () => {
   assert.deepEqual(loadNotifications().map(item => item.dedupeKey), ['three'])
   assert.ok(NOTIFICATION_ITEMS_KEY)
   assert.ok(NOTIFICATION_SETTINGS_KEY)
+})
+
+test('browser notification capability explains insecure hosts before requesting permission', async () => {
+  const originalNotification = globalThis.Notification
+  const originalWindow = globalThis.window
+  const originalNavigator = globalThis.navigator
+  try {
+    Object.defineProperty(globalThis, 'Notification', { configurable: true, value: { permission: 'default', requestPermission: async () => 'granted' } })
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { isSecureContext: false, location: { hostname: '100.92.41.120' } } })
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: 'Chrome', platform: 'Win32', maxTouchPoints: 0 } })
+    assert.equal(browserNotificationCapability().status, 'insecure')
+    assert.equal(await requestBrowserNotificationPermission(), 'insecure')
+    Object.defineProperty(globalThis, 'Notification', { configurable: true, value: { permission: 'default', requestPermission: async () => 'granted' } })
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { isSecureContext: true, location: { hostname: 'example.com' }, matchMedia: () => ({ matches: false }) } })
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 } })
+    assert.equal(browserNotificationCapability().status, 'ios-browser')
+    assert.equal(await requestBrowserNotificationPermission(), 'ios-browser')
+  } finally {
+    if (originalNotification === undefined) delete globalThis.Notification
+    else Object.defineProperty(globalThis, 'Notification', { configurable: true, value: originalNotification })
+    if (originalWindow === undefined) delete globalThis.window
+    else Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow })
+    if (originalNavigator === undefined) delete globalThis.navigator
+    else Object.defineProperty(globalThis, 'navigator', { configurable: true, value: originalNavigator })
+  }
+})
+
+test('registers a notification service worker on secure browser pages', async () => {
+  const originalWindow = globalThis.window
+  const originalNavigator = globalThis.navigator
+  const registration = { showNotification: async () => {} }
+  try {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { isSecureContext: true } })
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { serviceWorker: { register: async (path, options) => {
+      assert.equal(path, '/sw.js')
+      assert.deepEqual(options, { scope: '/' })
+      return registration
+    }, ready: Promise.resolve(registration) } } })
+    assert.equal(await registerNotificationServiceWorker(), registration)
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window
+    else Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow })
+    if (originalNavigator === undefined) delete globalThis.navigator
+    else Object.defineProperty(globalThis, 'navigator', { configurable: true, value: originalNavigator })
+  }
 })

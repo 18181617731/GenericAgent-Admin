@@ -130,13 +130,34 @@ export const isNotificationQuietHours = (settings = loadNotificationSettings(), 
   return start < end ? current >= start && current < end : current >= start || current < end
 }
 
-export const browserNotificationPermission = () => {
-  if (typeof Notification === 'undefined') return 'unsupported'
-  return Notification.permission || 'default'
+const isLocalNotificationHost = hostname => ['localhost', '127.0.0.1', '::1', '[::1]'].includes(String(hostname || '').toLowerCase())
+
+const isIosBrowserTab = () => {
+  if (typeof navigator === 'undefined') return false
+  const userAgent = String(navigator.userAgent || '')
+  const isIos = /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  if (!isIos || typeof window === 'undefined') return false
+  const standalone = Boolean(navigator.standalone) || Boolean(window.matchMedia?.('(display-mode: standalone)').matches)
+  return !standalone
 }
 
+export const browserNotificationCapability = () => {
+  const iosBrowser = isIosBrowserTab()
+  const hasApi = typeof Notification !== 'undefined' && typeof Notification.requestPermission === 'function'
+  const permission = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission || 'default'
+  if (!hasApi) return { status: iosBrowser ? 'ios-browser' : 'unsupported', permission }
+  if (typeof window !== 'undefined' && window.isSecureContext === false && !isLocalNotificationHost(window.location?.hostname)) {
+    return { status: 'insecure', permission }
+  }
+  if (iosBrowser) return { status: 'ios-browser', permission }
+  return { status: 'available', permission }
+}
+
+export const browserNotificationPermission = () => browserNotificationCapability().permission
+
 export const requestBrowserNotificationPermission = async () => {
-  if (typeof Notification === 'undefined' || typeof Notification.requestPermission !== 'function') return 'unsupported'
+  const capability = browserNotificationCapability()
+  if (capability.status !== 'available') return capability.status
   try { return await Notification.requestPermission() } catch { return 'denied' }
 }
 
@@ -145,11 +166,17 @@ export const notificationPath = item => {
   return item.subtab ? `${route}/${item.subtab}` : route
 }
 
-const deliverBrowserNotification = (item, settings) => {
-  if (!settings.channels.browser || browserNotificationPermission() !== 'granted') return
-  if (settings.channels.backgroundOnly && typeof document !== 'undefined' && document.visibilityState !== 'hidden') return
+const notificationOptions = item => ({
+  body: item.message,
+  tag: item.dedupeKey || item.id,
+  data: { path: notificationPath(item) },
+  renotify: true,
+  silent: false,
+})
+
+const showWindowNotification = item => {
   try {
-    const notification = new Notification(item.title, { body: item.message, tag: item.dedupeKey || item.id })
+    const notification = new Notification(item.title, notificationOptions(item))
     notification.onclick = () => {
       window.focus?.()
       window.location.href = notificationPath(item)
@@ -157,7 +184,31 @@ const deliverBrowserNotification = (item, settings) => {
   } catch {}
 }
 
-export const publishNotification = (input = {}) => {
+export const registerNotificationServiceWorker = () => {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined' || window.isSecureContext === false || !navigator.serviceWorker?.register) return Promise.resolve(null)
+  return navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    .then(() => navigator.serviceWorker.ready)
+    .catch(() => null)
+}
+
+const deliverBrowserNotification = (item, settings) => {
+  if (!settings.channels.browser || browserNotificationPermission() !== 'granted') return
+  if (settings.channels.backgroundOnly && typeof document !== 'undefined' && document.visibilityState !== 'hidden') return
+  const ready = typeof navigator === 'undefined' ? null : navigator.serviceWorker?.ready
+  if (!ready?.then) {
+    showWindowNotification(item)
+    return
+  }
+  ready.then(registration => {
+    if (typeof registration.showNotification !== 'function') {
+      showWindowNotification(item)
+      return null
+    }
+    return registration.showNotification(item.title, notificationOptions(item)).catch(() => showWindowNotification(item))
+  }).catch(() => showWindowNotification(item))
+}
+
+export const publishNotification = (input = {}, options = {}) => {
   const settings = loadNotificationSettings()
   const category = NOTIFICATION_CATEGORIES.some(item => item.id === input.category) ? input.category : 'system'
   if (!settings.enabled || settings.categories[category] === false) return null
@@ -173,7 +224,7 @@ export const publishNotification = (input = {}) => {
   })
   if (settings.channels.inApp) saveNotifications([item, ...items])
   const quiet = isNotificationQuietHours(settings)
-  if (!quiet && settings.channels.sound) playChatCompletionTone()
+  if (!quiet && settings.channels.sound && options.playSound !== false) playChatCompletionTone()
   if (!quiet) deliverBrowserNotification(item, settings)
   if (settings.channels.inApp) emitChange({ kind: 'item', item })
   return item
