@@ -1,9 +1,13 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,6 +46,50 @@ func installInstanceForTest(t *testing.T, h http.Handler, id string) instanceIns
 		t.Fatalf("decode install response: %v; body=%s", err, rr.Body.String())
 	}
 	return response
+}
+
+func buildTemplateZipForTest(t *testing.T, entries map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(w, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func installTemplateForTest(t *testing.T, h http.Handler, id string, archive []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("id", id); err != nil {
+		t.Fatal(err)
+	}
+	part, err := mw.CreateFormFile("template", "GA.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/install", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	h.ServeHTTP(rr, req)
+	return rr
 }
 
 func waitTestSignal(t *testing.T, ch <-chan string, label string) string {
@@ -164,6 +212,132 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
 			t.Errorf("completed %s state=%q error=%q", id, instance.InitStatus, instance.InitError)
 		}
+	}
+}
+
+func TestInstanceInstallFromUploadedTemplate(t *testing.T) {
+	s := newConfigTestServer(t)
+	oldDownload := downloadAndExtractGenericAgentArchive
+	downloadCalls := 0
+	downloadAndExtractGenericAgentArchive = func(context.Context, string) (string, error) {
+		downloadCalls++
+		return "", errors.New("uploaded template must not download")
+	}
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
+
+	archive := buildTemplateZipForTest(t, map[string]string{
+		"GenericAgent-main/agentmain.py":             "# fixture\n",
+		"GenericAgent-main/llmcore.py":               "# fixture\n",
+		"GenericAgent-main/assets/tools_schema.json": "{}\n",
+	})
+	rr := installTemplateForTest(t, s.Routes(), "uploaded", archive)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	waitInstanceInstallTasksForTest(t, s)
+	instance := instanceFromStoreForTest(t, s, "uploaded")
+	if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
+		t.Fatalf("uploaded state=%q error=%q", instance.InitStatus, instance.InitError)
+	}
+	if downloadCalls != 0 {
+		t.Fatalf("download called %d times", downloadCalls)
+	}
+	for _, rel := range []string{"agentmain.py", "llmcore.py", filepath.Join("assets", "tools_schema.json")} {
+		if _, err := os.Stat(filepath.Join(instance.GARoot, rel)); err != nil {
+			t.Errorf("uploaded file %q: %v", rel, err)
+		}
+	}
+	if _, err := os.Stat(s.instanceTemplateArchivePath("uploaded")); !os.IsNotExist(err) {
+		t.Errorf("staged archive remains after success: %v", err)
+	}
+}
+
+func TestConflictingTemplateUploadDoesNotReplaceExistingArchive(t *testing.T) {
+	s := newConfigTestServer(t)
+	t.Cleanup(s.stopInstanceInstalls)
+	id := "existing-upload"
+	root := filepath.Join(s.CfgStore.Root, id)
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
+	cfg.Instances = append(cfg.Instances, config.InstanceConfig{
+		ID: id, Name: id, GARoot: root, InitStatus: config.InstanceInitStatusInitializing,
+	})
+	if err := s.CfgStore.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	existing := []byte("existing recovery archive")
+	archivePath := s.instanceTemplateArchivePath(id)
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archivePath, existing, 0600); err != nil {
+		t.Fatal(err)
+	}
+	incoming := buildTemplateZipForTest(t, map[string]string{
+		"GenericAgent-main/agentmain.py": "# incoming\n",
+	})
+	rr := installTemplateForTest(t, s.Routes(), id, incoming)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	got, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, existing) {
+		t.Fatalf("existing staged archive was replaced: got %q", got)
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(archivePath), id+"-*.zip.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary uploads remain after conflict: %v", matches)
+	}
+}
+
+func TestUploadedTemplateRejectsInvalidZipAndCleansArchive(t *testing.T) {
+	s := newConfigTestServer(t)
+	t.Cleanup(s.stopInstanceInstalls)
+	rr := installTemplateForTest(t, s.Routes(), "invalid-zip", []byte("not a zip archive"))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "not a valid zip file") {
+		t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := s.CfgStore.Snapshot().Instance("invalid-zip"); ok {
+		t.Fatal("invalid zip created an instance")
+	}
+	if _, err := os.Stat(s.instanceTemplateArchivePath("invalid-zip")); !os.IsNotExist(err) {
+		t.Errorf("staged archive remains after invalid zip: %v", err)
+	}
+}
+
+func TestUploadedTemplateRejectsZipSlipWithoutWritingOutsideDestination(t *testing.T) {
+	s := newConfigTestServer(t)
+	t.Cleanup(s.stopInstanceInstalls)
+	outside := filepath.Join(s.CfgStore.Root, "escaped.txt")
+	archive := buildTemplateZipForTest(t, map[string]string{
+		"../escaped.txt": "must not escape",
+		"agentmain.py":   "# fixture\n",
+	})
+	rr := installTemplateForTest(t, s.Routes(), "unsafe", archive)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	waitInstanceInstallTasksForTest(t, s)
+	instance := instanceFromStoreForTest(t, s, "unsafe")
+	if instance.InitStatus != config.InstanceInitStatusFailed || !strings.Contains(instance.InitError, "escapes target directory") {
+		t.Fatalf("unsafe state=%q error=%q", instance.InitStatus, instance.InitError)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("zip slip wrote outside destination: %v", err)
+	}
+	if _, err := os.Stat(s.instanceTemplateArchivePath("unsafe")); !os.IsNotExist(err) {
+		t.Errorf("staged archive remains after failure: %v", err)
 	}
 }
 
@@ -331,6 +505,67 @@ func TestInstanceInstallResumesAfterServerRestart(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Errorf("download calls=%d want 2", calls.Load())
+	}
+}
+
+func TestUploadedTemplateResumesAfterServerRestart(t *testing.T) {
+	oldDownload := downloadAndExtractGenericAgentArchive
+	var calls atomic.Int32
+	downloadAndExtractGenericAgentArchive = func(context.Context, string) (string, error) {
+		calls.Add(1)
+		return "", errors.New("uploaded resume must not download")
+	}
+	t.Cleanup(func() { downloadAndExtractGenericAgentArchive = oldDownload })
+
+	store := config.NewStore(t.TempDir())
+	id := "uploaded-resume"
+	cfg := store.Snapshot()
+	cfg.Instances = []config.InstanceConfig{{
+		ID:         id,
+		Name:       "Uploaded resume",
+		GARoot:     filepath.Join(store.Root, id),
+		InitStatus: config.InstanceInitStatusInitializing,
+	}}
+	cfg.DefaultInstanceID = id
+	if err := os.MkdirAll(filepath.Join(store.Root, id), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("save initializing fixture: %v", err)
+	}
+	archive := buildTemplateZipForTest(t, map[string]string{
+		"GenericAgent-main/agentmain.py":             "# fixture\n",
+		"GenericAgent-main/llmcore.py":               "# fixture\n",
+		"GenericAgent-main/assets/tools_schema.json": "{}\n",
+	})
+	archiveDir := filepath.Join(store.Root, ".instance-install-archives")
+	if err := os.MkdirAll(archiveDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(archiveDir, id+".zip")
+	if err := os.WriteFile(archivePath, archive, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := config.NewStore(store.Root)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	s := New(reloaded, nil, nil, nil)
+	t.Cleanup(s.stopInstanceInstalls)
+	waitInstanceInstallTasksForTest(t, s)
+	instance := instanceFromStoreForTest(t, s, id)
+	if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
+		t.Fatalf("resumed upload state=%q error=%q", instance.InitStatus, instance.InitError)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("download called %d times", calls.Load())
+	}
+	if _, err := os.Stat(filepath.Join(instance.GARoot, "agentmain.py")); err != nil {
+		t.Fatalf("resumed uploaded fixture missing: %v", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Errorf("staged archive remains after resumed success: %v", err)
 	}
 }
 

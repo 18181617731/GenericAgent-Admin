@@ -13,6 +13,7 @@ const TEXT = {
     default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
     initializing: '\u521d\u59cb\u5316\u4e2d', ready: '\u5df2\u5c31\u7eea', failed: '\u521d\u59cb\u5316\u5931\u8d25', initError: '\u9519\u8bef\u8be6\u60c5',
     createTitle: '\u65b0\u5efa GA \u5b9e\u4f8b', editTitle: '\u7f16\u8f91 GA \u5b9e\u4f8b', installTitle: '填写新实例 ID', create: '\u521b\u5efa\u5b9e\u4f8b', save: '\u4fdd\u5b58\u4fee\u6539', startInstall: '开始创建',
+    template: 'GA.zip \u6a21\u677f\u5305\uff08\u53ef\u9009\uff09', templateHint: '\u4e0a\u4f20 .zip \u540e\u5c06\u4f7f\u7528\u8be5\u6a21\u677f\u521d\u59cb\u5316\uff1b\u7559\u7a7a\u5219\u4ece main \u5206\u652f\u4e0b\u8f7d\u3002',
     id: '\u5b9e\u4f8b ID', name: '\u663e\u793a\u540d\u79f0', root: 'GenericAgent \u6839\u76ee\u5f55', python: 'Python \u8def\u5f84', effectivePython: '\u5b9e\u9645 Python', auto: '\u81ea\u52a8\u68c0\u6d4b',
     idHint: '\u4ec5\u5efa\u7acb\u65f6\u53ef\u8bbe\u7f6e\uff0c\u5efa\u8bae\u4f7f\u7528\u7b80\u77ed\u4e14\u7a33\u5b9a\u7684\u6807\u8bc6\u3002', rootHint: '\u8be5\u76ee\u5f55\u5e94\u5305\u542b agentmain.py\u3002', pythonHint: '\u7559\u7a7a\u65f6\u7531\u540e\u7aef\u81ea\u52a8\u68c0\u6d4b\u3002',
     required: '\u8bf7\u586b\u5199\u5b9e\u4f8b ID\u3001\u540d\u79f0\u548c GenericAgent \u6839\u76ee\u5f55\u3002',
@@ -30,6 +31,7 @@ const TEXT = {
     default: 'Default', setDefault: 'Set as default', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
     initializing: 'Initializing', ready: 'Ready', failed: 'Initialization failed', initError: 'Error details',
     createTitle: 'Create GA instance', editTitle: 'Edit GA instance', installTitle: 'Choose the new instance ID', create: 'Create instance', save: 'Save changes', startInstall: 'Start creating',
+    template: 'GA.zip template (optional)', templateHint: 'Use this .zip to initialize the instance, or leave empty to download the main branch.',
     id: 'Instance ID', name: 'Display name', root: 'GenericAgent root', python: 'Python path', effectivePython: 'Effective Python', auto: 'Auto-detected',
     idHint: 'Set once at creation. Use a short, stable identifier.', rootHint: 'This directory should contain agentmain.py.', pythonHint: 'Leave blank to let the backend detect Python.',
     required: 'Instance ID, display name, and GenericAgent root are required.',
@@ -57,6 +59,7 @@ export default function InstancesPage({ lang = 'zh' }) {
   const [notice, setNotice] = useState('')
   const [editor, setEditor] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [templateFile, setTemplateFile] = useState(null)
 
   const applyPayload = useCallback((payload) => {
     setItems(normalizedItems(payload))
@@ -98,6 +101,7 @@ export default function InstancesPage({ lang = 'zh' }) {
 
   const beginCreate = () => {
     setForm(EMPTY_FORM)
+    setTemplateFile(null)
     setEditor('create')
     setError('')
     setNotice('')
@@ -105,6 +109,7 @@ export default function InstancesPage({ lang = 'zh' }) {
 
   const beginInstall = () => {
     setForm(EMPTY_FORM)
+    setTemplateFile(null)
     setEditor('install')
     setError('')
     setNotice('')
@@ -140,10 +145,18 @@ export default function InstancesPage({ lang = 'zh' }) {
     setError('')
     setNotice('')
     try {
+      let body
+      if (installing && templateFile) {
+        body = new FormData()
+        body.append('id', payload.id)
+        body.append('template', templateFile)
+      } else {
+        body = JSON.stringify(installing ? { id: payload.id } : payload)
+      }
       const result = await api(installing ? '/api/instances/install' : creating ? '/api/instances/create' : '/api/instances/update', {
         method: installing || creating ? 'POST' : 'PUT',
         dangerous: true,
-        body: JSON.stringify(installing ? { id: payload.id } : payload),
+        body,
       })
       applyPayload(result)
       setEditor(null)
@@ -222,6 +235,7 @@ export default function InstancesPage({ lang = 'zh' }) {
         {editor !== 'install' && <><label htmlFor="instance-name"><span>{copy.name}</span><input id="instance-name" aria-label={copy.name} value={form.name} disabled={anyBusy} onChange={event => patchForm('name', event.target.value)} required/></label>
         <label className="instance-field-wide" htmlFor="instance-root"><span>{copy.root}</span><input id="instance-root" aria-label={copy.root} value={form.ga_root} disabled={anyBusy} onChange={event => patchForm('ga_root', event.target.value)} required/><small>{copy.rootHint}</small></label>
         <label className="instance-field-wide" htmlFor="instance-python"><span>{copy.python}</span><input id="instance-python" aria-label={copy.python} value={form.python_path} disabled={anyBusy} onChange={event => patchForm('python_path', event.target.value)}/><small>{copy.pythonHint}</small></label></>}
+        {editor === 'install' && <label className="instance-field-wide" htmlFor="instance-template"><span>{copy.template}</span><input id="instance-template" aria-label={copy.template} type="file" accept=".zip,application/zip" disabled={anyBusy} onChange={event => setTemplateFile(event.target.files?.[0] || null)}/><small>{copy.templateHint}</small></label>}
       </div>
       <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
     </form>}

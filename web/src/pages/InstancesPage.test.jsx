@@ -31,6 +31,34 @@ describe('InstancesPage', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/instances', expect.objectContaining({ headers: expect.any(Object) }))
   })
 
+  it('uploads an optional ZIP template as multipart form data', async () => {
+    const installed = {
+      default_instance_id: 'primary',
+      items: [...initialPayload.items, { id: 'uploaded', name: 'uploaded', ga_root: 'C:/admin/uploaded', init_status: 'initializing' }],
+      instance: { id: 'uploaded', name: 'uploaded', ga_root: 'C:/admin/uploaded', init_status: 'initializing' },
+    }
+    globalThis.fetch = vi.fn(url => url === '/api/instances/install' ? reply(installed) : reply(initialPayload))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    await screen.findByRole('heading', { name: 'Primary' })
+    await user.click(screen.getByRole('button', { name: 'One-click add' }))
+    await user.type(screen.getByLabelText('Instance ID'), 'uploaded')
+    const archive = new File(['zip fixture'], 'GA.zip', { type: 'application/zip' })
+    await user.upload(screen.getByLabelText('GA.zip template (optional)'), archive)
+    await user.click(screen.getByRole('button', { name: 'Start creating' }))
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+    const [url, options] = globalThis.fetch.mock.calls[1]
+    expect(url).toBe('/api/instances/install')
+    expect(options.headers['X-GA-Confirm']).toBe('dangerous')
+    expect(options.headers['Content-Type']).toBeUndefined()
+    expect(options.body).toBeInstanceOf(FormData)
+    expect(options.body.get('id')).toBe('uploaded')
+    expect(options.body.get('template').name).toBe('GA.zip')
+  })
+
   it('adds an initializing instance immediately and polls it to ready', async () => {
     const initializing = {
       default_instance_id: 'primary',

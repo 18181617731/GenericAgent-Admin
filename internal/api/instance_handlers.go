@@ -1,6 +1,9 @@
 package api
 
 import (
+	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +21,71 @@ type instanceInstallRequest struct {
 }
 
 const automaticInstanceBaseID = "genericagent"
+const instanceTemplateMaxBytes int64 = 512 << 20
+
+func (s *Server) parseInstanceInstallRequest(w http.ResponseWriter, r *http.Request) (instanceInstallRequest, multipart.File, error) {
+	var req instanceInstallRequest
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		return req, nil, decode(r, &req)
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, instanceTemplateMaxBytes+(1<<20))
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return req, nil, fmt.Errorf("parse upload (maximum 512 MiB): %w", err)
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	req.ID = r.FormValue("id")
+	file, header, err := r.FormFile("template")
+	if err == http.ErrMissingFile {
+		return req, nil, nil
+	}
+	if err != nil {
+		return req, nil, fmt.Errorf("read template upload: %w", err)
+	}
+	if !strings.EqualFold(filepath.Ext(header.Filename), ".zip") {
+		file.Close()
+		return req, nil, fmt.Errorf("template must be a .zip file")
+	}
+	return req, file, nil
+}
+
+func (s *Server) stageInstanceTemplate(id string, src multipart.File) (string, error) {
+	if src == nil {
+		return "", nil
+	}
+	dir := filepath.Join(s.CfgStore.Root, ".instance-install-archives")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, id+"-*.zip.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	keepTemp := false
+	defer func() {
+		if !keepTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	n, copyErr := io.Copy(tmp, io.LimitReader(src, instanceTemplateMaxBytes+1))
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if n > instanceTemplateMaxBytes {
+		return "", fmt.Errorf("template exceeds 512 MiB")
+	}
+	if err := validateGenericAgentTemplateZip(tmpPath); err != nil {
+		return "", err
+	}
+	keepTemp = true
+	return tmpPath, nil
+}
 
 func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -28,15 +96,32 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusServiceUnavailable, "instance installer is shutting down")
 		return
 	}
-	var req instanceInstallRequest
-	if err := decode(r, &req); err != nil {
+	req, template, err := s.parseInstanceInstallRequest(w, r)
+	if err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if template != nil {
+		defer template.Close()
 	}
 	id := req.ID
 	if !isAutomaticInstanceID(id) {
 		bad(w, http.StatusBadRequest, "id must be 1-64 characters, start with a letter or number, and contain only letters, numbers, '.', '_' or '-'")
 		return
+	}
+
+	archivePath, err := s.stageInstanceTemplate(id, template)
+	if err != nil {
+		bad(w, http.StatusBadRequest, "invalid template archive: "+err.Error())
+		return
+	}
+	keepArchive := false
+	if archivePath != "" {
+		defer func() {
+			if !keepArchive {
+				_ = os.Remove(archivePath)
+			}
+		}()
 	}
 
 	s.ConfigMu.Lock()
@@ -52,6 +137,18 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusConflict, "instance name already exists: "+id)
 			return
 		}
+	}
+	if archivePath != "" {
+		finalArchivePath := s.instanceTemplateArchivePath(id)
+		if err := os.Remove(finalArchivePath); err != nil && !os.IsNotExist(err) {
+			bad(w, http.StatusInternalServerError, "replace staged template archive: "+err.Error())
+			return
+		}
+		if err := os.Rename(archivePath, finalArchivePath); err != nil {
+			bad(w, http.StatusInternalServerError, "stage template archive: "+err.Error())
+			return
+		}
+		archivePath = finalArchivePath
 	}
 
 	instance := config.InstanceConfig{
@@ -96,6 +193,7 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keepInstall = true
+	keepArchive = true
 	writeJSON(w, map[string]interface{}{
 		"ok":                  true,
 		"items":               cfg.Instances,
@@ -258,6 +356,10 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 	// would deadlock. Once removed, a late state publication is a no-op.
 	if done := s.cancelInstanceInstall(req.ID); done != nil {
 		<-done
+	}
+	if err := os.Remove(s.instanceTemplateArchivePath(req.ID)); err != nil && !os.IsNotExist(err) {
+		bad(w, http.StatusInternalServerError, "remove instance template: "+err.Error())
+		return
 	}
 	writeInstanceMutationResult(w, s.CfgStore.Snapshot())
 }

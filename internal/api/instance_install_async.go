@@ -1,8 +1,10 @@
 package api
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -56,13 +58,27 @@ func (s *Server) runInstanceInstall(ctx context.Context, task *instanceInstallTa
 	if err == nil {
 		err = s.resetAutomaticInstanceRoot(instance)
 	}
+	archivePath := s.instanceTemplateArchivePath(instance.ID)
+	usedTemplate := false
 	if err == nil {
-		_, err = downloadAndExtractGenericAgentArchive(ctx, instance.GARoot)
+		if _, statErr := os.Stat(archivePath); statErr == nil {
+			usedTemplate = true
+			err = extractGenericAgentTemplateZip(archivePath, instance.GARoot)
+		} else if !os.IsNotExist(statErr) {
+			err = statErr
+		} else {
+			_, err = downloadAndExtractGenericAgentArchive(ctx, instance.GARoot)
+		}
 	}
 	if err == nil {
 		health := ga.BuildHealth(instance.GARoot)
 		if !health.OK {
 			err = fmt.Errorf("downloaded GenericAgent is invalid: %s", strings.Join(health.Errors, ", "))
+		}
+	}
+	if usedTemplate && ctx.Err() == nil {
+		if removeErr := os.Remove(archivePath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("remove instance template archive %q: %v", instance.ID, removeErr)
 		}
 	}
 	if ctx.Err() != nil {
@@ -158,6 +174,129 @@ func (s *Server) stopInstanceInstalls() {
 	}
 	s.instanceInstallMu.Unlock()
 	s.instanceInstallWG.Wait()
+}
+
+func (s *Server) instanceTemplateArchivePath(id string) string {
+	return filepath.Join(s.CfgStore.Root, ".instance-install-archives", id+".zip")
+}
+
+const instanceTemplateMaxExtractedBytes int64 = 2 << 30
+const instanceTemplateMaxEntries = 100000
+
+func validateGenericAgentTemplateZip(zipPath string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("open zip: %w", err)
+	}
+	defer r.Close()
+	if len(r.File) == 0 {
+		return fmt.Errorf("template zip is empty")
+	}
+	if len(r.File) > instanceTemplateMaxEntries {
+		return fmt.Errorf("template zip has too many entries")
+	}
+	var total uint64
+	for _, f := range r.File {
+		if f.Mode()&os.ModeSymlink != 0 || !f.FileInfo().IsDir() && !f.Mode().IsRegular() {
+			return fmt.Errorf("unsupported zip entry: %s", f.Name)
+		}
+		total += f.UncompressedSize64
+		if total > uint64(instanceTemplateMaxExtractedBytes) {
+			return fmt.Errorf("template expands beyond 2 GiB")
+		}
+	}
+	return nil
+}
+
+func extractGenericAgentTemplateZip(zipPath, dest string) error {
+	if err := validateGenericAgentTemplateZip(zipPath); err != nil {
+		return err
+	}
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	stripRoot := ""
+	for _, f := range r.File {
+		name := strings.Trim(strings.ReplaceAll(f.Name, "\\", "/"), "/")
+		if name == "" {
+			continue
+		}
+		parts := strings.Split(name, "/")
+		if len(parts) < 2 {
+			stripRoot = ""
+			break
+		}
+		if stripRoot == "" {
+			stripRoot = parts[0]
+		} else if stripRoot != parts[0] {
+			stripRoot = ""
+			break
+		}
+	}
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destAbs, 0755); err != nil {
+		return err
+	}
+	var written int64
+	for _, f := range r.File {
+		name := strings.Trim(strings.ReplaceAll(f.Name, "\\", "/"), "/")
+		if name == "" {
+			continue
+		}
+		if stripRoot != "" {
+			if name == stripRoot {
+				continue
+			}
+			name = strings.TrimPrefix(name, stripRoot+"/")
+		}
+		if name == "" {
+			continue
+		}
+		target := filepath.Join(destAbs, filepath.FromSlash(name))
+		rel, relErr := filepath.Rel(destAbs, target)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("zip entry escapes target directory: %s", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode().Perm())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		n, copyErr := io.Copy(out, io.LimitReader(rc, instanceTemplateMaxExtractedBytes-written+1))
+		written += n
+		closeOutErr, closeInErr := out.Close(), rc.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeOutErr != nil {
+			return closeOutErr
+		}
+		if closeInErr != nil {
+			return closeInErr
+		}
+		if written > instanceTemplateMaxExtractedBytes {
+			return fmt.Errorf("template expands beyond 2 GiB")
+		}
+	}
+	return nil
 }
 
 func (s *Server) resetAutomaticInstanceRoot(instance config.InstanceConfig) error {
