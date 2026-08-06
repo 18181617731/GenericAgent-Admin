@@ -30,6 +30,7 @@ EXTRA_LLM_DEPS = [
     "playwright==1.48.0",
     "python-dotenv==1.0.1",
     "tiktoken==0.8.0",
+    "rich==13.9.4",
 ]
 
 # GA source repo

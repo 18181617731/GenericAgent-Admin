@@ -45,6 +45,7 @@ VENV_PY = (
     if IS_WIN
     else os.path.join(VENV_DIR, "bin", "python")
 )
+REQUIRED_IMPORTS = ("requests", "bs4", "bottle", "aiohttp", "rich")
 
 
 def log(msg: str) -> None:
@@ -159,7 +160,7 @@ def verify() -> bool:
 
     probe = (
         "import sys;"
-        "import requests, bs4, bottle, aiohttp;"
+        "import " + ", ".join(REQUIRED_IMPORTS) + ";"
         "print(sys.version.split()[0])"
     )
     try:
