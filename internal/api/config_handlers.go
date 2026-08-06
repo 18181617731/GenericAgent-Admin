@@ -36,13 +36,11 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		if err := s.CfgStore.Save(c); err != nil {
+		if err := s.saveConfigAndReconcile(c); err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
-		c = s.CfgStore.Cfg
-		s.Svc.SetRoot(c.GARoot, c.EffectivePython, c.BufferLines)
-		writeJSON(w, c)
+		writeJSON(w, s.CfgStore.Cfg)
 		return
 	}
 	bad(w, 405, "method not allowed")
@@ -642,6 +640,7 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 	cfg := s.CfgStore.Cfg
 	cfg.GARoot = root
 	cfg.PythonPath = setupVenvPython(root)
+	cfg.SyncDefaultInstanceFromLegacy()
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
@@ -735,6 +734,7 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg.BootstrapDone = true
+	cfg.SyncDefaultInstanceFromLegacy()
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
@@ -767,6 +767,7 @@ func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 	if h.OK {
 		cfg := s.CfgStore.Cfg
 		cfg.GARoot = abs
+		cfg.SyncDefaultInstanceFromLegacy()
 		if err := s.CfgStore.Save(cfg); err != nil {
 			bad(w, 500, err.Error())
 			return
@@ -797,6 +798,7 @@ func (s *Server) setupPythonInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.CfgStore.Cfg
 	cfg.PythonPath = strings.TrimSpace(pythonPath)
+	cfg.SyncDefaultInstanceFromLegacy()
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return

@@ -158,3 +158,182 @@ func TestBootstrapConfigDefaultsAndEffectivePythonPersistence(t *testing.T) {
 		t.Fatalf("effective_python=%q, want python_path %q", reloaded.Cfg.EffectivePython, py)
 	}
 }
+
+func TestStoreLoadMigratesLegacyConfigToDefaultInstance(t *testing.T) {
+	appRoot := t.TempDir()
+	gaRoot := filepath.Join(t.TempDir(), "ga")
+	if err := os.MkdirAll(gaRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	pythonPath := filepath.Join(gaRoot, "python.exe")
+	if err := os.WriteFile(pythonPath, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string]interface{}{
+		"ga_root":       gaRoot,
+		"python_path":   pythonPath,
+		"chat_data_dir": filepath.Join(appRoot, "chat"),
+		"port":          18787,
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "config.local.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewStore(appRoot)
+	if store.Cfg.DefaultInstanceID != "default" || len(store.Cfg.Instances) != 1 {
+		t.Fatalf("legacy config was not migrated: %#v", store.Cfg)
+	}
+	instance := store.Cfg.Instances[0]
+	if instance.ID != "default" || instance.Name != "Default" || instance.GARoot != gaRoot {
+		t.Fatalf("unexpected migrated instance: %#v", instance)
+	}
+	if instance.PythonPath != pythonPath || instance.EffectivePython != pythonPath {
+		t.Fatalf("unexpected migrated Python fields: %#v", instance)
+	}
+}
+
+func TestStoreRoundTripsInstanceRegistryAndLegacyMirror(t *testing.T) {
+	appRoot := t.TempDir()
+	rootA := filepath.Join(t.TempDir(), "ga-a")
+	rootB := filepath.Join(t.TempDir(), "ga-b")
+	for _, root := range []string{rootA, rootB} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pythonB := filepath.Join(rootB, "python.exe")
+	if err := os.WriteFile(pythonB, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.GARoot = rootA
+	cfg.DefaultInstanceID = "beta"
+	cfg.Instances = []InstanceConfig{
+		{ID: "alpha", Name: "Alpha", GARoot: rootA},
+		{ID: "beta", Name: "Beta", GARoot: rootB, PythonPath: pythonB},
+	}
+	store := NewStore(appRoot)
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := NewStore(appRoot)
+	if reloaded.Cfg.DefaultInstanceID != "beta" || len(reloaded.Cfg.Instances) != 2 {
+		t.Fatalf("unexpected registry after reload: %#v", reloaded.Cfg)
+	}
+	if reloaded.Cfg.GARoot != rootB || reloaded.Cfg.PythonPath != pythonB || reloaded.Cfg.EffectivePython != pythonB {
+		t.Fatalf("legacy fields do not mirror selected instance: %#v", reloaded.Cfg)
+	}
+	instance, ok := reloaded.Cfg.Instance("")
+	if !ok || instance.ID != "beta" {
+		t.Fatalf("default instance lookup = %#v, %v", instance, ok)
+	}
+}
+
+func TestSyncDefaultInstanceFromLegacy(t *testing.T) {
+	rootA := filepath.Join(t.TempDir(), "ga-a")
+	rootB := filepath.Join(t.TempDir(), "ga-b")
+	for _, root := range []string{rootA, rootB} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pythonB := filepath.Join(rootB, "python.exe")
+	if err := os.WriteFile(pythonB, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := AppConfig{
+		GARoot:            rootB,
+		PythonPath:        pythonB,
+		DefaultInstanceID: "alpha",
+		Instances: []InstanceConfig{
+			{ID: "alpha", Name: "Alpha", GARoot: rootA},
+		},
+	}
+	if !cfg.SyncDefaultInstanceFromLegacy() {
+		t.Fatal("SyncDefaultInstanceFromLegacy() = false, want true")
+	}
+	instance := cfg.Instances[0]
+	if instance.GARoot != rootB || instance.PythonPath != pythonB || instance.EffectivePython != pythonB {
+		t.Fatalf("default instance was not synchronized: %#v", instance)
+	}
+	cfg.DefaultInstanceID = "missing"
+	if cfg.SyncDefaultInstanceFromLegacy() {
+		t.Fatal("SyncDefaultInstanceFromLegacy() = true for missing default")
+	}
+}
+
+func TestStoreSaveRejectsInvalidInstanceRegistry(t *testing.T) {
+	rootA := filepath.Join(t.TempDir(), "ga-a")
+	rootB := filepath.Join(t.TempDir(), "ga-b")
+	for _, root := range []string{rootA, rootB} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := func() AppConfig {
+		cfg := Default()
+		cfg.DefaultInstanceID = "alpha"
+		cfg.Instances = []InstanceConfig{
+			{ID: "alpha", Name: "Alpha", GARoot: rootA},
+			{ID: "beta", Name: "Beta", GARoot: rootB},
+		}
+		return cfg
+	}
+	tests := []struct {
+		name string
+		want string
+		edit func(*AppConfig)
+	}{
+		{name: "invalid id", want: "instances[0].id", edit: func(cfg *AppConfig) { cfg.Instances[0].ID = "bad/id" }},
+		{name: "duplicate id", want: "duplicate instance id", edit: func(cfg *AppConfig) { cfg.Instances[1].ID = "alpha" }},
+		{name: "duplicate name", want: "duplicate instance name", edit: func(cfg *AppConfig) { cfg.Instances[1].Name = "ALPHA" }},
+		{name: "duplicate root", want: "duplicate instance ga_root", edit: func(cfg *AppConfig) { cfg.Instances[1].GARoot = rootA }},
+		{name: "missing default", want: "does not reference", edit: func(cfg *AppConfig) { cfg.DefaultInstanceID = "missing" }},
+		{name: "missing root", want: "does not exist", edit: func(cfg *AppConfig) { cfg.Instances[1].GARoot = filepath.Join(rootB, "missing") }},
+		{name: "empty root", want: "ga_root is required", edit: func(cfg *AppConfig) { cfg.Instances[1].GARoot = "" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base()
+			tt.edit(&cfg)
+			store := NewStore(t.TempDir())
+			err := store.Save(cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Save() err = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestStoreChatDataDirDefaultsToStoreRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "admin-root")
+	want := filepath.Join(root, "data")
+
+	store := NewStore(root)
+	if got := store.Cfg.ChatDataDir; got != want {
+		t.Fatalf("NewStore() chat_data_dir = %q, want %q", got, want)
+	}
+
+	cfg := store.Cfg
+	cfg.ChatDataDir = ""
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if got := store.Cfg.ChatDataDir; got != want {
+		t.Fatalf("Save() normalized chat_data_dir = %q, want %q", got, want)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "config.local.json"), []byte(`{"chat_data_dir":""}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewStore(root)
+	if got := reloaded.Cfg.ChatDataDir; got != want {
+		t.Fatalf("Load() normalized chat_data_dir = %q, want %q", got, want)
+	}
+}

@@ -31,16 +31,19 @@ import (
 type Server struct {
 	CfgStore                *config.Store
 	Svc                     *service.Manager
+	InstanceManagers        *instanceManagerRegistry
 	Models                  *modelconfig.Store
 	Static                  fs.FS
 	ReactApp                *reactAppBridge
-	ChatMu                  sync.Mutex
-	SessionMu               sync.Mutex
-	UsageMu                 sync.Mutex
-	ConfigMu                sync.Mutex
+	ChatMu                  *sync.Mutex
+	SessionMu               *sync.Mutex
+	UsageMu                 *sync.Mutex
+	ConfigMu                *sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
+	ChatRuntimes            *chatRuntimeRegistry
+	BaseCfgStore            *config.Store
 	titleBackfillStarted    bool
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
@@ -48,7 +51,17 @@ type Server struct {
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	return &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
+	chatRuntimes := newChatRuntimeRegistry()
+	defaultRuntime := chatRuntimes.runtime("")
+	return &Server{
+		CfgStore: cfg, BaseCfgStore: cfg, Svc: svc,
+		InstanceManagers: newInstanceManagerRegistry(cfg.Cfg, svc),
+		Models:           models, Static: static, ReactApp: newReactAppBridge(),
+		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
+		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
+		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
+		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
+	}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -89,6 +102,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.goalsDelete))
 	mux.HandleFunc("/api/goals/output", s.goalsOutput)
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
+	mux.HandleFunc("/api/instances", s.instancesList)
+	mux.HandleFunc("/api/instances/create", s.requireDangerousConfirm(s.instanceCreate))
+	mux.HandleFunc("/api/instances/update", s.requireDangerousConfirm(s.instanceUpdate))
+	mux.HandleFunc("/api/instances/delete", s.requireDangerousConfirm(s.instanceDelete))
+	mux.HandleFunc("/api/instances/default", s.requireDangerousConfirm(s.instanceSetDefault))
 	mux.HandleFunc("/api/slash-commands", s.slashCommands)
 	mux.HandleFunc("/api/extra-system-prompt-presets", s.requireDangerousConfirm(s.extraSystemPromptPresets))
 	mux.HandleFunc("/api/setup/state", s.setupState)
@@ -125,8 +143,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels/test", s.channelTest)
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
-	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
-	mux.HandleFunc("/api/chat/", s.chatHandler)
+	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
+	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
 	return recoverPanics(cors(mux))
@@ -146,7 +164,8 @@ func recoverPanics(next http.Handler) http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm, X-GA-Instance-ID")
+		w.Header().Set("Access-Control-Expose-Headers", "X-GA-Instance-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
@@ -168,6 +187,10 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
+	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
+	{Path: "/api/instances/delete", Level: "dangerous", Action: "delete_instance", Reason: "removes a configured GA runtime instance when its manager is idle"},
+	{Path: "/api/instances/default", Level: "reversible", Action: "set_default_instance", Reason: "changes the default GA runtime instance"},
 	{Path: "/api/extra-system-prompt-presets", Level: "reversible", Action: "save_extra_system_prompt_presets", Reason: "updates the reusable extra system prompt preset library"},
 	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone or downloads the GenericAgent source archive and changes configured GA root"},

@@ -50,6 +50,26 @@ type Manager struct {
 	subscribers     map[string]map[chan LogEvent]struct{}
 }
 
+// HasRunningProcesses reports whether this manager currently owns at least one
+// live process. It deliberately only considers processes started or adopted by
+// this manager; unrelated GenericAgent processes are outside its ownership.
+func (m *Manager) HasRunningProcesses() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.procs {
+		if p == nil || p.cmd == nil || p.cmd.Process == nil || p.ret != nil {
+			continue
+		}
+		if processAlive(p.cmd.Process.Pid) {
+			return true
+		}
+	}
+	return false
+}
+
 func NewManager(gaRoot string, bufferLines int) *Manager {
 	return NewManagerWithPython(gaRoot, "", bufferLines)
 }

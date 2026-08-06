@@ -538,7 +538,7 @@ func markDangerous(req *http.Request) {
 
 func newGoalTestServer(t *testing.T, gaRoot string) *Server {
 	t.Helper()
-	cfg := &config.Store{Root: t.TempDir(), Cfg: config.Default()}
+	cfg := config.NewStore(t.TempDir())
 	cfg.Cfg.GARoot = gaRoot
 	models := modelconfig.NewStore(t.TempDir())
 	return New(cfg, nil, models, nil)

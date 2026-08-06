@@ -45,8 +45,9 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.ChatDataDir == "" || !strings.Contains(got.ChatDataDir, "GenericAgent-Admin") {
-		t.Fatalf("chat_data_dir default not applied: %q", got.ChatDataDir)
+	wantChatDataDir := filepath.Join(s.CfgStore.Root, "data")
+	if got.ChatDataDir != wantChatDataDir {
+		t.Fatalf("chat_data_dir = %q, want %q", got.ChatDataDir, wantChatDataDir)
 	}
 }
 
