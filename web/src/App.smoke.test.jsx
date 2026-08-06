@@ -943,6 +943,10 @@ describe('chat model cascade', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Beta' }))
+    fireEvent.scroll(window)
+
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeTruthy()
+    expect(screen.getByText('Beta One')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
 
     expect(onChange).toHaveBeenCalledWith('b-1')

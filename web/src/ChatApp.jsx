@@ -2696,7 +2696,6 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
     if (!open) return
     const close = () => setOpen(false)
     const h = e => { if (!ref.current?.contains(e.target)) close() }
-    const onScroll = e => { if (!ref.current?.contains(e.target)) close() }
     const onKeyDown = e => {
       if (e.key !== 'Escape') return
       e.preventDefault()
@@ -2705,11 +2704,9 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
     }
     document.addEventListener('mousedown', h)
     document.addEventListener('keydown', onKeyDown)
-    window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('mousedown', h)
       document.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('scroll', onScroll, true)
     }
   }, [open])
   useEffect(() => {
