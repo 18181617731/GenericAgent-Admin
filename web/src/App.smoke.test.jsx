@@ -1172,6 +1172,49 @@ describe('chat model cascade', () => {
     expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
   })
 
+  test('uses a body portal and click-only provider switching on mobile', () => {
+    const originalMatchMedia = window.matchMedia
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(query => ({
+        matches: query === '(max-width: 680px)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    })
+    const onChange = vi.fn()
+
+    try {
+      render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
+      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+
+      const dialog = screen.getByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })
+      expect(dialog.closest('.oa-model-picker-layer')?.parentElement).toBe(document.body)
+      expect(document.documentElement.style.overflow).toBe('hidden')
+      fireEvent.pointerDown(screen.getByRole('tab', { name: 'Beta' }))
+      expect(screen.queryByText('Beta One')).toBeNull()
+      fireEvent.click(screen.getByRole('tab', { name: 'Beta' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
+
+      expect(onChange).toHaveBeenCalledWith('b-1')
+      expect(screen.queryByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })).toBeNull()
+      expect(document.documentElement.style.overflow).toBe('')
+
+      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+      fireEvent.click(screen.getByRole('button', { name: '\u5173\u95ed\u6a21\u578b\u9009\u62e9\u5668' }))
+      expect(screen.queryByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })).toBeNull()
+    } finally {
+      cleanup()
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        writable: true,
+        value: originalMatchMedia,
+      })
+    }
+  })
+
   test('scrolls only the model column when the current model is below its viewport', () => {
     const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       if (this.classList?.contains('oa-cascade-models')) return { top: 100, bottom: 200 }
