@@ -31,6 +31,42 @@ describe('InstancesPage', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/instances', expect.objectContaining({ headers: expect.any(Object) }))
   })
 
+  it('confirms one-click add and sends the dangerous confirmation header', async () => {
+    const installed = {
+      default_instance_id: 'primary',
+      items: [...initialPayload.items, { id: 'genericagent', name: 'GenericAgent', ga_root: 'C:/admin/instances/genericagent', effective_python: 'python' }],
+    }
+    let finishInstall
+    globalThis.fetch = vi.fn((url) => {
+      if (url === '/api/instances') return reply(initialPayload)
+      return new Promise(resolve => { finishInstall = () => resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => JSON.stringify(installed),
+      }) })
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    await screen.findByRole('heading', { name: 'Primary' })
+    await user.click(screen.getByRole('button', { name: 'One-click add' }))
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('[install_instance]'))
+    const pendingButton = screen.getByRole('button', { name: 'Downloading and adding\u2026' })
+    expect(pendingButton.disabled).toBe(true)
+    expect(pendingButton.getAttribute('aria-busy')).toBe('true')
+    const [url, options] = globalThis.fetch.mock.calls[1]
+    expect(url).toBe('/api/instances/install')
+    expect(options.method).toBe('POST')
+    expect(options.headers['X-GA-Confirm']).toBe('dangerous')
+
+    finishInstall()
+    expect(await screen.findByRole('heading', { name: 'GenericAgent' })).not.toBeNull()
+    expect(screen.getByText('GenericAgent downloaded and added')).not.toBeNull()
+  })
+
   it('confirms creation and sends the dangerous confirmation header', async () => {
     const created = {
       default_instance_id: 'primary',

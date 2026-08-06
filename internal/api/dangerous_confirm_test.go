@@ -1071,6 +1071,7 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/goals/stop", `{}`},
 		{http.MethodPost, "/api/goals/delete", `{}`},
 		{http.MethodPut, "/api/config", `not-json`},
+		{http.MethodPost, "/api/instances/install", `{}`},
 		{http.MethodPost, "/api/instances/create", `{}`},
 		{http.MethodPost, "/api/instances/update", `{}`},
 		{http.MethodPost, "/api/instances/delete", `{}`},

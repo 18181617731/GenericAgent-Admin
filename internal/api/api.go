@@ -103,6 +103,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/goals/output", s.goalsOutput)
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
 	mux.HandleFunc("/api/instances", s.instancesList)
+	mux.HandleFunc("/api/instances/install", s.requireDangerousConfirm(s.instanceInstall))
 	mux.HandleFunc("/api/instances/create", s.requireDangerousConfirm(s.instanceCreate))
 	mux.HandleFunc("/api/instances/update", s.requireDangerousConfirm(s.instanceUpdate))
 	mux.HandleFunc("/api/instances/delete", s.requireDangerousConfirm(s.instanceDelete))
@@ -193,6 +194,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/instances/default", Level: "reversible", Action: "set_default_instance", Reason: "changes the default GA runtime instance"},
 	{Path: "/api/extra-system-prompt-presets", Level: "reversible", Action: "save_extra_system_prompt_presets", Reason: "updates the reusable extra system prompt preset library"},
 	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},
+	{Path: "/api/instances/install", Level: "dangerous", Action: "install_instance", Reason: "downloads and extracts the GenericAgent main archive under the app instances directory and registers a new instance"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone or downloads the GenericAgent source archive and changes configured GA root"},
 	{Path: "/api/setup/python/install", Level: "dangerous", Action: "install_python", Reason: "downloads and runs the official Windows Python installer and persists the Python path"},
 	{Path: "/api/setup/venv/create", Level: "dangerous", Action: "create_venv", Reason: "creates or updates a Python virtual environment under the configured GA root"},

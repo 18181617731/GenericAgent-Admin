@@ -14572,7 +14572,17 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
   font-size: 13px;
   line-height: 1.65;
 }
-.instances-toolbar { display: flex; align-items: center; gap: 8px; }
+.instances-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.instances-toolbar button { white-space: nowrap; }
+.instances-install-button { min-width: 116px; }
+.instances-spin { animation: instances-spin .8s linear infinite; }
+@keyframes instances-spin { to { transform: rotate(360deg); } }
 .instances-message {
   margin-top: 18px;
   min-height: 42px;
@@ -14772,7 +14782,12 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 @media (max-width: 520px) {
   .instances-hero-mark { display: none; }
   .instances-hero { grid-template-columns: 1fr; gap: 12px; }
-  .instances-toolbar { grid-column: auto; }
+  .instances-toolbar {
+    grid-column: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .instances-install-button { grid-column: 1 / -1; }
   .instance-editor { padding: 15px 13px; }
   .instance-card > header { grid-template-columns: auto minmax(0, 1fr); }
   .instance-default-badge { grid-column: 2; justify-self: start; }
@@ -14780,4 +14795,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   .instance-card dd { text-align: left; }
   .instance-card > footer { flex-wrap: wrap; }
   .instance-card > footer button { flex: 1 1 calc(50% - 7px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .instances-spin { animation: none; }
 }

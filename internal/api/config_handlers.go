@@ -262,9 +262,11 @@ func runGitCommand(ctx context.Context, root string, args ...string) (string, er
 const setupInstallCloneTimeout = 5 * time.Minute
 const setupCommandTimeout = 20 * time.Minute
 const setupPythonInstallTimeout = 15 * time.Minute
+const genericAgentArchivePrimaryTimeout = 20 * time.Second
 
 const genericAgentRepoURL = "https://github.com/lsdefine/GenericAgent"
 const genericAgentArchiveURL = genericAgentRepoURL + "/archive/refs/heads/main.zip"
+const genericAgentArchiveFallbackURL = "https://codeload.github.com/lsdefine/GenericAgent/zip/refs/heads/main"
 const defaultWindowsPythonURL = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
 
 func runSetupClone(ctx context.Context, dest string) (string, error) {
@@ -292,7 +294,28 @@ func installGenericAgentSource(ctx context.Context, dest string) (string, string
 }
 
 var downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
-	return downloadAndExtractZipRoot(ctx, genericAgentArchiveURL, dest)
+	return downloadGenericAgentArchiveWithFallback(ctx, dest, downloadAndExtractZipRoot)
+}
+
+func downloadGenericAgentArchiveWithFallback(
+	ctx context.Context,
+	dest string,
+	download func(context.Context, string, string) (string, error),
+) (string, error) {
+	primaryCtx, cancelPrimary := context.WithTimeout(ctx, genericAgentArchivePrimaryTimeout)
+	out, primaryErr := download(primaryCtx, genericAgentArchiveURL, dest)
+	cancelPrimary()
+	if primaryErr == nil {
+		return out, nil
+	}
+	if ctx.Err() != nil {
+		return "", primaryErr
+	}
+	fallbackOut, fallbackErr := download(ctx, genericAgentArchiveFallbackURL, dest)
+	if fallbackErr != nil {
+		return "", fmt.Errorf("primary archive failed: %v; codeload fallback failed: %w", primaryErr, fallbackErr)
+	}
+	return strings.TrimSpace(fmt.Sprintf("primary archive failed: %v\ncodeload fallback: %s", primaryErr, fallbackOut)), nil
 }
 
 func downloadAndExtractZipRoot(ctx context.Context, archiveURL, dest string) (string, error) {

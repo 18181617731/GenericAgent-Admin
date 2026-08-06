@@ -1,14 +1,110 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/ga"
 )
 
 type instanceIDRequest struct {
 	ID string `json:"id"`
+}
+
+const automaticInstanceBaseID = "genericagent"
+
+func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	s.ConfigMu.Lock()
+	defer s.ConfigMu.Unlock()
+
+	cfg := cloneConfigWithInstances(s.CfgStore.Cfg)
+	instancesDir := filepath.Join(s.CfgStore.Root, "instances")
+	if err := os.MkdirAll(instancesDir, 0755); err != nil {
+		bad(w, http.StatusInternalServerError, "create instances directory: "+err.Error())
+		return
+	}
+	instance, dest, err := nextAutomaticInstance(cfg, instancesDir)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	keepInstall := false
+	defer func() {
+		if !keepInstall {
+			_ = os.RemoveAll(dest)
+		}
+	}()
+	_, err = downloadAndExtractGenericAgentArchive(r.Context(), dest)
+	if err != nil {
+		bad(w, http.StatusBadGateway, "download GenericAgent archive: "+err.Error())
+		return
+	}
+	instance.GARoot = filepath.Clean(dest)
+	if health := ga.BuildHealth(instance.GARoot); !health.OK {
+		bad(w, http.StatusUnprocessableEntity, "downloaded GenericAgent is invalid: "+strings.Join(health.Errors, ", "))
+		return
+	}
+
+	cfg.Instances = append(cfg.Instances, instance)
+	if len(cfg.Instances) == 1 {
+		cfg.DefaultInstanceID = instance.ID
+	}
+	if err := s.saveConfigAndReconcile(cfg); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	keepInstall = true
+	writeJSON(w, map[string]interface{}{
+		"ok":                  true,
+		"items":               s.CfgStore.Cfg.Instances,
+		"default_instance_id": s.CfgStore.Cfg.DefaultInstanceID,
+		"instance":            instance,
+		"archive_url":         genericAgentArchiveURL,
+	})
+}
+
+func nextAutomaticInstance(cfg config.AppConfig, instancesDir string) (config.InstanceConfig, string, error) {
+	for sequence := 1; ; sequence++ {
+		id := automaticInstanceBaseID
+		name := "GenericAgent"
+		if sequence > 1 {
+			id = fmt.Sprintf("%s-%d", automaticInstanceBaseID, sequence)
+			name = fmt.Sprintf("GenericAgent %d", sequence)
+		}
+		used := false
+		for _, current := range cfg.Instances {
+			if current.ID == id || strings.EqualFold(strings.TrimSpace(current.Name), name) {
+				used = true
+				break
+			}
+		}
+		if used {
+			continue
+		}
+		dest := filepath.Join(instancesDir, id)
+		if _, err := os.Lstat(dest); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return config.InstanceConfig{}, "", fmt.Errorf("inspect instance destination: %w", err)
+		}
+		return config.InstanceConfig{
+			ID:              id,
+			Name:            name,
+			GARoot:          dest,
+			PythonPath:      cfg.PythonPath,
+			EffectivePython: cfg.EffectivePython,
+		}, dest, nil
+	}
 }
 
 func (s *Server) instancesList(w http.ResponseWriter, r *http.Request) {
