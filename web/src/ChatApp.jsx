@@ -31,6 +31,7 @@ gsap.registerPlugin(useGSAP)
 const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches
 const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 560px)').matches
+const isMobileModelPickerViewport = () => Boolean(typeof window !== 'undefined' && window.matchMedia?.('(max-width: 680px)')?.matches)
 const chatLanguage = () => typeof localStorage !== 'undefined' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 const ct = (zh, en) => chatLanguage() === 'en' ? en : zh
 const chatLocale = () => chatLanguage() === 'en' ? 'en-US' : 'zh-CN'
@@ -2679,11 +2680,14 @@ const MessageList = memo(function MessageList({
 
 export function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
   const [open, setOpen] = useState(false)
+  const [mobilePicker, setMobilePicker] = useState(isMobileModelPickerViewport)
   const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
   const ref = useRef()
+  const layerRef = useRef(null)
   const triggerRef = useRef(null)
   const modelListRef = useRef(null)
   const menuId = React.useId()
+  const titleId = `${menuId}-title`
   const resetPreview = () => {
     if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
     else setPreviewProvider(groups[0]?.value || '')
@@ -2692,10 +2696,29 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
     if (!open) resetPreview()
     setOpen(value => !value)
   }
+  const closeMenu = (restoreFocus = false) => {
+    setOpen(false)
+    if (restoreFocus) window.requestAnimationFrame?.(() => triggerRef.current?.focus())
+  }
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined
+    const mq = window.matchMedia('(max-width: 680px)')
+    if (!mq) return undefined
+    const sync = () => setMobilePicker(Boolean(mq.matches))
+    sync()
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', sync)
+      return () => mq.removeEventListener('change', sync)
+    }
+    mq.addListener?.(sync)
+    return () => mq.removeListener?.(sync)
+  }, [])
   useEffect(() => {
     if (!open) return
     const close = () => setOpen(false)
-    const h = e => { if (!ref.current?.contains(e.target)) close() }
+    const h = e => {
+      if (!ref.current?.contains(e.target) && !layerRef.current?.contains(e.target)) close()
+    }
     const onKeyDown = e => {
       if (e.key !== 'Escape') return
       e.preventDefault()
@@ -2709,6 +2732,13 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [open])
+  useEffect(() => {
+    if (!open || !mobilePicker || typeof document === 'undefined') return undefined
+    const root = document.documentElement
+    const previousOverflow = root.style.overflow
+    root.style.overflow = 'hidden'
+    return () => { root.style.overflow = previousOverflow }
+  }, [open, mobilePicker])
   useEffect(() => {
     if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
     else if (groups[0]) setPreviewProvider(groups[0].value)
@@ -2730,44 +2760,93 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
     else if (currentRect.bottom > listRect.bottom) list.scrollTop += currentRect.bottom - listRect.bottom + 2
   }, [open, previewGroup?.value, selectedProvider, value])
 
+  const chooseModel = modelValue => {
+    onChange(modelValue)
+    closeMenu()
+  }
+  const mobileLayer = open && mobilePicker && typeof document !== 'undefined' ? createPortal(
+    <div className="oa-model-picker-layer" ref={layerRef}>
+      <button className="oa-model-picker-backdrop" type="button" tabIndex={-1}
+        aria-label={ct('点击背景关闭模型选择器', 'Close model picker from backdrop')} onClick={() => closeMenu(true)} />
+      <section id={menuId} className="oa-model-picker-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header className="oa-model-picker-header">
+          <div>
+            <span>{ct('当前会话', 'Current chat')}</span>
+            <h2 id={titleId}>{ct('选择模型', 'Choose a model')}</h2>
+          </div>
+          <button type="button" aria-label={ct('关闭模型选择器', 'Close model picker')} onClick={() => closeMenu(true)}>
+            <X size={18} />
+          </button>
+        </header>
+        <div className="oa-model-picker-providers" role="tablist" aria-label={ct('服务商', 'Providers')}>
+          {groups.map(group => (
+            <button key={group.value} type="button" role="tab"
+              className={group.value === previewGroup?.value ? 'active' : ''}
+              aria-selected={group.value === previewGroup?.value}
+              aria-controls={`${menuId}-models`}
+              onClick={() => setPreviewProvider(group.value)}>
+              {group.label}
+            </button>
+          ))}
+        </div>
+        <div id={`${menuId}-models`} className="oa-model-picker-models" ref={modelListRef}
+          role="tabpanel" aria-label={previewGroup ? `${previewGroup.label} ${ct('模型', 'models')}` : ct('模型', 'Models')}>
+          <div className="oa-model-picker-section-heading">
+            <strong>{previewGroup?.label || ct('模型', 'Models')}</strong>
+            <span>{previewGroup?.models.length || 0} {ct('个模型', 'models')}</span>
+          </div>
+          {previewGroup?.models.length ? previewGroup.models.map(model => {
+            const isCurrent = previewGroup.value === selectedProvider && String(model.value) === String(value)
+            return <button key={model.value} type="button" className={isCurrent ? 'active' : ''}
+              aria-current={isCurrent ? 'true' : undefined} onClick={() => chooseModel(model.value)}>
+              <span>{model.label}</span>
+              <span className="oa-model-picker-check" aria-hidden="true">{isCurrent && <Check size={16} />}</span>
+            </button>
+          }) : <div className="oa-model-picker-empty">{ct('这个服务商还没有可用模型', 'No models are available for this provider')}</div>}
+        </div>
+      </section>
+    </div>,
+    document.body,
+  ) : null
+
   return (
     <div className="oa-model-select oa-composer-cascade" ref={ref}>
       <button ref={triggerRef} type="button" disabled={disabled} title={displayModel}
-        aria-label={`模型：${displayModel}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={menuId}
+        aria-label={`${ct('模型', 'Model')}：${displayModel}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={menuId}
         onClick={toggleMenu}>
         <span className="oa-cascade-current-model">{displayModel}</span>
         <ChevronDown size={13} />
       </button>
-      {open && <div id={menuId} className="oa-cascade-menu" role="dialog" aria-label={ct('服务商和模型', 'Providers and models')}>
-        <div className="oa-cascade-providers" aria-label="服务商">
+      {open && !mobilePicker && <div id={menuId} className="oa-cascade-menu" role="dialog" aria-label={ct('服务商和模型', 'Providers and models')}>
+        <div className="oa-cascade-providers" aria-label={ct('服务商', 'Providers')}>
           {groups.map(group => (
             <button key={group.value} type="button"
               className={group.value === previewGroup?.value ? 'active' : ''}
               aria-pressed={group.value === previewGroup?.value}
               aria-current={group.value === selectedProvider ? 'true' : undefined}
               onMouseEnter={() => setPreviewProvider(group.value)}
-              onPointerEnter={() => setPreviewProvider(group.value)}
-              onPointerDown={e => { e.stopPropagation(); setPreviewProvider(group.value) }}
+              onPointerDown={() => setPreviewProvider(group.value)}
               onFocus={() => setPreviewProvider(group.value)}
               onClick={() => setPreviewProvider(group.value)}>
               <span>{group.label}</span><ChevronRight size={13} />
             </button>
           ))}
         </div>
-        <div className="oa-cascade-models" ref={modelListRef} aria-label={previewGroup ? `${previewGroup.label} 模型` : ct('模型', 'Model')}>
+        <div className="oa-cascade-models" ref={modelListRef} aria-label={previewGroup ? `${previewGroup.label} ${ct('模型', 'models')}` : ct('模型', 'Models')}>
           <div className="oa-cascade-heading">{previewGroup?.label || ct('模型', 'Model')}</div>
           {previewGroup?.models.length ? previewGroup.models.map(model => {
             const isCurrent = previewGroup.value === selectedProvider && String(model.value) === String(value)
             return <button key={model.value} type="button"
               className={isCurrent ? 'active' : ''}
               aria-current={isCurrent ? 'true' : undefined}
-              onClick={() => { onChange(model.value); setOpen(false) }}>
+              onClick={() => chooseModel(model.value)}>
               {isCurrent && <Check size={12} />}
               <span>{model.label}</span>
             </button>
-          }) : <div className="oa-cascade-empty">{ ct('未发现模型', 'No models found') }</div>}
+          }) : <div className="oa-cascade-empty">{ct('未发现模型', 'No models found')}</div>}
         </div>
       </div>}
+      {mobileLayer}
     </div>
   )
 }
