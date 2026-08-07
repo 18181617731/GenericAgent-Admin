@@ -330,6 +330,91 @@ func findChannelField(t *testing.T, profiles []channelProfile, name string) chan
 	return channelField{}
 }
 
+func TestChannelProfilesMatchOfficialFrontends(t *testing.T) {
+	h := newGoalTestServer(t, t.TempDir()).Routes()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/channels", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/channels status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp channelsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []string{"feishu", "wecom", "dingtalk", "discord", "qq", "telegram", "wechat"}
+	if len(resp.Profiles) != len(wantIDs) {
+		t.Fatalf("profile count=%d want=%d: %+v", len(resp.Profiles), len(wantIDs), resp.Profiles)
+	}
+	for i, want := range wantIDs {
+		if resp.Profiles[i].ID != want {
+			t.Fatalf("profile[%d]=%q want=%q", i, resp.Profiles[i].ID, want)
+		}
+	}
+	welcome := findChannelField(t, resp.Profiles, "wecom_welcome_message")
+	if welcome.Secret || welcome.Type != "" {
+		t.Fatalf("unexpected wecom welcome field: %+v", welcome)
+	}
+	wechat := resp.Profiles[len(resp.Profiles)-1]
+	if wechat.Testable || len(wechat.Fields) != 0 {
+		t.Fatalf("wechat must be scan-login only, got %+v", wechat)
+	}
+}
+
+func TestNewChannelCredentialProtocols(t *testing.T) {
+	oldEndpoints := channelTestEndpoints
+	oldClient := channelTestHTTPClient
+	defer func() { channelTestEndpoints = oldEndpoints; channelTestHTTPClient = oldClient }()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/discord":
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bot discord-secret" {
+				http.Error(w, `{"message":"bad discord request"}`, http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"bot-user"}`))
+		case "/qq":
+			var body map[string]string
+			if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&body) != nil || body["appId"] != "qq-app" || body["clientSecret"] != "qq-secret" {
+				http.Error(w, `{"message":"bad qq request"}`, http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_token":"token"}`))
+		case "/bottelegram-secret/getMe":
+			if r.Method != http.MethodGet {
+				http.Error(w, `{"description":"bad telegram request"}`, http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	channelTestEndpoints.Discord = ts.URL + "/discord"
+	channelTestEndpoints.QQ = ts.URL + "/qq"
+	channelTestEndpoints.Telegram = ts.URL
+	channelTestHTTPClient = ts.Client()
+
+	checks := []struct {
+		name string
+		test func() (bool, string)
+	}{
+		{name: "discord", test: func() (bool, string) { return testDiscordCredentials("discord-secret") }},
+		{name: "qq", test: func() (bool, string) { return testQQCredentials("qq-app", "qq-secret") }},
+		{name: "telegram", test: func() (bool, string) { return testTelegramCredentials("telegram-secret") }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			ok, message := check.test()
+			if !ok {
+				t.Fatalf("credential test failed: %s", message)
+			}
+		})
+	}
+}
+
 func TestChannelTestRequestJSONRejectsUnsafeUpstreamBodies(t *testing.T) {
 	cases := []struct {
 		name string
