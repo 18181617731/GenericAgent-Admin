@@ -56,6 +56,7 @@ describe('InstancesPage', () => {
     expect(options.headers['Content-Type']).toBeUndefined()
     expect(options.body).toBeInstanceOf(FormData)
     expect(options.body.get('id')).toBe('uploaded')
+    expect(options.body.get('use_template')).toBe('true')
     expect(options.body.get('template').name).toBe('GA.zip')
   })
 
@@ -99,7 +100,7 @@ describe('InstancesPage', () => {
     expect(url).toBe('/api/instances/install')
     expect(options.method).toBe('POST')
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
-    expect(JSON.parse(options.body)).toEqual({ id: 'genericagent' })
+    expect(JSON.parse(options.body)).toEqual({ id: 'genericagent', use_template: false })
 
     const installedHeading = await screen.findByRole('heading', { name: 'GenericAgent' })
     const installedCard = installedHeading.closest('article')
@@ -119,6 +120,27 @@ describe('InstancesPage', () => {
     expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(false)
     expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(false)
     expect(listCalls).toBe(2)
+  })
+
+  it('defaults to the persistent template when one is available', async () => {
+    const payload = { ...initialPayload, template_available: true }
+    globalThis.fetch = vi.fn(() => reply(payload))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    await screen.findByRole('heading', { name: 'Primary' })
+    await user.click(screen.getByRole('button', { name: 'One-click add' }))
+    const reuse = screen.getByRole('checkbox', { name: 'Use the saved GA.zip template' })
+    expect(reuse.checked).toBe(true)
+    expect(reuse.disabled).toBe(false)
+    expect(screen.getByText('A saved template is ready to reuse.')).not.toBeNull()
+    await user.type(screen.getByLabelText('Instance ID'), 'from-template')
+    await user.click(screen.getByRole('button', { name: 'Start creating' }))
+
+    const [url, options] = globalThis.fetch.mock.calls[1]
+    expect(url).toBe('/api/instances/install')
+    expect(JSON.parse(options.body)).toEqual({ id: 'from-template', use_template: true })
   })
 
   it('shows initialization failure details and stops polling', async () => {

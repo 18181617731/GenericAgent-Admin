@@ -209,6 +209,85 @@ func (s *Server) stopInstanceInstalls() {
 	s.instanceInstallWG.Wait()
 }
 
+func (s *Server) reusableInstanceTemplatePath() string {
+	return filepath.Join(s.CfgStore.Root, ".instance-templates", "genericagent.zip")
+}
+
+func (s *Server) reusableInstanceTemplateAvailable() bool {
+	info, err := os.Stat(s.reusableInstanceTemplatePath())
+	return err == nil && info.Mode().IsRegular()
+}
+
+func (s *Server) promoteInstanceTemplate(stagedPath string) error {
+	dest := s.reusableInstanceTemplatePath()
+	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+		return err
+	}
+	backup := dest + ".previous"
+	_ = os.Remove(backup)
+	hadPrevious := false
+	if err := os.Rename(dest, backup); err == nil {
+		hadPrevious = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(stagedPath, dest); err != nil {
+		if hadPrevious {
+			if restoreErr := os.Rename(backup, dest); restoreErr != nil {
+				return fmt.Errorf("replace reusable template: %v (restore previous template: %v)", err, restoreErr)
+			}
+		}
+		return err
+	}
+	if hadPrevious {
+		_ = os.Remove(backup)
+	}
+	return nil
+}
+
+func (s *Server) snapshotReusableInstanceTemplate(id string) (string, error) {
+	srcPath := s.reusableInstanceTemplatePath()
+	src, err := os.Open(srcPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	dest := s.instanceTemplateArchivePath(id)
+	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dest), id+"-snapshot-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	_, copyErr := io.Copy(tmp, src)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return "", err
+	}
+	keep = true
+	return dest, nil
+}
+
 func (s *Server) instanceTemplateArchivePath(id string) string {
 	return filepath.Join(s.CfgStore.Root, ".instance-install-archives", id+".zip")
 }
@@ -347,11 +426,15 @@ func (s *Server) automaticInstanceDestination(instance config.InstanceConfig) (s
 	if s == nil || s.CfgStore == nil || !isAutomaticInstanceID(instance.ID) {
 		return "", fmt.Errorf("refusing to modify unmanaged instance path")
 	}
-	dest := filepath.Join(s.CfgStore.Root, instance.ID)
-	if !sameRuntimePath(dest, instance.GARoot) {
-		return "", fmt.Errorf("refusing to modify unmanaged instance path %q", instance.GARoot)
+	legacyDest := filepath.Join(s.CfgStore.Root, instance.ID)
+	managedDest := filepath.Join(s.CfgStore.Root, automaticInstanceBaseID, "instances", instance.ID)
+	if sameRuntimePath(managedDest, instance.GARoot) {
+		return managedDest, nil
 	}
-	return dest, nil
+	if sameRuntimePath(legacyDest, instance.GARoot) {
+		return legacyDest, nil
+	}
+	return "", fmt.Errorf("refusing to modify unmanaged instance path %q", instance.GARoot)
 }
 
 func isAutomaticInstanceID(id string) bool {

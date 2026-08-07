@@ -16,7 +16,8 @@ const TEXT = {
     createTitle: '\u65b0\u5efa GA \u5b9e\u4f8b', editTitle: '\u7f16\u8f91 GA \u5b9e\u4f8b', installTitle: '填写新实例 ID', create: '\u521b\u5efa\u5b9e\u4f8b', save: '\u4fdd\u5b58\u4fee\u6539', startInstall: '开始创建',
     createSummary: '设置实例标识与本地运行环境。', editSummary: '更新显示名称或运行时路径。', installSummary: '选择稳定的标识，创建任务将在后台运行。',
     identityGroup: '实例标识', runtimeGroup: '运行环境', sourceGroup: '初始化来源', requiredField: '必填',
-    template: 'GA.zip \u6a21\u677f\u5305\uff08\u53ef\u9009\uff09', templateHint: '\u4e0a\u4f20 .zip \u540e\u5c06\u4f7f\u7528\u8be5\u6a21\u677f\u521d\u59cb\u5316\uff1b\u7559\u7a7a\u5219\u4ece main \u5206\u652f\u4e0b\u8f7d\u3002',
+    template: 'GA.zip \u6a21\u677f\u5305\uff08\u53ef\u9009\uff09', templateHint: '\u4e0a\u4f20\u7684 .zip \u4f1a\u6301\u4e45\u4fdd\u5b58\u5e76\u66ff\u6362\u5f53\u524d\u6a21\u677f\uff0c\u540c\u65f6\u7528\u4e8e\u672c\u6b21\u521d\u59cb\u5316\u3002',
+    reuseTemplate: '\u4f7f\u7528\u5df2\u4fdd\u5b58\u7684 GA.zip \u6a21\u677f', templateReady: '\u6a21\u677f\u5df2\u4fdd\u5b58\uff0c\u53ef\u76f4\u63a5\u590d\u7528\u3002', templateMissing: '\u5c1a\u65e0\u5df2\u4fdd\u5b58\u7684\u6a21\u677f\uff0c\u7559\u7a7a\u5c06\u4ece main \u5206\u652f\u4e0b\u8f7d\u3002',
     id: '\u5b9e\u4f8b ID', name: '\u663e\u793a\u540d\u79f0', root: 'GenericAgent \u6839\u76ee\u5f55', python: 'Python \u8def\u5f84', effectivePython: '\u5b9e\u9645 Python', auto: '\u81ea\u52a8\u68c0\u6d4b',
     idHint: '\u4ec5\u5efa\u7acb\u65f6\u53ef\u8bbe\u7f6e\uff0c\u5efa\u8bae\u4f7f\u7528\u7b80\u77ed\u4e14\u7a33\u5b9a\u7684\u6807\u8bc6\u3002', rootHint: '\u8be5\u76ee\u5f55\u5e94\u5305\u542b agentmain.py\u3002', pythonHint: '\u7559\u7a7a\u65f6\u7531\u540e\u7aef\u81ea\u52a8\u68c0\u6d4b\u3002',
     required: '\u8bf7\u586b\u5199\u5b9e\u4f8b ID\u3001\u540d\u79f0\u548c GenericAgent \u6839\u76ee\u5f55\u3002',
@@ -38,7 +39,8 @@ const TEXT = {
     createTitle: 'Create GA instance', editTitle: 'Edit GA instance', installTitle: 'Choose the new instance ID', create: 'Create instance', save: 'Save changes', startInstall: 'Start creating',
     createSummary: 'Set the instance identity and local runtime.', editSummary: 'Update the display name or runtime paths.', installSummary: 'Choose a stable ID. Creation continues in the background.',
     identityGroup: 'Instance identity', runtimeGroup: 'Runtime environment', sourceGroup: 'Initialization source', requiredField: 'Required',
-    template: 'GA.zip template (optional)', templateHint: 'Use this .zip to initialize the instance, or leave empty to download the main branch.',
+    template: 'GA.zip template (optional)', templateHint: 'An uploaded .zip is saved persistently, replaces the current template, and initializes this instance.',
+    reuseTemplate: 'Use the saved GA.zip template', templateReady: 'A saved template is ready to reuse.', templateMissing: 'No saved template yet. Leave empty to download the main branch.',
     id: 'Instance ID', name: 'Display name', root: 'GenericAgent root', python: 'Python path', effectivePython: 'Effective Python', auto: 'Auto-detected',
     idHint: 'Set once at creation. Use a short, stable identifier.', rootHint: 'This directory should contain agentmain.py.', pythonHint: 'Leave blank to let the backend detect Python.',
     required: 'Instance ID, display name, and GenericAgent root are required.',
@@ -68,6 +70,8 @@ export default function InstancesPage({ lang = 'zh' }) {
   const [notice, setNotice] = useState('')
   const [editor, setEditor] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [templateAvailable, setTemplateAvailable] = useState(false)
+  const [useTemplate, setUseTemplate] = useState(false)
   const [templateFile, setTemplateFile] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const deleteCancelRef = useRef(null)
@@ -76,6 +80,7 @@ export default function InstancesPage({ lang = 'zh' }) {
   const applyPayload = useCallback((payload) => {
     setItems(normalizedItems(payload))
     setDefaultID(String(payload?.default_instance_id || ''))
+    setTemplateAvailable(Boolean(payload?.template_available))
   }, [])
 
   const loadInstances = useCallback(async ({ silent = false } = {}) => {
@@ -122,6 +127,7 @@ export default function InstancesPage({ lang = 'zh' }) {
   const beginInstall = () => {
     setForm(EMPTY_FORM)
     setTemplateFile(null)
+    setUseTemplate(templateAvailable)
     setEditor('install')
     setError('')
     setNotice('')
@@ -161,9 +167,10 @@ export default function InstancesPage({ lang = 'zh' }) {
       if (installing && templateFile) {
         body = new FormData()
         body.append('id', payload.id)
+        body.append('use_template', 'true')
         body.append('template', templateFile)
       } else {
-        body = JSON.stringify(installing ? { id: payload.id } : payload)
+        body = JSON.stringify(installing ? { id: payload.id, use_template: useTemplate } : payload)
       }
       const result = await api(installing ? '/api/instances/install' : creating ? '/api/instances/create' : '/api/instances/update', {
         method: installing || creating ? 'POST' : 'PUT',
@@ -285,7 +292,10 @@ export default function InstancesPage({ lang = 'zh' }) {
         </fieldset>}
         {editor === 'install' && <fieldset className="instance-editor-section">
           <legend><span aria-hidden="true">02</span>{copy.sourceGroup}</legend>
-          <div className="instance-editor-grid"><label htmlFor="instance-template"><span>{copy.template}</span><input id="instance-template" aria-label={copy.template} type="file" accept=".zip,application/zip" disabled={anyBusy} onChange={event => setTemplateFile(event.target.files?.[0] || null)}/><small>{copy.templateHint}</small></label></div>
+          <div className="instance-editor-grid">
+            <label className="instance-template-reuse" htmlFor="instance-use-template"><span><input id="instance-use-template" aria-label={copy.reuseTemplate} type="checkbox" checked={Boolean(templateFile) || useTemplate} disabled={anyBusy || Boolean(templateFile) || !templateAvailable} onChange={event => setUseTemplate(event.target.checked)}/>{copy.reuseTemplate}</span><small>{templateAvailable ? copy.templateReady : copy.templateMissing}</small></label>
+            <label htmlFor="instance-template"><span>{copy.template}</span><input id="instance-template" aria-label={copy.template} type="file" accept=".zip,application/zip" disabled={anyBusy} onChange={event => { const file = event.target.files?.[0] || null; setTemplateFile(file); if (file) setUseTemplate(true) }}/><small>{copy.templateHint}</small></label>
+          </div>
         </fieldset>}
       </div>
       <div className="instance-editor-footer">
