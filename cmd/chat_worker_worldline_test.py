@@ -1,9 +1,11 @@
+import base64
 import importlib.util
 import json
 import os
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest import mock
@@ -38,6 +40,23 @@ class WorldlineSidecarTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_packaged_worker_replaces_stale_worldline_sidecar(self):
+        packaged_root = self.root / 'packaged' / 'cmd'
+        packaged_frontends = packaged_root / 'frontends'
+        packaged_frontends.mkdir(parents=True)
+        worker_path = packaged_root / 'chat_worker.py'
+        worker_path.write_text('# packaged worker\n', encoding='utf-8')
+        target = packaged_frontends / 'worldline.py'
+        target.write_text('from rich.console import Console\n', encoding='utf-8')
+        bundled = b'from pathlib import Path\n'
+        payload = base64.b64encode(zlib.compress(bundled)).decode('ascii')
+
+        with mock.patch.object(worker, '__file__', str(worker_path)), \
+             mock.patch.object(worker, '_BUNDLED_WORLDLINE_B64', payload):
+            worker._ensure_bundled_worldline_runtime()
+
+        self.assertEqual(target.read_bytes(), bundled)
 
     def test_worldline_hook_guard_is_defined_and_installs_once(self):
         registrations = []

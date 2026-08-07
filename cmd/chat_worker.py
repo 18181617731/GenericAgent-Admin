@@ -9,18 +9,22 @@ def _ensure_bundled_worldline_runtime():
     """Restore the packaged worldline sidecar when upgrading from legacy installers.
 
     Releases before v1.0.13 only copied chat_worker.py during self-update.  Packaged
-    workers therefore carry a compressed copy so the first chat can repair the
-    missing sibling atomically. Source checkouts already contain the sidecar and
-    never decode the placeholder.
+    workers therefore carry a compressed copy so the first chat can repair a
+    missing or stale sibling atomically. Source checkouts already contain the
+    sidecar and never decode the placeholder.
     """
     target = Path(__file__).resolve().parent / 'frontends' / 'worldline.py'
-    if target.is_file():
-        return
     payload = _BUNDLED_WORLDLINE_B64
     if not payload or payload == '__GA_ADMIN_BUNDLED_WORLDLINE_B64__':
         return
     import base64, zlib
     data = zlib.decompress(base64.b64decode(payload.encode('ascii')))
+    try:
+        if target.is_file() and target.read_bytes() == data:
+            return
+    except OSError:
+        # A stale or unreadable sidecar should be repaired from the bundled copy.
+        pass
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + '.tmp')
     temp.write_bytes(data)
@@ -372,6 +376,46 @@ def _sync_usage_llm_no(agent):
     value = _snapshot_llm_no(agent)
     if value is not None:
         os.environ['GA_ADMIN_LLM_NO'] = str(value)
+
+
+def _finalize_incomplete_turn_usage():
+    with _USAGE_LOCK:
+        if not (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
+                or _CURRENT_USAGE['cache_creation_tokens']
+                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
+            return
+        turn_snapshot = dict(_CURRENT_USAGE)
+        turn_index = len(_TURN_USAGES)
+        _TURN_USAGES.append(turn_snapshot)
+        _CURRENT_USAGE['input_tokens'] = 0
+        _CURRENT_USAGE['cache_creation_tokens'] = 0
+        _CURRENT_USAGE['cache_read_tokens'] = 0
+        _CURRENT_USAGE['output_tokens'] = 0
+        _CURRENT_USAGE['cached_tokens'] = 0
+    try:
+        emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
+    except Exception:
+        pass
+
+
+def _track_outbound_attempt(result):
+    """Preserve an outbound stream while closing usage for transport errors."""
+    try:
+        iterator = iter(result)
+    except TypeError:
+        return result
+
+    def tracked():
+        while True:
+            try:
+                item = next(iterator)
+            except StopIteration as stop:
+                return stop.value
+            if isinstance(item, str) and item.lstrip().startswith('!!!Error:'):
+                _finalize_incomplete_turn_usage()
+            yield item
+
+    return tracked()
 
 
 def _install_outbound_model_hooks(agent):

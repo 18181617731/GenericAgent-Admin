@@ -2,6 +2,16 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.49 - 2026-08-07
+
+### User-facing changes
+- 主导航按工作区、服务与自动化、配置与监控分组，桌面端和移动端保持一致，减少功能页面查找成本。
+- 通道服务页增加全部、运行中、已停止筛选，并为筛选为空的状态提供准确提示。
+- 修复通道页中文模式下硬编码显示 Channels 的问题；同时修复打包运行时使用过期 worldline.py 侧车文件的问题。
+
+### Validation
+- Passed Go tests, frontend lint, library tests, UI smoke tests, frontend production build, Windows packaging, and live browser/API checks.
+
 ## v1.0.48 - 2026-08-03
 
 ### User-facing changes

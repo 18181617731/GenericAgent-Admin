@@ -1,4 +1,4 @@
-export const NAV_ITEMS = ['overview','chat','files','memory','channels','tasks','autonomous','usage','goals','models','settings','logs']
+export const NAV_ITEMS = ['overview','instances','chat','files','memory','channels','tasks','autonomous','usage','goals','models','settings','logs']
 export const ROUTE_TABS = NAV_ITEMS
 export const TASK_SUB_TABS = ['scheduled','reports']
 
@@ -38,6 +38,7 @@ export const parseRoute = () => {
   const directTaskSubTab = ROUTE_TABS.includes(rawFirst) ? '' : TASK_ROUTE_ALIASES[rawFirst]
   const first = directTaskSubTab && rawFirst !== '' ? 'tasks' : (TAB_ALIASES[rawFirst] || rawFirst)
   let tab = ROUTE_TABS.includes(first) ? first : 'overview'
+  if (tab === 'instances') return { tab, taskSubTab: 'services' }
   const rawSub = tab === 'tasks' ? (parts[1] || (directTaskSubTab ? rawFirst : '')) : ''
   if (tab === 'tasks' && (rawSub === 'runs' || rawSub === 'goals')) tab = 'goals'
   const sub = TASK_ROUTE_ALIASES[rawSub] || rawSub

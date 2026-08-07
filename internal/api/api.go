@@ -55,10 +55,27 @@ type Server struct {
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	server := &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
-	if cfg != nil && svc != nil {
-		svc.SetUsageDir(usageEventDir(cfg.Cfg))
+	chatRuntimes := newChatRuntimeRegistry()
+	defaultRuntime := chatRuntimes.runtime("")
+	server := &Server{
+		CfgStore: cfg, BaseCfgStore: cfg, Svc: svc,
+		Models: models, Static: static, ReactApp: newReactAppBridge(),
+		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
+		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
+		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
+		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
+		InstanceManagers: func() *instanceManagerRegistry {
+			if cfg == nil {
+				return newInstanceManagerRegistry(config.AppConfig{}, svc)
+			}
+			return newInstanceManagerRegistry(cfg.Snapshot(), svc)
+		}(),
+		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
+	if cfg != nil && svc != nil {
+		svc.SetUsageDir(usageEventDir(cfg.Snapshot()))
+	}
+	server.resumeInstanceInstalls()
 	return server
 }
 
@@ -147,8 +164,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/usage/export", s.usageExport)
-	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
-	mux.HandleFunc("/api/chat/", s.chatHandler)
+	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
+	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
 	return recoverPanics(cors(mux))

@@ -5,10 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
-
-	"genericagent-admin-go/internal/config"
 )
 
 func TestNewHTTPServerSetsTimeouts(t *testing.T) {

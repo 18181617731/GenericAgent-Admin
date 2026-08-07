@@ -309,12 +309,16 @@ func Default() AppConfig {
 type Store struct {
 	Root string
 
-	mu  sync.RWMutex
+	mu sync.RWMutex
+	// Cfg is kept as the exported compatibility view used by in-package and
+	// integration callers. cfg remains for older in-package constructors.
+	Cfg AppConfig
 	cfg AppConfig
 }
 
 func NewStore(root string) *Store {
-	s := &Store{Root: root, cfg: defaultForRoot(root)}
+	cfg := defaultForRoot(root)
+	s := &Store{Root: root, Cfg: cloneAppConfig(cfg), cfg: cfg}
 	_ = s.Load()
 	return s
 }
@@ -326,7 +330,17 @@ func NewRuntimeStore(root string, cfg AppConfig) (*Store, error) {
 	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
-	return &Store{Root: root, cfg: cloneAppConfig(cfg)}, nil
+	return &Store{Root: root, Cfg: cloneAppConfig(cfg), cfg: cloneAppConfig(cfg)}, nil
+}
+
+func (s *Store) currentConfig() AppConfig {
+	if s.Cfg.Port == 0 && s.Cfg.Host == "" && s.Cfg.ChatDataDir == "" && s.Cfg.GARoot == "" &&
+		s.Cfg.PythonPath == "" && s.Cfg.EffectivePython == "" && s.Cfg.ProxyMode == "" &&
+		s.Cfg.Instances == nil && s.Cfg.ServiceAutostart == nil && s.Cfg.ServiceModels == nil &&
+		s.Cfg.ModelProbeProviders == nil && s.Cfg.SlashCommands == nil && s.Cfg.ExtraSystemPromptPresets == nil {
+		return s.cfg
+	}
+	return s.Cfg
 }
 
 // Snapshot returns a deep copy of the currently published configuration.
@@ -337,7 +351,7 @@ func (s *Store) Snapshot() AppConfig {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneAppConfig(s.cfg)
+	return cloneAppConfig(s.currentConfig())
 }
 
 // UpdateRuntime atomically updates the in-memory configuration without
@@ -348,7 +362,7 @@ func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cfg := cloneAppConfig(s.cfg)
+	cfg := cloneAppConfig(s.currentConfig())
 	if update != nil {
 		update(&cfg)
 	}
@@ -357,6 +371,7 @@ func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
 		return err
 	}
 	s.cfg = cloneAppConfig(cfg)
+	s.Cfg = cloneAppConfig(cfg)
 	return nil
 }
 
@@ -443,6 +458,12 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		instance.GARoot = strings.TrimSpace(instance.GARoot)
 		instance.PythonPath = strings.TrimSpace(instance.PythonPath)
 		instance.EffectivePython = effectiveInstancePython(instance)
+		if pathMissing(instance.PythonPath) {
+			instance.PythonPath = ""
+		}
+		if pathMissing(instance.EffectivePython) {
+			instance.EffectivePython = ""
+		}
 		instance.InitStatus = strings.ToLower(strings.TrimSpace(instance.InitStatus))
 		instance.InitError = strings.TrimSpace(instance.InitError)
 		instances = append(instances, instance)
@@ -542,7 +563,7 @@ func (s *Store) Load() error {
 		return err
 	}
 	if cfg.ChatDataDir == "" {
-		cfg.ChatDataDir = DefaultChatDataDir()
+		cfg.ChatDataDir = defaultChatDataDir(s.Root)
 	}
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
@@ -562,10 +583,12 @@ func (s *Store) Load() error {
 	clearMissingPythonPaths(&cfg)
 	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
 	cfg.EffectivePython = effectivePython(cfg)
+	cfg = normalize(cfg, s.Root)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
 	s.cfg = cloneAppConfig(cfg)
+	s.Cfg = cloneAppConfig(cfg)
 	return nil
 }
 
@@ -594,6 +617,9 @@ func (s *Store) Save(cfg AppConfig) error {
 	if s == nil {
 		return fmt.Errorf("config store is nil")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg = normalize(cloneAppConfig(cfg), s.Root)
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
 	}
@@ -622,6 +648,7 @@ func (s *Store) Save(cfg AppConfig) error {
 		return err
 	}
 	s.cfg = cloneAppConfig(cfg)
+	s.Cfg = cloneAppConfig(cfg)
 	return nil
 }
 

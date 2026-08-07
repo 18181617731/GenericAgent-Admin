@@ -82,8 +82,8 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel,
     </div>}
   </article>
 }
-export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, onReflectStart, t, actionState = null }) {
-  if (!services.length) return <div className="channel-service-empty">{t.hints.noFrontend}</div>
+export function ChannelServiceTable({ services = [], emptyMessage, onStart, onStop, onLogs, onAutostart, onReflectStart, t, actionState = null }) {
+  if (!services.length) return <div className="channel-service-empty">{emptyMessage || t.hints.noFrontend}</div>
   const isReflectService = (svc) => svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
   return <div className="channel-service-list">{services.map(svc => {
     const state = actionState?.name === svc.name ? actionState : actionState?.[svc.name]

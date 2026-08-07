@@ -53,6 +53,17 @@ gsap.registerPlugin(useGSAP)
 
 const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
+const NAV_GROUPS = [
+  { key: 'workspace', label: { zh: '工作区', en: 'Workspace' }, items: ['overview', 'instances', 'chat', 'files', 'memory'] },
+  { key: 'services', label: { zh: '服务与自动化', en: 'Services & automation' }, items: ['channels', 'tasks', 'autonomous'] },
+  { key: 'operations', label: { zh: '配置与监控', en: 'Configuration & monitoring' }, items: ['usage', 'goals', 'models', 'settings', 'logs'] },
+]
+
+const CHANNEL_SERVICE_FILTERS = {
+  zh: { groupLabel: '服务筛选', all: '全部', running: '运行中', stopped: '已停止', empty: '当前筛选下没有服务' },
+  en: { groupLabel: 'Service filters', all: 'All', running: 'Running', stopped: 'Stopped', empty: 'No services match this filter' },
+}
+
 export const I18N = withUpstreamI18n({
   zh: {
     appName: 'GA Admin', autostart: '开机自启', autostartService: '自启动', backup: '写操作会自动备份', browse: '选择目录', busy: '执行中', cancel: '取消', checkEnv: '检查 Python / Git', clear: '清空', close: '关闭', copy: '复制', create: '创建', delete: '删除', disableAutostart: '关闭自启', disabled: '停用', download: '下载', empty: '暂无', enableAutostart: '开启自启', enabled: '启用', envMissing: '环境缺失', envReady: '环境已就绪', error: '错误', hide: '隐藏', installDone: 'GA 已安装并配置', installGA: '安装 GA', installPath: '安装目录', language: '语言', loading: '加载中…', logs: '日志', mainNavigation: '主导航', read: '读取', ready: '就绪', refresh: '刷新', remove: '删除', retry: '重试', root: 'GenericAgent 根目录', running: '运行中', save: '保存', saveTitleModel: '保存标题模型', search: '搜索', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', setupOk: 'GA 路径已配置', setupTitle: '首次配置 GenericAgent', show: '显示', start: '启动', stop: '停止', stopped: '已停止', switchTheme: '切换主题', tagline: 'GenericAgent 本地管理面板', tail: '尾读', titleModel: '对话标题模型', titleModelDisabled: '禁用自动标题生成', titleModelFollowConversation: '跟随当前对话模型', titleModelHelp: '新会话和旧会话的标题生成使用此模型，可与对话模型不同。', titleModelSaved: '标题模型设置已保存', unsupported: '不支持', validateRoot: '验证并使用',
@@ -289,6 +300,8 @@ export default function App() {
   }, [theme])
   useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
   const t = I18N[lang] || I18N.en
+  const navLabel = key => key === 'instances' ? (lang === 'zh' ? 'GA 实例' : 'GA Instances') : t.nav[key]
+  const pageDescription = key => key === 'instances' ? (lang === 'zh' ? '管理隔离的 GA 运行目录、Python 解释器和默认实例。' : 'Manage isolated GA runtime roots, Python interpreters, and the default instance.') : t.desc[key]
   const settingsText = lang === 'zh' ? {
     title: '运行环境', summary: '集中管理 GA Admin 的本地路径与 Chat Python 网络环境。', configured: '配置已载入', unsavedHint: '修改后统一保存，写入前仍会二次确认。',
     paths: '基础路径', pathsDesc: '确定 GenericAgent 与 Chat 运行时从哪里读取程序和会话数据。', rootHelp: 'GenericAgent 项目根目录，保存后会重新载入工作区。', pythonHelp: '留空时自动检测；仅在需要固定解释器时填写。', dataHelp: '留空时使用默认目录；可指定独立的 Chat 会话存储位置。',
@@ -1130,7 +1143,11 @@ export default function App() {
     setProfiles(ps => ps.map((p, i) => i === idx ? { ...p, ...patch } : p))
   }
 
-  const nav = NAV_ITEMS
+  const navGroups = NAV_GROUPS.map(group => ({
+    ...group,
+    label: group.label[lang] || group.label.en,
+    items: group.items.filter(item => NAV_ITEMS.includes(item)),
+  }))
   const pushRoute = (nextTab, nextTaskSubTab = taskSubTab) => {
     const route = buildRoute(nextTab, nextTaskSubTab)
     if (window.location.pathname !== route || window.location.hash) window.history.pushState({}, '', route)
@@ -1278,14 +1295,18 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
       <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/></div>
-      <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{t.nav[tab]}</span><ChevronDown size={17}/></button>
-      <nav aria-label="主导航">{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{t.nav[n]}</button>)}</nav>
+      <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{navLabel(tab)}</span><ChevronDown size={17}/></button>
+      <nav aria-label={t.mainNavigation}>{navGroups.map(group => <div className="nav-group" key={group.key}>
+        <span className="nav-group-label">{group.label}</span>
+        {group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}<span>{navLabel(n)}</span></button>)}
+      </div>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
     </aside>
-    <main className="main"><header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+    <main className="main"><header><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}
+      {tab==='instances' && <InstancesPage lang={lang}/>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands} llms={llms}/>}
       {tab==='control' && <section>
         <div className="stats">
@@ -1396,7 +1417,7 @@ export default function App() {
         </div>}
       </section>}
       {tab==='memory' && <MemoryPage t={t} memory={inv.memory} onOpen={openMemoryEntry} onDownload={downloadFile} onReveal={entry => revealFileInExplorer(entry.path, 'folder')} onCopy={copyMemoryPath} onDiscuss={discussMemoryFile} onRefresh={refreshMemoryInventory} refreshing={memoryRefreshing}/>}
-      {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
+      {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} lang={lang} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
       {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
       {tab==='usage' && <UsagePage lang={lang}/>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
@@ -1456,21 +1477,31 @@ export default function App() {
       <GlobalFeedback message={msg} tone={notice?.kind === 'pending' ? 'progress' : notice?.kind} onDismiss={dismissMessage} onRetry={notice?.kind === 'error' ? refreshApp : undefined} retryLabel={t.retry} placement={tab === 'chat' ? 'top' : 'bottom'}/>
       {mobileNavOpen && <div className="mobile-nav-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setMobileNavOpen(false) }}>
         <section className="mobile-nav-sheet" role="dialog" aria-modal="true" aria-label="页面导航">
-          <header><div><b>前往功能页面</b><span>{t.nav[tab]}</span></div><button type="button" onClick={()=>setMobileNavOpen(false)} aria-label="关闭导航"><X size={18}/></button></header>
-          <div className="mobile-nav-grid">{nav.map(n => <button key={n} type="button" className={tab===n ? 'active' : ''} aria-current={tab===n ? 'page' : undefined} onClick={()=>navigateTo(n)}>{icon(n)}<span>{t.nav[n]}</span></button>)}</div>
+          <header><div><b>前往功能页面</b><span>{navLabel(tab)}</span></div><button type="button" onClick={()=>setMobileNavOpen(false)} aria-label="关闭导航"><X size={18}/></button></header>
+          <div className="mobile-nav-grid">{navGroups.map(group => <section className="mobile-nav-group" key={group.key} aria-labelledby={'mobile-nav-' + group.key}>
+            <h3 id={'mobile-nav-' + group.key}>{group.label}</h3>
+            <div className="mobile-nav-group-grid">{group.items.map(n => <button key={n} type="button" className={tab===n ? 'active' : ''} aria-current={tab===n ? 'page' : undefined} onClick={()=>navigateTo(n)}>{icon(n)}<span>{navLabel(n)}</span></button>)}</div>
+          </section>)}</div>
         </section>
       </div>}
       </>}
 
 
 
-export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
+export function ChannelsPage({ frontendSvcs = [], lang = 'zh', t, actionStates = {}, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState('')
   const [msg, setMsg] = useState(null)
   const text = t.channels
+  const filterText = CHANNEL_SERVICE_FILTERS[lang] || CHANNEL_SERVICE_FILTERS.zh
+  const [serviceFilter, setServiceFilter] = useState('all')
+  const visibleFrontendSvcs = useMemo(() => {
+    if (serviceFilter === 'running') return frontendSvcs.filter(svc => svc.running)
+    if (serviceFilter === 'stopped') return frontendSvcs.filter(svc => !svc.running)
+    return frontendSvcs
+  }, [frontendSvcs, serviceFilter])
   const profileName = profile => text.profileNames?.[profile.id] || profile.name
   const profileDescription = profile => text.profileDescriptions?.[profile.id] || profile.description
   const fieldLabel = field => text.fieldLabels?.[field.name] || field.label || field.name
@@ -1519,7 +1550,7 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   return <section className="channels-page">
     <div className="channel-hero">
       <div>
-        <span className="eyebrow">Channels</span>
+        <span className="eyebrow">{text.services}</span>
         <h2>{text.title}</h2>
         <p>{text.summary}</p>
       </div>
@@ -1557,10 +1588,16 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
       </Panel>
       <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
         <p className="muted">{t.desc.channels}</p>
-        <ChannelServiceTable services={frontendSvcs} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
+        <div className="channel-services-toolbar">
+          <div className="channel-services-summary"><b>{text.services}</b><span>{visibleFrontendSvcs.length}/{frontendSvcs.length}</span></div>
+          <div className="channel-service-filters" role="group" aria-label={filterText.groupLabel}>
+            {['all', 'running', 'stopped'].map(filter => <button key={filter} type="button" className={serviceFilter === filter ? 'active' : ''} aria-pressed={serviceFilter === filter} onClick={() => setServiceFilter(filter)}>{filterText[filter]}</button>)}
+          </div>
+        </div>
+        <ChannelServiceTable services={visibleFrontendSvcs} emptyMessage={serviceFilter === 'all' ? t.hints.noFrontend : filterText.empty} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
       </Panel>
     </div>
   </section>
 }
 
-function icon(n) { const m = { overview:<Activity size={16}/>, chat:<MessageSquare size={16}/>, files:<FileCode2 size={16}/>, tasks:<CalendarClock size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, usage:<BarChart3 size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }
+function icon(n) { const m = { overview:<Activity size={16}/>, instances:<Server size={16}/>, chat:<MessageSquare size={16}/>, files:<FileCode2 size={16}/>, tasks:<CalendarClock size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, usage:<BarChart3 size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }

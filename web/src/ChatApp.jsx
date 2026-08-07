@@ -8,7 +8,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { confirmDanger } from './lib/danger'
@@ -2415,7 +2415,7 @@ export function WorldlineNavigator({ state, onRefresh, onSwitch, disabled, onClo
   return <aside className="oa-worldline-drawer" aria-label="对话分支导航">
     <div className="oa-worldline-header">
       <div className="oa-worldline-heading"><span className="oa-worldline-title"><GitBranch size={15}/>对话分支</span><span className="oa-worldline-subtitle">查看并切换当前对话的历史路径</span></div>
-      <div className="oa-worldline-header-actions"><button type="button" className="oa-worldline-icon-btn" onClick={onRefresh} disabled={interactionLocked} aria-label="刷新对话分支"><RefreshCw size={14}/></button><button type="button" className="oa-worldline-icon-btn" onClick={() => onClose?.()} aria-label="关闭对话分支"><X size={14}/></button></div>
+      <div className="oa-worldline-header-actions"><button type="button" className="oa-worldline-icon-btn" onClick={onRefresh} disabled={interactionLocked} aria-label="刷新对话分支"><RotateCw size={14}/></button><button type="button" className="oa-worldline-icon-btn" onClick={() => onClose?.()} aria-label="关闭对话分支"><X size={14}/></button></div>
     </div>
     <div className="oa-worldline-body">
       {showTree && <div className="oa-worldline-tools"><div className="oa-worldline-overview"><span>{nodes.length} 条记录</span><span>{branchPointCount ? `${branchPointCount} 处分叉` : '单一路径'}</span></div><label className="oa-worldline-search"><Search size={13} aria-hidden="true"/><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索对话内容或模型" aria-label="搜索对话分支"/>{query && <button type="button" onClick={() => setQuery('')} aria-label="清空分支搜索"><X size={12}/></button>}</label></div>}
@@ -2589,7 +2589,7 @@ const ChatErrorCard = memo(function ChatErrorCard({ message, onRetry }) {
     </header>
     <p>{info.hint}</p>
     <div className="oa-chat-error-actions">
-      {onRetry && <button type="button" onClick={onRetry}><RefreshCw size={14}/>重新发送</button>}
+      {onRetry && <button type="button" onClick={onRetry}><RotateCw size={14}/>重新发送</button>}
       {info.detail && <details><summary>查看技术详情</summary><pre>{info.detail}</pre></details>}
     </div>
   </section>

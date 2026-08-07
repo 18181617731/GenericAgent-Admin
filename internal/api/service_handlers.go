@@ -118,6 +118,23 @@ func (s *Server) startServiceByName(name string, params map[string]string) (serv
 	return s.Svc.StartWithParams(name, params)
 }
 
+func (s *Server) startServiceWithManager(manager *service.Manager, name string, params map[string]string) (service.ServiceInfo, error) {
+	if manager == nil {
+		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
+	}
+	if params == nil || strings.TrimSpace(params["llm_no"]) == "" {
+		if models := s.CfgStore.Snapshot().ServiceModels; models != nil {
+			if no, ok := models[name]; ok {
+				if params == nil {
+					params = map[string]string{}
+				}
+				params["llm_no"] = strconv.Itoa(no)
+			}
+		}
+	}
+	return manager.StartWithParams(name, params)
+}
+
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, 405, "method not allowed")
