@@ -47,8 +47,8 @@ for (const src of backendSources) {
 }
 
 const dangerousHeaderRoutes = Array.from(
-  backendApi.matchAll(/mux\.HandleFunc\("([^"]+)",\s*s\.(\w+)\)/g),
-  match => ({ route: match[1], handler: match[2] }),
+  backendApi.matchAll(/mux\.HandleFunc\("([^"]+)",\s*(?:s\.(\w+)|s\.withModelInstance\(\(\*Server\)\.(\w+)\))\)/g),
+  match => ({ route: match[1], handler: match[2] || match[3] }),
 ).filter(({ handler }) => dangerousHeaderHandlers.has(handler)).map(({ route }) => route)
 
 const protectedFrontendRoutes = Array.from(new Set([...protectedMutatingRoutes, ...dangerousHeaderRoutes]))
