@@ -105,8 +105,10 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(live["index"], 0)
         self.assertEqual(live["usage"], {
             "input_tokens": 1500,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 821500,
             "output_tokens": 0,
-            "cached_tokens": 821500,
+            "cached_tokens": 0,
         })
 
         capture.write("[Output] tokens=22100\n")
@@ -115,8 +117,10 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertEqual(completed["index"], 0)
         self.assertEqual(completed["usage"], {
             "input_tokens": 1500,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 821500,
             "output_tokens": 22100,
-            "cached_tokens": 821500,
+            "cached_tokens": 0,
         })
         self.assertEqual(chat_worker._snapshot_turn_usages(), [completed["usage"]])
 
@@ -129,10 +133,62 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         live = self.events[-1]
         self.assertEqual(live["type"], "turn_usage")
         self.assertEqual(live["usage"], {
-            "input_tokens": 824200,
+            "input_tokens": 1500,
+            "cache_creation_tokens": 1200,
+            "cache_read_tokens": 821500,
             "output_tokens": 0,
-            "cached_tokens": 821500,
+            "cached_tokens": 0,
         })
+
+    def test_transport_error_attempt_seals_usage_before_fallback(self):
+        class LeafSession:
+            def __init__(self, model, result):
+                self.model = model
+                self.result = result
+
+            def raw_ask(self, messages):
+                result = self.result
+
+                def stream():
+                    chat_worker.sys.stderr.write(result[0])
+                    yield result[1]
+                    if len(result) > 2:
+                        chat_worker.sys.stderr.write(result[2])
+                return stream()
+
+        failed = LeafSession("claude-first", (
+            "[Cache] input=100 creation=20 read=80\n",
+            '!!!Error: HTTP 503: {"error":{"message":"Service temporarily unavailable","type":"api_error"}}',
+        ))
+        fallback = LeafSession("claude-fallback", (
+            "[Cache] input=200 creation=40 read=160\n",
+            "ok",
+            "[Output] tokens=30\n",
+        ))
+        backend = SimpleNamespace(
+            history=[],
+            model="claude-first",
+            reasoning_effort=None,
+            _sessions=[failed, fallback],
+        )
+        agent = FakeAgent()
+        agent.llmclient.backend = backend
+        chat_worker._reset_usage()
+
+        restore = chat_worker._install_outbound_model_hooks(agent)
+        try:
+            self.assertIn("!!!Error: HTTP 503", "".join(failed.raw_ask([])))
+            self.assertEqual("".join(fallback.raw_ask([])), "ok")
+        finally:
+            restore()
+
+        self.assertEqual(chat_worker._snapshot_turn_usages(), [
+            {"input_tokens": 100, "cache_creation_tokens": 20, "cache_read_tokens": 80, "output_tokens": 0, "cached_tokens": 0},
+            {"input_tokens": 200, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30, "cached_tokens": 0},
+        ])
+        usage_events = [event for event in self.events if event.get("type") == "turn_usage"]
+        self.assertEqual(usage_events[-2]["index"], 1)
+        self.assertEqual(usage_events[-1]["index"], 1)
 
     def test_outbound_model_events_follow_each_mixin_fallback_attempt(self):
         class LeafSession:

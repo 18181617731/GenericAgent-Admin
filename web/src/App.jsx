@@ -43,6 +43,7 @@ import { SettingsPage } from './pages/SettingsPage.jsx'
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
 const UsagePage = lazy(() => import('./pages/UsagePage').then(m => ({ default: m.UsagePage })))
+const InstancesPage = lazy(() => import('./pages/InstancesPage'))
 const Models = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.Models })))
 const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })))
 const AutonomousPage = lazy(() => import('./pages/AutonomousPage').then(m => ({ default: m.AutonomousPage })))

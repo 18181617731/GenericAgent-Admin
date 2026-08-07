@@ -9,12 +9,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"genericagent-admin-go/internal/config"
 )
 
 func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	cfg := s.CfgStore.Snapshot()
 	firstDay := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.Local).Unix()
 	secondDay := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.Local).UnixMilli()
 
@@ -93,8 +97,10 @@ func TestUsageOverviewAggregatesSessionsWithoutDoubleCounting(t *testing.T) {
 
 func TestUsageOverviewOmitsUnknownModelBreakdown(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	cfg := s.CfgStore.Snapshot()
 	if err := saveChatSession(cfg, chatSession{
 		ID: "legacy",
 		Messages: []chatMessage{{
@@ -124,8 +130,10 @@ func TestUsageOverviewOmitsUnknownModelBreakdown(t *testing.T) {
 
 func TestUsageLedgerSurvivesSessionDeletion(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	cfg := s.CfgStore.Snapshot()
 	cs := chatSession{ID: "deleted-later", Title: "Deleted later", Messages: []chatMessage{{
 		ID: "reply-1", Role: "assistant", ModelID: "model-x", CreatedAt: 123,
 		Usage: map[string]int{"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
@@ -156,8 +164,10 @@ func TestUsageLedgerSurvivesSessionDeletion(t *testing.T) {
 
 func TestRecordSessionUsageMigratesExistingSessionsFirst(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	cfg := s.CfgStore.Snapshot()
 	old := chatSession{ID: "old", Messages: []chatMessage{{
 		ID: "old-reply", Role: "assistant", Usage: map[string]int{"total_tokens": 10},
 	}}}
@@ -181,8 +191,10 @@ func TestRecordSessionUsageMigratesExistingSessionsFirst(t *testing.T) {
 
 func TestUsageOverviewMissingDirectoryIsEmptyAndReadOnly(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	dir := chatSessionDir(s.CfgStore.Cfg)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	dir := chatSessionDir(s.CfgStore.Snapshot())
 
 	rr := httptest.NewRecorder()
 	s.usageOverview(rr, httptest.NewRequest(http.MethodGet, "/api/usage/overview", nil))
@@ -402,6 +414,40 @@ func TestNormalizedMessageUsagePrefersUsagesOverZeroUsage(t *testing.T) {
 	}
 }
 
+func TestNormalizedMessageUsageIncludesModernCacheCategoriesInInput(t *testing.T) {
+	message := chatMessage{
+		Role:    "assistant",
+		ModelID: "claude-modern",
+		Usages: []map[string]int{
+			{"input_tokens": 100, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30},
+		},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 300 || totals.OutputTokens != 30 || totals.TotalTokens != 330 {
+		t.Fatalf("totals=%+v want input=300 output=30 total=330", totals)
+	}
+	if totals.Other["cache_creation_tokens"] != 40 || totals.Other["cache_read_tokens"] != 160 {
+		t.Fatalf("other=%+v want cache creation=40 read=160", totals.Other)
+	}
+}
+
+func TestNormalizedMessageUsageDoesNotDoubleCountLegacyCachedTokens(t *testing.T) {
+	message := chatMessage{
+		Role:  "assistant",
+		Usage: map[string]int{"input_tokens": 100, "cached_tokens": 80, "output_tokens": 30},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 100 || totals.TotalTokens != 130 {
+		t.Fatalf("totals=%+v want legacy input=100 total=130", totals)
+	}
+}
+
 func TestNormalizedMessageUsageFallsBackToLegacyUsage(t *testing.T) {
 	message := chatMessage{
 		Role:    "assistant",
@@ -419,8 +465,10 @@ func TestNormalizedMessageUsageFallsBackToLegacyUsage(t *testing.T) {
 
 func TestRecordSessionUsageRefreshesStaleZeroTotals(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	cfg := s.CfgStore.Snapshot()
 	created := time.Date(2026, time.July, 25, 9, 0, 0, 0, time.Local).Unix()
 
 	session := chatSession{

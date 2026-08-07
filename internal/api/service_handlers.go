@@ -20,16 +20,21 @@ func (s *Server) services(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	writeJSON(w, s.servicesWithAutostart())
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
+		return
+	}
+	setResolvedInstanceHeader(w, instanceID)
+	writeJSON(w, s.servicesWithAutostart(manager))
 }
 
-func (s *Server) servicesWithAutostart() []service.ServiceInfo {
-	items := s.Svc.Discover()
+func (s *Server) servicesWithAutostart(manager *service.Manager) []service.ServiceInfo {
+	items := manager.Discover()
 	auto := map[string]bool{}
-	for _, name := range s.CfgStore.Cfg.ServiceAutostart {
+	for _, name := range s.CfgStore.Snapshot().ServiceAutostart {
 		auto[name] = true
 	}
-	models := s.CfgStore.Cfg.ServiceModels
+	models := s.CfgStore.Snapshot().ServiceModels
 	for i := range items {
 		items[i].Autostart = auto[items[i].Name]
 		if models != nil && service.SupportsModelConfiguration(items[i]) {
@@ -47,7 +52,12 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, s.Svc.Summary())
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
+		return
+	}
+	setResolvedInstanceHeader(w, instanceID)
+	writeJSON(w, manager.Summary())
 }
 
 type nameReq struct {
@@ -60,12 +70,16 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
+		return
+	}
 	var q nameReq
 	if err := decode(r, &q); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	svc, err := s.startServiceByName(q.Name, q.Params)
+	svc, err := s.startServiceWithManager(manager, q.Name, q.Params)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrServiceNotFound) {
@@ -74,6 +88,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		bad(w, status, err.Error())
 		return
 	}
+	setResolvedInstanceHeader(w, instanceID)
 	writeJSON(w, svc)
 }
 
@@ -108,16 +123,21 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
+		return
+	}
 	var q nameReq
 	if err := decode(r, &q); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	if err := s.Svc.Stop(q.Name); err != nil {
+	if err := manager.Stop(q.Name); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
-	svc, _ := s.Svc.Find(q.Name)
+	svc, _ := manager.Find(q.Name)
+	setResolvedInstanceHeader(w, instanceID)
 	writeJSON(w, svc)
 }
 
@@ -126,13 +146,22 @@ func (s *Server) stopAll(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	s.Svc.StopAll()
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
+		return
+	}
+	manager.StopAll()
+	setResolvedInstanceHeader(w, instanceID)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, 405, "method not allowed")
+		return
+	}
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
 		return
 	}
 	var q struct {
@@ -170,12 +199,17 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart()})
+	setResolvedInstanceHeader(w, instanceID)
+	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart(manager)})
 }
 
 func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, 405, "method not allowed")
+		return
+	}
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
 		return
 	}
 	var q struct {
@@ -210,7 +244,8 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart()})
+	setResolvedInstanceHeader(w, instanceID)
+	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart(manager)})
 }
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
@@ -218,20 +253,20 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if s.Svc == nil {
-		bad(w, http.StatusInternalServerError, "service manager unavailable")
+	manager, instanceID, ok := s.serviceManagerForHTTP(w, r)
+	if !ok {
 		return
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/logs/"))
 	if strings.HasSuffix(name, "/stream") {
-		s.logStream(w, r, strings.TrimSpace(strings.TrimSuffix(name, "/stream")))
+		s.logStream(w, r, manager, instanceID, strings.TrimSpace(strings.TrimSuffix(name, "/stream")))
 		return
 	}
 	if name == "" {
 		bad(w, http.StatusBadRequest, "service name required")
 		return
 	}
-	if _, ok := s.Svc.Find(name); !ok {
+	if _, ok := manager.Find(name); !ok {
 		bad(w, http.StatusNotFound, "service not found")
 		return
 	}
@@ -240,11 +275,12 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"name": name, "lines": s.Svc.Logs(name, lines)})
+	setResolvedInstanceHeader(w, instanceID)
+	writeJSON(w, map[string]interface{}{"name": name, "lines": manager.Logs(name, lines)})
 }
 
 func (s *Server) requestedLogLines(r *http.Request) (int, error) {
-	lines := s.CfgStore.Cfg.LogTailLines
+	lines := s.CfgStore.Snapshot().LogTailLines
 	raw := strings.TrimSpace(r.URL.Query().Get("lines"))
 	if raw == "" {
 		return lines, nil
@@ -256,12 +292,12 @@ func (s *Server) requestedLogLines(r *http.Request) (int, error) {
 	return parsed, nil
 }
 
-func (s *Server) logStream(w http.ResponseWriter, r *http.Request, name string) {
+func (s *Server) logStream(w http.ResponseWriter, r *http.Request, manager *service.Manager, instanceID, name string) {
 	if name == "" {
 		bad(w, http.StatusBadRequest, "service name required")
 		return
 	}
-	if _, ok := s.Svc.Find(name); !ok {
+	if _, ok := manager.Find(name); !ok {
 		bad(w, http.StatusNotFound, "service not found")
 		return
 	}
@@ -276,8 +312,9 @@ func (s *Server) logStream(w http.ResponseWriter, r *http.Request, name string) 
 		return
 	}
 
-	snapshot, events, cancel := s.Svc.Subscribe(name, lines)
+	snapshot, events, cancel := manager.Subscribe(name, lines)
 	defer cancel()
+	setResolvedInstanceHeader(w, instanceID)
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")

@@ -16,10 +16,14 @@ import (
 
 func newChatCommandTestServer(t *testing.T) *Server {
 	t.Helper()
-	cfg := &config.Store{Root: t.TempDir(), Cfg: config.Default()}
-	cfg.Cfg.GARoot = t.TempDir()
-	cfg.Cfg.ChatDataDir = t.TempDir()
-	return New(cfg, service.NewManager(cfg.Cfg.GARoot, cfg.Cfg.BufferLines), modelconfig.NewStore(t.TempDir()), nil)
+	cfg := newTestConfigStore(t, t.TempDir(), config.Default())
+	updateTestConfig(t, cfg, func(cfg *config.AppConfig) {
+		cfg.GARoot = t.TempDir()
+	})
+	updateTestConfig(t, cfg, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	return New(cfg, service.NewManager(cfg.Snapshot().GARoot, cfg.Snapshot().BufferLines), modelconfig.NewStore(t.TempDir()), nil)
 }
 
 func TestParseImmediateChatCommand(t *testing.T) {
@@ -90,7 +94,7 @@ func TestMutateChatSessionPersistsAndRequiresOwnedToken(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	sid := "command-owner"
 	seed := chatSession{ID: sid, Title: "kept", Messages: []chatMessage{{ID: "u", Role: "user", Content: "prefill"}, {ID: "a", Role: "assistant", Content: "answer"}}, RawHistory: []map[string]interface{}{{"role": "user", "content": "prefill"}, {"role": "assistant", "content": "answer"}}, Settings: chatSettings{LLMNo: 2}, Workspace: "ws", ProjectMode: "proj"}
-	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +114,7 @@ func TestMutateChatSessionPersistsAndRequiresOwnedToken(t *testing.T) {
 	if len(got.Messages) != 0 || got.Title != "kept" || got.Settings.LLMNo != 2 || got.Workspace != "ws" || got.ProjectMode != "proj" {
 		t.Fatalf("got=%+v", got)
 	}
-	reloaded, err := loadChatSession(s.CfgStore.Cfg, sid)
+	reloaded, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +130,7 @@ func TestMutateChatSessionPersistsAndRequiresOwnedToken(t *testing.T) {
 func TestMutationReservationBlocksCompetingRunAtSessionBarrier(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	sid := "command-barrier"
-	if err := saveChatSession(s.CfgStore.Cfg, chatSession{ID: sid, Messages: []chatMessage{{ID: "u", Role: "user", Content: "keep"}}}); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Messages: []chatMessage{{ID: "u", Role: "user", Content: "keep"}}}); err != nil {
 		t.Fatal(err)
 	}
 	token := s.beginChatRun(sid)
@@ -229,7 +233,7 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 		},
 		Settings: normalizeChatSettings(chatSettings{}),
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 	token := s.beginChatRun(sid)
@@ -269,7 +273,7 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("cancel status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, sid)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +320,7 @@ func TestChatCancelDoesNotOverwriteTerminalMessage(t *testing.T) {
 		},
 		Settings: normalizeChatSettings(chatSettings{}),
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 	token := s.beginChatRun(sid)
@@ -334,7 +338,7 @@ func TestChatCancelDoesNotOverwriteTerminalMessage(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("cancel status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, sid)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +437,7 @@ func TestWorldlineRestorePersistsRestoredSession(t *testing.T) {
 			{"role": "assistant", "content": "old answer"},
 		},
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
 		t.Fatal(err)
 	}
 
@@ -483,7 +487,7 @@ func TestWorldlineRestorePersistsRestoredSession(t *testing.T) {
 		t.Fatalf("worker request: %#v", workerReq)
 	}
 
-	got, err := loadChatSession(s.CfgStore.Cfg, sid)
+	got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
 	}

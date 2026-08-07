@@ -20,13 +20,13 @@ export const THEMES = Object.freeze([
     icon: Sunset,
     label: { zh: '暖色', en: 'Warm' },
     description: { zh: '温暖金色调卡其色系统', en: 'Warm gold-tinted khaki palette' },
-    preview: ['#FEFCF7', '#FAF7F0', '#1A1610'],
+    preview: ['#FEFCF7', '#FAF7F0', '#C9A961'],  // Updated to match new colorPrimary
     antdAlgorithm: 'default',
     antdToken: {
       colorBgBase: '#FEFCF7',
       colorTextBase: '#1A1610',
       colorBorder: '#E0D8C8',
-      colorPrimary: '#B8860B',
+      colorPrimary: '#C9A961',  // Reduced saturation from #B8860B
       colorSuccess: '#3D8B40',
       colorWarning: '#E68A00',
       colorError: '#C62828',

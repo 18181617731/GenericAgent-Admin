@@ -3,15 +3,17 @@ import { createPortal } from 'react-dom'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RefreshCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
+import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
-import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
@@ -38,6 +40,7 @@ gsap.registerPlugin(useGSAP)
 const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 const isNarrowChatViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches
 const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 560px)').matches
+const isMobileModelPickerViewport = () => Boolean(typeof window !== 'undefined' && window.matchMedia?.('(max-width: 680px)')?.matches)
 const chatLanguage = () => typeof localStorage !== 'undefined' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 const ct = (zh, en) => chatLanguage() === 'en' ? en : zh
 const chatLocale = () => chatLanguage() === 'en' ? 'en-US' : 'zh-CN'
@@ -947,10 +950,14 @@ function SubagentOutputBlock({ text, onAskReply, isRunning }) {
 
   const turnItems = turns.map(t => {
     const summaryText = t.children.find(s => s.type === 'summary')?.text || ''
-    const toolCount = t.children.filter(s => s.type === 'tool').length
-    const preview = summaryText
-      ? summaryText.slice(0, 52) + (summaryText.length > 52 ? '…' : '')
-      : toolCount > 0 ? `${toolCount} tool call${toolCount > 1 ? 's' : ''}` : ''
+    const fallbackSource = t.children.map((seg) => {
+      if (seg.type === 'tool') return `🛠️ ${seg.name}()`
+      if (seg.type === 'text') return seg.text
+      return ''
+    }).filter(Boolean).join('\n')
+    const fallbackText = assistantTurnFallbackTitle(fallbackSource, t.n)
+    const previewSource = summaryText || fallbackText
+    const preview = previewSource.slice(0, 52) + (previewSource.length > 52 ? '…' : '')
     const label = (
       <span className="sa-turn-label">
         <Tag color="purple" style={{ fontSize: 10, padding: '0 5px', lineHeight: '18px', marginRight: 6 }}>
@@ -1284,14 +1291,14 @@ function AskUserPanel({ call, onReply }) {
   const hasStructured = Boolean(ask.question || ask.candidates.length)
   return <div className="oa-ask-panel">
     <div className="oa-ask-banner">
-      <span className="oa-ask-avatar">?</span>
+      <span className="oa-ask-avatar"><CircleHelp size={15} /></span>
       <div><b>{ct('需要用户确认', 'User confirmation required')}</b><p>{ct('智能体正在等待你的选择或补充信息', 'The agent is waiting for your choice or additional information')}</p></div>
     </div>
     {hasStructured ? <div className="oa-ask-body">
       {ask.question && <div className="oa-ask-question"><span>{ct('问题', 'Question')}</span><p>{ask.question}</p></div>}
-      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{ct('快捷回复', 'Quick replies')}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(e)=>{e.stopPropagation(); onReply?.(x)}} title={ct('点击填入输入框', 'Insert into the input')}>{x}</button>)}</div></div>}
-    </div> : call.args && <div className="oa-tool-args"><span>{'💬 question'}</span><pre>{call.args}</pre></div>}
-    {call.result && <div className="oa-tool-result oa-ask-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
+      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{ct('快捷回复', 'Quick replies')}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(e)=>{e.stopPropagation(); onReply?.(x)}} title={ct('点击填入输入框', 'Insert into the input')}><CornerDownLeft size={13} />{x}</button>)}</div></div>}
+    </div> : call.args && <div className="oa-tool-args"><span>{ct('问题', 'Question')}</span><pre>{call.args}</pre></div>}
+    {call.result && <div className="oa-tool-result oa-ask-result"><span>{ct('回复', 'Reply')}</span><pre>{call.result}</pre></div>}
   </div>
 }
 
@@ -1619,11 +1626,10 @@ function ToolCallBlock({ call, onAskReply }) {
 
   return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${isFileTool ? 'oa-tool-file' : ''} ${open ? 'open' : 'collapsed'}`}>
     <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-      <span className="oa-tool-icon">{isAskUser ? '❓' : isFileTool ? '📁' : '🛠️'}</span>
-      <span>{isAskUser ? 'Ask user' : 'Tool'}</span>
+      <span className="oa-tool-icon">{isAskUser ? <CircleHelp size={14} /> : isFileTool ? '📁' : '🛠️'}</span>
+      {!isAskUser && <span>Tool</span>}
       <b>{toolName}</b>
       {fileName && <em className="oa-tool-file-name">{fileName}</em>}
-      {isAskUser && <strong className="oa-ask-headline">{askSummary}</strong>}
       {resultStatus && <em>{resultStatus}</em>}
       {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? ct(`${askPayload.candidates.length} 个选项`, `${askPayload.candidates.length} options`) : ct('等待回复', 'Waiting for reply')}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
@@ -2221,7 +2227,7 @@ const extractSavedFilePaths = (content = '') => Array.from(
   (match) => match[1].trim(),
 ).filter(Boolean)
 
-const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.output_tokens || 0) > 0 || (u.cached_tokens || 0) > 0)
+const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.cache_creation_tokens || 0) > 0 || cacheReadTokens(u) > 0 || (u.output_tokens || 0) > 0)
 const formatElapsedMs = (ms = 0) => {
   const safe = Math.max(0, Number(ms) || 0)
   if (safe < 1000) return `${Math.max(0.1, safe / 1000).toFixed(1)}s`
@@ -2257,7 +2263,8 @@ const UsageRow = ({ u, label, className, elapsedMs = 0, live = false, ctxChars =
     {label && <span className="oa-usage-label">{label}</span>}
     {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? ct('实时耗时', 'Live elapsed time') : ct('耗时', 'Elapsed time')}><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1.5A4.5 4.5 0 1 1 8 11a4.5 4.5 0 0 1 0-7.5z"/><path d="M7.5 4.5h1v3.65l2.2 1.3-.5.9L7.5 9V4.5z"/></svg>{ct('耗时', 'Time')} <b>{formatElapsedMs(elapsedMs)}</b></span>}
     {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct('输入 tokens', 'Input tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{formatTokens(u.input_tokens)}</b></span>}
-    {u?.cached_tokens > 0 && <span className="oa-usage-cache" title={ct('缓存 tokens', 'Cached tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8.5 1 2 9h4.2l-1 6L13 7H8.5l1-6Z"/></svg>{ct('缓存', 'Cached')} <b>{formatTokens(u.cached_tokens)}</b></span>}
+    {u?.cache_creation_tokens > 0 && <span className="oa-usage-cache-write" title={ct('缓存写入 tokens', 'Cache creation tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 1v9m0 0 3-3m-3 3L5 7M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存写入', 'Cache write')} <b>{formatTokens(u.cache_creation_tokens)}</b></span>}
+    {cacheReadTokens(u) > 0 && <span className="oa-usage-cache-read" title={ct('缓存读取 tokens', 'Cache read tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 15V6m0 0 3 3M8 6 5 9M3 3h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存读取', 'Cache read')} <b>{formatTokens(cacheReadTokens(u))}</b></span>}
     {u?.output_tokens > 0 && <span className="oa-usage-out" title={ct('输出 tokens', 'Output tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>{ct('输出', 'Output')} <b>{formatTokens(u.output_tokens)}</b></span>}
     {hasCtx && <span className="oa-usage-ctx" title={ct(
       `AI 当前记住了 ${ctxMsgs} 条对话消息${ctxChars > 0 ? `，约 ${formatTokens(ctxChars)} 字` : ''}。上下文越长记忆越多，超出上限时旧消息会被自动裁剪。`,
@@ -2271,9 +2278,10 @@ const sumUsages = (usages) => {
   if (!Array.isArray(usages) || !usages.length) return null
   return usages.reduce((acc, u) => ({
     input_tokens: acc.input_tokens + (u?.input_tokens || 0),
-    cached_tokens: acc.cached_tokens + (u?.cached_tokens || 0),
+    cache_creation_tokens: acc.cache_creation_tokens + (u?.cache_creation_tokens || 0),
+    cache_read_tokens: acc.cache_read_tokens + cacheReadTokens(u),
     output_tokens: acc.output_tokens + (u?.output_tokens || 0),
-  }), { input_tokens: 0, cached_tokens: 0, output_tokens: 0 })
+  }), { input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, output_tokens: 0 })
 }
 
 export function GeneratedImageGallery({ content = '' }) {
@@ -2807,6 +2815,9 @@ export default function ChatApp() {
       }
     }).catch(() => {})
   }, [])
+  const [chatInstanceID, setChatInstanceID] = useState(initialChatInstanceID)
+  const [chatInstances, setChatInstances] = useState([])
+  const [chatInstancesLoading, setChatInstancesLoading] = useState(true)
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
@@ -2848,11 +2859,11 @@ export default function ChatApp() {
   useEffect(() => {
     if (!sid || !subagentLikely) { setSubagents([]); return undefined }
     let alive = true
-    const tick = () => { api(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
+    const tick = () => { chatApi(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
     tick()
     const timer = busy ? setInterval(tick, 5000) : null
     return () => { alive = false; if (timer) clearInterval(timer) }
-  }, [sid, busy, subagentLikely])
+  }, [sid, busy, subagentLikely, chatInstanceID])
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
@@ -2902,6 +2913,23 @@ export default function ChatApp() {
   const cmdDrawerRef = useRef(null)
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
+  const chatInstanceRef = useRef(chatInstanceID)
+  const chatRequestEpochRef = useRef(0)
+  const chatApi = useCallback(async (url, options) => {
+    const epoch = chatRequestEpochRef.current
+    const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
+    if (epoch !== chatRequestEpochRef.current) throw new DOMException('Chat instance changed', 'AbortError')
+    return result
+  }, [])
+  const chatFetch = useCallback(async (url, options) => {
+    const epoch = chatRequestEpochRef.current
+    const result = await fetch(addChatInstanceToURL(url, chatInstanceRef.current), options)
+    if (epoch !== chatRequestEpochRef.current) {
+      result.body?.cancel?.().catch?.(() => {})
+      throw new DOMException('Chat instance changed', 'AbortError')
+    }
+    return result
+  }, [])
   const runSeqRef = useRef(0)
   const activeRunRef = useRef(false)
   const guidingQueueRef = useRef('')
@@ -3338,7 +3366,7 @@ export default function ChatApp() {
       let state = null
       while (!state && isActiveSession(sessionId)) {
         try {
-          state = await api(`/api/chat/state/${sessionId}`, { signal })
+          state = await chatApi(`/api/chat/state/${sessionId}`, { signal })
         } catch (e) {
           if (e?.name === 'AbortError' || signal?.aborted) throw e
           await waitForStreamRetry(signal)
@@ -3350,7 +3378,7 @@ export default function ChatApp() {
 
       while (isActiveSession(sessionId)) {
         try {
-          res = await fetch(`/api/chat/stream/${sessionId}?from=${cursor}`, { signal })
+          res = await chatFetch(`/api/chat/stream/${sessionId}?from=${cursor}`, { signal })
           if (res.status === 204) return commandPatch
           if (!res.ok) throw new Error(await res.text())
           replay = true
@@ -3368,7 +3396,7 @@ export default function ChatApp() {
     if (!id) return
     try {
       streamAbortRef.current?.abort?.()
-      await api(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
+      await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
       setMessages(xs => xs.map(m => (m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止。', 'Stopped.'), error:true } : m))
       setSessions(xs => xs.map(s => s.id === id ? { ...s, running:false } : s))
       setNotice(ct('已中止当前执行', 'Current run stopped'))
@@ -3396,7 +3424,7 @@ export default function ChatApp() {
       return [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }]
     })
     try {
-      const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
+      const res = await chatFetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
       await followChatStream(res, pendingId, '', id, ctrl.signal)
@@ -3418,7 +3446,7 @@ export default function ChatApp() {
   }
 
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
-    const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
+    const st = await chatApi(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
     const nextLlms = st.llms || []
     const defaultNo = firstRuntimeModelNo(nextLlms)
@@ -3460,7 +3488,7 @@ export default function ChatApp() {
     setStreamingSid('')
     setAutoFollow(true)
     setShowFollow(false)
-    const d = await api(`/api/chat/session/${id}`)
+    const d = await chatApi(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
@@ -3529,7 +3557,7 @@ export default function ChatApp() {
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
-    const d = await api('/api/chat/sessions')
+    const d = await chatApi('/api/chat/sessions')
     const list = d.sessions || []
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
@@ -3573,7 +3601,7 @@ export default function ChatApp() {
 
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
-    await api(`/api/chat/session/${id}`, { method:'DELETE' })
+    await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
     clearSessionDrafts(id)
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')
@@ -3629,7 +3657,7 @@ export default function ChatApp() {
     setErr('')
     setNotice('')
     try {
-      const result = await deleteChatSessions(ids, id => api(`/api/chat/session/${id}`, { method:'DELETE' }))
+      const result = await deleteChatSessions(ids, id => chatApi(`/api/chat/session/${id}`, { method:'DELETE' }))
       clearSessionDrafts(result.deletedIds)
       const deleted = new Set(result.deletedIds)
       const activeDeleted = deleted.has(sid)
@@ -3682,7 +3710,7 @@ export default function ChatApp() {
   const saveRename = async (id) => {
     const title = draftTitle.trim()
     if (!title) return
-    const d = await api(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
+    const d = await chatApi(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
     setSessions(xs => xs.map(x => x.id === id ? { ...x, title:d.title, updated_at:d.updated_at } : x))
     setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
   }
@@ -3717,7 +3745,7 @@ export default function ChatApp() {
     setReasoningEffort(next)
     if (!sid) return
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, reasoning_effort: next }) })
+      await chatApi(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, reasoning_effort: next }) })
       setNotice(next === 'off' ? ct('推理强度已设为默认', 'Reasoning effort reset to default') : ct(`推理强度已设为 ${next}`, `Reasoning effort set to ${next}`))
     } catch (e) {
       setReasoningEffort(prev)
@@ -3779,7 +3807,7 @@ export default function ChatApp() {
     const targetOpenToken = openSeqRef.current
     setExtraPromptSaving(true)
     try {
-      const d = await api(`/api/chat/settings/${targetSid}`, {
+      const d = await chatApi(`/api/chat/settings/${targetSid}`, {
         method:'POST',
         body: JSON.stringify({ llm_no: llmNo, reasoning_effort: reasoningEffort, ...promptPresetPatch(extraPromptSelection) }),
       })
@@ -3976,7 +4004,7 @@ export default function ChatApp() {
       ? xs.map(m => m.id === retryId ? placeholder : m)
       : [...xs, placeholder])
     try {
-      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:`/btw ${question}` }) })
+      const data = await chatApi(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:`/btw ${question}` }) })
       if (!isActiveSession(sessionId)) return
       if (data?.message) setMessages(xs => xs.map(m => m.id === placeholderId ? { ...data.message, btw_status:'done' } : m))
       await loadSessions(sessionId)
@@ -4013,7 +4041,7 @@ export default function ChatApp() {
     let pending = null
     try {
       if (!id) {
-        const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
+        const d = await chatApi('/api/chat/session/new', { method:'POST', body:'{}' })
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
         clearSessionDrafts(id)
@@ -4044,7 +4072,7 @@ export default function ChatApp() {
         clientUserID,
         sourceUserMessageId: sourceMessageID,
       })
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
+      const res = await chatFetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
       if (sourceMessageID) setMessages(xs => {
         if (!isActiveSession(id)) return xs
@@ -4293,7 +4321,7 @@ export default function ChatApp() {
     try {
       if (wasRunning) {
         streamAbortRef.current?.abort?.()
-        if (id) await api(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
+        if (id) await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
         setMessages(xs => xs.map((m, idx) => (idx === xs.length - 1 && m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true } : m))
       }
     } catch (e) {
@@ -4324,8 +4352,22 @@ export default function ChatApp() {
     }
     initialize()
     loadPromptPresets().catch(e=>setErr(e.message))
+    api('/api/instances').then(payload => {
+      const options = chatInstanceOptions(payload)
+      setChatInstances(options)
+      if (!chatInstanceRef.current && payload?.default_id) {
+        const defaultID = String(payload.default_id).trim()
+        chatInstanceRef.current = defaultID
+        setChatInstanceID(defaultID)
+        persistChatInstanceID(defaultID)
+      }
+    }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
     return () => streamAbortRef.current?.abort?.()
   }, [])
+
+  useEffect(() => {
+    loadSessions('', { open:true }).catch(e => { if (e?.name !== 'AbortError') setErr(e.message) })
+  }, [chatInstanceID])
 
   useEffect(() => {
     let stopped = false
@@ -4334,7 +4376,7 @@ export default function ChatApp() {
       if (stopped || inFlight || document.hidden) return
       inFlight = true
       try {
-        const d = await api('/api/chat/sessions')
+        const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
           setSessions(d.sessions || [])
           setProjects(Array.isArray(d.projects) ? d.projects : [])
@@ -4353,7 +4395,7 @@ export default function ChatApp() {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [])
+  }, [chatInstanceID])
 
   useEffect(() => {
     if (!sessionManagerOpen) return
@@ -4370,6 +4412,41 @@ export default function ChatApp() {
       document.removeEventListener('keydown', onKey)
     }
   }, [sessionManagerOpen, batchDeleting])
+
+  const switchChatInstance = (nextValue) => {
+    const nextID = String(nextValue || '').trim()
+    if (!nextID || nextID === chatInstanceRef.current) return
+    streamAbortRef.current?.abort?.()
+    streamAbortRef.current = null
+    chatRequestEpochRef.current += 1
+    openSeqRef.current += 1
+    worldlineSeqRef.current += 1
+    runSeqRef.current += 1
+    activeRunRef.current = false
+    activeSidRef.current = ''
+    chatInstanceRef.current = nextID
+    persistChatInstanceID(nextID)
+    setChatInstanceID(nextID)
+    setSid('')
+    setSessions([])
+    setProjects([])
+    setMessages([])
+    messagesRef.current = []
+    setRawHistory([])
+    setHistoryInfo([])
+    setWorkingState(null)
+    setPlanState(null)
+    setSubagents([])
+    setBusy(false)
+    setStreamingSid('')
+    setWorldlineOpen(false)
+    setWorldlineState(null)
+    setWorldlineLoading(false)
+    setQueuedMessages([])
+    setAttachments([])
+    setErr('')
+    setNotice(ct('已切换 GA 实例', 'GA instance switched'))
+  }
 
   const scrollToThreadEnd = (behavior = 'auto') => {
     endRef.current?.scrollIntoView({ behavior, block:'end' })
@@ -4487,6 +4564,19 @@ export default function ChatApp() {
   return <ChatFileScopeContext.Provider value={{ workspace: current?.workspace || '', gaRoot: cfg?.ga_root || cfg?.GARoot || '' }}>
     <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <label className="oa-sidebar-instance" title={ct('切换实例会更新当前侧栏中的会话', 'Switching instances updates the sessions in this sidebar')}>
+        <span>{ct('GA 实例', 'GA instance')}</span>
+        <select
+          aria-label={ct('选择 GA 实例', 'Select GA instance')}
+          value={chatInstanceID}
+          onChange={event=>switchChatInstance(event.target.value)}
+          disabled={chatInstancesLoading || !chatInstances.length}
+        >
+          {chatInstancesLoading && <option value={chatInstanceID}>{ct('加载实例…', 'Loading instances…')}</option>}
+          {!chatInstancesLoading && !chatInstances.length && <option value="">{ct('默认实例', 'Default instance')}</option>}
+          {chatInstances.map(instance => <option key={instance.id} value={instance.id} disabled={instance.initializing}>{instance.name}{instance.initializing ? ct('（初始化中）', ' (initializing)') : ''}</option>)}
+        </select>
+      </label>
       <div className="oa-side-head">
         <div className="oa-sidebar-search">
           <Search size={16}/>
@@ -4499,6 +4589,13 @@ export default function ChatApp() {
           />
           {sidebarSearch && <button className="oa-search-clear" onClick={()=>setSidebarSearch('')} aria-label={ct('清除搜索', 'Clear search')}><X size={14}/></button>}
         </div>
+        <button
+          className="oa-new-chat"
+          onClick={newSession}
+          disabled={batchDeleting}
+          title={ct('新对话', 'New chat')}
+          aria-label={ct('新对话', 'New chat')}
+        ><MessageSquarePlus size={17}/></button>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
       <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
@@ -4568,7 +4665,6 @@ export default function ChatApp() {
         </div>
       })()}
       <div className="oa-sidebar-foot">
-        <button onClick={()=>loadSessions().catch(e=>setErr(e.message))}><RefreshCw size={15}/>{ct('刷新会话', 'Refresh sessions')}</button>
         <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>{ct('返回管理台', 'Back to admin')}</button>
       </div>
     </aside>

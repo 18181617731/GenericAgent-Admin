@@ -35,11 +35,12 @@ test('prompt preset save cannot target or update a different active session', ()
   const save = functionBlock(main, '  const saveExtraPromptSelection = async', '  const savePromptPresets = async')
   assert.match(save, /const targetSid = extraPromptTargetSid/)
   assert.match(save, /if \(activeSidRef\.current !== targetSid\)/)
-  assert.ok(save.includes('api(`/api/chat/settings/${targetSid}`'))
+  assert.ok(save.includes('chatApi(`/api/chat/settings/${targetSid}`'))
   assert.match(save, /targetOpenToken !== openSeqRef\.current \|\| activeSidRef\.current !== targetSid/)
 })
 
 test('prompt presets load on initial render so a saved selection has its real name', () => {
   const mount = functionBlock(main, '  useEffect(() => {\n    const initialize = async () =>', '  useEffect(() => {\n    let stopped')
   assert.match(mount, /loadPromptPresets\(\)\.catch/)
+  assert.match(mount, /\}, \[\]\)/)
 })

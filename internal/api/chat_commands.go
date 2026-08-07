@@ -134,7 +134,7 @@ func (s *Server) maybeHandleImmediateChatCommand(w http.ResponseWriter, r *http.
 		})
 	default:
 		s.SessionMu.Lock()
-		cs, err = loadChatSession(s.CfgStore.Cfg, sid)
+		cs, err = loadChatSession(s.CfgStore.Snapshot(), sid)
 		s.SessionMu.Unlock()
 	}
 	if err == nil {
@@ -334,7 +334,7 @@ func (s *Server) worldlineCommand(cs *chatSession, c immediateChatCommand, out m
 	if err != nil {
 		return fmt.Errorf("worldline worker: %w", err)
 	}
-	req := map[string]interface{}{"op": "worldline", "activate": true, "action": c.Mode, "sid": safeChatID(cs.ID), "ga_root": s.CfgStore.Cfg.GARoot, "workspace": cs.Workspace}
+	req := map[string]interface{}{"op": "worldline", "activate": true, "action": c.Mode, "sid": safeChatID(cs.ID), "ga_root": s.CfgStore.Snapshot().GARoot, "workspace": cs.Workspace}
 	if c.Mode == "restore" {
 		req["node_id"], req["mode"], req["to"] = c.Arg, c.RestoreMode, c.To
 	}

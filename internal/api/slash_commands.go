@@ -54,7 +54,7 @@ func (s *Server) slashCommands(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	items := mergeSlashCommands(adminSlashCommands, discoverProjectSlashCommands(s.CfgStore.Cfg.GARoot), discoverGASlashCommands(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython))
+	items := mergeSlashCommands(adminSlashCommands, discoverProjectSlashCommands(s.CfgStore.Snapshot().GARoot), discoverGASlashCommands(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython))
 	writeJSON(w, map[string]interface{}{"commands": items})
 }
 

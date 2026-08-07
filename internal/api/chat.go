@@ -132,24 +132,32 @@ func (s *Server) defaultChatSettings() chatSettings {
 	if s == nil || s.CfgStore == nil {
 		return normalizeChatSettings(chatSettings{})
 	}
-	return defaultChatSettingsFor(s.CfgStore.Cfg)
+	return defaultChatSettingsFor(s.CfgStore.Snapshot())
 }
 
 // rememberDefaultChatLLMNo persists llmNo as the seed for future sessions.
-// Best effort on purpose: a config write failure must not break the settings
-// update the user just made.
+// Request-scoped chat servers use an in-memory instance Store, so persist the
+// preference through the base Store instead. This remains best effort: a
+// config write failure must not undo the session settings already saved.
 func (s *Server) rememberDefaultChatLLMNo(llmNo int) {
-	if s == nil || s.CfgStore == nil || llmNo < 0 {
+	if s == nil || llmNo < 0 {
+		return
+	}
+	store := s.BaseCfgStore
+	if store == nil {
+		store = s.CfgStore
+	}
+	if store == nil {
 		return
 	}
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := s.CfgStore.Cfg
+	cfg := store.Snapshot()
 	if cfg.ChatDefaultLLMNo == llmNo {
 		return
 	}
 	cfg.ChatDefaultLLMNo = llmNo
-	_ = s.CfgStore.Save(cfg)
+	_ = store.Save(cfg)
 }
 
 type chatSession struct {
@@ -1231,7 +1239,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		return err
 	}
@@ -1262,7 +1270,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	fallback = append(fallback, final)
 	cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallback...)
 	cs.UpdatedAt = now.Unix()
-	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 }
 
 func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {
@@ -1389,7 +1397,7 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flusher http.Flusher, cs *chatSession, err error) {
 	msg := chatMessage{ID: newChatID(), Role: "assistant", Content: fmt.Sprintf("提交失败：%v", err), CreatedAt: time.Now().Unix(), Error: true}
 	cs.Messages = append(cs.Messages, msg)
-	_ = saveChatSession(s.CfgStore.Cfg, *cs)
+	_ = saveChatSession(s.CfgStore.Snapshot(), *cs)
 	_ = enc.Encode(map[string]interface{}{"type": "error", "message": msg})
 	if flusher != nil {
 		flusher.Flush()
@@ -1728,7 +1736,7 @@ func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
 		return w, nil
 	}
 	s.ChatMu.Unlock()
-	worker, err := startChatWorkerFunc(s.CfgStore.Cfg, sid)
+	worker, err := startChatWorkerFunc(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		return nil, err
 	}
@@ -2027,14 +2035,14 @@ func (s *Server) mutateChatSession(sid string, token *chatRun, mutate func(*chat
 	if s.chatSessionMutationHook != nil {
 		s.chatSessionMutationHook()
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		return chatSession{}, err
 	}
 	if err = mutate(&cs); err != nil {
 		return chatSession{}, err
 	}
-	err = saveChatSessionLocked(s.CfgStore.Cfg, cs)
+	err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	return cs, err
 }
 
@@ -2108,13 +2116,13 @@ func replacePendingChatMessage(messages []chatMessage, pendingID string, final c
 func (s *Server) saveChatSessionMerged(cs chatSession) error {
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
-	latest, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	latest, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID)
 	if err != nil {
 		return err
 	}
 	cs.Messages = mergeChatMessageLists(latest.Messages, cs.Messages)
 	preserveLatestChatTitle(&cs, latest)
-	return saveChatSession(s.CfgStore.Cfg, cs)
+	return saveChatSession(s.CfgStore.Snapshot(), cs)
 }
 
 func (s *Server) saveChatSessionExact(cs chatSession) error {
@@ -2125,10 +2133,10 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 	}
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
-	if latest, err := loadChatSession(s.CfgStore.Cfg, cs.ID); err == nil {
+	if latest, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID); err == nil {
 		preserveLatestChatTitle(&cs, latest)
 	}
-	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 }
 
 func preserveLatestChatTitle(candidate *chatSession, latest chatSession) {
@@ -2142,14 +2150,14 @@ func preserveLatestChatTitle(candidate *chatSession, latest chatSession) {
 func (s *Server) persistChatSessionIfMissing(cs chatSession) error {
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
-	_, err := os.Stat(chatSessionPath(s.CfgStore.Cfg, cs.ID))
+	_, err := os.Stat(chatSessionPath(s.CfgStore.Snapshot(), cs.ID))
 	if err == nil {
 		return nil
 	}
 	if !os.IsNotExist(err) {
 		return err
 	}
-	return saveChatSessionLocked(s.CfgStore.Cfg, cs)
+	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 }
 
 func saveChatSession(cfg config.AppConfig, cs chatSession) error {
@@ -2420,7 +2428,7 @@ func chatTitleNeedsAutomaticBackfill(cs chatSession) bool {
 }
 
 func (s *Server) chatTitleLLMNo(fallback int) int {
-	selected := s.CfgStore.Cfg.ChatTitleModel
+	selected := s.CfgStore.Snapshot().ChatTitleModel
 	if selected == nil || !selected.Enable {
 		return -1 // Disabled by default or explicitly
 	}
@@ -2473,11 +2481,11 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 
 	go func() {
 		defer s.finishChatTitleJob(sid)
-		title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
+		title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Snapshot(), sid, map[string]interface{}{
 			"op":           "title",
 			"conversation": exchange,
 			"llm_no":       llmNo,
-			"ga_root":      s.CfgStore.Cfg.GARoot,
+			"ga_root":      s.CfgStore.Snapshot().GARoot,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "chat title generation failed for %s: %v\n", sid, err)
@@ -2489,7 +2497,7 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 		}
 		s.SessionMu.Lock()
 		defer s.SessionMu.Unlock()
-		latest, err := loadChatSession(s.CfgStore.Cfg, sid)
+		latest, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 		if err != nil || latest.TitleSource == chatTitleSourceManual || latest.TitleSource == chatTitleSourceGenerated {
 			return
 		}
@@ -2503,7 +2511,7 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 		}
 		latest.Title = title
 		latest.TitleSource = chatTitleSourceGenerated
-		if err := saveChatSessionLocked(s.CfgStore.Cfg, latest); err != nil {
+		if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
 			fmt.Fprintf(os.Stderr, "chat title persistence failed for %s: %v\n", sid, err)
 		}
 	}()
@@ -2520,7 +2528,7 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 	defer s.finishChatTitleJob(sid)
 
 	s.SessionMu.Lock()
-	start, err := loadChatSession(s.CfgStore.Cfg, sid)
+	start, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		s.SessionMu.Unlock()
 		return chatSession{}, err
@@ -2541,11 +2549,11 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 		return chatSession{}, errChatTitleNoContext
 	}
 
-	title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Cfg, sid, map[string]interface{}{
+	title, err := runOneShotChatTitleWorkerFunc(s.CfgStore.Snapshot(), sid, map[string]interface{}{
 		"op":           "title",
 		"conversation": context,
 		"llm_no":       llmNo,
-		"ga_root":      s.CfgStore.Cfg.GARoot,
+		"ga_root":      s.CfgStore.Snapshot().GARoot,
 	})
 	if err != nil {
 		return chatSession{}, err
@@ -2557,7 +2565,7 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
-	latest, err := loadChatSession(s.CfgStore.Cfg, sid)
+	latest, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		return chatSession{}, err
 	}
@@ -2566,20 +2574,20 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 	}
 	latest.Title = title
 	latest.TitleSource = chatTitleSourceGenerated
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, latest); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
 		return chatSession{}, err
 	}
 	return latest, nil
 }
 
 func (s *Server) automaticChatTitleBackfillCandidates() ([]string, error) {
-	if err := ensureChatDataMigrated(s.CfgStore.Cfg); err != nil {
+	if err := ensureChatDataMigrated(s.CfgStore.Snapshot()); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755); err != nil {
+	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Snapshot()), 0755); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
+	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Snapshot()))
 	if err != nil {
 		return nil, err
 	}
@@ -2593,7 +2601,7 @@ func (s *Server) automaticChatTitleBackfillCandidates() ([]string, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		cs, loadErr := loadChatSession(s.CfgStore.Cfg, strings.TrimSuffix(entry.Name(), ".json"))
+		cs, loadErr := loadChatSession(s.CfgStore.Snapshot(), strings.TrimSuffix(entry.Name(), ".json"))
 		if loadErr == nil && chatTitleNeedsAutomaticBackfill(cs) {
 			candidates = append(candidates, candidate{id: cs.ID, updatedAt: cs.UpdatedAt})
 		}

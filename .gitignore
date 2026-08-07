@@ -3,6 +3,7 @@
 /web/dist/
 *.exe
 config.local.json
+*.local.json
 model_profiles.json
 web/node_modules/
 .gitnexus

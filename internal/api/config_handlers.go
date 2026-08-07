@@ -25,7 +25,7 @@ import (
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
-		writeJSON(w, s.CfgStore.Cfg)
+		writeJSON(w, s.CfgStore.Snapshot())
 		return
 	}
 	if r.Method == "PUT" {
@@ -36,7 +36,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		if err := s.CfgStore.Save(c); err != nil {
+		if err := s.saveConfigAndReconcile(c); err != nil {
 			bad(w, 400, err.Error())
 			return
 		}
@@ -90,15 +90,15 @@ func (s *Server) setupEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	gitStatus := checkTool("git", "--version")
-	pythonStatus := checkPythonForSetup(s.CfgStore.Cfg)
+	pythonStatus := checkPythonForSetup(s.CfgStore.Snapshot())
 	writeJSON(w, map[string]interface{}{
 		"ok":                pythonStatus.OK,
 		"tools":             []setupToolStatus{gitStatus, pythonStatus, checkTool("uv", "--version"), checkTool("npm", "--version")},
 		"git_required":      false,
 		"archive_fallback":  true,
 		"python_installer":  runtime.GOOS == "windows",
-		"configured_python": strings.TrimSpace(s.CfgStore.Cfg.PythonPath),
-		"effective_python":  strings.TrimSpace(s.CfgStore.Cfg.EffectivePython),
+		"configured_python": strings.TrimSpace(s.CfgStore.Snapshot().PythonPath),
+		"effective_python":  strings.TrimSpace(s.CfgStore.Snapshot().EffectivePython),
 		"checked":           time.Now().Format(time.RFC3339),
 	})
 }
@@ -265,9 +265,11 @@ func runGitCommand(ctx context.Context, root string, args ...string) (string, er
 const setupInstallCloneTimeout = 5 * time.Minute
 const setupCommandTimeout = 20 * time.Minute
 const setupPythonInstallTimeout = 15 * time.Minute
+const genericAgentArchivePrimaryTimeout = 20 * time.Second
 
 const genericAgentRepoURL = "https://github.com/lsdefine/GenericAgent"
 const genericAgentArchiveURL = genericAgentRepoURL + "/archive/refs/heads/main.zip"
+const genericAgentArchiveFallbackURL = "https://codeload.github.com/lsdefine/GenericAgent/zip/refs/heads/main"
 const defaultWindowsPythonURL = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
 
 func runSetupClone(ctx context.Context, dest string) (string, error) {
@@ -295,7 +297,28 @@ func installGenericAgentSource(ctx context.Context, dest string) (string, string
 }
 
 var downloadAndExtractGenericAgentArchive = func(ctx context.Context, dest string) (string, error) {
-	return downloadAndExtractZipRoot(ctx, genericAgentArchiveURL, dest)
+	return downloadGenericAgentArchiveWithFallback(ctx, dest, downloadAndExtractZipRoot)
+}
+
+func downloadGenericAgentArchiveWithFallback(
+	ctx context.Context,
+	dest string,
+	download func(context.Context, string, string) (string, error),
+) (string, error) {
+	primaryCtx, cancelPrimary := context.WithTimeout(ctx, genericAgentArchivePrimaryTimeout)
+	out, primaryErr := download(primaryCtx, genericAgentArchiveURL, dest)
+	cancelPrimary()
+	if primaryErr == nil {
+		return out, nil
+	}
+	if ctx.Err() != nil {
+		return "", primaryErr
+	}
+	fallbackOut, fallbackErr := download(ctx, genericAgentArchiveFallbackURL, dest)
+	if fallbackErr != nil {
+		return "", fmt.Errorf("primary archive failed: %v; codeload fallback failed: %w", primaryErr, fallbackErr)
+	}
+	return strings.TrimSpace(fmt.Sprintf("primary archive failed: %v\ncodeload fallback: %s", primaryErr, fallbackOut)), nil
 }
 
 func downloadAndExtractZipRoot(ctx context.Context, archiveURL, dest string) (string, error) {
@@ -470,7 +493,7 @@ func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if root == "" {
 		bad(w, 400, "ga_root is not configured")
 		return
@@ -513,7 +536,7 @@ func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if root == "" {
 		bad(w, 400, "ga_root is not configured")
 		return
@@ -574,7 +597,7 @@ func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	root := strings.TrimSpace(cfg.GARoot)
 	state := map[string]interface{}{
 		"ok":             true,
@@ -650,7 +673,7 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -661,20 +684,21 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), setupCommandTimeout)
 	defer cancel()
-	out, err := runSetupCommandOutputFunc(ctx, root, pythonForSetup(root, s.CfgStore.Cfg), "-m", "venv", setupVenvDir(root))
+	out, err := runSetupCommandOutputFunc(ctx, root, pythonForSetup(root, s.CfgStore.Snapshot()), "-m", "venv", setupVenvDir(root))
 	if err != nil {
 		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	cfg.PythonPath = setupVenvPython(root)
+	cfg.SyncDefaultInstanceFromLegacy()
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.Svc.SetRoot(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython, s.CfgStore.Cfg.BufferLines)
-	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "venv": setupVenvStatus(root), "output": strings.TrimSpace(out), "config": s.CfgStore.Cfg})
+	s.Svc.SetRoot(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython, s.CfgStore.Snapshot().BufferLines)
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "venv": setupVenvStatus(root), "output": strings.TrimSpace(out), "config": s.CfgStore.Snapshot()})
 }
 
 func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
@@ -682,7 +706,7 @@ func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -703,7 +727,7 @@ func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), setupCommandTimeout)
 	defer cancel()
-	python := pythonForSetup(root, s.CfgStore.Cfg)
+	python := pythonForSetup(root, s.CfgStore.Snapshot())
 	emit(setupStreamEvent{Type: "start", Line: fmt.Sprintf("%s -m pip install -e .", python)})
 	code, err := runSetupCommandStreamFunc(ctx, root, emit, python, "-m", "pip", "install", "-e", ".")
 	if err != nil {
@@ -718,7 +742,7 @@ func (s *Server) setupSmoke(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -730,7 +754,7 @@ func (s *Server) setupSmoke(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	python := pythonForSetup(root, s.CfgStore.Cfg)
+	python := pythonForSetup(root, s.CfgStore.Snapshot())
 	out, err := runSetupCommandOutputFunc(ctx, root, python, "-c", "import sys; print(sys.executable)")
 	if err != nil {
 		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
@@ -744,7 +768,7 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -754,7 +778,7 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "GA root health check failed")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	if py := setupVenvPython(root); strings.TrimSpace(cfg.PythonPath) == "" {
 		if _, err := os.Stat(py); err == nil {
@@ -762,12 +786,13 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg.BootstrapDone = true
+	cfg.SyncDefaultInstanceFromLegacy()
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.Svc.SetRoot(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython, s.CfgStore.Cfg.BufferLines)
-	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "health": h, "config": s.CfgStore.Cfg})
+	s.Svc.SetRoot(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython, s.CfgStore.Snapshot().BufferLines)
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "health": h, "config": s.CfgStore.Snapshot()})
 }
 
 func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
@@ -792,8 +817,9 @@ func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	h := ga.BuildHealth(abs)
 	if h.OK {
-		cfg := s.CfgStore.Cfg
+		cfg := s.CfgStore.Snapshot()
 		cfg.GARoot = abs
+		cfg.SyncDefaultInstanceFromLegacy()
 		if err := s.CfgStore.Save(cfg); err != nil {
 			bad(w, 500, err.Error())
 			return
@@ -822,14 +848,15 @@ func (s *Server) setupPythonInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, "Python installer completed but python.exe was not found")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.PythonPath = strings.TrimSpace(pythonPath)
+	cfg.SyncDefaultInstanceFromLegacy()
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.Svc.SetRoot(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython, s.CfgStore.Cfg.BufferLines)
-	writeJSON(w, map[string]interface{}{"ok": true, "python": s.CfgStore.Cfg.EffectivePython, "output": strings.TrimSpace(out), "config": s.CfgStore.Cfg})
+	s.Svc.SetRoot(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython, s.CfgStore.Snapshot().BufferLines)
+	writeJSON(w, map[string]interface{}{"ok": true, "python": s.CfgStore.Snapshot().EffectivePython, "output": strings.TrimSpace(out), "config": s.CfgStore.Snapshot()})
 }
 
 func runWindowsPythonInstaller(ctx context.Context) (string, string, error) {
@@ -944,7 +971,7 @@ func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, "clone completed but GenericAgent health check failed")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = targetAbs
 	if err := s.CfgStore.Save(cfg); err != nil {
 		bad(w, 500, err.Error())
@@ -993,7 +1020,7 @@ var startAutostartService = func(s *Server, name string) error {
 }
 
 func (s *Server) StartAutostartServices() {
-	for _, name := range s.CfgStore.Cfg.ServiceAutostart {
+	for _, name := range s.CfgStore.Snapshot().ServiceAutostart {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue

@@ -138,6 +138,11 @@ func normalizedMessageUsage(message chatMessage) (usageTotals, bool) {
 	for key, value := range values {
 		addUsageValue(&totals, key, value)
 	}
+	// Modern Claude usage reports uncached input, cache creation, and cache read
+	// as disjoint categories. Keep the latter two in Other for breakdowns while
+	// including them in the billed input total. Legacy cached_tokens is already
+	// a subset of input_tokens and must not be added again.
+	totals.InputTokens += totals.Other["cache_creation_tokens"] + totals.Other["cache_read_tokens"]
 	if totals.TotalTokens == 0 {
 		totals.TotalTokens = totals.InputTokens + totals.OutputTokens
 	}
