@@ -147,8 +147,8 @@ test('chat layout is shared instead of being coupled to the light palette', () =
   assert.doesNotMatch(lightChatRule, /(?:height|display|grid-template-columns|overflow|transition)\s*:/i)
 
   const sharedChatRule = ruleBodies('.oa-chat')
-    .find(rule => /grid-template-columns\s*:\s*260px\s+minmax\(0,\s*1fr\)/i.test(rule))
-  assert.ok(sharedChatRule, 'missing shared 260px chat layout')
+    .find(rule => /grid-template-columns\s*:\s*320px\s+minmax\(0,\s*1fr\)/i.test(rule))
+  assert.ok(sharedChatRule, 'missing shared 320px chat layout')
   assert.match(sharedChatRule, /height\s*:\s*100vh/i)
   assert.match(sharedChatRule, /overflow\s*:\s*hidden/i)
 })

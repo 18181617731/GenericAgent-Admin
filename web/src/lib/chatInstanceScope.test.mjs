@@ -22,6 +22,10 @@ test('renders the instance selector once at the top of the session sidebar', () 
   assert.ok(selector > sidebar && selector < search)
   assert.ok(search < sidebarEnd)
   assert.doesNotMatch(chatSource, /oa-instance-select|oa-mobile-instance-select/)
+  assert.doesNotMatch(chatSource, /刷新会话|Refresh sessions|RefreshCw/)
+  assert.equal((chatStyles.match(/grid-template-columns:\s*320px minmax\(0,1fr\)/g) || []).length, 2)
+  assert.equal((chatStyles.match(/\.oa-sidebar\s*\{[^}]*width:\s*320px/g) || []).length, 2)
+  assert.match(chatStyles, /width:min\(90vw,340px\)\s*!important/)
 })
 
 test('addChatInstanceToURL scopes only chat API routes and preserves query/hash', () => {

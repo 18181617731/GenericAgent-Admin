@@ -785,7 +785,7 @@ header p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; 
   min-height:100vh;
   height:100vh;
   display:grid;
-  grid-template-columns:260px minmax(0,1fr);
+  grid-template-columns:320px minmax(0,1fr);
   background: radial-gradient(circle at 74% 12%, rgba(16,163,127,.11), transparent 30%), radial-gradient(circle at 28% 86%, rgba(0,0,0,.045), transparent 32%), linear-gradient(180deg, #fffdf9 0%, var(--oa-bg) 58%, #f6f3ee 100%);
   color:var(--oa-text);
   font-family: var(--font);
@@ -1111,7 +1111,7 @@ html[data-theme="light"] .oa-chat {
 .oa-chat.is-collapsed .oa-main { grid-column:2; }
 .oa-chat.is-collapsed .oa-title { margin-left:0; }
  .oa-sidebar {
-  width:260px;
+  width:320px;
   background:var(--surface-muted) !important;
   border-right:1px solid var(--n-ededed);
   padding:8px;
@@ -13919,7 +13919,7 @@ html[data-color-scheme="dark"] .oa-project-toggle:hover { background:rgba(16,163
     position:fixed !important;
     inset:0 auto 0 0;
     z-index:320;
-    width:min(86vw,320px) !important;
+    width:min(90vw,340px) !important;
     height:100dvh !important;
     max-height:none;
     padding:max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
