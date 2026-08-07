@@ -15185,3 +15185,123 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   .channel-service-actions { align-items:flex-start; flex-direction:column; }
 }
 @media (prefers-reduced-motion:reduce) { .channel-config-card { transition:none; } .channel-config-card:hover { transform:none; } .channels-page .spin { animation:none; } }
+
+
+/* ===== Admin page header: one shared hierarchy across every management route ===== */
+.app:not(.app-tab-chat) .main > .admin-page-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 104px;
+  margin: 0 0 20px;
+  padding: 20px 22px;
+  overflow: hidden;
+  border: 1px solid var(--quiet-line);
+  border-radius: 18px;
+  background: var(--q-ffffffa84);
+  box-shadow: 0 1px 0 var(--g-ffffffa90) inset;
+}
+.app:not(.app-tab-chat) .main > .admin-page-header::before {
+  content: "";
+  position: absolute;
+  inset: 18px auto 18px 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  opacity: .78;
+}
+.admin-page-heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  min-width: 0;
+}
+.admin-page-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--quiet-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-strong));
+}
+.admin-page-icon svg { width: 19px; height: 19px; }
+.admin-page-copy { min-width: 0; }
+.app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy h2 {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: clamp(24px, 2.2vw, 31px);
+  font-weight: 650;
+  line-height: 1.08;
+  letter-spacing: -.035em;
+}
+.app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--quiet-muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.admin-page-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 34px;
+  padding-left: 18px;
+  border-left: 1px solid var(--quiet-line);
+  color: var(--quiet-muted);
+  font-size: 12px;
+  font-weight: 560;
+}
+.admin-page-endpoint,
+.admin-page-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.admin-page-endpoint svg { color: var(--quiet-muted); }
+.admin-page-health { color: var(--text); }
+.admin-page-health-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+.admin-page-health.is-ready { color: var(--green); }
+.admin-page-health.is-error { color: var(--red); }
+
+@media (max-width: 760px) {
+  .app:not(.app-tab-chat) .main > .admin-page-header {
+    display: grid;
+    gap: 15px;
+    min-height: 0;
+    padding: 17px 18px 15px;
+    border-radius: 16px;
+  }
+  .app:not(.app-tab-chat) .main > .admin-page-header::before { inset-block: 16px; }
+  .admin-page-meta {
+    width: 100%;
+    justify-content: space-between;
+    min-height: 0;
+    padding: 12px 0 0 57px;
+    border-top: 1px solid var(--quiet-line);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 440px) {
+  .app:not(.app-tab-chat) .main > .admin-page-header { padding-inline: 15px; }
+  .admin-page-heading { gap: 12px; }
+  .admin-page-icon { width: 38px; height: 38px; border-radius: 11px; }
+  .app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy h2 { font-size: 22px; }
+  .app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy p { font-size: 12.5px; }
+  .admin-page-meta { padding-left: 50px; }
+}

@@ -1224,7 +1224,16 @@ export default function App() {
         <button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={()=>setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button>
         <span>{t.appName}</span>
       </div>
-      <header><div><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span></div></header>
+      <header className="admin-page-header">
+        <div className="admin-page-heading">
+          <span className="admin-page-icon" aria-hidden="true">{icon(tab)}</span>
+          <div className="admin-page-copy"><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div>
+        </div>
+        <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}>
+          <span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span>
+          <span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span>
+        </div>
+      </header>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}

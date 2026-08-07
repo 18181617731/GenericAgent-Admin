@@ -1210,6 +1210,12 @@ describe('operator shell feedback', () => {
     const files = await screen.findByRole('button', { name: /文件|Files/i })
     const usage = screen.getByRole('button', { name: /用量总览|Usage/i })
     const overview = screen.getByRole('button', { name: /^(总览|Overview)$/i })
+    const pageHeader = document.querySelector('.admin-page-header')
+    expect(document.querySelectorAll('.admin-page-header')).toHaveLength(1)
+    expect(pageHeader?.querySelector('.admin-page-icon')?.getAttribute('aria-hidden')).toBe('true')
+    expect(pageHeader?.querySelector('.admin-page-meta')?.getAttribute('aria-label')).toMatch(/服务状态|Service status/i)
+    expect(pageHeader?.querySelector('.admin-page-health')?.getAttribute('role')).toBe('status')
+    expect(pageHeader?.querySelector('h2')?.textContent).toMatch(/总览|Overview/i)
     expect(overview.getAttribute('aria-current')).toBe('page')
     expect(usage.tagName).toBe('BUTTON')
     expect(usage.disabled).toBe(false)
@@ -1219,6 +1225,8 @@ describe('operator shell feedback', () => {
     fireEvent.click(files)
     expect(files.getAttribute('aria-current')).toBe('page')
     expect(files.disabled).toBe(false)
+    expect(document.querySelectorAll('.admin-page-header')).toHaveLength(1)
+    expect(document.querySelector('.admin-page-header h2')?.textContent).toMatch(/文件|Files/i)
   })
 
   test('mobile admin navigation opens and closes without trapping off-screen controls', async () => {
