@@ -63,6 +63,7 @@ export const I18N = {
     },
     channels: {
       title: '通道与前端服务', summary: '集中管理 GA 的模型通道密钥和上层前端进程。Secret 不回显，留空会保留现有值。', services: '服务', running: '运行中', keyConfig: '密钥配置', configFile: '配置文件', loadingConfig: '正在读取配置…', noConfigPath: '未读取到配置路径', refreshing: '刷新中…',
+      configTab: '渠道配置', servicesTab: '服务管理', configTabDesc: '管理各平台凭据与接入参数', servicesTabDesc: '控制前端服务与查看运行状态', channelViews: '通道管理视图',
       loadFailed: error => `读取通道配置失败：${error}`, saveConfirm: '写入通道配置会更新 GA mykey.py；Secret 留空将保留原值。确认继续？', saving: '正在写入 GA mykey.py…', saved: path => `已保存通道配置：${path}`, saveFailed: error => `保存失败：${error}`,
       testing: name => `正在测试 ${name} 凭据…`, testPassed: name => `${name}：测试通过`, testFailed: (name, error = '') => `${name}：测试失败${error ? ` · ${error}` : ''}`, testConnection: '测试连接', testingButton: '测试中…', savedField: '已保存', allowedUsersPlaceholder: 'user1,user2 或留空',
       profileNames: { feishu: '飞书 / Lark', lark: '飞书 / Lark', wecom: '企业微信', dingtalk: '钉钉', discord: 'Discord', qq: 'QQ', telegram: 'Telegram', wechat: '微信' },
@@ -109,6 +110,7 @@ export const I18N = {
     },
     channels: {
       title: 'Channels and frontend services', summary: 'Manage GA channel credentials and frontend processes in one place. Secrets are never echoed; leave them empty to preserve saved values.', services: 'Services', running: 'Running', keyConfig: 'Credentials', configFile: 'Configuration file', loadingConfig: 'Loading configuration…', noConfigPath: 'No configuration path available', refreshing: 'Refreshing…',
+      configTab: 'Channel config', servicesTab: 'Service management', configTabDesc: 'Manage platform credentials and connection settings', servicesTabDesc: 'Control frontend services and inspect runtime status', channelViews: 'Channel management views',
       loadFailed: error => `Failed to load channel configuration: ${error}`, saveConfirm: 'Writing channel configuration updates GA mykey.py. Empty secrets preserve their saved values. Continue?', saving: 'Writing GA mykey.py…', saved: path => `Channel configuration saved: ${path}`, saveFailed: error => `Save failed: ${error}`,
       testing: name => `Testing ${name} credentials…`, testPassed: name => `${name}: connection test passed`, testFailed: (name, error = '') => `${name}: connection test failed${error ? ` · ${error}` : ''}`, testConnection: 'Test connection', testingButton: 'Testing…', savedField: 'Saved', allowedUsersPlaceholder: 'user1,user2 or leave empty',
       profileNames: { feishu: 'Lark', lark: 'Lark', wecom: 'WeCom', dingtalk: 'DingTalk', discord: 'Discord', qq: 'QQ', telegram: 'Telegram', wechat: 'WeChat' },
@@ -1514,7 +1516,20 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState('')
   const [msg, setMsg] = useState(null)
+  const [activeView, setActiveView] = useState('config')
+  const tabRefs = useRef({})
   const text = t.channels
+  const selectView = view => {
+    setActiveView(view)
+    tabRefs.current[view]?.focus()
+  }
+  const handleTabKeyDown = event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    if (event.key === 'Home') return selectView('config')
+    if (event.key === 'End') return selectView('services')
+    selectView(activeView === 'config' ? 'services' : 'config')
+  }
   const profileName = profile => text.profileNames?.[profile.id] || profile.name
   const profileDescription = profile => text.profileDescriptions?.[profile.id] || profile.description
   const fieldLabel = field => text.fieldLabels?.[field.name] || field.label || field.name
@@ -1570,8 +1585,46 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
       <div><span>{configuredCount}</span><small>{text.savedField}</small></div>
       <div className={runningCount ? 'is-live' : ''}><span>{runningCount}<i/></span><small>{text.running} / {frontendSvcs.length}</small></div>
     </div>
+    <div className="channel-view-tabs" role="tablist" aria-label={text.channelViews}>
+      <button
+        ref={node => { tabRefs.current.config = node }}
+        id="channel-tab-config"
+        className={activeView === 'config' ? 'is-active' : ''}
+        role="tab"
+        aria-selected={activeView === 'config'}
+        aria-controls="channel-panel-config"
+        tabIndex={activeView === 'config' ? 0 : -1}
+        onClick={() => selectView('config')}
+        onKeyDown={handleTabKeyDown}
+      >
+        <span className="channel-tab-icon"><Globe2 size={18}/></span>
+        <span className="channel-tab-copy"><strong>{text.configTab}</strong><small>{text.configTabDesc}</small></span>
+        <em>{configuredCount}/{profiles.length || 0}</em>
+      </button>
+      <button
+        ref={node => { tabRefs.current.services = node }}
+        id="channel-tab-services"
+        className={activeView === 'services' ? 'is-active' : ''}
+        role="tab"
+        aria-selected={activeView === 'services'}
+        aria-controls="channel-panel-services"
+        tabIndex={activeView === 'services' ? 0 : -1}
+        onClick={() => selectView('services')}
+        onKeyDown={handleTabKeyDown}
+      >
+        <span className="channel-tab-icon"><Server size={18}/></span>
+        <span className="channel-tab-copy"><strong>{text.servicesTab}</strong><small>{text.servicesTabDesc}</small></span>
+        <em>{runningCount}/{frontendSvcs.length}</em>
+      </button>
+    </div>
     <div className="channels-layout">
-      <section className="channels-panel channel-key-panel">
+      <section
+        id="channel-panel-config"
+        className="channels-panel channel-key-panel"
+        role="tabpanel"
+        aria-labelledby="channel-tab-config"
+        hidden={activeView !== 'config'}
+      >
         <div className="channel-workspace-head">
           <div>
             <span className="channel-section-index">01</span>
@@ -1617,10 +1670,18 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
           {!loading && !profiles.length && <p className="empty-cell">{t.empty}</p>}
         </div>
       </section>
-      <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
-        <div className="channel-services-intro"><span className="channel-section-index">02</span><p>{t.desc.channels}</p></div>
-        <ChannelServiceTable services={frontendSvcs} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
-      </Panel>
+      <section
+        id="channel-panel-services"
+        className="channel-services-view"
+        role="tabpanel"
+        aria-labelledby="channel-tab-services"
+        hidden={activeView !== 'services'}
+      >
+        <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
+          <div className="channel-services-intro"><span className="channel-section-index">02</span><p>{t.desc.channels}</p></div>
+          <ChannelServiceTable services={frontendSvcs} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
+        </Panel>
+      </section>
     </div>
   </section>
 }
