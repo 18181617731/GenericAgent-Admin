@@ -464,7 +464,7 @@ func (s *Server) usageOverview(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ledger = enrichUsageLedgerMetadata(s.CfgStore.Cfg, ledger)
+	ledger = enrichUsageLedgerMetadata(s.CfgStore.Snapshot(), ledger)
 
 	response := usageOverviewResponse{
 		Models:          []usageBreakdown{},
@@ -576,7 +576,7 @@ func (s *Server) usageExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ledger = enrichUsageLedgerMetadata(s.CfgStore.Cfg, ledger)
+	ledger = enrichUsageLedgerMetadata(s.CfgStore.Snapshot(), ledger)
 	records := filterUsageRecords(usageRecordsFromLedger(ledger, s.usageModelCatalog()), query)
 	truncated := len(records) > maxUsageExportRecords
 	if truncated {

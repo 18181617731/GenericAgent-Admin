@@ -290,7 +290,7 @@ func TestWorldlineActivationCarriesPersistedSessionState(t *testing.T) {
 func TestWorldlineStateHandlerActivatesWhenRequested(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	const sid = "state-activation"
-	if err := saveChatSession(s.CfgStore.Cfg, chatSession{ID: sid, Title: sid, Messages: []chatMessage{{ID: "seed", Role: "user", Content: "seed", CreatedAt: 1}}, Settings: normalizeChatSettings(chatSettings{})}); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Title: sid, Messages: []chatMessage{{ID: "seed", Role: "user", Content: "seed", CreatedAt: 1}}, Settings: normalizeChatSettings(chatSettings{})}); err != nil {
 		t.Fatal(err)
 	}
 	installWorldlineTestWorker(t, s, sid)

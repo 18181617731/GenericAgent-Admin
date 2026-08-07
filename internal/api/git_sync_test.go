@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"genericagent-admin-go/internal/config"
 )
 
 func TestGaGitStatusDistinguishesRemoteLatestFromSynchronized(t *testing.T) {
@@ -48,7 +50,7 @@ func TestGaGitStatusDistinguishesRemoteLatestFromSynchronized(t *testing.T) {
 func TestGaGitStatusFetchesOriginOnly(t *testing.T) {
 	root := gitSyncTestRoot(t)
 	s := newConfigTestServer(t)
-	s.CfgStore.Cfg.GARoot = root
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.GARoot = root })
 	oldRunGit := runGitCommandFunc
 	t.Cleanup(func() { runGitCommandFunc = oldRunGit })
 	fetchArgs := ""
@@ -99,12 +101,12 @@ func TestGaGitStatusBlocksNonOriginTrackingBranch(t *testing.T) {
 func TestGaGitUpdateRunsDailyAutoSyncStrategy(t *testing.T) {
 	root := gitSyncTestRoot(t)
 	s := newConfigTestServer(t)
-	s.CfgStore.Cfg.GARoot = root
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.GARoot = root })
 	configuredPython := filepath.Join(root, "python-test.exe")
 	if err := os.WriteFile(configuredPython, []byte("stub"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	s.CfgStore.Cfg.EffectivePython = configuredPython
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.PythonPath = configuredPython })
 	oldRunGit := runGitCommandFunc
 	oldAutoSync := runGAAutoSyncFunc
 	t.Cleanup(func() { runGitCommandFunc = oldRunGit; runGAAutoSyncFunc = oldAutoSync })
@@ -157,7 +159,7 @@ func TestGaGitUpdateRunsDailyAutoSyncStrategy(t *testing.T) {
 func TestGaGitUpdateRejectsNonOriginTrackingBranch(t *testing.T) {
 	root := gitSyncTestRoot(t)
 	s := newConfigTestServer(t)
-	s.CfgStore.Cfg.GARoot = root
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.GARoot = root })
 	oldRunGit := runGitCommandFunc
 	oldAutoSync := runGAAutoSyncFunc
 	t.Cleanup(func() { runGitCommandFunc = oldRunGit; runGAAutoSyncFunc = oldAutoSync })

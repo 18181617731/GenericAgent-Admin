@@ -10,7 +10,7 @@ import (
 func (s *Server) autonomousApprovals(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		overview, err := ga.BuildAutonomousApprovals(s.CfgStore.Cfg.GARoot)
+		overview, err := ga.BuildAutonomousApprovals(s.CfgStore.Snapshot().GARoot)
 		if err != nil {
 			bad(w, http.StatusInternalServerError, err.Error())
 			return
@@ -33,7 +33,7 @@ func (s *Server) autonomousApprovalDecision(w http.ResponseWriter, r *http.Reque
 		bad(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	overview, queued, err := ga.DecideAutonomousApproval(s.CfgStore.Cfg.GARoot, req.ID, req.Decision, req.Note)
+	overview, queued, err := ga.DecideAutonomousApproval(s.CfgStore.Snapshot().GARoot, req.ID, req.Decision, req.Note)
 	if err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return

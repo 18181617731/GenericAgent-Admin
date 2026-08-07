@@ -7,23 +7,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"genericagent-admin-go/internal/config"
 )
 
 func TestChatSearchFindsTitlesContentAndProjects(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, chatSession{
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), chatSession{
 		ID: "title-hit", Title: "模型切换记录", UpdatedAt: 30, Messages: []chatMessage{{ID: "m1", Role: "user", Content: "验证模型顺序", CreatedAt: 30}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, chatSession{
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), chatSession{
 		ID: "content-hit", Title: "日常记录", UpdatedAt: 20, Messages: []chatMessage{{ID: "m2", Role: "assistant", Content: "北京时间现在是下午三点", CreatedAt: 20}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, chatSession{
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), chatSession{
 		ID: "project-hit", Title: "项目讨论", ProjectMode: "release-tools", UpdatedAt: 10, Messages: []chatMessage{{ID: "m3", Role: "user", Content: "准备发布", CreatedAt: 10}},
 	}); err != nil {
 		t.Fatal(err)
@@ -63,12 +67,14 @@ func TestChatSearchFindsTitlesContentAndProjects(t *testing.T) {
 func TestChatSearchUsesRecentOrderAndSafeValidation(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
 	for _, session := range []chatSession{
 		{ID: "older", Title: "相同关键词旧", UpdatedAt: 1, Messages: []chatMessage{{Content: "关键词"}}},
 		{ID: "newer", Title: "相同关键词新", UpdatedAt: 2, Messages: []chatMessage{{Content: "关键词"}}},
 	} {
-		if err := saveChatSessionLocked(s.CfgStore.Cfg, session); err != nil {
+		if err := saveChatSessionLocked(s.CfgStore.Snapshot(), session); err != nil {
 			t.Fatal(err)
 		}
 	}

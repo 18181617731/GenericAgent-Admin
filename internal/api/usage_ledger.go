@@ -241,12 +241,12 @@ func (s *Server) loadOrMigrateUsageLedger() (usageLedger, int, error) {
 	defer s.UsageMu.Unlock()
 	ledger, err := readUsageLedger(s.CfgStore.Snapshot())
 	if err == nil {
-		ledger, changed, ingestErr := ingestUsageEvents(s.CfgStore.Cfg, ledger)
+		ledger, changed, ingestErr := ingestUsageEvents(s.CfgStore.Snapshot(), ledger)
 		if ingestErr != nil {
 			return usageLedger{}, 0, ingestErr
 		}
 		if changed {
-			if err := writeUsageLedger(s.CfgStore.Cfg, ledger); err != nil {
+			if err := writeUsageLedger(s.CfgStore.Snapshot(), ledger); err != nil {
 				return usageLedger{}, 0, err
 			}
 		}
@@ -255,16 +255,16 @@ func (s *Server) loadOrMigrateUsageLedger() (usageLedger, int, error) {
 	if !os.IsNotExist(err) {
 		return usageLedger{}, 0, err
 	}
-	ledger, skipped, err := migrateUsageLedger(s.CfgStore.Cfg)
+	ledger, skipped, err := migrateUsageLedger(s.CfgStore.Snapshot())
 	if err != nil {
 		return usageLedger{}, 0, err
 	}
-	ledger, changed, err := ingestUsageEvents(s.CfgStore.Cfg, ledger)
+	ledger, changed, err := ingestUsageEvents(s.CfgStore.Snapshot(), ledger)
 	if err != nil {
 		return usageLedger{}, 0, err
 	}
 	if changed {
-		err = writeUsageLedger(s.CfgStore.Cfg, ledger)
+		err = writeUsageLedger(s.CfgStore.Snapshot(), ledger)
 	}
 	return ledger, skipped, err
 }
@@ -272,15 +272,15 @@ func (s *Server) loadOrMigrateUsageLedger() (usageLedger, int, error) {
 func (s *Server) readUsageLedgerOnly() (usageLedger, error) {
 	s.UsageMu.Lock()
 	defer s.UsageMu.Unlock()
-	ledger, err := readUsageLedger(s.CfgStore.Cfg)
+	ledger, err := readUsageLedger(s.CfgStore.Snapshot())
 	if os.IsNotExist(err) {
 		ledger = usageLedger{Version: usageLedgerVersion, Entries: []usageLedgerEntry{}}
-		return ingestUsageEventsOnly(s.CfgStore.Cfg, ledger)
+		return ingestUsageEventsOnly(s.CfgStore.Snapshot(), ledger)
 	}
 	if err != nil {
 		return usageLedger{}, err
 	}
-	return ingestUsageEventsOnly(s.CfgStore.Cfg, ledger)
+	return ingestUsageEventsOnly(s.CfgStore.Snapshot(), ledger)
 }
 
 func ingestUsageEventsOnly(cfg config.AppConfig, ledger usageLedger) (usageLedger, error) {
@@ -359,7 +359,7 @@ func (s *Server) recordSessionUsage(cs chatSession) error {
 		return err
 	}
 	var eventsChanged bool
-	ledger, eventsChanged, err = ingestUsageEvents(s.CfgStore.Cfg, ledger)
+	ledger, eventsChanged, err = ingestUsageEvents(s.CfgStore.Snapshot(), ledger)
 	if err != nil {
 		return err
 	}
@@ -403,14 +403,14 @@ func (s *Server) recordUsageEntries(entries []usageLedgerEntry) error {
 	}
 	s.UsageMu.Lock()
 	defer s.UsageMu.Unlock()
-	ledger, err := readUsageLedger(s.CfgStore.Cfg)
+	ledger, err := readUsageLedger(s.CfgStore.Snapshot())
 	if os.IsNotExist(err) {
-		ledger, _, err = migrateUsageLedger(s.CfgStore.Cfg)
+		ledger, _, err = migrateUsageLedger(s.CfgStore.Snapshot())
 	}
 	if err != nil {
 		return err
 	}
-	ledger, eventsChanged, err := ingestUsageEvents(s.CfgStore.Cfg, ledger)
+	ledger, eventsChanged, err := ingestUsageEvents(s.CfgStore.Snapshot(), ledger)
 	if err != nil {
 		return err
 	}
@@ -418,5 +418,5 @@ func (s *Server) recordUsageEntries(entries []usageLedgerEntry) error {
 	if !changed {
 		return nil
 	}
-	return writeUsageLedger(s.CfgStore.Cfg, ledger)
+	return writeUsageLedger(s.CfgStore.Snapshot(), ledger)
 }

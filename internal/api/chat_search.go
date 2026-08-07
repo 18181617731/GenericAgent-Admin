@@ -70,15 +70,15 @@ func (s *Server) chatSearch(w http.ResponseWriter, r *http.Request) {
 			limit = maxChatSearchLimit
 		}
 	}
-	if err := ensureChatDataMigrated(s.CfgStore.Cfg); err != nil {
+	if err := ensureChatDataMigrated(s.CfgStore.Snapshot()); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755); err != nil {
+	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Snapshot()), 0755); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
+	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Snapshot()))
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
@@ -91,7 +91,7 @@ func (s *Server) chatSearch(w http.ResponseWriter, r *http.Request) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		cs, loadErr := loadChatSession(s.CfgStore.Cfg, strings.TrimSuffix(entry.Name(), ".json"))
+		cs, loadErr := loadChatSession(s.CfgStore.Snapshot(), strings.TrimSuffix(entry.Name(), ".json"))
 		if loadErr != nil {
 			continue
 		}

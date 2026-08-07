@@ -79,7 +79,7 @@ func (s *Server) autonomousApprovalReview(w http.ResponseWriter, r *http.Request
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	overview, err := ga.BuildAutonomousApprovals(s.CfgStore.Cfg.GARoot)
+	overview, err := ga.BuildAutonomousApprovals(s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
@@ -97,7 +97,7 @@ func (s *Server) autonomousApprovalReview(w http.ResponseWriter, r *http.Request
 		}
 		results = append(results, result)
 	}
-	updated, err := ga.BuildAutonomousApprovals(s.CfgStore.Cfg.GARoot)
+	updated, err := ga.BuildAutonomousApprovals(s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
@@ -126,7 +126,7 @@ func autonomousReviewTargets(items []ga.AutonomousApproval, id string, ids []str
 }
 
 func (s *Server) reviewAutonomousApproval(item ga.AutonomousApproval, force bool) (ga.AutonomousReviewRecord, error) {
-	records, err := ga.LoadAutonomousReviews(s.CfgStore.Cfg.GARoot)
+	records, err := ga.LoadAutonomousReviews(s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		return ga.AutonomousReviewRecord{}, err
 	}
@@ -159,7 +159,7 @@ func (s *Server) reviewAutonomousApproval(item ga.AutonomousApproval, force bool
 	}
 	record.NextRetryAt = time.Time{}
 	record.UpdatedAt = time.Now()
-	return record, ga.SaveAutonomousReview(s.CfgStore.Cfg.GARoot, record)
+	return record, ga.SaveAutonomousReview(s.CfgStore.Snapshot().GARoot, record)
 }
 
 func findAutonomousReviewRecord(records []ga.AutonomousReviewRecord, id string) ga.AutonomousReviewRecord {
@@ -178,7 +178,7 @@ func (s *Server) saveAutonomousReviewFailure(record ga.AutonomousReviewRecord, e
 	record.ReviewReason = fmt.Sprintf("本轮审核调用失败，已按模型页面配置完成重试；这是第 %d 轮审核：%s；下次重新审核时会再次尝试", record.Attempts, redactProbeDetail(err.Error(), ""))
 	record.NextRetryAt = time.Now().Add(autonomousReviewCooldown)
 	record.UpdatedAt = time.Now()
-	return record, ga.SaveAutonomousReview(s.CfgStore.Cfg.GARoot, record)
+	return record, ga.SaveAutonomousReview(s.CfgStore.Snapshot().GARoot, record)
 }
 
 func (s *Server) resolveAutonomousReviewModel() (autonomousReviewModel, error) {
@@ -191,8 +191,9 @@ func (s *Server) resolveAutonomousReviewModel() (autonomousReviewModel, error) {
 		return autonomousReviewModel{}, fmt.Errorf("没有可用于审核的已启用模型")
 	}
 	desired := -1
-	if s.CfgStore.Cfg.ServiceModels != nil {
-		desired = s.CfgStore.Cfg.ServiceModels["reflect/autonomous.py"]
+	serviceModels := s.CfgStore.Snapshot().ServiceModels
+	if serviceModels != nil {
+		desired = serviceModels["reflect/autonomous.py"]
 	}
 	if desired >= 0 {
 		for _, model := range models {

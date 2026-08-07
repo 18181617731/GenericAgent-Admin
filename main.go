@@ -64,7 +64,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize admin authentication: %v", err)
 	}
-	addrs := adminListenAddresses(cfgStore.Cfg.Host, cfgStore.Cfg.Port, discoverTailscaleIPv4())
+	addrs := adminListenAddresses(cfgStore.Snapshot().Host, cfgStore.Snapshot().Port, discoverTailscaleIPv4())
 	url := "http://" + addrs[0]
 	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
 	srv.StartAutostartServices()

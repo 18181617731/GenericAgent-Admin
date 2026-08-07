@@ -17,9 +17,19 @@ import (
 func TestRuntimeRepairRebuildsDeletedConfiguredVenv(t *testing.T) {
 	s := newConfigTestServer(t)
 	root := t.TempDir()
-	missing := filepath.Join(root, "temp", ".venv", "Scripts", "python.exe")
-	s.CfgStore.Cfg = config.AppConfig{GARoot: root, PythonPath: missing, EffectivePython: missing, BufferLines: 1000}
 	managed := setupVenvPython(root)
+	if err := os.MkdirAll(filepath.Dir(managed), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+		cfg.GARoot, cfg.PythonPath, cfg.EffectivePython, cfg.BufferLines = root, managed, managed, 1000
+	})
+	if err := os.Remove(managed); err != nil {
+		t.Fatal(err)
+	}
 
 	oldBuild := buildRuntimeHealthForRepair
 	oldExecutable := runtimeRepairExecutablePath
@@ -60,17 +70,27 @@ func TestRuntimeRepairRebuildsDeletedConfiguredVenv(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if !result.OK || s.CfgStore.Cfg.PythonPath != managed || s.CfgStore.Cfg.EffectivePython != managed {
-		t.Fatalf("repair=%#v config=%#v", result, s.CfgStore.Cfg)
+	if !result.OK || s.CfgStore.Snapshot().PythonPath != managed || s.CfgStore.Snapshot().EffectivePython != managed {
+		t.Fatalf("repair=%#v config=%#v", result, s.CfgStore.Snapshot())
 	}
 }
 
 func TestRuntimeRepairHandlesMissingHealthAfterRebuild(t *testing.T) {
 	s := newConfigTestServer(t)
 	root := t.TempDir()
-	missing := filepath.Join(root, "temp", ".venv", "Scripts", "python.exe")
-	s.CfgStore.Cfg = config.AppConfig{GARoot: root, PythonPath: missing, EffectivePython: missing}
 	managed := setupVenvPython(root)
+	if err := os.MkdirAll(filepath.Dir(managed), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+		cfg.GARoot, cfg.PythonPath, cfg.EffectivePython = root, managed, managed
+	})
+	if err := os.Remove(managed); err != nil {
+		t.Fatal(err)
+	}
 
 	oldBuild := buildRuntimeHealthForRepair
 	oldExecutable := runtimeRepairExecutablePath

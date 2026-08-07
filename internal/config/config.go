@@ -435,6 +435,7 @@ func normalize(cfg AppConfig, root string) AppConfig {
 	cfg.PythonPath = strings.TrimSpace(cfg.PythonPath)
 	cfg.EffectivePython = effectivePython(cfg)
 	cfg.DefaultInstanceID = strings.TrimSpace(cfg.DefaultInstanceID)
+	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
 
 	instances := make([]InstanceConfig, 0, len(cfg.Instances)+1)
 	for _, instance := range cfg.Instances {
@@ -479,9 +480,16 @@ func normalize(cfg AppConfig, root string) AppConfig {
 			continue
 		}
 		// Keep the legacy single-instance fields as a compatibility mirror.
+		// The instance mirror wins for GARoot; a non-empty PythonPath that
+		// diverged from the mirror (set after the instance list was built) is
+		// kept so in-flight runtime overrides are not lost.
 		cfg.GARoot = instance.GARoot
-		cfg.PythonPath = instance.PythonPath
-		cfg.EffectivePython = instance.EffectivePython
+		if cfg.PythonPath == "" {
+			cfg.PythonPath = instance.PythonPath
+		}
+		if cfg.EffectivePython == "" || cfg.EffectivePython == instance.EffectivePython || cfg.EffectivePython == effectiveInstancePython(instance) {
+			cfg.EffectivePython = instance.EffectivePython
+		}
 		break
 	}
 	return cfg
@@ -541,27 +549,8 @@ func (s *Store) Load() error {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	if cfg.ChatDataDir == "" {
-		cfg.ChatDataDir = DefaultChatDataDir()
-	}
-	if cfg.Host == "" {
-		cfg.Host = "127.0.0.1"
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8787
-	}
-	if cfg.LogTailLines == 0 {
-		cfg.LogTailLines = 200
-	}
-	if cfg.BufferLines == 0 {
-		cfg.BufferLines = 1000
-	}
-	if cfg.ProxyMode == "" {
-		cfg.ProxyMode = "off"
-	}
 	clearMissingPythonPaths(&cfg)
-	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
-	cfg.EffectivePython = effectivePython(cfg)
+	cfg = normalize(cfg, s.Root)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
@@ -594,23 +583,10 @@ func (s *Store) Save(cfg AppConfig) error {
 	if s == nil {
 		return fmt.Errorf("config store is nil")
 	}
-	if cfg.Host == "" {
-		cfg.Host = "127.0.0.1"
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8787
-	}
-	if cfg.LogTailLines == 0 {
-		cfg.LogTailLines = 200
-	}
-	if cfg.BufferLines == 0 {
-		cfg.BufferLines = 1000
-	}
-	if cfg.ProxyMode == "" {
-		cfg.ProxyMode = "off"
-	}
-	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
-	cfg.EffectivePython = effectivePython(cfg)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg = normalize(cloneAppConfig(cfg), s.Root)
 	if err := Validate(cfg); err != nil {
 		return err
 	}

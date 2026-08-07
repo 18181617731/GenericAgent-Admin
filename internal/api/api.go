@@ -58,9 +58,21 @@ type Server struct {
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
-	server := &Server{CfgStore: cfg, Svc: svc, Models: models, Static: static, ReactApp: newReactAppBridge(), ChatRuns: map[string]*chatRun{}, ChatWorkers: map[string]*chatWorker{}, ChatTitleJobs: map[string]bool{}}
+	chatRuntimes := newChatRuntimeRegistry()
+	defaultRuntime := chatRuntimes.runtime("")
+	server := &Server{
+		CfgStore: cfg, BaseCfgStore: cfg, Svc: svc,
+		InstanceManagers: newInstanceManagerRegistry(cfg.Snapshot(), svc),
+		Models:           models, Static: static, ReactApp: newReactAppBridge(),
+		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
+		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
+		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
+		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
+		instanceInstallTasks: make(map[string]*instanceInstallTask),
+	}
+	server.resumeInstanceInstalls()
 	if cfg != nil && svc != nil {
-		svc.SetUsageDir(usageEventDir(cfg.Cfg))
+		svc.SetUsageDir(usageEventDir(cfg.Snapshot()))
 	}
 	return server
 }
@@ -77,7 +89,7 @@ func (s *Server) StartAutonomousMaintenance() {
 
 func (s *Server) autonomousReportCleanupLoop() {
 	cleanup := func() {
-		root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+		root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 		if root == "" {
 			return
 		}
@@ -125,6 +137,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/search", s.filesSearch)
 	mux.HandleFunc("/api/files/open", s.requireDangerousConfirm(s.filesOpen))
 	mux.HandleFunc("/api/files/image", s.filesImage)
+	mux.HandleFunc("/api/todos", s.projectTodos)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
 	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.scheduleTask))
 	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.scheduleCreate))
@@ -184,8 +197,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/usage/export", s.usageExport)
 	mux.HandleFunc("/api/chat/search", s.chatSearch)
-	mux.HandleFunc("/api/chat/sessions", s.chatSessions)
-	mux.HandleFunc("/api/chat/", s.chatHandler)
+	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
+	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
 	return recoverPanics(cors(mux))
@@ -311,7 +324,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := s.buildGARuntimeHealth()
-	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Cfg, "services": s.Svc.Summary(), "health": h})
+	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Snapshot(), "services": s.Svc.Summary(), "health": h})
 }
 
 func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
@@ -331,8 +344,9 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildGARuntimeHealth() ga.Health {
-	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
-	python := resolvePythonForRoot(root, s.CfgStore.Cfg.EffectivePython)
+	cfg := s.CfgStore.Snapshot()
+	root := strings.TrimSpace(cfg.GARoot)
+	python := resolvePythonForRoot(root, cfg.EffectivePython)
 	return s.buildGARuntimeHealthForWorker(root, python)
 }
 

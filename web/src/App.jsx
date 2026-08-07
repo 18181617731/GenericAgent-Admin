@@ -39,6 +39,7 @@ import { ProcessGuard } from './components/ProcessGuard'
 import { EnvironmentGuardianSection } from './components/ServicePlacement.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
 import { NotificationCenter } from './components/NotificationUI.jsx'
+import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
 import { collectNotificationEvents, buildNotificationSnapshot } from './lib/notificationMonitor.js'
 import { publishNotification } from './lib/notifications.js'
 import { SettingsPage } from './pages/SettingsPage.jsx'
@@ -1305,6 +1306,11 @@ export default function App() {
     onNavigate={navigateTo}
     onNavigateTaskSubTab={navigateTaskSubTab}
   />
+  const openTodoSource = item => {
+    const sourcePath = String(item?.sourcePath || item?.source_path || 'temp/TODO.txt').trim()
+    if (sourcePath) readFile(sourcePath)
+  }
+  const moduleTodo = module => <ModuleTodoPanel module={module} lang={lang} onNavigate={navigateTo} onOpenSource={openTodoSource}/>
 
   return <>
     {showLLMPicker && <div className="modal-overlay" onClick={() => setShowLLMPicker(false)}>
@@ -1330,9 +1336,9 @@ export default function App() {
       <GlobalFeedback message={msg} tone={notice?.kind === 'pending' ? 'progress' : notice?.kind} onDismiss={dismissMessage} onRetry={notice?.kind === 'error' ? refreshApp : undefined} retryLabel={t.retry} placement={tab === 'chat' ? 'top' : 'bottom'}/>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
-      {tab==='overview' && overviewPage}
+      {tab==='overview' && <>{overviewPage}{moduleTodo('overview')}</>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands} llms={llms}/>}
-      {tab==='notifications' && <NotificationsPage lang={lang} onOpen={openNotification}/>}
+      {tab==='notifications' && <><NotificationsPage lang={lang} onOpen={openNotification}/>{moduleTodo('notifications')}</>}
       {tab==='control' && <section>
         <div className="stats">
           <Stat label={t.cards.health} value={health?.ok ? 'OK' : 'FAIL'} icon={<ShieldAlert/>}/>
@@ -1368,9 +1374,9 @@ export default function App() {
           <Panel title={t.lists.riskHints}><EntryList items={(control?.risks || []).map(r=>({name:r.area,path:r.text,kind:r.level}))} empty="正常"/></Panel>
         </div>
       </section>}
-      {tab==='files' && <FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} revealFileInExplorer={revealFileInExplorer} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} discardChanges={discardFileChanges} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>}
+      {tab==='files' && <><FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} revealFileInExplorer={revealFileInExplorer} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} discardChanges={discardFileChanges} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>{moduleTodo('files')}</>}
 
-      {tab==='tasks' && <section className="tasks-page">
+      {tab==='tasks' && <><section className="tasks-page">
         <div className="stats schedule-stats">
           <div className="stat"><CalendarClock/><span>{t.lists.scheduledTasks}</span><b>{tasks.length}</b></div>
           <div className="stat"><CalendarClock/><span>{t.cards.enabledTasks || t.enabled}</span><b>{schedule.enabled || 0}</b></div>
@@ -1440,15 +1446,15 @@ export default function App() {
             <ScheduleArtifactPreview title={scheduleArtifactTitle} content={scheduleArtifact} empty={t.empty}/>
           </Panel>
         </div>}
-      </section>}
-      {tab==='memory' && <MemoryPage t={t} memory={inv.memory} onOpen={openMemoryEntry} onDownload={downloadFile} onReveal={entry => revealFileInExplorer(entry.path, 'folder')} onCopy={copyMemoryPath} onDiscuss={discussMemoryFile} onRefresh={refreshMemoryInventory} refreshing={memoryRefreshing}/>}
-      {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>}
-      {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
-      {tab==='usage' && <UsagePage lang={lang}/>}
-      {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
-      {tab==='settings' && <SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>}
-      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
-      {tab==='logs' && <section className="logs-page">
+      </section>{moduleTodo('tasks')}</>}
+      {tab==='memory' && <><MemoryPage t={t} memory={inv.memory} onOpen={openMemoryEntry} onDownload={downloadFile} onReveal={entry => revealFileInExplorer(entry.path, 'folder')} onCopy={copyMemoryPath} onDiscuss={discussMemoryFile} onRefresh={refreshMemoryInventory} refreshing={memoryRefreshing}/>{moduleTodo('memory')}</>}
+      {tab==='channels' && <><ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>{moduleTodo('channels')}</>}
+      {tab==='autonomous' && <><AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>{moduleTodo('autonomous')}</>}
+      {tab==='usage' && <><UsagePage lang={lang}/>{moduleTodo('usage')}</>}
+      {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
+      {tab==='settings' && <><SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>{moduleTodo('settings')}</>}
+      {tab==='models' && <><Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>{moduleTodo('models')}</>}
+      {tab==='logs' && <><section className="logs-page">
         <div className="logs-layout">
           <Panel title={t.lists.processes} className="logs-side">
             <div className="logs-toolbar">
@@ -1495,7 +1501,7 @@ export default function App() {
             </>}
           </Panel>
         </div>
-      </section>}        </Suspense>
+      </section>{moduleTodo('logs')}</>}        </Suspense>
   </ErrorBoundary>
     </main>
   </div>

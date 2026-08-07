@@ -44,7 +44,7 @@ func (s *Server) goalsStart(w http.ResponseWriter, r *http.Request) {
 		}
 		req.BudgetSeconds = req.BudgetMinutes * 60
 	}
-	meta, err := ga.StartGoal(s.CfgStore.Cfg.GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: s.CfgStore.Cfg.PythonPath, UsageDir: usageEventDir(s.CfgStore.Cfg), Hive: req.Hive})
+	meta, err := ga.StartGoal(s.CfgStore.Snapshot().GARoot, ga.GoalStartOptions{Objective: req.Objective, BudgetSeconds: req.BudgetSeconds, MaxTurns: req.MaxTurns, LLMNo: req.LLMNo, PythonPath: s.CfgStore.Snapshot().PythonPath, UsageDir: usageEventDir(s.CfgStore.Snapshot()), Hive: req.Hive})
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

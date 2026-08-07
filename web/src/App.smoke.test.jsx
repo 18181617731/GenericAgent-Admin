@@ -15,6 +15,7 @@ import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 import { SchedulerServiceRow } from './components/schedule.jsx'
 import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
 import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
+import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -2329,5 +2330,68 @@ describe('global feedback experience', () => {
   test('should expose successful feedback as a polite status', () => {
     render(<GlobalFeedback message="配置已保存" onDismiss={vi.fn()} successTimeout={0}/>)
     expect(screen.getByRole('status')).toBeTruthy()
+  })
+})
+
+describe('project TODO module panel', () => {
+  const payload = {
+    source_exists: true,
+    source_path: 'temp/TODO.txt',
+    total: 3,
+    open: 2,
+    completed: 1,
+    items: [
+      { id: 'task-1', title: '修复定时任务调度', module: 'tasks', status: 'queued', approved: true, summary: '任务需要按计划执行', line: 12 },
+      { id: 'model-1', title: '模型可用性检查', module: 'models', status: 'pending', line: 18 },
+      { id: 'file-1', title: '已归档文件清理', module: 'files', status: 'completed', line: 22 },
+    ],
+    modules: [
+      { module: 'tasks', total: 1, open: 1, completed: 0 },
+      { module: 'models', total: 1, open: 1, completed: 0 },
+      { module: 'files', total: 1, open: 0, completed: 1 },
+    ],
+  }
+
+  test('shows only the owning module, readable status, search, and source action', async () => {
+    globalThis.fetch = vi.fn(async url => {
+      expect(String(url)).toBe('/api/todos')
+      return jsonResponse(payload)
+    })
+    const onOpenSource = vi.fn()
+    render(<ModuleTodoPanel module="tasks" onOpenSource={onOpenSource}/>)
+
+    await screen.findByText('修复定时任务调度')
+    expect(screen.getByText('已批准，等待执行')).toBeTruthy()
+    expect(screen.queryByText('模型可用性检查')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '已完成' }))
+    expect(screen.getByText('没有匹配的待办')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '未完成' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索标题、章节或轮次' }), { target: { value: '调度' } })
+    expect(screen.getByText('修复定时任务调度')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '查看源文件：修复定时任务调度' }))
+    expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', sourcePath: 'temp/TODO.txt' }))
+  })
+
+  test('overview cards navigate to the related module', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(payload))
+    const onNavigate = vi.fn()
+    render(<ModuleTodoPanel module="overview" onNavigate={onNavigate}/>)
+    await screen.findByText('项目待办')
+    fireEvent.click(screen.getByTitle('进入模块：模型'))
+    expect(onNavigate).toHaveBeenCalledWith('models')
+  })
+
+  test('exposes a retry state when the TODO endpoint is temporarily unavailable', async () => {
+    let attempts = 0
+    globalThis.fetch = vi.fn(async () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('offline')
+      return jsonResponse(payload)
+    })
+    render(<ModuleTodoPanel module="tasks"/>)
+    await screen.findByText(/待办读取失败/)
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await screen.findByText('修复定时任务调度')
+    expect(attempts).toBe(2)
   })
 })

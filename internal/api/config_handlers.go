@@ -40,7 +40,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		c = s.CfgStore.Cfg
+		c = s.CfgStore.Snapshot()
 		s.Svc.SetRoot(c.GARoot, c.EffectivePython, c.BufferLines)
 		s.Svc.SetUsageDir(usageEventDir(c))
 		writeJSON(w, c)
@@ -573,7 +573,7 @@ func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "GA 仓库缺少 sche_tasks/git_autosync.py，无法执行 daily_git_pull_merge_push")
 		return
 	}
-	python := resolvePythonForRoot(abs, s.CfgStore.Cfg.EffectivePython)
+	python := resolvePythonForRoot(abs, s.CfgStore.Snapshot().EffectivePython)
 	syncOut, err := runGAAutoSyncFunc(ctx, python, gaGitSyncScript(abs), abs)
 	if err != nil {
 		bad(w, 500, strings.TrimSpace(syncOut+"\n"+err.Error()))

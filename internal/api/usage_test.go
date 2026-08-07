@@ -224,8 +224,8 @@ func TestUsageOverviewRejectsNonGet(t *testing.T) {
 
 func TestUsageOverviewFiltersAndPaginatesUsageRecords(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
+	cfg := s.CfgStore.Snapshot()
 	if err := os.MkdirAll(chatDataDir(cfg), 0o755); err != nil {
 		t.Fatalf("create chat data directory: %v", err)
 	}
@@ -267,8 +267,8 @@ func TestUsageOverviewFiltersAndPaginatesUsageRecords(t *testing.T) {
 
 func TestUsageExportIsReadOnlyAndReturnsCSV(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
+	cfg := s.CfgStore.Snapshot()
 	if err := os.MkdirAll(chatDataDir(cfg), 0o755); err != nil {
 		t.Fatalf("create chat data directory: %v", err)
 	}
@@ -312,8 +312,8 @@ func TestUsageOverviewRejectsInvalidRecordQuery(t *testing.T) {
 
 func TestEnrichUsageLedgerMetadataReadsSessionDetails(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
+	cfg := s.CfgStore.Snapshot()
 	llmNo := 3
 	session := chatSession{ID: "metadata-session", Title: "Renamed session", Messages: []chatMessage{{
 		ID: "reply", Role: "assistant", ModelID: "model-meta", LLMNo: &llmNo, CreatedAt: 99, ElapsedMS: 456,
@@ -333,8 +333,8 @@ func TestEnrichUsageLedgerMetadataReadsSessionDetails(t *testing.T) {
 
 func TestUsageEventsAreIngestedIdempotentlyIncludingInputOnlyUsage(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
-	cfg := s.CfgStore.Cfg
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
+	cfg := s.CfgStore.Snapshot()
 	if err := os.MkdirAll(usageEventDir(cfg), 0o755); err != nil {
 		t.Fatalf("create usage event directory: %v", err)
 	}

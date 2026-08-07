@@ -2465,7 +2465,7 @@ export function WorldlinePanel({ state, loading, switchingId, disabled, onClose,
   return <aside className="oa-context-drawer oa-worldline-drawer" aria-label="世界线分支">
     <div className="oa-context-head">
       <div><b>世界线</b><span>{!hasState && loading ? '正在读取世界线数据' : unavailable ? '当前会话暂无世界线数据' : `共 ${rows.length} 个节点 · ${branchCount} 个分支节点`}</span></div>
-      <div className="oa-context-actions"><button type="button" onClick={onRefresh} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button><button type="button" onClick={onClose} aria-label="关闭世界线"><X size={15}/></button></div>
+      <div className="oa-context-actions"><button className="oa-context-refresh" type="button" onClick={onRefresh} disabled={loading} title={loading ? '正在刷新世界线' : '刷新世界线'}><RefreshCw size={14}/><span>{loading ? '刷新中…' : '刷新'}</span></button><button type="button" onClick={onClose} aria-label="关闭世界线" title="关闭世界线"><X size={15}/></button></div>
     </div>
     {!hasState && <div className="oa-worldline-empty">{loading ? '正在初始化并读取当前会话的世界线…' : '还没有世界线记录，发送一条消息后再试。'}</div>}
     {unavailable && <div className="oa-worldline-empty">{worldlineUnavailableMessage(state)}</div>}
@@ -4719,7 +4719,6 @@ export default function ChatApp() {
         ><MessageSquarePlus size={17}/></button>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
-      <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
       <div className="oa-session-manager-head">
         <span className="oa-session-manager-title">{ct('历史会话', 'History')} <small>{sessions.length}</small></span>
         <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
@@ -4775,24 +4774,26 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
         <div className="oa-title"><b title={current ? shortTitle(current) : '新对话'}>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
-        <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={contextHelpText} aria-label={ct('查看模型上下文', 'View model context')}>
-          <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span><ChatFeatureHelp text={contextHelpText}/>
-        </button>
-        <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title={worldlineHelpText} aria-label={ct('查看和切换对话世界线', 'View and switch conversation branches')}>
-          <GitBranch size={16}/><span className="oa-context-label">世界线</span>{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}<ChatFeatureHelp text={worldlineHelpText}/>
-        </button>
-         <button
-          ref={mobileToolsTriggerRef}
-          className={`oa-icon-btn oa-mobile-tools-trigger ${mobileToolsOpen ? 'is-open' : ''}`}
-          type="button"
-          onClick={()=>setMobileToolsOpen(v=>!v)}
-          aria-label={ct('打开聊天工具', 'Open chat tools')}
-          aria-haspopup="dialog"
-          aria-expanded={mobileToolsOpen}
-          aria-controls="oa-mobile-tools-menu"
-          title={ct('上下文、世界线与配色', 'Context, timeline, and theme')}
-         ><MoreHorizontal size={18}/></button>
-         <NotificationCenter lang={chatLanguage()} />
+        <div className="oa-topbar-actions" aria-label={ct('聊天工具', 'Chat tools')}>
+          <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={contextHelpText} aria-label={ct('查看模型上下文', 'View model context')}>
+            <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span><ChatFeatureHelp text={contextHelpText}/>
+          </button>
+          <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title={worldlineHelpText} aria-label={ct('查看和切换对话世界线', 'View and switch conversation branches')}>
+            <GitBranch size={16}/><span className="oa-context-label">世界线</span>{(worldlineForView?.nodes?.length || 0) > 0 && <span className="oa-context-count">{worldlineForView.nodes.length}</span>}<ChatFeatureHelp text={worldlineHelpText}/>
+          </button>
+          <button
+            ref={mobileToolsTriggerRef}
+            className={`oa-icon-btn oa-mobile-tools-trigger ${mobileToolsOpen ? 'is-open' : ''}`}
+            type="button"
+            onClick={()=>setMobileToolsOpen(v=>!v)}
+            aria-label={ct('打开聊天工具', 'Open chat tools')}
+            aria-haspopup="dialog"
+            aria-expanded={mobileToolsOpen}
+            aria-controls="oa-mobile-tools-menu"
+            title={ct('上下文、世界线与配色', 'Context, timeline, and theme')}
+          ><MoreHorizontal size={18}/></button>
+          <NotificationCenter lang={chatLanguage()} />
+        </div>
       </header>
 
       {mobileToolsOpen && createPortal(<div className="oa-mobile-tools-layer">
