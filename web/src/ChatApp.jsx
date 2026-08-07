@@ -13,7 +13,7 @@ import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
-import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
@@ -913,10 +913,14 @@ function SubagentOutputBlock({ text, onAskReply, isRunning }) {
 
   const turnItems = turns.map(t => {
     const summaryText = t.children.find(s => s.type === 'summary')?.text || ''
-    const toolCount = t.children.filter(s => s.type === 'tool').length
-    const preview = summaryText
-      ? summaryText.slice(0, 52) + (summaryText.length > 52 ? '…' : '')
-      : toolCount > 0 ? `${toolCount} tool call${toolCount > 1 ? 's' : ''}` : ''
+    const fallbackSource = t.children.map((seg) => {
+      if (seg.type === 'tool') return `🛠️ ${seg.name}()`
+      if (seg.type === 'text') return seg.text
+      return ''
+    }).filter(Boolean).join('\n')
+    const fallbackText = assistantTurnFallbackTitle(fallbackSource, t.n)
+    const previewSource = summaryText || fallbackText
+    const preview = previewSource.slice(0, 52) + (previewSource.length > 52 ? '…' : '')
     const label = (
       <span className="sa-turn-label">
         <Tag color="purple" style={{ fontSize: 10, padding: '0 5px', lineHeight: '18px', marginRight: 6 }}>

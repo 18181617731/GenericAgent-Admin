@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, splitMarkdownParts, textRenderStats, previewLongText } from './chatTextSafety.js'
+import { MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, splitMarkdownParts, textRenderStats, previewLongText } from './chatTextSafety.js'
 
 test('many content lines do not trigger safe preview by line count alone', () => {
   const text = Array.from({ length: MARKDOWN_LINE_LIMIT + 20 }, (_, i) => `line ${i}`).join('\n')
@@ -85,6 +85,33 @@ test('assistant content is split into turns before large-text fallback', () => {
   assert.equal(textRenderStats(parsed.runs[0].body).tooLarge, false)
   assert.equal(textRenderStats(parsed.runs[1].body).tooLarge, false)
   assert.equal(parsed.body, 'final answer')
+})
+
+test('turn title falls back to unique tool names when summary is missing', () => {
+  const parsed = parseAssistantContent([
+    'LLM Running (Turn 7)',
+    '🛠️ code_run({"script":"test"})',
+    '📥 tool result',
+    '🛠️ web_scan({"text_only":true})',
+    '🛠️ code_run({"script":"build"})',
+  ].join('\n'))
+  assert.equal(parsed.runs[0].title, 'code_run · web_scan')
+})
+
+test('turn title falls back to cleaned body text when no summary or tool exists', () => {
+  const parsed = parseAssistantContent([
+    'LLM Running (Turn 8)',
+    '',
+    '## **Inspecting** [chat output](https://example.test)',
+    'More detail follows.',
+  ].join('\n'))
+  assert.equal(parsed.runs[0].title, 'Inspecting chat output')
+})
+
+test('turn title keeps summary priority and only uses Turn N for empty content', () => {
+  const withSummary = parseAssistantContent('LLM Running (Turn 9)\n<summary>Preferred summary</summary>\n🛠️ code_run({})')
+  assert.equal(withSummary.runs[0].title, 'Preferred summary')
+  assert.equal(assistantTurnFallbackTitle('📥 result only', 10), 'Turn 10')
 })
 
 test('assistant parser ignores transcript markers inside fenced tool output', () => {
