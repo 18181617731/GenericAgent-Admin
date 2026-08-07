@@ -112,6 +112,26 @@ afterEach(() => {
 })
 
 describe('channel frontend gates', () => {
+  test('ChannelsPage leaves the page heading to the app shell', async () => {
+    globalThis.fetch = vi.fn(() => Promise.resolve(jsonResponse({ profiles: [] })))
+
+    const { container } = render(
+      <ChannelsPage
+        frontendSvcs={[]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(container.querySelector('.channels-layout')).toBeTruthy())
+    expect(container.querySelector('header, h1, h2')).toBeNull()
+    expect(container.querySelector('.channel-console-metrics')).toBeTruthy()
+  })
+
   test('ChannelServiceTable routes reflect service start through onReflectStart', () => {
     const onStart = vi.fn()
     const onReflectStart = vi.fn()

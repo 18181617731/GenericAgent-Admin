@@ -1556,18 +1556,11 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   const channelTone = id => ({ feishu:'#3370ff', wecom:'#07c160', dingtalk:'#1677ff', discord:'#5865f2', qq:'#12b7f5', telegram:'#229ed9', wechat:'#2aae67' }[id] || '#6b7280')
   const channelMark = profile => ({ feishu:'飞', wecom:'企', dingtalk:'钉', discord:'D', qq:'Q', telegram:'T', wechat:'微' }[profile.id] || profileName(profile).slice(0, 1).toUpperCase())
   return <section className="channels-page">
-    <header className="channel-console-head">
-      <div className="channel-console-copy">
-        <span className="eyebrow"><Globe2 size={13}/> Channels</span>
-        <h2>{text.title}</h2>
-        <p>{text.summary}</p>
-      </div>
-      <div className="channel-console-metrics" aria-label="Channel overview">
-        <div><span>{profiles.length || '—'}</span><small>{text.keyConfig}</small></div>
-        <div><span>{configuredCount}</span><small>{text.savedField}</small></div>
-        <div className={runningCount ? 'is-live' : ''}><span>{runningCount}<i/></span><small>{text.running} / {frontendSvcs.length}</small></div>
-      </div>
-    </header>
+    <div className="channel-console-metrics" aria-label="Channel overview">
+      <div><span>{profiles.length || '—'}</span><small>{text.keyConfig}</small></div>
+      <div><span>{configuredCount}</span><small>{text.savedField}</small></div>
+      <div className={runningCount ? 'is-live' : ''}><span>{runningCount}<i/></span><small>{text.running} / {frontendSvcs.length}</small></div>
+    </div>
     <div className="channels-layout">
       <section className="channels-panel channel-key-panel">
         <div className="channel-workspace-head">

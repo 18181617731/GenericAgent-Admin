@@ -15110,13 +15110,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 
 /* Channels · communication switchboard (scoped redesign) */
 .channels-page { --channel-ink:var(--text); --channel-line:var(--border); max-width:none !important; width:100%; }
-.channel-console-head { position:relative; display:flex; justify-content:space-between; align-items:flex-end; gap:32px; margin-bottom:16px; padding:22px 24px; overflow:hidden; border:1px solid var(--channel-line); border-radius:18px; background:var(--surface); box-shadow:var(--shadow-tiny); }
-.channel-console-head::after { content:""; position:absolute; right:-32px; bottom:-56px; width:210px; height:110px; border:1px solid var(--border); border-radius:50%; opacity:.6; pointer-events:none; }
-.channel-console-copy { position:relative; z-index:1; max-width:720px; }
-.channel-console-copy .eyebrow { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font:700 11px/1 var(--mono); letter-spacing:.12em; }
-.channel-console-copy h2 { margin:8px 0 6px; max-width:720px; font-size:clamp(24px,2.5vw,38px); line-height:1.04; letter-spacing:-.045em; }
-.channel-console-copy p { max-width:680px; margin:0; color:var(--muted); line-height:1.55; }
-.channel-console-metrics { position:relative; z-index:1; display:grid; grid-template-columns:repeat(3,minmax(86px,1fr)); min-width:340px; border:1px solid var(--border); border-radius:13px; overflow:hidden; background:var(--surface-muted); }
+.channel-console-metrics { display:grid; grid-template-columns:repeat(3,minmax(86px,1fr)); width:min(100%,430px); margin:0 0 16px auto; border:1px solid var(--border); border-radius:13px; overflow:hidden; background:var(--surface-muted); }
 .channel-console-metrics>div { min-width:0; padding:11px 13px; border-left:1px solid var(--border); }
 .channel-console-metrics>div:first-child { border-left:0; }
 .channel-console-metrics span { display:flex; align-items:center; gap:7px; color:var(--channel-ink); font:750 20px/1 var(--mono); }
@@ -15180,9 +15174,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 .channels-page .channel-service-empty { border-radius:14px; }
 @media (max-width:1120px) { .channels-layout { grid-template-columns:1fr; } .channel-services-panel { position:static; } .channel-service-meta { grid-template-columns:1fr; } }
 @media (max-width:760px) {
-  .channel-console-head { display:block; padding:18px; }
-  .channel-console-copy h2 { font-size:26px; }
-  .channel-console-metrics { width:100%; min-width:0; margin-top:18px; }
+  .channel-console-metrics { width:100%; margin-bottom:16px; }
   .channel-console-metrics>div { padding:10px; }
   .channel-workspace-head { align-items:flex-start; }
   .channel-config-path>span:not(.channel-path-light) { display:none; }
