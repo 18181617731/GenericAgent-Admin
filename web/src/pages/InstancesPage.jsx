@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Star, Trash2, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Settings2, Star, Trash2, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 
@@ -10,7 +10,7 @@ const TEXT = {
     title: 'GA \u5b9e\u4f8b\u7ba1\u7406',
     summary: '\u4e3a\u6bcf\u4e2a GenericAgent \u8fd0\u884c\u65f6\u7ef4\u62a4\u72ec\u7acb\u7684\u8def\u5f84\u548c Python \u73af\u5883\u3002\u9ed8\u8ba4\u5b9e\u4f8b\u4f1a\u627f\u63a5\u672a\u663e\u5f0f\u6307\u5b9a\u5b9e\u4f8b\u7684\u8bf7\u6c42\u3002',
     add: '\u65b0\u5efa\u5b9e\u4f8b', install: '\u4e00\u952e\u65b0\u589e', installing: '\u6b63\u5728\u4e0b\u8f7d\u5e76\u65b0\u589e\u2026', refresh: '\u5237\u65b0', loading: '\u6b63\u5728\u8bfb\u53d6\u5b9e\u4f8b\u2026', empty: '\u6682\u65e0 GA \u5b9e\u4f8b',
-    default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
+    default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', configureModels: '\u914d\u7f6e\u6a21\u578b', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
     initializing: '\u521d\u59cb\u5316\u4e2d', ready: '\u5df2\u5c31\u7eea', failed: '\u521d\u59cb\u5316\u5931\u8d25', initError: '\u9519\u8bef\u8be6\u60c5',
     stages: { queued: '\u7b49\u5f85\u5f00\u59cb', preparing: '\u51c6\u5907\u5b89\u88c5\u76ee\u5f55', downloading: '\u4e0b\u8f7d\u5e76\u89e3\u538b GenericAgent', extracting: '\u89e3\u538b\u4e0a\u4f20\u7684\u6a21\u677f', verifying: '\u6821\u9a8c\u5b89\u88c5\u6587\u4ef6', finalizing: '\u4fdd\u5b58\u5b9e\u4f8b\u914d\u7f6e', complete: '\u521d\u59cb\u5316\u5b8c\u6210' },
     createTitle: '\u65b0\u5efa GA \u5b9e\u4f8b', editTitle: '\u7f16\u8f91 GA \u5b9e\u4f8b', installTitle: '填写新实例 ID', create: '\u521b\u5efa\u5b9e\u4f8b', save: '\u4fdd\u5b58\u4fee\u6539', startInstall: '开始创建',
@@ -33,7 +33,7 @@ const TEXT = {
     title: 'GA instance management',
     summary: 'Maintain an isolated path and Python environment for each GenericAgent runtime. The default instance handles requests that do not explicitly select one.',
     add: 'Add instance', install: 'One-click add', installing: 'Downloading and adding\u2026', refresh: 'Refresh', loading: 'Loading instances\u2026', empty: 'No GA instances configured',
-    default: 'Default', setDefault: 'Set as default', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
+    default: 'Default', setDefault: 'Set as default', configureModels: 'Configure models', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
     initializing: 'Initializing', ready: 'Ready', failed: 'Initialization failed', initError: 'Error details',
     stages: { queued: 'Waiting to start', preparing: 'Preparing install directory', downloading: 'Downloading and extracting GenericAgent', extracting: 'Extracting uploaded template', verifying: 'Verifying installed files', finalizing: 'Saving instance configuration', complete: 'Initialization complete' },
     createTitle: 'Create GA instance', editTitle: 'Edit GA instance', installTitle: 'Choose the new instance ID', create: 'Create instance', save: 'Save changes', startInstall: 'Start creating',
@@ -60,7 +60,7 @@ const isInitializingInstance = (instance) => normalizedInitStatus(instance) === 
 const PROTECTED_DEFAULT_INSTANCE_ID = 'default'
 const INSTANCE_POLL_MS = 1200
 
-export default function InstancesPage({ lang = 'zh' }) {
+export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
   const copy = TEXT[lang] || TEXT.en
   const [items, setItems] = useState([])
   const [defaultID, setDefaultID] = useState('')
@@ -339,6 +339,7 @@ export default function InstancesPage({ lang = 'zh' }) {
           </div>}
           {hasInitFailed && instance.init_error && <div className="instance-init-error" role="alert"><strong>{copy.initError}</strong><span>{instance.init_error}</span></div>}
           <footer>
+            <button type="button" onClick={() => onConfigureModels?.(instance)} disabled={anyBusy || isInitializing}><Settings2 size={14}/>{copy.configureModels}</button>
             <button type="button" onClick={() => beginEdit(instance)} disabled={anyBusy || isInitializing}><Pencil size={14}/>{copy.edit}</button>
             <button type="button" onClick={() => setDefault(instance)} disabled={anyBusy || isDefault || isInitializing}><Star size={14}/>{copy.setDefault}</button>
             <button type="button" className="danger" title={blocksDefaultDelete ? copy.defaultDeleteHint : ''} onClick={() => requestDelete(instance)} disabled={anyBusy || blocksDefaultDelete}><Trash2 size={14}/>{copy.remove}</button>

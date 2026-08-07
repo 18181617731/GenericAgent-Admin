@@ -31,6 +31,19 @@ describe('InstancesPage', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/instances', expect.objectContaining({ headers: expect.any(Object) }))
   })
 
+  it('opens model configuration for the selected instance', async () => {
+    globalThis.fetch = vi.fn(() => reply(initialPayload))
+    const onConfigureModels = vi.fn()
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" onConfigureModels={onConfigureModels} />)
+
+    const primaryCard = (await screen.findByRole('heading', { name: 'Primary' })).closest('article')
+    await user.click(within(primaryCard).getByRole('button', { name: 'Configure models' }))
+
+    expect(onConfigureModels).toHaveBeenCalledTimes(1)
+    expect(onConfigureModels).toHaveBeenCalledWith(initialPayload.items[0])
+  })
+
   it('uploads an optional ZIP template as multipart form data', async () => {
     const installed = {
       default_instance_id: 'primary',

@@ -806,6 +806,8 @@ export function Models({
   getProfileKey,
   onRevealKey,
   onClearRevealedKey,
+  modelInstance,
+  modelInstanceLabel,
 }) {
   const text = t.models
   const [addOpen, setAddOpen] = useState(false)
@@ -1318,6 +1320,13 @@ export function Models({
           <Button type="primary" icon={<Plus size={15} />} onClick={openAdd}>{text.addProvider}</Button>
         </div>
       </header>
+
+      {modelInstance && <Alert
+        type="info"
+        showIcon
+        message={`${modelInstanceLabel}: ${modelInstance.name || modelInstance.id} (${modelInstance.id})`}
+        className="model-page-alert"
+      />}
 
       <div className="model-summary-line" aria-label={text.configSummary}>
         <div className="model-summary-status">

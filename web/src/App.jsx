@@ -340,6 +340,7 @@ export default function App() {
   const [tmwdStatus, setTmwdStatus] = useState(null)
   const [observability, setObservability] = useState(null), [observabilityError, setObservabilityError] = useState('')
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
+  const [modelInstance, setModelInstance] = useState(null)
   const [persistedModelProfiles, setPersistedModelProfiles] = useState([])
   const [failoverGroups, setFailoverGroups] = useState([])
   const [modelSaveStatus, setModelSaveStatus] = useState({})
@@ -987,7 +988,7 @@ export default function App() {
     setModelImportLoading(true)
     try {
       const [d] = await Promise.all([
-        api('/api/models/import-mykey', { method:'POST', body: JSON.stringify({ reveal:false, save:false }) }),
+        api('/api/models/import-mykey', { method:'POST', headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {}, body: JSON.stringify({ reveal:false, save:false }) }),
         loadTitleModel(),
       ])
       const nextProfiles = orderedProviderProfiles(d.profiles || [])
@@ -1031,7 +1032,7 @@ export default function App() {
     if (baseUrl) params.set('base_url', baseUrl)
     if (apiKey) params.set('api_key', apiKey)
     if (varName) params.set('var_name', varName)
-    return api(`/api/models/discover?${params.toString()}`)
+    return api(`/api/models/discover?${params.toString()}`, { headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {} })
   }
   const revealModelKey = async (idx, profile, refresh = false) => {
     const profileKey = getModelProfileKey(idx, profile || profiles[idx])
@@ -1041,7 +1042,7 @@ export default function App() {
     }
     setModelKeyBusy(prev => ({ ...prev, [profileKey]: true }))
     try {
-      const d = await api('/api/models/raw', { dangerous: true })
+      const d = await api('/api/models/raw', { dangerous: true, headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {} })
       const rawProfiles = d?.profiles || []
       const varName = String(profile?.var_name || '').trim()
       const raw = (varName ? rawProfiles.find(p => String(p.var_name || '').trim() === varName) : null) || rawProfiles[idx]
@@ -1061,7 +1062,7 @@ export default function App() {
     setBusy(true)
     try {
       const cleanGroups = normalizeFailoverGroups(nextFailoverGroups)
-      const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
+      const d = await api('/api/models/export', { dangerous:true, method:'POST', headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {}, body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
       const cleanProfiles = nextProfiles.map(({ previous_var_name: _previousVarName, ...profile }) => profile)
       setPersistedModelProfiles(cleanProfiles)
       setFailoverGroups(cleanGroups)
@@ -1144,6 +1145,18 @@ export default function App() {
     setProfiles(ps => ps.map((p, i) => i === idx ? { ...p, ...patch } : p))
   }
 
+  const openModels = (instance = null) => {
+    setModelInstance(instance)
+    setProfiles([])
+    setPersistedModelProfiles([])
+    setFailoverGroups([])
+    setModelPreview('')
+    setModelSaveStatus({})
+    setModelRevealedKeys({})
+    modelImportAttempted.current = false
+    setTab('models')
+  }
+
   const nav = NAV_ITEMS
 
   const needsSetup = !!health && !health?.ok
@@ -1202,7 +1215,7 @@ export default function App() {
         <button type="button" className="admin-sidebar-close" aria-label={lang === 'zh' ? '收起管理导航' : 'Collapse admin navigation'} onClick={()=>setAdminSidebarOpen(false)}><PanelLeftClose size={20} aria-hidden="true"/></button>
       </div>
       <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang} /></div>
-      <nav aria-label={t.mainNavigation}>{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ setAdminSidebarOpen(false); if (n === 'chat') window.location.href = buildRoute('chat'); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav>
+      <nav aria-label={t.mainNavigation}>{nav.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>{ setAdminSidebarOpen(false); if (n === 'chat') window.location.href = buildRoute('chat'); else if (n === 'models') openModels(); else setTab(n) }}>{icon(n)}{t.nav[n]}</button>)}</nav>
       <button type="button" className="refresh" onClick={load} disabled={booting}><RefreshCw size={15} aria-hidden="true"/>{booting ? t.busy : t.refresh}</button>
       <StatusNotice kind={notice?.kind} message={notice?.message} retryLabel={t.retry} dismissLabel={t.close} onRetry={notice?.kind === 'error' ? load : undefined} onDismiss={notice?.kind === 'success' ? ()=>setNotice(null) : undefined}/>
     </aside>
@@ -1215,7 +1228,7 @@ export default function App() {
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
       {tab==='overview' && overviewPage}
-      {tab==='instances' && <InstancesPage lang={lang}/>}
+      {tab==='instances' && <InstancesPage lang={lang} onConfigureModels={openModels}/>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands}/>}
       {tab==='files' && <FilesPage t={t} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} discardChanges={discardFileChanges} deleteFile={deleteFile} downloadFile={downloadFile} runSearch={runSearch} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>}
 
@@ -1430,7 +1443,7 @@ export default function App() {
 
         </div>
       </section>}
-      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} failoverGroups={failoverGroups} onSaveFailoverGroups={saveFailoverGroups} onSaveProviderOrder={saveProviderOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>}
+      {tab==='models' && <Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelOrder={saveModelOrder} failoverGroups={failoverGroups} onSaveFailoverGroups={saveFailoverGroups} onSaveProviderOrder={saveProviderOrder} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey} modelInstance={modelInstance} modelInstanceLabel={lang === 'zh' ? '\u5f53\u524d\u5b9e\u4f8b' : 'Current instance'}/>}
       {tab==='logs' && <section className="logs-page">
         <div className="logs-layout">
           <Panel title={t.lists.processes} className="logs-side">
