@@ -2322,7 +2322,9 @@ html[data-color-scheme="dark"] .oa-file-card .oa-mini-copy:hover{
   font:inherit;
 }
 .oa-session-title .oa-session-draft-badge,
-.oa-session-dialog-title .oa-session-draft-badge{
+.oa-session-dialog-title .oa-session-draft-badge,
+.oa-session-title .oa-session-hub-badge,
+.oa-session-dialog-title .oa-session-hub-badge{
   flex:0 0 auto;
   padding:1px 6px;
   border:1px solid #ead7a8;
@@ -2333,6 +2335,13 @@ html[data-color-scheme="dark"] .oa-file-card .oa-mini-copy:hover{
   font-style:normal;
   font-weight:650;
   line-height:1.35;
+}
+.oa-session-title .oa-session-hub-badge,
+.oa-session-dialog-title .oa-session-hub-badge{
+  border-color:rgba(16,163,127,.30);
+  background:rgba(16,163,127,.09);
+  color:#08775e;
+  letter-spacing:.02em;
 }
 .oa-session small{
   display:block !important;
@@ -13752,12 +13761,18 @@ html[data-color-scheme="dark"] .oa-session-dialog-title .oa-session-draft-badge 
   background: rgba(224, 174, 70, .13);
   color: #f0c66e;
 }
+html[data-color-scheme="dark"] .oa-session-title .oa-session-hub-badge,
+html[data-color-scheme="dark"] .oa-session-dialog-title .oa-session-hub-badge {
+  border-color: rgba(58, 206, 166, .38);
+  background: rgba(16, 163, 127, .16);
+  color: #66d9ba;
+}
 
 
 /* /chat sidebar project launcher */
 .oa-sidebar-tabs {
   display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
+  grid-template-columns:repeat(3,minmax(0,1fr));
   gap:4px;
   margin:2px 0 10px;
   padding:3px;

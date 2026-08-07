@@ -20,6 +20,7 @@ import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEf
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
+import { hubSessions } from './lib/chatHubSessions.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -4652,6 +4653,8 @@ export default function ChatApp() {
     const q = sidebarSearch.trim().toLowerCase()
     return sessions.filter(s => (s.title || '').toLowerCase().includes(q))
   }, [sessions, sidebarSearch])
+  const filteredHubSessions = useMemo(() => hubSessions(sessions, sidebarSearch), [sessions, sidebarSearch])
+  const hubSessionCount = useMemo(() => hubSessions(sessions).length, [sessions])
   const filteredProjectGroups = useMemo(() => {
     if (!sidebarSearch.trim()) return projectSessionGroups
     const q = sidebarSearch.trim().toLowerCase()
@@ -4682,7 +4685,7 @@ export default function ChatApp() {
       <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') saveRename(session.id); if(event.key==='Escape') setEditing('') }}/>
       <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
     </div> : <button className="oa-session" onClick={()=>openSession(session.id)} title={shortTitle(session)}>
-      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(session)}</b>{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
+      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(session)}</b>{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
       <small><Clock3 size={11}/>{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
     </button>}
     {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={(event)=>{
@@ -4734,6 +4737,9 @@ export default function ChatApp() {
         <button type="button" role="tab" aria-selected={sidebarTab === 'history'} className={sidebarTab === 'history' ? 'active' : ''} onClick={()=>setSidebarTab('history')}>
           <Clock3 size={14}/><span>{ct('历史', 'History')}</span><small>{sessions.length}</small>
         </button>
+        <button type="button" role="tab" aria-selected={sidebarTab === 'hub'} className={sidebarTab === 'hub' ? 'active' : ''} onClick={()=>setSidebarTab('hub')}>
+          <Bot size={14}/><span>Hub</span><small>{hubSessionCount}</small>
+        </button>
         <button type="button" role="tab" aria-selected={sidebarTab === 'projects'} className={sidebarTab === 'projects' ? 'active' : ''} onClick={()=>setSidebarTab('projects')}>
           <FolderOpen size={14}/><span>{ct('项目', 'Projects')}</span><small>{projectSessionGroups.length}</small>
         </button>
@@ -4746,6 +4752,15 @@ export default function ChatApp() {
         <div className="oa-session-list">
           {filteredSessions.map(renderSidebarSession)}
           {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
+        </div>
+      </> : sidebarTab === 'hub' ? <>
+        <div className="oa-session-manager-head">
+          <span className="oa-session-manager-title">{ct('已入驻 Hub', 'Joined Hub')}</span>
+          <span className="oa-session-manager-hint">{ct('在会话菜单中退出', 'Leave from session menu')}</span>
+        </div>
+        <div className="oa-session-list">
+          {filteredHubSessions.map(renderSidebarSession)}
+          {!filteredHubSessions.length && <div className="oa-empty-list oa-hub-empty"><Bot size={20}/><span>{sidebarSearch ? ct('无匹配的 Hub 会话', 'No matching Hub sessions') : ct('暂无会话入驻 Hub', 'No sessions have joined Hub')}</span></div>}
         </div>
       </> : <div className="oa-session-list oa-project-list">
         {filteredProjectGroups.map((group, index) => {
@@ -5126,7 +5141,7 @@ export default function ChatApp() {
             return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
               <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
               <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
                 <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
               </span>
             </button>
