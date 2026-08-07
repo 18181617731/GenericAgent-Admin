@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +26,29 @@ func hubRequest(t *testing.T, h http.Handler, token, method, path, body string) 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+func TestResolvePythonForChatHubPrefersGARootVirtualenv(t *testing.T) {
+	gaRoot := t.TempDir()
+	var python string
+	if runtime.GOOS == "windows" {
+		python = filepath.Join(gaRoot, ".venv", "Scripts", "python.exe")
+	} else {
+		python = filepath.Join(gaRoot, ".venv", "bin", "python")
+	}
+	if err := os.MkdirAll(filepath.Dir(python), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(python, []byte("test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolvePythonForRoot(gaRoot, ""); got != python {
+		t.Fatalf("empty configured Python resolved to %q, want GA virtualenv %q", got, python)
+	}
+	const configured = "custom-python"
+	if got := resolvePythonForRoot(gaRoot, configured); got != configured {
+		t.Fatalf("configured Python resolved to %q, want %q", got, configured)
+	}
 }
 
 func TestEmbeddedChatHubBridgeIsMaterialized(t *testing.T) {

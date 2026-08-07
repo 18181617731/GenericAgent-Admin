@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -233,16 +234,13 @@ func (s *Server) StartChatHubBridge() {
 	}
 	token := randomChatHubToken()
 	httpServer := &http.Server{Handler: s.chatHubAPI(token), ReadHeaderTimeout: 5 * time.Second}
-	python := strings.TrimSpace(cfg.EffectivePython)
-	if python == "" {
-		python = strings.TrimSpace(cfg.PythonPath)
-	}
-	if python == "" {
-		python = "python"
-	}
+	python := resolvePythonForRoot(cfg.GARoot, cfg.EffectivePython)
 	cmd := exec.Command(python, script)
 	cmd.Env = append(pythonEnvWithAdminProxy(cfg), "GA_ROOT="+cfg.GARoot, "GA_ADMIN_HUB_API=http://"+listener.Addr().String(), "GA_ADMIN_HUB_TOKEN="+token)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
+		log.Printf("chat hub bridge: start %q failed: %v", python, err)
 		_ = listener.Close()
 		_ = os.Remove(script)
 		return
@@ -251,15 +249,19 @@ func (s *Server) StartChatHubBridge() {
 	s.chatHubBridgeServer = httpServer
 	go func() { _ = httpServer.Serve(listener) }()
 	go func() {
-		_ = cmd.Wait()
+		err := cmd.Wait()
 		_ = httpServer.Close()
 		_ = os.Remove(script)
 		s.chatHubBridgeMu.Lock()
-		if s.chatHubBridgeCmd == cmd {
+		unexpected := s.chatHubBridgeCmd == cmd
+		if unexpected {
 			s.chatHubBridgeCmd = nil
 			s.chatHubBridgeServer = nil
 		}
 		s.chatHubBridgeMu.Unlock()
+		if unexpected {
+			log.Printf("chat hub bridge: process exited: %v", err)
+		}
 	}()
 }
 

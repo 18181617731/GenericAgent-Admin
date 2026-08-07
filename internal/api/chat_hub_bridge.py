@@ -69,7 +69,8 @@ def main():
         async def _loop(self):
             try:
                 import websockets
-            except ImportError:
+            except ImportError as exc:
+                print("[chat_hub_bridge:%s] websockets unavailable: %s" % (self.name, exc), flush=True)
                 return
             while not self._stopped:
                 try:
@@ -92,8 +93,8 @@ def main():
                         }))
                         async for raw in ws:
                             await self._on_cmd(ws, json.loads(raw))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print("[chat_hub_bridge:%s] connection failed: %s" % (self.name, exc), flush=True)
                 self._ws = None
                 if not self._stopped:
                     await asyncio.sleep(5)
@@ -131,8 +132,8 @@ def main():
                 if peer not in clients:
                     try:
                         connect(item)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print("[chat_hub_bridge:%s] registration failed: %s" % (peer, exc), flush=True)
         time.sleep(3)
 
 
