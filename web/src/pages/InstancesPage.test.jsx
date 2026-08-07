@@ -68,6 +68,8 @@ describe('InstancesPage', () => {
         ga_root: 'C:/admin/genericagent',
         effective_python: 'python',
         init_status: 'initializing',
+        init_stage: 'queued',
+        init_progress: 5,
       }],
     }
     const ready = {
@@ -102,6 +104,9 @@ describe('InstancesPage', () => {
     const installedHeading = await screen.findByRole('heading', { name: 'GenericAgent' })
     const installedCard = installedHeading.closest('article')
     expect(within(installedCard).getByText('Initializing')).not.toBeNull()
+    expect(within(installedCard).getByText('Waiting to start')).not.toBeNull()
+    const initProgress = within(installedCard).getByRole('progressbar', { name: 'Waiting to start' })
+    expect(initProgress.value).toBe(5)
     expect(within(installedCard).getByText('C:/admin/genericagent')).not.toBeNull()
     expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(true)
     expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(true)
@@ -110,6 +115,7 @@ describe('InstancesPage', () => {
     expect(screen.getByText('Instance added and initializing in the background')).not.toBeNull()
 
     await waitFor(() => expect(within(installedCard).getByText('Ready')).not.toBeNull(), { timeout: 3000 })
+    expect(within(installedCard).queryByRole('progressbar')).toBeNull()
     expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(false)
     expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(false)
     expect(listCalls).toBe(2)

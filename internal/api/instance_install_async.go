@@ -54,6 +54,7 @@ func (s *Server) startInstanceInstall(instance config.InstanceConfig) bool {
 func (s *Server) runInstanceInstall(ctx context.Context, task *instanceInstallTask, instance config.InstanceConfig) {
 	defer s.finishInstanceInstallTask(instance.ID, task)
 
+	s.setInstanceInstallProgress(instance, "preparing", 15)
 	err := ctx.Err()
 	if err == nil {
 		err = s.resetAutomaticInstanceRoot(instance)
@@ -63,14 +64,17 @@ func (s *Server) runInstanceInstall(ctx context.Context, task *instanceInstallTa
 	if err == nil {
 		if _, statErr := os.Stat(archivePath); statErr == nil {
 			usedTemplate = true
+			s.setInstanceInstallProgress(instance, "extracting", 35)
 			err = extractGenericAgentTemplateZip(archivePath, instance.GARoot)
 		} else if !os.IsNotExist(statErr) {
 			err = statErr
 		} else {
+			s.setInstanceInstallProgress(instance, "downloading", 35)
 			_, err = downloadAndExtractGenericAgentArchive(ctx, instance.GARoot)
 		}
 	}
 	if err == nil {
+		s.setInstanceInstallProgress(instance, "verifying", 85)
 		health := ga.BuildHealth(instance.GARoot)
 		if !health.OK {
 			err = fmt.Errorf("downloaded GenericAgent is invalid: %s", strings.Join(health.Errors, ", "))
@@ -95,6 +99,7 @@ func (s *Server) runInstanceInstall(ctx context.Context, task *instanceInstallTa
 		s.failInstanceInstall(instance, message)
 		return
 	}
+	s.setInstanceInstallProgress(instance, "finalizing", 95)
 	s.setInstanceInstallState(instance, config.InstanceInitStatusReady, "")
 }
 
@@ -110,6 +115,30 @@ func (s *Server) finishInstanceInstallTask(id string, task *instanceInstallTask)
 
 func (s *Server) failInstanceInstall(instance config.InstanceConfig, message string) {
 	s.setInstanceInstallState(instance, config.InstanceInitStatusFailed, strings.TrimSpace(message))
+}
+
+func (s *Server) setInstanceInstallProgress(instance config.InstanceConfig, stage string, progress int) {
+	if s == nil || s.ConfigMu == nil || s.CfgStore == nil {
+		return
+	}
+	s.ConfigMu.Lock()
+	defer s.ConfigMu.Unlock()
+	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
+	for i := range cfg.Instances {
+		current := cfg.Instances[i]
+		if current.ID != instance.ID || !sameRuntimePath(current.GARoot, instance.GARoot) {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(current.InitStatus)) != config.InstanceInitStatusInitializing {
+			return
+		}
+		cfg.Instances[i].InitStage = stage
+		cfg.Instances[i].InitProgress = progress
+		if err := s.saveConfigAndReconcile(cfg); err != nil {
+			log.Printf("persist instance install progress %q=%q: %v", instance.ID, stage, err)
+		}
+		return
+	}
 }
 
 func (s *Server) setInstanceInstallState(instance config.InstanceConfig, status, message string) {
@@ -129,6 +158,10 @@ func (s *Server) setInstanceInstallState(instance config.InstanceConfig, status,
 		}
 		cfg.Instances[i].InitStatus = status
 		cfg.Instances[i].InitError = message
+		if status == config.InstanceInitStatusReady {
+			cfg.Instances[i].InitStage = "complete"
+			cfg.Instances[i].InitProgress = 100
+		}
 		if err := s.saveConfigAndReconcile(cfg); err != nil {
 			log.Printf("persist instance install state %q=%q: %v", instance.ID, status, err)
 		}

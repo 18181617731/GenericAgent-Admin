@@ -159,6 +159,8 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		PythonPath:      cfg.PythonPath,
 		EffectivePython: cfg.EffectivePython,
 		InitStatus:      config.InstanceInitStatusInitializing,
+		InitStage:       "queued",
+		InitProgress:    5,
 	}
 	dest, err := s.automaticInstanceDestination(instance)
 	if err != nil {
@@ -229,6 +231,8 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 	// cannot impersonate or enqueue an automatic installation.
 	instance.InitStatus = ""
 	instance.InitError = ""
+	instance.InitStage = ""
+	instance.InitProgress = 0
 	if instance.ID == "" {
 		bad(w, http.StatusBadRequest, "instance id is required")
 		return
@@ -285,6 +289,8 @@ func (s *Server) instanceUpdate(w http.ResponseWriter, r *http.Request) {
 			// an instance metadata update.
 			instance.InitStatus = current.InitStatus
 			instance.InitError = current.InitError
+			instance.InitStage = current.InitStage
+			instance.InitProgress = current.InitProgress
 			cfg.Instances[i] = instance
 			found = true
 			break

@@ -14919,6 +14919,44 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.instance-init-progress {
+  display: grid;
+  gap: 6px;
+  margin: 0 16px 12px;
+}
+.instance-init-progress-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.instance-init-progress-copy strong {
+  color: #9b6210;
+  font: 700 11px/1 var(--mono);
+}
+.instance-init-progress progress {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, #d28b21 15%, var(--instances-line));
+  accent-color: #d28b21;
+}
+.instance-init-progress progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: color-mix(in srgb, #d28b21 15%, var(--instances-line));
+}
+.instance-init-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: #d28b21;
+}
+.instance-init-progress.has-failed progress { accent-color: var(--danger, #d13c3c); }
+.instance-init-progress.has-failed progress::-webkit-progress-value { background: var(--danger, #d13c3c); }
+.instance-init-progress.has-failed .instance-init-progress-copy strong { color: var(--danger, #b92f2f); }
 .instance-init-error {
   display: grid;
   gap: 4px;

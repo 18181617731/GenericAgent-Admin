@@ -178,6 +178,9 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		if result.Instance.InitStatus != config.InstanceInitStatusInitializing || result.Instance.InitError != "" {
 			t.Errorf("%s response state=%q error=%q", label, result.Instance.InitStatus, result.Instance.InitError)
 		}
+		if result.Instance.InitStage != "queued" || result.Instance.InitProgress != 5 {
+			t.Errorf("%s response progress=%q/%d want queued/5", label, result.Instance.InitStage, result.Instance.InitProgress)
+		}
 	}
 	if first.Instance.ID != "genericagent" || first.Instance.Name != "genericagent" || first.Instance.GARoot != wantFirst {
 		t.Errorf("first instance=%+v", first.Instance)
@@ -200,8 +203,12 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		}
 	}
 	for _, id := range []string{"genericagent", "genericagent-2"} {
-		if got := instanceFromStoreForTest(t, s, id).InitStatus; got != config.InstanceInitStatusInitializing {
-			t.Errorf("persisted %s state=%q want initializing", id, got)
+		instance := instanceFromStoreForTest(t, s, id)
+		if instance.InitStatus != config.InstanceInitStatusInitializing {
+			t.Errorf("persisted %s state=%q want initializing", id, instance.InitStatus)
+		}
+		if instance.InitStage != "downloading" || instance.InitProgress != 35 {
+			t.Errorf("persisted %s progress=%q/%d want downloading/35", id, instance.InitStage, instance.InitProgress)
 		}
 	}
 
@@ -211,6 +218,9 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		instance := instanceFromStoreForTest(t, s, id)
 		if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
 			t.Errorf("completed %s state=%q error=%q", id, instance.InitStatus, instance.InitError)
+		}
+		if instance.InitStage != "complete" || instance.InitProgress != 100 {
+			t.Errorf("completed %s progress=%q/%d want complete/100", id, instance.InitStage, instance.InitProgress)
 		}
 	}
 }
@@ -616,11 +626,13 @@ func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
 	root := t.TempDir()
 	h := s.Routes()
 	createBody, err := json.Marshal(config.InstanceConfig{
-		ID:         "manual",
-		Name:       "Manual",
-		GARoot:     root,
-		InitStatus: config.InstanceInitStatusInitializing,
-		InitError:  "client supplied",
+		ID:           "manual",
+		Name:         "Manual",
+		GARoot:       root,
+		InitStatus:   config.InstanceInitStatusInitializing,
+		InitError:    "client supplied",
+		InitStage:    "complete",
+		InitProgress: 99,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -633,13 +645,15 @@ func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	created := instanceFromStoreForTest(t, s, "manual")
-	if created.InitStatus != "" || created.InitError != "" {
+	if created.InitStatus != "" || created.InitError != "" || created.InitStage != "" || created.InitProgress != 0 {
 		t.Fatalf("create accepted client install state: %+v", created)
 	}
 
 	created.Name = "Updated"
 	created.InitStatus = config.InstanceInitStatusFailed
 	created.InitError = "client overwrite"
+	created.InitStage = "complete"
+	created.InitProgress = 99
 	updateBody, err := json.Marshal(created)
 	if err != nil {
 		t.Fatal(err)
@@ -652,7 +666,7 @@ func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
 		t.Fatalf("update status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	updated := instanceFromStoreForTest(t, s, "manual")
-	if updated.Name != "Updated" || updated.InitStatus != "" || updated.InitError != "" {
+	if updated.Name != "Updated" || updated.InitStatus != "" || updated.InitError != "" || updated.InitStage != "" || updated.InitProgress != 0 {
 		t.Fatalf("updated instance=%+v", updated)
 	}
 }

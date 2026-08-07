@@ -12,6 +12,7 @@ const TEXT = {
     add: '\u65b0\u5efa\u5b9e\u4f8b', install: '\u4e00\u952e\u65b0\u589e', installing: '\u6b63\u5728\u4e0b\u8f7d\u5e76\u65b0\u589e\u2026', refresh: '\u5237\u65b0', loading: '\u6b63\u5728\u8bfb\u53d6\u5b9e\u4f8b\u2026', empty: '\u6682\u65e0 GA \u5b9e\u4f8b',
     default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
     initializing: '\u521d\u59cb\u5316\u4e2d', ready: '\u5df2\u5c31\u7eea', failed: '\u521d\u59cb\u5316\u5931\u8d25', initError: '\u9519\u8bef\u8be6\u60c5',
+    stages: { queued: '\u7b49\u5f85\u5f00\u59cb', preparing: '\u51c6\u5907\u5b89\u88c5\u76ee\u5f55', downloading: '\u4e0b\u8f7d\u5e76\u89e3\u538b GenericAgent', extracting: '\u89e3\u538b\u4e0a\u4f20\u7684\u6a21\u677f', verifying: '\u6821\u9a8c\u5b89\u88c5\u6587\u4ef6', finalizing: '\u4fdd\u5b58\u5b9e\u4f8b\u914d\u7f6e', complete: '\u521d\u59cb\u5316\u5b8c\u6210' },
     createTitle: '\u65b0\u5efa GA \u5b9e\u4f8b', editTitle: '\u7f16\u8f91 GA \u5b9e\u4f8b', installTitle: '填写新实例 ID', create: '\u521b\u5efa\u5b9e\u4f8b', save: '\u4fdd\u5b58\u4fee\u6539', startInstall: '开始创建',
     createSummary: '设置实例标识与本地运行环境。', editSummary: '更新显示名称或运行时路径。', installSummary: '选择稳定的标识，创建任务将在后台运行。',
     identityGroup: '实例标识', runtimeGroup: '运行环境', sourceGroup: '初始化来源', requiredField: '必填',
@@ -33,6 +34,7 @@ const TEXT = {
     add: 'Add instance', install: 'One-click add', installing: 'Downloading and adding\u2026', refresh: 'Refresh', loading: 'Loading instances\u2026', empty: 'No GA instances configured',
     default: 'Default', setDefault: 'Set as default', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
     initializing: 'Initializing', ready: 'Ready', failed: 'Initialization failed', initError: 'Error details',
+    stages: { queued: 'Waiting to start', preparing: 'Preparing install directory', downloading: 'Downloading and extracting GenericAgent', extracting: 'Extracting uploaded template', verifying: 'Verifying installed files', finalizing: 'Saving instance configuration', complete: 'Initialization complete' },
     createTitle: 'Create GA instance', editTitle: 'Edit GA instance', installTitle: 'Choose the new instance ID', create: 'Create instance', save: 'Save changes', startInstall: 'Start creating',
     createSummary: 'Set the instance identity and local runtime.', editSummary: 'Update the display name or runtime paths.', installSummary: 'Choose a stable ID. Creation continues in the background.',
     identityGroup: 'Instance identity', runtimeGroup: 'Runtime environment', sourceGroup: 'Initialization source', requiredField: 'Required',
@@ -298,6 +300,10 @@ export default function InstancesPage({ lang = 'zh' }) {
         const isInitializing = initStatus === 'initializing'
         const hasInitFailed = initStatus === 'failed'
         const initLabel = isInitializing ? copy.initializing : hasInitFailed ? copy.failed : initStatus === 'ready' ? copy.ready : ''
+        const initStage = String(instance.init_stage || '').trim().toLowerCase()
+        const initProgress = Math.max(0, Math.min(100, Number(instance.init_progress) || 0))
+        const initStageLabel = copy.stages[initStage] || copy.initializing
+        const showInitProgress = (isInitializing || hasInitFailed) && Boolean(initStage || initProgress > 0)
         const isProtectedDefault = instance.id === PROTECTED_DEFAULT_INSTANCE_ID
         const blocksDefaultDelete = isProtectedDefault || isDefault && items.length > 1
         return <article className={`instance-card${isDefault ? ' is-default' : ''}${isInitializing ? ' is-initializing' : ''}${hasInitFailed ? ' has-init-failed' : ''}`} key={instance.id}>
@@ -317,6 +323,10 @@ export default function InstancesPage({ lang = 'zh' }) {
             <div><dt>{copy.python}</dt><dd title={instance.python_path || ''}>{instance.python_path || copy.auto}</dd></div>
             <div><dt>{copy.effectivePython}</dt><dd title={instance.effective_python || ''}>{instance.effective_python || copy.auto}</dd></div>
           </dl>
+          {showInitProgress && <div className={`instance-init-progress${hasInitFailed ? ' has-failed' : ''}`}>
+            <div className="instance-init-progress-copy"><span>{initStageLabel}</span><strong>{initProgress}%</strong></div>
+            <progress aria-label={initStageLabel} max="100" value={initProgress}>{initProgress}%</progress>
+          </div>}
           {hasInitFailed && instance.init_error && <div className="instance-init-error" role="alert"><strong>{copy.initError}</strong><span>{instance.init_error}</span></div>}
           <footer>
             <button type="button" onClick={() => beginEdit(instance)} disabled={anyBusy || isInitializing}><Pencil size={14}/>{copy.edit}</button>

@@ -38,6 +38,8 @@ type InstanceConfig struct {
 	EffectivePython string `json:"effective_python,omitempty"`
 	InitStatus      string `json:"init_status,omitempty"`
 	InitError       string `json:"init_error,omitempty"`
+	InitStage       string `json:"init_stage,omitempty"`
+	InitProgress    int    `json:"init_progress,omitempty"`
 }
 
 const (
@@ -444,6 +446,12 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		instance.EffectivePython = effectiveInstancePython(instance)
 		instance.InitStatus = strings.ToLower(strings.TrimSpace(instance.InitStatus))
 		instance.InitError = strings.TrimSpace(instance.InitError)
+		instance.InitStage = strings.ToLower(strings.TrimSpace(instance.InitStage))
+		if instance.InitProgress < 0 {
+			instance.InitProgress = 0
+		} else if instance.InitProgress > 100 {
+			instance.InitProgress = 100
+		}
 		instances = append(instances, instance)
 	}
 	if len(instances) == 0 && cfg.GARoot != "" {
