@@ -46,10 +46,14 @@ func main() {
 		log.Printf("migrate autostart entry: %v", err)
 	}
 	if launch.PortSet {
-		cfgStore.Cfg.Port = launch.Port
+		if err := cfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+			cfg.Port = launch.Port
+		}); err != nil {
+			log.Fatalf("apply command-line port override: %v", err)
+		}
 	}
-	version.SetRepoURL(cfgStore.Cfg.UpdateRepoURL)
-	svc := service.NewManagerWithPython(cfgStore.Cfg.GARoot, cfgStore.Cfg.EffectivePython, cfgStore.Cfg.BufferLines)
+	version.SetRepoURL(cfgStore.Snapshot().UpdateRepoURL)
+	svc := service.NewManagerWithPython(cfgStore.Snapshot().GARoot, cfgStore.Snapshot().EffectivePython, cfgStore.Snapshot().BufferLines)
 	models := modelconfig.NewStore(cwd)
 	static, err := fs.Sub(webFS, "web/dist")
 	if err != nil {
@@ -185,12 +189,12 @@ func waitForShutdownSignal(server *http.Server, cleanup func()) {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	log.Printf("shutdown signal received; stopping GenericAgent Admin Go")
-	if cleanup != nil {
-		cleanup()
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+	if cleanup != nil {
+		cleanup()
+	}
 }
 
 func appRoot(explicitRoot string) (string, error) {
@@ -263,7 +267,7 @@ func tryPortableAutoInit(cwd string, store *config.Store) error {
 	if !ok {
 		return nil // Not a portable bundle
 	}
-	if store.Cfg.BootstrapDone && validatePortableConfig(cwd, store.Cfg) == nil {
+	if store.Snapshot().BootstrapDone && validatePortableConfig(cwd, store.Snapshot()) == nil {
 		return nil // Already initialized for this exact bundle location
 	}
 
@@ -290,17 +294,18 @@ func tryPortableAutoInit(cwd string, store *config.Store) error {
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("reload config after bootstrap: %w", err)
 	}
-	if err := validatePortableConfig(cwd, store.Cfg); err != nil {
+	if err := validatePortableConfig(cwd, store.Snapshot()); err != nil {
 		return fmt.Errorf("bootstrap produced incomplete config: %w", err)
 	}
 
 	// Mark bootstrap as done only after both required paths are present and usable.
-	store.Cfg.BootstrapDone = true
-	if err := store.Save(store.Cfg); err != nil {
+	cfg := store.Snapshot()
+	cfg.BootstrapDone = true
+	if err := store.Save(cfg); err != nil {
 		return fmt.Errorf("save bootstrap_done flag: %w", err)
 	}
 
-	log.Printf("portable auto-init completed: ga_root=%s", store.Cfg.GARoot)
+	log.Printf("portable auto-init completed: ga_root=%s", store.Snapshot().GARoot)
 	return nil
 }
 

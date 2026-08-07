@@ -107,6 +107,50 @@ const findTopLevelAssistantMarkers = (full = '') => {
   return markers
 }
 
+const TURN_TITLE_LIMIT = 88
+
+const compactTurnTitle = (value = '') => {
+  const text = String(value || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+] |\d+[.)] )\s*/g, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[`*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text.length <= TURN_TITLE_LIMIT) return text
+  return `${text.slice(0, TURN_TITLE_LIMIT - 1).trimEnd()}…`
+}
+
+export const assistantTurnFallbackTitle = (chunk = '', turn = '') => {
+  const source = String(chunk || '')
+  const toolNames = []
+  const addTool = (name = '') => {
+    const clean = String(name || '').trim().replace(/^`+|`+$/g, '')
+    if (clean && !toolNames.includes(clean)) toolNames.push(clean)
+  }
+  for (const line of source.split('\n')) {
+    let match = line.trim().match(/^🛠️?\s*Tool:\s*`?([^`\s📥(]+)`?/i)
+    if (!match) match = line.trim().match(/^🛠️?\s+([\w.-]+)\s*\(/i)
+    if (match) addTool(match[1])
+  }
+  if (toolNames.length) {
+    const visible = toolNames.slice(0, 3).join(' · ')
+    return toolNames.length > 3 ? `${visible} +${toolNames.length - 3}` : visible
+  }
+
+  let fenced = false
+  for (const rawLine of cleanAssistantRunBody(source).split('\n')) {
+    const line = rawLine.trim()
+    if (/^(?:```|~~~)/.test(line)) { fenced = !fenced; continue }
+    if (fenced || !line) continue
+    if (/^(?:🛠️?|📥|📤|\[Info\]|\[Result\]|\[ROUND END\]|\{\s*$|\}\s*$)/i.test(line)) continue
+    const title = compactTurnTitle(line)
+    if (title) return title
+  }
+  return turn === '' ? '' : `Turn ${turn}`
+}
+
 export const parseAssistantContent = (raw = '') => {
   const full = String(raw || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const markers = findTopLevelAssistantMarkers(full)
@@ -122,7 +166,7 @@ export const parseAssistantContent = (raw = '') => {
       const end = i + 1 < turnMarkers.length ? turnMarkers[i + 1].index : processEnd
       const chunk = full.slice(start, end).trim()
       const summary = chunk.match(/<summary>([\s\S]*?)<\/summary>/i)
-      const title = summary?.[1]?.trim() || `Turn ${m.turn}`
+      const title = summary?.[1]?.trim() || assistantTurnFallbackTitle(chunk, m.turn)
       runs.push({ turn: m.turn, title, body: cleanAssistantRunBody(chunk) })
     })
     const final = parseAssistantFinalBody(finalText || '')

@@ -210,7 +210,7 @@ func (s *Server) chatWorldlineRPC(sid string, req map[string]interface{}) (chatW
 	if !validChatWorldlineID(sid) {
 		return chatWorldlineResponse{}, fmt.Errorf("invalid worldline session id")
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		return chatWorldlineResponse{}, err
 	}
@@ -232,7 +232,7 @@ func (s *Server) chatWorldlineRPC(sid string, req map[string]interface{}) (chatW
 func (s *Server) chatWorldlineRPCLocked(sid string, worker *chatWorker, workspace string, req map[string]interface{}) (chatWorldlineResponse, error) {
 	req["op"] = "worldline"
 	req["sid"] = safeChatID(sid)
-	req["ga_root"] = s.CfgStore.Cfg.GARoot
+	req["ga_root"] = s.CfgStore.Snapshot().GARoot
 	req["workspace"] = strings.TrimSpace(workspace)
 	if s.chatWorldlineRPCHook != nil {
 		if err := s.chatWorldlineRPCHook(sid, req); err != nil {
@@ -408,7 +408,7 @@ func (s *Server) chatWorldlineSwitch(w http.ResponseWriter, r *http.Request, sid
 		bad(w, http.StatusConflict, "worldline switch lost ownership")
 		return
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return

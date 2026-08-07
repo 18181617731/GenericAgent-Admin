@@ -17,15 +17,15 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []map[string]interface{}{}
-	if err := ensureChatDataMigrated(s.CfgStore.Cfg); err != nil {
+	if err := ensureChatDataMigrated(s.CfgStore.Snapshot()); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Cfg), 0755); err != nil {
+	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Snapshot()), 0755); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Cfg))
+	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Snapshot()))
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
@@ -34,14 +34,14 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		cs, err := loadChatSession(s.CfgStore.Cfg, strings.TrimSuffix(e.Name(), ".json"))
+		cs, err := loadChatSession(s.CfgStore.Snapshot(), strings.TrimSuffix(e.Name(), ".json"))
 		if err != nil {
 			continue
 		}
 		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Cfg.GARoot)})
+	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Snapshot().GARoot)})
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +144,7 @@ func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 	projectMode := strings.TrimSpace(req.ProjectMode)
 	if projectMode != "" {
 		found := false
-		for _, name := range discoverProjectNames(s.CfgStore.Cfg.GARoot) {
+		for _, name := range discoverProjectNames(s.CfgStore.Snapshot().GARoot) {
 			if name == projectMode {
 				found = true
 				break
@@ -157,7 +157,7 @@ func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 	}
 	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}, ProjectMode: projectMode}
 	if projectMode != "" {
-		if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+		if err := saveChatSession(s.CfgStore.Snapshot(), cs); err != nil {
 			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -341,7 +341,7 @@ func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid str
 
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		bad(w, http.StatusNotFound, "session not found")
 		return
@@ -380,7 +380,7 @@ func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid str
 		Workspace:   cs.Workspace,
 		ProjectMode: cs.ProjectMode,
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Cfg, fork); err != nil {
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), fork); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -388,7 +388,7 @@ func (s *Server) chatForkSession(w http.ResponseWriter, r *http.Request, sid str
 }
 
 func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), safeChatID(sid))
 	if err != nil {
 		bad(w, 500, err.Error())
 		return
@@ -444,8 +444,8 @@ func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid s
 	if worker != nil {
 		s.dropChatWorker(sid, worker)
 	}
-	_ = os.Remove(chatSessionPath(s.CfgStore.Cfg, sid))
-	sidecar := filepath.Join(s.CfgStore.Cfg.GARoot, "temp", "rewind_data", "ga-admin", "admin_sidecars", sid+".json")
+	_ = os.Remove(chatSessionPath(s.CfgStore.Snapshot(), sid))
+	sidecar := filepath.Join(s.CfgStore.Snapshot().GARoot, "temp", "rewind_data", "ga-admin", "admin_sidecars", sid+".json")
 	_ = os.Remove(sidecar)
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -480,7 +480,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 			cs.ExtraSysPromptPresetID = ""
 			cs.ExtraSysPrompts = nil
 		} else {
-			preset, ok := findExtraSystemPromptPreset(s.CfgStore.Cfg.ExtraSystemPromptPresets, presetID)
+			preset, ok := findExtraSystemPromptPreset(s.CfgStore.Snapshot().ExtraSystemPromptPresets, presetID)
 			if !ok {
 				bad(w, http.StatusBadRequest, "extra system prompt preset not found")
 				return
@@ -489,7 +489,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 			cs.ExtraSysPrompts = []string{preset.Content}
 		}
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
@@ -508,13 +508,13 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 }
 
 func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
-	cs, err := loadChatSession(s.CfgStore.Cfg, safeChatID(sid))
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), safeChatID(sid))
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
-	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Snapshot())
 	markChatLLMActive(llms, cs.Settings.LLMNo)
 	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
@@ -562,7 +562,7 @@ func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Requ
 	msg := chatMessage{ID: newChatID(), Role: "assistant", Content: reply, CreatedAt: time.Now().Unix()}
 	cs.Messages = append(cs.Messages, msg)
 	cs.UpdatedAt = time.Now().Unix()
-	if err := saveChatSession(s.CfgStore.Cfg, *cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), *cs); err != nil {
 		s.endChatRun(sid)
 		bad(w, http.StatusInternalServerError, err.Error())
 		return true
@@ -596,7 +596,7 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 	reply := ""
 	switch {
 	case arg == "":
-		names := discoverProjectNames(s.CfgStore.Cfg.GARoot)
+		names := discoverProjectNames(s.CfgStore.Snapshot().GARoot)
 		if len(names) == 0 {
 			reply = "当前没有已创建的项目。用法：`/project <项目名>`，关闭：`/project off`。"
 		} else {
@@ -612,12 +612,12 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 			reply = "进入 Project Mode 失败：项目名必须是 1 个安全的目录名称（不能包含路径分隔符、冒号、控制字符或 `.` / `..`）。"
 			break
 		}
-		gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+		gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 		if gaRoot == "" {
 			reply = "进入 Project Mode 失败：GA Root 未配置。"
 			break
 		}
-		projectDir := projectModeWorkspace(s.CfgStore.Cfg, name)
+		projectDir := projectModeWorkspace(s.CfgStore.Snapshot(), name)
 		if st, err := os.Lstat(projectDir); err == nil {
 			if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
 				reply = fmt.Sprintf("进入 Project Mode 失败：项目路径不是安全目录：`%s`", projectDir)
@@ -647,7 +647,7 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 	msg := chatMessage{ID: newChatID(), Role: "assistant", Content: reply, CreatedAt: time.Now().Unix()}
 	cs.Messages = append(cs.Messages, msg)
 	cs.UpdatedAt = time.Now().Unix()
-	if err := saveChatSession(s.CfgStore.Cfg, *cs); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), *cs); err != nil {
 		s.endChatRun(sid)
 		bad(w, http.StatusInternalServerError, err.Error())
 		return true
@@ -673,7 +673,7 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 	}
 	sid = safeChatID(sid)
 	s.SessionMu.Lock()
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	s.SessionMu.Unlock()
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
@@ -688,9 +688,9 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 		"project_mode":     cs.ProjectMode,
 		"llm_no":           cs.Settings.LLMNo,
 		"reasoning_effort": cs.Settings.ReasoningEffort,
-		"ga_root":          s.CfgStore.Cfg.GARoot,
+		"ga_root":          s.CfgStore.Snapshot().GARoot,
 	}
-	msg, err := runOneShotBTWWorkerFunc(s.CfgStore.Cfg, sid, cmdReq)
+	msg, err := runOneShotBTWWorkerFunc(s.CfgStore.Snapshot(), sid, cmdReq)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
@@ -698,11 +698,11 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 	msg.Kind = "btw"
 	msg.SideQuestion = strings.TrimSpace(strings.TrimPrefix(prompt, "/btw"))
 	s.SessionMu.Lock()
-	latest, loadErr := loadChatSession(s.CfgStore.Cfg, sid)
+	latest, loadErr := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if loadErr == nil {
 		latest.Messages = mergeChatMessageLists(latest.Messages, []chatMessage{msg})
 		latest.UpdatedAt = time.Now().Unix()
-		loadErr = saveChatSession(s.CfgStore.Cfg, latest)
+		loadErr = saveChatSession(s.CfgStore.Snapshot(), latest)
 	}
 	s.SessionMu.Unlock()
 	if loadErr != nil {
@@ -742,7 +742,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		s.maybeHandleImmediateChatCommand(w, r, sid, token, cmd)
 		return
 	}
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		s.endChatRunOwned(sid, token)
 		bad(w, 500, err.Error())
@@ -776,7 +776,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 			return
 		}
 	}
-	saved, refs, err := saveChatUploads(s.CfgStore.Cfg, req.Files)
+	saved, refs, err := saveChatUploads(s.CfgStore.Snapshot(), req.Files)
 	if err != nil {
 		s.endChatRunOwned(sid, token)
 		bad(w, 400, err.Error())
@@ -837,7 +837,7 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"extra_sys_prompts":        cs.ExtraSysPrompts,
 		"llm_no":                   cs.Settings.LLMNo,
 		"reasoning_effort":         cs.Settings.ReasoningEffort,
-		"ga_root":                  s.CfgStore.Cfg.GARoot,
+		"ga_root":                  s.CfgStore.Snapshot().GARoot,
 		"_ga_worldline_resend":     strings.TrimSpace(req.SourceUserMessageID) != "",
 		"_ga_pending_assistant_id": pendingMsg.ID,
 		"_ga_run_started_at_ms":    runStartedAtMS,
@@ -900,5 +900,5 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 }
 
 func (s *Server) chatFile(w http.ResponseWriter, r *http.Request, name string) {
-	http.ServeFile(w, r, filepath.Join(chatUploadDir(s.CfgStore.Cfg), filepath.Base(name)))
+	http.ServeFile(w, r, filepath.Join(chatUploadDir(s.CfgStore.Snapshot()), filepath.Base(name)))
 }

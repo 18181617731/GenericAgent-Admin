@@ -17,7 +17,7 @@ func (s *Server) filesList(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	items, err := ga.ListSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"))
+	items, err := ga.ListSafe(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("path"))
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -30,7 +30,7 @@ func (s *Server) filesRead(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	d, err := ga.ReadSafeAny(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"))
+	d, err := ga.ReadSafeAny(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("path"))
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -49,7 +49,7 @@ func (s *Server) filesImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	p, _, err = ga.SafeResolveAny(s.CfgStore.Cfg.GARoot, p)
+	p, _, err = ga.SafeResolveAny(s.CfgStore.Snapshot().GARoot, p)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -98,7 +98,7 @@ func (s *Server) filesWrite(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	d, err := ga.WriteSafe(s.CfgStore.Cfg.GARoot, req.Path, req.Content)
+	d, err := ga.WriteSafe(s.CfgStore.Snapshot().GARoot, req.Path, req.Content)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -124,7 +124,7 @@ func (s *Server) filesDelete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "path required")
 		return
 	}
-	if err := ga.DeleteSafe(s.CfgStore.Cfg.GARoot, path); err != nil {
+	if err := ga.DeleteSafe(s.CfgStore.Snapshot().GARoot, path); err != nil {
 		bad(w, 400, err.Error())
 		return
 	}
@@ -143,7 +143,7 @@ func (s *Server) filesDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	var clean string
 	var err error
-	p, clean, err = ga.SafeResolveAny(s.CfgStore.Cfg.GARoot, p)
+	p, clean, err = ga.SafeResolveAny(s.CfgStore.Snapshot().GARoot, p)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -176,7 +176,7 @@ func (s *Server) filesTail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d, err := ga.TailSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), lines)
+	d, err := ga.TailSafe(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("path"), lines)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -198,7 +198,7 @@ func (s *Server) filesSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	hits, err := ga.SearchSafe(s.CfgStore.Cfg.GARoot, r.URL.Query().Get("path"), r.URL.Query().Get("q"), limit)
+	hits, err := ga.SearchSafe(s.CfgStore.Snapshot().GARoot, r.URL.Query().Get("path"), r.URL.Query().Get("q"), limit)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -225,7 +225,7 @@ func (s *Server) filesOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	p, _, err = ga.SafeResolveAny(s.CfgStore.Cfg.GARoot, p)
+	p, _, err = ga.SafeResolveAny(s.CfgStore.Snapshot().GARoot, p)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

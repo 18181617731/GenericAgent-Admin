@@ -240,7 +240,7 @@ func TestWorldlineActivationCarriesPersistedSessionState(t *testing.T) {
 		Working:     map[string]interface{}{"key_info": "restored"},
 		Settings:    normalizeChatSettings(chatSettings{}),
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 		t.Fatal(err)
 	}
 	installWorldlineTestWorker(t, s, sid)
@@ -315,7 +315,7 @@ func TestWorldlineSwitchRoundTripPersistsAcrossServerRestart(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	const sid = "roundtrip"
 	initial := chatSession{ID: sid, Title: "roundtrip", Messages: []chatMessage{{ID: "seed", Role: "user", Content: "seed", CreatedAt: 1}}, Settings: normalizeChatSettings(chatSettings{})}
-	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 		t.Fatal(err)
 	}
 	installWorldlineTestWorker(t, s, sid)
@@ -336,7 +336,7 @@ func TestWorldlineSwitchRoundTripPersistsAcrossServerRestart(t *testing.T) {
 	}
 	assertDisk := func(node string) {
 		t.Helper()
-		got, err := loadChatSession(s.CfgStore.Cfg, sid)
+		got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -371,7 +371,7 @@ func TestWorldlineTerminalCommitFailuresAreObservableAndIsolated(t *testing.T) {
 		s := newChatCommandTestServer(t)
 		const sid = "bind-failure"
 		initial := chatSession{ID: sid, Title: sid, Settings: normalizeChatSettings(chatSettings{})}
-		if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 			t.Fatal(err)
 		}
 		installWorldlineTestWorker(t, s, sid)
@@ -397,7 +397,7 @@ func TestWorldlineTerminalCommitFailuresAreObservableAndIsolated(t *testing.T) {
 		if strings.Contains(failed, `"type":"done"`) || !strings.Contains(failed, `"type":"error"`) || !strings.Contains(failed, "injected bind failure") {
 			t.Fatalf("bind failure terminal SSE = %s", failed)
 		}
-		got, err := loadChatSession(s.CfgStore.Cfg, sid)
+		got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -416,7 +416,7 @@ func TestWorldlineTerminalCommitFailuresAreObservableAndIsolated(t *testing.T) {
 		s := newChatCommandTestServer(t)
 		const sid = "exact-save-failure"
 		initial := chatSession{ID: sid, Title: sid, Messages: []chatMessage{{ID: "seed", Role: "user", Content: "seed", CreatedAt: 1}}, Settings: normalizeChatSettings(chatSettings{})}
-		if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+		if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 			t.Fatal(err)
 		}
 		installWorldlineTestWorker(t, s, sid)
@@ -454,7 +454,7 @@ func TestWorldlineTerminalCommitFailuresAreObservableAndIsolated(t *testing.T) {
 		if strings.Contains(failed, `"type":"done"`) || !strings.Contains(failed, `"type":"error"`) || !strings.Contains(failed, "injected exact save failure") {
 			t.Fatalf("exact save failure terminal SSE = %s", failed)
 		}
-		after, err := loadChatSession(s.CfgStore.Cfg, sid)
+		after, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -480,7 +480,7 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	const sid = "edit-resend"
 	initial := chatSession{ID: sid, Title: "edit-resend", Messages: []chatMessage{{ID: "seed", Role: "user", Content: "seed", CreatedAt: 1}}, Settings: normalizeChatSettings(chatSettings{})}
-	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 		t.Fatal(err)
 	}
 	installWorldlineTestWorker(t, s, sid)
@@ -522,7 +522,7 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	}
 	assertExact := func(wantUserID, wantPrompt string) {
 		t.Helper()
-		got, err := loadChatSession(s.CfgStore.Cfg, sid)
+		got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -550,7 +550,7 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 
 	// A fresh server must observe the same exact terminal branch, with no stale sibling messages merged back in.
 	s2 := New(s.CfgStore, s.Svc, s.Models, s.Static)
-	got, err := loadChatSession(s2.CfgStore.Cfg, sid)
+	got, err := loadChatSession(s2.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,7 +567,7 @@ func TestWorldlineEditResendAcceptsFoldedSourceOnSelectedPhysicalPath(t *testing
 		Messages: []chatMessage{{ID: "u-folded", Role: "user", Content: "old prompt", CreatedAt: 1}},
 		Settings: normalizeChatSettings(chatSettings{}),
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 		t.Fatal(err)
 	}
 	installWorldlineTestWorker(t, s, sid)
@@ -591,8 +591,8 @@ func TestWorldlineDeleteIsNarrowAndRejectsBusySession(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	makeArtifacts := func(sid string) (string, string) {
 		t.Helper()
-		session := chatSessionPath(s.CfgStore.Cfg, sid)
-		sidecar := filepath.Join(s.CfgStore.Cfg.GARoot, "temp", "rewind_data", "ga-admin", "admin_sidecars", sid+".json")
+		session := chatSessionPath(s.CfgStore.Snapshot(), sid)
+		sidecar := filepath.Join(s.CfgStore.Snapshot().GARoot, "temp", "rewind_data", "ga-admin", "admin_sidecars", sid+".json")
 		for _, p := range []string{session, sidecar} {
 			if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 				t.Fatal(err)

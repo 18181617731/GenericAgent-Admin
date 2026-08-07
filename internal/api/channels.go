@@ -161,7 +161,7 @@ func (s *Server) channelTestValues(profileID string, fields []channelField) (map
 		return nil, fmt.Errorf("unknown channel profile: %s", profileID)
 	}
 	existing := map[string]string{}
-	if strings.TrimSpace(s.CfgStore.Cfg.GARoot) != "" {
+	if strings.TrimSpace(s.CfgStore.Snapshot().GARoot) != "" {
 		if b, err := os.ReadFile(s.channelConfigPath()); err == nil {
 			existing = parseChannelAssignments(string(b))
 		} else if !os.IsNotExist(err) {
@@ -351,7 +351,7 @@ func urlQueryEscape(s string) string {
 }
 
 func (s *Server) channelConfigPath() string {
-	return filepath.Join(s.CfgStore.Cfg.GARoot, "mykey.py")
+	return filepath.Join(s.CfgStore.Snapshot().GARoot, "mykey.py")
 }
 
 func unsafeChannelGARoot(p string) bool {
@@ -369,7 +369,7 @@ func (s *Server) loadChannelsResponse() channelsResponse {
 	values := map[string]string{}
 	exists := false
 	configPath := ""
-	if !unsafeChannelGARoot(s.CfgStore.Cfg.GARoot) {
+	if !unsafeChannelGARoot(s.CfgStore.Snapshot().GARoot) {
 		configPath = s.channelConfigPath()
 		if content, err := os.ReadFile(configPath); err == nil {
 			exists = true
@@ -392,7 +392,7 @@ func (s *Server) loadChannelsResponse() channelsResponse {
 }
 
 func (s *Server) saveChannels(profiles []channelProfile) error {
-	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if unsafeChannelGARoot(gaRoot) {
 		return fmt.Errorf("GA root is not configured or is a filesystem root")
 	}

@@ -36,3 +36,9 @@ test('usage overview has a stable refreshable route', () => {
   assert.deepEqual(parseRoute(), { tab: 'usage', taskSubTab: 'scheduled' })
   assert.equal(buildRoute('usage'), '/usage')
 })
+
+test('GA instances has a stable refreshable route', () => {
+  setLocation('http://localhost/instances')
+  assert.deepEqual(parseRoute(), { tab: 'instances', taskSubTab: 'services' })
+  assert.equal(buildRoute('instances'), '/instances')
+})

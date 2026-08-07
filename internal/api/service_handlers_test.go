@@ -16,11 +16,15 @@ import (
 
 func newServiceHandlerTestServer(t *testing.T, gaRoot string) *Server {
 	t.Helper()
-	cfg := &config.Store{Root: t.TempDir(), Cfg: config.Default()}
-	cfg.Cfg.GARoot = gaRoot
-	cfg.Cfg.LogTailLines = 1
+	cfg := newTestConfigStore(t, t.TempDir(), config.Default())
+	updateTestConfig(t, cfg, func(cfg *config.AppConfig) {
+		cfg.GARoot = gaRoot
+	})
+	updateTestConfig(t, cfg, func(cfg *config.AppConfig) {
+		cfg.LogTailLines = 1
+	})
 	models := modelconfig.NewStore(t.TempDir())
-	return New(cfg, service.NewManager(cfg.Cfg.GARoot, cfg.Cfg.BufferLines), models, nil)
+	return New(cfg, service.NewManager(cfg.Snapshot().GARoot, cfg.Snapshot().BufferLines), models, nil)
 }
 
 func TestLogsRouteRejectsUnknownAndEmptyService(t *testing.T) {

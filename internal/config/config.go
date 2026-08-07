@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 )
 
 type SlashCommandItem struct {
@@ -28,6 +30,22 @@ type ChatTitleModelRef struct {
 	LLMNo           int    `json:"llm_no"`
 }
 
+type InstanceConfig struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	GARoot          string `json:"ga_root"`
+	PythonPath      string `json:"python_path,omitempty"`
+	EffectivePython string `json:"effective_python,omitempty"`
+	InitStatus      string `json:"init_status,omitempty"`
+	InitError       string `json:"init_error,omitempty"`
+}
+
+const (
+	InstanceInitStatusInitializing = "initializing"
+	InstanceInitStatusReady        = "ready"
+	InstanceInitStatusFailed       = "failed"
+)
+
 type AppConfig struct {
 	GARoot                   string                    `json:"ga_root"`
 	ChatDataDir              string                    `json:"chat_data_dir"`
@@ -37,6 +55,8 @@ type AppConfig struct {
 	BufferLines              int                       `json:"buffer_lines"`
 	PythonPath               string                    `json:"python_path"`
 	EffectivePython          string                    `json:"effective_python,omitempty"`
+	DefaultInstanceID        string                    `json:"default_instance_id,omitempty"`
+	Instances                []InstanceConfig          `json:"instances,omitempty"`
 	BootstrapDone            bool                      `json:"bootstrap_done"`
 	ProxyMode                string                    `json:"proxy_mode"` // off | system | custom
 	HTTPProxy                string                    `json:"http_proxy"`
@@ -54,6 +74,37 @@ type AppConfig struct {
 	// It tracks the model last picked in Admin Chat so a new conversation keeps
 	// using it instead of silently falling back to the first configured model.
 	ChatDefaultLLMNo int `json:"chat_default_llm_no,omitempty"`
+}
+
+func validInstanceID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for i, r := range id {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || i > 0 && (r == '-' || r == '_' || r == '.') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validateRuntimePath(name, path string, wantDir bool) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%s does not exist: %w", name, err)
+	}
+	if wantDir && !st.IsDir() {
+		return fmt.Errorf("%s is not a directory", name)
+	}
+	if !wantDir && st.IsDir() {
+		return fmt.Errorf("%s is a directory", name)
+	}
+	return nil
 }
 
 func Validate(cfg AppConfig) error {
@@ -82,6 +133,71 @@ func Validate(cfg AppConfig) error {
 			if provEmpty != modelEmpty {
 				return fmt.Errorf("chat_title_model: provider_var_name and model must both be set or both be empty")
 			}
+		}
+	}
+	if len(cfg.Instances) == 0 {
+		if strings.TrimSpace(cfg.DefaultInstanceID) != "" {
+			return fmt.Errorf("default_instance_id requires at least one instance")
+		}
+	} else {
+		defaultID := strings.TrimSpace(cfg.DefaultInstanceID)
+		if defaultID == "" {
+			return fmt.Errorf("default_instance_id is required when instances are configured")
+		}
+		seenIDs := make(map[string]struct{}, len(cfg.Instances))
+		seenNames := make(map[string]struct{}, len(cfg.Instances))
+		seenRoots := make([]string, 0, len(cfg.Instances))
+		defaultFound := false
+		for i, instance := range cfg.Instances {
+			prefix := fmt.Sprintf("instances[%d]", i)
+			id := strings.TrimSpace(instance.ID)
+			if !validInstanceID(id) {
+				return fmt.Errorf("%s.id must be 1-64 characters and contain only letters, numbers, '.', '_' or '-'", prefix)
+			}
+			if _, ok := seenIDs[id]; ok {
+				return fmt.Errorf("duplicate instance id %q", id)
+			}
+			seenIDs[id] = struct{}{}
+			name := strings.TrimSpace(instance.Name)
+			if name == "" || len([]rune(name)) > 100 {
+				return fmt.Errorf("%s.name must be 1-100 characters", prefix)
+			}
+			nameKey := strings.ToLower(name)
+			if _, ok := seenNames[nameKey]; ok {
+				return fmt.Errorf("duplicate instance name %q", name)
+			}
+			seenNames[nameKey] = struct{}{}
+			status := strings.ToLower(strings.TrimSpace(instance.InitStatus))
+			switch status {
+			case "", InstanceInitStatusInitializing, InstanceInitStatusReady, InstanceInitStatusFailed:
+			default:
+				return fmt.Errorf("%s.init_status must be %q, %q or %q", prefix, InstanceInitStatusInitializing, InstanceInitStatusReady, InstanceInitStatusFailed)
+			}
+			root := strings.TrimSpace(instance.GARoot)
+			if root == "" {
+				return fmt.Errorf("%s.ga_root is required", prefix)
+			}
+			if err := validateRuntimePath(prefix+".ga_root", root, true); err != nil {
+				return err
+			}
+			for _, otherRoot := range seenRoots {
+				if samePath(root, otherRoot) {
+					return fmt.Errorf("duplicate instance ga_root %q", root)
+				}
+			}
+			seenRoots = append(seenRoots, root)
+			if err := validateRuntimePath(prefix+".python_path", instance.PythonPath, false); err != nil {
+				return err
+			}
+			if err := validateRuntimePath(prefix+".effective_python", instance.EffectivePython, false); err != nil {
+				return err
+			}
+			if id == defaultID {
+				defaultFound = true
+			}
+		}
+		if !defaultFound {
+			return fmt.Errorf("default_instance_id %q does not reference a configured instance", defaultID)
 		}
 	}
 	if root := strings.TrimSpace(cfg.GARoot); root != "" {
@@ -148,13 +264,24 @@ func validateProxyURL(name, value string) error {
 }
 
 func DefaultChatDataDir() string {
-	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
-		return filepath.Join(dir, "GenericAgent-Admin")
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		return filepath.Join(cwd, "data")
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".genericagent-admin")
+	return "data"
+}
+
+func defaultChatDataDir(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return DefaultChatDataDir()
 	}
-	return "GenericAgent-Admin"
+	return filepath.Join(root, "data")
+}
+
+func defaultForRoot(root string) AppConfig {
+	cfg := Default()
+	cfg.ChatDataDir = defaultChatDataDir(root)
+	return cfg
 }
 
 func Default() AppConfig {
@@ -181,13 +308,91 @@ func Default() AppConfig {
 
 type Store struct {
 	Root string
-	Cfg  AppConfig
+
+	mu  sync.RWMutex
+	cfg AppConfig
 }
 
 func NewStore(root string) *Store {
-	s := &Store{Root: root, Cfg: Default()}
+	s := &Store{Root: root, cfg: defaultForRoot(root)}
 	_ = s.Load()
 	return s
+}
+
+// NewRuntimeStore creates an in-memory store from cfg without reading from or
+// writing to disk. It is useful for request-scoped derived configurations.
+func NewRuntimeStore(root string, cfg AppConfig) (*Store, error) {
+	cfg = normalize(cloneAppConfig(cfg), root)
+	if err := Validate(cfg); err != nil {
+		return nil, err
+	}
+	return &Store{Root: root, cfg: cloneAppConfig(cfg)}, nil
+}
+
+// Snapshot returns a deep copy of the currently published configuration.
+// Callers may freely mutate the returned value without aliasing Store state.
+func (s *Store) Snapshot() AppConfig {
+	if s == nil {
+		return AppConfig{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneAppConfig(s.cfg)
+}
+
+// UpdateRuntime atomically updates the in-memory configuration without
+// persisting it. It is intended for process-local overrides such as CLI flags.
+func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
+	if s == nil {
+		return fmt.Errorf("config store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg := cloneAppConfig(s.cfg)
+	if update != nil {
+		update(&cfg)
+	}
+	cfg = normalize(cfg, s.Root)
+	if err := Validate(cfg); err != nil {
+		return err
+	}
+	s.cfg = cloneAppConfig(cfg)
+	return nil
+}
+
+func cloneAppConfig(cfg AppConfig) AppConfig {
+	if cfg.Instances != nil {
+		cloned := make([]InstanceConfig, len(cfg.Instances))
+		copy(cloned, cfg.Instances)
+		cfg.Instances = cloned
+	}
+	if cfg.ServiceAutostart != nil {
+		cloned := make([]string, len(cfg.ServiceAutostart))
+		copy(cloned, cfg.ServiceAutostart)
+		cfg.ServiceAutostart = cloned
+	}
+	if cfg.ServiceModels != nil {
+		cloned := make(map[string]int, len(cfg.ServiceModels))
+		for name, llmNo := range cfg.ServiceModels {
+			cloned[name] = llmNo
+		}
+		cfg.ServiceModels = cloned
+	}
+	if cfg.ChatTitleModel != nil {
+		cloned := *cfg.ChatTitleModel
+		cfg.ChatTitleModel = &cloned
+	}
+	if cfg.SlashCommands != nil {
+		cloned := make([]SlashCommandItem, len(cfg.SlashCommands))
+		copy(cloned, cfg.SlashCommands)
+		cfg.SlashCommands = cloned
+	}
+	if cfg.ExtraSystemPromptPresets != nil {
+		cloned := make([]ExtraSystemPromptPreset, len(cfg.ExtraSystemPromptPresets))
+		copy(cloned, cfg.ExtraSystemPromptPresets)
+		cfg.ExtraSystemPromptPresets = cloned
+	}
+	return cfg
 }
 
 func (s *Store) path() string { return filepath.Join(s.Root, "config.local.json") }
@@ -199,12 +404,140 @@ func effectivePython(cfg AppConfig) string {
 	return strings.TrimSpace(cfg.EffectivePython)
 }
 
+func effectiveInstancePython(instance InstanceConfig) string {
+	if py := strings.TrimSpace(instance.PythonPath); py != "" {
+		return py
+	}
+	return strings.TrimSpace(instance.EffectivePython)
+}
+
+func normalize(cfg AppConfig, root string) AppConfig {
+	if strings.TrimSpace(cfg.ChatDataDir) == "" {
+		cfg.ChatDataDir = defaultChatDataDir(root)
+	}
+	if strings.TrimSpace(cfg.Host) == "" {
+		cfg.Host = "127.0.0.1"
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 8787
+	}
+	if cfg.LogTailLines == 0 {
+		cfg.LogTailLines = 200
+	}
+	if cfg.BufferLines == 0 {
+		cfg.BufferLines = 1000
+	}
+	if strings.TrimSpace(cfg.ProxyMode) == "" {
+		cfg.ProxyMode = "off"
+	}
+
+	cfg.GARoot = strings.TrimSpace(cfg.GARoot)
+	cfg.PythonPath = strings.TrimSpace(cfg.PythonPath)
+	cfg.EffectivePython = effectivePython(cfg)
+	cfg.DefaultInstanceID = strings.TrimSpace(cfg.DefaultInstanceID)
+
+	instances := make([]InstanceConfig, 0, len(cfg.Instances)+1)
+	for _, instance := range cfg.Instances {
+		instance.ID = strings.TrimSpace(instance.ID)
+		instance.Name = strings.TrimSpace(instance.Name)
+		instance.GARoot = strings.TrimSpace(instance.GARoot)
+		instance.PythonPath = strings.TrimSpace(instance.PythonPath)
+		instance.EffectivePython = effectiveInstancePython(instance)
+		instance.InitStatus = strings.ToLower(strings.TrimSpace(instance.InitStatus))
+		instance.InitError = strings.TrimSpace(instance.InitError)
+		instances = append(instances, instance)
+	}
+	if len(instances) == 0 && cfg.GARoot != "" {
+		instances = append(instances, InstanceConfig{
+			ID:              "default",
+			Name:            "Default",
+			GARoot:          cfg.GARoot,
+			PythonPath:      cfg.PythonPath,
+			EffectivePython: cfg.EffectivePython,
+		})
+		cfg.DefaultInstanceID = "default"
+	}
+	cfg.Instances = instances
+
+	if len(cfg.Instances) == 0 {
+		cfg.DefaultInstanceID = ""
+		return cfg
+	}
+	if cfg.DefaultInstanceID == "" {
+		for _, instance := range cfg.Instances {
+			if samePath(instance.GARoot, cfg.GARoot) && cfg.GARoot != "" {
+				cfg.DefaultInstanceID = instance.ID
+				break
+			}
+		}
+		if cfg.DefaultInstanceID == "" {
+			cfg.DefaultInstanceID = cfg.Instances[0].ID
+		}
+	}
+	for _, instance := range cfg.Instances {
+		if instance.ID != cfg.DefaultInstanceID {
+			continue
+		}
+		// Keep the legacy single-instance fields as a compatibility mirror.
+		cfg.GARoot = instance.GARoot
+		cfg.PythonPath = instance.PythonPath
+		cfg.EffectivePython = instance.EffectivePython
+		break
+	}
+	return cfg
+}
+
+func samePath(a, b string) bool {
+	a = filepath.Clean(strings.TrimSpace(a))
+	b = filepath.Clean(strings.TrimSpace(b))
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func (cfg *AppConfig) SyncDefaultInstanceFromLegacy() bool {
+	if cfg == nil {
+		return false
+	}
+	defaultID := strings.TrimSpace(cfg.DefaultInstanceID)
+	for i := range cfg.Instances {
+		if strings.TrimSpace(cfg.Instances[i].ID) != defaultID {
+			continue
+		}
+		cfg.Instances[i].GARoot = strings.TrimSpace(cfg.GARoot)
+		cfg.Instances[i].PythonPath = strings.TrimSpace(cfg.PythonPath)
+		cfg.Instances[i].EffectivePython = effectivePython(*cfg)
+		return true
+	}
+	return false
+}
+
+func (cfg AppConfig) Instance(id string) (InstanceConfig, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = strings.TrimSpace(cfg.DefaultInstanceID)
+	}
+	for _, instance := range cfg.Instances {
+		if instance.ID == id {
+			return instance, true
+		}
+	}
+	return InstanceConfig{}, false
+}
+
 func (s *Store) Load() error {
+	if s == nil {
+		return fmt.Errorf("config store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	data, err := os.ReadFile(s.path())
 	if err != nil {
 		return nil
 	}
-	cfg := Default()
+	cfg := defaultForRoot(s.Root)
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
@@ -232,7 +565,7 @@ func (s *Store) Load() error {
 	if err := Validate(cfg); err != nil {
 		return err
 	}
-	s.Cfg = cfg
+	s.cfg = cloneAppConfig(cfg)
 	return nil
 }
 
@@ -258,8 +591,8 @@ func pathMissing(path string) bool {
 }
 
 func (s *Store) Save(cfg AppConfig) error {
-	if strings.TrimSpace(cfg.ChatDataDir) == "" {
-		cfg.ChatDataDir = DefaultChatDataDir()
+	if s == nil {
+		return fmt.Errorf("config store is nil")
 	}
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
@@ -288,7 +621,7 @@ func (s *Store) Save(cfg AppConfig) error {
 	if err := writeFileAtomic(s.path(), data, 0644); err != nil {
 		return err
 	}
-	s.Cfg = cfg
+	s.cfg = cloneAppConfig(cfg)
 	return nil
 }
 

@@ -22,7 +22,7 @@ func newConfigTestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := config.NewStore(t.TempDir())
 	models := modelconfig.NewStore(t.TempDir())
-	return New(cfg, service.NewManager(cfg.Cfg.GARoot, cfg.Cfg.BufferLines), models, nil)
+	return New(cfg, service.NewManager(cfg.Snapshot().GARoot, cfg.Snapshot().BufferLines), models, nil)
 }
 
 func TestConfigSaveValidationAndDefaults(t *testing.T) {
@@ -45,8 +45,9 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.ChatDataDir == "" || !strings.Contains(got.ChatDataDir, "GenericAgent-Admin") {
-		t.Fatalf("chat_data_dir default not applied: %q", got.ChatDataDir)
+	wantChatDataDir := filepath.Join(s.CfgStore.Root, "data")
+	if got.ChatDataDir != wantChatDataDir {
+		t.Fatalf("chat_data_dir = %q, want %q", got.ChatDataDir, wantChatDataDir)
 	}
 }
 
@@ -82,7 +83,7 @@ func TestConfigSaveRejectsInvalidPathsAndProxy(t *testing.T) {
 
 func TestSetupValidateDryRunDoesNotPersistInvalidRoot(t *testing.T) {
 	s := newConfigTestServer(t)
-	before := s.CfgStore.Cfg.GARoot
+	before := s.CfgStore.Snapshot().GARoot
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/validate", strings.NewReader(`{"path":"`+filepath.ToSlash(t.TempDir())+`"}`))
 	markDangerous(req)
@@ -93,8 +94,8 @@ func TestSetupValidateDryRunDoesNotPersistInvalidRoot(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"ok":false`) {
 		t.Fatalf("expected unhealthy response: %s", rr.Body.String())
 	}
-	if s.CfgStore.Cfg.GARoot != before {
-		t.Fatalf("invalid dry-run persisted root: %q -> %q", before, s.CfgStore.Cfg.GARoot)
+	if s.CfgStore.Snapshot().GARoot != before {
+		t.Fatalf("invalid dry-run persisted root: %q -> %q", before, s.CfgStore.Snapshot().GARoot)
 	}
 }
 
@@ -246,8 +247,8 @@ func TestSetupInstallClonesGenericAgentUnderInstallDirectory(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if s.CfgStore.Cfg.GARoot != wantRoot {
-		t.Fatalf("ga_root=%q want %q", s.CfgStore.Cfg.GARoot, wantRoot)
+	if s.CfgStore.Snapshot().GARoot != wantRoot {
+		t.Fatalf("ga_root=%q want %q", s.CfgStore.Snapshot().GARoot, wantRoot)
 	}
 	var got map[string]interface{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
@@ -345,7 +346,9 @@ func TestGaGitUpdateRejectsMissingUpstreamBeforePull(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	s.CfgStore.Cfg.GARoot = root
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.GARoot = root
+	})
 
 	oldRunGit := runGitCommandFunc
 	t.Cleanup(func() { runGitCommandFunc = oldRunGit })
@@ -456,8 +459,8 @@ func TestSetupPythonInstallPersistsDiscoveredPython(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if s.CfgStore.Cfg.PythonPath != installerPython {
-		t.Fatalf("python_path=%q want %q", s.CfgStore.Cfg.PythonPath, installerPython)
+	if s.CfgStore.Snapshot().PythonPath != installerPython {
+		t.Fatalf("python_path=%q want %q", s.CfgStore.Snapshot().PythonPath, installerPython)
 	}
 	var got map[string]interface{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
@@ -470,8 +473,18 @@ func TestSetupPythonInstallPersistsDiscoveredPython(t *testing.T) {
 
 func TestSetupStateIsReadOnlyAndDoesNotRequireDangerousConfirm(t *testing.T) {
 	s := newConfigTestServer(t)
-	s.CfgStore.Cfg.GARoot = t.TempDir()
-	s.CfgStore.Cfg.EffectivePython = filepath.Join(s.CfgStore.Cfg.GARoot, ".venv", "Scripts", "python.exe")
+	gaRoot := t.TempDir()
+	python := filepath.Join(gaRoot, ".venv", "Scripts", "python.exe")
+	if err := os.MkdirAll(filepath.Dir(python), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(python, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.GARoot = gaRoot
+		cfg.EffectivePython = python
+	})
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/setup/state", nil)
@@ -483,7 +496,7 @@ func TestSetupStateIsReadOnlyAndDoesNotRequireDangerousConfirm(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["ok"] != true || got["ga_root"] != s.CfgStore.Cfg.GARoot || got["python"] != s.CfgStore.Cfg.EffectivePython {
+	if got["ok"] != true || got["ga_root"] != s.CfgStore.Snapshot().GARoot || got["python"] != s.CfgStore.Snapshot().EffectivePython {
 		t.Fatalf("unexpected setup state: %#v", got)
 	}
 }
@@ -540,7 +553,7 @@ func TestSlashCommandsIncludesGAPaletteEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectsDir, "not-a-project.txt"), []byte("ignored"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	cfg.EffectivePython = ""
 	if err := s.CfgStore.Save(cfg); err != nil {

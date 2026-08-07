@@ -32,22 +32,29 @@ import (
 type Server struct {
 	CfgStore                *config.Store
 	Svc                     *service.Manager
+	InstanceManagers        *instanceManagerRegistry
 	Models                  *modelconfig.Store
 	Static                  fs.FS
 	ReactApp                *reactAppBridge
-	ChatMu                  sync.Mutex
-	SessionMu               sync.Mutex
-	UsageMu                 sync.Mutex
-	ConfigMu                sync.Mutex
+	ChatMu                  *sync.Mutex
+	SessionMu               *sync.Mutex
+	UsageMu                 *sync.Mutex
+	ConfigMu                *sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
+	ChatRuntimes            *chatRuntimeRegistry
+	BaseCfgStore            *config.Store
 	titleBackfillStarted    bool
 	autonomousCleanupStop   chan struct{}
 	autonomousCleanupOnce   sync.Once
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
+	instanceInstallMu       sync.Mutex
+	instanceInstallWG       sync.WaitGroup
+	instanceInstallTasks    map[string]*instanceInstallTask
+	instanceInstallsClosing bool
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
@@ -130,6 +137,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.goalsDelete))
 	mux.HandleFunc("/api/goals/output", s.goalsOutput)
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
+	mux.HandleFunc("/api/instances", s.instancesList)
+	mux.HandleFunc("/api/instances/install", s.requireDangerousConfirm(s.instanceInstall))
+	mux.HandleFunc("/api/instances/create", s.requireDangerousConfirm(s.instanceCreate))
+	mux.HandleFunc("/api/instances/update", s.requireDangerousConfirm(s.instanceUpdate))
+	mux.HandleFunc("/api/instances/delete", s.requireDangerousConfirm(s.instanceDelete))
+	mux.HandleFunc("/api/instances/default", s.requireDangerousConfirm(s.instanceSetDefault))
 	mux.HandleFunc("/api/slash-commands", s.slashCommands)
 	mux.HandleFunc("/api/extra-system-prompt-presets", s.requireDangerousConfirm(s.extraSystemPromptPresets))
 	mux.HandleFunc("/api/setup/state", s.setupState)
@@ -192,7 +205,8 @@ func recoverPanics(next http.Handler) http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm, X-GA-Instance-ID")
+		w.Header().Set("Access-Control-Expose-Headers", "X-GA-Instance-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
@@ -214,8 +228,13 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
+	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
+	{Path: "/api/instances/delete", Level: "dangerous", Action: "delete_instance", Reason: "removes a configured GA runtime instance when its manager is idle"},
+	{Path: "/api/instances/default", Level: "reversible", Action: "set_default_instance", Reason: "changes the default GA runtime instance"},
 	{Path: "/api/extra-system-prompt-presets", Level: "reversible", Action: "save_extra_system_prompt_presets", Reason: "updates the reusable extra system prompt preset library"},
 	{Path: "/api/setup/validate", Level: "reversible", Action: "save_ga_root", Reason: "persists configured GA root after successful health validation"},
+	{Path: "/api/instances/install", Level: "dangerous", Action: "install_instance", Reason: "downloads and extracts the GenericAgent main archive under the app instances directory and registers a new instance"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone or downloads the GenericAgent source archive and changes configured GA root"},
 	{Path: "/api/setup/python/install", Level: "dangerous", Action: "install_python", Reason: "downloads and runs the official Windows Python installer and persists the Python path"},
 	{Path: "/api/setup/venv/create", Level: "dangerous", Action: "create_venv", Reason: "creates or updates a Python virtual environment under the configured GA root"},
@@ -300,7 +319,7 @@ func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, ga.BuildInventory(s.CfgStore.Cfg.GARoot))
+	writeJSON(w, ga.BuildInventory(s.CfgStore.Snapshot().GARoot))
 }
 
 func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
@@ -366,12 +385,12 @@ func (s *Server) tmwebdriverInstallDeps(w http.ResponseWriter, r *http.Request) 
 		bad(w, 405, "method not allowed")
 		return
 	}
-	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if gaRoot == "" {
 		bad(w, 400, "ga_root is empty")
 		return
 	}
-	python := resolvePythonForRoot(gaRoot, s.CfgStore.Cfg.PythonPath)
+	python := resolvePythonForRoot(gaRoot, s.CfgStore.Snapshot().PythonPath)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	args := buildTMWebDriverInstallArgs(defaultPipIndexURL)
@@ -520,11 +539,11 @@ func (s *Server) tmwebdriverRepair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startTMWebDriverMaster() (int, []string, error) {
-	gaRoot := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
+	gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
 	if gaRoot == "" {
 		return 0, nil, errors.New("ga_root is empty")
 	}
-	python := resolvePythonForRoot(gaRoot, s.CfgStore.Cfg.PythonPath)
+	python := resolvePythonForRoot(gaRoot, s.CfgStore.Snapshot().PythonPath)
 	code := "from TMWebDriver import TMWebDriver; TMWebDriver()"
 	cmd := exec.Command(python, "-c", code)
 	cmd.Dir = gaRoot
@@ -564,7 +583,7 @@ func resolvePythonForRoot(gaRoot, configured string) string {
 }
 
 func (s *Server) buildTMWebDriverStatus() tmwebdriverStatusResponse {
-	return buildTMWebDriverStatusForConfig(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.PythonPath)
+	return buildTMWebDriverStatusForConfig(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath)
 }
 
 func buildTMWebDriverStatusForConfig(gaRoot, configuredPython string) tmwebdriverStatusResponse {
@@ -1019,7 +1038,7 @@ func (s *Server) reactAppStart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	if err := s.ReactApp.start(s.CfgStore.Cfg.GARoot); err != nil {
+	if err := s.ReactApp.start(s.CfgStore.Snapshot().GARoot); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
@@ -1037,7 +1056,7 @@ func (s *Server) reactAppStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.ReactApp.snapshot())
 }
 func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
-	if err := s.ReactApp.start(s.CfgStore.Cfg.GARoot); err != nil {
+	if err := s.ReactApp.start(s.CfgStore.Snapshot().GARoot); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
