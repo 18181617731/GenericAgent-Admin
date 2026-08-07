@@ -4622,9 +4622,15 @@ export default function ChatApp() {
           />
           {sidebarSearch && <button className="oa-search-clear" onClick={()=>setSidebarSearch('')} aria-label={ct('清除搜索', 'Clear search')}><X size={14}/></button>}
         </div>
+        <button
+          className="oa-new-chat"
+          onClick={newSession}
+          disabled={batchDeleting}
+          title={ct('新对话', 'New chat')}
+          aria-label={ct('新对话', 'New chat')}
+        ><MessageSquarePlus size={17}/></button>
         <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
       </div>
-      <button className="oa-new-chat" onClick={newSession} disabled={batchDeleting}><MessageSquarePlus size={16}/><span>{ct('新对话', 'New chat')}</span></button>
       <div className="oa-sidebar-tabs" role="tablist" aria-label={ct('会话视图', 'Session views')}>
         <button type="button" role="tab" aria-selected={sidebarTab === 'history'} className={sidebarTab === 'history' ? 'active' : ''} onClick={()=>setSidebarTab('history')}>
           <Clock3 size={14}/><span>{ct('历史', 'History')}</span><small>{sessions.length}</small>
