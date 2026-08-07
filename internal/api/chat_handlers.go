@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Snapshot().GARoot)})
@@ -72,6 +72,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 	case "settings":
 		if len(parts) == 2 && r.Method == http.MethodPost {
 			s.chatSaveSettings(w, r, parts[1])
+			return
+		}
+	case "hub":
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.chatSetHubEnabled(w, r, parts[1])
 			return
 		}
 	case "fork":
@@ -430,6 +435,34 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 	writeJSON(w, chatSessionForClient(cs))
 }
 
+func (s *Server) chatSetHubEnabled(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cs.HubEnabled = req.Enabled
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "hub_enabled": cs.HubEnabled})
+}
+
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {
 	if !validChatWorldlineID(sid) {
 		bad(w, http.StatusBadRequest, "invalid session id")
@@ -706,6 +739,13 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 }
 
 func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
+	s.chatPostMode(w, r, sid, false)
+}
+
+// chatPostMode starts the same durable chat run used by the Web UI. Hub callers
+// use startOnly so their synchronous put callback can acknowledge admission
+// immediately instead of waiting for the entire streamed model response.
+func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string, startOnly bool) {
 	var req struct {
 		Prompt              string        `json:"prompt"`
 		Files               []chatUpload  `json:"files"`
@@ -830,6 +870,10 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 		"_ga_run_started_at_ms":    runStartedAtMS,
 	}
 	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
+	if startOnly {
+		writeJSON(w, map[string]interface{}{"ok": true, "running": true})
+		return
+	}
 	s.streamChatRun(w, r, sid, 0)
 }
 

@@ -48,6 +48,9 @@ type Server struct {
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
+	chatHubBridgeMu         sync.Mutex
+	chatHubBridgeCmd        *exec.Cmd
+	chatHubBridgeServer     *http.Server
 	instanceInstallMu       sync.Mutex
 	instanceInstallWG       sync.WaitGroup
 	instanceInstallTasks    map[string]*instanceInstallTask
@@ -1029,6 +1032,7 @@ func (s *Server) ShutdownCleanup() {
 		return
 	}
 	s.stopInstanceInstalls()
+	s.StopChatHubBridge()
 	s.StopManagedServices()
 	if s.ReactApp != nil {
 		_ = s.ReactApp.stop()

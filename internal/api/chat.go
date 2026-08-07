@@ -31,6 +31,7 @@ type chatMessage struct {
 	ID             string                   `json:"id"`
 	Role           string                   `json:"role"`
 	Content        string                   `json:"content"`
+	Outputs        []string                 `json:"outputs,omitempty"`
 	ModelID        string                   `json:"model_id,omitempty"`
 	Files          []map[string]interface{} `json:"files,omitempty"`
 	CreatedAt      int64                    `json:"created_at"`
@@ -169,6 +170,7 @@ type chatSession struct {
 	WorldlineHead          string                   `json:"worldline_head,omitempty"`
 	Workspace              string                   `json:"workspace,omitempty"`
 	ProjectMode            string                   `json:"project_mode,omitempty"`
+	HubEnabled             bool                     `json:"hub_enabled,omitempty"`
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 }

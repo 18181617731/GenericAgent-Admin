@@ -3892,6 +3892,19 @@ export default function ChatApp() {
     setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
   }
 
+  const setSessionHubEnabled = async (session) => {
+    if (!session?.id) return
+    const enabled = !session.hub_enabled
+    setMenuOpen(''); setMenuPos(null); setErr('')
+    try {
+      const d = await chatApi(`/api/chat/hub/${session.id}`, { method:'PATCH', body:JSON.stringify({ enabled }) })
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, hub_enabled:Boolean(d.hub_enabled) } : x))
+      setNotice(d.hub_enabled ? ct('会话已入驻 Hub', 'Session joined Hub') : ct('会话已退出 Hub', 'Session left Hub'))
+    } catch (e) {
+      setErr(e.message || String(e))
+    }
+  }
+
   const saveModel = async (next) => {
     setLlmNo(next)
     if (!sid) return
@@ -4764,6 +4777,7 @@ export default function ChatApp() {
         if (!s) return null
         return <div className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
           <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
+          <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>
           <button className="danger" onClick={()=>deleteSession(s.id)}><Trash2 size={14}/>{ct('删除', 'Delete')}</button>
         </div>
       })()}
