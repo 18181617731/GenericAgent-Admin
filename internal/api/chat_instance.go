@@ -122,6 +122,11 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 	cfg.GARoot = instance.GARoot
 	cfg.PythonPath = instance.PythonPath
 	cfg.EffectivePython = instance.EffectivePython
+	// NewRuntimeStore normalizes the legacy GARoot/Python compatibility fields
+	// from DefaultInstanceID. Scope the derived request configuration to the
+	// selected instance so normalization cannot restore the global default.
+	cfg.DefaultInstanceID = instanceID
+	cfg.Instances = []config.InstanceConfig{instance}
 	runtimeID := instanceID
 	if instanceID == "default" {
 		// The migrated legacy instance keeps both the legacy data directory and

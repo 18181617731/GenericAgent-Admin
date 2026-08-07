@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -100,6 +101,13 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	if got := betaServer.CfgStore.Snapshot().ChatDataDir; got != betaDataDir {
 		t.Fatalf("beta data dir = %q, want %q", got, betaDataDir)
 	}
+	betaCfg := betaServer.CfgStore.Snapshot()
+	if betaCfg.GARoot != betaRoot {
+		t.Fatalf("beta GA root = %q, want %q", betaCfg.GARoot, betaRoot)
+	}
+	if betaCfg.DefaultInstanceID != "beta" || len(betaCfg.Instances) != 1 || betaCfg.Instances[0].ID != "beta" {
+		t.Fatalf("beta runtime instance scope = default %q, instances %#v; want beta only", betaCfg.DefaultInstanceID, betaCfg.Instances)
+	}
 	if defaultServer.ChatMu == betaServer.ChatMu {
 		t.Fatal("default and beta unexpectedly share a chat runtime")
 	}
@@ -133,6 +141,47 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	}
 	if !defaultAgain.ChatTitleJobs["default-only"] || betaAgain.ChatTitleJobs["default-only"] {
 		t.Fatal("runtime state isolation changed after switching the default instance")
+	}
+}
+
+func TestChatInstanceProjectsFollowSelectedInstance(t *testing.T) {
+	appRoot := t.TempDir()
+	defaultRoot := filepath.Join(t.TempDir(), "ga-default")
+	betaRoot := filepath.Join(t.TempDir(), "ga-beta")
+	for root, project := range map[string]string{defaultRoot: "default-project", betaRoot: "beta-project"} {
+		if err := os.MkdirAll(filepath.Join(root, "temp", "projects", project), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.DefaultInstanceID = "default"
+	cfg.Instances = []config.InstanceConfig{
+		{ID: "default", Name: "Default", GARoot: defaultRoot},
+		{ID: "beta", Name: "Beta", GARoot: betaRoot},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	server := New(store, nil, nil, nil)
+	for instanceID, want := range map[string]string{"default": "default-project", "beta": "beta-project"} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/chat/sessions?instance_id="+instanceID, nil)
+		server.Routes().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("instance %q status = %d, body = %s", instanceID, rr.Code, rr.Body.String())
+		}
+		var payload struct {
+			Projects []string `json:"projects"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("instance %q decode error = %v", instanceID, err)
+		}
+		if len(payload.Projects) != 1 || payload.Projects[0] != want {
+			t.Fatalf("instance %q projects = %#v, want [%q]", instanceID, payload.Projects, want)
+		}
 	}
 }
 
