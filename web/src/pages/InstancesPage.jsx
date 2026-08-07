@@ -232,33 +232,36 @@ export default function InstancesPage({ lang = 'zh' }) {
       {error ? <X size={16}/> : <CheckCircle2 size={16}/>}<span>{error || notice}</span>
     </div>}
 
-    {editor && <form className="instance-editor" onSubmit={submit} aria-labelledby="instance-editor-title">
+    {editor && <form className={`instance-editor is-${editor}`} onSubmit={submit} aria-labelledby="instance-editor-title">
       <div className="instance-editor-heading">
+        <div className="instance-editor-heading-icon" aria-hidden="true">{editor === 'install' ? <Download size={18}/> : editor === 'create' ? <Plus size={18}/> : <Pencil size={17}/>}</div>
         <div className="instance-editor-heading-copy">
           <h3 id="instance-editor-title">{editor === 'create' ? copy.createTitle : editor === 'install' ? copy.installTitle : copy.editTitle}</h3>
           <p>{editor === 'create' ? copy.createSummary : editor === 'install' ? copy.installSummary : copy.editSummary}</p>
         </div>
-        <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
       </div>
       <div className="instance-editor-body">
         <fieldset className="instance-editor-section">
-          <legend>{copy.identityGroup}</legend>
+          <legend><span aria-hidden="true">01</span>{copy.identityGroup}</legend>
           <div className="instance-editor-grid instance-editor-grid-identity">
             <label htmlFor="instance-id"><span>{copy.id}<em>{copy.requiredField}</em></span><input id="instance-id" aria-label={copy.id} value={form.id} disabled={editor !== 'create' && editor !== 'install' || anyBusy} onChange={event => patchForm('id', event.target.value)} required/><small>{copy.idHint}</small></label>
             {editor !== 'install' && <label htmlFor="instance-name"><span>{copy.name}<em>{copy.requiredField}</em></span><input id="instance-name" aria-label={copy.name} value={form.name} disabled={anyBusy} onChange={event => patchForm('name', event.target.value)} required/></label>}
           </div>
         </fieldset>
         {editor !== 'install' && <fieldset className="instance-editor-section">
-          <legend>{copy.runtimeGroup}</legend>
+          <legend><span aria-hidden="true">02</span>{copy.runtimeGroup}</legend>
           <div className="instance-editor-grid">
             <label htmlFor="instance-root"><span>{copy.root}<em>{copy.requiredField}</em></span><input id="instance-root" aria-label={copy.root} value={form.ga_root} disabled={anyBusy} onChange={event => patchForm('ga_root', event.target.value)} required/><small>{copy.rootHint}</small></label>
             <label htmlFor="instance-python"><span>{copy.python}</span><input id="instance-python" aria-label={copy.python} value={form.python_path} disabled={anyBusy} onChange={event => patchForm('python_path', event.target.value)}/><small>{copy.pythonHint}</small></label>
           </div>
         </fieldset>}
         {editor === 'install' && <fieldset className="instance-editor-section">
-          <legend>{copy.sourceGroup}</legend>
+          <legend><span aria-hidden="true">02</span>{copy.sourceGroup}</legend>
           <div className="instance-editor-grid"><label htmlFor="instance-template"><span>{copy.template}</span><input id="instance-template" aria-label={copy.template} type="file" accept=".zip,application/zip" disabled={anyBusy} onChange={event => setTemplateFile(event.target.files?.[0] || null)}/><small>{copy.templateHint}</small></label></div>
         </fieldset>}
+      </div>
+      <div className="instance-editor-footer">
+        <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
       </div>
     </form>}
 
