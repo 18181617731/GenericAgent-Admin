@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"genericagent-admin-go/internal/config"
 )
 
 func TestModelsProbeRequiresSuccessfulChatInsteadOfListedModelID(t *testing.T) {
@@ -176,7 +178,7 @@ func TestModelsProbeRecordsUsageAsModelProbeChannel(t *testing.T) {
 	defer upstream.Close()
 
 	s := newModelTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
 	rr := postModelProbe(t, s, map[string]interface{}{
 		"protocol": "native_oai", "base_url": upstream.URL, "api_key": "sk-probe-test", "var_name": "native_oai_probe", "models": []string{"probe-model"},
 	})

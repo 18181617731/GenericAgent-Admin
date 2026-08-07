@@ -46,9 +46,6 @@ func main() {
 		log.Printf("migrate autostart entry: %v", err)
 	}
 	if launch.PortSet {
-		cfgStore.Cfg.Port = launch.Port
-	}
-	if launch.PortSet {
 		if err := cfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
 			cfg.Port = launch.Port
 		}); err != nil {
@@ -63,14 +60,15 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
-	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv))
+	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv), os.Getenv(authEnabledEnv))
 	if err != nil {
 		log.Fatalf("initialize admin authentication: %v", err)
 	}
-	addrs := adminListenAddresses(cfgStore.Cfg.Host, cfgStore.Cfg.Port, discoverTailscaleIPv4())
+	addrs := adminListenAddresses(cfgStore.Snapshot().Host, cfgStore.Snapshot().Port, discoverTailscaleIPv4())
 	url := "http://" + addrs[0]
 	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
 	srv.StartAutostartServices()
+	srv.StartAutonomousMaintenance()
 	activeAddrs, err := startHTTPListeners(server, addrs)
 	if err != nil {
 		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)
@@ -114,6 +112,7 @@ const (
 	adminIdleTimeout       = 120 * time.Second
 	authUserEnv            = "GA_ADMIN_AUTH_USER"
 	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
+	authEnabledEnv         = "GA_ADMIN_AUTH_ENABLED"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { autonomousExecutionState, autonomousHandledProgress, autonomousReviewView, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousApproval, summarizeAutonomousReport, summarizeAutonomousReviewNeed } from './autonomous.js'
+import { autonomousExecutionState, autonomousHandledProgress, autonomousReviewView, autonomousServiceView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousProblem, summarizeAutonomousReport, summarizeAutonomousReviewNeed } from './autonomous.js'
 
 test('autonomous summary reports running services approvals and latest record', () => {
   const latest = { name: 'latest.md', mod_time: '2026-07-28T10:00:00Z' }
@@ -9,6 +9,19 @@ test('autonomous summary reports running services approvals and latest record', 
     approvals: { pending: 2 },
     reports: [latest, { name: 'older.md' }],
   }), { running: 1, total: 2, pending: 2, reports: 2, latestReport: latest })
+})
+
+test('autonomous summary derives pending count from normalized items', () => {
+  assert.equal(autonomousSummary({
+    approvals: {
+      pending: 3,
+      items: [
+        { state: 'pending', status: '已完成' },
+        { state: 'pending', status: '无需审批' },
+        { state: 'pending', status: '待批未落地', next_step: '用户批准后执行' },
+      ],
+    },
+  }).pending, 1)
 })
 
 test('autonomous report search is case insensitive and includes paths', () => {
@@ -51,10 +64,9 @@ test('autonomous execution state defaults approved work to queued', () => {
   assert.equal(autonomousExecutionState({ decision: 'rejected' }), 'not_applicable')
 })
 
-test('approval outcome summaries prefer explicit text and explain fallback outcomes plainly', () => {
-  assert.equal(summarizeAutonomousApproval({ expected_outcome: '以后可以直接照着执行' }), '以后可以直接照着执行')
-  assert.equal(summarizeAutonomousApproval({ target: 'memory/example.md' }), '批准后会把相关方案整理到 memory/example.md，以后遇到同类问题时可以直接参考。')
-  assert.match(summarizeAutonomousApproval({ next_step: 'Add the reference and generate a report' }, 'en'), /After approval, the autonomous workflow will add/)
+test('approval problem summaries prefer the model-generated plain-language text', () => {
+  assert.equal(summarizeAutonomousProblem({ problem: '修复台账与真实文件状态不一致' }), '修复台账与真实文件状态不一致')
+  assert.match(summarizeAutonomousProblem({ title: '示例任务' }), /这项任务是为了解决“示例任务”/)
 })
 
 test('autonomous handled approvals expose progress groups in stable order', () => {
@@ -66,7 +78,21 @@ test('autonomous handled approvals expose progress groups in stable order', () =
   assert.deepEqual(result.handledGroups.map(group => ({ key: group.key, ids: group.items.map(item => item.id) })), [
     { key: 'queued', ids: ['queued'] },
     { key: 'not_applicable', ids: ['rejected'] },
-    { key: 'unknown', ids: ['unknown'] },
+    { key: 'closed', ids: ['unknown'] },
+  ])
+})
+
+test('autonomous pending view removes stale completed and no-approval items', () => {
+  const completed = { id: 'completed', state: 'pending', status: '已完成并通过验证' }
+  const noApproval = { id: 'no-approval', state: 'pending', status: '无需审批' }
+  const queued = { id: 'queued-stale', state: 'pending', execution_state: 'queued' }
+  const pending = { id: 'pending', state: 'pending', status: '待批未落地', next_step: '用户批准后执行' }
+  const result = splitAutonomousApprovals([completed, noApproval, queued, pending])
+  assert.deepEqual(result.pending.map(item => item.id), ['pending'])
+  assert.deepEqual(result.handledGroups.map(group => ({ key: group.key, ids: group.items.map(item => item.id) })), [
+    { key: 'queued', ids: ['queued-stale'] },
+    { key: 'not_required', ids: ['no-approval'] },
+    { key: 'closed', ids: ['completed'] },
   ])
 })
 

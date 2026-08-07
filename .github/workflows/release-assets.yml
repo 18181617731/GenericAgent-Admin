@@ -68,7 +68,6 @@ jobs:
     needs: prepare
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
-    needs: prepare-release
     strategy:
       fail-fast: false
       matrix:

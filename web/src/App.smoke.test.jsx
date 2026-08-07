@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage, I18N } from './App.jsx'
-import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade } from './ChatApp.jsx'
+import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, WorldlinePanel } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
@@ -15,6 +15,7 @@ import { GlobalFeedback, MessageBanner } from './components/feedback.jsx'
 import { SchedulerServiceRow } from './components/schedule.jsx'
 import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
 import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
+import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -101,7 +102,7 @@ afterEach(() => {
 
 const pendingApproval = {
   id: 'draft-one', title: '补充自主操作 SOP', state: 'pending', status: '待批未落地',
-  source: 'R37', target: 'memory/autonomous_sop.md', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
+  source: 'R37', target: 'memory/autonomous_sop.md', problem: '避免自主操作方案只停留在报告里，实际执行时没有统一依据', risk: '低', evidence: '目标文件不存在', next_step: '批准后生成文档',
 }
 
 const approvalOverview = (items = [pendingApproval]) => ({
@@ -161,6 +162,27 @@ describe('autonomous operations page', () => {
     await waitFor(() => expect(rejectedSummary?.closest('details')?.open).toBe(true))
     fireEvent.click(rejectedSummary)
     await waitFor(() => expect(rejectedSummary?.closest('details')?.open).toBe(false))
+  })
+
+  test('should exclude completed and no-approval items from the pending view', async () => {
+    installBrowserPolyfills()
+    const completed = { ...pendingApproval, id: 'completed-stale', title: '已完成但台账未更新', status: '已完成并通过验证' }
+    const noApproval = { ...pendingApproval, id: 'no-approval', title: '无需审批的例行检查', status: '无需审批' }
+    const current = { ...pendingApproval, id: 'still-pending', title: '仍需人工确认' }
+    globalThis.fetch = vi.fn(async url => {
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([completed, noApproval, current]))
+      throw new Error(`unexpected url ${url}`)
+    })
+    render(<AutonomousPage lang="zh" reports={[]}/> )
+
+    expect(await screen.findByRole('tab', { name: '待审批 (1)' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: '待审批 (1)' }))
+    expect(await screen.findByText('仍需人工确认')).toBeTruthy()
+    expect(screen.queryByText('已完成但台账未更新')).toBeNull()
+    expect(screen.queryByText('无需审批的例行检查')).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: /已处理/ }))
+    expect(await screen.findByText('已完成但台账未更新')).toBeTruthy()
+    expect(await screen.findByText('无需审批的例行检查')).toBeTruthy()
   })
 
   test('should show live bulk approval progress and retry failed items', async () => {
@@ -228,10 +250,11 @@ describe('autonomous operations page', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
     expect(await screen.findByText('报告需要人工审批')).toBeTruthy()
     expect(screen.getByText('需要人工复核')).toBeTruthy()
-    expect(screen.getByText('需要审批')).toBeTruthy()
+    expect(screen.getByText('未自动批准')).toBeTruthy()
     expect(screen.getByText('高')).toBeTruthy()
-    expect(screen.getByText('请核查报告证据后明确批准或拒绝')).toBeTruthy()
+    expect(screen.queryByText('请核查报告证据后明确批准或拒绝')).toBeNull()
     expect(screen.getByText(/报告处于阻塞状态/)).toBeTruthy()
+    expect(screen.getByText('避免自主操作方案只停留在报告里，实际执行时没有统一依据')).toBeTruthy()
     expect(screen.queryByText('human review required')).toBeNull()
   })
 
@@ -1166,7 +1189,7 @@ describe('chat model cascade', () => {
 
     try {
       render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
-      fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
+      fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u6a21\u578b\uff0c\u5f53\u524d Alpha \u00b7 Alpha One' }))
 
       const dialog = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })
       expect(dialog.closest('.oa-mobile-picker-backdrop')?.parentElement).toBe(document.body)
@@ -1180,7 +1203,7 @@ describe('chat model cascade', () => {
       expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
       expect(document.body.style.overflow).toBe('')
 
-      fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
+      fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u6a21\u578b\uff0c\u5f53\u524d Alpha \u00b7 Alpha One' }))
       fireEvent.click(screen.getByRole('button', { name: '\u5173\u95ed\u6a21\u578b\u9009\u62e9' }))
       expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
     } finally {
@@ -1424,6 +1447,20 @@ describe('operator shell feedback', () => {
     fireEvent.click(files)
     expect(files.getAttribute('aria-current')).toBe('page')
     expect(files.disabled).toBe(false)
+  })
+
+  test('overview hides duplicate cards and keeps actionable summary cards', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async url => shellPayload(url))
+    render(<App />)
+
+    const scheduledCard = await screen.findByRole('button', { name: /定时任务:/ })
+    expect(document.querySelectorAll('.overview-stats .stat-link')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: /服务控制:/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /调度提醒:/ })).toBeNull()
+    expect(scheduledCard.className).toContain('stat-link')
+    fireEvent.click(scheduledCard)
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
   })
 
   test('hides an applied update status without repeatedly checking GitHub', async () => {
@@ -2020,6 +2057,9 @@ describe('mobile chat session navigation', () => {
 
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('First chat'))
+    expect(document.querySelectorAll('.oa-sidebar .oa-session-row')).toHaveLength(sessions.length)
+    expect(screen.getByText('历史会话')).toBeTruthy()
+    expect(screen.queryByText('最近对话')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name:'展开侧栏' }))
     const second = screen.getByRole('button', { name:/Second chat/ })
     fireEvent.click(second)
@@ -2028,6 +2068,59 @@ describe('mobile chat session navigation', () => {
     expect(document.querySelector('.oa-sidebar')?.classList.contains('collapsed')).toBe(true)
     expect(screen.queryByRole('button', { name:'关闭侧栏' })).toBeNull()
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === '/api/chat/session/two')).toHaveLength(1)
+  }, 15000)
+})
+
+describe('chat worldline controls', () => {
+  const worldline = {
+    schema_version: 1,
+    available: true,
+    root_id: 'root',
+    head: 'left',
+    current_path: ['root', 'left'],
+    nodes: [
+      { id: 'root', title: '起点', parent_id: null, mapping_status: 'unmapped', ordinal: 0 },
+      { id: 'left', title: '当前分支', parent_id: 'root', mapping_status: 'mapped', ordinal: 0 },
+      { id: 'right', title: '另一分支', parent_id: 'root', mapping_status: 'mapped', ordinal: 1 },
+    ],
+  }
+
+  test('shows a loading explanation before worldline data arrives', () => {
+    render(<WorldlinePanel state={null} loading switchingId="" disabled={false} onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={vi.fn()} />)
+    expect(screen.getByText('正在初始化并读取当前会话的世界线…')).toBeTruthy()
+    expect(screen.getByText('正在读取世界线数据')).toBeTruthy()
+  })
+
+  test('lists branches and switches a mapped node', () => {
+    const onSwitch = vi.fn()
+    render(<WorldlinePanel state={worldline} loading={false} switchingId="" disabled={false} onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={onSwitch} />)
+    expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy()
+    expect(screen.getByText('当前分支')).toBeTruthy()
+    expect(screen.getByText('另一分支')).toBeTruthy()
+    expect(screen.getByText('仅记录')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '切换' }))
+    expect(onSwitch).toHaveBeenCalledWith('right')
+  })
+
+  test('activates the current session before loading worldline state', async () => {
+    const sessions = [{ id: 'worldline-session', title: 'Worldline chat', count: 2, updated_at: '2026-08-05T10:00:00Z' }]
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands: [] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands: [] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path === '/api/chat/session/worldline-session') return jsonResponse({ ...sessions[0], messages: [], raw_history: [], history_info: [], settings: { llm_no: 0, tools_mode: 'official' } })
+      if (path === '/api/chat/state/worldline-session') return jsonResponse({ llms: [], settings: { llm_no: 0, tools_mode: 'official' } })
+      if (path === '/api/chat/worldline/worldline-session?activate=true') return jsonResponse(worldline)
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    Element.prototype.scrollIntoView = vi.fn()
+    render(<ChatApp />)
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Worldline chat'))
+    fireEvent.click(screen.getByRole('button', { name: '查看和切换对话世界线' }))
+    await waitFor(() => expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy())
+    expect(globalThis.fetch.mock.calls.some(([url]) => String(url) === '/api/chat/worldline/worldline-session?activate=true')).toBe(true)
   }, 15000)
 })
 
@@ -2237,5 +2330,68 @@ describe('global feedback experience', () => {
   test('should expose successful feedback as a polite status', () => {
     render(<GlobalFeedback message="配置已保存" onDismiss={vi.fn()} successTimeout={0}/>)
     expect(screen.getByRole('status')).toBeTruthy()
+  })
+})
+
+describe('project TODO module panel', () => {
+  const payload = {
+    source_exists: true,
+    source_path: 'temp/TODO.txt',
+    total: 3,
+    open: 2,
+    completed: 1,
+    items: [
+      { id: 'task-1', title: '修复定时任务调度', module: 'tasks', status: 'queued', approved: true, summary: '任务需要按计划执行', line: 12 },
+      { id: 'model-1', title: '模型可用性检查', module: 'models', status: 'pending', line: 18 },
+      { id: 'file-1', title: '已归档文件清理', module: 'files', status: 'completed', line: 22 },
+    ],
+    modules: [
+      { module: 'tasks', total: 1, open: 1, completed: 0 },
+      { module: 'models', total: 1, open: 1, completed: 0 },
+      { module: 'files', total: 1, open: 0, completed: 1 },
+    ],
+  }
+
+  test('shows only the owning module, readable status, search, and source action', async () => {
+    globalThis.fetch = vi.fn(async url => {
+      expect(String(url)).toBe('/api/todos')
+      return jsonResponse(payload)
+    })
+    const onOpenSource = vi.fn()
+    render(<ModuleTodoPanel module="tasks" onOpenSource={onOpenSource}/>)
+
+    await screen.findByText('修复定时任务调度')
+    expect(screen.getByText('已批准，等待执行')).toBeTruthy()
+    expect(screen.queryByText('模型可用性检查')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '已完成' }))
+    expect(screen.getByText('没有匹配的待办')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '未完成' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索标题、章节或轮次' }), { target: { value: '调度' } })
+    expect(screen.getByText('修复定时任务调度')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '查看源文件：修复定时任务调度' }))
+    expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', sourcePath: 'temp/TODO.txt' }))
+  })
+
+  test('overview cards navigate to the related module', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(payload))
+    const onNavigate = vi.fn()
+    render(<ModuleTodoPanel module="overview" onNavigate={onNavigate}/>)
+    await screen.findByText('项目待办')
+    fireEvent.click(screen.getByTitle('进入模块：模型'))
+    expect(onNavigate).toHaveBeenCalledWith('models')
+  })
+
+  test('exposes a retry state when the TODO endpoint is temporarily unavailable', async () => {
+    let attempts = 0
+    globalThis.fetch = vi.fn(async () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('offline')
+      return jsonResponse(payload)
+    })
+    render(<ModuleTodoPanel module="tasks"/>)
+    await screen.findByText(/待办读取失败/)
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await screen.findByText('修复定时任务调度')
+    expect(attempts).toBe(2)
   })
 })

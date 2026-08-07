@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -308,5 +309,26 @@ func TestManagerPythonPrefersEffectivePythonOverVenv(t *testing.T) {
 	m.SetRoot(root, effective, 100)
 	if got := m.python(); got != effective {
 		t.Fatalf("python()=%q, want effective python %q", got, effective)
+	}
+}
+
+func TestServiceExecutablePrefersWindowlessPythonOnWindows(t *testing.T) {
+	root := t.TempDir()
+	python := filepath.Join(root, "python.exe")
+	pythonw := filepath.Join(root, "pythonw.exe")
+	for _, path := range []string{python, pythonw} {
+		if err := os.WriteFile(path, []byte("stub"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := serviceExecutable(python)
+	if runtime.GOOS == "windows" {
+		if got != pythonw {
+			t.Fatalf("serviceExecutable()=%q, want %q", got, pythonw)
+		}
+		return
+	}
+	if got != python {
+		t.Fatalf("serviceExecutable()=%q, want %q on non-Windows", got, python)
 	}
 }

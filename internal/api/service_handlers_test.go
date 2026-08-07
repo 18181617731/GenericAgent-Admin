@@ -263,7 +263,7 @@ func TestServiceRoutesEnforceWorkflowAndModelBoundaries(t *testing.T) {
 
 func TestStartAutostartServicesUsesConfiguredServiceStartup(t *testing.T) {
 	s := newServiceHandlerTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"}
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"} })
 	previous := startAutostartService
 	started := []string{}
 	startAutostartService = func(_ *Server, name string) error {

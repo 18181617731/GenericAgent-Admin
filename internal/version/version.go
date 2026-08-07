@@ -1016,7 +1016,6 @@ func fetchLatest(ctx context.Context) (rel *Release, err error) {
 			}
 			return fmt.Errorf("github release check failed: %s %s", resp.Status, strings.TrimSpace(string(b)))
 		}
-		var out Release
 		if resp.ContentLength > maxUpdateMetadataBytes {
 			return fmt.Errorf("github release metadata too large: %d bytes exceeds limit %d", resp.ContentLength, maxUpdateMetadataBytes)
 		}
@@ -1040,6 +1039,7 @@ func fetchLatest(ctx context.Context) (rel *Release, err error) {
 			rel = selected
 			return nil
 		}
+		var out Release
 		if err := json.Unmarshal(trimmed, &out); err != nil {
 			return err
 		}

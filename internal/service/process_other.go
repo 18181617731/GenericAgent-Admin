@@ -54,6 +54,18 @@ func (m *Manager) stopConflictingService(s ServiceInfo) ([]int, error) {
 	return killed, nil
 }
 
+func stopManagedProcess(_ string, pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
+}
+
+func (m *Manager) scanExternalServicePIDs(_ []ServiceInfo) map[string]int {
+	return map[string]int{}
+}
+
 func listPythonProcesses() ([]processRow, error) {
 	out, err := exec.Command("ps", "-eo", "pid=,ppid=,comm=,args=").Output()
 	if err != nil {

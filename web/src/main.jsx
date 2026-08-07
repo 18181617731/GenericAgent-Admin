@@ -7,9 +7,12 @@ import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
 import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
+import { registerNotificationServiceWorker } from './lib/notifications.js'
 
 const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
 const Root = lazy(() => (isChat ? import('./ChatApp.jsx') : import('./App.jsx')))
+
+void registerNotificationServiceWorker()
 
 const storedLanguage = () => localStorage.getItem('ga-admin-lang-explicit') === '1' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 

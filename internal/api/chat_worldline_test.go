@@ -287,6 +287,30 @@ func TestWorldlineActivationCarriesPersistedSessionState(t *testing.T) {
 	}
 }
 
+func TestWorldlineStateHandlerActivatesWhenRequested(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "state-activation"
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Title: sid, Messages: []chatMessage{{ID: "seed", Role: "user", Content: "seed", CreatedAt: 1}}, Settings: normalizeChatSettings(chatSettings{})}); err != nil {
+		t.Fatal(err)
+	}
+	installWorldlineTestWorker(t, s, sid)
+	activated := false
+	s.chatWorldlineRPCHook = func(_ string, req map[string]interface{}) error {
+		activated, _ = req["activate"].(bool)
+		return nil
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/chat/worldline/"+sid+"?activate=true", nil)
+	s.chatWorldlineState(rec, req, sid)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !activated {
+		t.Fatal("worldline state request did not activate the persisted session")
+	}
+}
+
 func TestWorldlineSwitchRoundTripPersistsAcrossServerRestart(t *testing.T) {
 	s := newChatCommandTestServer(t)
 	const sid = "roundtrip"

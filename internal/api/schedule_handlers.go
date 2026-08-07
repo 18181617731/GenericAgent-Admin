@@ -43,7 +43,7 @@ func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		t, err := ga.SaveTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
+		t, err := ga.SaveTask(s.CfgStore.Snapshot().GARoot, req.ID, taskRaw)
 		if err != nil {
 			bad(w, 400, err.Error())
 			return
@@ -90,7 +90,7 @@ func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	t, err := ga.CreateTask(s.CfgStore.Cfg.GARoot, req.ID, taskRaw)
+	t, err := ga.CreateTask(s.CfgStore.Snapshot().GARoot, req.ID, taskRaw)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -103,18 +103,18 @@ func (s *Server) prepareScheduleTaskModel(raw map[string]any) (ga.ScheduleModelD
 	if err != nil || !selected {
 		return ga.ScheduleModelDispatchResult{}, false, err
 	}
-	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Snapshot())
 	if err != nil {
 		return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("cannot verify scheduled task model: %w", err)
 	}
 	if !containsScheduleLLMNo(llms, llmNo) {
 		return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("scheduled task model #%d is unavailable", llmNo)
 	}
-	patch, err := ga.EnsureScheduleModelDispatch(s.CfgStore.Cfg.GARoot)
+	patch, err := ga.EnsureScheduleModelDispatch(s.CfgStore.Snapshot().GARoot)
 	if err != nil || len(patch.Updated) == 0 {
 		return patch, false, err
 	}
-	running, err := ga.SchedulerRunning(s.CfgStore.Cfg.GARoot, s.CfgStore.Cfg.EffectivePython)
+	running, err := ga.SchedulerRunning(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython)
 	if err != nil {
 		return patch, false, err
 	}

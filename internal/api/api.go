@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -45,6 +46,8 @@ type Server struct {
 	ChatRuntimes            *chatRuntimeRegistry
 	BaseCfgStore            *config.Store
 	titleBackfillStarted    bool
+	autonomousCleanupStop   chan struct{}
+	autonomousCleanupOnce   sync.Once
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
@@ -59,24 +62,52 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 	defaultRuntime := chatRuntimes.runtime("")
 	server := &Server{
 		CfgStore: cfg, BaseCfgStore: cfg, Svc: svc,
-		Models: models, Static: static, ReactApp: newReactAppBridge(),
+		InstanceManagers: newInstanceManagerRegistry(cfg.Snapshot(), svc),
+		Models:           models, Static: static, ReactApp: newReactAppBridge(),
 		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
 		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
 		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
-		InstanceManagers: func() *instanceManagerRegistry {
-			if cfg == nil {
-				return newInstanceManagerRegistry(config.AppConfig{}, svc)
-			}
-			return newInstanceManagerRegistry(cfg.Snapshot(), svc)
-		}(),
 		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
+	server.resumeInstanceInstalls()
 	if cfg != nil && svc != nil {
 		svc.SetUsageDir(usageEventDir(cfg.Snapshot()))
 	}
-	server.resumeInstanceInstalls()
 	return server
+}
+
+func (s *Server) StartAutonomousMaintenance() {
+	if s == nil || s.CfgStore == nil {
+		return
+	}
+	s.autonomousCleanupOnce.Do(func() {
+		s.autonomousCleanupStop = make(chan struct{})
+		go s.autonomousReportCleanupLoop()
+	})
+}
+
+func (s *Server) autonomousReportCleanupLoop() {
+	cleanup := func() {
+		root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
+		if root == "" {
+			return
+		}
+		if _, err := ga.CleanupAutonomousReports(root, ga.DefaultAutonomousReportRetention); err != nil {
+			log.Printf("autonomous report cleanup: %v", err)
+		}
+	}
+	cleanup()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			cleanup()
+		case <-s.autonomousCleanupStop:
+			return
+		}
+	}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -106,6 +137,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/search", s.filesSearch)
 	mux.HandleFunc("/api/files/open", s.requireDangerousConfirm(s.filesOpen))
 	mux.HandleFunc("/api/files/image", s.filesImage)
+	mux.HandleFunc("/api/todos", s.projectTodos)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
 	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.scheduleTask))
 	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.scheduleCreate))
@@ -164,6 +196,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/usage/export", s.usageExport)
+	mux.HandleFunc("/api/chat/search", s.chatSearch)
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
@@ -291,7 +324,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := s.buildGARuntimeHealth()
-	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Cfg, "services": s.Svc.Summary(), "health": h})
+	writeJSON(w, map[string]interface{}{"ok": h.OK, "config": s.CfgStore.Snapshot(), "services": s.Svc.Summary(), "health": h})
 }
 
 func (s *Server) gaInventory(w http.ResponseWriter, r *http.Request) {
@@ -311,8 +344,9 @@ func (s *Server) gaHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildGARuntimeHealth() ga.Health {
-	root := strings.TrimSpace(s.CfgStore.Cfg.GARoot)
-	python := resolvePythonForRoot(root, s.CfgStore.Cfg.EffectivePython)
+	cfg := s.CfgStore.Snapshot()
+	root := strings.TrimSpace(cfg.GARoot)
+	python := resolvePythonForRoot(root, cfg.EffectivePython)
 	return s.buildGARuntimeHealthForWorker(root, python)
 }
 
@@ -1063,7 +1097,10 @@ func (s *Server) ShutdownCleanup() {
 	if s == nil {
 		return
 	}
-	s.stopInstanceInstalls()
+	if s.autonomousCleanupStop != nil {
+		close(s.autonomousCleanupStop)
+		s.autonomousCleanupStop = nil
+	}
 	s.StopManagedServices()
 	if s.ReactApp != nil {
 		_ = s.ReactApp.stop()

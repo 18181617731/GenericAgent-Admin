@@ -309,16 +309,12 @@ func Default() AppConfig {
 type Store struct {
 	Root string
 
-	mu sync.RWMutex
-	// Cfg is kept as the exported compatibility view used by in-package and
-	// integration callers. cfg remains for older in-package constructors.
-	Cfg AppConfig
+	mu  sync.RWMutex
 	cfg AppConfig
 }
 
 func NewStore(root string) *Store {
-	cfg := defaultForRoot(root)
-	s := &Store{Root: root, Cfg: cloneAppConfig(cfg), cfg: cfg}
+	s := &Store{Root: root, cfg: defaultForRoot(root)}
 	_ = s.Load()
 	return s
 }
@@ -330,17 +326,7 @@ func NewRuntimeStore(root string, cfg AppConfig) (*Store, error) {
 	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
-	return &Store{Root: root, Cfg: cloneAppConfig(cfg), cfg: cloneAppConfig(cfg)}, nil
-}
-
-func (s *Store) currentConfig() AppConfig {
-	if s.Cfg.Port == 0 && s.Cfg.Host == "" && s.Cfg.ChatDataDir == "" && s.Cfg.GARoot == "" &&
-		s.Cfg.PythonPath == "" && s.Cfg.EffectivePython == "" && s.Cfg.ProxyMode == "" &&
-		s.Cfg.Instances == nil && s.Cfg.ServiceAutostart == nil && s.Cfg.ServiceModels == nil &&
-		s.Cfg.ModelProbeProviders == nil && s.Cfg.SlashCommands == nil && s.Cfg.ExtraSystemPromptPresets == nil {
-		return s.cfg
-	}
-	return s.Cfg
+	return &Store{Root: root, cfg: cloneAppConfig(cfg)}, nil
 }
 
 // Snapshot returns a deep copy of the currently published configuration.
@@ -351,7 +337,7 @@ func (s *Store) Snapshot() AppConfig {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneAppConfig(s.currentConfig())
+	return cloneAppConfig(s.cfg)
 }
 
 // UpdateRuntime atomically updates the in-memory configuration without
@@ -362,7 +348,7 @@ func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cfg := cloneAppConfig(s.currentConfig())
+	cfg := cloneAppConfig(s.cfg)
 	if update != nil {
 		update(&cfg)
 	}
@@ -371,7 +357,6 @@ func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
 		return err
 	}
 	s.cfg = cloneAppConfig(cfg)
-	s.Cfg = cloneAppConfig(cfg)
 	return nil
 }
 
@@ -450,6 +435,7 @@ func normalize(cfg AppConfig, root string) AppConfig {
 	cfg.PythonPath = strings.TrimSpace(cfg.PythonPath)
 	cfg.EffectivePython = effectivePython(cfg)
 	cfg.DefaultInstanceID = strings.TrimSpace(cfg.DefaultInstanceID)
+	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
 
 	instances := make([]InstanceConfig, 0, len(cfg.Instances)+1)
 	for _, instance := range cfg.Instances {
@@ -500,9 +486,16 @@ func normalize(cfg AppConfig, root string) AppConfig {
 			continue
 		}
 		// Keep the legacy single-instance fields as a compatibility mirror.
+		// The instance mirror wins for GARoot; a non-empty PythonPath that
+		// diverged from the mirror (set after the instance list was built) is
+		// kept so in-flight runtime overrides are not lost.
 		cfg.GARoot = instance.GARoot
-		cfg.PythonPath = instance.PythonPath
-		cfg.EffectivePython = instance.EffectivePython
+		if cfg.PythonPath == "" {
+			cfg.PythonPath = instance.PythonPath
+		}
+		if cfg.EffectivePython == "" || cfg.EffectivePython == instance.EffectivePython || cfg.EffectivePython == effectiveInstancePython(instance) {
+			cfg.EffectivePython = instance.EffectivePython
+		}
 		break
 	}
 	return cfg
@@ -562,33 +555,12 @@ func (s *Store) Load() error {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	if cfg.ChatDataDir == "" {
-		cfg.ChatDataDir = defaultChatDataDir(s.Root)
-	}
-	if cfg.Host == "" {
-		cfg.Host = "127.0.0.1"
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8787
-	}
-	if cfg.LogTailLines == 0 {
-		cfg.LogTailLines = 200
-	}
-	if cfg.BufferLines == 0 {
-		cfg.BufferLines = 1000
-	}
-	if cfg.ProxyMode == "" {
-		cfg.ProxyMode = "off"
-	}
 	clearMissingPythonPaths(&cfg)
-	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
-	cfg.EffectivePython = effectivePython(cfg)
 	cfg = normalize(cfg, s.Root)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
 	s.cfg = cloneAppConfig(cfg)
-	s.Cfg = cloneAppConfig(cfg)
 	return nil
 }
 
@@ -619,24 +591,8 @@ func (s *Store) Save(cfg AppConfig) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	cfg = normalize(cloneAppConfig(cfg), s.Root)
-	if cfg.Host == "" {
-		cfg.Host = "127.0.0.1"
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8787
-	}
-	if cfg.LogTailLines == 0 {
-		cfg.LogTailLines = 200
-	}
-	if cfg.BufferLines == 0 {
-		cfg.BufferLines = 1000
-	}
-	if cfg.ProxyMode == "" {
-		cfg.ProxyMode = "off"
-	}
-	cfg.ModelProbeProviders = normalizeUniqueStrings(cfg.ModelProbeProviders)
-	cfg.EffectivePython = effectivePython(cfg)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
@@ -648,7 +604,6 @@ func (s *Store) Save(cfg AppConfig) error {
 		return err
 	}
 	s.cfg = cloneAppConfig(cfg)
-	s.Cfg = cloneAppConfig(cfg)
 	return nil
 }
 

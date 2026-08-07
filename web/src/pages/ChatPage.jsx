@@ -8,6 +8,8 @@ import { consumeMemoryChatDraft } from '../lib/memoryChatDraft.js'
 import { TurnList } from '../components/turns'
 import { ModelCascadePicker } from '../components/ModelCascadePicker'
 import { firstRuntimeModelNo } from '../lib/modelDefaults.js'
+import { primeChatCompletionTone } from '../lib/chatCompletionTone.js'
+import { publishNotification } from '../lib/notifications.js'
 
 const readFileDataURL = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader()
@@ -133,6 +135,8 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
       return
     }
     if ((!text && files.length === 0) || busy) return
+    // iOS only grants asynchronous completion audio after this user action unlocks it.
+    primeChatCompletionTone()
     let cur = activeSidRef.current || sid
     if (!cur) {
       const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
@@ -192,7 +196,13 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
             const nextUltraPlan = terminalEvent.message?.ultraplan || terminalEvent.message?.ultraplan_state || terminalEvent.message?.ultraPlanState || m.ultraplan
             return {...m, ...terminalEvent.message, ultraplan: nextUltraPlan}
           }))
-          if (terminalEvent.type === 'error') setErr(terminalEvent.message?.content || 'error')
+          if (terminalEvent.type === 'error') {
+            const detail = terminalEvent.message?.content || 'error'
+            setErr(detail)
+            publishNotification({ category: 'chat', level: 'error', title: '对话执行失败', message: `会话 ${cur} 执行失败：${detail}`, route: 'chat', dedupeKey: `chat:${cur}:${assistant.id}:error` })
+          } else if (terminalEvent.type === 'done') {
+            publishNotification({ category: 'chat', level: 'success', title: '对话已完成', message: `会话 ${cur} 已完成回复。`, route: 'chat', dedupeKey: `chat:${cur}:${assistant.id}:done` })
+          }
         }
       } catch (error) {
         deltaBatcher.flushNow()
@@ -210,6 +220,7 @@ export function ChatPage({ t, slashCommands, llms = [] }) {
     } catch(e) {
       setErr(e.message)
       setMessages(ms => ms.map(m => m.id === assistant.id ? {...m, content:`失败：${e.message}`, error:true} : m))
+      publishNotification({ category: 'chat', level: 'error', title: '对话执行失败', message: `会话 ${cur} 执行失败：${e.message}`, route: 'chat', dedupeKey: `chat:${cur}:${assistant.id}:transport-error` })
     } finally { setBusy(false) }
   }
 

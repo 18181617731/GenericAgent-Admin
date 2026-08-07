@@ -562,9 +562,9 @@ class GenericAgent:
 		t.Fatal(err)
 	}
 	s := newGoalTestServer(t, root)
-	s.CfgStore.Cfg.PythonPath = "python"
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.PythonPath = "python" })
 
-	llms, err := s.listGARuntimeLLMs(s.CfgStore.Cfg)
+	llms, err := s.listGARuntimeLLMs(s.CfgStore.Snapshot())
 	if err != nil {
 		t.Fatalf("listGARuntimeLLMs() error: %v", err)
 	}
@@ -1452,9 +1452,9 @@ func TestChatSaveSettingsPersistsValidJSON(t *testing.T) {
 
 func TestChatSaveSettingsDropsPersistentWorkerWhenModelChanges(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
 	seed := chatSession{ID: "session-switch", Settings: chatSettings{LLMNo: 1}}
-	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
 		t.Fatal(err)
 	}
 	worker := &chatWorker{SID: seed.ID}
@@ -1478,9 +1478,9 @@ func TestChatSaveSettingsDropsPersistentWorkerWhenModelChanges(t *testing.T) {
 
 func TestChatSaveSettingsKeepsPersistentWorkerWhenModelIsUnchanged(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
 	seed := chatSession{ID: "session-same-model", Settings: chatSettings{LLMNo: 3}}
-	if err := saveChatSession(s.CfgStore.Cfg, seed); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
 		t.Fatal(err)
 	}
 	worker := &chatWorker{SID: seed.ID}
@@ -1913,7 +1913,7 @@ func TestSaveChatSessionMergedPreservesBTWThatFinishesFirst(t *testing.T) {
 
 func TestSaveChatSessionMergedPreservesRenameMadeDuringRun(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
 	initial := chatSession{
 		ID:    "rename-during-run",
 		Title: "automatic title",
@@ -1922,10 +1922,10 @@ func TestSaveChatSessionMergedPreservesRenameMadeDuringRun(t *testing.T) {
 			{ID: "pending", Role: "assistant"},
 		},
 	}
-	if err := saveChatSession(s.CfgStore.Cfg, initial); err != nil {
+	if err := saveChatSession(s.CfgStore.Snapshot(), initial); err != nil {
 		t.Fatal(err)
 	}
-	staleRun, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	staleRun, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1942,7 +1942,7 @@ func TestSaveChatSessionMergedPreservesRenameMadeDuringRun(t *testing.T) {
 	if err := s.saveChatSessionMerged(staleRun); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, initial.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1956,7 +1956,7 @@ func TestSaveChatSessionMergedPreservesRenameMadeDuringRun(t *testing.T) {
 
 func TestSaveChatSessionMergedKeepsAutomaticTitleForNewSession(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
-	s.CfgStore.Cfg.ChatDataDir = t.TempDir()
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ChatDataDir = t.TempDir() })
 	cs := chatSession{
 		ID:       "new-session-auto-title",
 		Title:    "北京时间几点了",
@@ -1965,7 +1965,7 @@ func TestSaveChatSessionMergedKeepsAutomaticTitleForNewSession(t *testing.T) {
 	if err := s.saveChatSessionMerged(cs); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := loadChatSession(s.CfgStore.Cfg, cs.ID)
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

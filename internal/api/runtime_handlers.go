@@ -36,12 +36,12 @@ func (s *Server) gaRuntimeRepair(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Cfg.GARoot)
+	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
 	if err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	python := resolvePythonForRoot(root, s.CfgStore.Cfg.EffectivePython)
+	python := resolvePythonForRoot(root, s.CfgStore.Snapshot().EffectivePython)
 	result := runtimeRepairResult{Python: python, CheckedAt: time.Now().Format(time.RFC3339)}
 	result.Before = buildRuntimeHealthForRepair(root, python)
 	if result.Before.Runtime == nil {
@@ -111,14 +111,16 @@ func repairLegacyRuntime(root string, runtime *ga.RuntimeHealth, result *runtime
 func (s *Server) persistRuntimePython(root string, result *runtimeRepairResult) {
 	if result.After.Runtime != nil && isAbsoluteExistingFile(result.After.Runtime.PythonPath) {
 		result.Python = result.After.Runtime.PythonPath
-		cfg := s.CfgStore.Cfg
+		cfg := s.CfgStore.Snapshot()
 		if cfg.PythonPath != result.Python {
 			cfg.GARoot = root
 			cfg.PythonPath = result.Python
+			cfg.EffectivePython = result.Python
+			cfg.SyncDefaultInstanceFromLegacy()
 			if saveErr := s.CfgStore.Save(cfg); saveErr != nil {
 				result.Errors = append(result.Errors, "保存已验证 Python 路径失败: "+saveErr.Error())
 			} else {
-				saved := s.CfgStore.Cfg
+				saved := s.CfgStore.Snapshot()
 				s.Svc.SetRoot(saved.GARoot, saved.EffectivePython, saved.BufferLines)
 				result.Operations = append(result.Operations, "已固定本次验证成功的 Python: "+result.Python)
 			}
@@ -128,11 +130,11 @@ func (s *Server) persistRuntimePython(root string, result *runtimeRepairResult) 
 
 func (s *Server) ensureManagedRuntimePython(ctx context.Context, root, python string, result *runtimeRepairResult) (string, bool) {
 	managed := setupVenvPython(root)
-	configured := strings.TrimSpace(s.CfgStore.Cfg.EffectivePython)
+	configured := strings.TrimSpace(s.CfgStore.Snapshot().EffectivePython)
 	if isAbsoluteExistingFile(managed) || isAbsoluteExistingFile(configured) {
 		return python, true
 	}
-	base, err := runtimeRepairExecutablePath(pythonForSetup(root, s.CfgStore.Cfg))
+	base, err := runtimeRepairExecutablePath(pythonForSetup(root, s.CfgStore.Snapshot()))
 	if err != nil {
 		result.Errors = append(result.Errors, "找不到可用于重建虚拟环境的 Python: "+err.Error())
 		return python, false

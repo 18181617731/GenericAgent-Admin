@@ -6,17 +6,13 @@ import { AutonomousServiceCard } from '../components/AutonomousServiceCard.jsx'
 import { api } from '../lib/api.js'
 import { confirmDanger } from '../lib/danger.js'
 import { autonomousCopy, localizeAutonomousApprovalValue } from '../lib/autonomousCopy.js'
-import { autonomousExecutionState, autonomousReviewView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousApproval, summarizeAutonomousReport, summarizeAutonomousReviewNeed } from '../lib/autonomous.js'
+import { autonomousExecutionState, autonomousReviewView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousProblem, summarizeAutonomousReport } from '../lib/autonomous.js'
 
 const approvalDetails = (item, copy, lang) => [
   [copy.source, item.source || item.draft_path],
   [copy.target, item.target],
   [copy.risk, localizeAutonomousApprovalValue(item.risk, lang, 'risk')],
   [copy.evidence, localizeAutonomousApprovalValue(item.evidence, lang, 'evidence')],
-  [copy.nextStep, localizeAutonomousApprovalValue(item.next_step, lang, 'nextStep')],
-  [copy.reviewModel, item.review_model ? `${item.review_provider ? `${item.review_provider} / ` : ''}${item.review_model}${item.review_model_no !== undefined && item.review_model_no !== null ? ` (#${item.review_model_no})` : ''}` : ''],
-  [copy.reviewDecision, localizeAutonomousApprovalValue(item.review_decision, lang, 'reviewDecision')],
-  [copy.reviewReason, localizeAutonomousApprovalValue(item.review_reason, lang, 'reviewReason')],
 ].filter(([, value]) => value)
 
 const executionPresentation = (item, copy) => {
@@ -29,6 +25,54 @@ const executionPresentation = (item, copy) => {
     not_applicable: copy.executionNotApplicable,
   }
   return { state, label: labels[state] || copy.executionUnknown }
+}
+
+const reviewTagLabels = (copy) => ({
+  choice: copy.reviewTagChoice,
+  blocked: copy.reviewTagBlocked,
+  file_change: copy.reviewTagFileChange,
+  config_change: copy.reviewTagConfigChange,
+  verification: copy.reviewTagVerification,
+  documentation: copy.reviewTagDocumentation,
+  observation: copy.reviewTagObservation,
+  completed: copy.reviewTagCompleted,
+  manual: copy.reviewTagManual,
+})
+
+const reviewFocusText = (item, copy, lang) => {
+  const tags = Array.isArray(item?.review_tags) ? item.review_tags : []
+  if (tags.includes('choice')) return copy.reviewFocusChoice
+  if (tags.includes('blocked')) return copy.reviewFocusBlocked
+  if (tags.includes('file_change') && tags.includes('config_change')) return copy.reviewFocusFileAndConfig
+  if (tags.includes('file_change')) return copy.reviewFocusFileChange
+  if (tags.includes('config_change')) return copy.reviewFocusConfigChange
+  if (tags.includes('verification')) return copy.reviewFocusVerification
+  if (tags.includes('documentation')) return copy.reviewFocusDocumentation
+  if (tags.includes('observation')) return copy.reviewFocusObservation
+  return lang === 'en' ? copy.reviewFocusGeneral : item?.review_focus || copy.reviewFocusGeneral
+}
+
+function ApprovalReviewContext({ item, lang, copy }) {
+  const tags = Array.isArray(item?.review_tags) ? item.review_tags : []
+  const options = Array.isArray(item?.review_options) ? item.review_options : []
+  if (!tags.length && !options.length && !item?.review_focus) return null
+  const labels = reviewTagLabels(copy)
+  const visibleOptions = options.slice(0, 4)
+  return <section className="autonomous-approval-focus" aria-label={copy.reviewFocus}>
+    <div className="autonomous-approval-focus-head">
+      <strong>{copy.reviewFocus}</strong>
+      <div className="autonomous-review-tags">{tags.map(tag => labels[tag] ? <span key={tag}>{labels[tag]}</span> : null)}</div>
+    </div>
+    <p>{reviewFocusText(item, copy, lang)}</p>
+    {visibleOptions.length > 0 && <div className="autonomous-review-options">
+      <b>{copy.reviewOptions}</b>
+      <ol>{visibleOptions.map(option => <li key={`${option.key}-${option.title}`}>
+        <div><strong>{option.key}. {localizeAutonomousApprovalValue(option.title, lang, 'reviewOption')}</strong>{option.recommended && <em>{copy.reviewRecommended}</em>}</div>
+        {option.summary && <span>{localizeAutonomousApprovalValue(option.summary, lang, 'reviewOption')}</span>}
+      </li>)}</ol>
+      {options.length > visibleOptions.length && <small>{copy.reviewMoreOptions(options.length - visibleOptions.length)}</small>}
+    </div>}
+  </section>
 }
 
 function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, onApprove, onReject, onOpenReport }) {
@@ -57,14 +101,11 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
         {review.confidence && <span><b>{copy.reviewConfidence}</b>{review.confidence}</span>}
       </div>}
     </section>}
-    <section className="autonomous-approval-reason">
-      <strong>{copy.reviewWhy}</strong>
-      <p>{summarizeAutonomousReviewNeed(item, review, lang)}</p>
+    <section className="autonomous-approval-problem">
+      <strong>{copy.problem}</strong>
+      <p>{summarizeAutonomousProblem(item, lang)}</p>
     </section>
-    <section className="autonomous-approval-outcome">
-      <strong>{copy.expectedOutcome}</strong>
-      <p>{summarizeAutonomousApproval(item, lang)}</p>
-    </section>
+    <ApprovalReviewContext item={item} lang={lang} copy={copy}/>
     <dl>{approvalDetails(item, copy, lang).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {!pending && (item.decided_at || item.note) && <div className="autonomous-decision-meta">
       {item.decided_at && <span>{copy.decidedAt}：{readableAutonomousDate(item.decided_at, lang)}</span>}

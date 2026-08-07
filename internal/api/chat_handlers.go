@@ -414,12 +414,12 @@ func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid s
 	}
 	sid = safeChatID(sid)
 	s.SessionMu.Lock()
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err == nil {
 		cs.Title = title
 		cs.TitleSource = chatTitleSourceManual
 		cs.UpdatedAt = time.Now().Unix()
-		err = saveChatSessionLocked(s.CfgStore.Cfg, cs)
+		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	}
 	s.SessionMu.Unlock()
 	if err != nil {
@@ -457,7 +457,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 		return
 	}
 	sid = safeChatID(sid)
-	cs, err := loadChatSession(s.CfgStore.Cfg, sid)
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		bad(w, 500, err.Error())
 		return

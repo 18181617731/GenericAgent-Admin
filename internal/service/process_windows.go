@@ -50,12 +50,72 @@ func (m *Manager) stopConflictingService(s ServiceInfo) ([]int, error) {
 		if err != nil {
 			continue
 		}
-		if err := p.Kill(); err != nil {
+		var stopErr error
+		if s.Kind == "guardian" {
+			stopErr = killProcessTree(row.pid)
+		} else {
+			stopErr = p.Kill()
+		}
+		if stopErr != nil && processAlive(row.pid) {
+			err := stopErr
 			return killed, err
 		}
 		killed = append(killed, row.pid)
 	}
 	return killed, nil
+}
+
+func killProcessTree(pid int) error {
+	cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F")
+	hideChildWindow(cmd)
+	return cmd.Run()
+}
+
+func stopManagedProcess(kind string, pid int) error {
+	if kind == "guardian" {
+		return killProcessTree(pid)
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
+}
+
+func (m *Manager) scanExternalServicePIDs(services []ServiceInfo) map[string]int {
+	rows, err := listPythonProcesses()
+	if err != nil {
+		return map[string]int{}
+	}
+	result := map[string]int{}
+	scores := map[string]int{}
+	for _, row := range rows {
+		for _, svc := range services {
+			if !commandLineMatchesService(row.commandLine, m.GARoot, svc.Command) {
+				continue
+			}
+			score := externalServiceMatchScore(row, svc)
+			if score > scores[svc.Name] || score == scores[svc.Name] && (result[svc.Name] == 0 || row.pid < result[svc.Name]) {
+				result[svc.Name] = row.pid
+				scores[svc.Name] = score
+			}
+		}
+	}
+	return result
+}
+
+func externalServiceMatchScore(row processRow, svc ServiceInfo) int {
+	score := 1
+	expected := strings.ToLower(normalizePathText(serviceExecutable(svc.Command[0])))
+	executable := strings.ToLower(normalizePathText(row.executablePath))
+	commandLine := strings.ToLower(normalizePathText(row.commandLine))
+	if executable == expected {
+		score += 4
+	}
+	if strings.Contains(commandLine, expected) {
+		score += 2
+	}
+	return score
 }
 
 func listPythonProcesses() ([]processRow, error) {

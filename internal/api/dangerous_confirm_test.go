@@ -347,6 +347,7 @@ func TestRegisteredGetRoutesDoNotReachUnreviewedSideEffects(t *testing.T) {
 	}
 
 	reviewedGetSideEffects := map[string]bool{
+		"/api/chat/search":        true, // GET may run one-time chat data migration/dir initialization before searching.
 		"/api/chat/sessions":      true, // GET may run one-time chat data migration/dir initialization before listing sessions.
 		"/api/chat/":              true, // GET session/state/stream/file paths share chat storage helpers that may migrate legacy data.
 		"/api/usage/overview":     true, // First GET migrates legacy per-message usage into the independent ledger.
@@ -392,7 +393,7 @@ func TestReviewedGetSideEffectRoutesStayCurrent(t *testing.T) {
 	for _, route := range registered {
 		routesByPath[route.Path] = route
 	}
-	for _, routePath := range []string{"/api/chat/sessions", "/api/chat/", "/api/usage/overview", "/api/setup/env", "/api/tmwebdriver/status"} {
+	for _, routePath := range []string{"/api/chat/search", "/api/chat/sessions", "/api/chat/", "/api/usage/overview", "/api/setup/env", "/api/tmwebdriver/status"} {
 		route, ok := routesByPath[routePath]
 		if !ok || !methodsByHandler[route.Handler][http.MethodGet] || len(sideEffectsByHandler[route.Handler]) == 0 {
 			t.Fatalf("reviewed GET side-effect route %s is stale; update route safety contract", routePath)

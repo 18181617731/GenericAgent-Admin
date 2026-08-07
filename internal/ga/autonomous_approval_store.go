@@ -24,6 +24,7 @@ type AutonomousReviewRecord struct {
 	ReviewDecision   string    `json:"review_decision,omitempty"`
 	ReviewConfidence string    `json:"review_confidence,omitempty"`
 	ReviewReason     string    `json:"review_reason,omitempty"`
+	ReviewProblem    string    `json:"review_problem,omitempty"`
 	ReviewModelNo    int       `json:"review_model_no,omitempty"`
 	ReviewModel      string    `json:"review_model,omitempty"`
 	ReviewProvider   string    `json:"review_provider,omitempty"`
@@ -197,6 +198,9 @@ func applyAutonomousReviews(overview *AutonomousApprovalOverview, reviews []Auto
 		item.ReviewDecision = review.ReviewDecision
 		item.ReviewConfidence = review.ReviewConfidence
 		item.ReviewReason = review.ReviewReason
+		if strings.TrimSpace(review.ReviewProblem) != "" {
+			item.Problem = review.ReviewProblem
+		}
 		if review.ReviewModel != "" || review.ReviewProvider != "" || review.ReviewStatus != "" {
 			modelNo := review.ReviewModelNo
 			item.ReviewModelNo = &modelNo

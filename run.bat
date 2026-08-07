@@ -37,6 +37,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo Configuring Tailscale HTTPS access...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\configure-tailscale-serve.ps1" -BackendPort 8787 -HttpsPort 443
+if errorlevel 1 (
+  echo WARNING: Tailscale HTTPS setup could not be completed. The local service is still running.
+)
+
 exit /b 0
 
 :stop_running_admin

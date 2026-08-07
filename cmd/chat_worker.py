@@ -9,22 +9,25 @@ def _ensure_bundled_worldline_runtime():
     """Restore the packaged worldline sidecar when upgrading from legacy installers.
 
     Releases before v1.0.13 only copied chat_worker.py during self-update.  Packaged
-    workers therefore carry a compressed copy so the first chat can repair a
-    missing or stale sibling atomically. Source checkouts already contain the
-    sidecar and never decode the placeholder.
+    workers therefore carry a compressed copy so the first chat can repair the
+    missing sibling atomically. Source checkouts already contain the sidecar and
+    never decode the placeholder.
     """
     target = Path(__file__).resolve().parent / 'frontends' / 'worldline.py'
     payload = _BUNDLED_WORLDLINE_B64
     if not payload or payload == '__GA_ADMIN_BUNDLED_WORLDLINE_B64__':
         return
     import base64, zlib
-    data = zlib.decompress(base64.b64decode(payload.encode('ascii')))
     try:
-        if target.is_file() and target.read_bytes() == data:
-            return
-    except OSError:
-        # A stale or unreadable sidecar should be repaired from the bundled copy.
-        pass
+        data = zlib.decompress(base64.b64decode(payload.encode('ascii')))
+    except Exception:
+        return
+    if target.is_file():
+        try:
+            if target.read_bytes() == data:
+                return
+        except OSError:
+            pass
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + '.tmp')
     temp.write_bytes(data)

@@ -61,12 +61,12 @@ func TestStorePersistsNormalizedModelProbeProviders(t *testing.T) {
 	}
 
 	want := []string{"native_oai_config_primary", "native_claude_config_backup"}
-	if !reflect.DeepEqual(store.Cfg.ModelProbeProviders, want) {
-		t.Fatalf("saved model probe providers = %#v, want %#v", store.Cfg.ModelProbeProviders, want)
+	if !reflect.DeepEqual(store.Snapshot().ModelProbeProviders, want) {
+		t.Fatalf("saved model probe providers = %#v, want %#v", store.Snapshot().ModelProbeProviders, want)
 	}
 	reloaded := NewStore(root)
-	if !reflect.DeepEqual(reloaded.Cfg.ModelProbeProviders, want) {
-		t.Fatalf("reloaded model probe providers = %#v, want %#v", reloaded.Cfg.ModelProbeProviders, want)
+	if !reflect.DeepEqual(reloaded.Snapshot().ModelProbeProviders, want) {
+		t.Fatalf("reloaded model probe providers = %#v, want %#v", reloaded.Snapshot().ModelProbeProviders, want)
 	}
 }
 
@@ -152,15 +152,16 @@ func TestStoreLoadClearsMissingPythonWithoutLosingOtherSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := &Store{Root: root, Cfg: Default()}
+	store := NewStore(root)
 	if err := store.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if filepath.Clean(store.Cfg.GARoot) != filepath.Clean(root) || !store.Cfg.BootstrapDone {
-		t.Fatalf("non-Python settings were lost: %#v", store.Cfg)
+	loaded := store.Snapshot()
+	if filepath.Clean(loaded.GARoot) != filepath.Clean(root) || !loaded.BootstrapDone {
+		t.Fatalf("non-Python settings were lost: %#v", loaded)
 	}
-	if store.Cfg.PythonPath != "" || store.Cfg.EffectivePython != "" {
-		t.Fatalf("missing Python paths were retained: %#v", store.Cfg)
+	if loaded.PythonPath != "" || loaded.EffectivePython != "" {
+		t.Fatalf("missing Python paths were retained: %#v", loaded)
 	}
 }
 

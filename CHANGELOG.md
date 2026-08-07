@@ -2,24 +2,64 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
-## v1.0.49 - 2026-08-07
+## v1.0.57 - 2026-08-08
 
 ### User-facing changes
-- 主导航按工作区、服务与自动化、配置与监控分组，桌面端和移动端保持一致，减少功能页面查找成本。
+- 重构主导航，按工作区、服务与自动化、配置与监控分组，并新增 GA 实例入口，降低功能查找成本。
 - 通道服务页增加全部、运行中、已停止筛选，并为筛选为空的状态提供准确提示。
-- 修复通道页中文模式下硬编码显示 Channels 的问题；同时修复打包运行时使用过期 worldline.py 侧车文件的问题。
+- 优化移动端侧栏和模型选择器的可访问交互；移动端选择器使用全屏弹层、明确的服务商/模型语义和可恢复焦点。
+- 修复 worldline 运行时侧车文件打包过期、错误流使用量未收尾，以及多实例 Chat/API 路由合并后的兼容问题。
 
 ### Validation
-- Passed Go tests, frontend lint, library tests, UI smoke tests, frontend production build, Windows packaging, and live browser/API checks.
+- Passed `go test ./...`, frontend lint, library tests (`244/244`), UI smoke tests (`93/93`), Python protocol tests, frontend production build, Windows `build.bat`, and live packaged HTTP checks.
 
-## v1.0.48 - 2026-08-03
+## v1.0.56 - 2026-08-07
 
 ### User-facing changes
-- 已处理的自主进化审批记录改为按执行进展分组：已加入 `TODO` 等待执行、已完成并归档、已完成但缺少归档文件、执行失败以及已拒绝不执行。
-- 每个进展分组显示数量和说明，保留远端已有的批量审批、审核模型和执行报告能力，用户可以直接判断任务当前所处阶段。
+- 新增项目待办模块，在概览、文件、任务、模型、日志、服务和通知等页面提供按模块查看、筛选、搜索和回源入口。
+- 优化聊天顶部工具栏，将上下文、世界线、更多工具和通知统一收拢到右侧，改善收起侧栏后的操作路径。
+- 优化世界线面板的按钮反馈、节点标题截断、状态标识和窄屏浮层布局，减少长文本溢出并提升切换可读性。
+- 改进配置归一化、服务进程状态、会话搜索、用量记录及相关 API 的稳定性和测试覆盖。
+
+## v1.0.52 - 2026-08-05
+
+### User-facing changes
+- 默认关闭 HTTP Basic Auth，本机、局域网和 Tailscale 地址可以直接访问，不再被历史密码阻塞。
+- 保留可选认证能力，可通过 `GA_ADMIN_AUTH_ENABLED=1` 或同时配置 `GA_ADMIN_AUTH_USER` 与 `GA_ADMIN_AUTH_PASSWORD` 重新启用。
+- 认证状态接口明确返回当前是否启用认证，关闭认证时改密接口给出明确的 `auth_disabled` 提示。
+- 修复 Windows 发布工作流的构建任务依赖配置，确保新版本标签可以正常生成发布包。
 
 ### Validation
-- Passed frontend lint, library tests, UI smoke tests, frontend production build, Windows packaging, and live browser/API checks.
+- Passed `go test ./...`, frontend lint, library tests (`234/234`), frontend production build, authentication UI tests (`6/6`), Windows `build.bat`, and live HTTP checks on localhost and the detected Tailscale interface.
+
+## v1.0.51 - 2026-08-04
+
+### User-facing changes
+- 待审批列表按真实审批状态过滤，自动排除已完成、无需审批和已失效的项目，避免用户重复处理。
+- 待审批卡片增加“要解决什么问题”、审批场景和文件/配置/验证提示；报告包含多个方案时展示候选方案及推荐项。
+- 无法可靠细分审批场景的项目明确标记为“需要人工确认”，并保留审批上下文，减少用户对审核依据的疑惑。
+- 定期清理历史执行完成文件，避免临时报告长期堆积影响查看和磁盘空间。
+
+### Validation
+- Passed `go test ./...`, frontend library tests (`234/234`), UI smoke tests (`94/94`), frontend lint, frontend production build, and Windows `build.bat` packaging.
+
+## v1.0.50 - 2026-08-04
+
+### User-facing changes
+- 修复 Windows 服务看护器启动后无法稳定拉起 scheduler/autonomous 的问题，启动前会清理旧看护器及其子进程树，避免端口冲突和重复实例。
+- 服务看护器及其托管服务优先使用 `pythonw.exe` 和无窗口进程标志启动，避免反复弹出终端窗口。
+- 管理端识别看护器实际拉起的外部服务状态，页面状态与 `45762/45763` 端口和真实进程保持一致。
+- 停止看护器时同步停止其托管服务，主动停止记录为正常结束，避免页面显示误导性的失败返回码。
+
+### Validation
+- Passed `go test ./...`, frontend lint, library tests (`232/232`), UI smoke tests (`93/93`), Windows `build.bat`, and live watchdog recovery, stop, duplicate-start, port, and hidden-window checks.
+
+## v1.0.49 - 2026-08-04
+
+### User-facing changes
+- 总览页移除重复的“服务控制”和“调度提醒”卡片，只保留后台服务与定时任务，并支持直接跳转到对应页面。
+- 总览统计卡片在桌面端与手机端保持两列布局，避免空白、重叠和横向溢出。
+- 兼容历史模型配置中以浮点数保存的 `availability_latency_ms`，加载后自动规范化为整数。
 
 ## v1.0.47 - 2026-08-03
 

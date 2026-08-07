@@ -33,10 +33,10 @@ func authRequest(handler http.Handler, method, path, remote, user, password stri
 }
 
 func TestAuthManagerRequiresEnvironmentPair(t *testing.T) {
-	if _, err := newAuthManager(t.TempDir(), "admin", ""); err == nil {
+	if _, err := newAuthManager(t.TempDir(), "admin", "", ""); err == nil {
 		t.Fatal("expected incomplete environment credentials to fail")
 	}
-	manager, err := newAuthManager(t.TempDir(), "operator", "configured-secret")
+	manager, err := newAuthManager(t.TempDir(), "operator", "configured-secret", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,26 @@ func TestAuthManagerRequiresEnvironmentPair(t *testing.T) {
 	}
 }
 
+func TestAuthDisabledByDefaultAllowsRemoteAccess(t *testing.T) {
+	manager, err := newAuthManager(t.TempDir(), "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.enabled {
+		t.Fatal("authentication should be disabled by default")
+	}
+	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if got := authRequest(handler, http.MethodGet, "/api/config", "100.93.123.76:5000", "", "", nil); got.Code != http.StatusNoContent {
+		t.Fatalf("remote request without credentials = %d, want 204", got.Code)
+	}
+	status := authRequest(handler, http.MethodGet, "/api/auth/status", "100.93.123.76:5000", "", "", nil)
+	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"authEnabled":false`)) {
+		t.Fatalf("status = %d %s", status.Code, status.Body.String())
+	}
+}
+
 func TestAuthMiddlewareDefaultCredentialAndGate(t *testing.T) {
-	manager, err := newAuthManager(t.TempDir(), "", "")
+	manager, err := newAuthManager(t.TempDir(), "", "", "true")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +101,7 @@ func TestAuthMiddlewareDefaultCredentialAndGate(t *testing.T) {
 
 func TestChangePasswordPersistsAndSwitchesCredentials(t *testing.T) {
 	root := t.TempDir()
-	manager, err := newAuthManager(root, "", "")
+	manager, err := newAuthManager(root, "", "", "true")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +134,7 @@ func TestChangePasswordPersistsAndSwitchesCredentials(t *testing.T) {
 		t.Fatalf("new credential after change = %d, want 204", got.Code)
 	}
 
-	reloaded, err := newAuthManager(root, "", "")
+	reloaded, err := newAuthManager(root, "", "", "true")
 	if err != nil {
 		t.Fatal(err)
 	}

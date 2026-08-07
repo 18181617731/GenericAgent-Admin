@@ -37,6 +37,7 @@ type authDiskState struct {
 type authManager struct {
 	mu         sync.RWMutex
 	path       string
+	enabled    bool
 	username   string
 	password   string
 	salt       []byte
@@ -46,10 +47,15 @@ type authManager struct {
 	external   bool
 }
 
-func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) {
+func newAuthManager(appRoot, envUser, envPassword, envEnabled string) (*authManager, error) {
 	manager := &authManager{path: filepath.Join(appRoot, authStateFilename)}
 	if (envUser == "") != (envPassword == "") {
 		return nil, errors.New("GA_ADMIN_AUTH_USER and GA_ADMIN_AUTH_PASSWORD must be set together")
+	}
+	manager.enabled = parseAuthEnabled(envEnabled) || envUser != ""
+	if !manager.enabled {
+		manager.username = defaultAuthUser
+		return manager, nil
 	}
 	if envUser != "" {
 		manager.username = envUser
@@ -84,10 +90,19 @@ func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) 
 	return manager, nil
 }
 
+func parseAuthEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *authManager) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		loopback := isIPv4LoopbackRemote(r.RemoteAddr)
-		if !loopback && !a.authenticateRequest(r) {
+		if a.enabled && !loopback && !a.authenticateRequest(r) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
 			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "authentication required", http.StatusUnauthorized)
@@ -102,7 +117,7 @@ func (a *authManager) middleware(next http.Handler) http.Handler {
 			a.handleChangePassword(w, r)
 			return
 		}
-		if !loopback && a.passwordChangeRequired() && strings.HasPrefix(r.URL.Path, "/api/") {
+		if a.enabled && !loopback && a.passwordChangeRequired() && strings.HasPrefix(r.URL.Path, "/api/") {
 			writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true})
 			return
 		}
@@ -111,6 +126,9 @@ func (a *authManager) middleware(next http.Handler) http.Handler {
 }
 
 func (a *authManager) authenticateRequest(r *http.Request) bool {
+	if !a.enabled {
+		return true
+	}
 	user, password, ok := r.BasicAuth()
 	if !ok {
 		return false
@@ -142,7 +160,7 @@ func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	mustChange := a.mustChange && !isIPv4LoopbackRemote(r.RemoteAddr)
-	writeAuthJSON(w, http.StatusOK, map[string]any{"username": a.username, "mustChangePassword": mustChange, "managedByEnvironment": a.external})
+	writeAuthJSON(w, http.StatusOK, map[string]any{"authEnabled": a.enabled, "username": a.username, "mustChangePassword": mustChange, "managedByEnvironment": a.external})
 }
 
 type changePasswordRequest struct {
@@ -155,6 +173,10 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	if !a.enabled {
+		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "auth_disabled"})
 		return
 	}
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {

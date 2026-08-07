@@ -91,7 +91,7 @@ function ProviderModelMenu({ groups, selectedProvider, previewProvider, value, o
       <div><b>选择模型</b><span>{stats.providers} 个服务商 · {stats.models} 个模型</span></div>
       {mobile && <button type="button" onClick={onClose} aria-label="关闭模型选择"><X size={18}/></button>}
     </div>
-    <label className="oa-cascade-search"><Search size={14} aria-hidden="true"/><input value={query} onChange={event => onQuery(event.target.value)} onKeyDown={event => {
+    <label className="oa-cascade-search"><Search size={14} aria-hidden="true"/><input autoFocus value={query} onChange={event => onQuery(event.target.value)} onKeyDown={event => {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         event.currentTarget.closest('.oa-cascade-menu')?.querySelector('[data-cascade-provider], [data-cascade-model]')?.focus()

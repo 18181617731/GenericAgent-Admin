@@ -93,7 +93,14 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startServiceByName(name string, params map[string]string) (service.ServiceInfo, error) {
-	svc, ok := s.Svc.Find(name)
+	return s.startServiceWithManager(s.Svc, name, params)
+}
+
+func (s *Server) startServiceWithManager(manager *service.Manager, name string, params map[string]string) (service.ServiceInfo, error) {
+	if manager == nil {
+		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
+	}
+	svc, ok := manager.Find(name)
 	if !ok {
 		return service.ServiceInfo{}, service.ErrServiceNotFound
 	}
@@ -101,28 +108,6 @@ func (s *Server) startServiceByName(name string, params map[string]string) (serv
 		return svc, service.ErrWorkflowManaged
 	}
 	if service.SupportsModelConfiguration(svc) && (params == nil || strings.TrimSpace(params["llm_no"]) == "") {
-		if models := s.CfgStore.Cfg.ServiceModels; models != nil {
-			if no, ok := models[name]; ok {
-				if params == nil {
-					params = map[string]string{}
-				}
-				params["llm_no"] = strconv.Itoa(no)
-			}
-		}
-	}
-	if _, statErr := os.Stat(filepath.Join(s.CfgStore.Cfg.GARoot, "llmcore.py")); statErr == nil {
-		if _, err := ga.EnsureUsageTelemetry(s.CfgStore.Cfg.GARoot); err != nil {
-			return svc, err
-		}
-	}
-	return s.Svc.StartWithParams(name, params)
-}
-
-func (s *Server) startServiceWithManager(manager *service.Manager, name string, params map[string]string) (service.ServiceInfo, error) {
-	if manager == nil {
-		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
-	}
-	if params == nil || strings.TrimSpace(params["llm_no"]) == "" {
 		if models := s.CfgStore.Snapshot().ServiceModels; models != nil {
 			if no, ok := models[name]; ok {
 				if params == nil {
@@ -130,6 +115,11 @@ func (s *Server) startServiceWithManager(manager *service.Manager, name string, 
 				}
 				params["llm_no"] = strconv.Itoa(no)
 			}
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(s.CfgStore.Snapshot().GARoot, "llmcore.py")); statErr == nil {
+		if _, err := ga.EnsureUsageTelemetry(s.CfgStore.Snapshot().GARoot); err != nil {
+			return svc, err
 		}
 	}
 	return manager.StartWithParams(name, params)
@@ -198,7 +188,7 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "service autostart is managed by its Goal or checklist workflow")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	seen := map[string]bool{}
 	next := []string{}
 	for _, name := range cfg.ServiceAutostart {
@@ -246,7 +236,7 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "service does not support model configuration")
 		return
 	}
-	cfg := s.CfgStore.Cfg
+	cfg := s.CfgStore.Snapshot()
 	models := map[string]int{}
 	for k, v := range cfg.ServiceModels {
 		models[k] = v

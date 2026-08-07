@@ -56,6 +56,13 @@ describe('worldline restore-point chooser', () => {
     expect(badges[0].title).toContain('notes.txt')
   })
 
+  test('explains missing worldline records without exposing a technical status code', () => {
+    render(<WorldlinePanel state={{ available:false, degraded_reason:'missing' }} loading={false} switchingId="" disabled={false}
+      onClose={vi.fn()} onRefresh={vi.fn()} onSwitch={vi.fn()}/>)
+    expect(screen.getByText('当前会话还没有可用的世界线记录。完成一轮成功对话后，系统会自动创建节点。')).toBeTruthy()
+    expect(screen.queryByText('missing')).toBeNull()
+  })
+
   test('closes with Escape', () => {
     const onClose = vi.fn()
     render(<WorldlineRestoreDialog nodes={[]} onClose={onClose} onSelect={vi.fn()}/>)

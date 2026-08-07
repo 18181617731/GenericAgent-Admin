@@ -28,7 +28,7 @@ export const autonomousServiceView = (service, lang = 'zh') => {
 export const autonomousSummary = ({ services = [], approvals = {}, reports = [] } = {}) => ({
   running: services.filter(service => service?.running).length,
   total: services.length,
-  pending: Number(approvals?.pending) || 0,
+  pending: Array.isArray(approvals?.items) ? splitAutonomousApprovals(approvals.items).pending.length : Number(approvals?.pending) || 0,
   reports: reports.length,
   latestReport: reports[0] || null,
 })
@@ -46,38 +46,71 @@ export const autonomousExecutionState = item => {
   return ''
 }
 
+const autonomousApprovalText = item => String([
+  item?.title, item?.status, item?.next_step, item?.review_status, item?.review_decision, item?.review_reason,
+].filter(Boolean).join(' ')).toLowerCase().replaceAll('_', ' ')
+
+const approvalTextHasNoApproval = item => {
+  const text = autonomousApprovalText(item)
+  return /no approval required|approval not required|no human approval|no human review|no review needed|not required|not applicable|无需审批|无需人工审批|不需要审批|不需审批|无须审批|无需审核|无需人工审核|不需要审核|不需审核|无须审核|无需人工复核|不需要人工复核|无需用户确认|不需要用户确认|无需批准|不需要批准/i.test(text)
+}
+
+const approvalReviewRequiresDecision = item => {
+  const text = String([item?.review_status, item?.review_decision, item?.review_reason].filter(Boolean).join(' ')).toLowerCase().replaceAll('_', ' ')
+  return /needs approval|pending approval|awaiting user approval|approval gate|approval evidence|report is blocked|model review unavailable|需要审批|待审批|待批准|等待用户审批|审批门槛|审批证据|报告处于阻塞状态|模型审核不可用/i.test(text)
+}
+
+const approvalStatusHasCompletion = item => {
+  const text = String(item?.status || '').toLowerCase().replaceAll('complete_task', '')
+  if (/未完成|尚未完成|未实施|未落地|未执行|not completed|not implemented|unfinished|pending/i.test(text)) return false
+  return /已完成|执行完成|完成并通过|已执行|已落地|已实施|已归档|已关闭|已通过|通过验证|completed|done|finished|implemented|landed|archived|closed|passed|successful|obsolete|superseded/i.test(text)
+}
+
+export const normalizeAutonomousApproval = item => {
+  if (!item || item.state !== 'pending' || item.decision) return item
+  const executionState = autonomousExecutionState(item)
+  if (executionState === 'completed') return { ...item, state: 'closed' }
+  if (['queued', 'failed', 'report_missing'].includes(executionState)) return { ...item, state: 'approved', decision: item.decision || 'approved' }
+  if (executionState === 'not_applicable') return { ...item, state: approvalTextHasNoApproval(item) ? 'not_required' : 'rejected', decision: item.decision || (approvalTextHasNoApproval(item) ? '' : 'rejected') }
+  if (approvalTextHasNoApproval(item)) return { ...item, state: 'not_required', execution_state: 'not_applicable' }
+  if (approvalStatusHasCompletion(item) && !approvalReviewRequiresDecision(item)) return { ...item, state: 'closed' }
+  return item
+}
+
 export const autonomousHandledProgress = item => {
   const state = autonomousExecutionState(item)
+  if (item?.state === 'not_required') return 'not_required'
+  if (item?.state === 'closed' && !state) return 'closed'
   if (state === 'queued' || state === 'completed' || state === 'report_missing' || state === 'failed' || state === 'not_applicable') return state
   return item?.decision === 'approved' ? 'queued' : 'unknown'
 }
 
 export const splitAutonomousApprovals = (items = []) => {
-  const pending = items.filter(item => item?.state === 'pending')
-  const handled = items.filter(item => item?.state !== 'pending')
-  const handledGroups = ['queued', 'completed', 'report_missing', 'failed', 'not_applicable', 'unknown']
+  const normalizedItems = items.map(normalizeAutonomousApproval)
+  const pending = normalizedItems.filter(item => item?.state === 'pending')
+  const handled = normalizedItems.filter(item => item?.state !== 'pending')
+  const handledGroups = ['queued', 'completed', 'report_missing', 'failed', 'not_applicable', 'not_required', 'closed', 'unknown']
     .map(key => ({ key, items: handled.filter(item => autonomousHandledProgress(item) === key) }))
     .filter(group => group.items.length > 0)
   return { pending, handled, handledGroups }
 }
 
-const approvalOutcomeValue = item => item?.expected_outcome || item?.expected_result || item?.expected_effect || item?.outcome
-
 const cleanApprovalOutcome = value => String(value || '').replace(/\s+/g, ' ').replace(/^[-*]+\s*/, '').trim()
 
-export const summarizeAutonomousApproval = (item = {}, lang = 'zh') => {
-  const explicit = cleanApprovalOutcome(localizeAutonomousApprovalValue(approvalOutcomeValue(item), lang, 'expectedOutcome'))
+const approvalProblemValue = item => item?.problem || item?.issue || item?.background || item?.purpose
+
+export const summarizeAutonomousProblem = (item = {}, lang = 'zh') => {
+  const explicit = cleanApprovalOutcome(localizeAutonomousApprovalValue(approvalProblemValue(item), lang, 'problem'))
   if (explicit) return explicit
-  const target = cleanApprovalOutcome(item.target)
-  const nextStep = cleanApprovalOutcome(localizeAutonomousApprovalValue(item.next_step, lang, 'nextStep'))
+  const title = cleanApprovalOutcome(localizeAutonomousApprovalValue(item.title, lang, 'title'))
   if (lang === 'en') {
-    if (target) return `After approval, the proposal will be put into ${target} so it can be reused for similar situations.`
-    if (nextStep) return `After approval, the autonomous workflow will ${nextStep.charAt(0).toLowerCase()}${nextStep.slice(1)}.`
-    return 'After approval, the proposal will be added to the autonomous queue for SOP-based execution and reporting.'
+    return title
+      ? `This task addresses the unresolved or unverified problem in “${title}”, so the proposal does not remain only in a report without taking effect.`
+      : 'This task addresses an unresolved or unverified problem so the proposal does not remain only in a report without taking effect.'
   }
-  if (target) return `批准后会把相关方案整理到 ${target}，以后遇到同类问题时可以直接参考。`
-  if (nextStep) return `批准后会${nextStep.replace(/^用户批准后(?:再)?/, '').replace(/^批准后(?:再)?/, '')}。`
-  return '批准后会加入自主任务队列，由自主服务按规则执行并生成报告。'
+  return title
+    ? `这项任务是为了解决“${title}”中尚未落地或尚未确认的问题，避免只有报告记录而实际效果没有生效。`
+    : '这项任务是为了解决尚未落地或尚未确认的问题，避免只有报告记录而实际效果没有生效。'
 }
 
 const reviewReasonText = value => String(value || '').replace(/\s+/g, ' ').trim()
@@ -85,6 +118,9 @@ const reviewReasonText = value => String(value || '').replace(/\s+/g, ' ').trim(
 const reviewReasonParts = (reason, copy, lang) => {
   const text = reviewReasonText(reason)
   const parts = []
+  if (/report is blocked|报告处于阻塞状态/i.test(text)) parts.push(copy.reviewBlocked)
+  if (/proposed source change is not confirmed as implemented|拟议源码变更尚未确认实施/i.test(text)) parts.push(copy.reviewChangeUnconfirmed)
+  if (/approval evidence is missing or unverifiable|approval evidence cannot be verified|approval evidence is missing|审批证据缺失或无法核验|审批证据无法核验|审批证据缺失/i.test(text)) parts.push(copy.reviewEvidenceMissing)
   if (/approval gate|审批门槛|明确要求.*审批/i.test(text)) parts.push(copy.reviewGate)
   if (/retry scheduled|model review scheduled|review scheduled|安排重试|审核已安排|重试/i.test(text)) parts.push(copy.reviewRetryScheduled)
   if (/conservative rule|保守规则/i.test(text)) parts.push(copy.reviewConservative)
