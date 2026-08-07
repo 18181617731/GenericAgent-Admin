@@ -1551,47 +1551,72 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
     } catch (e) { setMsg({ kind: 'error', text: text.testFailed(name, e.message) }) } finally { setTesting('') }
   }
   const runningCount = frontendSvcs.filter(s => s.running).length
+  const profiles = config?.profiles || []
+  const configuredCount = profiles.filter(profile => (profile.fields || []).some(field => field.has_value || String(field.value || '').trim())).length
+  const channelTone = id => ({ feishu:'#3370ff', wecom:'#07c160', dingtalk:'#1677ff', discord:'#5865f2', qq:'#12b7f5', telegram:'#229ed9', wechat:'#2aae67' }[id] || '#6b7280')
+  const channelMark = profile => ({ feishu:'飞', wecom:'企', dingtalk:'钉', discord:'D', qq:'Q', telegram:'T', wechat:'微' }[profile.id] || profileName(profile).slice(0, 1).toUpperCase())
   return <section className="channels-page">
-    <div className="channel-hero">
-      <div>
-        <span className="eyebrow">Channels</span>
+    <header className="channel-console-head">
+      <div className="channel-console-copy">
+        <span className="eyebrow"><Globe2 size={13}/> Channels</span>
         <h2>{text.title}</h2>
         <p>{text.summary}</p>
       </div>
-      <div className="channel-hero-stats">
-        <span><b>{frontendSvcs.length}</b> {text.services}</span>
-        <span><b>{runningCount}</b> {text.running}</span>
+      <div className="channel-console-metrics" aria-label="Channel overview">
+        <div><span>{profiles.length || '—'}</span><small>{text.keyConfig}</small></div>
+        <div><span>{configuredCount}</span><small>{text.savedField}</small></div>
+        <div className={runningCount ? 'is-live' : ''}><span>{runningCount}<i/></span><small>{text.running} / {frontendSvcs.length}</small></div>
       </div>
-    </div>
+    </header>
     <div className="channels-layout">
-      <Panel title={text.keyConfig} className="channels-panel channel-key-panel">
-        <div className="channel-toolbar">
-          <div>{config?.path ? <span>{text.configFile}: <code>{config.path}</code></span> : <span>{loading ? text.loadingConfig : text.noConfigPath}</span>}</div>
-          <div className="actions"><button onClick={load} disabled={loading || saving}>{loading ? text.refreshing : t.refresh}</button><button onClick={save} disabled={saving || loading || !config}>{saving ? t.busy : t.save}</button></div>
+      <section className="channels-panel channel-key-panel">
+        <div className="channel-workspace-head">
+          <div>
+            <span className="channel-section-index">01</span>
+            <div><h3>{text.keyConfig}</h3><p>{profiles.length ? `${profiles.length} Channels` : text.loadingConfig}</p></div>
+          </div>
+          <div className="channel-workspace-actions">
+            <button className="channel-icon-button" onClick={load} disabled={loading || saving} title={t.refresh} aria-label={t.refresh}><RefreshCw size={15} className={loading ? 'spin' : ''}/></button>
+            <button className="primary channel-save-button" onClick={save} disabled={saving || loading || !config}><Save size={15}/>{saving ? t.busy : t.save}</button>
+          </div>
+        </div>
+        <div className="channel-config-path">
+          <span className="channel-path-light"/>
+          <span>{config?.path ? text.configFile : (loading ? text.loadingConfig : text.noConfigPath)}</span>
+          {config?.path && <code title={config.path}>{config.path}</code>}
         </div>
         {msg && <p className={`${msg.kind === 'error' ? 'err' : 'ok'} channel-message`}>{msg.text}</p>}
         <div className="channel-config-list">
-          {(config?.profiles || []).map(profile => <article className="channel-config-card" key={profile.id}>
-            <div className="channel-config-head">
-              <div><h3>{profileName(profile)}</h3><p>{profileDescription(profile)}</p></div>
-              {profile.testable && <button onClick={()=>testProfile(profile)} disabled={saving || testing === profile.id}>{testing === profile.id ? text.testingButton : text.testConnection}</button>}
-            </div>
-            <div className="channel-fields">
-              {(profile.fields || []).map(field => <label key={field.name}>
-                <span>{fieldLabel(field)}<small>{field.name}{field.secret && field.has_value ? ` · ${text.savedField}` : ''}</small></span>
-                {field.secret
-                  ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
-                  : field.type === 'bool'
-                    ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
-                    : <input value={field.value || ''} placeholder={fieldPlaceholder(field)} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
-              </label>)}
-            </div>
-          </article>)}
-          {!loading && !config?.profiles?.length && <p className="empty-cell">{t.empty}</p>}
+          {profiles.map((profile, profileIndex) => {
+            const completedFields = (profile.fields || []).filter(field => field.has_value || String(field.value || '').trim()).length
+            return <article className="channel-config-card" key={profile.id} style={{ '--channel-tone': channelTone(profile.id) }}>
+              <div className="channel-config-head">
+                <div className="channel-identity">
+                  <span className="channel-brand-mark">{channelMark(profile)}</span>
+                  <div><div className="channel-title-line"><h3>{profileName(profile)}</h3><span>{String(profileIndex + 1).padStart(2, '0')}</span></div><p>{profileDescription(profile)}</p></div>
+                </div>
+                <div className="channel-card-actions">
+                  <span className={`channel-field-count${completedFields ? ' has-config' : ''}`}>{completedFields}/{(profile.fields || []).length}</span>
+                  {profile.testable && <button onClick={()=>testProfile(profile)} disabled={saving || testing === profile.id}>{testing === profile.id ? text.testingButton : text.testConnection}</button>}
+                </div>
+              </div>
+              <div className="channel-fields">
+                {(profile.fields || []).map(field => <label key={field.name}>
+                  <span>{fieldLabel(field)}<small>{field.name}{field.secret && field.has_value ? ` · ${text.savedField}` : ''}</small></span>
+                  {field.secret
+                    ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
+                    : field.type === 'bool'
+                      ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
+                      : <input value={field.value || ''} placeholder={fieldPlaceholder(field)} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
+                </label>)}
+              </div>
+            </article>
+          })}
+          {!loading && !profiles.length && <p className="empty-cell">{t.empty}</p>}
         </div>
-      </Panel>
+      </section>
       <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
-        <p className="muted">{t.desc.channels}</p>
+        <div className="channel-services-intro"><span className="channel-section-index">02</span><p>{t.desc.channels}</p></div>
         <ChannelServiceTable services={frontendSvcs} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
       </Panel>
     </div>
