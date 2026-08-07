@@ -10,6 +10,7 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Paperclip, Plus, RefreshCw, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
+import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
@@ -2998,6 +2999,9 @@ export default function ChatApp() {
       }
     }).catch(() => {})
   }, [])
+  const [chatInstanceID, setChatInstanceID] = useState(initialChatInstanceID)
+  const [chatInstances, setChatInstances] = useState([])
+  const [chatInstancesLoading, setChatInstancesLoading] = useState(true)
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
@@ -3039,11 +3043,11 @@ export default function ChatApp() {
   useEffect(() => {
     if (!sid || !subagentLikely) { setSubagents([]); return undefined }
     let alive = true
-    const tick = () => { api(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
+    const tick = () => { chatApi(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
     tick()
     const timer = busy ? setInterval(tick, 5000) : null
     return () => { alive = false; if (timer) clearInterval(timer) }
-  }, [sid, busy, subagentLikely])
+  }, [sid, busy, subagentLikely, chatInstanceID])
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
@@ -3092,6 +3096,23 @@ export default function ChatApp() {
   const cmdDrawerRef = useRef(null)
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
+  const chatInstanceRef = useRef(chatInstanceID)
+  const chatRequestEpochRef = useRef(0)
+  const chatApi = useCallback(async (url, options) => {
+    const epoch = chatRequestEpochRef.current
+    const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
+    if (epoch !== chatRequestEpochRef.current) throw new DOMException('Chat instance changed', 'AbortError')
+    return result
+  }, [])
+  const chatFetch = useCallback(async (url, options) => {
+    const epoch = chatRequestEpochRef.current
+    const result = await fetch(addChatInstanceToURL(url, chatInstanceRef.current), options)
+    if (epoch !== chatRequestEpochRef.current) {
+      result.body?.cancel?.().catch?.(() => {})
+      throw new DOMException('Chat instance changed', 'AbortError')
+    }
+    return result
+  }, [])
   const runSeqRef = useRef(0)
   const activeRunRef = useRef(false)
   const guidingQueueRef = useRef('')
@@ -3525,7 +3546,7 @@ export default function ChatApp() {
       let state = null
       while (!state && isActiveSession(sessionId)) {
         try {
-          state = await api(`/api/chat/state/${sessionId}`, { signal })
+          state = await chatApi(`/api/chat/state/${sessionId}`, { signal })
         } catch (e) {
           if (e?.name === 'AbortError' || signal?.aborted) throw e
           await waitForStreamRetry(signal)
@@ -3537,7 +3558,7 @@ export default function ChatApp() {
 
       while (isActiveSession(sessionId)) {
         try {
-          res = await fetch(`/api/chat/stream/${sessionId}?from=${cursor}`, { signal })
+          res = await chatFetch(`/api/chat/stream/${sessionId}?from=${cursor}`, { signal })
           if (res.status === 204) return commandPatch
           if (!res.ok) throw new Error(await res.text())
           replay = true
@@ -3555,7 +3576,7 @@ export default function ChatApp() {
     if (!id) return
     try {
       streamAbortRef.current?.abort?.()
-      await api(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
+      await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
       setMessages(xs => xs.map(m => (m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止。', 'Stopped.'), error:true } : m))
       setSessions(xs => xs.map(s => s.id === id ? { ...s, running:false } : s))
       setNotice(ct('已中止当前执行', 'Current run stopped'))
@@ -3583,7 +3604,7 @@ export default function ChatApp() {
       return [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }]
     })
     try {
-      const res = await fetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
+      const res = await chatFetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
       if (res.status === 204) return
       if (!res.ok) throw new Error(await res.text())
       await followChatStream(res, pendingId, '', id, ctrl.signal)
@@ -3605,7 +3626,7 @@ export default function ChatApp() {
   }
 
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
-    const st = await api(id ? `/api/chat/state/${id}` : '/api/chat/state')
+    const st = await chatApi(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
     const nextLlms = st.llms || []
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? nextLlms[0]?.index ?? 0
@@ -3641,7 +3662,7 @@ export default function ChatApp() {
     setStreamingSid('')
     setAutoFollow(true)
     setShowFollow(false)
-    const d = await api(`/api/chat/session/${id}`)
+    const d = await chatApi(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
@@ -3692,7 +3713,7 @@ export default function ChatApp() {
     setWorldlineSwitchingId(nodeId)
     setErr(''); setNotice('')
     try {
-      const d = await api(`/api/chat/worldline/${id}/switch`, { method: 'POST', body: JSON.stringify({ node_id: nodeId }) })
+      const d = await chatApi(`/api/chat/worldline/${id}/switch`, { method: 'POST', body: JSON.stringify({ node_id: nodeId }) })
       if (activeSidRef.current !== id) return
       await openSession(id, false)
       if (activeSidRef.current !== id) return
@@ -3710,7 +3731,7 @@ export default function ChatApp() {
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
-    const d = await api('/api/chat/sessions')
+    const d = await chatApi('/api/chat/sessions')
     const list = d.sessions || []
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
@@ -3733,7 +3754,7 @@ export default function ChatApp() {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject ? { project_mode:selectedProject } : {}) })
+    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject ? { project_mode:selectedProject } : {}) })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
@@ -3753,7 +3774,7 @@ export default function ChatApp() {
 
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
-    await api(`/api/chat/session/${id}`, { method:'DELETE' })
+    await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
     clearSessionDrafts(id)
     setSessions(xs => xs.filter(x => x.id !== id))
     setMenuOpen('')
@@ -3809,7 +3830,7 @@ export default function ChatApp() {
     setErr('')
     setNotice('')
     try {
-      const result = await deleteChatSessions(ids, id => api(`/api/chat/session/${id}`, { method:'DELETE' }))
+      const result = await deleteChatSessions(ids, id => chatApi(`/api/chat/session/${id}`, { method:'DELETE' }))
       clearSessionDrafts(result.deletedIds)
       const deleted = new Set(result.deletedIds)
       const activeDeleted = deleted.has(sid)
@@ -3862,7 +3883,7 @@ export default function ChatApp() {
   const saveRename = async (id) => {
     const title = draftTitle.trim()
     if (!title) return
-    const d = await api(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
+    const d = await chatApi(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
     setSessions(xs => xs.map(x => x.id === id ? { ...x, title:d.title, updated_at:d.updated_at } : x))
     setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
   }
@@ -3870,7 +3891,7 @@ export default function ChatApp() {
   const saveModel = async (next) => {
     setLlmNo(next)
     if (!sid) return
-    await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: reasoningEffort }) })
+    await chatApi(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: reasoningEffort }) })
     setNotice(ct('模型已切换', 'Model changed'))
   }
 
@@ -3880,7 +3901,7 @@ export default function ChatApp() {
     setReasoningEffort(next)
     if (!sid) return
     try {
-      await api(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, reasoning_effort: next }) })
+      await chatApi(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: llmNo, reasoning_effort: next }) })
       setNotice(next === 'off' ? ct('推理强度已设为默认', 'Reasoning effort reset to default') : ct(`推理强度已设为 ${next}`, `Reasoning effort set to ${next}`))
     } catch (e) {
       setReasoningEffort(prev)
@@ -3942,7 +3963,7 @@ export default function ChatApp() {
     const targetOpenToken = openSeqRef.current
     setExtraPromptSaving(true)
     try {
-      const d = await api(`/api/chat/settings/${targetSid}`, {
+      const d = await chatApi(`/api/chat/settings/${targetSid}`, {
         method:'POST',
         body: JSON.stringify({ llm_no: llmNo, reasoning_effort: reasoningEffort, ...promptPresetPatch(extraPromptSelection) }),
       })
@@ -4139,7 +4160,7 @@ export default function ChatApp() {
       ? xs.map(m => m.id === retryId ? placeholder : m)
       : [...xs, placeholder])
     try {
-      const data = await api(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:`/btw ${question}` }) })
+      const data = await chatApi(`/api/chat/btw/${sessionId}`, { method:'POST', body:JSON.stringify({ prompt:`/btw ${question}` }) })
       if (!isActiveSession(sessionId)) return
       if (data?.message) setMessages(xs => xs.map(m => m.id === placeholderId ? { ...data.message, btw_status:'done' } : m))
       await loadSessions(sessionId)
@@ -4176,7 +4197,7 @@ export default function ChatApp() {
     let pending = null
     try {
       if (!id) {
-        const d = await api('/api/chat/session/new', { method:'POST', body:'{}' })
+        const d = await chatApi('/api/chat/session/new', { method:'POST', body:'{}' })
         if (runToken !== runSeqRef.current || openToken !== openSeqRef.current) return
         id = d.id
         clearSessionDrafts(id)
@@ -4206,7 +4227,7 @@ export default function ChatApp() {
         clientUserID,
         sourceUserMessageId: sourceMessageID,
       })
-      const res = await fetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
+      const res = await chatFetch(`/api/chat/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl.signal, body: JSON.stringify(payload) })
       if (!res.ok) throw new Error(await res.text())
       if (sourceMessageID) setMessages(xs => {
         if (!isActiveSession(id)) return xs
@@ -4432,7 +4453,7 @@ export default function ChatApp() {
     try {
       if (wasRunning) {
         streamAbortRef.current?.abort?.()
-        if (id) await api(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
+        if (id) await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
         setMessages(xs => xs.map((m, idx) => (idx === xs.length - 1 && m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true } : m))
       }
     } catch (e) {
@@ -4446,10 +4467,23 @@ export default function ChatApp() {
   }
 
   useEffect(() => {
-    loadSessions('', { open:true }).catch(e=>setErr(e.message))
     loadPromptPresets().catch(e=>setErr(e.message))
+    api('/api/instances').then(payload => {
+      const options = chatInstanceOptions(payload)
+      setChatInstances(options)
+      if (!chatInstanceRef.current && payload?.default_id) {
+        const defaultID = String(payload.default_id).trim()
+        chatInstanceRef.current = defaultID
+        setChatInstanceID(defaultID)
+        persistChatInstanceID(defaultID)
+      }
+    }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
     return () => streamAbortRef.current?.abort?.()
   }, [])
+
+  useEffect(() => {
+    loadSessions('', { open:true }).catch(e => { if (e?.name !== 'AbortError') setErr(e.message) })
+  }, [chatInstanceID])
 
   useEffect(() => {
     let stopped = false
@@ -4458,7 +4492,7 @@ export default function ChatApp() {
       if (stopped || inFlight || document.hidden) return
       inFlight = true
       try {
-        const d = await api('/api/chat/sessions')
+        const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
           setSessions(d.sessions || [])
           setProjects(Array.isArray(d.projects) ? d.projects : [])
@@ -4477,7 +4511,7 @@ export default function ChatApp() {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [])
+  }, [chatInstanceID])
 
   useEffect(() => {
     if (!sessionManagerOpen) return
@@ -4494,6 +4528,41 @@ export default function ChatApp() {
       document.removeEventListener('keydown', onKey)
     }
   }, [sessionManagerOpen, batchDeleting])
+
+  const switchChatInstance = (nextValue) => {
+    const nextID = String(nextValue || '').trim()
+    if (!nextID || nextID === chatInstanceRef.current) return
+    streamAbortRef.current?.abort?.()
+    streamAbortRef.current = null
+    chatRequestEpochRef.current += 1
+    openSeqRef.current += 1
+    worldlineSeqRef.current += 1
+    runSeqRef.current += 1
+    activeRunRef.current = false
+    activeSidRef.current = ''
+    chatInstanceRef.current = nextID
+    persistChatInstanceID(nextID)
+    setChatInstanceID(nextID)
+    setSid('')
+    setSessions([])
+    setProjects([])
+    setMessages([])
+    messagesRef.current = []
+    setRawHistory([])
+    setHistoryInfo([])
+    setWorkingState(null)
+    setPlanState(null)
+    setSubagents([])
+    setBusy(false)
+    setStreamingSid('')
+    setWorldlineOpen(false)
+    setWorldlineState(null)
+    setWorldlineLoading(false)
+    setQueuedMessages([])
+    setAttachments([])
+    setErr('')
+    setNotice(ct('已切换 GA 实例', 'GA instance switched'))
+  }
 
   const scrollToThreadEnd = (behavior = 'auto') => {
     endRef.current?.scrollIntoView({ behavior, block:'end' })
@@ -4610,6 +4679,19 @@ export default function ChatApp() {
 
   return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <label className="oa-sidebar-instance" title={ct('切换实例会更新当前侧栏中的会话', 'Switching instances updates the sessions in this sidebar')}>
+        <span>{ct('GA 实例', 'GA instance')}</span>
+        <select
+          aria-label={ct('选择 GA 实例', 'Select GA instance')}
+          value={chatInstanceID}
+          onChange={event=>switchChatInstance(event.target.value)}
+          disabled={chatInstancesLoading || !chatInstances.length}
+        >
+          {chatInstancesLoading && <option value={chatInstanceID}>{ct('加载实例…', 'Loading instances…')}</option>}
+          {!chatInstancesLoading && !chatInstances.length && <option value="">{ct('默认实例', 'Default instance')}</option>}
+          {chatInstances.map(instance => <option key={instance.id} value={instance.id} disabled={instance.initializing}>{instance.name}{instance.initializing ? ct('（初始化中）', ' (initializing)') : ''}</option>)}
+        </select>
+      </label>
       <div className="oa-side-head">
         <div className="oa-sidebar-search">
           <Search size={16}/>
