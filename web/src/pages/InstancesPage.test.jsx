@@ -166,6 +166,10 @@ describe('InstancesPage', () => {
 
     await screen.findByRole('heading', { name: 'Primary' })
     await user.click(screen.getByRole('button', { name: 'Add instance' }))
+    const editor = screen.getByRole('form', { name: 'Create GA instance' })
+    expect(within(editor).getByText('Set the instance identity and local runtime.')).not.toBeNull()
+    expect(within(editor).getByRole('group', { name: 'Instance identity' })).not.toBeNull()
+    expect(within(editor).getByRole('group', { name: 'Runtime environment' })).not.toBeNull()
     await user.type(screen.getByLabelText('Instance ID'), 'secondary')
     await user.type(screen.getByLabelText('Display name'), 'Secondary')
     await user.type(screen.getByLabelText('GenericAgent root'), 'D:/ga')

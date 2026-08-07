@@ -14630,59 +14630,141 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
 }
 .instance-editor {
   margin-top: 18px;
-  border: 1px solid color-mix(in srgb, var(--instances-accent) 32%, var(--instances-line));
-  border-left: 3px solid var(--instances-accent);
-  border-radius: var(--radius-card, 8px);
+  border: 1px solid color-mix(in srgb, var(--instances-accent) 24%, var(--instances-line));
+  border-radius: calc(var(--radius-card, 8px) + 2px);
   background: var(--surface-strong, #fff);
   box-shadow: var(--shadow-tiny, 0 1px 2px rgba(0, 0, 0, .05));
-  padding: 18px;
+  overflow: hidden;
 }
 .instance-editor-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--instances-line);
+  background: color-mix(in srgb, var(--instances-accent-soft) 58%, var(--surface-strong, #fff));
 }
+.instance-editor-heading-mark {
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--instances-accent) 22%, transparent);
+  border-radius: var(--radius-card, 8px);
+  background: var(--surface-strong, #fff);
+  color: var(--instances-accent);
+  display: grid;
+  place-items: center;
+}
+.instance-editor-heading-copy { min-width: 0; }
 .instance-editor-heading small {
   color: var(--instances-accent);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 750;
-  letter-spacing: .06em;
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
-.instance-editor-heading h3 { margin: 4px 0 0; font-size: 18px; }
+.instance-editor-heading h3 {
+  margin: 2px 0 0;
+  font-size: 17px;
+  line-height: 1.3;
+}
+.instance-editor-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .instances-page button.icon-btn { width: 36px; padding: 0; }
-.instance-form-grid {
+.instance-editor-body { padding: 4px 18px 0; }
+.instance-editor-section {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 17px 0 18px;
+}
+.instance-editor-section + .instance-editor-section { border-top: 1px solid var(--instances-line); }
+.instance-editor-section legend {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.4;
+}
+.instance-editor-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 15px 18px;
+  gap: 16px 18px;
 }
-.instance-form-grid label { min-width: 0; display: grid; align-content: start; gap: 7px; }
-.instance-form-grid label > span { color: var(--text); font-size: 12px; font-weight: 700; }
-.instance-form-grid input {
+.instance-editor-grid label {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+.instance-editor-grid label > span {
+  min-height: 17px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 680;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.instance-editor-grid label > span em {
+  color: var(--instances-accent);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 680;
+}
+.instance-editor-grid input {
   width: 100%;
-  height: 39px;
+  height: 44px;
   border: 1px solid var(--instances-line);
   border-radius: var(--radius-card, 8px);
+  outline: 0;
   background: var(--input-bg, rgba(0, 0, 0, .03));
   color: var(--text);
   font: 13px/1.3 var(--mono);
-  padding: 0 11px;
+  padding: 0 12px;
+  transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
 }
-.instance-form-grid input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--instances-accent) 42%, var(--instances-line)); }
-.instance-form-grid input:disabled { opacity: .62; cursor: not-allowed; }
-.instance-form-grid small { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.instance-field-wide { grid-column: 1 / -1; }
+.instance-editor-grid input[type="file"] {
+  height: auto;
+  min-height: 44px;
+  padding: 7px 10px;
+  font-family: inherit;
+}
+.instance-editor-grid input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--instances-accent) 48%, var(--instances-line)); }
+.instance-editor-grid input:focus-visible {
+  border-color: var(--instances-accent);
+  background: var(--surface-strong, #fff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--instances-accent) 15%, transparent);
+}
+.instance-editor-grid input:disabled {
+  opacity: .62;
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+}
+.instance-editor-grid small {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
 .instance-editor-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 18px;
-  padding-top: 14px;
+  padding: 13px 18px;
   border-top: 1px solid var(--instances-line);
+  background: color-mix(in srgb, var(--surface-strong, #fff) 82%, var(--instances-accent-soft));
 }
+.instance-editor-actions button { min-width: 92px; }
 .instances-empty {
   min-height: 230px;
   margin-top: 18px;
@@ -14837,8 +14919,10 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   .instances-hero { grid-template-columns: auto minmax(0, 1fr); }
   .instances-toolbar { grid-column: 1 / -1; }
   .instances-toolbar button { flex: 1; }
-  .instance-form-grid { grid-template-columns: 1fr; }
-  .instance-field-wide { grid-column: auto; }
+  .instance-editor-grid { grid-template-columns: 1fr; }
+  .instance-editor-heading { padding: 15px; }
+  .instance-editor-body { padding-inline: 15px; }
+  .instance-editor-actions { padding: 12px 15px; }
 }
 @media (max-width: 520px) {
   .instances-hero-mark { display: none; }
@@ -14849,7 +14933,9 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
     grid-template-columns: 1fr 1fr;
   }
   .instances-install-button { grid-column: 1 / -1; }
-  .instance-editor { padding: 15px 13px; }
+  .instance-editor-heading { grid-template-columns: minmax(0, 1fr) auto; }
+  .instance-editor-heading-mark { display: none; }
+  .instance-editor-actions button { flex: 1; min-width: 0; }
   .instance-card > header { grid-template-columns: auto minmax(0, 1fr); }
   .instance-card-badges { grid-column: 2; align-items: flex-start; }
   .instance-card dl > div { grid-template-columns: 1fr; gap: 4px; }
