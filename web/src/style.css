@@ -10446,6 +10446,7 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
 }
 
 @media (max-width:680px) {
+  .app:not(.app-tab-chat) .sidebar nav { display:none; }
   .sidebar,
   .app:not(.app-tab-chat) .sidebar {
     grid-template-columns:minmax(0, 1fr) auto 42px;

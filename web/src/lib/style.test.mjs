@@ -66,6 +66,7 @@ test('mobile chat topbar and notification filters stay inside the iPhone viewpor
 })
 
 test('mobile density pass keeps the shell compact without shrinking touch controls into text', () => {
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.app:not\(\.app-tab-chat\)\s+\.sidebar\s+nav\s*\{\s*display\s*:\s*none/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.sidebar,[\s\S]*?grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+104px\s+36px/i)
   assert.match(css, /\.brand,[\s\S]*?\.app:not\(\.app-tab-chat\)\s+\.brand\s*\{[^}]*display:none/i)
   assert.match(css, /\.mobile-nav-trigger\s*\{[^}]*grid-column:1[^}]*grid-row:1/i)

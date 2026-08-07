@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.58 - 2026-08-08
+
+### Mobile verification and fix
+- 修复桌面导航分组样式覆盖移动端折叠规则的问题，手机端只显示导航触发器，打开后使用可滚动分组弹层。
+- 完成 320px、390px 手机视口的真实浏览器验收，确认主页面、通道、实例、模型、对话、任务及其他功能页没有页面级横向溢出。
+- 增加样式回归断言，防止移动端导航再次被桌面导航规则撑开。
+
 ## v1.0.57 - 2026-08-08
 
 ### User-facing changes
