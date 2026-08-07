@@ -14945,6 +14945,64 @@ html[data-color-scheme="dark"] .oa-chat .oa-message.assistant .oa-msg-footer > .
   background: color-mix(in srgb, var(--surface-muted, #f5f5f5) 52%, transparent);
 }
 .instance-card > footer button { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.instance-delete-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--text) 36%, transparent);
+  backdrop-filter: blur(3px);
+}
+.instance-delete-dialog {
+  width: min(440px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--danger, #d13c3c) 28%, var(--instances-line));
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--text) 24%, transparent);
+}
+.instance-delete-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--danger, #b92f2f);
+  background: color-mix(in srgb, var(--danger, #d13c3c) 10%, var(--surface));
+}
+.instance-delete-copy { min-width: 0; }
+.instance-delete-copy h3 { margin: 1px 0 7px; font-size: 18px; }
+.instance-delete-copy p { margin: 0; color: var(--muted); line-height: 1.6; }
+.instance-delete-copy code {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: var(--instances-muted-bg);
+  overflow-wrap: anywhere;
+}
+.instance-delete-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+.instance-delete-actions button { min-width: 96px; justify-content: center; }
+.instance-delete-actions button.danger {
+  border-color: color-mix(in srgb, var(--danger, #d13c3c) 42%, var(--instances-line));
+  color: var(--danger, #b92f2f);
+  background: color-mix(in srgb, var(--danger, #d13c3c) 8%, var(--surface));
+}
+.instance-delete-actions button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--instances-accent) 28%, transparent);
+  outline-offset: 2px;
+}
 html[data-color-scheme="dark"] .instances-page {
   --instances-accent: #55c9b8;
   --instances-accent-soft: rgba(85, 201, 184, .1);
@@ -14963,6 +15021,9 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   .instance-editor-footer { padding: 12px 16px; }
 }
 @media (max-width: 520px) {
+  .instance-delete-backdrop { align-items: end; padding: 12px; }
+  .instance-delete-dialog { padding: 18px; border-radius: 16px; }
+  .instance-delete-actions button { flex: 1; }
   .instances-hero-mark { display: none; }
   .instances-hero { grid-template-columns: 1fr; gap: 12px; }
   .instances-toolbar {

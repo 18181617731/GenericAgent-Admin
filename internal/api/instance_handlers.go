@@ -21,6 +21,7 @@ type instanceInstallRequest struct {
 }
 
 const automaticInstanceBaseID = "genericagent"
+const protectedDefaultInstanceID = "default"
 const instanceTemplateMaxBytes int64 = 512 << 20
 
 func (s *Server) parseInstanceInstallRequest(w http.ResponseWriter, r *http.Request) (instanceInstallRequest, multipart.File, error) {
@@ -330,6 +331,11 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		s.ConfigMu.Unlock()
 		bad(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if req.ID == protectedDefaultInstanceID {
+		s.ConfigMu.Unlock()
+		bad(w, http.StatusConflict, "the default instance cannot be deleted")
 		return
 	}
 	if req.ID == cfg.DefaultInstanceID && len(kept) > 0 {

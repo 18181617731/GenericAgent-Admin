@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import { CheckCircle2, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Star, Trash2, X } from 'lucide-react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertTriangle, CheckCircle2, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Star, Trash2, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 
@@ -23,7 +23,8 @@ const TEXT = {
     confirmInstall: '\u5c06\u4ece GenericAgent main \u5206\u652f\u4e0b\u8f7d\u6e90\u7801\u5e76\u81ea\u52a8\u6ce8\u518c\u4e3a\u65b0\u5b9e\u4f8b\uff0c\u7ee7\u7eed\u5417\uff1f',
     confirmCreate: '\u786e\u8ba4\u521b\u5efa\u8be5 GA \u5b9e\u4f8b\uff1f', confirmUpdate: '\u786e\u8ba4\u4fdd\u5b58\u8be5 GA \u5b9e\u4f8b\u7684\u4fee\u6539\uff1f',
     confirmDefault: name => `\u786e\u8ba4\u5c06\u201c${name}\u201d\u8bbe\u4e3a\u9ed8\u8ba4\u5b9e\u4f8b\uff1f`,
-    confirmDelete: name => `\u786e\u8ba4\u5220\u9664\u201c${name}\u201d\uff1f\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u78c1\u76d8\u4e0a\u7684 GenericAgent \u76ee\u5f55\u3002`,
+    deleteTitle: '\u786e\u8ba4\u5220\u9664\u5b9e\u4f8b', deleteConfirm: '\u786e\u8ba4\u5220\u9664',
+    confirmDelete: name => `\u5373\u5c06\u4ece GenericAgent-Admin \u4e2d\u79fb\u9664\u201c${name}\u201d\u3002\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u78c1\u76d8\u4e0a\u7684 GenericAgent \u76ee\u5f55\u3002`,
     defaultDeleteHint: '\u8bf7\u5148\u5c06\u5176\u4ed6\u5b9e\u4f8b\u8bbe\u4e3a\u9ed8\u8ba4\u3002',
   },
   en: {
@@ -43,7 +44,8 @@ const TEXT = {
     confirmInstall: 'Download the GenericAgent main branch and register it as a new instance?',
     confirmCreate: 'Create this GA instance?', confirmUpdate: 'Save changes to this GA instance?',
     confirmDefault: name => `Set "${name}" as the default instance?`,
-    confirmDelete: name => `Delete "${name}"? This does not remove the GenericAgent directory from disk.`,
+    deleteTitle: 'Confirm instance deletion', deleteConfirm: 'Delete instance',
+    confirmDelete: name => `"${name}" will be removed from GenericAgent-Admin. This will not delete the GenericAgent directory from disk.`,
     defaultDeleteHint: 'Set another instance as default before deleting this one.',
   },
 }
@@ -51,6 +53,7 @@ const TEXT = {
 const normalizedItems = (payload) => Array.isArray(payload?.items) ? payload.items : []
 const normalizedInitStatus = (instance) => String(instance?.init_status || '').trim().toLowerCase()
 const isInitializingInstance = (instance) => normalizedInitStatus(instance) === 'initializing'
+const PROTECTED_DEFAULT_INSTANCE_ID = 'default'
 const INSTANCE_POLL_MS = 1200
 
 export default function InstancesPage({ lang = 'zh' }) {
@@ -64,6 +67,9 @@ export default function InstancesPage({ lang = 'zh' }) {
   const [editor, setEditor] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [templateFile, setTemplateFile] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const deleteCancelRef = useRef(null)
+  const deleteTriggerRef = useRef(null)
 
   const applyPayload = useCallback((payload) => {
     setItems(normalizedItems(payload))
@@ -192,8 +198,28 @@ export default function InstancesPage({ lang = 'zh' }) {
     }
   }
 
+  const requestDelete = (instance) => {
+    deleteTriggerRef.current = document.activeElement
+    setDeleteTarget(instance)
+  }
+
+  const cancelDelete = () => {
+    setDeleteTarget(null)
+    window.setTimeout(() => deleteTriggerRef.current?.focus(), 0)
+  }
+
+  useEffect(() => {
+    if (!deleteTarget) return undefined
+    deleteCancelRef.current?.focus()
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !busy) cancelDelete()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [deleteTarget, busy])
+
   const remove = async (instance) => {
-    if (!confirmDanger('delete_instance', copy.confirmDelete(instance.name || instance.id))) return
+    setDeleteTarget(null)
     setBusy(`delete:${instance.id}`)
     setError('')
     setNotice('')
@@ -272,7 +298,8 @@ export default function InstancesPage({ lang = 'zh' }) {
         const isInitializing = initStatus === 'initializing'
         const hasInitFailed = initStatus === 'failed'
         const initLabel = isInitializing ? copy.initializing : hasInitFailed ? copy.failed : initStatus === 'ready' ? copy.ready : ''
-        const blocksDefaultDelete = isDefault && items.length > 1
+        const isProtectedDefault = instance.id === PROTECTED_DEFAULT_INSTANCE_ID
+        const blocksDefaultDelete = isProtectedDefault || isDefault && items.length > 1
         return <article className={`instance-card${isDefault ? ' is-default' : ''}${isInitializing ? ' is-initializing' : ''}${hasInitFailed ? ' has-init-failed' : ''}`} key={instance.id}>
           <header>
             <span className="instance-card-icon"><Cpu size={19}/></span>
@@ -294,10 +321,27 @@ export default function InstancesPage({ lang = 'zh' }) {
           <footer>
             <button type="button" onClick={() => beginEdit(instance)} disabled={anyBusy || isInitializing}><Pencil size={14}/>{copy.edit}</button>
             <button type="button" onClick={() => setDefault(instance)} disabled={anyBusy || isDefault || isInitializing}><Star size={14}/>{copy.setDefault}</button>
-            <button type="button" className="danger" title={blocksDefaultDelete ? copy.defaultDeleteHint : ''} onClick={() => remove(instance)} disabled={anyBusy || blocksDefaultDelete}><Trash2 size={14}/>{copy.remove}</button>
+            <button type="button" className="danger" title={blocksDefaultDelete ? copy.defaultDeleteHint : ''} onClick={() => requestDelete(instance)} disabled={anyBusy || blocksDefaultDelete}><Trash2 size={14}/>{copy.remove}</button>
           </footer>
         </article>
       })}
+    </div>}
+
+    {deleteTarget && <div className="instance-delete-backdrop" onMouseDown={event => {
+      if (event.target === event.currentTarget && !busy) cancelDelete()
+    }}>
+      <section className="instance-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="instance-delete-title" aria-describedby="instance-delete-description">
+        <div className="instance-delete-icon" aria-hidden="true"><AlertTriangle size={22}/></div>
+        <div className="instance-delete-copy">
+          <h3 id="instance-delete-title">{copy.deleteTitle}</h3>
+          <p id="instance-delete-description">{copy.confirmDelete(deleteTarget.name || deleteTarget.id)}</p>
+          <code>{deleteTarget.id}</code>
+        </div>
+        <div className="instance-delete-actions">
+          <button ref={deleteCancelRef} type="button" onClick={cancelDelete} disabled={Boolean(busy)}>{copy.cancel}</button>
+          <button type="button" className="danger" onClick={() => remove(deleteTarget)} disabled={Boolean(busy)}><Trash2 size={15}/>{copy.deleteConfirm}</button>
+        </div>
+      </section>
     </div>}
   </section>
 }

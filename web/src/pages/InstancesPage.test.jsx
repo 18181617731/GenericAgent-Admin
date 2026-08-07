@@ -219,6 +219,41 @@ describe('InstancesPage', () => {
     expect(await screen.findByRole('heading', { name: 'Primary updated' })).not.toBeNull()
   })
 
+  it('keeps the reserved default instance non-deletable after switching the active default', async () => {
+    const protectedDefault = { id: 'default', name: 'Default', ga_root: 'C:/ga', python_path: '', effective_python: 'python' }
+    const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
+    globalThis.fetch = vi.fn(() => reply({
+      default_instance_id: 'secondary',
+      items: [protectedDefault, secondary],
+    }))
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    const defaultCard = (await screen.findByRole('heading', { name: 'Default' })).closest('article')
+    const deleteButton = within(defaultCard).getByRole('button', { name: 'Delete' })
+    expect(deleteButton.disabled).toBe(true)
+    await user.click(deleteButton)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses an in-page confirmation and cancels without deleting', async () => {
+    const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
+    globalThis.fetch = vi.fn(() => reply({ ...initialPayload, items: [...initialPayload.items, secondary] }))
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    const secondaryCard = (await screen.findByRole('heading', { name: 'Secondary' })).closest('article')
+    await user.click(within(secondaryCard).getByRole('button', { name: 'Delete' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Confirm instance deletion' })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Confirm instance deletion' })).toBeNull()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('sets another default before deleting the previous default', async () => {
     const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
     const twoInstances = { ...initialPayload, items: [...initialPayload.items, secondary] }
@@ -247,6 +282,10 @@ describe('InstancesPage', () => {
     expect(JSON.parse(options.body)).toEqual({ id: 'secondary' })
 
     await user.click(within(screen.getByRole('heading', { name: 'Primary' }).closest('article')).getByRole('button', { name: 'Delete' }))
+    const dialog = screen.getByRole('dialog', { name: 'Confirm instance deletion' })
+    expect(within(dialog).getByText(/Primary/)).not.toBeNull()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    await user.click(within(dialog).getByRole('button', { name: 'Delete instance' }))
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3))
     ;[url, options] = globalThis.fetch.mock.calls[2]
     expect(url).toBe('/api/instances/delete')
