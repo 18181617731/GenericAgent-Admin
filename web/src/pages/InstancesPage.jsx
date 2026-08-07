@@ -234,13 +234,11 @@ export default function InstancesPage({ lang = 'zh' }) {
 
     {editor && <form className="instance-editor" onSubmit={submit} aria-labelledby="instance-editor-title">
       <div className="instance-editor-heading">
-        <div className="instance-editor-heading-mark" aria-hidden="true">{editor === 'install' ? <Download size={18}/> : <Cpu size={18}/>}</div>
         <div className="instance-editor-heading-copy">
-          <small>{editor === 'create' ? copy.add : editor === 'install' ? copy.install : form.id}</small>
           <h3 id="instance-editor-title">{editor === 'create' ? copy.createTitle : editor === 'install' ? copy.installTitle : copy.editTitle}</h3>
           <p>{editor === 'create' ? copy.createSummary : editor === 'install' ? copy.installSummary : copy.editSummary}</p>
         </div>
-        <button type="button" className="icon-btn" aria-label={copy.cancel} onClick={() => setEditor(null)} disabled={anyBusy}><X size={17}/></button>
+        <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
       </div>
       <div className="instance-editor-body">
         <fieldset className="instance-editor-section">
@@ -262,7 +260,6 @@ export default function InstancesPage({ lang = 'zh' }) {
           <div className="instance-editor-grid"><label htmlFor="instance-template"><span>{copy.template}</span><input id="instance-template" aria-label={copy.template} type="file" accept=".zip,application/zip" disabled={anyBusy} onChange={event => setTemplateFile(event.target.files?.[0] || null)}/><small>{copy.templateHint}</small></label></div>
         </fieldset>}
       </div>
-      <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
     </form>}
 
     {loading ? <div className="instances-empty"><RefreshCw className="spin" size={22}/><span>{copy.loading}</span></div> : items.length === 0 ? <div className="instances-empty"><Server size={28}/><span>{copy.empty}</span><button type="button" onClick={beginCreate}><Plus size={15}/>{copy.add}</button></div> : <div className="instances-grid">
