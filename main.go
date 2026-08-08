@@ -60,13 +60,9 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
-	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv), os.Getenv(authEnabledEnv))
-	if err != nil {
-		log.Fatalf("initialize admin authentication: %v", err)
-	}
 	addrs := adminListenAddresses(cfgStore.Snapshot().Host, cfgStore.Snapshot().Port, discoverTailscaleIPv4())
 	url := "http://" + addrs[0]
-	server := newHTTPServer(addrs[0], auth.middleware(srv.Routes()))
+	server := newHTTPServer(addrs[0], authDisabledMiddleware(srv.Routes()))
 	srv.StartAutostartServices()
 	srv.StartAutonomousMaintenance()
 	activeAddrs, err := startHTTPListeners(server, addrs)
@@ -110,9 +106,6 @@ type launchOptions struct {
 const (
 	adminReadHeaderTimeout = 10 * time.Second
 	adminIdleTimeout       = 120 * time.Second
-	authUserEnv            = "GA_ADMIN_AUTH_USER"
-	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
-	authEnabledEnv         = "GA_ADMIN_AUTH_ENABLED"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

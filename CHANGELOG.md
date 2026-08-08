@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.59 - 2026-08-08
+
+### Direct access for trusted networks
+- 取消外网、局域网和 Tailscale 访问的 HTTP Basic Auth，访问服务地址后直接进入管理页面，不再要求用户名和密码。
+- 旧版 `GA_ADMIN_AUTH_*` 环境变量与 `auth.local.json` 不再参与请求拦截；保留认证状态接口兼容前端和旧客户端。
+- 远程免登录访问应配合 Tailscale ACL、操作系统防火墙和 HTTPS 使用，不要将管理端口直接暴露到公网。
+
 ## v1.0.58 - 2026-08-08
 
 ### Mobile verification and fix

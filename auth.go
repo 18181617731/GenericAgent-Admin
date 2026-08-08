@@ -99,6 +99,39 @@ func parseAuthEnabled(value string) bool {
 	}
 }
 
+// Authentication is intentionally disabled for the production server. Keep
+// the two auth API endpoints available because the frontend checks auth status
+// before rendering and older clients may still call the password endpoint.
+func authDisabledMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/status":
+			if r.Method != http.MethodGet {
+				w.Header().Set("Allow", http.MethodGet)
+				writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+				return
+			}
+			writeAuthJSON(w, http.StatusOK, map[string]any{
+				"authEnabled":          false,
+				"username":             defaultAuthUser,
+				"mustChangePassword":   false,
+				"managedByEnvironment": false,
+			})
+			return
+		case "/api/auth/change-password":
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", http.MethodPost)
+				writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+				return
+			}
+			writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "auth_disabled"})
+			return
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
 func (a *authManager) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		loopback := isIPv4LoopbackRemote(r.RemoteAddr)

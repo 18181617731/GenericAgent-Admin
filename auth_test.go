@@ -63,6 +63,25 @@ func TestAuthDisabledByDefaultAllowsRemoteAccess(t *testing.T) {
 	}
 }
 
+func TestAuthDisabledMiddlewareAlwaysAllowsRemoteAccess(t *testing.T) {
+	reached := false
+	handler := authDisabledMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	if got := authRequest(handler, http.MethodGet, "/api/config", "100.93.123.76:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
+		t.Fatalf("remote request without credentials = %d, reached %v; want 204 and reached", got.Code, reached)
+	}
+	status := authRequest(handler, http.MethodGet, "/api/auth/status", "100.93.123.76:5000", "", "", nil)
+	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"authEnabled":false`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":false`)) {
+		t.Fatalf("status = %d %s", status.Code, status.Body.String())
+	}
+	if got := authRequest(handler, http.MethodPost, "/api/auth/change-password", "100.93.123.76:5000", "admin", "admin", changePasswordRequest{}); got.Code != http.StatusConflict || !bytes.Contains(got.Body.Bytes(), []byte(`"auth_disabled"`)) {
+		t.Fatalf("change password = %d %s", got.Code, got.Body.String())
+	}
+}
+
 func TestAuthMiddlewareDefaultCredentialAndGate(t *testing.T) {
 	manager, err := newAuthManager(t.TempDir(), "", "", "true")
 	if err != nil {
