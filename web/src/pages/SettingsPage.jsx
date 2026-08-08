@@ -1,9 +1,10 @@
 import { RotateCcw, Save } from 'lucide-react'
 import { Panel } from '../components/common'
+import ScalePicker from '../ScalePicker.jsx'
 
 const update = (setConfig, config, field) => event => setConfig({ ...config, [field]: event.target.value })
 
-export function SettingsPage({ t, root, setRoot, config, setConfig, dirty, busy, onSave, onReset }) {
+export function SettingsPage({ t, lang = 'zh', root, setRoot, config, setConfig, dirty, busy, onSave, onReset, uiScale = 1, onUiScaleChange = () => {} }) {
   const proxyMode = config?.proxy_mode || 'off'
   return <section className="settings-page">
     <Panel title={t.nav.settings} className="settings-panel">
@@ -24,6 +25,11 @@ export function SettingsPage({ t, root, setRoot, config, setConfig, dirty, busy,
             <label className="settings-field" htmlFor="settings-all-proxy"><span>ALL_PROXY</span><input id="settings-all-proxy" value={config?.all_proxy || ''} onChange={update(setConfig, config, 'all_proxy')} placeholder="socks5://127.0.0.1:7890"/></label>
             <label className="settings-field" htmlFor="settings-no-proxy"><span>NO_PROXY</span><input id="settings-no-proxy" value={config?.no_proxy || ''} onChange={update(setConfig, config, 'no_proxy')} placeholder="localhost,127.0.0.1"/></label>
           </div>}
+        </section>
+
+        <section className="settings-section settings-appearance-section" aria-labelledby="settings-appearance-title">
+          <div className="settings-section-head"><h3 id="settings-appearance-title">{lang === 'zh' ? '界面显示' : 'Interface display'}</h3><p>{lang === 'zh' ? '按你的屏幕大小调整字体、间距和组件比例，设置会保存在当前浏览器。' : 'Adjust text, spacing, and component scale for your screen. This is saved in the current browser.'}</p></div>
+          <ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang} variant="settings" />
         </section>
 
         <div className="settings-save-bar">

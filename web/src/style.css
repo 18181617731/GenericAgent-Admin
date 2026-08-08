@@ -15969,9 +15969,10 @@ html[data-color-scheme="dark"] .oa-search-result.is-current { border-color:rgba(
   .oa-mobile-tools-menu {
     position:absolute;
     top:calc(54px + env(safe-area-inset-top));
-    right:8px;
-    width:min(264px, calc(100vw - 16px));
-    display:grid;
+  right:8px;
+  width:min(264px, calc(100vw - 16px));
+  max-width:calc(100% - 16px);
+  display:grid;
     gap:6px;
     padding:10px;
     border:1px solid var(--border);
@@ -17296,4 +17297,117 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
     max-height: calc(100dvh - var(--oa-topbar-h, 48px) - 16px);
   }
   .oa-chat .oa-worldline-drawer .oa-context-head span { max-width: 46vw; }
+}
+
+/* User-controlled interface scale: keep the whole workspace in sync, including portals. */
+html { --ga-ui-scale: 1; }
+@supports (zoom: 1) {
+  html { zoom: var(--ga-ui-scale, 1); }
+  body { width: calc(100vw * var(--ga-ui-scale-width, 1)); min-width: 0; max-width: none; }
+  #root { width: 100%; min-width: 0; }
+}
+
+.ui-scale-picker {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  color: var(--text);
+}
+.ui-scale-label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 680;
+  white-space: nowrap;
+}
+.ui-scale-label svg { flex: 0 0 auto; color: var(--green); }
+.ui-scale-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.ui-scale-button,
+.ui-scale-value {
+  min-width: 30px;
+  min-height: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--text);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 720;
+}
+.ui-scale-value { min-width: 62px; color: var(--green); background: color-mix(in srgb, var(--green) 9%, var(--surface-strong)); }
+.ui-scale-button:hover:not(:disabled),
+.ui-scale-value:hover { border-color: color-mix(in srgb, var(--green) 48%, var(--border)); background: color-mix(in srgb, var(--green) 12%, var(--surface-strong)); transform: none; }
+.ui-scale-button:disabled { opacity: .42; cursor: not-allowed; }
+.ui-scale-picker button:focus-visible { outline: 3px solid color-mix(in srgb, var(--green) 28%, transparent); outline-offset: 2px; }
+.ui-scale-hint {
+  display: none;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.ui-scale-keyboard { display: block; margin-top: 3px; }
+.ui-scale-picker--settings {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+}
+.ui-scale-picker--settings .ui-scale-hint { display: block; grid-column: 1 / -1; }
+.sidebar .ui-scale-picker { grid-column: 1 / -1; padding: 2px 6px 0; }
+.sidebar .ui-scale-picker .ui-scale-hint { display: none; }
+.ui-scale-picker--compact { width: 100%; }
+.oa-mobile-tools-menu .ui-scale-picker--compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+.oa-mobile-tools-menu .ui-scale-picker--compact .ui-scale-label { font-size: 13px; }
+.ui-scale-picker--mobile {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-muted) 68%, transparent);
+}
+.ui-scale-picker--mobile .ui-scale-hint { display: block; grid-column: 1 / -1; }
+.mobile-nav-appearance { padding-top: 10px; }
+
+@media (max-width: 680px) {
+  .sidebar .ui-scale-picker { display: none; }
+  .ui-scale-picker--mobile {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 10px;
+  }
+  .ui-scale-picker--mobile .ui-scale-label { font-size: 13px; }
+  .ui-scale-picker--mobile .ui-scale-hint { font-size: 11px; }
+}
+
+@media (max-width: 420px) {
+  .ui-scale-picker--settings { grid-template-columns: 1fr; }
+  .ui-scale-picker--settings .ui-scale-controls { justify-self: start; }
+  .oa-mobile-tools-menu .ui-scale-picker--compact { grid-template-columns: 1fr; gap: 6px; }
 }

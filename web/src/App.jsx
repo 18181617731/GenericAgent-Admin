@@ -5,6 +5,7 @@ import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Code
 import { api } from './lib/api'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
+import ScalePicker from './ScalePicker.jsx'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
@@ -280,7 +281,7 @@ const OverviewPage = ({
   </section>
 }
 
-export default function App() {
+export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const defaultLang = 'zh'
   const [lang, setLang] = useState(() => localStorage.getItem('ga-admin-lang-explicit') === '1' ? (localStorage.getItem('ga-admin-lang') || defaultLang) : defaultLang)
   const chooseLang = (nextLang) => {
@@ -1340,7 +1341,7 @@ export default function App() {
     <div ref={appScope} className={`app app-tab-${tab}`} aria-busy={booting || busy || versionBusy || undefined}>
     <aside className="sidebar">
       <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
-      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/></div>
+      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{navLabel(tab)}</span><ChevronDown size={17}/></button>
       <nav aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
@@ -1466,7 +1467,7 @@ export default function App() {
       {tab==='autonomous' && <><AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>{moduleTodo('autonomous')}</>}
       {tab==='usage' && <><UsagePage lang={lang}/>{moduleTodo('usage')}</>}
       {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
-      {tab==='settings' && <><SettingsPage t={t} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft}/>{moduleTodo('settings')}</>}
+      {tab==='settings' && <><SettingsPage t={t} lang={lang} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft} uiScale={uiScale} onUiScaleChange={onUiScaleChange}/>{moduleTodo('settings')}</>}
       {tab==='models' && <><Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>{moduleTodo('models')}</>}
       {tab==='logs' && <><section className="logs-page">
         <div className="logs-layout">
@@ -1522,6 +1523,7 @@ export default function App() {
       {mobileNavOpen && <div className="mobile-nav-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setMobileNavOpen(false) }}>
         <section className="mobile-nav-sheet" role="dialog" aria-modal="true" aria-label="页面导航">
           <header><div><b>前往功能页面</b><span>{navLabel(tab)}</span></div><button type="button" onClick={()=>setMobileNavOpen(false)} aria-label="关闭导航"><X size={18}/></button></header>
+          <div className="mobile-nav-appearance"><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang} variant="mobile"/></div>
           <div className="mobile-nav-grid">{navGroups.map(group => <section key={group.key} className="mobile-nav-group"><b>{group.label[lang]}</b><div className="mobile-nav-group-grid">{group.items.map(n => <button key={n} type="button" className={tab===n ? 'active' : ''} aria-current={tab===n ? 'page' : undefined} onClick={()=>navigateTo(n)}>{icon(n)}<span>{navLabel(n)}</span></button>)}</div></section>)}</div>
         </section>
       </div>}

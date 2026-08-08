@@ -2,6 +2,7 @@ import React, { createContext, memo, useCallback, useContext, useEffect, useLayo
 import { createPortal } from 'react-dom'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
+import ScalePicker from './ScalePicker.jsx'
 import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
@@ -2803,7 +2804,7 @@ function CustomSelect({ value, onChange, options, disabled, native = false, aria
   )
 }
 
-export default function ChatApp() {
+export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   // Theme state: sync with localStorage and system preference
   const [theme, setTheme] = useState(getInitialTheme)
   useEffect(() => {
@@ -4822,6 +4823,7 @@ export default function ChatApp() {
             lang={chatLanguage()}
             variant="compact"
           />
+          <ScalePicker value={uiScale} onChange={onUiScaleChange} lang={chatLanguage()} variant="compact" />
         </div>
       </div>, document.body)}
 

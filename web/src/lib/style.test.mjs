@@ -34,6 +34,17 @@ test('product usability styles preserve keyboard focus, touch targets, and reduc
   assert.match(css, /html\[data-theme="dark"\]\s+\.ga-message-banner\.is-error/i)
 })
 
+test('interface scale controls are visible and scale the whole workspace', () => {
+  assert.match(css, /html\s*\{[^}]*--ga-ui-scale\s*:\s*1/i)
+  assert.match(css, /@supports\s*\(zoom\s*:\s*1\)[\s\S]*html\s*\{[^}]*zoom\s*:\s*var\(--ga-ui-scale/i)
+  assert.match(css, /\.ui-scale-picker\s*\{[^}]*display\s*:\s*flex/i)
+  assert.match(css, /\.ui-scale-button[^}]*min-height\s*:\s*32px/i)
+  assert.match(css, /\.ui-scale-picker--settings\s*\{[^}]*grid-column\s*:\s*1\s*\/\s*-1/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.sidebar\s+\.ui-scale-picker\s*\{[^}]*display\s*:\s*none/i)
+  assert.match(css, /\.oa-mobile-tools-menu\s*\{[\s\S]*?max-width\s*:\s*calc\(100%\s*-\s*16px\)/i)
+  assert.match(css, /\.ui-scale-picker--mobile\s*\{[^}]*background\s*:/i)
+})
+
 test('mobile feedback stays in document flow and model actions use two columns', () => {
   assert.match(
     css,

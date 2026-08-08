@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.60 - 2026-08-08
+
+### Adjustable interface scale
+- Added an 80%-120% interface scale control in 5% steps for the admin workspace, settings page, and mobile navigation/tool menus.
+- Persisted the selected scale in the current browser, with a one-click reset and Ctrl/Cmd `+`, `-`, and `0` shortcuts.
+- Fixed narrow 320px layouts at enlarged scale so mobile pages remain fully visible without horizontal clipping.
+
 ## v1.0.59 - 2026-08-08
 
 ### Direct access for trusted networks

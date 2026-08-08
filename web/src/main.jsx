@@ -7,6 +7,7 @@ import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
 import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
+import { applyUIScaleToDocument, DEFAULT_UI_SCALE, getInitialUIScale, stepUIScale, UI_SCALE_STORAGE_KEY } from './lib/uiScale.js'
 import { registerNotificationServiceWorker } from './lib/notifications.js'
 
 const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
@@ -15,10 +16,13 @@ const Root = lazy(() => (isChat ? import('./ChatApp.jsx') : import('./App.jsx'))
 void registerNotificationServiceWorker()
 
 const storedLanguage = () => localStorage.getItem('ga-admin-lang-explicit') === '1' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
+const initialUIScale = getInitialUIScale()
+applyUIScaleToDocument(initialUIScale)
 
 function LocalizedRoot() {
   const [lang, setLang] = useState(storedLanguage)
   const [colorMode, setColorMode] = useState(getInitialTheme)
+  const [uiScale, setUIScale] = useState(initialUIScale)
   useEffect(() => {
     const onLanguageChange = event => setLang(event.detail === 'en' ? 'en' : 'zh')
     window.addEventListener('ga-admin-language-change', onLanguageChange)
@@ -36,6 +40,22 @@ function LocalizedRoot() {
   useEffect(() => {
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
   }, [lang])
+  useEffect(() => {
+    const activeScale = applyUIScaleToDocument(uiScale)
+    localStorage.setItem(UI_SCALE_STORAGE_KEY, String(activeScale))
+    window.dispatchEvent(new CustomEvent('ga-admin-ui-scale-change', { detail: activeScale }))
+  }, [uiScale])
+  useEffect(() => {
+    const onKeyDown = event => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      if (!['+', '=', '-', '0'].includes(event.key)) return
+      event.preventDefault()
+      if (event.key === '0') setUIScale(DEFAULT_UI_SCALE)
+      else setUIScale(current => stepUIScale(current, event.key === '-' ? -1 : 1))
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
   const chooseLanguage = nextLanguage => {
     const activeLanguage = nextLanguage === 'en' ? 'en' : 'zh'
     localStorage.setItem('ga-admin-lang-explicit', '1')
@@ -57,7 +77,7 @@ function LocalizedRoot() {
     <ErrorBoundary>
       <AuthGate lang={lang} theme={colorMode} onLanguageChange={chooseLanguage} onThemeChange={setColorMode}>
         <Suspense fallback={<RouteFallback label={loading} />}>
-          <Root />
+          <Root uiScale={uiScale} onUiScaleChange={setUIScale} />
         </Suspense>
       </AuthGate>
     </ErrorBoundary>
