@@ -3,6 +3,7 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Activity, Bot, Brain, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, ExternalLink, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Sparkles, Target, Terminal, Trash2, UploadCloud, XCircle, Download } from 'lucide-react'
 import './admin-mobile.css'
+import AgentCockpit from './components/AgentCockpit'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { api } from './lib/api'
@@ -188,7 +189,7 @@ const TaskFormEditor = ({ value, onChange, t }) => {
 }
 
 const OverviewPage = ({
-  t, services, schedule, observability, observabilityError, refreshObservability,
+  lang, t, services, schedule, observability, observabilityError, refreshObservability,
   versionInfo, versionCheck, versionStatus, versionBusy, checkVersion, updateVersion,
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
   updateGASource, autostart, toggleAutostart, root,
@@ -212,6 +213,8 @@ const OverviewPage = ({
       <Stat label={t.cards.schedule} value={schedule.task_count || 0} icon={<CalendarClock/>}/>
       <Stat label={t.cards.enabledTasks} value={schedule.enabled || 0} icon={<CheckCircle2/>}/>
     </div>
+
+    <AgentCockpit lang={lang} />
 
     <ObservabilityCard
       snapshot={observability}
@@ -1171,6 +1174,7 @@ export default function App() {
   }
 
   const overviewPage = <OverviewPage
+    lang={lang}
     t={t}
     services={services}
     schedule={schedule}
