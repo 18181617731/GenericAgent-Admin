@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Eye, Play, Square } from 'lucide-react'
+import { Eye, ExternalLink, Play, Square } from 'lucide-react'
 import { modelLabel } from '../lib/format'
 
 const serviceCommand = (svc) => Array.isArray(svc?.command) ? svc.command.join(' ') : (svc?.command || '-')
@@ -61,7 +61,7 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel,
     </div>}
   </article>
 }
-export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, onReflectStart, t, actionState = null }) {
+export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, onAutostart, onReflectStart, onOpenHub, t, actionState = null }) {
   if (!services.length) return <div className="channel-service-empty">{t.hints.noFrontend}</div>
   const isReflectService = (svc) => svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
   return <div className="channel-service-list">{services.map(svc => {
@@ -77,7 +77,7 @@ export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, on
     <ServiceMeta svc={svc} compact t={t}/>
     <div className="channel-service-actions">
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label>
-      <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
+      <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>{svc.name === 'frontends/hub.py' && <button type="button" onClick={onOpenHub} title="打开 Hub 面板"><ExternalLink size={14}/>Hub</button>}</div>
     </div>
     {state?.message && <div className={`service-action-status ${state.status || ''}`} role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
       <span>{state.message}</span>

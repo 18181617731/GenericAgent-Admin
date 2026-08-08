@@ -20,6 +20,36 @@ import (
 	"genericagent-admin-go/internal/modelconfig"
 )
 
+func TestChatSessionsIncludesPinnedState(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	cs := chatSession{ID: "pinned-summary", Title: "Pinned", UpdatedAt: 123, Messages: []chatMessage{}, Pinned: true}
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.chatSessions(rec, httptest.NewRequest(http.MethodGet, "/api/chat/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Sessions []struct {
+			ID     string `json:"id"`
+			Pinned bool   `json:"pinned"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Sessions) != 1 || payload.Sessions[0].ID != cs.ID || !payload.Sessions[0].Pinned {
+		t.Fatalf("sessions = %#v, want pinned summary for %q", payload.Sessions, cs.ID)
+	}
+}
+
 func TestNormalizeChatSettingsPreservesOfficialReasoningEffortLevels(t *testing.T) {
 	levels := []string{"off", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 	for _, level := range levels {
@@ -300,7 +330,7 @@ func TestChatTitleGenerationNeverOverwritesManualRename(t *testing.T) {
 	}
 }
 
-func TestChatTerminalSavePreservesManualRename(t *testing.T) {
+func TestChatTerminalSavePreservesManualRenameAndPinnedState(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
 	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
@@ -310,6 +340,7 @@ func TestChatTerminalSavePreservesManualRename(t *testing.T) {
 		ID:          "title-terminal-race",
 		Title:       "手动标题",
 		TitleSource: chatTitleSourceManual,
+		Pinned:      true,
 		Messages:    []chatMessage{{ID: "u1", Role: "user", Content: "第一句话"}},
 	}
 	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
@@ -318,6 +349,7 @@ func TestChatTerminalSavePreservesManualRename(t *testing.T) {
 	staleWorkerCopy := latest
 	staleWorkerCopy.Title = "第一句话"
 	staleWorkerCopy.TitleSource = chatTitleSourceTemporary
+	staleWorkerCopy.Pinned = false
 	staleWorkerCopy.Messages = append(staleWorkerCopy.Messages, chatMessage{ID: "a1", Role: "assistant", Content: "回答"})
 
 	if err := s.saveChatSessionMerged(staleWorkerCopy); err != nil {
@@ -329,6 +361,35 @@ func TestChatTerminalSavePreservesManualRename(t *testing.T) {
 	}
 	if stored.Title != "手动标题" || stored.TitleSource != chatTitleSourceManual {
 		t.Fatalf("terminal save overwrote manual title: %+v", stored)
+	}
+	if !stored.Pinned {
+		t.Fatalf("terminal save overwrote pinned state: %+v", stored)
+	}
+}
+
+func TestChatExactTerminalSavePreservesPinnedState(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	latest := chatSession{ID: "pin-exact-race", Pinned: true, Messages: []chatMessage{{ID: "u1", Role: "user", Content: "question"}}}
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
+		t.Fatal(err)
+	}
+	staleWorkerCopy := latest
+	staleWorkerCopy.Pinned = false
+	staleWorkerCopy.Messages = append(staleWorkerCopy.Messages, chatMessage{ID: "a1", Role: "assistant", Content: "answer"})
+
+	if err := s.saveChatSessionExact(staleWorkerCopy); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), latest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Pinned {
+		t.Fatalf("exact terminal save overwrote pinned state: %+v", stored)
 	}
 }
 

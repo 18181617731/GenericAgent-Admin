@@ -182,3 +182,45 @@ func TestChatHubAPIExposesPersistentSessionAndControlsRun(t *testing.T) {
 		t.Fatalf("opted-out session direct access status = %d, want %d", hidden.Code, http.StatusNotFound)
 	}
 }
+
+func TestChatSetPinnedPersistsWithoutChangingUpdatedAt(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	s := New(store, nil, nil, nil)
+	const updatedAt int64 = 1700000000
+	if err := saveChatSession(store.Snapshot(), chatSession{ID: "session-pin", Title: "Pin me", UpdatedAt: updatedAt}); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := loadChatSession(store.Snapshot(), "session-pin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.chatSetPinned(w, httptest.NewRequest(http.MethodPatch, "/api/chat/pin/session-pin", strings.NewReader(`{"pinned":true}`)), "session-pin")
+	if w.Code != http.StatusOK {
+		t.Fatalf("pin status = %d: %s", w.Code, w.Body.String())
+	}
+	persisted, err := loadChatSession(store.Snapshot(), "session-pin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.Pinned {
+		t.Fatal("pinned state was not persisted")
+	}
+	if persisted.UpdatedAt != baseline.UpdatedAt {
+		t.Fatalf("updated_at = %d, want unchanged %d", persisted.UpdatedAt, baseline.UpdatedAt)
+	}
+
+	w = httptest.NewRecorder()
+	s.chatSetPinned(w, httptest.NewRequest(http.MethodPatch, "/api/chat/pin/session-pin", strings.NewReader(`{"pinned":false}`)), "session-pin")
+	if w.Code != http.StatusOK {
+		t.Fatalf("unpin status = %d: %s", w.Code, w.Body.String())
+	}
+	persisted, err = loadChatSession(store.Snapshot(), "session-pin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Pinned {
+		t.Fatal("unpinned state was not persisted")
+	}
+}

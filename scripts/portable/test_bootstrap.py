@@ -53,9 +53,10 @@ class BootstrapConfigTest(unittest.TestCase):
     def test_writes_bundle_config_for_canonical_layout(self):
         self.assert_layout(nested=False)
 
-    def test_required_imports_include_rich(self):
+    def test_required_imports_cover_frontend_service_chain(self):
         module = load_bootstrap(SOURCE)
-        self.assertIn("rich", module.REQUIRED_IMPORTS)
+        for name in ("rich", "qrcode", "websockets", "fastapi", "uvicorn", "psutil", "lark_oapi", "telegram", "botpy", "Crypto", "wecom_aibot_sdk", "dingtalk_stream"):
+            self.assertIn(name, module.REQUIRED_IMPORTS)
 
     def test_writes_bundle_config_for_legacy_nested_layout(self):
         self.assert_layout(nested=True)

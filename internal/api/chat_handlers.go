@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Snapshot().GARoot)})
@@ -77,6 +77,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 	case "hub":
 		if len(parts) == 2 && r.Method == http.MethodPatch {
 			s.chatSetHubEnabled(w, r, parts[1])
+			return
+		}
+	case "pin":
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.chatSetPinned(w, r, parts[1])
 			return
 		}
 	case "fork":
@@ -461,6 +466,34 @@ func (s *Server) chatSetHubEnabled(w http.ResponseWriter, r *http.Request, sid s
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "hub_enabled": cs.HubEnabled})
+}
+
+func (s *Server) chatSetPinned(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Pinned bool `json:"pinned"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cs.Pinned = req.Pinned
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "pinned": cs.Pinned})
 }
 
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {

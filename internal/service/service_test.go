@@ -36,6 +36,31 @@ func TestDiscoverExcludesGoalModeFromGenericReflectList(t *testing.T) {
 	}
 }
 
+func TestDiscoverIncludesHubFrontend(t *testing.T) {
+	root := t.TempDir()
+	frontendsDir := filepath.Join(root, "frontends")
+	if err := os.MkdirAll(frontendsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontendsDir, "hub.py"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	items := NewManager(root, 100).Discover()
+	for _, item := range items {
+		if item.Name == "frontends/hub.py" {
+			if item.Kind != "frontend" {
+				t.Fatalf("hub kind=%s", item.Kind)
+			}
+			if len(item.Command) != 2 || item.Command[1] != "frontends/hub.py" {
+				t.Fatalf("hub command=%#v", item.Command)
+			}
+			return
+		}
+	}
+	t.Fatalf("frontends/hub.py was not discovered: %#v", items)
+}
+
 func TestDiscoverIncludesChannelFrontendApps(t *testing.T) {
 	root := t.TempDir()
 	frontendsDir := filepath.Join(root, "frontends")

@@ -45,7 +45,11 @@ VENV_PY = (
     if IS_WIN
     else os.path.join(VENV_DIR, "bin", "python")
 )
-REQUIRED_IMPORTS = ("requests", "bs4", "bottle", "aiohttp", "rich")
+REQUIRED_IMPORTS = (
+    "requests", "bs4", "bottle", "aiohttp", "rich", "qrcode",
+    "websockets", "fastapi", "uvicorn", "psutil", "lark_oapi",
+    "telegram", "botpy", "Crypto", "wecom_aibot_sdk", "dingtalk_stream",
+)
 
 
 def log(msg: str) -> None:

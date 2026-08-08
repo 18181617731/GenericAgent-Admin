@@ -144,6 +144,8 @@ func (m *Manager) Discover() []ServiceInfo {
 
 	// GA native lifecycle entries. These are not under frontends/reflect but are essential to taking over GA.
 	m.addIfExists(&out, "hub.pyw", "core", []string{py, "hub.pyw"})
+	// Hub is a user-facing frontend but is named hub.py rather than *app.py.
+	m.addIfExists(&out, filepath.Join("frontends", "hub.py"), "frontend", []string{py, filepath.ToSlash(filepath.Join("frontends", "hub.py"))})
 	m.addIfExists(&out, "launch.py", "core", []string{py, "launch.py"})
 	m.addIfExists(&out, "agent_loop.py", "core", []string{py, "agent_loop.py"})
 	m.addIfExists(&out, filepath.Join("reflect", "scheduler.py"), "reflect", []string{py, "agentmain.py", "--reflect", filepath.ToSlash(filepath.Join("reflect", "scheduler.py"))})

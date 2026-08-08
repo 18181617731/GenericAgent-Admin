@@ -8,7 +8,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Paperclip, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { confirmDanger } from './lib/danger'
@@ -21,6 +21,7 @@ import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManage
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
+import { groupRecentSessions } from './lib/chatSessionGroups.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -3073,8 +3074,10 @@ export default function ChatApp() {
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
+  const [sessionManagerView, setSessionManagerView] = useState('all')
   const [selectedSessionIds, setSelectedSessionIds] = useState([])
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [hubUpdatingSessionId, setHubUpdatingSessionId] = useState('')
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
@@ -3796,6 +3799,7 @@ export default function ChatApp() {
   }
 
   const openSessionManager = () => {
+    setSessionManagerView('all')
     setSessionManagerOpen(true)
     setSelectedSessionIds([])
     setEditing('')
@@ -3819,9 +3823,10 @@ export default function ChatApp() {
     if (batchDeleting) return
     setSelectedSessionIds(ids => {
       const selected = new Set(ids)
-      return sessions.length > 0 && sessions.every(session => selected.has(session.id))
-        ? []
-        : sessions.map(session => session.id)
+      const visibleIds = managedSessions.map(session => session.id)
+      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selected.has(id))
+      visibleIds.forEach(id => allVisibleSelected ? selected.delete(id) : selected.add(id))
+      return [...selected]
     })
   }
 
@@ -3893,9 +3898,25 @@ export default function ChatApp() {
     setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
   }
 
-  const setSessionHubEnabled = async (session) => {
+  const setSessionPinned = async (session) => {
     if (!session?.id) return
+    const pinned = !session.pinned
+    setMenuOpen(''); setMenuPos(null); setErr('')
+    setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned } : x))
+    try {
+      const d = await chatApi(`/api/chat/pin/${session.id}`, { method:'PATCH', body:JSON.stringify({ pinned }) })
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned:Boolean(d.pinned) } : x))
+      setNotice(d.pinned ? ct('\u5df2\u7f6e\u9876\u4f1a\u8bdd', 'Session pinned') : ct('\u5df2\u53d6\u6d88\u7f6e\u9876', 'Session unpinned'))
+    } catch (e) {
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned:!pinned } : x))
+      setErr(e.message || String(e))
+    }
+  }
+
+  const setSessionHubEnabled = async (session) => {
+    if (!session?.id || hubUpdatingSessionId) return
     const enabled = !session.hub_enabled
+    setHubUpdatingSessionId(session.id)
     setMenuOpen(''); setMenuPos(null); setErr('')
     try {
       const d = await chatApi(`/api/chat/hub/${session.id}`, { method:'PATCH', body:JSON.stringify({ enabled }) })
@@ -3903,6 +3924,8 @@ export default function ChatApp() {
       setNotice(d.hub_enabled ? ct('会话已入驻 Hub', 'Session joined Hub') : ct('会话已退出 Hub', 'Session left Hub'))
     } catch (e) {
       setErr(e.message || String(e))
+    } finally {
+      setHubUpdatingSessionId('')
     }
   }
 
@@ -4653,8 +4676,18 @@ export default function ChatApp() {
     const q = sidebarSearch.trim().toLowerCase()
     return sessions.filter(s => (s.title || '').toLowerCase().includes(q))
   }, [sessions, sidebarSearch])
-  const filteredHubSessions = useMemo(() => hubSessions(sessions, sidebarSearch), [sessions, sidebarSearch])
-  const hubSessionCount = useMemo(() => hubSessions(sessions).length, [sessions])
+  const recentSessionGroups = useMemo(() => groupRecentSessions(filteredSessions), [filteredSessions])
+  const recentGroupLabels = {
+    pinned: ct('\u7f6e\u9876', 'Pinned'),
+    today: ct('\u4eca\u5929', 'Today'),
+    yesterday: ct('\u6628\u5929', 'Yesterday'),
+    this_week: ct('\u672c\u5468', 'This week'),
+    last_week: ct('\u4e0a\u5468', 'Last week'),
+    this_month: ct('\u672c\u6708', 'This month'),
+    older: ct('\u66f4\u65e9', 'Older'),
+  }
+  const managedHubSessions = useMemo(() => hubSessions(sessions), [sessions])
+  const managedSessions = sessionManagerView === 'hub' ? managedHubSessions : sessions
   const filteredProjectGroups = useMemo(() => {
     if (!sidebarSearch.trim()) return projectSessionGroups
     const q = sidebarSearch.trim().toLowerCase()
@@ -4662,7 +4695,8 @@ export default function ChatApp() {
   }, [projectSessionGroups, sidebarSearch])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
   const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
-  const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
+  const visibleSelectedSessionCount = managedSessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
+  const allSessionsSelected = managedSessions.length > 0 && visibleSelectedSessionCount === managedSessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
   const providerGroups = useMemo(() => groupRuntimeModels(llms), [llms])
@@ -4680,12 +4714,12 @@ export default function ChatApp() {
     }
   }
 
-  const renderSidebarSession = (session) => <div key={session.id} className={`oa-session-row ${session.id===sid?'active':''} ${session.running?'is-running':''}`}>
+  const renderSidebarSession = (session) => <div key={session.id} className={`oa-session-row ${session.id===sid?'active':''} ${session.running?'is-running':''} ${session.pinned?'is-pinned':''}`}>
     {editing === session.id ? <div className="oa-rename">
       <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') saveRename(session.id); if(event.key==='Escape') setEditing('') }}/>
       <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
     </div> : <button className="oa-session" onClick={()=>openSession(session.id)} title={shortTitle(session)}>
-      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(session)}</b>{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
+      <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}{session.pinned && <Pin className="oa-session-pin" size={12} aria-label={ct('\u5df2\u7f6e\u9876', 'Pinned')}/>}<b>{shortTitle(session)}</b>{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
       <small><Clock3 size={11}/>{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
     </button>}
     {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={(event)=>{
@@ -4737,9 +4771,6 @@ export default function ChatApp() {
         <button type="button" role="tab" aria-selected={sidebarTab === 'history'} className={sidebarTab === 'history' ? 'active' : ''} onClick={()=>setSidebarTab('history')}>
           <Clock3 size={14}/><span>{ct('历史', 'History')}</span><small>{sessions.length}</small>
         </button>
-        <button type="button" role="tab" aria-selected={sidebarTab === 'hub'} className={sidebarTab === 'hub' ? 'active' : ''} onClick={()=>setSidebarTab('hub')}>
-          <Bot size={14}/><span>Hub</span><small>{hubSessionCount}</small>
-        </button>
         <button type="button" role="tab" aria-selected={sidebarTab === 'projects'} className={sidebarTab === 'projects' ? 'active' : ''} onClick={()=>setSidebarTab('projects')}>
           <FolderOpen size={14}/><span>{ct('项目', 'Projects')}</span><small>{projectSessionGroups.length}</small>
         </button>
@@ -4750,17 +4781,11 @@ export default function ChatApp() {
           <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
         </div>
         <div className="oa-session-list">
-          {filteredSessions.map(renderSidebarSession)}
+          {recentSessionGroups.map(group => <section className={`oa-recent-group oa-recent-group-${group.key}`} key={group.key}>
+            <div className="oa-recent-group-head">{group.key === 'pinned' && <Pin size={12}/>}<span>{recentGroupLabels[group.key]}</span><small>{group.sessions.length}</small></div>
+            <div className="oa-recent-group-body">{group.sessions.map(renderSidebarSession)}</div>
+          </section>)}
           {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
-        </div>
-      </> : sidebarTab === 'hub' ? <>
-        <div className="oa-session-manager-head">
-          <span className="oa-session-manager-title">{ct('已入驻 Hub', 'Joined Hub')}</span>
-          <span className="oa-session-manager-hint">{ct('在会话菜单中退出', 'Leave from session menu')}</span>
-        </div>
-        <div className="oa-session-list">
-          {filteredHubSessions.map(renderSidebarSession)}
-          {!filteredHubSessions.length && <div className="oa-empty-list oa-hub-empty"><Bot size={20}/><span>{sidebarSearch ? ct('无匹配的 Hub 会话', 'No matching Hub sessions') : ct('暂无会话入驻 Hub', 'No sessions have joined Hub')}</span></div>}
         </div>
       </> : <div className="oa-session-list oa-project-list">
         {filteredProjectGroups.map((group, index) => {
@@ -4792,6 +4817,7 @@ export default function ChatApp() {
         if (!s) return null
         return <div className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
           <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
+          <button onClick={()=>setSessionPinned(s)}><Pin size={14}/>{s.pinned ? ct('\u53d6\u6d88\u7f6e\u9876', 'Unpin') : ct('\u7f6e\u9876', 'Pin')}</button>
           <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>
           <button className="danger" onClick={()=>deleteSession(s.id)}><Trash2 size={14}/>{ct('删除', 'Delete')}</button>
         </div>
@@ -5128,25 +5154,35 @@ export default function ChatApp() {
           <button className="oa-icon-btn oa-session-manager-dialog-close" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label={ct('关闭会话管理', 'Close session manager')} autoFocus><X size={17}/></button>
         </header>
         <div className="oa-session-manager-dialog-tools">
-          <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting}>
-            <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && selectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
+          <div className="oa-session-manager-filter" role="group" aria-label={ct('会话筛选', 'Session filter')}>
+            <button type="button" className={sessionManagerView === 'all' ? 'is-active' : ''} onClick={()=>setSessionManagerView('all')} disabled={batchDeleting}>{ct('全部', 'All')}<small>{sessions.length}</small></button>
+            <button type="button" className={sessionManagerView === 'hub' ? 'is-active' : ''} onClick={()=>setSessionManagerView('hub')} disabled={batchDeleting}>Hub<small>{managedHubSessions.length}</small></button>
+          </div>
+          <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (visibleSelectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!managedSessions.length || batchDeleting}>
+            <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && visibleSelectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
             <span>{allSessionsSelected ? ct('取消全选', 'Clear selection') : ct('全选', 'Select all')}</span>
           </button>
-          <span className="oa-session-selected-count">{ct('已选', 'Selected')} {selectedSessionCount} / {sessions.length}</span>
+          <span className="oa-session-selected-count">{ct('已选', 'Selected')} {visibleSelectedSessionCount} / {managedSessions.length}</span>
         </div>
         <div className="oa-session-manager-dialog-list">
-          {sessions.map(s => {
+          {managedSessions.map(s => {
             const selected = selectedSessionIdSet.has(s.id)
+            const hubUpdating = hubUpdatingSessionId === s.id
             const sourceLabel = s.title_source === 'generated' ? 'AI' : s.title_source === 'manual' ? '手动' : '旧标题'
-            return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
-              <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
-              <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
-                <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
-              </span>
-            </button>
+            return <div key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`}>
+              <button className="oa-session-manager-dialog-select" type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting || Boolean(hubUpdatingSessionId)}>
+                <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
+                <span className="oa-session-dialog-copy">
+                  <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                  <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
+                </span>
+              </button>
+              <button className={`oa-session-dialog-hub-action ${s.hub_enabled ? 'is-leave' : ''}`} type="button" onClick={()=>setSessionHubEnabled(s)} disabled={batchDeleting || Boolean(hubUpdatingSessionId)} aria-label={s.hub_enabled ? ct(`退出 Hub：${shortTitle(s)}`, `Leave Hub: ${shortTitle(s)}`) : ct(`入驻 Hub：${shortTitle(s)}`, `Join Hub: ${shortTitle(s)}`)}>
+                <Bot size={13}/><span>{hubUpdating ? ct('处理中…', 'Updating…') : s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</span>
+              </button>
+            </div>
           })}
-          {!sessions.length && <div className="oa-session-manager-dialog-empty">{ct('暂无历史会话', 'No session history')}</div>}
+          {!managedSessions.length && <div className="oa-session-manager-dialog-empty">{sessionManagerView === 'hub' ? ct('暂无会话入驻 Hub', 'No sessions have joined Hub') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
         <footer className="oa-session-manager-dialog-foot">
           <small>{ct('删除后无法恢复', 'Deleted sessions cannot be recovered')}</small>

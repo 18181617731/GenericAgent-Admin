@@ -171,6 +171,7 @@ type chatSession struct {
 	Workspace              string                   `json:"workspace,omitempty"`
 	ProjectMode            string                   `json:"project_mode,omitempty"`
 	HubEnabled             bool                     `json:"hub_enabled,omitempty"`
+	Pinned                 bool                     `json:"pinned,omitempty"`
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 }
@@ -1931,7 +1932,7 @@ func (s *Server) saveChatSessionMerged(cs chatSession) error {
 		return err
 	}
 	cs.Messages = mergeChatMessageLists(latest.Messages, cs.Messages)
-	preserveLatestChatTitle(&cs, latest)
+	preserveLatestChatUserMetadata(&cs, latest)
 	return saveChatSession(s.CfgStore.Snapshot(), cs)
 }
 
@@ -1944,12 +1945,13 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
 	if latest, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID); err == nil {
-		preserveLatestChatTitle(&cs, latest)
+		preserveLatestChatUserMetadata(&cs, latest)
 	}
 	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 }
 
-func preserveLatestChatTitle(candidate *chatSession, latest chatSession) {
+func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) {
+	candidate.Pinned = latest.Pinned
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title
@@ -1975,6 +1977,14 @@ func saveChatSession(cfg config.AppConfig, cs chatSession) error {
 }
 
 func saveChatSessionLocked(cfg config.AppConfig, cs chatSession) error {
+	return saveChatSessionWithUpdatedAtLocked(cfg, cs, true)
+}
+
+func saveChatSessionPreserveUpdatedAtLocked(cfg config.AppConfig, cs chatSession) error {
+	return saveChatSessionWithUpdatedAtLocked(cfg, cs, false)
+}
+
+func saveChatSessionWithUpdatedAtLocked(cfg config.AppConfig, cs chatSession, touchUpdatedAt bool) error {
 	if err := ensureChatDataMigrated(cfg); err != nil {
 		return err
 	}
@@ -1983,7 +1993,9 @@ func saveChatSessionLocked(cfg config.AppConfig, cs chatSession) error {
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
 	cs.Plan = normalizeChatPlan(cs.Plan)
-	cs.UpdatedAt = time.Now().Unix()
+	if touchUpdatedAt {
+		cs.UpdatedAt = time.Now().Unix()
+	}
 	b, _ := json.MarshalIndent(cs, "", "  ")
 	return writeChatFileAtomic(chatSessionPath(cfg, cs.ID), b, 0644)
 }
