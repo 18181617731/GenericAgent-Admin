@@ -41,6 +41,16 @@ class WorldlineSidecarTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_bundled_worldline_path_wins_over_ga_root(self):
+        original_path = list(sys.path)
+        worker_dir = Path(worker.__file__).resolve().parent
+        try:
+            sys.path[:] = [str(self.root / 'genericagent'), str(worker_dir)]
+            worker._ensure_bundled_worldline_import_path()
+            self.assertEqual(Path(sys.path[0]).resolve(), worker_dir)
+        finally:
+            sys.path[:] = original_path
+
     def test_packaged_worker_replaces_stale_worldline_sidecar(self):
         packaged_root = self.root / 'packaged' / 'cmd'
         packaged_frontends = packaged_root / 'frontends'

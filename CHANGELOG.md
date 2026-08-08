@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.61 - 2026-08-08
+
+### Worldline runtime compatibility
+- Fixed worldline requests loading GenericAgent's optional TUI implementation instead of the dependency-free Admin sidecar.
+- Prevented `ModuleNotFoundError: No module named 'rich'` when the GA core virtual environment does not install the optional UI extras.
+- Added a regression check covering packaged worldline import precedence.
+
 ## v1.0.60 - 2026-08-08
 
 ### Adjustable interface scale

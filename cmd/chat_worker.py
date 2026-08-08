@@ -37,6 +37,21 @@ def _ensure_bundled_worldline_runtime():
 _ensure_bundled_worldline_runtime()
 
 
+def _ensure_bundled_worldline_import_path():
+    """Prefer the dependency-free Admin sidecar over GA's optional UI copy."""
+    bundled_root = Path(__file__).resolve().parent
+    bundled_key = os.path.normcase(str(bundled_root))
+    kept = []
+    for entry in sys.path:
+        try:
+            entry_key = os.path.normcase(str(Path(entry or os.curdir).resolve()))
+        except (OSError, RuntimeError, TypeError):
+            entry_key = ''
+        if entry_key != bundled_key:
+            kept.append(entry)
+    sys.path[:] = [str(bundled_root), *kept]
+
+
 def _force_utf8_stdio():
     # Windows pipes otherwise may inherit the active ANSI code page and corrupt CJK text.
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -1425,6 +1440,7 @@ def _install_worldline_hook():
 
 
 def _ensure_worldline_store(agent, ga_root, workspace):
+    _ensure_bundled_worldline_import_path()
     from frontends.worldline import RewindStore
     cwd = os.path.realpath(str(workspace or ga_root))
     store = getattr(agent, '_admin_worldline_store', None)
@@ -1803,6 +1819,7 @@ def _bind_worldline_head(store, ga_root, sid, req):
 
 
 def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
+    _ensure_bundled_worldline_import_path()
     from frontends.worldline import tree_from_store
     tree = tree_from_store(store, time.time())
     bindings = sidecar.get('bindings', {}) if isinstance(sidecar, dict) else {}
@@ -2029,6 +2046,7 @@ def handle_worldline_request(agent, req):
             'working': _snapshot_ga_state(agent).get('working') or {},
         })
         return
+    _ensure_bundled_worldline_import_path()
     from frontends.worldline import restore_plan
     result = None
     if action == 'bind':
@@ -2487,6 +2505,7 @@ def main():
                 root = _resolve_request_root(req.get('ga_root'), root)
                 if str(root) not in sys.path:
                     sys.path.insert(0, str(root))
+                _ensure_bundled_worldline_import_path()
                 os.chdir(root)
                 from agentmain import GeneraticAgent
                 agent = GeneraticAgent()
