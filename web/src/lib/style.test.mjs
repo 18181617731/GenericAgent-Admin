@@ -43,6 +43,14 @@ test('interface scale controls are visible and scale the whole workspace', () =>
   assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.sidebar\s+\.ui-scale-picker\s*\{[^}]*display\s*:\s*none/i)
   assert.match(css, /\.oa-mobile-tools-menu\s*\{[\s\S]*?max-width\s*:\s*calc\(100%\s*-\s*16px\)/i)
   assert.match(css, /\.ui-scale-picker--mobile\s*\{[^}]*background\s*:/i)
+  assert.match(
+    css,
+    /@supports\s*\(zoom\s*:\s*1\)[\s\S]*?\.oa-chat,[\s\S]*?height\s*:\s*calc\(100dvh\s*\*\s*var\(--ga-ui-scale-width/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*900px\)[\s\S]*?\.oa-chat\s+\.oa-sidebar\s*\{[^}]*width\s*:\s*min\([\s\S]*?var\(--ga-ui-scale-width/i,
+  )
 })
 
 test('mobile feedback stays in document flow and model actions use two columns', () => {
@@ -88,6 +96,7 @@ test('mobile density pass keeps the shell compact without shrinking touch contro
   assert.match(css, /\.sidebar\s+\.theme-picker-trigger-copy,[\s\S]*?\.theme-picker--compact\s+\.theme-picker-trigger\s*>\s*svg:last-child\s*\{\s*display:none/i)
   assert.match(css, /\.overview-page\s+\.overview-stats\s+\.stat\s*\{[^}]*min-height:64px[^}]*padding:8px\s+9px/i)
   assert.match(css, /\.overview-page\s*>\s*\.observability-card,[\s\S]*?padding:10px/i)
+  assert.match(css, /@media\s*\(max-width:\s*420px\)[\s\S]*?\.overview-page\s+\.observability-stats\s*\{[^}]*grid-template-columns\s*:\s*1fr/i)
   assert.match(css, /\.schedule-stats\s*\{[^}]*grid-template-columns:repeat\(4,/i)
   assert.match(css, /\.channel-hero\s*>\s*div:first-child\s*\{\s*display:none/i)
   assert.match(css, /\.channel-toolbar\s+\.actions\s*\{[^}]*grid-template-columns:repeat\(2,/i)

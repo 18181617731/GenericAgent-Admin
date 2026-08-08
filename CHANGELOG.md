@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.62 - 2026-08-08
+
+### Mobile zoom navigation layout
+- Fixed the overview observability grid staying in two columns below 420px, which compressed or clipped runtime details on iPhone-sized screens.
+- Kept the selected interface scale usable across SPA route changes, including the chat sidebar height, width, and footer actions.
+- Added responsive viewport regression coverage for 320px and 375px mobile layouts at enlarged and reduced scale.
+
 ## v1.0.61 - 2026-08-08
 
 ### Worldline runtime compatibility

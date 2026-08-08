@@ -11573,6 +11573,16 @@ html[data-color-scheme="dark"] .overview-page .overview-panel .autostart-head sv
   .environment-guardian > header { display:grid; gap:5px; padding:0 2px; }
   .environment-guardian > header p { text-align:left; }
 }
+@media (max-width: 420px) {
+  /* The overview selector is more specific than the shared mobile rule. Keep
+     the observability cells readable as one full-width column on iPhones. */
+  .overview-page .observability-stats { grid-template-columns: 1fr; }
+  .overview-page .observability-stats span {
+    border-right: 0;
+    border-bottom: 1px solid var(--overview-line);
+  }
+  .overview-page .observability-stats span:last-child { border-bottom: 0; }
+}
 
 /* Settings — compact, task-oriented environment configuration */
 .settings-page {
@@ -17305,6 +17315,28 @@ html { --ga-ui-scale: 1; }
   html { zoom: var(--ga-ui-scale, 1); }
   body { width: calc(100vw * var(--ga-ui-scale-width, 1)); min-width: 0; max-width: none; }
   #root { width: 100%; min-width: 0; }
+
+  /* html zoom also scales viewport-sized chat shells. Compensate their CSS
+     height so mobile sidebars keep their footer actions reachable. */
+  .oa-chat,
+  .oa-chat .oa-main,
+  .oa-chat .oa-sidebar {
+    height: calc(100dvh * var(--ga-ui-scale-width, 1));
+    min-height: calc(100dvh * var(--ga-ui-scale-width, 1));
+  }
+
+  @media (max-width: 900px) {
+    .oa-chat .oa-sidebar {
+      width: min(
+        calc(90vw * var(--ga-ui-scale-width, 1)),
+        calc(340px * var(--ga-ui-scale-width, 1))
+      ) !important;
+      max-width: min(
+        calc(90vw * var(--ga-ui-scale-width, 1)),
+        calc(340px * var(--ga-ui-scale-width, 1))
+      );
+    }
+  }
 }
 
 .ui-scale-picker {
