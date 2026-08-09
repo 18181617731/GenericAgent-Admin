@@ -40,7 +40,6 @@ type Server struct {
 	SessionMu               *sync.Mutex
 	UsageMu                 *sync.Mutex
 	ConfigMu                *sync.Mutex
-	WorkboardMu             *sync.Mutex
 	ChatRuns                map[string]*chatRun
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
@@ -67,7 +66,7 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 		InstanceManagers: newInstanceManagerRegistry(cfg.Snapshot(), svc),
 		Models:           models, Static: static, ReactApp: newReactAppBridge(),
 		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
-		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{}, WorkboardMu: &sync.Mutex{},
+		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
 		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
 		instanceInstallTasks: make(map[string]*instanceInstallTask),
@@ -156,8 +155,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/title-model", s.requireDangerousConfirm(s.modelsTitleModel))
 	mux.HandleFunc("/api/channels/test", s.channelTest)
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
-	mux.HandleFunc("/api/workboard", s.requireDangerousConfirm(s.workboard))
-	mux.HandleFunc("/api/workboard/", s.requireDangerousConfirm(s.workboardItem))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
@@ -182,7 +179,7 @@ func cors(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm, X-GA-Instance-ID")
 		w.Header().Set("Access-Control-Expose-Headers", "X-GA-Instance-ID")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -244,8 +241,6 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
-	{Path: "/api/workboard", Level: "reversible", Action: "create_workboard_item", Reason: "creates a persisted approval work item in the Admin data directory"},
-	{Path: "/api/workboard/", Level: "reversible", Action: "transition_workboard_item", Reason: "moves a persisted work item through the controlled approval workflow"},
 }
 
 func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
