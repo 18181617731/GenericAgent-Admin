@@ -209,6 +209,12 @@ func writeChatHubBridgeScript() (string, error) {
 	return path, nil
 }
 
+func newChatHubBridgeCommand(python, script string) *exec.Cmd {
+	cmd := exec.Command(python, script)
+	hideChildWindow(cmd)
+	return cmd
+}
+
 // StartChatHubBridge starts one lightweight process which exposes all Admin sessions.
 func (s *Server) StartChatHubBridge() {
 	if s == nil {
@@ -235,7 +241,7 @@ func (s *Server) StartChatHubBridge() {
 	token := randomChatHubToken()
 	httpServer := &http.Server{Handler: s.chatHubAPI(token), ReadHeaderTimeout: 5 * time.Second}
 	python := resolvePythonForRoot(cfg.GARoot, cfg.EffectivePython)
-	cmd := exec.Command(python, script)
+	cmd := newChatHubBridgeCommand(python, script)
 	cmd.Env = append(pythonEnvWithAdminProxy(cfg), "GA_ROOT="+cfg.GARoot, "GA_ADMIN_HUB_API=http://"+listener.Addr().String(), "GA_ADMIN_HUB_TOKEN="+token)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
