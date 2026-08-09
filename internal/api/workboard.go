@@ -19,14 +19,38 @@ const workboardFileName = "workboard.json"
 var workboardStatuses = []string{"backlog", "active", "review", "done"}
 var workboardRisks = map[string]bool{"low": true, "medium": true, "high": true}
 
+type workboardEvidence struct {
+	Label  string `json:"label"`
+	Detail string `json:"detail"`
+}
+
+type workboardProposal struct {
+	Summary  string              `json:"summary"`
+	Evidence []workboardEvidence `json:"evidence"`
+}
+
+type workboardEvent struct {
+	Action   string `json:"action"`
+	Actor    string `json:"actor"`
+	Note     string `json:"note,omitempty"`
+	Revision int    `json:"revision"`
+	At       string `json:"at"`
+}
+
 type workboardItem struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Owner     string `json:"owner"`
-	Risk      string `json:"risk"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID                 string            `json:"id"`
+	Title              string            `json:"title"`
+	Outcome            string            `json:"outcome"`
+	AcceptanceCriteria []string          `json:"acceptance_criteria"`
+	Owner              string            `json:"owner"`
+	Risk               string            `json:"risk"`
+	Status             string            `json:"status"`
+	Revision           int               `json:"revision"`
+	Proposal           workboardProposal `json:"proposal"`
+	Instructions       string            `json:"instructions"`
+	Events             []workboardEvent  `json:"events"`
+	CreatedAt          string            `json:"created_at"`
+	UpdatedAt          string            `json:"updated_at"`
 }
 
 type workboardState struct {
@@ -46,19 +70,31 @@ func (s *Server) workboard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"items": state.Items, "statuses": workboardStatuses})
 	case http.MethodPost:
 		var req struct {
-			Title string `json:"title"`
-			Owner string `json:"owner"`
-			Risk  string `json:"risk"`
+			Title              string   `json:"title"`
+			Outcome            string   `json:"outcome"`
+			AcceptanceCriteria []string `json:"acceptance_criteria"`
+			Owner              string   `json:"owner"`
+			Risk               string   `json:"risk"`
 		}
 		if err := decodeWorkboardJSON(r, &req); err != nil {
 			bad(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		req.Title = strings.TrimSpace(req.Title)
+		req.Outcome = strings.TrimSpace(req.Outcome)
 		req.Owner = strings.TrimSpace(req.Owner)
 		req.Risk = strings.ToLower(strings.TrimSpace(req.Risk))
 		if req.Title == "" || len([]rune(req.Title)) > 160 {
 			bad(w, http.StatusBadRequest, "title must be 1-160 characters")
+			return
+		}
+		if req.Outcome == "" || len([]rune(req.Outcome)) > 1000 {
+			bad(w, http.StatusBadRequest, "outcome must be 1-1000 characters")
+			return
+		}
+		criteria, err := normalizeWorkboardLines(req.AcceptanceCriteria, 12, 500)
+		if err != nil || len(criteria) == 0 {
+			bad(w, http.StatusBadRequest, "acceptance_criteria must contain 1-12 non-empty items of at most 500 characters")
 			return
 		}
 		if len([]rune(req.Owner)) > 80 {
@@ -75,7 +111,13 @@ func (s *Server) workboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
-		item := workboardItem{ID: id, Title: req.Title, Owner: req.Owner, Risk: req.Risk, Status: "backlog", CreatedAt: now, UpdatedAt: now}
+		item := workboardItem{
+			ID: id, Title: req.Title, Outcome: req.Outcome, AcceptanceCriteria: criteria,
+			Owner: req.Owner, Risk: req.Risk, Status: "backlog", Revision: 1,
+			Proposal:  workboardProposal{Evidence: []workboardEvidence{}},
+			Events:    []workboardEvent{{Action: "created", Actor: "human", Revision: 1, At: now}},
+			CreatedAt: now, UpdatedAt: now,
+		}
 		s.WorkboardMu.Lock()
 		defer s.WorkboardMu.Unlock()
 		state, err := s.readWorkboard()
@@ -95,25 +137,41 @@ func (s *Server) workboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workboardItem(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch {
+	if r.Method != http.MethodPost {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/workboard/"))
-	if id == "" || strings.Contains(id, "/") {
-		bad(w, http.StatusBadRequest, "invalid work item id")
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/workboard/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "commands" {
+		bad(w, http.StatusBadRequest, "expected /api/workboard/{id}/commands")
 		return
 	}
+	id := parts[0]
 	var req struct {
-		Status string `json:"status"`
+		Action           string              `json:"action"`
+		ExpectedRevision int                 `json:"expected_revision"`
+		Note             string              `json:"note"`
+		Proposal         string              `json:"proposal"`
+		Evidence         []workboardEvidence `json:"evidence"`
 	}
 	if err := decodeWorkboardJSON(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
-	if workboardStatusIndex(req.Status) < 0 {
-		bad(w, http.StatusBadRequest, "status must be backlog, active, review, or done")
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	req.Note = strings.TrimSpace(req.Note)
+	req.Proposal = strings.TrimSpace(req.Proposal)
+	if req.ExpectedRevision < 1 {
+		bad(w, http.StatusBadRequest, "expected_revision must be positive")
+		return
+	}
+	if len([]rune(req.Note)) > 2000 || len([]rune(req.Proposal)) > 4000 {
+		bad(w, http.StatusBadRequest, "note or proposal is too long")
+		return
+	}
+	if err := validateWorkboardCommand(&req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -125,25 +183,89 @@ func (s *Server) workboardItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range state.Items {
-		if state.Items[i].ID != id {
+		item := &state.Items[i]
+		if item.ID != id {
 			continue
 		}
-		current := workboardStatusIndex(state.Items[i].Status)
-		next := workboardStatusIndex(req.Status)
-		if current < 0 || next-current > 1 || current-next > 1 {
-			bad(w, http.StatusConflict, "status transition must move one stage at a time")
+		if item.Revision != req.ExpectedRevision {
+			bad(w, http.StatusConflict, fmt.Sprintf("stale work item: expected revision %d, current revision is %d; refresh and review before retrying", req.ExpectedRevision, item.Revision))
 			return
 		}
-		state.Items[i].Status = req.Status
-		state.Items[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		next, actor, err := applyWorkboardCommand(item, req.Action, req.Note, req.Proposal, req.Evidence)
+		if err != nil {
+			bad(w, http.StatusConflict, err.Error())
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		item.Status = next
+		item.Revision++
+		item.UpdatedAt = now
+		item.Events = append(item.Events, workboardEvent{Action: req.Action, Actor: actor, Note: req.Note, Revision: item.Revision, At: now})
 		if err := s.writeWorkboard(state); err != nil {
 			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, state.Items[i])
+		writeJSON(w, item)
 		return
 	}
 	bad(w, http.StatusNotFound, "work item not found")
+}
+
+func validateWorkboardCommand(req *struct {
+	Action           string              `json:"action"`
+	ExpectedRevision int                 `json:"expected_revision"`
+	Note             string              `json:"note"`
+	Proposal         string              `json:"proposal"`
+	Evidence         []workboardEvidence `json:"evidence"`
+}) error {
+	if req.Action != "start" && req.Action != "submit_proposal" && req.Action != "return" && req.Action != "approve" {
+		return errors.New("action must be start, submit_proposal, return, or approve")
+	}
+	if req.Action == "return" && req.Note == "" {
+		return errors.New("return requires instructions in note")
+	}
+	if req.Action == "submit_proposal" {
+		if req.Proposal == "" || len(req.Evidence) == 0 || len(req.Evidence) > 12 {
+			return errors.New("submit_proposal requires a proposal and 1-12 evidence items")
+		}
+		for i := range req.Evidence {
+			req.Evidence[i].Label = strings.TrimSpace(req.Evidence[i].Label)
+			req.Evidence[i].Detail = strings.TrimSpace(req.Evidence[i].Detail)
+			if req.Evidence[i].Label == "" || req.Evidence[i].Detail == "" || len([]rune(req.Evidence[i].Label)) > 120 || len([]rune(req.Evidence[i].Detail)) > 1000 {
+				return errors.New("evidence label and detail are required and must fit their limits")
+			}
+		}
+	}
+	return nil
+}
+
+func applyWorkboardCommand(item *workboardItem, action, note, proposal string, evidence []workboardEvidence) (string, string, error) {
+	switch action {
+	case "start":
+		if item.Status != "backlog" {
+			return "", "", errors.New("start requires backlog status")
+		}
+		return "active", "agent", nil
+	case "submit_proposal":
+		if item.Status != "active" {
+			return "", "", errors.New("submit_proposal requires active status")
+		}
+		item.Proposal = workboardProposal{Summary: proposal, Evidence: evidence}
+		item.Instructions = ""
+		return "review", "agent", nil
+	case "return":
+		if item.Status != "review" {
+			return "", "", errors.New("return requires review status")
+		}
+		item.Instructions = note
+		return "active", "human", nil
+	case "approve":
+		if item.Status != "review" {
+			return "", "", errors.New("approve requires review status")
+		}
+		return "done", "human", nil
+	}
+	return "", "", errors.New("unsupported action")
 }
 
 func (s *Server) workboardPath() string {
@@ -165,6 +287,20 @@ func (s *Server) readWorkboard() (workboardState, error) {
 	}
 	if state.Items == nil {
 		state.Items = []workboardItem{}
+	}
+	for i := range state.Items {
+		if state.Items[i].Revision < 1 {
+			state.Items[i].Revision = 1
+		}
+		if state.Items[i].AcceptanceCriteria == nil {
+			state.Items[i].AcceptanceCriteria = []string{}
+		}
+		if state.Items[i].Proposal.Evidence == nil {
+			state.Items[i].Proposal.Evidence = []workboardEvidence{}
+		}
+		if state.Items[i].Events == nil {
+			state.Items[i].Events = []workboardEvent{}
+		}
 	}
 	return state, nil
 }
@@ -209,6 +345,21 @@ func decodeWorkboardJSON(r *http.Request, dst interface{}) error {
 		return errors.New("request body must contain one JSON object")
 	}
 	return nil
+}
+
+func normalizeWorkboardLines(values []string, maxItems, maxRunes int) ([]string, error) {
+	if len(values) > maxItems {
+		return nil, errors.New("too many items")
+	}
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len([]rune(value)) > maxRunes {
+			return nil, errors.New("invalid item")
+		}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
 }
 
 func newWorkboardID() (string, error) {
