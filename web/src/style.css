@@ -16,26 +16,29 @@ html[data-theme="warm"] {
   --border-muted: rgba(0, 0, 0, .12);
   --text: #1A1610;
   --muted: #5C5344;
-  --muted-2: #8B7355;
+  /* Text colours below clear WCAG AA (4.5:1) on every warm surface, including
+     the deepest one (--surface #F3EEE3), not just on --bg. */
+  --muted-2: #7C674C;
   --strong: #0F0D08;
   --em: #5C5344;
-  --blue: #0288A8;
-  --cyan: #0A7C7A;
-  --violet: #8B6DD4;
-  --green: #3D8B40;
-  --orange: #E68A00;
+  --blue: #027590;
+  --cyan: #0A7775;
+  --violet: #7455C9;
+  --green: #357838;
+  --orange: #9A5C00;
   --red: #C62828;
   --gold: #C9A961;  /* Reduced saturation */
   --accent: #C9A961;  /* Reduced saturation */
   --accent-hover: #A8914F;  /* Adjusted from new base */
   --accent-bg: rgba(201, 169, 97, 0.08);
   --accent-bg-strong: rgba(201, 169, 97, 0.15);
-  --accent-text: #9A7D3E;  /* Adjusted from new base */
-  --text-on-accent: #ffffff;
-  --success: #3D8B40;
-  --warning: #E68A00;
+  --accent-text: #806833;
+  /* Ink on the gold fill: white was 2.25:1, this ink reads 8:1. */
+  --text-on-accent: #1A1610;
+  --success: #357838;
+  --warning: #9A5C00;
   --error: #C62828;
-  --info: #0288A8;
+  --info: #027590;
   --focus-ring: rgba(201, 169, 97, .35);
   --focus-glow: rgba(201, 169, 97, .1);
   --input-bg: rgba(0, 0, 0, .03);
@@ -920,16 +923,35 @@ html[data-theme="light"] {
   --text: #0d0d0d;
   --strong: #000000;
   --muted: #6b6b6b;
-  --muted-2: #8f8f8f;
-  --green: #10a37f;
+  /* Secondary text and status colours below clear WCAG AA (4.5:1) on every
+     light surface, including the deepest one (--surface-muted #f7f7f7). */
+  --muted-2: #707070;
+  --em: #4a4a4a;
+  --green: #0C7F63;
   --accent: #C9A961;  /* Reduced saturation */
-  --text-on-accent: #ffffff;
+  --accent-hover: #A8914F;
+  --accent-bg: rgba(201, 169, 97, .10);
+  --accent-bg-strong: rgba(201, 169, 97, .18);
+  --accent-text: #866C36;
+  /* White ink on the gold fill was 2.25:1; this ink reads 8:1. */
+  --text-on-accent: #1A1610;
+  --success: #387E3A;
+  --warning: #A16100;
+  --error: #C62828;
+  --info: #027A97;
+  --blue: #027A97;
+  --cyan: #0A7C7A;
+  --violet: #7455C9;
+  --orange: #A16100;
+  --focus-ring: rgba(201, 169, 97, .45);
+  --focus-glow: rgba(201, 169, 97, .16);
   --code-bg: #f7f7f8;
   --code-text: #0d0d0d;
   --code-inline-bg: #f2f2f2;
   --chat-table-border: #ececec;
   --chat-table-header-bg: #f7f7f8;
   --pre-text: #0d0d0d;
+  /* Flat theme: no drop shadows, borders carry the elevation. */
   --shadow: none;
   --shadow-soft: none;
   --shadow-tiny: none;
@@ -1001,20 +1023,20 @@ nav { gap:1px; margin:8px 0; }
 nav button {
   min-height:36px;
   padding:8px 10px;
-  border:0 !important;
+  border:0;
   border-radius:10px;
   background:transparent;
   color: var(--text);
-  box-shadow:none !important;
+  box-shadow:none;
   font-size:14px;
   font-weight:400;
 }
 nav button svg { color: var(--muted); width:17px; height:17px; }
 nav button.active, nav button:hover {
-  background:var(--n-ececec) !important;
-  border:0 !important;
+  background:var(--n-ececec);
+  border:0;
   color:var(--text);
-  box-shadow:none !important;
+  box-shadow:none;
 }
 .nav-pop { color: var(--muted); font-size:11px; font-weight:500; }
 .refresh { margin-top:8px; background:var(--surface-strong); }
@@ -3767,10 +3789,42 @@ html[data-color-scheme="dark"] {
   --text: #ececec;
   --strong: #ffffff;
   --muted: #a6abb2;
-  --muted-2: #777d85;
+  /* Secondary text lifted from #777d85 (3.57:1 on cards) to clear AA everywhere. */
+  --muted-2: #8d9299;
+  --em: #c9ced6;
+  /* Elevation overlays must be white-based here; the light theme's black
+     alphas were invisible on dark surfaces. */
+  --surface-subtle: rgba(255, 255, 255, .05);
+  --surface-subtle-hover: rgba(255, 255, 255, .08);
+  --surface-hover: rgba(255, 255, 255, .06);
+  --input-bg: rgba(255, 255, 255, .05);
+  --hover-bg: rgba(255, 255, 255, .07);
+  --border-subtle: rgba(255, 255, 255, .12);
+  --border-muted: rgba(255, 255, 255, .18);
+  /* Shadows need real opacity to register against a near-black backdrop. */
+  --shadow: 0 24px 70px rgba(0, 0, 0, .55);
+  --shadow-soft: 0 14px 42px rgba(0, 0, 0, .42);
+  --shadow-tiny: 0 1px 2px rgba(0, 0, 0, .35);
+  --focus-ring: rgba(25, 195, 156, .38);
+  --focus-glow: rgba(25, 195, 156, .14);
   --green: #19c39c;
   --red: #f0616d;
+  /* Status colours: all >= 4.5:1 on the darkest card surface #24282e. */
+  --success: #48a44b;
+  --error: #e26e6e;
+  --warning: #e68a00;
+  --info: #029ec3;
+  --blue: #029ec3;
+  --cyan: #0da29f;
+  --violet: #9d83da;
+  --orange: #e68a00;
+  --gold: #d8b872;
   --accent: #19c39c;
+  /* Hover lifts on dark instead of darkening, so the ink stays readable. */
+  --accent-hover: #35d0aa;
+  --accent-bg: rgba(25, 195, 156, .12);
+  --accent-bg-strong: rgba(25, 195, 156, .22);
+  --accent-text: #46d3b0;
   --text-on-accent: #0d0f11;
   --code-bg: #20242a;
   --code-text: #ececec;
@@ -3897,6 +3951,16 @@ html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,
     linear-gradient(180deg,
       color-mix(in srgb, var(--accent) 24%, transparent),
       color-mix(in srgb, var(--accent) 13%, transparent));
+}
+/* The swatches already communicate the active theme. Keep the utility icon
+   neutral in light schemes instead of repeating the warm gold accent. */
+html[data-color-scheme="light"] .theme-picker--default .theme-picker-trigger-icon {
+  color: color-mix(in srgb, var(--text) 76%, #64748b);
+  background: color-mix(in srgb, var(--text) 5%, var(--surface-strong));
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+}
+html[data-color-scheme="light"] .theme-picker--default .theme-picker-trigger:hover .theme-picker-trigger-icon {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface-strong));
 }
 .theme-picker-trigger-copy {
   min-width: 0;
@@ -15355,4 +15419,400 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   .app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy h2 { font-size: 22px; }
   .app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy p { font-size: 12.5px; }
   .admin-page-meta { padding-left: 50px; }
+}
+
+
+/* ==========================================================================
+   Keyboard focus fallback  (appended last, intentionally zero-specificity)
+   --------------------------------------------------------------------------
+   Audit: 112 visible focus rule parts already existed, but they only
+   covered 19 of 108 focusable controls. The remaining 89 were bare
+   <button>s - report list rows, service card actions, language options,
+   the sidebar refresh - with no keyboard focus indicator at all.
+
+   Every selector below is wrapped in :where(), so its specificity is
+   0,0,0: all existing :focus / :focus-visible / :focus-within treatments
+   keep winning on cascade, and this paints only where nothing else does.
+   :focus-visible (not :focus) keeps mouse clicks clean - the ring shows
+   for keyboard traversal and assistive tooling.
+
+   Ring colour is --accent-text, which is >= 4.6:1 against the deepest
+   surface in all three themes, comfortably past the 3:1 that WCAG 1.4.11
+   asks of a non-text indicator.
+   ========================================================================== */
+:where(
+  a[href]:focus-visible,
+  area[href]:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [contenteditable="true"]:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible
+) {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+/* Rows in scrolling lists sit flush against a clipped container, so an
+   outset ring loses its edges. Tuck it inside for those instead. */
+:where(.report-list, .svc-actions, .lang-options) :where(button:focus-visible) {
+  outline-offset: -2px;
+}
+
+/* Windows high-contrast mode ships its own focus palette; defer to it. */
+@media (forced-colors: active) {
+  :where(
+    a[href]:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible,
+    [tabindex]:not([tabindex="-1"]):focus-visible
+  ) {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+
+/* === Admin sidebar refinement (2026-08) ================================
+   A restrained navigation rail for the admin shell. Keep every selector
+   anchored to #admin-sidebar so route content and /chat remain untouched. */
+#admin-sidebar {
+  --sidebar-accent: var(--accent-text, #0f766e);
+  --sidebar-bg: color-mix(in srgb, var(--surface-strong) 94%, var(--bg-soft));
+  --sidebar-control: color-mix(in srgb, var(--surface-strong) 88%, var(--surface-muted));
+  --sidebar-hover: color-mix(in srgb, var(--text) 5%, transparent);
+  --sidebar-active: color-mix(in srgb, var(--sidebar-accent) 10%, var(--surface-strong));
+  --sidebar-line: color-mix(in srgb, var(--border) 82%, transparent);
+  box-sizing: border-box;
+  width: 280px;
+  padding: 18px 14px 14px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-line);
+  box-shadow: none;
+  backdrop-filter: none;
+  scrollbar-gutter: stable;
+}
+
+#admin-sidebar::-webkit-scrollbar { width: 6px; }
+#admin-sidebar::-webkit-scrollbar-track { background: transparent; }
+#admin-sidebar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 24%, transparent);
+  border-radius: 999px;
+}
+
+#admin-sidebar .admin-sidebar-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 2px 14px;
+}
+
+#admin-sidebar .brand,
+.app:not(.app-tab-chat) #admin-sidebar .brand {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#admin-sidebar .brand > .brand-logo {
+  display: block;
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  padding: 2px;
+  flex: 0 0 38px;
+  object-fit: contain;
+  object-position: center;
+  background: #f7f7f5;
+  border: 1px solid rgba(15, 23, 42, .08);
+  border-radius: 11px;
+}
+
+#admin-sidebar .brand > div { min-width: 0; }
+#admin-sidebar .brand h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 720;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#admin-sidebar .brand p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#admin-sidebar .lang-switch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px 8px;
+  margin: 0 0 12px;
+  padding: 9px;
+  color: var(--muted);
+  background: var(--sidebar-control);
+  border: 1px solid var(--sidebar-line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+#admin-sidebar .lang-switch-label {
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: .025em;
+}
+
+#admin-sidebar .lang-switch-label svg {
+  width: 14px;
+  height: 14px;
+  color: var(--sidebar-accent);
+}
+
+#admin-sidebar .lang-options {
+  gap: 2px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+  border: 1px solid var(--sidebar-line);
+  box-shadow: none;
+}
+
+#admin-sidebar .lang-options button {
+  min-width: 34px;
+  height: 25px;
+  min-height: 25px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 680;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+#admin-sidebar .lang-options button:hover {
+  color: var(--text);
+  background: var(--sidebar-hover);
+  transform: none;
+}
+
+#admin-sidebar .lang-options button.active,
+#admin-sidebar .lang-options button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-strong) !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--strong) 10%, transparent) !important;
+}
+
+#admin-sidebar .theme-picker {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--sidebar-line);
+}
+
+#admin-sidebar .theme-picker-trigger {
+  width: 100%;
+  min-height: 42px;
+  grid-template-columns: 28px minmax(0, 1fr) 32px 14px;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+#admin-sidebar .theme-picker-trigger:hover {
+  background: var(--sidebar-hover);
+  border-color: var(--sidebar-line);
+  box-shadow: none;
+  transform: none;
+}
+
+#admin-sidebar .theme-picker-trigger:active {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  transform: none;
+}
+
+#admin-sidebar .theme-picker-trigger-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+#admin-sidebar .theme-picker-trigger-copy small {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+}
+
+#admin-sidebar .theme-picker-trigger-copy b { font-size: 12.5px; }
+
+#admin-sidebar nav {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--sidebar-line);
+  border-bottom: 1px solid var(--sidebar-line);
+}
+
+#admin-sidebar nav button,
+.app:not(.app-tab-chat) #admin-sidebar nav button {
+  position: relative;
+  width: 100%;
+  min-height: 38px;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 7px 10px;
+  overflow: visible;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 590;
+  line-height: 1.25;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+#admin-sidebar nav button:nth-child(4),
+#admin-sidebar nav button:nth-child(11) { margin-top: 7px; }
+
+#admin-sidebar nav button:nth-child(4)::before,
+#admin-sidebar nav button:nth-child(11)::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: 9px;
+  left: 9px;
+  height: 1px;
+  pointer-events: none;
+  background: var(--sidebar-line);
+}
+
+#admin-sidebar nav button > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  color: color-mix(in srgb, var(--muted) 86%, transparent);
+  transition: color .16s ease;
+}
+
+#admin-sidebar nav button:hover,
+.app:not(.app-tab-chat) #admin-sidebar nav button:hover {
+  color: var(--text);
+  background: var(--sidebar-hover);
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+#admin-sidebar nav button:hover > svg { color: var(--text); }
+
+#admin-sidebar nav button.active,
+#admin-sidebar nav button[aria-current="page"],
+.app:not(.app-tab-chat) #admin-sidebar nav button.active {
+  color: var(--text);
+  background: var(--sidebar-active);
+  border-color: color-mix(in srgb, var(--sidebar-accent) 18%, transparent);
+  box-shadow: inset 3px 0 0 var(--sidebar-accent) !important;
+}
+
+#admin-sidebar nav button.active > svg,
+#admin-sidebar nav button[aria-current="page"] > svg { color: var(--sidebar-accent); }
+
+#admin-sidebar nav button:focus-visible,
+#admin-sidebar .refresh:focus-visible,
+#admin-sidebar .theme-picker-trigger:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: 2px;
+}
+
+#admin-sidebar > .refresh {
+  width: 100%;
+  min-height: 38px;
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 620;
+  background: transparent;
+  border: 1px solid var(--sidebar-line);
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+#admin-sidebar > .refresh:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--sidebar-hover);
+  border-color: color-mix(in srgb, var(--muted) 30%, var(--sidebar-line));
+  box-shadow: none;
+  transform: none;
+}
+
+#admin-sidebar > .refresh:disabled { background: transparent; }
+
+#admin-sidebar > .refresh:disabled svg { animation: adminSidebarSpin .9s linear infinite; }
+
+#admin-sidebar > .ga-status-notice {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 9px 9px 10px;
+  gap: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--status-tint) 42%, var(--sidebar-control));
+  border: 1px solid color-mix(in srgb, var(--status-accent) 28%, var(--sidebar-line));
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+#admin-sidebar > .ga-status-notice .ga-status-message {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+#admin-sidebar > .ga-status-notice button {
+  min-height: 28px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+@keyframes adminSidebarSpin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  #admin-sidebar > .refresh:disabled svg { animation: none; }
+  #admin-sidebar nav button > svg { transition: none; }
+}
+
+/* Light admin navigation stays neutral; gold remains available to the wider theme. */
+html[data-theme="light"] #admin-sidebar {
+  --sidebar-accent: #0f766e;
+  --sidebar-active: color-mix(in srgb, var(--text) 5%, var(--surface-strong));
 }
