@@ -1338,7 +1338,9 @@ func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flush
 func chatPythonForConfig(cfg config.AppConfig) string {
 	// Chat must honor the Python selected during setup. Falling back to a bare
 	// launcher can miss GA dependencies (for example requests) and hide models.
-	return resolvePythonForRoot(cfg.GARoot, cfg.PythonPath)
+	// With nothing configured, borrow a sibling instance's interpreter rather
+	// than trusting a path that merely exists.
+	return resolveUsablePythonForRoot(cfg.GARoot, cfg.PythonPath, cfg.PythonFallbackRoots)
 }
 
 func (s *Server) listGARuntimeLLMs(cfg config.AppConfig) ([]map[string]interface{}, error) {

@@ -97,6 +97,31 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 	return clone
 }
 
+// pythonFallbackRoots lists the interpreters and GA roots that may lend an
+// interpreter to the instance identified by skipID: every sibling instance's
+// configured python and root, plus the base config's own python and root.
+// Order matters, callers probe these in sequence.
+func pythonFallbackRoots(base config.AppConfig, skipID string) []string {
+	var out []string
+	add := func(v string) {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	for _, sibling := range base.Instances {
+		if sibling.ID == skipID {
+			continue
+		}
+		add(sibling.PythonPath)
+		add(sibling.EffectivePython)
+		add(sibling.GARoot)
+	}
+	add(base.PythonPath)
+	add(base.EffectivePython)
+	add(base.GARoot)
+	return out
+}
+
 func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) {
 	baseStore := s.BaseCfgStore
 	if baseStore == nil {
@@ -122,6 +147,11 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 	cfg.GARoot = instance.GARoot
 	cfg.PythonPath = instance.PythonPath
 	cfg.EffectivePython = instance.EffectivePython
+	// A freshly created instance is a bare GA checkout: no .venv of its own, so
+	// the only interpreter that can import GA's dependencies usually belongs to
+	// another instance. Carry those roots so interpreter resolution can borrow
+	// one instead of falling back to a bare launcher that lacks requests.
+	cfg.PythonFallbackRoots = pythonFallbackRoots(baseStore.Snapshot(), instance.ID)
 	// NewRuntimeStore normalizes the legacy GARoot/Python compatibility fields
 	// from DefaultInstanceID. Scope the derived request configuration to the
 	// selected instance so normalization cannot restore the global default.

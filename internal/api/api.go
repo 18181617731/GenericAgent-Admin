@@ -517,6 +517,22 @@ func resolvePythonForRoot(gaRoot, configured string) string {
 	return "python"
 }
 
+// resolveUsablePythonForRoot is resolvePythonForRoot plus a dependency check.
+// Path-only resolution is enough while provisioning, but running GA code needs
+// an interpreter that can actually import GA's dependencies: a fresh instance
+// has no .venv, so the path-only answer can be a bare interpreter that fails on
+// "import requests". An explicitly configured interpreter is always honored as
+// is, so an operator's choice is never silently overridden.
+func resolveUsablePythonForRoot(gaRoot, configured string, fallbacks []string) string {
+	if strings.TrimSpace(configured) != "" {
+		return resolvePythonForRoot(gaRoot, configured)
+	}
+	if py := pyfind.ResolveUsable(gaRoot, configured, fallbacks); py != "" {
+		return py
+	}
+	return resolvePythonForRoot(gaRoot, configured)
+}
+
 func (s *Server) buildTMWebDriverStatus() tmwebdriverStatusResponse {
 	return buildTMWebDriverStatusForConfig(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().PythonPath)
 }

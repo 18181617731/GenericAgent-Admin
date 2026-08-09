@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"genericagent-admin-go/internal/config"
@@ -228,5 +229,92 @@ func TestInstanceManagerRegistryClearsFallbackRootWhenLastInstanceIsRemoved(t *t
 	resolved, instanceID, ok := registry.manager("")
 	if !ok || resolved != fallback || instanceID != "" {
 		t.Fatalf("legacy fallback resolution = (%p, %q, %v), want (%p, empty, true)", resolved, instanceID, ok, fallback)
+	}
+}
+
+
+func TestPythonFallbackRootsBorrowsSiblingsAndSkipsSelf(t *testing.T) {
+	base := config.AppConfig{
+		GARoot:          `C:\base\ga`,
+		PythonPath:      `C:\base\.venv\Scripts\python.exe`,
+		EffectivePython: `C:\base\.venv\Scripts\python.exe`,
+		Instances: []config.InstanceConfig{
+			{ID: "default", GARoot: `C:\default\ga`, PythonPath: `C:\default\.venv\Scripts\python.exe`, EffectivePython: `C:\default\.venv\Scripts\python.exe`},
+			{ID: "coder", GARoot: `C:\coder\ga`, PythonPath: "", EffectivePython: `C:\coder\stub\python.exe`},
+			{ID: "blank"},
+		},
+	}
+
+	got := pythonFallbackRoots(base, "coder")
+	want := []string{
+		`C:\default\.venv\Scripts\python.exe`,
+		`C:\default\.venv\Scripts\python.exe`,
+		`C:\default\ga`,
+		`C:\base\.venv\Scripts\python.exe`,
+		`C:\base\.venv\Scripts\python.exe`,
+		`C:\base\ga`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("fallback roots = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("fallback roots[%d] = %q, want %q (all=%#v)", i, got[i], want[i], got)
+		}
+	}
+	for _, candidate := range got {
+		if strings.Contains(candidate, `C:\coder\`) {
+			t.Fatalf("fallback roots leaked the instance's own paths: %#v", got)
+		}
+	}
+}
+
+func TestChatServerForRequestGivesInstanceSiblingPythonFallbacks(t *testing.T) {
+	appRoot := t.TempDir()
+	defaultRoot := filepath.Join(t.TempDir(), "ga-default")
+	coderRoot := filepath.Join(t.TempDir(), "ga-coder")
+	for _, root := range []string{defaultRoot, coderRoot} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defaultPython := filepath.Join(defaultRoot, "python.exe")
+	if err := os.WriteFile(defaultPython, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = defaultRoot
+	cfg.DefaultInstanceID = "default"
+	cfg.Instances = []config.InstanceConfig{
+		{ID: "default", Name: "default", GARoot: defaultRoot, PythonPath: defaultPython, EffectivePython: defaultPython},
+		{ID: "coder", Name: "coder", GARoot: coderRoot},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	server := New(store, nil, nil, nil)
+	resolved, instanceID := mustChatServerForRequest(t, server, "/api/chat/sessions?instance_id=coder")
+	if instanceID != "coder" {
+		t.Fatalf("instance ID = %q, want coder", instanceID)
+	}
+
+	snapshot := resolved.CfgStore.Snapshot()
+	if snapshot.GARoot != coderRoot {
+		t.Fatalf("instance GA root = %q, want %q", snapshot.GARoot, coderRoot)
+	}
+	found := false
+	for _, candidate := range snapshot.PythonFallbackRoots {
+		if candidate == defaultPython {
+			found = true
+		}
+		if candidate == coderRoot {
+			t.Fatalf("instance fallbacks include its own root: %#v", snapshot.PythonFallbackRoots)
+		}
+	}
+	if !found {
+		t.Fatalf("instance fallbacks = %#v, want sibling python %q", snapshot.PythonFallbackRoots, defaultPython)
 	}
 }

@@ -240,7 +240,7 @@ func (s *Server) StartChatHubBridge() {
 	}
 	token := randomChatHubToken()
 	httpServer := &http.Server{Handler: s.chatHubAPI(token), ReadHeaderTimeout: 5 * time.Second}
-	python := resolvePythonForRoot(cfg.GARoot, cfg.EffectivePython)
+	python := resolveUsablePythonForRoot(cfg.GARoot, cfg.EffectivePython, cfg.PythonFallbackRoots)
 	cmd := newChatHubBridgeCommand(python, script)
 	cmd.Env = append(pythonEnvWithAdminProxy(cfg), "GA_ROOT="+cfg.GARoot, "GA_ADMIN_HUB_API=http://"+listener.Addr().String(), "GA_ADMIN_HUB_TOKEN="+token)
 	cmd.Stdout = os.Stderr

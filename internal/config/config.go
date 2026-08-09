@@ -75,6 +75,12 @@ type AppConfig struct {
 	// It tracks the model last picked in Admin Chat so a new conversation keeps
 	// using it instead of silently falling back to the first configured model.
 	ChatDefaultLLMNo int `json:"chat_default_llm_no,omitempty"`
+	// PythonFallbackRoots lists other GA roots (or interpreter paths) that may
+	// lend an interpreter when this config's own root has no usable one. A fresh
+	// instance is a bare GA checkout with no .venv, so the only interpreter that
+	// can import GA's dependencies often belongs to a sibling instance. This is
+	// runtime-only wiring derived from the instance registry, never persisted.
+	PythonFallbackRoots []string `json:"-"`
 }
 
 func validInstanceID(id string) bool {
@@ -392,6 +398,11 @@ func cloneAppConfig(cfg AppConfig) AppConfig {
 		cloned := make([]ExtraSystemPromptPreset, len(cfg.ExtraSystemPromptPresets))
 		copy(cloned, cfg.ExtraSystemPromptPresets)
 		cfg.ExtraSystemPromptPresets = cloned
+	}
+	if cfg.PythonFallbackRoots != nil {
+		cloned := make([]string, len(cfg.PythonFallbackRoots))
+		copy(cloned, cfg.PythonFallbackRoots)
+		cfg.PythonFallbackRoots = cloned
 	}
 	return cfg
 }
