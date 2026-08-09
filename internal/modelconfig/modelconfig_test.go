@@ -762,7 +762,14 @@ func TestPythonExeFindsPosixVirtualEnvBeforeFallback(t *testing.T) {
 	}
 }
 
+// A root with no virtualenv falls through to host discovery. The env is
+// emptied so the result cannot depend on whether this machine happens to have
+// uv or a PATH python installed; the ordering itself is covered by the pyfind
+// package tests.
 func TestPythonExeFallbackPrefersPython3OffWindows(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	got := pythonExe(t.TempDir(), "")
 	want := "python3"
 	if runtime.GOOS == "windows" {

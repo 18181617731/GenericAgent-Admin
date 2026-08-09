@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"genericagent-admin-go/internal/pyfind"
 )
 
 const (
@@ -874,48 +876,12 @@ func goalPython(root, requested string) (string, error) {
 		}
 		return requested, nil
 	}
-	if runtime.GOOS == "windows" {
-		for _, p := range []string{filepath.Join(root, ".venv", "Scripts", "python.exe"), filepath.Join(root, "venv", "Scripts", "python.exe")} {
-			if existsFile(p) {
-				return p, nil
-			}
-		}
-		if p := latestUVWindowsPython(); p != "" {
-			return p, nil
-		}
-		if p, err := exec.LookPath("python"); err == nil && !isWindowsAppsPythonAlias(p) {
-			return p, nil
-		}
-	}
-	for _, p := range []string{filepath.Join(root, ".venv", "bin", "python"), filepath.Join(root, "venv", "bin", "python")} {
-		if existsFile(p) {
-			return p, nil
-		}
-	}
-	if p, err := exec.LookPath("python3"); err == nil {
-		return p, nil
+	// Interpreter discovery lives in pyfind so the goal runner, the Admin API,
+	// and the mykey importer cannot drift apart on which python they pick.
+	if py := pyfind.Resolve(root, ""); py != "" {
+		return py, nil
 	}
 	return "python", nil
-}
-
-func latestUVWindowsPython() string {
-	base := filepath.Join(os.Getenv("APPDATA"), "uv", "python")
-	matches, err := filepath.Glob(filepath.Join(base, "cpython-*", "python.exe"))
-	if err != nil || len(matches) == 0 {
-		return ""
-	}
-	sort.Strings(matches)
-	for i := len(matches) - 1; i >= 0; i-- {
-		if existsFile(matches[i]) {
-			return matches[i]
-		}
-	}
-	return ""
-}
-
-func isWindowsAppsPythonAlias(p string) bool {
-	p = strings.ToLower(filepath.Clean(p))
-	return strings.Contains(p, strings.ToLower(filepath.Join("Microsoft", "WindowsApps", "python.exe")))
 }
 
 var killGoalPID = killExactPID

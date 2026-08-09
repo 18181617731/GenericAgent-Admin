@@ -9,10 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
+
+	"genericagent-admin-go/internal/pyfind"
 )
 
 type OptionalBool bool
@@ -939,25 +940,14 @@ print(json.dumps({'updated_at':'','profiles':profiles,'failover_groups':failover
 	return d, nil
 }
 
+// pythonExe resolves the interpreter used to parse mykey.py.
+//
+// Resolution is delegated to pyfind so the importer, the Admin API, and the
+// goal runner share one order. The previous local copy fell through to a bare
+// "python" on Windows, which resolves to the Microsoft Store stub on machines
+// without a project venv; that stub exits 9009 without running the script.
 func pythonExe(gaRoot, configuredPython string) string {
-	if py := strings.TrimSpace(configuredPython); py != "" {
-		return py
-	}
-	candidates := []string{
-		filepath.Join(gaRoot, ".venv", "Scripts", "python.exe"),
-		filepath.Join(gaRoot, "venv", "Scripts", "python.exe"),
-		filepath.Join(gaRoot, ".venv", "bin", "python"),
-		filepath.Join(gaRoot, "venv", "bin", "python"),
-	}
-	for _, c := range candidates {
-		if exists(c) {
-			return c
-		}
-	}
-	if runtime.GOOS == "windows" {
-		return "python"
-	}
-	return "python3"
+	return pyfind.Resolve(gaRoot, configuredPython)
 }
 func boolArg(v bool) string {
 	if v {
