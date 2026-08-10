@@ -356,6 +356,7 @@ function StepFileMutationMarker() {
 function FileAttachment({ path, resolvedPath = '' }) {
   const displayPath = String(path || '').trim()
   const fileScope = useContext(ChatFileScopeContext)
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const clean = resolveChatToolFilePath(resolvedPath || displayPath, fileScope)
   const name = displayPath.split(/[\\/]/).filter(Boolean).pop() || displayPath || ct('文件', 'File')
   const extMatch = name.match(/\.([^.]+)$/)
@@ -374,22 +375,26 @@ function FileAttachment({ path, resolvedPath = '' }) {
       alert(ct(`打开失败：${e?.message || e}`, `Open failed: ${e?.message || e}`))
     }
   }
-  return <span className={`oa-file-card oa-file-kind-${kind}`} title={displayPath || clean}>
-    <button type="button" className="oa-file-leading" onClick={() => open('file')} aria-label={ct(`打开文件 ${name}`, `Open file ${name}`)}>
+  const imageLabel = ct(`查看图片 ${name}`, `View image ${name}`)
+  return <>
+    <span className={`oa-file-card oa-file-kind-${kind}`} title={displayPath || clean}>
+    <button type="button" className="oa-file-leading" onClick={() => isImage ? setImagePreviewOpen(true) : open('file')} aria-label={isImage ? imageLabel : ct(`打开文件 ${name}`, `Open file ${name}`)}>
       <Icon className="oa-file-fallback-icon" size={19}/>
       {isImage && <img src={imageUrl} alt="" loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />}
     </button>
-    <span className="oa-file-meta">
-      <span className="oa-file-name-row"><b>{name}</b><small>{extension}</small></span>
-      <em>{directory || ct('本地文件', 'Local file')}</em>
-    </span>
+    {!isImage && <span className="oa-file-meta">
+        <span className="oa-file-name-row"><b>{name}</b><small>{extension}</small></span>
+        <em>{directory || ct('本地文件', 'Local file')}</em>
+      </span>}
     <span className="oa-file-actions">
       <a href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></a>
       <button type="button" onClick={() => open('file')} title={ct('打开文件', 'Open file')} aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
       <button type="button" onClick={() => open('folder')} title={ct('打开所在位置', 'Open containing folder')} aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
       <CopyButton text={displayPath || clean} compact />
     </span>
-  </span>
+    </span>
+    {isImage && <ImagePreviewDialog images={[{ name, src:imageUrl }]} activeIndex={imagePreviewOpen ? 0 : -1} onClose={() => setImagePreviewOpen(false)} />}
+  </>
 }
 
 function InlineRichText({ text = '' }) {
@@ -2323,7 +2328,6 @@ export function GeneratedImageGallery({ content = '' }) {
         const name = path.split(/[\\/]/).filter(Boolean).pop() || '生成图片'
         return <button key={path} type="button" className="oa-generated-image-thumb" onClick={() => setActivePath(path)} aria-label={`查看原图 ${name}`} title={path}>
           <img src={generatedImageURL(path)} alt={name} loading="lazy" />
-          <span><FileImage size={13}/>{name}</span>
         </button>
       })}
     </div>

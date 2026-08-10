@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.64 - 2026-08-10
+
+### Image-first chat previews
+- Changed local image attachments and generated image cards to show the image preview without visible file paths, names, or extensions.
+- Kept file details available on hover and keyboard focus, with download, open, folder, and copy-path actions grouped into the preview card.
+- Added click-to-open full-size image previews and responsive image-only card coverage for chat attachments.
+
 ## v1.0.62 - 2026-08-08
 
 ### Mobile zoom navigation layout

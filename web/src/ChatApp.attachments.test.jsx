@@ -68,7 +68,10 @@ describe('chat file attachments', () => {
   test('opens generated images in a lightbox and closes with Escape', () => {
     render(<GeneratedImageGallery content={'[FILE:C:\\tmp\\generated-photo.png]'} />)
 
-    fireEvent.click(screen.getByRole('button', { name:'查看原图 generated-photo.png' }))
+    const thumb = screen.getByRole('button', { name:'查看原图 generated-photo.png' })
+    expect(thumb.querySelector('span')).toBeNull()
+    expect(screen.queryByText('generated-photo.png')).toBeNull()
+    fireEvent.click(thumb)
     expect(screen.getByRole('dialog', { name:'生成图片预览' })).toBeTruthy()
 
     fireEvent.keyDown(document, { key:'Escape' })
@@ -118,6 +121,28 @@ describe('chat file attachments', () => {
     const download = screen.getByRole('link', { name:'下载文件 report.pdf' })
     expect(download.getAttribute('href')).toBe('/api/files/download?path=C%3A%2Ftmp%2Freport.pdf')
     expect(download.getAttribute('download')).toBe('report.pdf')
+  })
+
+  test('renders assistant image files as image-only preview cards', () => {
+    const path = 'C:/tmp/schnauzer.png'
+    const { container } = render(
+      <ChatMessage
+        message={{ id:'a-image-file', role:'assistant', content:`Done\n\n[FILE:${path}]`, created_at:0 }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    const card = container.querySelector('.oa-file-card.oa-file-kind-image')
+    expect(card).toBeTruthy()
+    expect(card.querySelector('.oa-file-meta')).toBeNull()
+    expect(card.getAttribute('title')).toBe(path)
+    expect(card.querySelector('img')?.getAttribute('src')).toBe(`/api/files/image?path=${encodeURIComponent(path)}`)
+    expect(screen.queryByText(path)).toBeNull()
+    expect(screen.getByRole('link', { name:'下载文件 schnauzer.png' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name:'查看图片 schnauzer.png' }))
+    expect(screen.getByRole('dialog', { name:'图片预览 schnauzer.png' })).toBeTruthy()
   })
 
   test('resolves workspace-relative tool paths within the GA root', () => {
