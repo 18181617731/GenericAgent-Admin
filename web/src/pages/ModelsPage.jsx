@@ -31,6 +31,7 @@ import {
   nextFailoverGroupName,
   normalizeFailoverGroups,
   API_MODE_OPTIONS,
+  SERVICE_TIER_OPTIONS,
   THINKING_TYPE_OPTIONS,
   addModelConfigs,
   modelProtocolFields,
@@ -126,7 +127,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
   const text = t.models
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
-  const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
+  const configSummary = [config.api_mode, config.service_tier, config.thinking_type, config.reasoning_effort]
     .filter(Boolean)
     .join(' · ') || text.defaultParams
 
@@ -203,6 +204,12 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
               <label className="model-field">
                 <span className="model-field-label">{text.apiMode}</span>
                 <Select allowClear value={config.api_mode || undefined} onChange={api_mode => onChange({ api_mode })} placeholder={text.inherit} options={API_MODE_OPTIONS} />
+              </label>
+            )}
+            {fields.serviceTier && (
+              <label className="model-field">
+                <span className="model-field-label">{text.serviceTier}</span>
+                <Select allowClear value={config.service_tier || undefined} onChange={service_tier => onChange({ service_tier })} placeholder={text.inherit} options={SERVICE_TIER_OPTIONS} />
               </label>
             )}
             {fields.thinkingType && (

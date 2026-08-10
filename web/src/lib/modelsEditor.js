@@ -2,13 +2,14 @@ const text = value => String(value ?? '').trim()
 
 const DEFAULT_MODEL_PROTOCOL = 'native_oai'
 const MODEL_PROTOCOL_FIELDS = {
-  native_oai: { apiMode: true, reasoningFamily: 'oai' },
+  native_oai: { apiMode: true, serviceTier: true, reasoningFamily: 'oai' },
   native_claude: { thinkingType: true, reasoningFamily: 'claude', userAgent: true, fakeClaudeCode: true },
-  oai: { apiMode: true, reasoningFamily: 'oai' },
+  oai: { apiMode: true, serviceTier: true, reasoningFamily: 'oai' },
   claude: { thinkingType: true, reasoningFamily: 'claude' },
 }
 
 export const API_MODE_OPTIONS = ['chat_completions', 'responses'].map(value => ({ value, label: value }))
+export const SERVICE_TIER_OPTIONS = ['auto', 'default', 'priority', 'flex'].map(value => ({ value, label: value }))
 export const THINKING_TYPE_OPTIONS = ['adaptive', 'enabled', 'disabled'].map(value => ({ value, label: value }))
 
 const REASONING_EFFORT_OPTIONS = {
@@ -31,6 +32,7 @@ const MODEL_SETTING_KEYS = [
   'connect_timeout',
   'user_agent',
   'api_mode',
+  'service_tier',
   'thinking_type',
   'reasoning_effort',
   'fake_cc_system_prompt',

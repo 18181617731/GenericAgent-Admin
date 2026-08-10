@@ -46,6 +46,24 @@ func TestProfileAcceptsLegacyStringFakeCCSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestLegacyProfileServiceTierRenders(t *testing.T) {
+	data := []byte(`{"profiles":[{"var_name":"native_oai_config_main","type":"native_oai","name":"main","apibase":"https://api.example/v1","model":"gpt-test","apikey":"sk-real-secret","service_tier":"priority"}]}`)
+	var draft Draft
+	if err := json.Unmarshal(data, &draft); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || draft.Profiles[0].ServiceTier != "priority" {
+		t.Fatalf("ServiceTier = %#v, want priority", draft.Profiles)
+	}
+	rendered, err := Render(draft.Profiles)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !strings.Contains(rendered, `"service_tier": "priority"`) {
+		t.Fatalf("rendered service_tier missing:\n%s", rendered)
+	}
+}
+
 func TestStoreSaveCreatesRootAndLoadsMaskedSecrets(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing", "models")
 	store := NewStore(root)
@@ -429,7 +447,7 @@ func TestExportImportPreservesPerModelDisplayNames(t *testing.T) {
 
 func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 	root := t.TempDir()
-	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"acme-chat","reasoning_effort":"low","read_timeout":120},{"model":"acme-reasoning","reasoning_effort":"high","read_timeout":600}]}]}`)
+	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"acme-chat","reasoning_effort":"low","service_tier":"default","read_timeout":120},{"model":"acme-reasoning","reasoning_effort":"high","service_tier":"priority","read_timeout":600}]}]}`)
 	var input Draft
 	if err := json.Unmarshal(data, &input); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
@@ -453,6 +471,7 @@ func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 		ModelConfigs []struct {
 			Model           string `json:"model"`
 			ReasoningEffort string `json:"reasoning_effort"`
+			ServiceTier     string `json:"service_tier"`
 			ReadTimeout     *int   `json:"read_timeout"`
 		} `json:"model_configs"`
 	}
@@ -462,10 +481,10 @@ func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 	if len(got.ModelConfigs) != 2 {
 		t.Fatalf("model_configs = %#v, want two entries", got.ModelConfigs)
 	}
-	if got.ModelConfigs[0].Model != "acme-chat" || got.ModelConfigs[0].ReasoningEffort != "low" || got.ModelConfigs[0].ReadTimeout == nil || *got.ModelConfigs[0].ReadTimeout != 120 {
+	if got.ModelConfigs[0].Model != "acme-chat" || got.ModelConfigs[0].ReasoningEffort != "low" || got.ModelConfigs[0].ServiceTier != "default" || got.ModelConfigs[0].ReadTimeout == nil || *got.ModelConfigs[0].ReadTimeout != 120 {
 		t.Fatalf("first model config = %#v", got.ModelConfigs[0])
 	}
-	if got.ModelConfigs[1].Model != "acme-reasoning" || got.ModelConfigs[1].ReasoningEffort != "high" || got.ModelConfigs[1].ReadTimeout == nil || *got.ModelConfigs[1].ReadTimeout != 600 {
+	if got.ModelConfigs[1].Model != "acme-reasoning" || got.ModelConfigs[1].ReasoningEffort != "high" || got.ModelConfigs[1].ServiceTier != "priority" || got.ModelConfigs[1].ReadTimeout == nil || *got.ModelConfigs[1].ReadTimeout != 600 {
 		t.Fatalf("second model config = %#v", got.ModelConfigs[1])
 	}
 }
@@ -563,6 +582,7 @@ func TestImportLegacyMyKeyGroupsProfilesByProviderIdentity(t *testing.T) {
     "apikey": "sk-shared-real-secret",
     "apibase": "https://code.example/v1/",
     "model": "gpt-5.5",
+    "service_tier": "priority",
 }
 
 native_oai_config_gpt55_2 = {
@@ -588,6 +608,9 @@ native_oai_config_gpt55_2 = {
 	}
 	if len(got.Models) != 2 || got.Models[0] != "gpt-5.5" || got.Models[1] != "gpt-5.4" {
 		t.Fatalf("provider models = %#v, want both legacy models", got.Models)
+	}
+	if len(got.ModelConfigs) != 2 || got.ModelConfigs[0].ServiceTier != "priority" || got.ModelConfigs[1].ServiceTier != "" {
+		t.Fatalf("legacy model service tiers = %#v, want priority and empty", got.ModelConfigs)
 	}
 	if got.APIKey != "sk-****cret" {
 		t.Fatalf("masked provider key = %q, want masked secret", got.APIKey)
