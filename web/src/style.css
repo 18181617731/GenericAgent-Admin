@@ -15816,3 +15816,135 @@ html[data-theme="light"] #admin-sidebar {
   --sidebar-accent: #0f766e;
   --sidebar-active: color-mix(in srgb, var(--text) 5%, var(--surface-strong));
 }
+
+/* /chat sidebar refinement: quiet hierarchy and theme-aware surfaces. */
+.oa-sidebar {
+  --oa-side-line: color-mix(in srgb, var(--text) 10%, transparent);
+  --oa-side-control: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+  --oa-side-hover: color-mix(in srgb, var(--text) 5%, transparent);
+  --oa-side-active: color-mix(in srgb, var(--text) 8%, transparent);
+  background:color-mix(in srgb, var(--surface-muted) 96%, var(--surface-strong)) !important;
+  border-right-color:var(--oa-side-line);
+  padding:10px;
+}
+
+.oa-sidebar-instance { padding-inline:4px; }
+.oa-sidebar-instance select,
+.oa-sidebar-search {
+  box-sizing:border-box;
+  border:1px solid var(--oa-side-line);
+  background:var(--oa-side-control);
+  box-shadow:none;
+}
+.oa-sidebar-instance select:hover,
+.oa-sidebar-search:hover { border-color:color-mix(in srgb, var(--text) 18%, transparent); }
+.oa-sidebar-instance select:focus-visible,
+.oa-sidebar-search:focus-within {
+  outline:none;
+  border-color:color-mix(in srgb, var(--oa-green) 55%, var(--oa-side-line));
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--oa-green) 14%, transparent);
+}
+.oa-sidebar-search input:focus-visible { outline:none; }
+
+.oa-new-chat,
+.oa-new-chat:hover {
+  box-shadow:none !important;
+  transform:none !important;
+}
+
+.oa-sidebar-tabs {
+  border-color:var(--oa-side-line);
+  background:var(--oa-side-hover);
+  box-shadow:none;
+}
+.oa-sidebar-tabs button:hover { background:var(--oa-side-hover); }
+.oa-sidebar-tabs button.active {
+  background:var(--surface-strong);
+  box-shadow:none;
+}
+
+.oa-sidebar .oa-session:hover { background:var(--oa-side-hover) !important; }
+.oa-sidebar .oa-session-row.active {
+  background:var(--oa-side-active) !important;
+  box-shadow:inset 2px 0 0 color-mix(in srgb, var(--oa-green) 72%, var(--text));
+}
+.oa-sidebar .oa-session-row.active .oa-session { background:transparent !important; }
+
+.oa-sidebar-foot {
+  padding-top:8px;
+  border-top:1px solid var(--oa-side-line);
+}
+.oa-sidebar-foot button { border:1px solid transparent; }
+.oa-sidebar-foot button:hover {
+  border-color:var(--oa-side-line);
+  background:var(--oa-side-hover);
+}
+.oa-sidebar button:focus-visible {
+  outline:2px solid color-mix(in srgb, var(--oa-green) 70%, var(--text));
+  outline-offset:2px;
+}
+
+@media (max-width:680px) {
+  .oa-sidebar {
+    padding:max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+  }
+}
+
+/* /chat instance switcher: a compact control without changing native select behavior. */
+.oa-sidebar-instance {
+  position:relative;
+  gap:5px;
+}
+.oa-sidebar-instance > span {
+  display:flex;
+  align-items:center;
+  min-height:16px;
+  color:color-mix(in srgb, var(--oa-muted) 86%, var(--oa-text));
+  font-size:10px;
+  letter-spacing:.045em;
+}
+.oa-sidebar-instance select {
+  appearance:none;
+  -webkit-appearance:none;
+  height:38px;
+  padding:0 34px 0 12px;
+  border-radius:11px;
+  background-image:none;
+  transition:border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.oa-sidebar-instance::after {
+  content:"";
+  position:absolute;
+  right:14px;
+  bottom:15px;
+  width:7px;
+  height:7px;
+  border-right:1.5px solid var(--oa-muted);
+  border-bottom:1.5px solid var(--oa-muted);
+  transform:rotate(45deg);
+  pointer-events:none;
+  transition:border-color .16s ease, opacity .16s ease;
+}
+.oa-sidebar-instance:hover > span,
+.oa-sidebar-instance:focus-within > span {
+  color:color-mix(in srgb, var(--oa-text) 82%, var(--oa-muted));
+}
+.oa-sidebar-instance:hover::after,
+.oa-sidebar-instance:focus-within::after {
+  border-color:var(--oa-green);
+}
+.oa-sidebar-instance:has(select:disabled)::after { opacity:.45; }
+
+@media (max-width:680px) {
+  .oa-sidebar-instance select {
+    height:36px;
+    padding-left:11px;
+    padding-right:32px;
+  }
+  .oa-sidebar-instance::after { right:13px; bottom:14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oa-sidebar-instance select,
+  .oa-sidebar-instance::after { transition:none; }
+}
