@@ -2297,6 +2297,24 @@ export function GeneratedImageGallery({ content = '' }) {
   useEffect(() => {
     if (activePath && !paths.includes(activePath)) setActivePath('')
   }, [activePath, paths])
+  useEffect(() => {
+    if (!activePath) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setActivePath('')
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      const index = paths.indexOf(activePath)
+      if (index < 0 || paths.length < 2) return
+      const offset = event.key === 'ArrowLeft' ? -1 : 1
+      setActivePath(paths[(index + offset + paths.length) % paths.length])
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [activePath, paths])
   if (!paths.length) return null
   const activeName = activePath?.split(/[\\/]/).filter(Boolean).pop() || 'generated-image'
   return <>
@@ -2320,6 +2338,56 @@ export function GeneratedImageGallery({ content = '' }) {
       </section>
     </div>}
   </>
+}
+
+export function ImagePreviewDialog({ images = [], activeIndex = -1, onClose, onChange }) {
+  const image = images[activeIndex]
+  useEffect(() => {
+    if (!image) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose?.()
+        return
+      }
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      if (images.length < 2) return
+      const offset = event.key === 'ArrowLeft' ? -1 : 1
+      onChange?.((activeIndex + offset + images.length) % images.length)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [activeIndex, image, images, onChange, onClose])
+  if (!image || typeof document === 'undefined') return null
+  const label = image.name || ct('图片预览', 'Image preview')
+  const hasMultiple = images.length > 1
+  return createPortal(
+    <div className="oa-image-preview-layer" role="dialog" aria-modal="true" aria-label={`图片预览 ${label}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
+      <section className="oa-image-preview-dialog">
+        <header className="oa-image-preview-head">
+          <div><b title={label}>{label}</b><span>{activeIndex + 1} / {images.length}</span></div>
+          <button type="button" onClick={onClose} aria-label="关闭图片预览" title="关闭图片预览" autoFocus><X size={18}/></button>
+        </header>
+        <div className="oa-image-preview-canvas">
+          {hasMultiple && <button type="button" className="oa-image-preview-nav is-prev" onClick={() => onChange?.((activeIndex - 1 + images.length) % images.length)} aria-label="上一张图片" title="上一张图片"><ChevronLeft size={22}/></button>}
+          <figure className="oa-image-preview-figure">
+            <img src={image.src} alt={label}/>
+            <figcaption>{ct('点击左右按钮或使用键盘方向键切换', 'Use the arrow buttons or keyboard arrows to switch')}</figcaption>
+          </figure>
+          {hasMultiple && <button type="button" className="oa-image-preview-nav is-next" onClick={() => onChange?.((activeIndex + 1) % images.length)} aria-label="下一张图片" title="下一张图片"><ChevronRight size={22}/></button>}
+        </div>
+        <footer className="oa-image-preview-foot">
+          <span>{ct('原图保持完整比例显示', 'Original aspect ratio is preserved')}</span>
+          <a href={image.src} target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>{ct('打开原图', 'Open original')}</a>
+        </footer>
+      </section>
+    </div>,
+    document.body,
+  )
 }
 
 function initWorldline(sid = '') {
@@ -2635,6 +2703,12 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const [draft, setDraft] = useState(userText)
   const [editError, setEditError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [previewImageIndex, setPreviewImageIndex] = useState(-1)
+  const previewImages = imageFiles.map((file, index) => ({
+    key: `${uploadFileName(file)}-${index}`,
+    name: uploadFileName(file),
+    src: uploadFileSource(file),
+  })).filter(image => image.src)
   const resetDraft = () => { setDraft(userText); setEditError(''); setEditing(false) }
   const submitEdit = async () => {
     if (!draft.trim() || draft.trim() === String(userText || '').trim()) { setEditing(false); return }
@@ -2657,7 +2731,17 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
     <div className="oa-bubble">
       <div className="oa-msg-body">
       <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
-      {imageFiles.length > 0 && <div className="oa-msg-images">{imageFiles.map((file, i) => <a className="oa-msg-image-link" key={uploadFileName(file) || i} href={uploadFileSource(file)} target="_blank" rel="noreferrer"><img className="oa-msg-image" src={uploadFileSource(file)} alt={uploadFileName(file)} /></a>)}</div>}
+      {imageFiles.length > 0 && <div className="oa-msg-images" aria-label="消息图片">{imageFiles.map((file, i) => {
+        const name = uploadFileName(file)
+        const src = uploadFileSource(file)
+        const key = `${name}-${i}`
+        const previewIndex = previewImages.findIndex(image => image.key === key)
+        return <button className="oa-msg-image-link" key={key} type="button" onClick={() => previewIndex >= 0 && setPreviewImageIndex(previewIndex)} disabled={!src} aria-label={src ? `查看图片 ${name}` : `图片不可用 ${name}`} title={src ? `点击查看原图：${name}` : name}>
+          <span className="oa-msg-image-stage"><img className="oa-msg-image" src={src} alt={name} loading="lazy" /></span>
+          <span className="oa-msg-image-name">{name}</span>
+        </button>
+      })}</div>}
+      <ImagePreviewDialog images={previewImages} activeIndex={previewImageIndex} onClose={() => setPreviewImageIndex(-1)} onChange={setPreviewImageIndex} />
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
         {pendingFiles.map((file, i) => {
