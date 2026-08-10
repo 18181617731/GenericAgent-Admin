@@ -44,6 +44,7 @@ type Server struct {
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
 	ChatRuntimes            *chatRuntimeRegistry
+	ChatRuntime             *chatRuntime
 	BaseCfgStore            *config.Store
 	titleBackfillStarted    bool
 	chatSessionMutationHook func()
@@ -68,7 +69,7 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
 		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
-		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
+		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes, ChatRuntime: defaultRuntime,
 		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
 	s.resumeInstanceInstalls()

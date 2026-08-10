@@ -109,3 +109,33 @@ export const pickResumePlaceholderId = (messages) => {
   if (tail.content) return ''
   return tail.id || ''
 }
+
+const LOOP_FOLLOW_STATUSES = new Set(['waiting', 'running', 'evaluating'])
+
+export const isLoopFollowActive = (loop) => Boolean(
+  loop?.enabled && LOOP_FOLLOW_STATUSES.has(String(loop?.status || '').toLowerCase())
+)
+
+export const normalizeStreamRunIdentity = ({ pendingId = '', startedAtMs = 0 } = {}) => ({
+  pendingId: String(pendingId || '').trim(),
+  startedAtMs: Number(startedAtMs) || 0,
+})
+
+export const sameStreamRun = (left, right) => {
+  const a = normalizeStreamRunIdentity(left)
+  const b = normalizeStreamRunIdentity(right)
+  if (a.pendingId && b.pendingId) return a.pendingId === b.pendingId
+  return a.startedAtMs > 0 && b.startedAtMs > 0 && a.startedAtMs === b.startedAtMs
+}
+
+// Decide what to do after a stream response ends. A terminal response remains readable from
+// the replay endpoint until the next run starts, so it must never be attached as a new round.
+export const decideStreamFollow = ({ running = false, loop = null, currentRun = null, availableRun = null, terminal = false } = {}) => {
+  const loopActive = isLoopFollowActive(loop)
+  if (running) {
+    if (!availableRun?.pendingId && !(Number(availableRun?.startedAtMs) > 0)) return 'wait'
+    if (terminal && sameStreamRun(currentRun, availableRun)) return 'wait'
+    return 'attach'
+  }
+  return loopActive ? 'wait' : 'finish'
+}

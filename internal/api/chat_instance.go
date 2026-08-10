@@ -23,12 +23,14 @@ func (e *chatInstanceNotFoundError) Error() string {
 // Keeping the mutexes with the maps prevents request-scoped Server copies from
 // accidentally copying a live mutex.
 type chatRuntime struct {
-	chatMu    sync.Mutex
-	sessionMu sync.Mutex
-	usageMu   sync.Mutex
-	runs      map[string]*chatRun
-	workers   map[string]*chatWorker
-	titleJobs map[string]bool
+	chatMu           sync.Mutex
+	sessionMu        sync.Mutex
+	usageMu          sync.Mutex
+	runs             map[string]*chatRun
+	workers          map[string]*chatWorker
+	titleJobs        map[string]bool
+	loopRecoveryOnce sync.Once
+	loopRecoveryErr  error
 }
 
 type chatRuntimeRegistry struct {
@@ -80,6 +82,7 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		ChatWorkers:             s.ChatWorkers,
 		ChatTitleJobs:           s.ChatTitleJobs,
 		ChatRuntimes:            s.ChatRuntimes,
+		ChatRuntime:             s.ChatRuntime,
 		BaseCfgStore:            baseStore,
 		titleBackfillStarted:    s.titleBackfillStarted,
 		chatSessionMutationHook: s.chatSessionMutationHook,
@@ -93,6 +96,7 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		clone.ChatRuns = runtime.runs
 		clone.ChatWorkers = runtime.workers
 		clone.ChatTitleJobs = runtime.titleJobs
+		clone.ChatRuntime = runtime
 	}
 	return clone
 }
@@ -191,6 +195,10 @@ func (s *Server) withChatInstance(next func(*Server, http.ResponseWriter, *http.
 				status = http.StatusNotFound
 			}
 			bad(w, status, err.Error())
+			return
+		}
+		if err := chatServer.recoverChatLoopsAfterRestart(); err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		setResolvedInstanceHeader(w, instanceID)

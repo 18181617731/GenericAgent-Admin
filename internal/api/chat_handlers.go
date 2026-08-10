@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned})
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned, "loop": cs.Loop})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Snapshot().GARoot)})
@@ -115,6 +115,15 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(parts) == 3 && parts[2] == "switch" && r.Method == http.MethodPost {
 			s.chatWorldlineSwitch(w, r, parts[1])
+			return
+		}
+	case "loop":
+		if len(parts) == 3 && parts[2] == "start" && r.Method == http.MethodPost {
+			s.chatLoopStart(w, r, parts[1])
+			return
+		}
+		if len(parts) == 3 && parts[2] == "stop" && r.Method == http.MethodPost {
+			s.chatLoopStop(w, r, parts[1])
 			return
 		}
 	case "stream":
@@ -580,7 +589,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["warning"] = err.Error()
 	}
 	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {

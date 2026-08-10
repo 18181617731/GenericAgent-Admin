@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './chatStream.js'
 
 test('scroll follow preserves auto mode when fast content growth moves the bottom away', () => {
   assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 320 }), 'preserve')
@@ -193,4 +193,58 @@ test('beginLive is idempotent and harmless when already live', () => {
   assert.equal(callbacks.length, 1)
   callbacks.shift()()
   assert.deepEqual(flushed, ['abc'])
+})
+
+test('loop follow remains active only for backend-hosted transitional states', () => {
+  for (const status of ['waiting', 'running', 'evaluating']) {
+    assert.equal(isLoopFollowActive({ enabled:true, status }), true, status)
+  }
+  assert.equal(isLoopFollowActive({ enabled:false, status:'running' }), false)
+  assert.equal(isLoopFollowActive({ enabled:true, status:'completed' }), false)
+  assert.equal(isLoopFollowActive(null), false)
+})
+
+test('run identity prefers pending id and safely falls back to start time', () => {
+  assert.equal(sameStreamRun(
+    { pendingId:'assistant-1', startedAtMs:10 },
+    { pendingId:'assistant-1', startedAtMs:99 },
+  ), true)
+  assert.equal(sameStreamRun(
+    { pendingId:'assistant-1', startedAtMs:10 },
+    { pendingId:'assistant-2', startedAtMs:10 },
+  ), false)
+  assert.equal(sameStreamRun({ startedAtMs:10 }, { startedAtMs:10 }), true)
+  assert.equal(sameStreamRun({}, {}), false)
+})
+
+test('terminal replay is never mistaken for the next loop round', () => {
+  const currentRun = { pendingId:'assistant-1', startedAtMs:10 }
+  assert.equal(decideStreamFollow({
+    running:true,
+    loop:{ enabled:true, status:'running' },
+    currentRun,
+    availableRun:{ pendingId:'assistant-1', startedAtMs:10 },
+    terminal:true,
+  }), 'wait')
+  assert.equal(decideStreamFollow({
+    running:true,
+    loop:{ enabled:true, status:'running' },
+    currentRun,
+    availableRun:{ pendingId:'assistant-2', startedAtMs:20 },
+    terminal:true,
+  }), 'attach')
+})
+
+test('loop waits across the no-run evaluation gap and finishes only after loop terminal state', () => {
+  assert.equal(decideStreamFollow({
+    running:false,
+    loop:{ enabled:true, status:'evaluating' },
+    terminal:true,
+  }), 'wait')
+  assert.equal(decideStreamFollow({
+    running:false,
+    loop:{ enabled:false, status:'completed' },
+    terminal:true,
+  }), 'finish')
+  assert.equal(decideStreamFollow({ running:false, loop:null, terminal:true }), 'finish')
 })

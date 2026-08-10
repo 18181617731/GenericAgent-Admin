@@ -156,6 +156,26 @@ func (s *Server) rememberDefaultChatLLMNo(llmNo int) {
 	_ = store.Save(cfg)
 }
 
+type chatLoopRecord struct {
+	AtMS    int64  `json:"created_at_ms"`
+	Round   int    `json:"round"`
+	Phase   string `json:"phase"`
+	Summary string `json:"summary"`
+	Prompt  string `json:"prompt,omitempty"`
+}
+
+type chatLoopState struct {
+	Enabled          bool             `json:"enabled"`
+	Status           string           `json:"status"`
+	Epoch            int64            `json:"epoch"`
+	Round            int              `json:"round"`
+	MaxRounds        int              `json:"max_rounds"`
+	StopReason       string           `json:"stop_reason,omitempty"`
+	ControllerPrompt string           `json:"controller_prompt,omitempty"`
+	ControllerLLMNo  int              `json:"controller_llm_no"`
+	Records          []chatLoopRecord `json:"records,omitempty"`
+}
+
 type chatSession struct {
 	ID                     string                   `json:"id"`
 	Title                  string                   `json:"title"`
@@ -174,6 +194,7 @@ type chatSession struct {
 	Pinned                 bool                     `json:"pinned,omitempty"`
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
+	Loop                   chatLoopState            `json:"loop"`
 }
 
 const (
@@ -699,6 +720,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		s.scheduleChatTitleGeneration(sid, cs)
 	}
 	s.endChatRunOwned(sid, token)
+	s.afterChatRunTerminal(sid, !final.Error)
 }
 
 func chatRawHistoryFromEvent(ev map[string]interface{}) []map[string]interface{} {
@@ -1284,7 +1306,15 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 		run.Subscribers[ch] = true
 	}
 	done := run.Done
+	pendingAssistantID := run.PendingAssistantID
+	runStartedAtMS := run.RunStartedAtMS
 	s.ChatMu.Unlock()
+	if pendingAssistantID != "" {
+		w.Header().Set("X-Chat-Pending-ID", pendingAssistantID)
+	}
+	if runStartedAtMS > 0 {
+		w.Header().Set("X-Chat-Run-Started-At-Ms", strconv.FormatInt(runStartedAtMS, 10))
+	}
 	for _, line := range initial {
 		_, _ = w.Write(append(append([]byte(nil), line...), '\n'))
 		if flusher != nil {
@@ -1954,6 +1984,7 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 
 func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) {
 	candidate.Pinned = latest.Pinned
+	candidate.Loop = latest.Loop
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title
