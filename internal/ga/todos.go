@@ -53,7 +53,7 @@ var projectTodoNumberPrefix = regexp.MustCompile(`^[0-9]+[.)、]\s*`)
 
 var projectTodoModuleOrder = []string{
 	"overview", "notifications", "tasks", "autonomous", "goals", "models",
-	"files", "memory", "channels", "usage", "settings", "logs",
+	"files", "memory", "channels", "usage", "settings", "logs", "other",
 }
 
 type projectTodoModuleRule struct {
@@ -236,7 +236,7 @@ func projectTodoDetail(line string) string {
 
 func projectTodoModule(title string) string {
 	lower := strings.ToLower(title)
-	bestModule, bestScore := "autonomous", 0
+	bestModule, bestScore := "other", 0
 	for _, rule := range projectTodoModuleRules {
 		score := 0
 		for _, keyword := range rule.keywords {

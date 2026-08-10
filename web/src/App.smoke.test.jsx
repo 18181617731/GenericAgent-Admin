@@ -2372,13 +2372,19 @@ describe('project TODO module panel', () => {
     expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', sourcePath: 'temp/TODO.txt' }))
   })
 
-  test('overview cards navigate to the related module', async () => {
+  test('overview groups TODOs by processing status instead of product modules', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(payload))
-    const onNavigate = vi.fn()
-    render(<ModuleTodoPanel module="overview" onNavigate={onNavigate}/>)
+    render(<ModuleTodoPanel module="overview"/>)
     await screen.findByText('项目待办')
-    fireEvent.click(screen.getByTitle('进入模块：模型'))
-    expect(onNavigate).toHaveBeenCalledWith('models')
+    expect(screen.getByText('按处理状态')).toBeTruthy()
+    expect(screen.getByText('待处理')).toBeTruthy()
+    expect(screen.getByText('待执行')).toBeTruthy()
+    expect(screen.getByText('待同步')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '已完成：1 项' })).toBeTruthy()
+    expect(screen.queryByTitle('进入模块：模型')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /待执行/ }))
+    expect(screen.getByText('修复定时任务调度')).toBeTruthy()
+    expect(screen.queryByText('模型可用性检查')).toBeNull()
   })
 
   test('exposes a retry state when the TODO endpoint is temporarily unavailable', async () => {

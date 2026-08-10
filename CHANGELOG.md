@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.65 - 2026-08-10
+
+### Simplified project TODO overview
+- 将总览中的多模块卡片收敛为待处理、待执行、待同步、已完成四个互斥状态分组，点击即可筛选对应清单。
+- 保留产品模块作为条目辅助标签，避免把不稳定的关键词归类误认为总览主分类。
+- 未识别模块改为“其他”，不再错误归入“自主进化”，并补充状态筛选与未知模块回归测试。
+
 ## v1.0.64 - 2026-08-10
 
 ### Image-first chat previews
