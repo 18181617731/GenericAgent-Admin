@@ -75,6 +75,19 @@ describe('chat file attachments', () => {
     expect(screen.queryByRole('dialog', { name:'生成图片预览' })).toBeNull()
   })
 
+  test('adds the active chat instance to saved upload image URLs', () => {
+    const { container } = render(
+      <ChatMessage
+        chatInstanceID="default"
+        message={{ id:'u-saved-image', role:'user', content:'Saved image', files:[{ name:'saved.png', type:'image/png', url:'/api/chat/file/saved.png' }], created_at:0 }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-msg-image')?.getAttribute('src')).toBe('/api/chat/file/saved.png?instance_id=default')
+  })
+
   test('renders a saved non-image upload as a file path card', () => {
     const content = 'Review this\n\n[附件已保存]\n[FILE:C:/tmp/report.pdf]'
     const { container } = render(
