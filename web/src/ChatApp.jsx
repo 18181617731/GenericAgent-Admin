@@ -2684,7 +2684,7 @@ const ChatErrorCard = memo(function ChatErrorCard({ message, onRetry }) {
   </section>
 })
 
-export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '' }) {
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
@@ -2707,7 +2707,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const previewImages = imageFiles.map((file, index) => ({
     key: `${uploadFileName(file)}-${index}`,
     name: uploadFileName(file),
-    src: uploadFileSource(file),
+    src: addChatInstanceToURL(uploadFileSource(file), chatInstanceID),
   })).filter(image => image.src)
   const resetDraft = () => { setDraft(userText); setEditError(''); setEditing(false) }
   const submitEdit = async () => {
@@ -2733,7 +2733,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
       <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
       {imageFiles.length > 0 && <div className="oa-msg-images" aria-label="消息图片">{imageFiles.map((file, i) => {
         const name = uploadFileName(file)
-        const src = uploadFileSource(file)
+        const src = addChatInstanceToURL(uploadFileSource(file), chatInstanceID)
         const key = `${name}-${i}`
         const previewIndex = previewImages.findIndex(image => image.key === key)
         return <button className="oa-msg-image-link" key={key} type="button" onClick={() => previewIndex >= 0 && setPreviewImageIndex(previewIndex)} disabled={!src} aria-label={src ? `查看图片 ${name}` : `图片不可用 ${name}`} title={src ? `点击查看原图：${name}` : name}>
@@ -2760,7 +2760,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion }) {
+const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '' }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
@@ -2768,7 +2768,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
       const retrySource = m.error && i > 0 && messages[i - 1]?.role === 'user' ? messages[i - 1] : null
-      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
+      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} chatInstanceID={chatInstanceID} />)
       return nodes
     })}
   </>
@@ -4555,8 +4555,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     api('/api/instances').then(payload => {
       const options = chatInstanceOptions(payload)
       setChatInstances(options)
-      if (!chatInstanceRef.current && payload?.default_id) {
-        const defaultID = String(payload.default_id).trim()
+      const serverDefaultID = payload?.default_instance_id || payload?.default_id
+      if (!chatInstanceRef.current && serverDefaultID) {
+        const defaultID = String(serverDefaultID).trim()
         chatInstanceRef.current = defaultID
         setChatInstanceID(defaultID)
         persistChatInstanceID(defaultID)
@@ -4935,7 +4936,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />
         <SubagentStatusPanel states={subagents}/>
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
