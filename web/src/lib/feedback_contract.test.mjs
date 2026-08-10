@@ -17,3 +17,10 @@ test('feedback module exposes accessible error fallback', () => {
   assert.match(feedback, /export function GlobalFeedback/)
   assert.match(feedback, /aria-label="关闭提示"/)
 })
+
+test('module load errors offer a cache-busting page reload', () => {
+  const feedback = readFileSync(new URL('../components/feedback.jsx', import.meta.url), 'utf8')
+  assert.match(feedback, /importing a module script failed/i)
+  assert.match(feedback, /_ga_module_reload/)
+  assert.match(feedback, /window\.location\.replace/)
+})

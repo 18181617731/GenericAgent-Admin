@@ -60,6 +60,23 @@ func TestStaticServesCleanAssetPath(t *testing.T) {
 	if rr.Body.String() != "console.log('ok')" {
 		t.Fatalf("body=%q", rr.Body.String())
 	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+		t.Fatalf("cache-control=%q", got)
+	}
+}
+
+func TestStaticMissingAssetDoesNotFallbackToIndex(t *testing.T) {
+	s := &Server{Static: fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("index")},
+	}}
+	rr := httptest.NewRecorder()
+	s.static(rr, httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusNotFound, rr.Body.String())
+	}
+	if rr.Body.String() == "index" {
+		t.Fatal("missing module must not receive index.html")
+	}
 }
 
 var _ fs.FS = fstest.MapFS{}
