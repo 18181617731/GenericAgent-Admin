@@ -2,7 +2,7 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
-## v1.0.66 - 2026-08-11
+## v1.0.67 - 2026-08-11
 
 ### Loop 首轮执行与可操作示例
 - 修复新会话启动 Loop 后长期停留在“进展 0/最大轮次”的问题，启动时会立即排队执行首轮目标。
