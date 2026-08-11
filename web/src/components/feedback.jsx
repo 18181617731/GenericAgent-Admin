@@ -6,6 +6,23 @@ import { Check, Copy, RefreshCw, X } from 'lucide-react'
 
 const localized = (zh, en) => typeof document !== 'undefined' && document.documentElement.lang === 'en' ? en : zh
 
+const MODULE_RELOAD_PARAM = '_ga_module_reload'
+
+export const isModuleLoadError = error => /importing a module script failed|failed to fetch dynamically imported module|loading chunk|chunkloaderror/i.test(String(error?.message || error || ''))
+
+const reloadAfterModuleLoadError = error => {
+  if (!isModuleLoadError(error) || typeof window === 'undefined') return false
+  try {
+    const next = new URL(window.location.href)
+    if (next.searchParams.has(MODULE_RELOAD_PARAM)) return false
+    next.searchParams.set(MODULE_RELOAD_PARAM, String(Date.now()))
+    window.location.replace(next.toString())
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function StatusNotice({ kind = 'success', message, onRetry, onDismiss, retryLabel, dismissLabel }) {
   if (!message) return null
   const isError = kind === 'error'
@@ -122,6 +139,7 @@ export function GlobalFeedback({ message, tone = 'auto', onDismiss, onRetry, ret
 
 export function ErrorFallback({ error, onReset, title }) {
   const message = error?.message || String(error || 'Unknown error')
+  const moduleLoadError = isModuleLoadError(error)
   return (
     <div className="ga-error-boundary" role="alert" aria-live="assertive">
       <div>
@@ -129,7 +147,7 @@ export function ErrorFallback({ error, onReset, title }) {
         <p>{localized('当前页面模块渲染异常，其他导航仍可继续使用。', 'This page module failed to render. Other navigation remains available.')}</p>
         <code>{message}</code>
       </div>
-      {onReset && <button type="button" onClick={onReset}>{localized('重试', 'Retry')}</button>}
+      {onReset && <button type="button" onClick={onReset}>{localized(moduleLoadError ? '刷新页面' : '重试', moduleLoadError ? 'Reload page' : 'Retry')}</button>}
     </div>
   )
 }
@@ -154,7 +172,10 @@ export class ErrorBoundary extends Component {
     }
   }
 
-  reset = () => this.setState({ error: null })
+  reset = () => {
+    if (reloadAfterModuleLoadError(this.state.error)) return
+    this.setState({ error: null })
+  }
 
   render() {
     if (this.state.error) {

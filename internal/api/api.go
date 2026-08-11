@@ -822,6 +822,10 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	p = path.Clean(p)
 	data, err := fs.ReadFile(s.Static, p)
 	if err != nil {
+		if path.Ext(p) != "" {
+			bad(w, http.StatusNotFound, fmt.Sprintf("static asset not found: %s", p))
+			return
+		}
 		data, err = fs.ReadFile(s.Static, "index.html")
 		if err != nil {
 			bad(w, 404, fmt.Sprintf("not found: %s", p))
@@ -829,6 +833,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		}
 		p = "index.html"
 	}
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	if strings.HasSuffix(p, ".js") {
 		w.Header().Set("Content-Type", "application/javascript")
 	} else if strings.HasSuffix(p, ".css") {

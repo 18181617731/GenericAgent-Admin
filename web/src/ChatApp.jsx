@@ -356,6 +356,7 @@ function StepFileMutationMarker() {
 function FileAttachment({ path, resolvedPath = '' }) {
   const displayPath = String(path || '').trim()
   const fileScope = useContext(ChatFileScopeContext)
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const clean = resolveChatToolFilePath(resolvedPath || displayPath, fileScope)
   const name = displayPath.split(/[\\/]/).filter(Boolean).pop() || displayPath || ct('文件', 'File')
   const extMatch = name.match(/\.([^.]+)$/)
@@ -374,22 +375,26 @@ function FileAttachment({ path, resolvedPath = '' }) {
       alert(ct(`打开失败：${e?.message || e}`, `Open failed: ${e?.message || e}`))
     }
   }
-  return <span className={`oa-file-card oa-file-kind-${kind}`} title={displayPath || clean}>
-    <button type="button" className="oa-file-leading" onClick={() => open('file')} aria-label={ct(`打开文件 ${name}`, `Open file ${name}`)}>
+  const imageLabel = ct(`查看图片 ${name}`, `View image ${name}`)
+  return <>
+    <span className={`oa-file-card oa-file-kind-${kind}`} title={displayPath || clean}>
+    <button type="button" className="oa-file-leading" onClick={() => isImage ? setImagePreviewOpen(true) : open('file')} aria-label={isImage ? imageLabel : ct(`打开文件 ${name}`, `Open file ${name}`)}>
       <Icon className="oa-file-fallback-icon" size={19}/>
       {isImage && <img src={imageUrl} alt="" loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />}
     </button>
-    <span className="oa-file-meta">
-      <span className="oa-file-name-row"><b>{name}</b><small>{extension}</small></span>
-      <em>{directory || ct('本地文件', 'Local file')}</em>
-    </span>
+    {!isImage && <span className="oa-file-meta">
+        <span className="oa-file-name-row"><b>{name}</b><small>{extension}</small></span>
+        <em>{directory || ct('本地文件', 'Local file')}</em>
+      </span>}
     <span className="oa-file-actions">
       <a href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></a>
       <button type="button" onClick={() => open('file')} title={ct('打开文件', 'Open file')} aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
       <button type="button" onClick={() => open('folder')} title={ct('打开所在位置', 'Open containing folder')} aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
       <CopyButton text={displayPath || clean} compact />
     </span>
-  </span>
+    </span>
+    {isImage && <ImagePreviewDialog images={[{ name, src:imageUrl }]} activeIndex={imagePreviewOpen ? 0 : -1} onClose={() => setImagePreviewOpen(false)} />}
+  </>
 }
 
 function InlineRichText({ text = '' }) {
@@ -2297,6 +2302,24 @@ export function GeneratedImageGallery({ content = '' }) {
   useEffect(() => {
     if (activePath && !paths.includes(activePath)) setActivePath('')
   }, [activePath, paths])
+  useEffect(() => {
+    if (!activePath) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setActivePath('')
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      const index = paths.indexOf(activePath)
+      if (index < 0 || paths.length < 2) return
+      const offset = event.key === 'ArrowLeft' ? -1 : 1
+      setActivePath(paths[(index + offset + paths.length) % paths.length])
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [activePath, paths])
   if (!paths.length) return null
   const activeName = activePath?.split(/[\\/]/).filter(Boolean).pop() || 'generated-image'
   return <>
@@ -2305,7 +2328,6 @@ export function GeneratedImageGallery({ content = '' }) {
         const name = path.split(/[\\/]/).filter(Boolean).pop() || '生成图片'
         return <button key={path} type="button" className="oa-generated-image-thumb" onClick={() => setActivePath(path)} aria-label={`查看原图 ${name}`} title={path}>
           <img src={generatedImageURL(path)} alt={name} loading="lazy" />
-          <span><FileImage size={13}/>{name}</span>
         </button>
       })}
     </div>
@@ -2320,6 +2342,56 @@ export function GeneratedImageGallery({ content = '' }) {
       </section>
     </div>}
   </>
+}
+
+export function ImagePreviewDialog({ images = [], activeIndex = -1, onClose, onChange }) {
+  const image = images[activeIndex]
+  useEffect(() => {
+    if (!image) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose?.()
+        return
+      }
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      if (images.length < 2) return
+      const offset = event.key === 'ArrowLeft' ? -1 : 1
+      onChange?.((activeIndex + offset + images.length) % images.length)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [activeIndex, image, images, onChange, onClose])
+  if (!image || typeof document === 'undefined') return null
+  const label = image.name || ct('图片预览', 'Image preview')
+  const hasMultiple = images.length > 1
+  return createPortal(
+    <div className="oa-image-preview-layer" role="dialog" aria-modal="true" aria-label={`图片预览 ${label}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
+      <section className="oa-image-preview-dialog">
+        <header className="oa-image-preview-head">
+          <div><b title={label}>{label}</b><span>{activeIndex + 1} / {images.length}</span></div>
+          <button type="button" onClick={onClose} aria-label="关闭图片预览" title="关闭图片预览" autoFocus><X size={18}/></button>
+        </header>
+        <div className="oa-image-preview-canvas">
+          {hasMultiple && <button type="button" className="oa-image-preview-nav is-prev" onClick={() => onChange?.((activeIndex - 1 + images.length) % images.length)} aria-label="上一张图片" title="上一张图片"><ChevronLeft size={22}/></button>}
+          <figure className="oa-image-preview-figure">
+            <img src={image.src} alt={label}/>
+            <figcaption>{ct('点击左右按钮或使用键盘方向键切换', 'Use the arrow buttons or keyboard arrows to switch')}</figcaption>
+          </figure>
+          {hasMultiple && <button type="button" className="oa-image-preview-nav is-next" onClick={() => onChange?.((activeIndex + 1) % images.length)} aria-label="下一张图片" title="下一张图片"><ChevronRight size={22}/></button>}
+        </div>
+        <footer className="oa-image-preview-foot">
+          <span>{ct('原图保持完整比例显示', 'Original aspect ratio is preserved')}</span>
+          <a href={image.src} target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>{ct('打开原图', 'Open original')}</a>
+        </footer>
+      </section>
+    </div>,
+    document.body,
+  )
 }
 
 function initWorldline(sid = '') {
@@ -2616,7 +2688,7 @@ const ChatErrorCard = memo(function ChatErrorCard({ message, onRetry }) {
   </section>
 })
 
-export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '' }) {
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
@@ -2635,6 +2707,12 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const [draft, setDraft] = useState(userText)
   const [editError, setEditError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [previewImageIndex, setPreviewImageIndex] = useState(-1)
+  const previewImages = imageFiles.map((file, index) => ({
+    key: `${uploadFileName(file)}-${index}`,
+    name: uploadFileName(file),
+    src: addChatInstanceToURL(uploadFileSource(file), chatInstanceID),
+  })).filter(image => image.src)
   const resetDraft = () => { setDraft(userText); setEditError(''); setEditing(false) }
   const submitEdit = async () => {
     if (!draft.trim() || draft.trim() === String(userText || '').trim()) { setEditing(false); return }
@@ -2657,7 +2735,17 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
     <div className="oa-bubble">
       <div className="oa-msg-body">
       <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
-      {imageFiles.length > 0 && <div className="oa-msg-images">{imageFiles.map((file, i) => <a className="oa-msg-image-link" key={uploadFileName(file) || i} href={uploadFileSource(file)} target="_blank" rel="noreferrer"><img className="oa-msg-image" src={uploadFileSource(file)} alt={uploadFileName(file)} /></a>)}</div>}
+      {imageFiles.length > 0 && <div className="oa-msg-images" aria-label="消息图片">{imageFiles.map((file, i) => {
+        const name = uploadFileName(file)
+        const src = addChatInstanceToURL(uploadFileSource(file), chatInstanceID)
+        const key = `${name}-${i}`
+        const previewIndex = previewImages.findIndex(image => image.key === key)
+        return <button className="oa-msg-image-link" key={key} type="button" onClick={() => previewIndex >= 0 && setPreviewImageIndex(previewIndex)} disabled={!src} aria-label={src ? `查看图片 ${name}` : `图片不可用 ${name}`} title={src ? `点击查看原图：${name}` : name}>
+          <span className="oa-msg-image-stage"><img className="oa-msg-image" src={src} alt={name} loading="lazy" /></span>
+          <span className="oa-msg-image-name">{name}</span>
+        </button>
+      })}</div>}
+      <ImagePreviewDialog images={previewImages} activeIndex={previewImageIndex} onClose={() => setPreviewImageIndex(-1)} onChange={setPreviewImageIndex} />
       {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
         {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
         {pendingFiles.map((file, i) => {
@@ -2676,7 +2764,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion }) {
+const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '' }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
@@ -2684,7 +2772,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
       const nodes = []
       if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
       const retrySource = m.error && i > 0 && messages[i - 1]?.role === 'user' ? messages[i - 1] : null
-      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} />)
+      nodes.push(<ChatMessage key={m.id} message={m} models={models} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} chatInstanceID={chatInstanceID} />)
       return nodes
     })}
   </>
@@ -4471,8 +4559,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     api('/api/instances').then(payload => {
       const options = chatInstanceOptions(payload)
       setChatInstances(options)
-      if (!chatInstanceRef.current && payload?.default_id) {
-        const defaultID = String(payload.default_id).trim()
+      const serverDefaultID = payload?.default_instance_id || payload?.default_id
+      if (!chatInstanceRef.current && serverDefaultID) {
+        const defaultID = String(serverDefaultID).trim()
         chatInstanceRef.current = defaultID
         setChatInstanceID(defaultID)
         persistChatInstanceID(defaultID)
@@ -4851,7 +4940,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} />
+        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />
         <SubagentStatusPanel states={subagents}/>
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>

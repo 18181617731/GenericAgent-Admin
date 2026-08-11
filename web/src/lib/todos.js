@@ -1,7 +1,8 @@
-export const TODO_MODULES = ['overview', 'notifications', 'tasks', 'autonomous', 'goals', 'models', 'files', 'memory', 'channels', 'usage', 'settings', 'logs']
+export const TODO_MODULES = ['overview', 'notifications', 'tasks', 'autonomous', 'goals', 'models', 'files', 'memory', 'channels', 'usage', 'settings', 'logs', 'other']
+export const TODO_OVERVIEW_STATUS_GROUPS = ['pending', 'queued', 'needs_sync', 'completed']
 const MODULE_LABELS = {
-  zh: { overview: '总览', notifications: '消息通知', tasks: '定时任务', autonomous: '自主进化', goals: 'Goal 模式', models: '模型', files: '文件', memory: '记忆', channels: '通道', usage: '用量总览', settings: '配置', logs: '日志' },
-  en: { overview: 'Overview', notifications: 'Notifications', tasks: 'Scheduled tasks', autonomous: 'Autonomous', goals: 'Goal Mode', models: 'Models', files: 'Files', memory: 'Memory', channels: 'Channels', usage: 'Usage', settings: 'Settings', logs: 'Logs' },
+  zh: { overview: '总览', notifications: '消息通知', tasks: '定时任务', autonomous: '自主进化', goals: 'Goal 模式', models: '模型', files: '文件', memory: '记忆', channels: '通道', usage: '用量总览', settings: '配置', logs: '日志', other: '其他' },
+  en: { overview: 'Overview', notifications: 'Notifications', tasks: 'Scheduled tasks', autonomous: 'Autonomous', goals: 'Goal Mode', models: 'Models', files: 'Files', memory: 'Memory', channels: 'Channels', usage: 'Usage', settings: 'Settings', logs: 'Logs', other: 'Other' },
 }
 
 const STATUS_LABELS = {
@@ -23,7 +24,7 @@ export const normalizeTodoOverview = payload => {
     summary: asText(item?.summary),
     section: asText(item?.section),
     status: ['pending', 'queued', 'needs_sync', 'completed'].includes(item?.status) ? item.status : 'pending',
-    module: TODO_MODULES.includes(item?.module) ? item.module : 'autonomous',
+    module: TODO_MODULES.includes(item?.module) ? item.module : 'other',
     round: asText(item?.round),
     priority: asText(item?.priority),
     approved: item?.approved === true,
@@ -31,7 +32,7 @@ export const normalizeTodoOverview = payload => {
     line: Number.isInteger(item?.line) ? item.line : 0,
   })) : []
   const modules = Array.isArray(source.modules) ? source.modules.map(module => ({
-    module: TODO_MODULES.includes(module?.module) ? module.module : 'autonomous',
+    module: TODO_MODULES.includes(module?.module) ? module.module : 'other',
     total: Math.max(0, Number(module?.total) || 0),
     open: Math.max(0, Number(module?.open) || 0),
     completed: Math.max(0, Number(module?.completed) || 0),
@@ -55,10 +56,10 @@ export const todoIsOpen = item => item?.status !== 'completed'
 
 export const todoItemsForModule = (overview, module) => (overview?.items || []).filter(item => item.module === module)
 
-export const filterTodoItems = (items, { showCompleted = false, query = '' } = {}) => {
+export const filterTodoItems = (items, { showCompleted = false, query = '', status = '' } = {}) => {
   const needle = asText(query).toLocaleLowerCase()
   return (Array.isArray(items) ? items : []).filter(item => {
-    if (showCompleted ? item.status !== 'completed' : !todoIsOpen(item)) return false
+    if (status ? item.status !== status : showCompleted ? item.status !== 'completed' : !todoIsOpen(item)) return false
     if (!needle) return true
     return [item.title, item.summary, item.section, item.round, item.priority, todoStatusLabel(item.status, 'zh')]
       .some(value => asText(value).toLocaleLowerCase().includes(needle))
@@ -66,5 +67,10 @@ export const filterTodoItems = (items, { showCompleted = false, query = '' } = {
 }
 
 export const todoItemStatusTone = status => ({ completed: 'done', queued: 'queued', needs_sync: 'sync', pending: 'pending' }[status] || 'pending')
+
+export const todoOverviewStatusSummary = overview => TODO_OVERVIEW_STATUS_GROUPS.map(status => ({
+  status,
+  count: (overview?.items || []).filter(item => item.status === status).length,
+}))
 
 export const todoModuleSummary = (overview, module) => (overview?.modules || []).find(item => item.module === module) || { module, total: 0, open: 0, completed: 0, needsSync: 0 }

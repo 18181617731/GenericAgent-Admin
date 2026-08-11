@@ -42,13 +42,13 @@ func TestBuildProjectTodosParsesStatusAndModuleContext(t *testing.T) {
 		t.Fatalf("approved task title = %+v", overview.Items[1])
 	}
 	assertProjectTodo(t, overview.Items[2], "pending", "files", "", "")
-	assertProjectTodo(t, overview.Items[3], "needs_sync", "autonomous", "R12", "")
+	assertProjectTodo(t, overview.Items[3], "needs_sync", "other", "R12", "")
 
 	modules := map[string]ProjectTodoModule{}
 	for _, module := range overview.Modules {
 		modules[module.Module] = module
 	}
-	if modules["tasks"].Completed != 1 || modules["models"].Open != 1 || modules["files"].Open != 1 || modules["autonomous"].Open != 1 {
+	if modules["tasks"].Completed != 1 || modules["models"].Open != 1 || modules["files"].Open != 1 || modules["other"].Open != 1 {
 		t.Fatalf("module summaries = %#v", modules)
 	}
 }
@@ -76,7 +76,7 @@ func TestProjectTodoModuleUsesSpecificProductDomains(t *testing.T) {
 		"执行日志 trace 可观测":     "logs",
 		"TMWebDriver Web 通道": "channels",
 		"Python 依赖与 PATH 配置": "settings",
-		"开发一个新的冷门能力工具":       "autonomous",
+		"开发一个新的冷门能力工具":       "other",
 	}
 	for title, expected := range tests {
 		if actual := projectTodoModule(title); actual != expected {

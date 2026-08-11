@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { filterTodoItems, normalizeTodoOverview, todoItemsForModule, todoModuleLabel, todoStatusLabel } from './todos.js'
+import { filterTodoItems, normalizeTodoOverview, todoItemsForModule, todoModuleLabel, todoOverviewStatusSummary, todoStatusLabel } from './todos.js'
 
 const payload = {
   source_exists: true,
@@ -30,6 +30,22 @@ test('filters open and completed TODOs independently and searches context', () =
   assert.deepEqual(filterTodoItems(overview.items).map(item => item.id), ['a', 'b'])
   assert.deepEqual(filterTodoItems(overview.items, { showCompleted: true }).map(item => item.id), ['c'])
   assert.deepEqual(filterTodoItems(overview.items, { query: '模型' }).map(item => item.id), ['b'])
+  assert.deepEqual(filterTodoItems(overview.items, { status: 'queued' }).map(item => item.id), ['a'])
+})
+
+test('summarizes the overview by mutually exclusive processing status', () => {
+  const overview = normalizeTodoOverview(payload)
+  assert.deepEqual(todoOverviewStatusSummary(overview), [
+    { status: 'pending', count: 0 },
+    { status: 'queued', count: 1 },
+    { status: 'needs_sync', count: 1 },
+    { status: 'completed', count: 1 },
+  ])
+})
+
+test('does not assign an unknown module to autonomous work', () => {
+  const overview = normalizeTodoOverview({ items: [{ title: '未识别领域', module: 'new-module' }] })
+  assert.equal(overview.items[0].module, 'other')
 })
 
 test('uses readable module and status labels with safe fallbacks', () => {

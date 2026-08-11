@@ -1,7 +1,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
-import { ChatFileScopeContext, ChatMessage, extractToolResultFilePath, resolveChatToolFilePath } from './ChatApp.jsx'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { ChatFileScopeContext, ChatMessage, GeneratedImageGallery, extractToolResultFilePath, resolveChatToolFilePath } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
 
@@ -27,10 +27,68 @@ describe('chat file attachments', () => {
     expect(image).toBeTruthy()
     expect(image.getAttribute('src')).toBe('data:image/jpeg;base64,AA==')
     expect(image.getAttribute('alt')).toBe('large-photo.jpg')
-    const imageLink = container.querySelector('.oa-msg-image-link')
+    const imageLink = screen.getByRole('button', { name:'查看图片 large-photo.jpg' })
     expect(imageLink).toBeTruthy()
-    expect(imageLink.getAttribute('href')).toBe('data:image/jpeg;base64,AA==')
-    expect(imageLink.getAttribute('target')).toBe('_blank')
+    expect(imageLink.getAttribute('type')).toBe('button')
+    expect(screen.getByText('large-photo.jpg')).toBeTruthy()
+
+    fireEvent.click(imageLink)
+    expect(screen.getByRole('dialog', { name:'图片预览 large-photo.jpg' })).toBeTruthy()
+    expect(screen.getByRole('button', { name:'关闭图片预览' })).toBeTruthy()
+    expect(screen.getByText('1 / 1')).toBeTruthy()
+
+    fireEvent.keyDown(document, { key:'Escape' })
+    expect(screen.queryByRole('dialog', { name:'图片预览 large-photo.jpg' })).toBeNull()
+  })
+
+  test('supports switching between full-size image previews', () => {
+    render(
+      <ChatMessage
+        message={{
+          id:'u-images',
+          role:'user',
+          content:'See images',
+          files:[
+            { name:'first.png', type:'image/png', url:'data:image/png;base64,AA==' },
+            { name:'second.png', type:'image/png', url:'data:image/png;base64,BB==' },
+          ],
+          created_at:0,
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name:'查看图片 first.png' }))
+    expect(screen.getByRole('dialog', { name:'图片预览 first.png' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name:'下一张图片' }))
+    expect(screen.getByRole('dialog', { name:'图片预览 second.png' })).toBeTruthy()
+  })
+
+  test('opens generated images in a lightbox and closes with Escape', () => {
+    render(<GeneratedImageGallery content={'[FILE:C:\\tmp\\generated-photo.png]'} />)
+
+    const thumb = screen.getByRole('button', { name:'查看原图 generated-photo.png' })
+    expect(thumb.querySelector('span')).toBeNull()
+    expect(screen.queryByText('generated-photo.png')).toBeNull()
+    fireEvent.click(thumb)
+    expect(screen.getByRole('dialog', { name:'生成图片预览' })).toBeTruthy()
+
+    fireEvent.keyDown(document, { key:'Escape' })
+    expect(screen.queryByRole('dialog', { name:'生成图片预览' })).toBeNull()
+  })
+
+  test('adds the active chat instance to saved upload image URLs', () => {
+    const { container } = render(
+      <ChatMessage
+        chatInstanceID="default"
+        message={{ id:'u-saved-image', role:'user', content:'Saved image', files:[{ name:'saved.png', type:'image/png', url:'/api/chat/file/saved.png' }], created_at:0 }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-msg-image')?.getAttribute('src')).toBe('/api/chat/file/saved.png?instance_id=default')
   })
 
   test('keeps four uploaded images separate and ignores tool-log image paths', () => {
@@ -95,6 +153,28 @@ describe('chat file attachments', () => {
     const download = screen.getByRole('link', { name:'下载文件 report.pdf' })
     expect(download.getAttribute('href')).toBe('/api/files/download?path=C%3A%2Ftmp%2Freport.pdf')
     expect(download.getAttribute('download')).toBe('report.pdf')
+  })
+
+  test('renders assistant image files as image-only preview cards', () => {
+    const path = 'C:/tmp/schnauzer.png'
+    const { container } = render(
+      <ChatMessage
+        message={{ id:'a-image-file', role:'assistant', content:`Done\n\n[FILE:${path}]`, created_at:0 }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    const card = container.querySelector('.oa-file-card.oa-file-kind-image')
+    expect(card).toBeTruthy()
+    expect(card.querySelector('.oa-file-meta')).toBeNull()
+    expect(card.getAttribute('title')).toBe(path)
+    expect(card.querySelector('img')?.getAttribute('src')).toBe(`/api/files/image?path=${encodeURIComponent(path)}`)
+    expect(screen.queryByText(path)).toBeNull()
+    expect(screen.getByRole('link', { name:'下载文件 schnauzer.png' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name:'查看图片 schnauzer.png' }))
+    expect(screen.getByRole('dialog', { name:'图片预览 schnauzer.png' })).toBeTruthy()
   })
 
   test('resolves workspace-relative tool paths within the GA root', () => {
