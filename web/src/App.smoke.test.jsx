@@ -2131,6 +2131,10 @@ describe('mobile chat session navigation', () => {
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('First chat'))
     expect(document.querySelectorAll('.oa-sidebar .oa-session-row')).toHaveLength(sessions.length)
+    expect(screen.getAllByRole('button', { name:'返回管理台' })).toHaveLength(2)
+    expect(document.querySelector('.oa-admin-back-trigger')?.textContent).toBe('管理台')
+    expect(document.querySelector('.oa-topbar-actions .oa-context-btn .oa-context-label')?.textContent).toBe('上下文')
+    expect(document.querySelector('.oa-topbar-actions .oa-worldline-btn .oa-context-label')?.textContent).toBe('世界线')
     expect(screen.getByText('历史会话')).toBeTruthy()
     expect(screen.queryByText('最近对话')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name:'展开侧栏' }))
@@ -2195,6 +2199,65 @@ describe('chat worldline controls', () => {
     await waitFor(() => expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy())
     expect(globalThis.fetch.mock.calls.some(([url]) => String(url) === '/api/chat/worldline/worldline-session?activate=true')).toBe(true)
   }, 15000)
+})
+
+describe('chat loop controls', () => {
+  test('explains an empty objective, uses the current message, and completes start-stop flow', async () => {
+    installBrowserPolyfills()
+    Element.prototype.scrollIntoView = vi.fn()
+    const sessions = [{ id:'loop-session', title:'Loop chat', count:0, updated_at:'2026-08-11T10:00:00Z' }]
+    const model = { index:0, provider:'Provider A', model:'loop-model' }
+    const stoppedLoop = { enabled:false, status:'waiting', epoch:0, round:0, max_rounds:0, controller_llm_no:0 }
+    let startedBody = null
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
+      if (path === '/api/instances') return jsonResponse({ items:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path === '/api/chat/session/loop-session') return jsonResponse({ ...sessions[0], messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/loop-session') return jsonResponse({ llms:[model], settings:{ llm_no:0, tools_mode:'official' }, loop:stoppedLoop })
+      if (path === '/api/chat/loop/loop-session/start') {
+        startedBody = JSON.parse(options.body)
+        return jsonResponse({ ok:true, loop:{ enabled:true, status:'waiting', epoch:1, round:0, max_rounds:startedBody.max_rounds, controller_prompt:startedBody.objective, controller_llm_no:startedBody.controller_llm_no } })
+      }
+      if (path === '/api/chat/loop/loop-session/stop') return jsonResponse({ ok:true, loop:{ enabled:false, status:'stopped', epoch:2, round:0, max_rounds:10, stop_reason:'user', controller_prompt:startedBody?.objective || '' } })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Loop chat'))
+    fireEvent.click(screen.getByRole('button', { name:'配置 Loop' }))
+    const startButton = screen.getByRole('button', { name:'启动 Loop' })
+    const objective = screen.getByRole('textbox', { name:'目标' })
+    const maxRounds = screen.getByRole('spinbutton', { name:'最多轮次' })
+    expect(screen.getByText('项目 TODO 修复闭环')).toBeTruthy()
+    expect(startButton.disabled).toBe(false)
+    fireEvent.click(startButton)
+    await waitFor(() => expect(screen.getByText('请填写目标，或先在当前输入框写入任务后再启动。')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name:'填入此 Demo' }))
+    expect(objective.value).toContain('请检查当前项目 TODO')
+    expect(maxRounds.value).toBe('3')
+    fireEvent.change(objective, { target:{ value:'' } })
+
+    const prompt = '请整理当前项目的待办，并在完成后汇报结果。'
+    fireEvent.change(document.querySelector('.oa-composer textarea'), { target:{ value:prompt } })
+    expect(screen.getByText('目标为空，启动后会立即执行当前输入内容。')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name:/Loop 控制模型/ }))
+    await waitFor(() => expect(document.querySelector('.oa-cselect-menu-portal')).toBeTruthy())
+    fireEvent.mouseDown(screen.getByRole('option', { name:'Provider A / loop-model' }))
+    fireEvent.click(screen.getByRole('button', { name:'启动 Loop' }))
+    await waitFor(() => expect(startedBody?.objective).toBe(prompt))
+    expect(startedBody?.max_rounds).toBe(3)
+    expect(document.querySelector('.oa-composer textarea')?.value).toBe('')
+    expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name:'停止 Loop' }))
+    await waitFor(() => expect(globalThis.fetch.mock.calls.some(([url, options]) => String(url).split('?')[0] === '/api/chat/loop/loop-session/stop' && options?.method === 'POST')).toBe(true))
+  }, 30000)
 })
 
 describe('assistant generated image gallery', () => {

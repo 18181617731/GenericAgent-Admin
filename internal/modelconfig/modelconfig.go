@@ -73,6 +73,7 @@ type ModelConfig struct {
 	ConnectTimeout        *int                   `json:"connect_timeout,omitempty"`
 	UserAgent             string                 `json:"user_agent,omitempty"`
 	APIMode               string                 `json:"api_mode,omitempty"`
+	ServiceTier           string                 `json:"service_tier,omitempty"`
 	ThinkingType          string                 `json:"thinking_type,omitempty"`
 	ReasoningEffort       string                 `json:"reasoning_effort,omitempty"`
 	FakeCCSystemPrompt    *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`

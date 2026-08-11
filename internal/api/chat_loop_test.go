@@ -3,12 +3,14 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"genericagent-admin-go/internal/config"
 )
@@ -123,6 +125,16 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-start-stop"
 	saveChatLoopTestSession(t, s, chatSession{ID: sid})
+	oldStartChatWorker := startChatWorkerFunc
+	releaseWorker := make(chan struct{})
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		<-releaseWorker
+		return nil, errors.New("test worker released")
+	}
+	defer func() {
+		close(releaseWorker)
+		startChatWorkerFunc = oldStartChatWorker
+	}()
 
 	start := httptest.NewRecorder()
 	startReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"Finish the release","max_rounds":999}`))
@@ -137,11 +149,14 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	if err := json.Unmarshal(start.Body.Bytes(), &startPayload); err != nil {
 		t.Fatal(err)
 	}
-	if !startPayload.Loop.Enabled || startPayload.Loop.Status != chatLoopStatusWaiting || startPayload.Loop.MaxRounds != chatLoopMaxRounds {
+	if !startPayload.Loop.Enabled || startPayload.Loop.Status != chatLoopStatusRunning || startPayload.Loop.Round != 1 || startPayload.Loop.MaxRounds != chatLoopMaxRounds {
 		t.Fatalf("start loop = %#v", startPayload.Loop)
 	}
 	if startPayload.Loop.ControllerPrompt != "Finish the release" || startPayload.Loop.Epoch != 1 {
 		t.Fatalf("start loop metadata = %#v", startPayload.Loop)
+	}
+	if len(startPayload.Loop.Records) != 2 || startPayload.Loop.Records[1].Phase != "starting" {
+		t.Fatalf("first loop turn record = %#v", startPayload.Loop.Records)
 	}
 
 	stop := httptest.NewRecorder()
@@ -159,6 +174,41 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	if persisted.Loop.Epoch != 2 {
 		t.Fatalf("stopped epoch = %d, want 2", persisted.Loop.Epoch)
 	}
+	if len(persisted.Messages) != 2 || persisted.Messages[0].Role != "user" || persisted.Messages[1].Role != "assistant" {
+		t.Fatalf("first loop turn messages = %#v", persisted.Messages)
+	}
+}
+
+func TestChatLoopFirstRunFailureStopsLoop(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "loop-first-run-error"
+	saveChatLoopTestSession(t, s, chatSession{ID: sid})
+	oldStartChatWorker := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		return nil, errors.New("worker unavailable")
+	}
+	defer func() { startChatWorkerFunc = oldStartChatWorker }()
+
+	start := httptest.NewRecorder()
+	startReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"Run the first task","max_rounds":3}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	s.chatHandler(start, startReq)
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d: %s", start.Code, start.Body.String())
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		persisted, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+		if err == nil && !persisted.Loop.Enabled {
+			if persisted.Loop.Status != chatLoopStatusError || persisted.Loop.StopReason != "agent_error" {
+				t.Fatalf("failed first run loop = %#v", persisted.Loop)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	persisted, _ := loadChatSession(s.CfgStore.Snapshot(), sid)
+	t.Fatalf("first run failure left loop active: %#v", persisted.Loop)
 }
 
 func TestChatLoopStateAppearsInSessionAPIs(t *testing.T) {

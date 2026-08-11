@@ -33,6 +33,7 @@ type chatMessage struct {
 	ID              string                   `json:"id"`
 	Role            string                   `json:"role"`
 	Content         string                   `json:"content"`
+	Outputs         []string                 `json:"outputs,omitempty"`
 	ModelID         string                   `json:"model_id,omitempty"`
 	LLMNo           *int                     `json:"llm_no,omitempty"`
 	Files           []map[string]interface{} `json:"files,omitempty"`
@@ -489,6 +490,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
 		s.endChatRunOwned(sid, token)
+		s.afterChatRunTerminal(sid, false)
 		return
 	}
 	s.setChatRunCmd(sid, worker.Cmd)
@@ -510,6 +512,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
 		s.endChatRunOwned(sid, token)
+		s.afterChatRunTerminal(sid, false)
 		return
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
@@ -1441,7 +1444,13 @@ func chatPythonForConfig(cfg config.AppConfig) string {
 	// launcher can miss GA dependencies (for example requests) and hide models.
 	// With nothing configured, borrow a sibling instance's interpreter rather
 	// than trusting a path that merely exists.
-	return resolveUsablePythonForRoot(cfg.GARoot, cfg.PythonPath, cfg.PythonFallbackRoots)
+	configured := strings.TrimSpace(cfg.PythonPath)
+	if configured != "" && strings.ContainsAny(configured, `/\\`) {
+		if info, err := os.Stat(configured); err != nil || info.IsDir() {
+			return resolvePythonForRoot(cfg.GARoot, "")
+		}
+	}
+	return resolveUsablePythonForRoot(cfg.GARoot, configured, cfg.PythonFallbackRoots)
 }
 
 func (s *Server) listGARuntimeLLMs(cfg config.AppConfig) ([]map[string]interface{}, error) {

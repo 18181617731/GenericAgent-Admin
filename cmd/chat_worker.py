@@ -2465,6 +2465,10 @@ def handle_request(agent, worker, req):
                 stop_ultraplan_observer()
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent)}
+                outputs = [value for value in (item.get('outputs') or [])
+                           if isinstance(value, str) and value.strip()]
+                if outputs:
+                    msg['outputs'] = outputs
                 if _up_state.get('phases') or _up_state.get('objective'):
                     msg['ultraplan_state'] = dict(_up_state)
                 emit_goal_update(force=True)

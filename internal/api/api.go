@@ -579,27 +579,8 @@ func (s *Server) startTMWebDriverMaster() (int, []string, error) {
 // pyfind, which skips the Microsoft Store python stub instead of handing back a
 // launcher that exits 9009.
 func resolvePythonForRoot(gaRoot, configured string) string {
-	if configured = strings.TrimSpace(configured); configured != "" {
-		if path, err := executablePath(configured); err == nil {
-			return path
-		}
-	}
-	var candidates []string
-	if runtime.GOOS == "windows" {
-		candidates = append(candidates, filepath.Join(gaRoot, ".venv", "Scripts", "python.exe"), filepath.Join(gaRoot, "venv", "Scripts", "python.exe"), "python")
-	} else {
-		candidates = append(candidates, filepath.Join(gaRoot, ".venv", "bin", "python"), filepath.Join(gaRoot, "venv", "bin", "python"), "python3", "python")
-	}
-	for _, c := range candidates {
-		if strings.ContainsRune(c, filepath.Separator) {
-			if st, err := os.Stat(c); err == nil && !st.IsDir() {
-				return c
-			}
-			continue
-		}
-		if p, err := exec.LookPath(c); err == nil {
-			return p
-		}
+	if python := pyfind.Resolve(gaRoot, configured); python != "" {
+		return python
 	}
 	return "python"
 }

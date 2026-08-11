@@ -68,12 +68,22 @@ test('mobile feedback stays in document flow and model actions use two columns',
   )
 })
 
-test('mobile chat topbar and notification filters stay inside the iPhone viewport', () => {
+test('mobile chat navigation and tools stay fixed inside the iPhone viewport', () => {
   assert.match(
     css,
-    /@media\s*\(max-width:680px\)[\s\S]*?\.oa-topbar\s*\{[^}]*grid-template-columns\s*:\s*76px\s+minmax\(0,1fr\)\s+36px\s+36px/i,
+    /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*grid-template-columns\s*:\s*max-content\s+minmax\(0,\s*1fr\)/i,
   )
-  assert.match(css, /\.oa-topbar\s*>\s*\.oa-context-btn\s*\{[^}]*display\s*:\s*none\s*!important/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*grid-template-rows\s*:\s*48px\s+44px/i)
+  assert.match(css, /\.oa-chat\s+\.oa-admin-back-trigger\s*\{[^}]*display\s*:\s*none/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-collapsed-actions\s+\.oa-admin-back-trigger\s*\{[^}]*display\s*:\s*inline-flex/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*position\s*:\s*fixed/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*inset\s*:\s*0\s+0\s+auto/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*width\s*:\s*100%/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar-actions\s*\{[^}]*grid-row\s*:\s*2/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-workspace\s*\{[^}]*grid-row\s*:\s*2/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-workspace\s*>\s*\.oa-thread\s*\{[^}]*grid-row\s*:\s*auto/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-composer-wrap\s*\{[^}]*grid-row\s*:\s*3/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar-actions\s*>\s*\.oa-context-btn\s*\{[^}]*display\s*:\s*inline-flex\s*!important/i)
   assert.match(css, /\.oa-mobile-tools-layer\s*\{[^}]*position\s*:\s*fixed[^}]*z-index\s*:\s*1000/i)
   assert.match(css, /\.oa-mobile-picker-backdrop\s*\{[^}]*box-sizing\s*:\s*border-box[^}]*padding-bottom\s*:\s*max\(4px,\s*env\(safe-area-inset-bottom\)\)/i)
   assert.match(
@@ -82,6 +92,25 @@ test('mobile chat topbar and notification filters stay inside the iPhone viewpor
   )
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-topbar\s*\{[^}]*overflow-x\s*:\s*visible\s*!important[^}]*overflow-y\s*:\s*visible\s*!important/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.notification-popover\s*\{[^}]*z-index\s*:\s*1200/i)
+})
+
+test('desktop chat keeps the composer under the transcript and gives sidebars breathing room', () => {
+  assert.match(css, /\.oa-main\.has-loop\s*\{[^}]*--oa-chat-rail-width\s*:\s*320px/i)
+  assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*width\s*:\s*min\([^;]*var\(--oa-chat-rail-width/i)
+  assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*margin-right\s*:\s*var\(--oa-chat-rail-width/i)
+  assert.match(css, /\.oa-chat\s+\.oa-sidebar\s*\{[^}]*padding\s*:\s*14px\s+14px\s+12px/i)
+  assert.match(css, /\.oa-chat\s+\.oa-session-list\s*\{[^}]*padding\s*:\s*4px\s+3px\s+12px/i)
+  assert.match(css, /\.oa-workspace\.has-loop\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+320px/i)
+  assert.match(css, /\.oa-loop-panel\s*\{[^}]*display\s*:\s*grid/i)
+  assert.match(css, /\.oa-loop-config\s*\{[^}]*display\s*:\s*grid/i)
+})
+
+test('loop configuration keeps model options above clipped rails and explains empty objectives', () => {
+  assert.match(css, /\.oa-cselect-menu-portal\s*\{[^}]*position\s*:\s*fixed[^}]*z-index\s*:\s*1400/i)
+  assert.match(css, /\.oa-loop-config-actions\s+small\.is-warning\s*\{[^}]*color\s*:\s*var\(--red\)/i)
+  assert.match(css, /\.oa-loop-demo\s*\{[^}]*border\s*:/i)
+  assert.match(css, /\.oa-loop-demo-steps\s*\{[^}]*display\s*:\s*grid/i)
+  assert.match(css, /\.oa-loop-guide\s*\{[^}]*border\s*:/i)
 })
 
 test('mobile density pass keeps the shell compact without shrinking touch controls into text', () => {

@@ -1360,7 +1360,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       <nav aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
     </aside>
-    <main className="main"><header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header>
+    <main className="main">{tab === 'chat' ? <header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header> : <header className="admin-page-header">
+      <div className="admin-page-heading"><span className="admin-page-icon" aria-hidden="true">{icon(tab)}</span><div className="admin-page-copy"><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div></div>
+      <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}><span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span><span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div>
+    </header>}
       <GlobalFeedback message={msg} tone={notice?.kind === 'pending' ? 'progress' : notice?.kind} onDismiss={dismissMessage} onRetry={notice?.kind === 'error' ? refreshApp : undefined} retryLabel={t.retry} placement={tab === 'chat' ? 'top' : 'bottom'}/>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
@@ -1477,7 +1480,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>}
       </section>{moduleTodo('tasks')}</>}
       {tab==='memory' && <><MemoryPage t={t} memory={inv.memory} onOpen={openMemoryEntry} onDownload={downloadFile} onReveal={entry => revealFileInExplorer(entry.path, 'folder')} onCopy={copyMemoryPath} onDiscuss={discussMemoryFile} onRefresh={refreshMemoryInventory} refreshing={memoryRefreshing}/>{moduleTodo('memory')}</>}
-      {tab==='channels' && <><ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService}/>{moduleTodo('channels')}</>}
+      {tab==='channels' && <><ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService} onOpenHub={openHub}/>{moduleTodo('channels')}</>}
       {tab==='autonomous' && <><AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>{moduleTodo('autonomous')}</>}
       {tab==='usage' && <><UsagePage lang={lang}/>{moduleTodo('usage')}</>}
       {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
@@ -1610,6 +1613,10 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
       setMsg({ kind: d.ok ? 'success' : 'error', text: d.ok ? `${text.testPassed(name)}${detail ? ` · ${detail}` : ''}` : text.testFailed(name, detail) })
     } catch (e) { setMsg({ kind: 'error', text: text.testFailed(name, e.message) }) } finally { setTesting('') }
   }
+  const profiles = config?.profiles || []
+  const configuredCount = profiles.filter(profile => (profile.fields || []).some(field => field.has_value || String(field.value || '').trim())).length
+  const channelTone = id => ({ feishu:'#3370ff', wecom:'#07c160', dingtalk:'#1677ff', discord:'#5865f2', qq:'#12b7f5', telegram:'#229ed9', wechat:'#2aae67' }[id] || '#6b7280')
+  const channelMark = profile => ({ feishu:'飞', wecom:'企', dingtalk:'钉', discord:'D', qq:'Q', telegram:'T', wechat:'微' }[profile.id] || profileName(profile).slice(0, 1).toUpperCase())
   const allFrontendSvcs = frontendSvcs || []
   const runningCount = allFrontendSvcs.filter(s => s.running).length
   const serviceFilters = [
@@ -1713,17 +1720,25 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
           })}
           {!loading && !profiles.length && <p className="empty-cell">{t.empty}</p>}
         </div>
-      </Panel>
-      <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
-        <p className="muted">{t.desc.channels}</p>
-        <div className="channel-service-toolbar">
-          <div className="channel-service-filters" role="group" aria-label={text.serviceFilterLabel}>
-            {serviceFilters.map(([key, label, count]) => <button key={key} type="button" className={serviceFilter === key ? 'active' : ''} aria-pressed={serviceFilter === key} onClick={() => setServiceFilter(key)}>{label}<span>{count}</span></button>)}
+      </section>
+      <section
+        id="channel-panel-services"
+        className="channel-services-view"
+        role="tabpanel"
+        aria-labelledby="channel-tab-services"
+        hidden={activeView !== 'services'}
+      >
+        <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">
+          <p className="muted">{t.desc.channels}</p>
+          <div className="channel-service-toolbar">
+            <div className="channel-service-filters" role="group" aria-label={text.serviceFilterLabel}>
+              {serviceFilters.map(([key, label, count]) => <button key={key} type="button" className={serviceFilter === key ? 'active' : ''} aria-pressed={serviceFilter === key} onClick={() => setServiceFilter(key)}>{label}<span>{count}</span></button>)}
+            </div>
+            <span className="channel-service-count" aria-live="polite">{visibleFrontendSvcs.length} / {allFrontendSvcs.length}</span>
           </div>
-          <span className="channel-service-count" aria-live="polite">{visibleFrontendSvcs.length} / {allFrontendSvcs.length}</span>
-        </div>
-        <ChannelServiceTable services={visibleFrontendSvcs} emptyMessage={allFrontendSvcs.length ? text.serviceFilterEmpty(filterLabel) : t.hints.noFrontend} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart}/>
-      </Panel>
+          <ChannelServiceTable services={visibleFrontendSvcs} emptyMessage={allFrontendSvcs.length ? text.serviceFilterEmpty(filterLabel) : t.hints.noFrontend} t={t} actionState={actionStates} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onReflectStart={onReflectStart} onOpenHub={onOpenHub}/>
+        </Panel>
+      </section>
     </div>
   </section>
 }

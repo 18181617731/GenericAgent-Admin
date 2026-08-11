@@ -204,6 +204,8 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 
 	sid = safeChatID(sid)
 	running := s.chatRunActive(sid)
+	startFirstRun := false
+	loopEpoch := int64(0)
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err == nil {
@@ -233,7 +235,14 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		appendChatLoopRecord(&cs.Loop, "started", "Loop started.", "")
 		if running {
 			cs.Loop.Status = chatLoopStatusRunning
+		} else {
+			// A new chat has no completed assistant turn that could trigger the
+			// normal afterChatRunTerminal -> controller evaluation chain. Queue
+			// the objective itself as the first main-agent turn instead of leaving
+			// the loop in a permanent waiting/0-of-N state.
+			startFirstRun = len(cs.Messages) == 0
 		}
+		loopEpoch = cs.Loop.Epoch
 		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	}
 	s.SessionMu.Unlock()
@@ -242,7 +251,23 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		return
 	}
 
-	if !running && chatLoopHasTerminalAssistant(cs) {
+	if startFirstRun {
+		s.queueChatLoopRun(chatLoopRunRequest{
+			sid:            sid,
+			epoch:          loopEpoch,
+			prompt:         objective,
+			expectedStatus: chatLoopStatusWaiting,
+			phase:          "starting",
+			summary:        "First task turn queued.",
+		})
+		// Return the state after the first turn was admitted so the browser can
+		// attach to the run immediately, even when the worker starts quickly.
+		s.SessionMu.Lock()
+		if latest, loadErr := loadChatSession(s.CfgStore.Snapshot(), sid); loadErr == nil {
+			cs = latest
+		}
+		s.SessionMu.Unlock()
+	} else if !running && chatLoopHasTerminalAssistant(cs) {
 		s.afterChatRunTerminal(sid, true)
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "loop": cs.Loop})
@@ -278,6 +303,7 @@ func (s *Server) publishChatLoopState(sid string, state chatLoopState) {
 
 func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	if !success {
+		s.failChatLoopAfterRun(sid)
 		return
 	}
 	sid = safeChatID(sid)
@@ -311,6 +337,18 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	s.SessionMu.Unlock()
 	s.publishChatLoopState(sid, cs.Loop)
 	go s.evaluateChatLoop(sid, epoch, cs)
+}
+
+func (s *Server) failChatLoopAfterRun(sid string) {
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	epoch := cs.Loop.Epoch
+	active := err == nil && cs.Loop.Enabled
+	s.SessionMu.Unlock()
+	if active {
+		s.finishChatLoop(sid, epoch, chatLoopStatusError, "agent_error")
+	}
 }
 
 func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
@@ -369,25 +407,25 @@ func (s *Server) finishChatLoop(sid string, epoch int64, status, reason string) 
 	}
 }
 
-func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
-	token := s.beginChatRun(sid)
-	if token == nil {
-		s.deferChatLoopForActiveRun(sid, epoch)
-		return
-	}
+type chatLoopRunRequest struct {
+	sid            string
+	epoch          int64
+	prompt         string
+	expectedStatus string
+	phase          string
+	summary        string
+}
 
-	runStartedAtMS := time.Now().UnixMilli()
-	userMsg := chatMessage{ID: newChatID(), Role: "user", Content: prompt, CreatedAt: time.Now().Unix()}
-	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
+func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg, pendingMsg chatMessage, startedAtMS int64) (chatSession, bool, error) {
 	var cs chatSession
-	owned, saveErr := s.saveChatRunPending(sid, token, pendingMsg.ID, runStartedAtMS, func() error {
+	owned, saveErr := s.saveChatRunPending(req.sid, token, pendingMsg.ID, startedAtMS, func() error {
 		s.SessionMu.Lock()
 		defer s.SessionMu.Unlock()
-		latest, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+		latest, err := loadChatSession(s.CfgStore.Snapshot(), req.sid)
 		if err != nil {
 			return err
 		}
-		if !latest.Loop.Enabled || latest.Loop.Epoch != epoch || latest.Loop.Status != chatLoopStatusEvaluating {
+		if !latest.Loop.Enabled || latest.Loop.Epoch != req.epoch || latest.Loop.Status != req.expectedStatus {
 			return errChatLoopStale
 		}
 		latest.Loop.MaxRounds = normalizeChatLoopMaxRounds(latest.Loop.MaxRounds)
@@ -405,7 +443,11 @@ func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
 		latest.Loop.Round++
 		latest.Loop.Status = chatLoopStatusRunning
 		latest.Loop.StopReason = ""
-		appendChatLoopRecord(&latest.Loop, "continue", "Controller queued the next step.", prompt)
+		phase := req.phase
+		if phase == "" {
+			phase = "continue"
+		}
+		appendChatLoopRecord(&latest.Loop, phase, req.summary, req.prompt)
 		latest.Messages = append(latest.Messages, userMsg, pendingMsg)
 		latest.UpdatedAt = time.Now().Unix()
 		updateChatTitle(&latest)
@@ -415,16 +457,12 @@ func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
 		cs = latest
 		return nil
 	})
-	if !owned || saveErr != nil {
-		s.endChatRunOwned(sid, token)
-		if saveErr != nil && !errors.Is(saveErr, errChatLoopStale) {
-			s.finishChatLoop(sid, epoch, chatLoopStatusError, "persist_error: "+saveErr.Error())
-		}
-		return
-	}
+	return cs, owned, saveErr
+}
 
-	s.publishChatLoopState(sid, cs.Loop)
-	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": userMsg})
+func (s *Server) launchChatLoopRun(req chatLoopRunRequest, token *chatRun, cs chatSession, userMsg, pendingMsg chatMessage, runStartedAtMS int64) {
+	s.publishChatLoopState(req.sid, cs.Loop)
+	s.publishChatRun(req.sid, map[string]interface{}{"type": "user", "message": userMsg})
 	workerHistory := append([]chatMessage(nil), cs.Messages...)
 	for i := len(workerHistory) - 1; i >= 0; i-- {
 		if workerHistory[i].ID == userMsg.ID {
@@ -433,7 +471,7 @@ func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
 		}
 	}
 	cmdReq := map[string]interface{}{
-		"prompt":                   prompt,
+		"prompt":                   req.prompt,
 		"history":                  workerHistory,
 		"raw_history":              cs.RawHistory,
 		"history_info":             cs.HistoryInfo,
@@ -447,13 +485,45 @@ func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
 		"_ga_pending_assistant_id": pendingMsg.ID,
 		"_ga_run_started_at_ms":    runStartedAtMS,
 	}
-	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
+	go s.runChatWorkerOwned(req.sid, token, cs, cmdReq)
+}
+
+func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
+	s.queueChatLoopRun(chatLoopRunRequest{
+		sid:            sid,
+		epoch:          epoch,
+		prompt:         prompt,
+		expectedStatus: chatLoopStatusEvaluating,
+		phase:          "continue",
+		summary:        "Controller queued the next step.",
+	})
+}
+
+func (s *Server) queueChatLoopRun(req chatLoopRunRequest) {
+	token := s.beginChatRun(req.sid)
+	if token == nil {
+		s.deferChatLoopForActiveRun(req.sid, req.epoch)
+		return
+	}
+
+	runStartedAtMS := time.Now().UnixMilli()
+	userMsg := chatMessage{ID: newChatID(), Role: "user", Content: req.prompt, CreatedAt: time.Now().Unix()}
+	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
+	cs, owned, saveErr := s.saveChatLoopRun(req, token, userMsg, pendingMsg, runStartedAtMS)
+	if !owned || saveErr != nil {
+		s.endChatRunOwned(req.sid, token)
+		if saveErr != nil && !errors.Is(saveErr, errChatLoopStale) {
+			s.finishChatLoop(req.sid, req.epoch, chatLoopStatusError, "persist_error: "+saveErr.Error())
+		}
+		return
+	}
+	s.launchChatLoopRun(req, token, cs, userMsg, pendingMsg, runStartedAtMS)
 }
 
 func (s *Server) deferChatLoopForActiveRun(sid string, epoch int64) {
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
-	if err == nil && cs.Loop.Enabled && cs.Loop.Epoch == epoch && cs.Loop.Status == chatLoopStatusEvaluating {
+	if err == nil && cs.Loop.Enabled && cs.Loop.Epoch == epoch && (cs.Loop.Status == chatLoopStatusEvaluating || cs.Loop.Status == chatLoopStatusWaiting) {
 		cs.Loop.Status = chatLoopStatusRunning
 		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	}
