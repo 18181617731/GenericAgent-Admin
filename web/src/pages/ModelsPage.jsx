@@ -260,7 +260,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
   )
 }
 
-function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, busy, checking, disabled, availabilityResult, discoveryError = '', t }) {
+function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onCheck, onCancel, busy, checking, disabled, availabilityResult, discoveryError = '', t }) {
   const [draft, setDraft] = useState('')
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const text = t.models
@@ -289,9 +289,15 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
       <div className="model-config-toolbar">
         <strong>模型列表</strong>
         <Space size={8}>
-          <Button onClick={onCheck} loading={checking} disabled={disabled || busy || checking} icon={<ShieldCheck size={14} />}>
-            检测当前服务商
-          </Button>
+          {checking ? (
+            <Button danger type="text" onClick={onCancel} icon={<X size={14} />}>
+              取消检测
+            </Button>
+          ) : (
+            <Button onClick={onCheck} disabled={disabled || busy} icon={<ShieldCheck size={14} />}>
+              检测当前服务商
+            </Button>
+          )}
           <Button onClick={openDiscover} disabled={disabled || checking} icon={<RefreshCw size={14} />}>
             获取模型
           </Button>
@@ -409,6 +415,8 @@ function ProfileCard({
   const [discovered, setDiscovered] = useState([])
   const [availabilityBusy, setAvailabilityBusy] = useState(false)
   const [availabilityResult, setAvailabilityResult] = useState(null)
+  const availabilityAbortRef = useRef(null)
+  useEffect(() => () => availabilityAbortRef.current?.abort(), [])
   const [dirty, setDirty] = useState(false)
   const [nameDirty, setNameDirty] = useState(false)
   const selectedModels = profileModels(p)
@@ -455,7 +463,7 @@ function ProfileCard({
     return uniqueModels(response?.models || [])
   }
 
-  const requestProviderProbe = async () => {
+  const requestProviderProbe = async signal => {
     const configuredKey = String(p.apikey || '').trim()
     const configs = profileModelConfigs(p)
     return probeModels({
@@ -465,6 +473,7 @@ function ProfileCard({
       varName: p.var_name,
       models: configs.map(config => config.model),
       modelOptions: Object.fromEntries(configs.map(config => [config.model, { api_mode: config.api_mode, user_agent: config.user_agent }])),
+      signal,
     })
   }
 
@@ -483,20 +492,26 @@ function ProfileCard({
 
   const checkAvailability = async () => {
     if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)) return
+    const controller = new AbortController()
+    availabilityAbortRef.current = controller
     setAvailabilityBusy(true)
     setAvailabilityResult(null)
     try {
-      const response = await requestProviderProbe()
+      const response = await requestProviderProbe(controller.signal)
       const probeResults = Array.isArray(response?.results) ? response.results : []
       if (!probeResults.length) throw new Error('未获得任何真实对话检测结果，未修改当前配置。')
       setDiscovered(probeResults.filter(item => item.available).map(item => ({ id: item.id })))
       const result = reconcileModelProbeResults(p, probeResults, response.checked_at)
-      patchProfile(idx, result.profile)
+      if (controller.signal.aborted) {
+        const error = new Error('妫€娴嬪凡鍙栨秷')
+        error.name = 'AbortError'
+        throw error
+      }
       const saved = await onSave?.(idx, profileKey, result.profile)
       if (saved === false) {
-        patchProfile(idx, p)
         throw new Error('模型状态保存失败，已恢复检测前配置。')
       }
+      patchProfile(idx, result.profile)
       const { available, unavailable, disabled, restored, checkedAt } = result.summary
       const failures = probeResults.filter(item => !item.available).slice(0, 3).map(item => `${item.id}：${item.detail}`).join('；')
       setAvailabilityResult({
@@ -505,11 +520,18 @@ function ProfileCard({
         description: `自动禁用 ${disabled} 个，自动恢复 ${restored} 个。${failures ? `失败摘要：${failures}。` : ''}检测时间 ${new Date(checkedAt).toLocaleString()}。`,
       })
     } catch (error) {
-      setAvailabilityResult({ type: 'error', message: '检测失败，未修改模型状态', description: String(error?.message || error) })
+      if (error?.name === 'AbortError') {
+        setAvailabilityResult({ type: 'warning', message: '检测已取消，未修改模型状态', description: '已停止等待当前服务商，原有模型状态保持不变。' })
+      } else {
+        setAvailabilityResult({ type: 'error', message: '检测失败，未修改模型状态', description: String(error?.message || error) })
+      }
     } finally {
+      if (availabilityAbortRef.current === controller) availabilityAbortRef.current = null
       setAvailabilityBusy(false)
     }
   }
+
+  const cancelAvailability = () => availabilityAbortRef.current?.abort()
 
   return (
     <article className={`model-source-card${dirty ? ' is-dirty' : ''}${result?.errors?.length ? ' has-error' : ''}`}>
@@ -627,6 +649,7 @@ function ProfileCard({
           onChange={patch}
           onDiscover={discover}
           onCheck={checkAvailability}
+          onCancel={cancelAvailability}
           busy={discoverBusy}
           checking={availabilityBusy}
           availabilityResult={availabilityResult}
@@ -1063,6 +1086,8 @@ export function Models({
   const [batchProbeBusy, setBatchProbeBusy] = useState(false)
   const [batchProbeProgress, setBatchProbeProgress] = useState(null)
   const [batchProbeResult, setBatchProbeResult] = useState(null)
+  const batchProbeAbortRef = useRef(null)
+  useEffect(() => () => batchProbeAbortRef.current?.abort(), [])
   const [probeScopeOpen, setProbeScopeOpen] = useState(false)
   const [probeScopeMode, setProbeScopeMode] = useState('all')
   const [probeScopeKeys, setProbeScopeKeys] = useState([])
@@ -1580,6 +1605,8 @@ export function Models({
       setBatchProbeResult({ type: 'error', message: '没有可检测的服务商', description: '请打开“检测范围”重新选择服务商。' })
       return
     }
+    const controller = new AbortController()
+    batchProbeAbortRef.current = controller
     setBatchProbeBusy(true)
     setBatchProbeResult(null)
     setBatchProbeProgress({ completed: 0, total: targets.length, current: targets[0].name })
@@ -1588,9 +1615,15 @@ export function Models({
         profiles,
         configuredKeys: effectiveProbeProviders,
         probeModels,
+        signal: controller.signal,
         onProgress: setBatchProbeProgress,
       })
       if (!outcome.summary.successfulProviders) throw new Error('所有服务商均检测失败，未修改模型状态。')
+      if (controller.signal.aborted) {
+        const error = new Error('妫€娴嬪凡鍙栨秷')
+        error.name = 'AbortError'
+        throw error
+      }
       const saved = await onSaveModelProfiles?.(outcome.profiles)
       if (saved === false || !onSaveModelProfiles) throw new Error('模型状态保存失败，未应用本次检测结果。')
       const summary = outcome.summary
@@ -1601,11 +1634,18 @@ export function Models({
         description: `${summary.available} 个模型可用，${summary.unavailable} 个不可用；自动禁用 ${summary.disabled} 个，自动恢复 ${summary.restored} 个。${failures ? `失败摘要：${failures}。` : ''}`,
       })
     } catch (error) {
-      setBatchProbeResult({ type: 'error', message: '批量检测失败', description: String(error?.message || error) })
+      if (error?.name === 'AbortError') {
+        setBatchProbeResult({ type: 'warning', message: '检测已取消，未修改模型状态', description: '已停止等待，模型状态未保存。' })
+      } else {
+        setBatchProbeResult({ type: 'error', message: '批量检测失败', description: String(error?.message || error) })
+      }
     } finally {
+      if (batchProbeAbortRef.current === controller) batchProbeAbortRef.current = null
       setBatchProbeBusy(false)
     }
   }
+
+  const cancelBatchAvailability = () => batchProbeAbortRef.current?.abort()
 
   const riskItems = [{
     key: 'risk',
@@ -1638,9 +1678,14 @@ export function Models({
     <section className="models-page">
       <header className="model-page-head model-page-head--actions-only">
         <div className="model-page-actions">
-          <Button type="primary" icon={<ShieldCheck size={14} />} onClick={runBatchAvailability} loading={batchProbeBusy} disabled={!profiles.length}>
+          <Button type="primary" icon={<ShieldCheck size={14} />} onClick={runBatchAvailability} loading={batchProbeBusy} disabled={batchProbeBusy || !profiles.length}>
             对话检测并同步
           </Button>
+          {batchProbeBusy && (
+            <Button danger type="text" icon={<X size={14} />} onClick={cancelBatchAvailability}>
+              取消检测
+            </Button>
+          )}
           <Button icon={<Settings2 size={14} />} onClick={openProbeScope} disabled={batchProbeBusy || !profiles.length} title="配置一键检测涉及的服务商">
             检测范围：{probeScopeLabel}
           </Button>

@@ -91,6 +91,38 @@ describe('chat file attachments', () => {
     expect(container.querySelector('.oa-msg-image')?.getAttribute('src')).toBe('/api/chat/file/saved.png?instance_id=default')
   })
 
+  test('keeps four uploaded images separate and ignores tool-log image paths', () => {
+    const files = Array.from({ length: 4 }, (_, index) => ({
+      name: `dog-${index + 1}.jpg`,
+      type: 'image/jpeg',
+      url: `data:image/jpeg;base64,dog-${index + 1}`,
+    }))
+    const userView = render(<ChatMessage message={{ id:'u-four-images', role:'user', content:'Four photos', files, created_at:0 }} pending={false} onAskReply={vi.fn()} />)
+    expect(userView.container.querySelectorAll('.oa-msg-image')).toHaveLength(4)
+    userView.unmount()
+
+    const assistantView = render(
+      <ChatMessage
+        message={{
+          id:'a-tool-images',
+          role:'assistant',
+          content:[
+            'Tool: code_run',
+            '```python',
+            String.raw`remote = "/sdcard/ga_shot.png"`,
+            String.raw`path = r"G:\\MygenericAgent\\temp\\dog_new1.jpg"`,
+            '```',
+            String.raw`[Stdout] G:\\MygenericAgent\\temp\\dog_new1.jpg: 1 file pushed`,
+          ].join('\n'),
+          created_at:0,
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+    expect(assistantView.container.querySelector('.oa-generated-images')).toBeNull()
+  })
+
   test('renders a saved non-image upload as a file path card', () => {
     const content = 'Review this\n\n[附件已保存]\n[FILE:C:/tmp/report.pdf]'
     const { container } = render(

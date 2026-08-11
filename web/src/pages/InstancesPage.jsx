@@ -9,6 +9,10 @@ const TEXT = {
   zh: {
     title: 'GA \u5b9e\u4f8b\u7ba1\u7406',
     summary: '\u4e3a\u6bcf\u4e2a GenericAgent \u8fd0\u884c\u65f6\u7ef4\u62a4\u72ec\u7acb\u7684\u8def\u5f84\u548c Python \u73af\u5883\u3002\u9ed8\u8ba4\u5b9e\u4f8b\u4f1a\u627f\u63a5\u672a\u663e\u5f0f\u6307\u5b9a\u5b9e\u4f8b\u7684\u8bf7\u6c42\u3002',
+    helpLabel: '\u4e86\u89e3 GA \u5b9e\u4f8b\u4f7f\u7528\u8bf4\u660e', helpTitle: 'GA \u5b9e\u4f8b\u662f\u4ec0\u4e48\uff1f',
+    helpText: '\u6bcf\u4e2a\u5b9e\u4f8b\u5bf9\u5e94\u4e00\u4e2a\u72ec\u7acb\u7684 GenericAgent \u8fd0\u884c\u76ee\u5f55\u548c Python \u73af\u5883\u3002',
+    helpSteps: ['\u65b0\u5efa\uff1a\u586b\u5199 ID\u3001\u540d\u79f0\u548c\u6839\u76ee\u5f55\uff1bPython \u8def\u5f84\u53ef\u7559\u7a7a\u81ea\u52a8\u68c0\u6d4b\u3002', '\u4e00\u952e\u65b0\u589e\uff1a\u81ea\u52a8\u4e0b\u8f7d\u5e76\u6ce8\u518c\u65b0\u5b9e\u4f8b\uff0c\u4e5f\u53ef\u4e0a\u4f20 GA.zip \u6a21\u677f\u3002', '\u8bbe\u4e3a\u9ed8\u8ba4\uff1a\u672a\u6307\u5b9a\u5b9e\u4f8b\u7684\u8bf7\u6c42\u4f1a\u4f7f\u7528\u5b83\uff1b\u5bf9\u8bdd\u9875\u53ef\u4ece\u4fa7\u680f\u5207\u6362\u3002'],
+    helpNote: '\u5220\u9664\u53ea\u79fb\u9664\u7ba1\u7406\u53f0\u8bb0\u5f55\uff0c\u4e0d\u4f1a\u5220\u9664\u78c1\u76d8\u4e0a\u7684 GenericAgent \u76ee\u5f55\u3002',
     add: '\u65b0\u5efa\u5b9e\u4f8b', install: '\u4e00\u952e\u65b0\u589e', installing: '\u6b63\u5728\u4e0b\u8f7d\u5e76\u65b0\u589e\u2026', refresh: '\u5237\u65b0', loading: '\u6b63\u5728\u8bfb\u53d6\u5b9e\u4f8b\u2026', empty: '\u6682\u65e0 GA \u5b9e\u4f8b',
     default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', configureModels: '\u914d\u7f6e\u6a21\u578b', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
     initializing: '\u521d\u59cb\u5316\u4e2d', ready: '\u5df2\u5c31\u7eea', failed: '\u521d\u59cb\u5316\u5931\u8d25', initError: '\u9519\u8bef\u8be6\u60c5',
@@ -32,6 +36,10 @@ const TEXT = {
   en: {
     title: 'GA instance management',
     summary: 'Maintain an isolated path and Python environment for each GenericAgent runtime. The default instance handles requests that do not explicitly select one.',
+    helpLabel: 'Learn how GA instances work', helpTitle: 'What is a GA instance?',
+    helpText: 'Each instance maps to an isolated GenericAgent directory and Python environment.',
+    helpSteps: ['Create: enter an ID, display name, and root directory; Python can be left blank for auto-detection.', 'One-click add: download and register a new instance, or upload a GA.zip template.', 'Set as default: requests without an explicit instance use it; switch instances from the chat sidebar.'],
+    helpNote: 'Deleting an instance removes only its admin registry entry; the GenericAgent directory on disk is not deleted.',
     add: 'Add instance', install: 'One-click add', installing: 'Downloading and adding\u2026', refresh: 'Refresh', loading: 'Loading instances\u2026', empty: 'No GA instances configured',
     default: 'Default', setDefault: 'Set as default', configureModels: 'Configure models', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
     initializing: 'Initializing', ready: 'Ready', failed: 'Initialization failed', initError: 'Error details',
@@ -253,7 +261,31 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
   return <section className="instances-page" aria-busy={anyBusy || loading}>
     <div className="instances-hero">
       <div className="instances-hero-mark"><Server size={24}/></div>
-      <div className="instances-hero-copy"><h2>{copy.title}</h2><p>{copy.summary}</p></div>
+      <div className="instances-hero-copy">
+        <div className="instances-title-row">
+          <h2>{copy.title}</h2>
+          <div className={`instances-help${helpOpen ? ' is-open' : ''}`} onKeyDown={event => { if (event.key === 'Escape') setHelpOpen(false) }}>
+            <button
+              type="button"
+              className="instances-help-trigger"
+              aria-label={copy.helpLabel}
+              aria-expanded={helpOpen}
+              aria-controls="instances-help-popover"
+              title={copy.helpLabel}
+              onClick={() => setHelpOpen(current => !current)}
+            >
+              <CircleHelp size={17}/>
+            </button>
+            <div id="instances-help-popover" className="instances-help-popover" role="tooltip">
+              <strong>{copy.helpTitle}</strong>
+              <p>{copy.helpText}</p>
+              <ul>{copy.helpSteps.map(step => <li key={step}>{step}</li>)}</ul>
+              <small>{copy.helpNote}</small>
+            </div>
+          </div>
+        </div>
+        <p>{copy.summary}</p>
+      </div>
       <div className="instances-toolbar">
         <button type="button" className="ghost" onClick={loadInstances} disabled={loading || anyBusy}><RefreshCw size={15}/>{copy.refresh}</button>
         <button type="button" onClick={beginCreate} disabled={anyBusy}><Plus size={16}/>{copy.add}</button>

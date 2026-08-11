@@ -60,3 +60,22 @@ test('batch probe keeps failed providers unchanged and reconciles successful pro
   assert.deepEqual(result.profiles[1], profiles[1])
   assert.deepEqual(progress.at(-1), { completed: 2, total: 2, current: '备用服务商' })
 })
+
+test('batch probe aborts immediately without converting cancellation into provider failures', async () => {
+  const controller = new AbortController()
+  const run = runModelBatchProbe({
+    profiles,
+    configuredKeys: [],
+    signal: controller.signal,
+    probeModels: ({ signal }) => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => {
+        const error = new Error('cancelled')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    }),
+  })
+  setTimeout(() => controller.abort(), 0)
+
+  await assert.rejects(run, error => error?.name === 'AbortError')
+})
