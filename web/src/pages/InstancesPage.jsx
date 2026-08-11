@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Settings2, Star, Trash2, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, CircleHelp, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Settings2, Star, Trash2, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 
@@ -76,6 +76,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [helpOpen, setHelpOpen] = useState(false)
   const [editor, setEditor] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [templateAvailable, setTemplateAvailable] = useState(false)
