@@ -1036,8 +1036,9 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (varName) params.set('var_name', varName)
     return api(`/api/models/discover?${params.toString()}`)
   }
-  const probeModels = async ({ protocol, baseUrl, apiKey, varName, models, modelOptions } = {}) => api('/api/models/probe', {
+  const probeModels = async ({ protocol, baseUrl, apiKey, varName, models, modelOptions, signal } = {}) => api('/api/models/probe', {
     method: 'POST',
+    signal,
     body: JSON.stringify({ protocol, base_url: baseUrl, api_key: apiKey, var_name: varName, models, model_options: modelOptions }),
   })
   const saveModelProbeProviders = async providerKeys => {

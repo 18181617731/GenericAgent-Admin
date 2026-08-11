@@ -67,18 +67,24 @@ async function probeProvider(target, probeModels) {
   return { ...target, profile: reconciled.profile, summary: reconciled.summary, probeResults }
 }
 
-export async function runModelBatchProbe({ profiles = [], configuredKeys = [], probeModels, onProgress }) {
+export async function runModelBatchProbe({ profiles = [], configuredKeys = [], probeModels, onProgress, signal }) {
   const targets = resolveModelProbeTargets(profiles, configuredKeys)
   const nextProfiles = profiles.map(profile => ({ ...profile }))
   const results = []
 
   for (const target of targets) {
+    if (signal?.aborted) {
+      const error = new Error('检测已取消')
+      error.name = 'AbortError'
+      throw error
+    }
     onProgress?.({ completed: results.length, total: targets.length, current: target.name })
     let result
     try {
-      result = await probeProvider(target, probeModels)
+      result = await probeProvider(target, input => probeModels({ ...input, signal }))
       nextProfiles[target.index] = result.profile
     } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) throw error
       result = { ...target, error: String(error?.message || error) }
     }
     results.push(result)

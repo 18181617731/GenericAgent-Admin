@@ -75,6 +75,37 @@ func TestModelsProbeRequiresSuccessfulChatInsteadOfListedModelID(t *testing.T) {
 	}
 }
 
+func TestModelsProbeStopsAtOverallDeadline(t *testing.T) {
+	oldDeadline := modelProbeMaxDuration
+	modelProbeMaxDuration = 10 * time.Millisecond
+	t.Cleanup(func() { modelProbeMaxDuration = oldDeadline })
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		http.Error(w, "slow", http.StatusGatewayTimeout)
+	}))
+	defer upstream.Close()
+
+	s := newModelTestServer(t, t.TempDir())
+	started := time.Now()
+	rr := postModelProbe(t, s, map[string]interface{}{
+		"protocol": "native_oai", "base_url": upstream.URL, "models": []string{"slow-model"},
+	})
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("probe exceeded overall deadline: %s", elapsed)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	result := decodeModelProbeResponse(t, rr)
+	if len(result.Results) != 1 || result.Results[0].Available || result.Results[0].Status != "request_failed" {
+		t.Fatalf("slow model was not failed cleanly: %#v", result.Results)
+	}
+	if !strings.Contains(result.Results[0].Detail, "context deadline exceeded") {
+		t.Fatalf("slow model detail=%q, want deadline", result.Results[0].Detail)
+	}
+}
+
 func TestModelsProbeRejectsSuccessfulResponseWithWrongBeijingTime(t *testing.T) {
 	fixed := time.Date(2026, time.July, 15, 14, 35, 0, 0, time.FixedZone("CST", 8*60*60))
 	oldNow := modelProbeNow

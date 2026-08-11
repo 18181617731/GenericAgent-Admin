@@ -25,6 +25,11 @@ const (
 	modelProbeRetryMaxDelay         = 30 * time.Second
 )
 
+// A model availability probe is a bounded health check, not a normal chat
+// request. Keep a broken upstream from blocking the whole batch for the
+// profile's full chat read timeout and retry budget.
+var modelProbeMaxDuration = 60 * time.Second
+
 var modelProbeNow = time.Now
 var modelProbeRetryDelay = func(attempt int) time.Duration {
 	if attempt < 0 {
@@ -100,7 +105,9 @@ func (s *Server) modelsProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	options := s.resolveModelProbeOptions(input.VarName, input.ModelOptions)
 	checkedAt := modelProbeNow().In(time.FixedZone("Asia/Shanghai", 8*60*60))
-	results := runModelProbes(r.Context(), input.BaseURL, apiKey, models, options, isClaude, checkedAt)
+	probeContext, cancel := context.WithTimeout(r.Context(), modelProbeMaxDuration)
+	defer cancel()
+	results := runModelProbes(probeContext, input.BaseURL, apiKey, models, options, isClaude, checkedAt)
 	if err := s.recordModelProbeUsage(input.VarName, results, checkedAt); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
