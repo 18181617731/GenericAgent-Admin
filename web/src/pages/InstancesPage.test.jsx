@@ -31,6 +31,19 @@ describe('InstancesPage', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/instances', expect.objectContaining({ headers: expect.any(Object) }))
   })
 
+  it('opens model configuration for the selected instance', async () => {
+    globalThis.fetch = vi.fn(() => reply(initialPayload))
+    const onConfigureModels = vi.fn()
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" onConfigureModels={onConfigureModels} />)
+
+    const primaryCard = (await screen.findByRole('heading', { name: 'Primary' })).closest('article')
+    await user.click(within(primaryCard).getByRole('button', { name: 'Configure models' }))
+
+    expect(onConfigureModels).toHaveBeenCalledTimes(1)
+    expect(onConfigureModels).toHaveBeenCalledWith(initialPayload.items[0])
+  })
+
   it('uploads an optional ZIP template as multipart form data', async () => {
     const installed = {
       default_instance_id: 'primary',
@@ -56,6 +69,7 @@ describe('InstancesPage', () => {
     expect(options.headers['Content-Type']).toBeUndefined()
     expect(options.body).toBeInstanceOf(FormData)
     expect(options.body.get('id')).toBe('uploaded')
+    expect(options.body.get('use_template')).toBe('true')
     expect(options.body.get('template').name).toBe('GA.zip')
   })
 
@@ -68,6 +82,8 @@ describe('InstancesPage', () => {
         ga_root: 'C:/admin/genericagent',
         effective_python: 'python',
         init_status: 'initializing',
+        init_stage: 'queued',
+        init_progress: 5,
       }],
     }
     const ready = {
@@ -97,11 +113,14 @@ describe('InstancesPage', () => {
     expect(url).toBe('/api/instances/install')
     expect(options.method).toBe('POST')
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
-    expect(JSON.parse(options.body)).toEqual({ id: 'genericagent' })
+    expect(JSON.parse(options.body)).toEqual({ id: 'genericagent', use_template: false })
 
     const installedHeading = await screen.findByRole('heading', { name: 'GenericAgent' })
     const installedCard = installedHeading.closest('article')
     expect(within(installedCard).getByText('Initializing')).not.toBeNull()
+    expect(within(installedCard).getByText('Waiting to start')).not.toBeNull()
+    const initProgress = within(installedCard).getByRole('progressbar', { name: 'Waiting to start' })
+    expect(initProgress.value).toBe(5)
     expect(within(installedCard).getByText('C:/admin/genericagent')).not.toBeNull()
     expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(true)
     expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(true)
@@ -110,9 +129,31 @@ describe('InstancesPage', () => {
     expect(screen.getByText('Instance added and initializing in the background')).not.toBeNull()
 
     await waitFor(() => expect(within(installedCard).getByText('Ready')).not.toBeNull(), { timeout: 3000 })
+    expect(within(installedCard).queryByRole('progressbar')).toBeNull()
     expect(within(installedCard).getByRole('button', { name: 'Edit' }).disabled).toBe(false)
     expect(within(installedCard).getByRole('button', { name: 'Set as default' }).disabled).toBe(false)
     expect(listCalls).toBe(2)
+  })
+
+  it('defaults to the persistent template when one is available', async () => {
+    const payload = { ...initialPayload, template_available: true }
+    globalThis.fetch = vi.fn(() => reply(payload))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    await screen.findByRole('heading', { name: 'Primary' })
+    await user.click(screen.getByRole('button', { name: 'One-click add' }))
+    const reuse = screen.getByRole('checkbox', { name: 'Use the saved GA.zip template' })
+    expect(reuse.checked).toBe(true)
+    expect(reuse.disabled).toBe(false)
+    expect(screen.getByText('A saved template is ready to reuse.')).not.toBeNull()
+    await user.type(screen.getByLabelText('Instance ID'), 'from-template')
+    await user.click(screen.getByRole('button', { name: 'Start creating' }))
+
+    const [url, options] = globalThis.fetch.mock.calls[1]
+    expect(url).toBe('/api/instances/install')
+    expect(JSON.parse(options.body)).toEqual({ id: 'from-template', use_template: true })
   })
 
   it('shows initialization failure details and stops polling', async () => {
@@ -219,6 +260,41 @@ describe('InstancesPage', () => {
     expect(await screen.findByRole('heading', { name: 'Primary updated' })).not.toBeNull()
   })
 
+  it('keeps the reserved default instance non-deletable after switching the active default', async () => {
+    const protectedDefault = { id: 'default', name: 'Default', ga_root: 'C:/ga', python_path: '', effective_python: 'python' }
+    const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
+    globalThis.fetch = vi.fn(() => reply({
+      default_instance_id: 'secondary',
+      items: [protectedDefault, secondary],
+    }))
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    const defaultCard = (await screen.findByRole('heading', { name: 'Default' })).closest('article')
+    const deleteButton = within(defaultCard).getByRole('button', { name: 'Delete' })
+    expect(deleteButton.disabled).toBe(true)
+    await user.click(deleteButton)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses an in-page confirmation and cancels without deleting', async () => {
+    const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
+    globalThis.fetch = vi.fn(() => reply({ ...initialPayload, items: [...initialPayload.items, secondary] }))
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    const secondaryCard = (await screen.findByRole('heading', { name: 'Secondary' })).closest('article')
+    await user.click(within(secondaryCard).getByRole('button', { name: 'Delete' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Confirm instance deletion' })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Confirm instance deletion' })).toBeNull()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('sets another default before deleting the previous default', async () => {
     const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
     const twoInstances = { ...initialPayload, items: [...initialPayload.items, secondary] }
@@ -247,6 +323,10 @@ describe('InstancesPage', () => {
     expect(JSON.parse(options.body)).toEqual({ id: 'secondary' })
 
     await user.click(within(screen.getByRole('heading', { name: 'Primary' }).closest('article')).getByRole('button', { name: 'Delete' }))
+    const dialog = screen.getByRole('dialog', { name: 'Confirm instance deletion' })
+    expect(within(dialog).getByText(/Primary/)).not.toBeNull()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    await user.click(within(dialog).getByRole('button', { name: 'Delete instance' }))
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3))
     ;[url, options] = globalThis.fetch.mock.calls[2]
     expect(url).toBe('/api/instances/delete')

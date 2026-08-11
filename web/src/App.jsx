@@ -336,6 +336,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [observability, setObservability] = useState(null), [observabilityError, setObservabilityError] = useState('')
   const [runtimeRepairing, setRuntimeRepairing] = useState(false), [runtimeRepairResult, setRuntimeRepairResult] = useState(null)
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
+  const [modelInstance, setModelInstance] = useState(null)
   const [persistedModelProfiles, setPersistedModelProfiles] = useState([])
   const [failoverGroups, setFailoverGroups] = useState([])
   const [modelSaveStatus, setModelSaveStatus] = useState({})
@@ -622,6 +623,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLogStreamNonce(value => value + 1)
   }
   const viewServiceLogs = (name) => { setTab('logs'); loadServiceLogs(name) }
+  const openHub = () => window.open('http://127.0.0.1:19737', '_blank', 'noopener,noreferrer')
 
   useEffect(() => {
     if (tab !== 'logs' || !selected) {
@@ -990,7 +992,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setModelImportLoading(true)
     try {
       const [d] = await Promise.all([
-        api('/api/models/import-mykey', { method:'POST', body: JSON.stringify({ reveal:false, save:false }) }),
+        api('/api/models/import-mykey', { method:'POST', headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {}, body: JSON.stringify({ reveal:false, save:false }) }),
         loadTitleModel(),
       ])
       const nextProfiles = orderedProviderProfiles(d.profiles || [])
@@ -1034,7 +1036,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (baseUrl) params.set('base_url', baseUrl)
     if (apiKey) params.set('api_key', apiKey)
     if (varName) params.set('var_name', varName)
-    return api(`/api/models/discover?${params.toString()}`)
+    return api(`/api/models/discover?${params.toString()}`, { headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {} })
   }
   const probeModels = async ({ protocol, baseUrl, apiKey, varName, models, modelOptions } = {}) => api('/api/models/probe', {
     method: 'POST',
@@ -1061,7 +1063,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     setModelKeyBusy(prev => ({ ...prev, [profileKey]: true }))
     try {
-      const d = await api('/api/models/raw', { dangerous: true })
+      const d = await api('/api/models/raw', { dangerous: true, headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {} })
       const rawProfiles = d?.profiles || []
       const varName = String(profile?.var_name || '').trim()
       const raw = (varName ? rawProfiles.find(p => String(p.var_name || '').trim() === varName) : null) || rawProfiles[idx]
@@ -1081,7 +1083,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setBusy(true)
     try {
       const cleanGroups = normalizeFailoverGroups(nextFailoverGroups)
-      const d = await api('/api/models/export', { dangerous:true, method:'POST', body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
+      const d = await api('/api/models/export', { dangerous:true, method:'POST', headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {}, body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
       const cleanProfiles = nextProfiles.map(({ previous_var_name: _previousVarName, ...profile }) => profile)
       setPersistedModelProfiles(cleanProfiles)
       setFailoverGroups(cleanGroups)
@@ -1169,6 +1171,18 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     const shouldClearSecret = Object.prototype.hasOwnProperty.call(patch, 'apikey') || Object.prototype.hasOwnProperty.call(patch, 'var_name')
     if (shouldClearSecret) clearRevealedModelKey(idx, profiles[idx])
     setProfiles(ps => ps.map((p, i) => i === idx ? { ...p, ...patch } : p))
+  }
+
+  const openModels = (instance = null) => {
+    setModelInstance(instance)
+    setProfiles([])
+    setPersistedModelProfiles([])
+    setFailoverGroups([])
+    setModelPreview('')
+    setModelSaveStatus({})
+    setModelRevealedKeys({})
+    modelImportAttempted.current = false
+    setTab('models')
   }
 
   const nav = NAV_ITEMS
@@ -1531,14 +1545,27 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
 
 
-export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onStop, onLogs, onAutostart, onReflectStart }) {
+export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onStop, onLogs, onAutostart, onReflectStart, onOpenHub }) {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState('')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [msg, setMsg] = useState(null)
+  const [activeView, setActiveView] = useState('config')
+  const tabRefs = useRef({})
   const text = t.channels
+  const selectView = view => {
+    setActiveView(view)
+    tabRefs.current[view]?.focus()
+  }
+  const handleTabKeyDown = event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    if (event.key === 'Home') return selectView('config')
+    if (event.key === 'End') return selectView('services')
+    selectView(activeView === 'config' ? 'services' : 'config')
+  }
   const profileName = profile => text.profileNames?.[profile.id] || profile.name
   const profileDescription = profile => text.profileDescriptions?.[profile.id] || profile.description
   const fieldLabel = field => text.fieldLabels?.[field.name] || field.label || field.name
@@ -1597,42 +1624,94 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
       : allFrontendSvcs
   const filterLabel = serviceFilters.find(([key]) => key === serviceFilter)?.[1] || text.serviceFilterAll
   return <section className="channels-page">
-    <div className="channel-hero">
-      <div>
-        <span className="eyebrow">Channels</span>
-        <h2>{text.title}</h2>
-        <p>{text.summary}</p>
-      </div>
-      <div className="channel-hero-stats">
-        <span><b>{frontendSvcs.length}</b> {text.services}</span>
-        <span><b>{runningCount}</b> {text.running}</span>
-      </div>
+    <div className="channel-console-metrics" aria-label="Channel overview">
+      <div><span>{profiles.length || '—'}</span><small>{text.keyConfig}</small></div>
+      <div><span>{configuredCount}</span><small>{text.savedField}</small></div>
+      <div className={runningCount ? 'is-live' : ''}><span>{runningCount}<i/></span><small>{text.running} / {frontendSvcs.length}</small></div>
+    </div>
+    <div className="channel-view-tabs" role="tablist" aria-label={text.channelViews}>
+      <button
+        ref={node => { tabRefs.current.config = node }}
+        id="channel-tab-config"
+        className={activeView === 'config' ? 'is-active' : ''}
+        role="tab"
+        aria-selected={activeView === 'config'}
+        aria-controls="channel-panel-config"
+        tabIndex={activeView === 'config' ? 0 : -1}
+        onClick={() => selectView('config')}
+        onKeyDown={handleTabKeyDown}
+      >
+        <span className="channel-tab-icon"><Globe2 size={18}/></span>
+        <span className="channel-tab-copy"><strong>{text.configTab}</strong><small>{text.configTabDesc}</small></span>
+        <em>{configuredCount}/{profiles.length || 0}</em>
+      </button>
+      <button
+        ref={node => { tabRefs.current.services = node }}
+        id="channel-tab-services"
+        className={activeView === 'services' ? 'is-active' : ''}
+        role="tab"
+        aria-selected={activeView === 'services'}
+        aria-controls="channel-panel-services"
+        tabIndex={activeView === 'services' ? 0 : -1}
+        onClick={() => selectView('services')}
+        onKeyDown={handleTabKeyDown}
+      >
+        <span className="channel-tab-icon"><Server size={18}/></span>
+        <span className="channel-tab-copy"><strong>{text.servicesTab}</strong><small>{text.servicesTabDesc}</small></span>
+        <em>{runningCount}/{frontendSvcs.length}</em>
+      </button>
     </div>
     <div className="channels-layout">
-      <Panel title={text.keyConfig} className="channels-panel channel-key-panel">
-        <div className="channel-toolbar">
-          <div>{config?.path ? <span>{text.configFile}: <code>{config.path}</code></span> : <span>{loading ? text.loadingConfig : text.noConfigPath}</span>}</div>
-          <div className="actions"><button onClick={load} disabled={loading || saving}>{loading ? text.refreshing : t.refresh}</button><button onClick={save} disabled={saving || loading || !config}>{saving ? t.busy : t.save}</button></div>
+      <section
+        id="channel-panel-config"
+        className="channels-panel channel-key-panel"
+        role="tabpanel"
+        aria-labelledby="channel-tab-config"
+        hidden={activeView !== 'config'}
+      >
+        <div className="channel-workspace-head">
+          <div>
+            <span className="channel-section-index">01</span>
+            <div><h3>{text.keyConfig}</h3><p>{profiles.length ? `${profiles.length} Channels` : text.loadingConfig}</p></div>
+          </div>
+          <div className="channel-workspace-actions">
+            <button className="channel-icon-button" onClick={load} disabled={loading || saving} title={t.refresh} aria-label={t.refresh}><RefreshCw size={15} className={loading ? 'spin' : ''}/></button>
+            <button className="primary channel-save-button" onClick={save} disabled={saving || loading || !config}><Save size={15}/>{saving ? t.busy : t.save}</button>
+          </div>
+        </div>
+        <div className="channel-config-path">
+          <span className="channel-path-light"/>
+          <span>{config?.path ? text.configFile : (loading ? text.loadingConfig : text.noConfigPath)}</span>
+          {config?.path && <code title={config.path}>{config.path}</code>}
         </div>
         {msg && <p className={`${msg.kind === 'error' ? 'err' : 'ok'} channel-message`}>{msg.text}</p>}
         <div className="channel-config-list">
-          {(config?.profiles || []).map(profile => <article className="channel-config-card" key={profile.id}>
-            <div className="channel-config-head">
-              <div><h3>{profileName(profile)}</h3><p>{profileDescription(profile)}</p></div>
-              <button onClick={()=>testProfile(profile)} disabled={saving || testing === profile.id}>{testing === profile.id ? text.testingButton : text.testConnection}</button>
-            </div>
-            <div className="channel-fields">
-              {(profile.fields || []).map(field => <label key={field.name}>
-                <span>{fieldLabel(field)}<small>{field.name}{field.secret && field.has_value ? ` · ${text.savedField}` : ''}</small></span>
-                {field.secret
-                  ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
-                  : field.type === 'bool'
-                    ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
-                    : <input value={field.value || ''} placeholder={fieldPlaceholder(field)} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
-              </label>)}
-            </div>
-          </article>)}
-          {!loading && !config?.profiles?.length && <p className="empty-cell">{t.empty}</p>}
+          {profiles.map((profile, profileIndex) => {
+            const completedFields = (profile.fields || []).filter(field => field.has_value || String(field.value || '').trim()).length
+            return <article className="channel-config-card" key={profile.id} style={{ '--channel-tone': channelTone(profile.id) }}>
+              <div className="channel-config-head">
+                <div className="channel-identity">
+                  <span className="channel-brand-mark">{channelMark(profile)}</span>
+                  <div><div className="channel-title-line"><h3>{profileName(profile)}</h3><span>{String(profileIndex + 1).padStart(2, '0')}</span></div><p>{profileDescription(profile)}</p></div>
+                </div>
+                <div className="channel-card-actions">
+                  <span className={`channel-field-count${completedFields ? ' has-config' : ''}`}>{completedFields}/{(profile.fields || []).length}</span>
+                  {profile.testable && <button onClick={()=>testProfile(profile)} disabled={saving || testing === profile.id}>{testing === profile.id ? text.testingButton : text.testConnection}</button>}
+                </div>
+              </div>
+              <div className="channel-fields">
+                {(profile.fields || []).map(field => <label key={field.name}>
+                  <span>{fieldLabel(field)}<small>{field.name}{field.secret && field.has_value ? ` · ${text.savedField}` : ''}</small></span>
+                  {field.secret
+                    ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
+                    : field.type === 'bool'
+                      ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
+                      : <input value={field.value || ''} placeholder={fieldPlaceholder(field)} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
+                </label>)}
+              </div>
+            </article>
+          })}
+          {!loading && !profiles.length && <p className="empty-cell">{t.empty}</p>}
         </div>
       </Panel>
       <Panel title={t.lists.frontendServices} className="channels-panel channel-services-panel">

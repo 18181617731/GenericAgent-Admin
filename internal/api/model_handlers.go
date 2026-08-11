@@ -106,6 +106,11 @@ func resolveChatTitleModel(ref *config.ChatTitleModelRef, options []chatTitleMod
 }
 
 func (s *Server) reconcileChatTitleModel(profiles []modelconfig.Profile) error {
+	// Instance-scoped model requests use an in-memory derived config store.
+	// Chat title selection is Admin-wide, so model-file edits must not rewrite it.
+	if s.BaseCfgStore != nil && s.BaseCfgStore != s.CfgStore {
+		return nil
+	}
 	current := s.CfgStore.Snapshot().ChatTitleModel
 	if current == nil {
 		return nil

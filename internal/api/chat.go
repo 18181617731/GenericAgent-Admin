@@ -160,6 +160,26 @@ func (s *Server) rememberDefaultChatLLMNo(llmNo int) {
 	_ = store.Save(cfg)
 }
 
+type chatLoopRecord struct {
+	AtMS    int64  `json:"created_at_ms"`
+	Round   int    `json:"round"`
+	Phase   string `json:"phase"`
+	Summary string `json:"summary"`
+	Prompt  string `json:"prompt,omitempty"`
+}
+
+type chatLoopState struct {
+	Enabled          bool             `json:"enabled"`
+	Status           string           `json:"status"`
+	Epoch            int64            `json:"epoch"`
+	Round            int              `json:"round"`
+	MaxRounds        int              `json:"max_rounds"`
+	StopReason       string           `json:"stop_reason,omitempty"`
+	ControllerPrompt string           `json:"controller_prompt,omitempty"`
+	ControllerLLMNo  int              `json:"controller_llm_no"`
+	Records          []chatLoopRecord `json:"records,omitempty"`
+}
+
 type chatSession struct {
 	ID                     string                   `json:"id"`
 	Title                  string                   `json:"title"`
@@ -174,8 +194,11 @@ type chatSession struct {
 	WorldlineHead          string                   `json:"worldline_head,omitempty"`
 	Workspace              string                   `json:"workspace,omitempty"`
 	ProjectMode            string                   `json:"project_mode,omitempty"`
+	HubEnabled             bool                     `json:"hub_enabled,omitempty"`
+	Pinned                 bool                     `json:"pinned,omitempty"`
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
+	Loop                   chatLoopState            `json:"loop"`
 }
 
 const (
@@ -768,6 +791,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		s.scheduleChatTitleGeneration(sid, cs)
 	}
 	s.endChatRunOwned(sid, token)
+	s.afterChatRunTerminal(sid, !final.Error)
 }
 
 func chatRawHistoryFromEvent(ev map[string]interface{}) []map[string]interface{} {
@@ -1353,7 +1377,15 @@ func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid strin
 		run.Subscribers[ch] = true
 	}
 	done := run.Done
+	pendingAssistantID := run.PendingAssistantID
+	runStartedAtMS := run.RunStartedAtMS
 	s.ChatMu.Unlock()
+	if pendingAssistantID != "" {
+		w.Header().Set("X-Chat-Pending-ID", pendingAssistantID)
+	}
+	if runStartedAtMS > 0 {
+		w.Header().Set("X-Chat-Run-Started-At-Ms", strconv.FormatInt(runStartedAtMS, 10))
+	}
 	for _, line := range initial {
 		_, _ = w.Write(append(append([]byte(nil), line...), '\n'))
 		if flusher != nil {
@@ -1407,7 +1439,9 @@ func (s *Server) finishChatError(w http.ResponseWriter, enc *json.Encoder, flush
 func chatPythonForConfig(cfg config.AppConfig) string {
 	// Chat must honor the Python selected during setup. Falling back to a bare
 	// launcher can miss GA dependencies (for example requests) and hide models.
-	return resolvePythonForRoot(cfg.GARoot, cfg.PythonPath)
+	// With nothing configured, borrow a sibling instance's interpreter rather
+	// than trusting a path that merely exists.
+	return resolveUsablePythonForRoot(cfg.GARoot, cfg.PythonPath, cfg.PythonFallbackRoots)
 }
 
 func (s *Server) listGARuntimeLLMs(cfg config.AppConfig) ([]map[string]interface{}, error) {
@@ -2121,7 +2155,7 @@ func (s *Server) saveChatSessionMerged(cs chatSession) error {
 		return err
 	}
 	cs.Messages = mergeChatMessageLists(latest.Messages, cs.Messages)
-	preserveLatestChatTitle(&cs, latest)
+	preserveLatestChatUserMetadata(&cs, latest)
 	return saveChatSession(s.CfgStore.Snapshot(), cs)
 }
 
@@ -2134,12 +2168,14 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 	s.SessionMu.Lock()
 	defer s.SessionMu.Unlock()
 	if latest, err := loadChatSession(s.CfgStore.Snapshot(), cs.ID); err == nil {
-		preserveLatestChatTitle(&cs, latest)
+		preserveLatestChatUserMetadata(&cs, latest)
 	}
 	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 }
 
-func preserveLatestChatTitle(candidate *chatSession, latest chatSession) {
+func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) {
+	candidate.Pinned = latest.Pinned
+	candidate.Loop = latest.Loop
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title
@@ -2165,6 +2201,14 @@ func saveChatSession(cfg config.AppConfig, cs chatSession) error {
 }
 
 func saveChatSessionLocked(cfg config.AppConfig, cs chatSession) error {
+	return saveChatSessionWithUpdatedAtLocked(cfg, cs, true)
+}
+
+func saveChatSessionPreserveUpdatedAtLocked(cfg config.AppConfig, cs chatSession) error {
+	return saveChatSessionWithUpdatedAtLocked(cfg, cs, false)
+}
+
+func saveChatSessionWithUpdatedAtLocked(cfg config.AppConfig, cs chatSession, touchUpdatedAt bool) error {
 	if err := ensureChatDataMigrated(cfg); err != nil {
 		return err
 	}
@@ -2173,7 +2217,9 @@ func saveChatSessionLocked(cfg config.AppConfig, cs chatSession) error {
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
 	cs.Plan = normalizeChatPlan(cs.Plan)
-	cs.UpdatedAt = time.Now().Unix()
+	if touchUpdatedAt {
+		cs.UpdatedAt = time.Now().Unix()
+	}
 	b, _ := json.MarshalIndent(cs, "", "  ")
 	return writeChatFileAtomic(chatSessionPath(cfg, cs.ID), b, 0644)
 }

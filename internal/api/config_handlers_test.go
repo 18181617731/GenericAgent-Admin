@@ -25,6 +25,40 @@ func newConfigTestServer(t *testing.T) *Server {
 	return New(cfg, service.NewManager(cfg.Snapshot().GARoot, cfg.Snapshot().BufferLines), models, nil)
 }
 
+func TestInstanceDeleteRejectsProtectedDefaultAfterDefaultSwitch(t *testing.T) {
+	s := newConfigTestServer(t)
+	defaultRoot := t.TempDir()
+	secondaryRoot := t.TempDir()
+	cfg := s.CfgStore.Snapshot()
+	cfg.Instances = []config.InstanceConfig{
+		{ID: protectedDefaultInstanceID, Name: "Default", GARoot: defaultRoot},
+		{ID: "secondary", Name: "Secondary", GARoot: secondaryRoot},
+	}
+	cfg.DefaultInstanceID = "secondary"
+	cfg.GARoot = secondaryRoot
+	if err := s.CfgStore.Save(cfg); err != nil {
+		t.Fatalf("save fixture: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/instances/delete", strings.NewReader(`{"id":"default"}`))
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status=%d want=%d body=%s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "default instance cannot be deleted") {
+		t.Fatalf("body=%q does not explain protected default", rr.Body.String())
+	}
+	got := s.CfgStore.Snapshot()
+	if _, ok := got.Instance(protectedDefaultInstanceID); !ok {
+		t.Fatal("protected default instance was deleted")
+	}
+	if got.DefaultInstanceID != "secondary" {
+		t.Fatalf("default_instance_id=%q want secondary", got.DefaultInstanceID)
+	}
+}
+
 func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	s := newConfigTestServer(t)
 	root := t.TempDir()

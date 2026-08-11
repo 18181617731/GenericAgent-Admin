@@ -10,11 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"genericagent-admin-go/internal/pyfind"
 )
 
 const myKeyBackupLimit = 2
@@ -151,6 +152,7 @@ type Profile struct {
 	ConnectTimeout     *int                   `json:"connect_timeout,omitempty"`
 	UserAgent          string                 `json:"user_agent,omitempty"`
 	APIMode            string                 `json:"api_mode,omitempty"`
+	ServiceTier        string                 `json:"service_tier,omitempty"`
 	ThinkingType       string                 `json:"thinking_type,omitempty"`
 	ReasoningEffort    string                 `json:"reasoning_effort,omitempty"`
 	FakeCCSystemPrompt *OptionalBool          `json:"fake_cc_system_prompt,omitempty"`
@@ -357,6 +359,7 @@ func profileModelConfigs(p Profile) []ModelConfig {
 			ConnectTimeout:     p.ConnectTimeout,
 			UserAgent:          p.UserAgent,
 			APIMode:            p.APIMode,
+			ServiceTier:        p.ServiceTier,
 			ThinkingType:       p.ThinkingType,
 			ReasoningEffort:    p.ReasoningEffort,
 			FakeCCSystemPrompt: p.FakeCCSystemPrompt,
@@ -789,7 +792,7 @@ for var, value in vars(mod).items():
         p['failover_order']=failover_order
         p.update(failover_values)
     identity_by_var[var]=(typ, apibase.strip().rstrip('/'), apikey_text)
-    for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
+    for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('service_tier','service_tier'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
     p['extra']=d
     p['sort_order']=len(profile_order)
@@ -810,7 +813,7 @@ def model_configs_of(profile):
     if not model:
         return []
     config={'model':model}
-    for key in ('name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
+    for key in ('name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','service_tier','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
         if key in profile:
             config[key]=profile[key]
     extra=profile.get('extra')
@@ -1023,25 +1026,14 @@ print(json.dumps({'updated_at':'','profiles':profiles,'failover_groups':failover
 	return d, nil
 }
 
+// pythonExe resolves the interpreter used to parse mykey.py.
+//
+// Resolution is delegated to pyfind so the importer, the Admin API, and the
+// goal runner share one order. The previous local copy fell through to a bare
+// "python" on Windows, which resolves to the Microsoft Store stub on machines
+// without a project venv; that stub exits 9009 without running the script.
 func pythonExe(gaRoot, configuredPython string) string {
-	if py := strings.TrimSpace(configuredPython); py != "" {
-		return py
-	}
-	candidates := []string{
-		filepath.Join(gaRoot, ".venv", "Scripts", "python.exe"),
-		filepath.Join(gaRoot, "venv", "Scripts", "python.exe"),
-		filepath.Join(gaRoot, ".venv", "bin", "python"),
-		filepath.Join(gaRoot, "venv", "bin", "python"),
-	}
-	for _, c := range candidates {
-		if exists(c) {
-			return c
-		}
-	}
-	if runtime.GOOS == "windows" {
-		return "python"
-	}
-	return "python3"
+	return pyfind.Resolve(gaRoot, configuredPython)
 }
 func boolArg(v bool) string {
 	if v {
@@ -1206,6 +1198,9 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 		}
 		if config.APIMode != "" {
 			m["api_mode"] = config.APIMode
+		}
+		if config.ServiceTier != "" {
+			m["service_tier"] = config.ServiceTier
 		}
 		if config.ThinkingType != "" {
 			m["thinking_type"] = config.ThinkingType

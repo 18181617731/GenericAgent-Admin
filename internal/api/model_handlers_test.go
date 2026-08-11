@@ -696,3 +696,63 @@ func TestModelsPreviewAllowsMaskedSecretWithoutLeakingStoredSecret(t *testing.T)
 		t.Fatalf("preview leaked stored secret: %s", bodyText)
 	}
 }
+
+func TestModelsAreScopedToRequestedInstance(t *testing.T) {
+	appRoot := t.TempDir()
+	defaultRoot := filepath.Join(t.TempDir(), "ga-default")
+	betaRoot := filepath.Join(t.TempDir(), "ga-beta")
+	for _, root := range []string{defaultRoot, betaRoot} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = defaultRoot
+	cfg.DefaultInstanceID = "default"
+	cfg.Instances = []config.InstanceConfig{
+		{ID: "default", Name: "Default", GARoot: defaultRoot},
+		{ID: "beta", Name: "Beta", GARoot: betaRoot},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := New(store, service.NewManager(defaultRoot, cfg.BufferLines), modelconfig.NewStore(defaultRoot), nil)
+
+	body := `{"profiles":[{"var_name":"native_oai_config1","type":"native_oai","name":"Beta Model","apibase":"https://beta.example/v1","apikey":"sk-beta","model":"beta-model"}]}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/models", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Instance-ID", "beta")
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("beta PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-GA-Instance-ID"); got != "beta" {
+		t.Fatalf("resolved instance header=%q want beta", got)
+	}
+	if _, err := os.Stat(filepath.Join(betaRoot, "mykey.py")); err != nil {
+		t.Fatalf("beta mykey.py was not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(defaultRoot, "mykey.py")); !os.IsNotExist(err) {
+		t.Fatalf("default mykey.py was unexpectedly written: %v", err)
+	}
+
+	for instanceID, wantModel := range map[string]string{"default": "", "beta": "beta-model"} {
+		rr = httptest.NewRecorder()
+		req = httptest.NewRequest(http.MethodGet, "/api/models", nil)
+		req.Header.Set("X-GA-Instance-ID", instanceID)
+		s.Routes().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s GET status=%d body=%s", instanceID, rr.Code, rr.Body.String())
+		}
+		if wantModel == "" && strings.Contains(rr.Body.String(), "beta-model") {
+			t.Fatalf("default response leaked beta model: %s", rr.Body.String())
+		}
+		if wantModel != "" && !strings.Contains(rr.Body.String(), wantModel) {
+			t.Fatalf("beta response missing %q: %s", wantModel, rr.Body.String())
+		}
+	}
+}

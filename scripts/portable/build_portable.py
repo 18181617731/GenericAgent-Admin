@@ -31,6 +31,21 @@ EXTRA_LLM_DEPS = [
     "python-dotenv==1.0.1",
     "tiktoken==0.8.0",
     "rich==13.9.4",
+    # Frontend/service dependencies not included by the base editable install.
+    # The Admin bundle starts the hub and may start the conductor service.
+    "qrcode>=7.4",
+    "websockets>=12.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "psutil>=5.9",
+    # Feishu frontend (frontends/fsapp.py; import name: lark_oapi).
+    "lark-oapi>=1.0",
+    # Optional chat frontends declared by GA's all-frontends extra.
+    "python-telegram-bot>=20.0",
+    "qq-botpy>=1.0",
+    "pycryptodome>=3.19",
+    "wecom-aibot-sdk>=1.0",
+    "dingtalk-stream>=0.20",
 ]
 
 # GA source repo

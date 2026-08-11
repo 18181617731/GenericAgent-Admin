@@ -82,7 +82,21 @@ $CoreDeps = @(
     "beautifulsoup4",
     "bottle",
     "simple-websocket-server",
-    "aiohttp"
+    "aiohttp",
+    # Frontend adapters and Admin service controls.
+    "qrcode",
+    "websockets",
+    "fastapi",
+    "uvicorn[standard]",
+    "psutil",
+    # Feishu frontend (import name: lark_oapi).
+    "lark-oapi",
+    # Optional chat frontends declared by GA's all-frontends extra.
+    "python-telegram-bot",
+    "qq-botpy",
+    "pycryptodome",
+    "wecom-aibot-sdk",
+    "dingtalk-stream"
 )
 
 # Trimmed from the clone: dead weight for a runnable bundle.
@@ -353,7 +367,7 @@ if ($LASTEXITCODE -ne 0) { Die "pip self-upgrade failed with exit code $LASTEXIT
 & $venvPy -m pip install --quiet --disable-pip-version-check @CoreDeps
 if ($LASTEXITCODE -ne 0) { Die "pip install of core deps failed with exit code $LASTEXITCODE" }
 
-$probe = "import requests,bs4,bottle,aiohttp;print('deps ok')"
+$probe = "import requests,bs4,bottle,aiohttp,qrcode,websockets,fastapi,uvicorn,psutil,lark_oapi,telegram,botpy,Crypto,wecom_aibot_sdk,dingtalk_stream;print('deps ok')"
 $probeOut = & $venvPy -c $probe
 if ($LASTEXITCODE -ne 0) { Die "dependency import probe failed" }
 Say "venv $($probeOut.Trim()) ($(DirSizeMB $venvDir) MB)"

@@ -169,14 +169,17 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 	second := installInstanceForTest(t, h, "genericagent-2")
 	secondDest := waitTestSignal(t, started, "second download")
 
-	wantFirst := filepath.Join(s.CfgStore.Root, "genericagent")
-	wantSecond := filepath.Join(s.CfgStore.Root, "genericagent-2")
+	wantFirst := filepath.Join(s.CfgStore.Root, automaticInstanceBaseID, "instances", "genericagent")
+	wantSecond := filepath.Join(s.CfgStore.Root, automaticInstanceBaseID, "instances", "genericagent-2")
 	for label, result := range map[string]instanceInstallResponse{"first": first, "second": second} {
 		if !result.OK {
 			t.Errorf("%s response ok=false: %+v", label, result)
 		}
 		if result.Instance.InitStatus != config.InstanceInitStatusInitializing || result.Instance.InitError != "" {
 			t.Errorf("%s response state=%q error=%q", label, result.Instance.InitStatus, result.Instance.InitError)
+		}
+		if result.Instance.InitStage != "queued" || result.Instance.InitProgress != 5 {
+			t.Errorf("%s response progress=%q/%d want queued/5", label, result.Instance.InitStage, result.Instance.InitProgress)
 		}
 	}
 	if first.Instance.ID != "genericagent" || first.Instance.Name != "genericagent" || first.Instance.GARoot != wantFirst {
@@ -200,8 +203,12 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		}
 	}
 	for _, id := range []string{"genericagent", "genericagent-2"} {
-		if got := instanceFromStoreForTest(t, s, id).InitStatus; got != config.InstanceInitStatusInitializing {
-			t.Errorf("persisted %s state=%q want initializing", id, got)
+		instance := instanceFromStoreForTest(t, s, id)
+		if instance.InitStatus != config.InstanceInitStatusInitializing {
+			t.Errorf("persisted %s state=%q want initializing", id, instance.InitStatus)
+		}
+		if instance.InitStage != "downloading" || instance.InitProgress != 35 {
+			t.Errorf("persisted %s progress=%q/%d want downloading/35", id, instance.InitStage, instance.InitProgress)
 		}
 	}
 
@@ -211,6 +218,9 @@ func TestInstanceInstallReturnsInitializingAndAllocatesUniqueDestinations(t *tes
 		instance := instanceFromStoreForTest(t, s, id)
 		if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
 			t.Errorf("completed %s state=%q error=%q", id, instance.InitStatus, instance.InitError)
+		}
+		if instance.InitStage != "complete" || instance.InitProgress != 100 {
+			t.Errorf("completed %s progress=%q/%d want complete/100", id, instance.InitStage, instance.InitProgress)
 		}
 	}
 }
@@ -252,6 +262,47 @@ func TestInstanceInstallFromUploadedTemplate(t *testing.T) {
 	}
 	if _, err := os.Stat(s.instanceTemplateArchivePath("uploaded")); !os.IsNotExist(err) {
 		t.Errorf("staged archive remains after success: %v", err)
+	}
+}
+
+func TestUploadedTemplatePersistsAndInitializesAnotherInstance(t *testing.T) {
+	s := newConfigTestServer(t)
+	oldDownload := downloadAndExtractGenericAgentArchive
+	downloadCalls := 0
+	downloadAndExtractGenericAgentArchive = func(context.Context, string) (string, error) {
+		downloadCalls++
+		return "", errors.New("reusable template must not download")
+	}
+	t.Cleanup(func() {
+		s.stopInstanceInstalls()
+		downloadAndExtractGenericAgentArchive = oldDownload
+	})
+
+	archive := buildTemplateZipForTest(t, map[string]string{
+		"GenericAgent-main/agentmain.py":             "# persistent fixture\n",
+		"GenericAgent-main/llmcore.py":               "# fixture\n",
+		"GenericAgent-main/assets/tools_schema.json": "{}\n",
+	})
+	if rr := installTemplateForTest(t, s.Routes(), "template-owner", archive); rr.Code != http.StatusOK {
+		t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	waitInstanceInstallTasksForTest(t, s)
+	if got, err := os.ReadFile(s.reusableInstanceTemplatePath()); err != nil || !bytes.Equal(got, archive) {
+		t.Fatalf("persistent template mismatch: err=%v equal=%v", err, bytes.Equal(got, archive))
+	}
+
+	response := installInstanceForTest(t, s.Routes(), "template-reuse")
+	waitInstanceInstallTasksForTest(t, s)
+	instance := instanceFromStoreForTest(t, s, response.Instance.ID)
+	if instance.InitStatus != config.InstanceInitStatusReady || instance.InitError != "" {
+		t.Fatalf("reused state=%q error=%q", instance.InitStatus, instance.InitError)
+	}
+	content, err := os.ReadFile(filepath.Join(instance.GARoot, "agentmain.py"))
+	if err != nil || string(content) != "# persistent fixture\n" {
+		t.Fatalf("reused template content=%q err=%v", content, err)
+	}
+	if downloadCalls != 0 {
+		t.Fatalf("download called %d times", downloadCalls)
 	}
 }
 
@@ -616,11 +667,13 @@ func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
 	root := t.TempDir()
 	h := s.Routes()
 	createBody, err := json.Marshal(config.InstanceConfig{
-		ID:         "manual",
-		Name:       "Manual",
-		GARoot:     root,
-		InitStatus: config.InstanceInitStatusInitializing,
-		InitError:  "client supplied",
+		ID:           "manual",
+		Name:         "Manual",
+		GARoot:       root,
+		InitStatus:   config.InstanceInitStatusInitializing,
+		InitError:    "client supplied",
+		InitStage:    "complete",
+		InitProgress: 99,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -633,13 +686,15 @@ func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	created := instanceFromStoreForTest(t, s, "manual")
-	if created.InitStatus != "" || created.InitError != "" {
+	if created.InitStatus != "" || created.InitError != "" || created.InitStage != "" || created.InitProgress != 0 {
 		t.Fatalf("create accepted client install state: %+v", created)
 	}
 
 	created.Name = "Updated"
 	created.InitStatus = config.InstanceInitStatusFailed
 	created.InitError = "client overwrite"
+	created.InitStage = "complete"
+	created.InitProgress = 99
 	updateBody, err := json.Marshal(created)
 	if err != nil {
 		t.Fatal(err)
@@ -652,7 +707,7 @@ func TestInstanceMutationKeepsInstallStateServerOwned(t *testing.T) {
 		t.Fatalf("update status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	updated := instanceFromStoreForTest(t, s, "manual")
-	if updated.Name != "Updated" || updated.InitStatus != "" || updated.InitError != "" {
+	if updated.Name != "Updated" || updated.InitStatus != "" || updated.InitError != "" || updated.InitStage != "" || updated.InitProgress != 0 {
 		t.Fatalf("updated instance=%+v", updated)
 	}
 }

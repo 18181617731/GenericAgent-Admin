@@ -17,10 +17,12 @@ type instanceIDRequest struct {
 }
 
 type instanceInstallRequest struct {
-	ID string `json:"id"`
+	ID          string `json:"id"`
+	UseTemplate *bool  `json:"use_template,omitempty"`
 }
 
 const automaticInstanceBaseID = "genericagent"
+const protectedDefaultInstanceID = "default"
 const instanceTemplateMaxBytes int64 = 512 << 20
 
 func (s *Server) parseInstanceInstallRequest(w http.ResponseWriter, r *http.Request) (instanceInstallRequest, multipart.File, error) {
@@ -36,6 +38,10 @@ func (s *Server) parseInstanceInstallRequest(w http.ResponseWriter, r *http.Requ
 		defer r.MultipartForm.RemoveAll()
 	}
 	req.ID = r.FormValue("id")
+	if raw := strings.TrimSpace(r.FormValue("use_template")); raw != "" {
+		useTemplate := !strings.EqualFold(raw, "false") && raw != "0"
+		req.UseTemplate = &useTemplate
+	}
 	file, header, err := r.FormFile("template")
 	if err == http.ErrMissingFile {
 		return req, nil, nil
@@ -138,30 +144,41 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	useTemplate := req.UseTemplate == nil || *req.UseTemplate
 	if archivePath != "" {
-		finalArchivePath := s.instanceTemplateArchivePath(id)
-		if err := os.Remove(finalArchivePath); err != nil && !os.IsNotExist(err) {
-			bad(w, http.StatusInternalServerError, "replace staged template archive: "+err.Error())
+		if err := s.promoteInstanceTemplate(archivePath); err != nil {
+			bad(w, http.StatusInternalServerError, "save reusable template archive: "+err.Error())
 			return
 		}
-		if err := os.Rename(archivePath, finalArchivePath); err != nil {
-			bad(w, http.StatusInternalServerError, "stage template archive: "+err.Error())
+		archivePath = ""
+		useTemplate = true
+	}
+	if useTemplate {
+		var err error
+		archivePath, err = s.snapshotReusableInstanceTemplate(id)
+		if err != nil {
+			bad(w, http.StatusInternalServerError, "prepare reusable template archive: "+err.Error())
 			return
 		}
-		archivePath = finalArchivePath
 	}
 
 	instance := config.InstanceConfig{
 		ID:              id,
 		Name:            id,
-		GARoot:          filepath.Join(s.CfgStore.Root, id),
+		GARoot:          filepath.Join(s.CfgStore.Root, automaticInstanceBaseID, "instances", id),
 		PythonPath:      cfg.PythonPath,
 		EffectivePython: cfg.EffectivePython,
 		InitStatus:      config.InstanceInitStatusInitializing,
+		InitStage:       "queued",
+		InitProgress:    5,
 	}
 	dest, err := s.automaticInstanceDestination(instance)
 	if err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		bad(w, http.StatusInternalServerError, "create instances directory: "+err.Error())
 		return
 	}
 	if err := os.Mkdir(dest, 0755); err != nil {
@@ -198,6 +215,7 @@ func (s *Server) instanceInstall(w http.ResponseWriter, r *http.Request) {
 		"ok":                  true,
 		"items":               cfg.Instances,
 		"default_instance_id": cfg.DefaultInstanceID,
+		"template_available":  s.reusableInstanceTemplateAvailable(),
 		"instance":            instance,
 	})
 }
@@ -207,9 +225,11 @@ func (s *Server) instancesList(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	cfg := s.CfgStore.Snapshot()
 	writeJSON(w, map[string]interface{}{
-		"items":               s.CfgStore.Snapshot().Instances,
-		"default_instance_id": s.CfgStore.Snapshot().DefaultInstanceID,
+		"items":               cfg.Instances,
+		"default_instance_id": cfg.DefaultInstanceID,
+		"template_available":  s.reusableInstanceTemplateAvailable(),
 	})
 }
 
@@ -228,6 +248,8 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 	// cannot impersonate or enqueue an automatic installation.
 	instance.InitStatus = ""
 	instance.InitError = ""
+	instance.InitStage = ""
+	instance.InitProgress = 0
 	if instance.ID == "" {
 		bad(w, http.StatusBadRequest, "instance id is required")
 		return
@@ -284,6 +306,8 @@ func (s *Server) instanceUpdate(w http.ResponseWriter, r *http.Request) {
 			// an instance metadata update.
 			instance.InitStatus = current.InitStatus
 			instance.InitError = current.InitError
+			instance.InitStage = current.InitStage
+			instance.InitProgress = current.InitProgress
 			cfg.Instances[i] = instance
 			found = true
 			break
@@ -330,6 +354,11 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		s.ConfigMu.Unlock()
 		bad(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if req.ID == protectedDefaultInstanceID {
+		s.ConfigMu.Unlock()
+		bad(w, http.StatusConflict, "the default instance cannot be deleted")
 		return
 	}
 	if req.ID == cfg.DefaultInstanceID && len(kept) > 0 {

@@ -28,6 +28,16 @@
 
 The goal is not to replace GenericAgent, but to consolidate local GA runtime state, task entry points, model configuration, team collaboration, and desktop assistance into a maintainable UI.
 
+### 🖥️ See It in Action
+
+<p align="center">
+  <img src="docs/screenshots/chat-light.png" alt="GA Admin native chat - light theme" width="32%" />
+  <img src="docs/screenshots/chat-warm.png" alt="GA Admin native chat - warm theme" width="32%" />
+  <img src="docs/screenshots/chat-dark.png" alt="GA Admin native chat - dark theme" width="32%" />
+</p>
+
+*Native chat with instance switching, model selection, streaming replies, and usage tracking.*
+
 ### 📑 Table of Contents
 
 - [Key Features](#-key-features)
@@ -345,6 +355,16 @@ This project is used internally within the GenericAgent ecosystem. For external 
 **GenericAgent Admin Go** 是 GenericAgent 的桌面管理面板。Go 后端负责进程、文件、配置、更新和系统集成，React/Vite 前端提供控制台界面。打包为单个 `ga-admin` / `ga-admin.exe` 可执行文件。
 
 目标不是替代 GenericAgent，而是将本地 GA 运行状态、任务入口、模型配置、团队协作和桌面辅助整合到一个可维护的 UI 中。
+
+### 🖥️ 界面预览
+
+<p align="center">
+  <img src="docs/screenshots/chat-light.png" alt="GA Admin 原生聊天 - 浅色主题" width="32%" />
+  <img src="docs/screenshots/chat-warm.png" alt="GA Admin 原生聊天 - 暖色主题" width="32%" />
+  <img src="docs/screenshots/chat-dark.png" alt="GA Admin 原生聊天 - 深色主题" width="32%" />
+</p>
+
+*支持实例切换、模型选择、流式回复与用量跟踪的原生聊天界面。*
 
 ### 📑 目录
 
