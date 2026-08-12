@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,14 +17,13 @@ import (
 // caption colour. Both are set from Go because the page inside the window has
 // no say over the frame Windows draws around it.
 var (
-	dwmapi                          = windows.NewLazySystemDLL("dwmapi.dll")
-	procDwmSetWindowAttribute       = dwmapi.NewProc("DwmSetWindowAttribute")
-	procLookupIconIDFromDirectoryEx = user32.NewProc("LookupIconIdFromDirectoryEx")
-	procCreateIconFromResourceEx    = user32.NewProc("CreateIconFromResourceEx")
-	procSendMessageW                = user32.NewProc("SendMessageW")
-	procGetSystemMetrics            = user32.NewProc("GetSystemMetrics")
-	procSetWindowPos                = user32.NewProc("SetWindowPos")
-	procGetWindowRect               = user32.NewProc("GetWindowRect")
+	dwmapi                       = windows.NewLazySystemDLL("dwmapi.dll")
+	procDwmSetWindowAttribute    = dwmapi.NewProc("DwmSetWindowAttribute")
+	procCreateIconFromResourceEx = user32.NewProc("CreateIconFromResourceEx")
+	procSendMessageW             = user32.NewProc("SendMessageW")
+	procGetSystemMetrics         = user32.NewProc("GetSystemMetrics")
+	procSetWindowPos             = user32.NewProc("SetWindowPos")
+	procGetWindowRect            = user32.NewProc("GetWindowRect")
 
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procSetProcessDPIAware            = user32.NewProc("SetProcessDPIAware")
@@ -135,19 +135,67 @@ func setWindowIcon(hwnd uintptr, ico []byte) {
 
 // iconFromICO picks the frame closest to the requested size out of an .ico
 // file held in memory and turns it into an HICON.
+//
+// The directory is read here instead of by LookupIconIdFromDirectoryEx, which
+// wants the resource form of that table: its entries end in a two-byte
+// resource id where a file's end in a four-byte offset, so a file walks it out
+// of step after the first entry and it answers with whatever the drift lands
+// on — for this icon, the 16px frame at every size, stretched by the call
+// below into a blurred caption and taskbar icon.
 func iconFromICO(ico []byte, cx, cy int) uintptr {
-	if len(ico) == 0 || cx <= 0 || cy <= 0 {
-		return 0
-	}
-	offset, _, _ := procLookupIconIDFromDirectoryEx.Call(
-		uintptr(unsafe.Pointer(&ico[0])), 1, uintptr(cx), uintptr(cy), lrDefaultColor)
-	if offset == 0 || int(offset) >= len(ico) {
+	offset, length := bestICOFrame(ico, cx, cy)
+	if length == 0 {
 		return 0
 	}
 	icon, _, _ := procCreateIconFromResourceEx.Call(
-		uintptr(unsafe.Pointer(&ico[int(offset)])), uintptr(len(ico)-int(offset)),
+		uintptr(unsafe.Pointer(&ico[offset])), uintptr(length),
 		1, iconResourceVersion, uintptr(cx), uintptr(cy), lrDefaultColor)
 	return icon
+}
+
+// bestICOFrame locates the frame to draw the icon at the requested size from.
+func bestICOFrame(ico []byte, cx, cy int) (offset, length int) {
+	const header, entry = 6, 16
+	if len(ico) < header || cx <= 0 || cy <= 0 {
+		return 0, 0
+	}
+	want := cx
+	if cy > want {
+		want = cy
+	}
+	best := 0
+	for i := 0; i < int(binary.LittleEndian.Uint16(ico[4:])); i++ {
+		at := header + i*entry
+		if at+entry > len(ico) {
+			break
+		}
+		side := int(ico[at])
+		if side == 0 {
+			side = 256
+		}
+		size := int(binary.LittleEndian.Uint32(ico[at+8:]))
+		start := int(binary.LittleEndian.Uint32(ico[at+12:]))
+		if size <= 0 || start < header || start+size > len(ico) {
+			continue
+		}
+		if length == 0 || closerICOSide(side, best, want) {
+			best, offset, length = side, start, size
+		}
+	}
+	return offset, length
+}
+
+// closerICOSide reports whether a frame of side a suits a target of want
+// better than one of side b. Reaching the target beats falling short of it,
+// because shrinking a frame keeps detail that stretching one cannot invent.
+func closerICOSide(a, b, want int) bool {
+	if (a >= want) != (b >= want) {
+		return a >= want
+	}
+	if a >= want {
+		return a < b
+	}
+	return a > b
 }
 
 // setTitleBarTheme paints the caption dark or light so the frame stops
