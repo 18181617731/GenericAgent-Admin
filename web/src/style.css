@@ -15764,10 +15764,10 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 }
 
 #admin-sidebar nav button:nth-child(3),
-#admin-sidebar nav button:nth-child(10) { margin-top: 7px; }
+#admin-sidebar nav button:nth-child(8) { margin-top: 7px; }
 
 #admin-sidebar nav button:nth-child(3)::before,
-#admin-sidebar nav button:nth-child(10)::before {
+#admin-sidebar nav button:nth-child(8)::before {
   content: "";
   position: absolute;
   top: -5px;

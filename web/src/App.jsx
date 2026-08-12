@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, Bot, Brain, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, ExternalLink, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Sparkles, Target, Terminal, Trash2, UploadCloud, XCircle, Download } from 'lucide-react'
+import { Activity, BarChart3, CalendarClock, CheckCircle2, Code2, Copy, Eye, ExternalLink, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Sparkles, Target, Terminal, Trash2, UploadCloud, XCircle, Download } from 'lucide-react'
 import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
@@ -23,11 +23,9 @@ import {
   shouldReportVersionPollError,
   versionMatchesExpectedRelease,
 } from './lib/versionUpdatePolling'
-import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
-import { TurnList } from './components/turns'
+import { ChannelServiceTable, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TaskRow } from './components/schedule'
 import { ErrorBoundary, RouteFallback, StatusNotice } from './components/feedback'
-import { ProcessGuard } from './components/ProcessGuard'
 import SetupWizard from './components/SetupWizard.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
@@ -44,8 +42,8 @@ export const I18N = {
   zh: {
     appName: 'GA Admin', autostart: '开机自启', autostartService: '自启动', backup: '写操作会自动备份', browse: '选择目录', busy: '执行中', cancel: '取消', checkEnv: '检查 Python / Git', clear: '清空', close: '关闭', copy: '复制', create: '创建', delete: '删除', disableAutostart: '关闭自启', disabled: '停用', download: '下载', empty: '暂无', enableAutostart: '开启自启', enabled: '启用', envMissing: '环境缺失', envReady: '环境已就绪', error: '错误', hide: '隐藏', installDone: 'GA 已安装并配置', installGA: '安装 GA', installPath: '安装目录', language: '语言', loading: '加载中…', logs: '日志', mainNavigation: '主导航', read: '读取', ready: '就绪', refresh: '刷新', remove: '删除', retry: '重试', root: 'GenericAgent 根目录', running: '运行中', save: '保存', saveTitleModel: '保存标题模型', search: '搜索', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', setupOk: 'GA 路径已配置', setupTitle: '首次配置 GenericAgent', show: '显示', start: '启动', stop: '停止', stopped: '已停止', switchTheme: '切换主题', tagline: 'GenericAgent 设置与管理中心', tail: '尾读', titleModel: '对话标题模型', titleModelDisabled: '禁用自动标题生成', titleModelFollowConversation: '跟随当前对话模型', titleModelHelp: '新会话和旧会话的标题生成使用此模型，可与对话模型不同。', titleModelSaved: '标题模型设置已保存', unsupported: '不支持', validateRoot: '验证并使用',
     serviceDesc: { scheduler: '定时任务调度器：每 120 秒扫描 sche_tasks/ 中的任务，按 once/daily/weekly/every_Nh 等周期到期触发，并归档 L4 会话记录。', autonomous: '自主待机驱动：每 30 分钟检测一次，当用户离开超过 30 分钟，便提示智能体按自动化 SOP 自行推进任务。' },
-    nav: { overview: '总览', instances: 'GA 实例', files: '文件', tasks: '任务', memory: '记忆', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
-    desc: { overview: '从 GA 的功能域理解并接管生命周期。', instances: '管理隔离的 GA 运行目录、Python 解释器和默认实例。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '普通会话、任务文件、批处理入口、任务型服务与 sche_tasks 定时任务。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '反思、自主运行、Goal Mode 与团队 Worker。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 中的模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
+    nav: { overview: '总览', instances: 'GA 实例', files: '文件', tasks: '任务', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
+    desc: { overview: '从 GA 的功能域理解并接管生命周期。', instances: '管理隔离的 GA 运行目录、Python 解释器和默认实例。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '任务型服务、sche_tasks 定时任务、Goal/自主运行与报告。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 中的模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
     cards: { processes: '进程', running: '运行中', stopped: '已停止', memoryLayers: '记忆层', sopTools: 'SOP/工具', schedule: '定时任务', enabledTasks: '已启用', reports: '报告', coreFiles: '核心文件', reflect: '反思脚本', health: 'GA 健康', capabilities: '能力', risks: '风险', version: '版本管理' },
     overview: {
       observability: '只读观测', healthChecks: '健康检查', coreFiles: '核心文件', memorySops: '记忆 SOP', riskRules: '风险规则', healthy: '健康端点报告正常', needsAttention: '健康端点需要关注', awaitingSnapshot: '等待只读快照', generatedAt: '生成时间', missingCore: '核心文件缺失',
@@ -91,8 +89,8 @@ export const I18N = {
   en: {
     appName: 'GA Admin', tagline: 'GenericAgent settings & management hub', root: 'GenericAgent root', setupTitle: 'First-time GenericAgent setup', setupDesc: 'Select an existing GA root, or install GA into a new directory.', validateRoot: 'Validate & use', installGA: 'Install GA', installPath: 'Install path', setupOk: 'GA root configured', installDone: 'GA installed and configured', browse: 'Choose directory', checkEnv: 'Check Python / Git', envReady: 'Environment ready', envMissing: 'Environment missing', save: 'Save', refresh: 'Refresh', busy: 'Busy', ready: 'Ready', error: 'Error', empty: 'Empty', enabled: 'Enabled', disabled: 'Disabled', start: 'Start', stop: 'Stop', running: 'Running', stopped: 'Stopped', language: 'Language', copy: 'Copy', clear: 'Clear', delete: 'Delete', show: 'Show', hide: 'Hide', search: 'Search', read: 'Read', create: 'Create', remove: 'Delete', backup: 'writes create backups', autostart: 'Autostart', enableAutostart: 'Enable autostart', disableAutostart: 'Disable autostart', unsupported: 'Unsupported', titleModel: 'Chat title model', titleModelDisabled: 'Disable automatic title generation', titleModelHelp: 'Use this model for new and existing chat titles, independently of the conversation model.', titleModelFollowConversation: 'Follow the current conversation model', saveTitleModel: 'Save title model', titleModelSaved: 'Title model setting saved', tail: 'Tail', download: 'Download', autostartService: 'Autostart', logs: 'Logs', close: 'Close', cancel: 'Cancel', retry: 'Retry', loading: 'Loading…', mainNavigation: 'Main navigation', switchTheme: 'Switch theme',
     serviceDesc: { scheduler: 'Scheduled-task runner: scans sche_tasks/ every 120s and fires tasks when their once/daily/weekly/every_Nh cadence is due, also archiving L4 session logs.', autonomous: 'Idle autonomy driver: checks every 30 min and, once the user has been away for over 30 min, prompts the agent to advance tasks on its own per the automation SOP.' },
-    nav: { overview: 'Overview', instances: 'GA Instances', files: 'Files', tasks: 'Tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Hive Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
-    desc: { overview: 'Understand and take over GA lifecycle by native domains.', instances: 'Manage isolated GA runtime roots, Python interpreters, and the default instance.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Conversations, task files, batch entrypoints and task services.', memory: 'Layered memory, SOPs and utility indexes.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Reflection, autonomous runs, Goal Mode and team workers.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Configure GA root, Python, chat data directory, and Chat Python proxy.', logs: 'Process state and output logs.' },
+    nav: { overview: 'Overview', instances: 'GA Instances', files: 'Files', tasks: 'Tasks', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Hive Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
+    desc: { overview: 'Understand and take over GA lifecycle by native domains.', instances: 'Manage isolated GA runtime roots, Python interpreters, and the default instance.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Task services, sche_tasks scheduled jobs, goal/autonomous runs and reports.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Configure GA root, Python, chat data directory, and Chat Python proxy.', logs: 'Process state and output logs.' },
     cards: { processes: 'Processes', running: 'Running', stopped: 'Stopped', memoryLayers: 'Memory layers', sopTools: 'SOP/tools', schedule: 'Scheduled jobs', enabledTasks: 'Enabled', reports: 'Reports', coreFiles: 'Core files', reflect: 'Reflect scripts', health: 'GA health', capabilities: 'Capabilities', risks: 'Risks', version: 'Version management' },
     overview: {
       observability: 'Read-only observability', healthChecks: 'Health checks', coreFiles: 'Core files', memorySops: 'Memory SOPs', riskRules: 'Risk rules', healthy: 'Health endpoints are reporting normally', needsAttention: 'Health endpoints need attention', awaitingSnapshot: 'Waiting for a read-only snapshot', generatedAt: 'Generated', missingCore: 'Missing core files',
@@ -325,7 +323,7 @@ export default function App() {
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
   const [cfg, setCfg] = useState(null), [health, setHealth] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
-  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [notice, setNotice] = useState(null), [selected, setSelected] = useState('')
+  const [root, setRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [notice, setNotice] = useState(null), [selected, setSelected] = useState('')
   const msg = notice?.message || ''
   const setMsg = (message, kind) => {
     const value = String(message || '')
@@ -335,10 +333,8 @@ export default function App() {
   const [logStreamState, setLogStreamState] = useState('idle'), [logStreamNonce, setLogStreamNonce] = useState(0), [followLogs, setFollowLogs] = useState(true)
   const [serviceActionStates, setServiceActionStates] = useState({})
   const logViewRef = useRef(null)
-  const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
-  const [tmwdStatus, setTmwdStatus] = useState(null)
   const [observability, setObservability] = useState(null), [observabilityError, setObservabilityError] = useState('')
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
   const [modelInstance, setModelInstance] = useState(null)
@@ -415,20 +411,6 @@ export default function App() {
   }
 
   const loadLLMs = async () => { try { const d = await api('/api/chat/state'); setLLMs(d.llms || []) } catch(e){ console.error('加载模型列表失败:', e) } }
-  const refreshTMWebDriverStatus = async () => {
-    const d = await api('/api/tmwebdriver/status')
-    setTmwdStatus(d)
-    return d
-  }
-  const repairTMWebDriver = async () => {
-    if (!confirmDanger('tmwebdriver-repair', lang === 'zh' ? '启动或修复 TMWebDriver master 进程？' : 'Start or repair the TMWebDriver master process?')) return
-    setBusy(true); setMsg('正在启动 TMWebDriver master…')
-    try {
-      const d = await api('/api/tmwebdriver/repair', { dangerous:true, method:'POST', body: '{}' })
-      setTmwdStatus(d.status)
-      setMsg(d.message || (d.started ? `已启动 TMWebDriver master PID ${d.pid}` : 'TMWebDriver master 已在运行'))
-    } catch(e){ setMsg(`TMWebDriver 修复失败：${e.message}`) } finally{ setBusy(false) }
-  }
 
   const readObservability = async () => {
     const request = (endpoint) => {
@@ -476,7 +458,6 @@ export default function App() {
       }
       if (tab === 'files') loadFiles(filePath).catch(e => setMsg(e.message))
       if (tab === 'tasks') loadScheduleTasks({ quiet:true }).catch(e => setScheduleError(e.message))
-      if (tab === 'setup') refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
       setNotice({ kind: 'success', message: t.overview.refreshed })
     } catch (e) {
       setNotice({ kind: 'error', message: t.overview.refreshFailed(e.message) })
@@ -485,9 +466,9 @@ export default function App() {
   useEffect(() => { load() }, [])
   useEffect(() => {
     if (tab === 'goals' && health?.ok) { loadGoals().catch(e => setMsg(e.message)); loadLLMs() }
-    if (tab === 'autonomous' && health?.ok && !llms.length) loadLLMs()
+    // The runs sub tab hosts the goal list and reflect services (whose rows offer a model picker).
+    if (tab === 'tasks' && health?.ok) { loadGoals().catch(() => {}); if (!llms.length) loadLLMs() }
     if (tab === 'files' && health?.ok && !fileList.length) loadFiles(filePath).catch(e => setMsg(e.message))
-    if (tab === 'setup' && health?.ok && !tmwdStatus) refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
     // The auto-title card lives on the settings page and needs its own option list.
     if (tab === 'settings' && health?.ok && !titleModelChoices.length) loadTitleModel().catch(() => {})
   }, [tab, health?.ok])
@@ -495,10 +476,6 @@ export default function App() {
   const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status?remote=1'); setGitStatus(d); setMsg(d.upstream_configured === false ? t.overview.sourceMissingMessage : (d.latest ? t.overview.sourceCurrentMessage : t.overview.sourceBehindMessage(d.behind || 0))) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
   const updateGASource = async () => { if (!confirmDanger('ga-git-update', t.overview.sourceCheckConfirm)) return; setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-update', { dangerous:true, method:'POST', body: '{}' }); setGitResult(d); setMsg(d.changed ? t.overview.sourceUpdatedMessage(d.before, d.after) : t.overview.sourceCurrentMessage); setGitStatus(await api('/api/ga/git-status')); await load() } catch(e){ setMsg(e.message) } finally{ setGitBusy(false) } }
   const saveConfig = async () => { if (!confirmDanger('config-save', lang === 'zh' ? '保存 GA Admin 配置？会写入配置文件并可能切换 GA 根目录。' : 'Save the GA Admin configuration? This writes the configuration file and may switch the GA root.')) return; setBusy(true); try { const c = await api('/api/config', { dangerous:true, method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) }); setCfg(c); setMsg(t.hints.rootSaved); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const checkSetupEnv = async () => { setBusy(true); try { const d = await api('/api/setup/env'); setSetupEnv(d); setMsg(d.ok ? t.envReady : t.envMissing) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const browseSetupDir = async (target = 'root') => { setBusy(true); try { const base = target === 'install' ? installRoot : root; const d = await api('/api/setup/browse', { method:'POST', body: JSON.stringify({ path: base }) }); if (d.path) { target === 'install' ? setInstallRoot(d.path) : setRoot(d.path) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const validateSetupRoot = async () => { if (!confirmDanger('setup-validate-root', lang === 'zh' ? '验证并保存当前 GA 根目录？' : 'Validate and save the current GA root?')) return; setBusy(true); try { const d = await api('/api/setup/validate', { dangerous:true, method:'POST', body: JSON.stringify({ path: root }) }); if (!d.ok) throw new Error('GenericAgent health check failed'); const c = await api('/api/config', { dangerous:true, method:'PUT', body: JSON.stringify({ ...cfg, ga_root: d.root }) }); setCfg(c); setRoot(d.root); setMsg(t.setupOk); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const installGA = async () => { if (!confirmDanger('setup-install-ga', lang === 'zh' ? '安装/克隆 GenericAgent 到目标目录？会写入本地文件。' : 'Install or clone GenericAgent into the target directory? This writes local files.')) return; setBusy(true); try { const env = setupEnv || await api('/api/setup/env'); setSetupEnv(env); if (!env.ok) throw new Error(t.envMissing); const d = await api('/api/setup/install', { dangerous:true, method:'POST', body: JSON.stringify({ path: installRoot || root }) }); setRoot(d.root); setMsg(t.installDone); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const startReflectService = (name) => {
     const fallbackModel = llms.find(m => m?.index !== undefined && m?.index !== null)
     setReflectLLMNo(current => current !== '' ? current : (fallbackModel?.index?.toString() || '0'))
@@ -868,20 +845,6 @@ export default function App() {
       setMsg(e.message)
     }
     finally{ setVersionBusy(false) }
-  }
-  const installTMWebDriverDeps = async () => {
-    if (!confirmDanger('tmwebdriver-install-deps', lang === 'zh' ? '将使用当前 GA Python 执行 pip install requests bottle simple-websocket-server（清华源）。继续？' : 'Use the current GA Python to install requests, bottle, and simple-websocket-server?')) return
-    setBusy(true)
-    try { const d = await api('/api/tmwebdriver/install-deps', { dangerous:true, method:'POST', body:'{}' }); setTmwdStatus(d.status || d); setMsg(d.ok ? (lang === 'zh' ? 'TMWebDriver 依赖安装完成' : 'TMWebDriver dependencies installed') : (d.error || (lang === 'zh' ? '依赖安装失败，请查看输出' : 'Dependency installation failed; review the output'))) }
-    catch(e){ setMsg(e.message) }
-    finally{ setBusy(false) }
-  }
-  const configureGitMirror = async (enabled) => {
-    if (!confirmDanger('git-mirror', lang === 'zh' ? (enabled ? '将写入全局 git GitHub 镜像 insteadOf 配置。继续？' : '将移除默认 GitHub 镜像 insteadOf 配置。继续？') : (enabled ? 'Write the global GitHub mirror insteadOf setting to Git configuration?' : 'Remove the default GitHub mirror insteadOf setting from Git configuration?'))) return
-    setGitBusy(true)
-    try { const d = await api('/api/ga/git-mirror', { dangerous:true, method:'POST', body: JSON.stringify({ enabled }) }); setGitResult(d); setMsg(d.ok ? (enabled ? 'GitHub 镜像已启用' : 'GitHub 镜像已关闭') : (d.error || 'Git 镜像配置失败')) }
-    catch(e){ setMsg(e.message) }
-    finally{ setGitBusy(false) }
   }
   const runSearch = async () => {
     const path = filePath
@@ -1317,9 +1280,12 @@ export default function App() {
                 : <p className="muted">{t.empty}</p>}
             </div>
           </Panel>
-          <Panel title={t.nav.autonomous}>
-            <div className="actions"><button onClick={()=>setTab('autonomous')}><Bot size={14}/>{t.nav.autonomous}</button></div>
-            <EntryList items={[...(reflectSvcs || []).map(s=>({ name:s.name, path:s.running ? `${t.running}${s.pid ? ` · PID ${s.pid}` : ''}` : t.stopped, kind:s.kind || 'reflect' })), ...((inv.autonomous_reports || []).slice(0, 8).map(r=>({ name:r.name, path:new Date(r.mod_time).toLocaleString(), kind:'report' })))]} empty={t.empty}/>
+          <Panel title={t.lists.reflectServices}>
+            {reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={serviceActionStates[s.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}
+          </Panel>
+          <Panel title={`${t.nav.autonomous} · ${t.lists.recentReports}`}>
+            <div className="report-list">{(inv.autonomous_reports || []).length ? (inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>) : <p className="muted">{t.empty}</p>}</div>
+            <pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre>
           </Panel>
         </div>}
 
@@ -1336,9 +1302,7 @@ export default function App() {
           </Panel>
         </div>}
       </section>}
-      {tab==='memory' && <section><div className="grid2"><Panel title={t.lists.memory}><EntryList items={[inv.memory?.insight, inv.memory?.facts].filter(Boolean)} empty={t.empty}/></Panel><Panel title={t.lists.sop}><EntryList items={[...(inv.memory?.sops||[]), ...(inv.memory?.utils||[])]} empty={t.empty}/></Panel></div></section>}
       {tab==='channels' && <ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService} onOpenHub={openHub}/>}
-      {tab==='autonomous' && <section><Panel title={t.lists.reflectServices}>{reflectSvcs.length ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={serviceActionStates[s.name]} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel}/>) : <p className="muted">{t.hints.noReflect}</p>}</Panel><Panel title={t.lists.recentReports}><div className="report-list">{(inv.autonomous_reports || []).map(r=><button key={r.path} className={scheduleArtifactTitle===r.path ? 'active' : ''} onClick={()=>readScheduleArtifact(r.path, 'autonomous')}>{r.name}<small>{new Date(r.mod_time).toLocaleString()}</small></button>)}</div><pre className="artifact-view">{scheduleArtifactTitle?.includes('autonomous_reports') ? (scheduleArtifact || t.empty) : t.empty}</pre></Panel></section>}
       {tab==='usage' && <UsagePage lang={lang}/>}
       {tab==='goals' && <GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>}
       {tab==='settings' && <section className="settings-page">
@@ -1686,4 +1650,4 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   </section>
 }
 
-function icon(n) { const m = { overview:<Activity size={16}/>, instances:<Server size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, memory:<Brain size={16}/>, channels:<Globe2 size={16}/>, autonomous:<Bot size={16}/>, usage:<BarChart3 size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }
+function icon(n) { const m = { overview:<Activity size={16}/>, instances:<Server size={16}/>, files:<FileCode2 size={16}/>, tasks:<Terminal size={16}/>, channels:<Globe2 size={16}/>, usage:<BarChart3 size={16}/>, schedule:<CalendarClock size={16}/>, goals:<Target size={16}/>, models:<SlidersHorizontal size={16}/>, settings:<FolderCog size={16}/>, logs:<FolderCog size={16}/> }; return m[n] }

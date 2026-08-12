@@ -1,4 +1,4 @@
-export const NAV_ITEMS = ['overview','instances','files','tasks','memory','channels','autonomous','usage','goals','models','settings','logs']
+export const NAV_ITEMS = ['overview','instances','files','tasks','channels','usage','goals','models','settings','logs']
 export const ROUTE_TABS = NAV_ITEMS
 export const TASK_SUB_TABS = ['services','scheduled','runs','reports']
 
@@ -7,6 +7,8 @@ const TAB_ALIASES = {
   home: 'overview',
   index: 'overview',
   chat: 'overview',
+  // The standalone memory page was removed; its files live under GA root.
+  memory: 'files',
   task: 'tasks',
   tasks: 'tasks',
   config: 'settings',
@@ -20,6 +22,8 @@ const TASK_ROUTE_ALIASES = {
   scheduled: 'scheduled',
   runs: 'runs',
   goals: 'runs',
+  // The standalone autonomous page merged into tasks/runs.
+  autonomous: 'runs',
   reports: 'reports',
 }
 
