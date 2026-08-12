@@ -4,7 +4,9 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChannelServiceTable } from './components/common.jsx'
-import App, { ChannelsPage, I18N } from './App.jsx'
+import App from './App.jsx'
+import { ChannelsPage } from './pages/ChannelsPage.jsx'
+import { I18N } from './lib/i18n.js'
 import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, groupRuntimeModels } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
@@ -1304,9 +1306,10 @@ describe('operator shell feedback', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: /文件|Files/i })
-    
-    // First verify the trigger exists and panel opens
-    const trigger = screen.getByRole('button', { name: /外观|Appearance/i })
+
+    // Appearance lives on the General settings page, not in the shell chrome.
+    fireEvent.click(screen.getByRole('button', { name: /^(常规|General)$/i }))
+    const trigger = await screen.findByRole('button', { name: /外观|Appearance/i })
     expect(trigger).toBeTruthy()
     
     await user.click(trigger)
@@ -1327,12 +1330,14 @@ describe('operator shell feedback', () => {
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'EN' }))
+    fireEvent.click(await screen.findByRole('button', { name: '常规' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
+    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Overview$/i }))
 
     expect(await screen.findByText('Version management')).toBeTruthy()
     expect(screen.getByText('Read-only observability')).toBeTruthy()
     expect(screen.getByText('GA source update')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
     expect(screen.queryByText('只读观测')).toBeNull()
     expect(screen.queryByText('版本管理')).toBeNull()
     expect(screen.queryByText('GA 源代码更新')).toBeNull()

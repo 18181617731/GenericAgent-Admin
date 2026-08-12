@@ -62,8 +62,9 @@ test('sidebar status notice fits its compact rail without hiding actions', () =>
 })
 
 test('language controls reserve stable space for translated labels', () => {
-  assert.match(css, /\.sidebar \.lang-switch\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s)
-  assert.match(css, /\.sidebar \.lang-switch-label\s*\{[^}]*white-space:\s*nowrap/s)
+  const segmented = ruleBodies('.set-segmented button').join('\n')
+  assert.match(segmented, /min-width\s*:\s*74px/i)
+  assert.match(segmented, /white-space\s*:\s*nowrap/i)
   assert.match(
     css,
     /html\[data-color-scheme="dark"\] \.app:not\(\.app-tab-chat\) \.sidebar nav button\.active,[\s\S]*?\{[^}]*background:\s*var\(--surface-muted\)\s*!important[^}]*color:\s*var\(--text\)\s*!important/s,
@@ -99,21 +100,20 @@ test('model discovery keeps focus, responsive controls, and reduced-motion meani
   )
 })
 
-test('settings auto-title card has toggle and action field styles', () => {
-  const toggleRule = ruleBodies('.settings-field-toggle').join('\n')
-  assert.match(toggleRule, /grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+auto/i)
+test('settings rows render a real switch, a state pill, and stack on narrow screens', () => {
+  assert.match(ruleBodies('.set-toggle-track').join('\n'), /border-radius\s*:\s*999px/i)
+  assert.match(css, /\.set-toggle input:checked \+ \.set-toggle-track \.set-toggle-knob\s*\{[^}]*transform\s*:\s*translateX/i)
   const stateRule = ruleBodies('.settings-toggle-state').join('\n')
   assert.match(stateRule, /border-radius\s*:\s*999px/i)
   assert.match(stateRule, /font-weight\s*:\s*700/i)
-  const actionRule = ruleBodies('.settings-field-action').join('\n')
-  assert.match(actionRule, /justify-items\s*:\s*end/i)
+  assert.match(ruleBodies('.set-card-footer').join('\n'), /justify-content\s*:\s*flex-end/i)
   assert.match(
     css,
     /\.settings-toggle-state\.is-on\s*\{[^}]*color\s*:\s*var\(--settings-success-ink\)[^}]*\}/i,
   )
   assert.match(
     css,
-    /@media\s*\(max-width:\s*760px\)[\s\S]*?\.settings-field-toggle\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)[^}]*\}/i,
+    /@media\s*\(max-width:\s*720px\)[\s\S]*?\.set-row\s*\{[^}]*flex-direction\s*:\s*column[^}]*\}/i,
   )
 })
 
@@ -174,7 +174,7 @@ test('theme-specific metadata and settings actions keep readable foregrounds', (
   const darkSettingsRules = ruleBodies('html[data-color-scheme="dark"] .settings-page').join('\n')
   assert.match(settingsRules, /--settings-success-ink\s*:\s*#176b3c/i)
   assert.match(darkSettingsRules, /--settings-success-ink\s*:\s*#84e1c0/i)
-  assert.match(ruleBodies('.settings-config-status.ready').join('\n'), /color\s*:\s*var\(--settings-success-ink\)/i)
+  assert.match(ruleBodies('.set-state.is-on').join('\n'), /color\s*:\s*var\(--settings-success-ink/i)
   assert.match(ruleBodies('.settings-toggle-state.is-on').join('\n'), /color\s*:\s*var\(--settings-success-ink\)/i)
 
   const darkSettingsPrimary = ruleBodies('html[data-color-scheme="dark"] .settings-page button.primary').join('\n')

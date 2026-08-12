@@ -1,4 +1,4 @@
-export const NAV_ITEMS = ['overview','instances','files','tasks','channels','usage','goals','models','settings','logs']
+export const NAV_ITEMS = ['overview','settings','chat','models','instances','channels','tasks','goals','files','usage','logs']
 export const ROUTE_TABS = NAV_ITEMS
 export const TASK_SUB_TABS = ['services','scheduled','runs','reports']
 
@@ -6,12 +6,13 @@ const TAB_ALIASES = {
   '': 'overview',
   home: 'overview',
   index: 'overview',
-  chat: 'overview',
   // The standalone memory page was removed; its files live under GA root.
   memory: 'files',
   task: 'tasks',
   tasks: 'tasks',
   config: 'settings',
+  general: 'settings',
+  about: 'overview',
 }
 
 const TASK_ROUTE_ALIASES = {
@@ -44,7 +45,9 @@ const routeParts = () => {
 export const parseRoute = () => {
   const parts = routeParts()
   const rawFirst = parts[0] || ''
-  const directTaskSubTab = TASK_ROUTE_ALIASES[rawFirst]
+  // A real route always wins over a task-section shortcut, so /admin/goals is
+  // the Goal Mode page while /admin/tasks/goals is the runs section.
+  const directTaskSubTab = ROUTE_TABS.includes(rawFirst) ? undefined : TASK_ROUTE_ALIASES[rawFirst]
   const first = directTaskSubTab && rawFirst !== '' ? 'tasks' : (TAB_ALIASES[rawFirst] || rawFirst)
   const tab = ROUTE_TABS.includes(first) ? first : 'overview'
   const rawSub = tab === 'tasks' ? (parts[1] || (directTaskSubTab ? rawFirst : '')) : ''

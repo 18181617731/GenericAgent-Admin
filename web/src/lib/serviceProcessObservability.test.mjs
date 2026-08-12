@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { frontendSource } from './frontendSources.mjs'
 
 const common = readFileSync(new URL('../components/common.jsx', import.meta.url), 'utf8')
 const processGuard = readFileSync(new URL('../components/ProcessGuard.jsx', import.meta.url), 'utf8')
-const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
+const app = frontendSource()
 
 test('service cards expose lifecycle metadata without mutating services', () => {
   assert.match(common, /serviceReturnCode/)
@@ -40,6 +41,6 @@ test('reflect services can start with a safe model fallback', () => {
   assert.match(common, /startsWith\('reflect\/'\)/)
   assert.match(app, /setReflectLLMNo\(current => current !== '' \? current : \(fallbackModel\?\.index\?\.toString\(\) \|\| '0'\)\)/)
   assert.match(app, /if \(!\/\^\\d\+\$\/\.test\(selectedLLMNo\)\)/)
-  assert.match(app, /llms\.length \? llms\.map/)
+  assert.match(app, /llms\.length \? [\w.]*llms\.map/)
   assert.match(app, /<option value="0">\{t\.service\.noModelsDefault\}<\/option>/)
 })

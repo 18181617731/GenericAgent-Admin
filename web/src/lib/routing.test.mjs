@@ -7,10 +7,16 @@ const setLocation = (url) => {
 }
 
 test('parseRoute maps aliases and task sub tabs', () => {
-  setLocation('http://localhost/admin/goals')
+  setLocation('http://localhost/admin/tasks/goals')
   assert.deepEqual(parseRoute(), { tab: 'tasks', taskSubTab: 'runs' })
   setLocation('http://localhost/admin/tmwd')
   assert.deepEqual(parseRoute(), { tab: 'overview', taskSubTab: 'services' })
+})
+
+test('goal mode round-trips its own route instead of collapsing into tasks', () => {
+  setLocation('http://localhost/admin/goals')
+  assert.deepEqual(parseRoute(), { tab: 'goals', taskSubTab: 'services' })
+  assert.equal(buildRoute('goals'), '/admin/goals')
 })
 
 test('parseRoute strips the /admin mount prefix', () => {
@@ -20,8 +26,15 @@ test('parseRoute strips the /admin mount prefix', () => {
   assert.deepEqual(parseRoute(), { tab: 'tasks', taskSubTab: 'reports' })
 })
 
-test('legacy chat tab now lands on overview (chat lives at /)', () => {
+test('/admin/chat is the chat settings page (the chat itself lives at /)', () => {
   setLocation('http://localhost/admin/chat')
+  assert.deepEqual(parseRoute(), { tab: 'chat', taskSubTab: 'services' })
+})
+
+test('legacy config and about paths resolve to their settings pages', () => {
+  setLocation('http://localhost/admin/config')
+  assert.deepEqual(parseRoute(), { tab: 'settings', taskSubTab: 'services' })
+  setLocation('http://localhost/admin/about')
   assert.deepEqual(parseRoute(), { tab: 'overview', taskSubTab: 'services' })
 })
 

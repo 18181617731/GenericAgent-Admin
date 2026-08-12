@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { buildScheduleCreateRequest, normalizeScheduleTasksPayload } from './schedule.js'
+import { frontendSource } from './frontendSources.mjs'
 
 test('normalizeScheduleTasksPayload gives stable empty and row states', () => {
   assert.deepEqual(normalizeScheduleTasksPayload(null).tasks, [])
@@ -17,14 +17,14 @@ test('buildScheduleCreateRequest trims id and includes default task body', () =>
 })
 
 test('schedule UI refreshes /api/schedule/tasks and confirms dangerous create', () => {
-  const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
-  assert.match(app, /api\('\/api\/schedule\/tasks'\)/)
-  assert.match(app, /const loadScheduleTasks = async/)
-  assert.match(app, /setScheduleError\(e\.message\)/)
-  assert.match(app, /confirmDanger\('schedule-create'/)
-  assert.match(app, /api\('\/api\/schedule\/create', \{ dangerous:true, method:'POST'/)
-  assert.match(app, /<RefreshCw size=\{14\}\/>\{t\.refresh\}/)
-  assert.match(app, /\{t\.hints\.noTasks\}/)
+  const source = frontendSource()
+  assert.match(source, /api\('\/api\/schedule\/tasks'\)/)
+  assert.match(source, /const loadScheduleTasks = async/)
+  assert.match(source, /setError\(e\.message\)/)
+  assert.match(source, /confirmDanger\('schedule-create'/)
+  assert.match(source, /api\('\/api\/schedule\/create', \{ dangerous:true, method:'POST'/)
+  assert.match(source, /<RefreshCw size=\{14\}\/>\{t\.refresh\}/)
+  assert.match(source, /\{t\.hints\.noTasks\}/)
 })
 
 
