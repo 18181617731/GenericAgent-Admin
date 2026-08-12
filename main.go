@@ -115,8 +115,9 @@ func main() {
 		OpenSettings: func() { ui.OpenSettings(url) },
 		StopServices: func() { srv.StopManagedServices() },
 		Status: func() trayStatus {
-			return describeTrayStatus(listener.Addr().String(), cfgStore.Snapshot(), auth.PasswordConfigured(), primaryLANAddress)
+			return describeTrayStatus(listener.Addr().String(), cfgStore.Snapshot(), auth.PasswordConfigured(), primaryLANAddress, trayLanguage())
 		},
+		RunningServices: func() int { return srv.RunningManagedServices() },
 		Exit: func() {
 			ui.CloseAll()
 			srv.ShutdownCleanup()

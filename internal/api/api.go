@@ -1059,10 +1059,42 @@ func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
 
 // StopManagedServices stops GenericAgent child services managed by the Admin UI.
 func (s *Server) StopManagedServices() {
-	if s == nil || s.Svc == nil {
-		return
+	for _, manager := range s.managedServiceManagers() {
+		manager.StopAll()
 	}
-	s.Svc.StopAll()
+}
+
+// RunningManagedServices counts what StopManagedServices would stop, so a menu
+// entry can say how much is at stake before someone clicks it.
+func (s *Server) RunningManagedServices() int {
+	running := 0
+	for _, manager := range s.managedServiceManagers() {
+		running += manager.RunningProcessCount()
+	}
+	return running
+}
+
+// managedServiceManagers lists every manager whose processes this Admin owns.
+// Each configured instance runs its own, and the default manager stays in the
+// list because it serves a single-instance setup on its own; leaving the extra
+// instances out would strand their children when the Admin exits.
+func (s *Server) managedServiceManagers() []*service.Manager {
+	if s == nil {
+		return nil
+	}
+	seen := map[*service.Manager]bool{}
+	managers := make([]*service.Manager, 0, 2)
+	for _, manager := range s.InstanceManagers.managers() {
+		if manager == nil || seen[manager] {
+			continue
+		}
+		seen[manager] = true
+		managers = append(managers, manager)
+	}
+	if s.Svc != nil && !seen[s.Svc] {
+		managers = append(managers, s.Svc)
+	}
+	return managers
 }
 
 // ShutdownCleanup stops child processes before the Admin process exits.

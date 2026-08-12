@@ -20,16 +20,13 @@ var appIconICO []byte
 //go:embed assets/tray.png
 var appIconPNG []byte
 
-// The bound address is fixed for the process lifetime, but remote access and
-// the password can be changed from the settings page while it runs, so the
-// menu re-reads its status instead of rendering once at startup.
+// The bound address is fixed for the process lifetime, but remote access, the
+// password, and the set of running services all change while the process runs,
+// so the menu re-reads them instead of rendering once at startup.
 const trayRefreshInterval = 3 * time.Second
 
-// copiedFeedbackTitle briefly replaces an address entry so that a copy, which
-// otherwise changes nothing on screen, is visibly acknowledged.
-const copiedFeedback = "已复制 "
-
 func runTray(app trayApp) {
+	text := trayLanguage()
 	var exitOnce sync.Once
 	quit := func() {
 		exitOnce.Do(func() {
@@ -46,22 +43,22 @@ func runTray(app trayApp) {
 			systray.SetIcon(appIconPNG)
 		}
 		systray.SetTitle("GA")
-		systray.SetTooltip(trayTooltipAppName)
+		systray.SetTooltip(text.AppName)
 
-		openItem := systray.AddMenuItem("打开 Admin", "打开管理界面")
-		chatItem := systray.AddMenuItem("打开 Chat", "打开对话界面")
-		settingsItem := systray.AddMenuItem("打开设置", "远程访问与访问密码都在设置页")
+		openItem := systray.AddMenuItem(text.OpenAdmin, text.OpenAdminTip)
+		chatItem := systray.AddMenuItem(text.OpenChat, text.OpenChatTip)
+		settingsItem := systray.AddMenuItem(text.OpenSettings, text.OpenSettingsTip)
 		systray.AddSeparator()
 		// The default listen port is random, so the tray is the only place a
 		// user can read, and take, the address of the running server.
-		localItem := systray.AddMenuItem("", "点击复制本机地址")
-		lanItem := systray.AddMenuItem("", "点击复制局域网地址")
-		scopeItem := systray.AddMenuItem("", "在设置页修改远程访问")
+		localItem := systray.AddMenuItem("", text.CopyLocalTip)
+		lanItem := systray.AddMenuItem("", text.CopyLANTip)
+		scopeItem := systray.AddMenuItem("", text.ScopeTip)
 		scopeItem.Disable()
 		systray.AddSeparator()
-		stopItem := systray.AddMenuItem("停止所有服务", "停止所有由 Admin 托管的服务")
+		stopItem := systray.AddMenuItem("", text.StopTip)
 		systray.AddSeparator()
-		exitItem := systray.AddMenuItem("退出 Admin", "退出 GenericAgent Admin")
+		exitItem := systray.AddMenuItem(text.Exit, text.ExitTip)
 
 		status := app.status()
 		render := func() {
@@ -69,6 +66,17 @@ func runTray(app trayApp) {
 			localItem.SetTitle(status.LocalLabel)
 			scopeItem.SetTitle(status.ScopeLabel)
 			systray.SetTooltip(status.Tooltip)
+
+			running := app.runningServices()
+			stopItem.SetTitle(stopServicesLabel(text, running))
+			// Nothing to stop is worth saying with the entry itself rather
+			// than with a click that would do nothing.
+			if running > 0 {
+				stopItem.Enable()
+			} else {
+				stopItem.Disable()
+			}
+
 			if status.LANLabel == "" {
 				lanItem.Hide()
 				return
@@ -86,7 +94,9 @@ func runTray(app trayApp) {
 				log.Printf("tray: %v", err)
 				return
 			}
-			item.SetTitle(copiedFeedback + url)
+			// A copy changes nothing on screen, so the entry acknowledges it
+			// until the next refresh restores the address.
+			item.SetTitle(text.Copied + url)
 		}
 
 		go func() {

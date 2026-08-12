@@ -12,7 +12,7 @@ const testLAN = "192.168.1.20"
 func lanIP(ip string) func() string { return func() string { return ip } }
 
 func TestTrayStatusLoopbackLaunch(t *testing.T) {
-	status := describeTrayStatus("127.0.0.1:50451", config.Default(), false, lanIP(testLAN))
+	status := describeTrayStatus("127.0.0.1:50451", config.Default(), false, lanIP(testLAN), trayZH)
 
 	if status.LocalURL != "http://127.0.0.1:50451" {
 		t.Fatalf("local URL = %q", status.LocalURL)
@@ -24,10 +24,10 @@ func TestTrayStatusLoopbackLaunch(t *testing.T) {
 	if status.LANLabel != "" || status.LANURL != "" {
 		t.Fatalf("loopback launch advertised a LAN address: %q %q", status.LANLabel, status.LANURL)
 	}
-	if status.ScopeLabel != trayScopeLabel+scopeLocalOnly {
+	if status.ScopeLabel != trayZH.ScopeLabel+trayZH.ScopeLocalOnly {
 		t.Fatalf("scope = %q", status.ScopeLabel)
 	}
-	if !strings.Contains(status.Tooltip, "127.0.0.1:50451") || !strings.Contains(status.Tooltip, scopeLocalOnly) {
+	if !strings.Contains(status.Tooltip, "127.0.0.1:50451") || !strings.Contains(status.Tooltip, trayZH.ScopeLocalOnly) {
 		t.Fatalf("tooltip = %q", status.Tooltip)
 	}
 }
@@ -37,7 +37,7 @@ func TestTrayStatusPublishedWithPassword(t *testing.T) {
 	cfg.RemoteAccess = true
 	cfg.Port = 8787
 
-	status := describeTrayStatus("[::]:8787", cfg, true, lanIP(testLAN))
+	status := describeTrayStatus("[::]:8787", cfg, true, lanIP(testLAN), trayZH)
 
 	if status.LANURL != "http://192.168.1.20:8787" {
 		t.Fatalf("LAN URL = %q", status.LANURL)
@@ -49,7 +49,7 @@ func TestTrayStatusPublishedWithPassword(t *testing.T) {
 	if status.LocalURL != "http://127.0.0.1:8787" {
 		t.Fatalf("local URL = %q", status.LocalURL)
 	}
-	if status.ScopeLabel != trayScopeLabel+scopeRemotePassword {
+	if status.ScopeLabel != trayZH.ScopeLabel+trayZH.ScopeRemotePassword {
 		t.Fatalf("scope = %q", status.ScopeLabel)
 	}
 }
@@ -60,9 +60,9 @@ func TestTrayStatusPublishedAnonymously(t *testing.T) {
 	cfg.RemoteAllowAnonymous = true
 	cfg.Port = 8787
 
-	status := describeTrayStatus("0.0.0.0:8787", cfg, false, lanIP(testLAN))
+	status := describeTrayStatus("0.0.0.0:8787", cfg, false, lanIP(testLAN), trayZH)
 
-	if status.ScopeLabel != trayScopeLabel+scopeRemoteAnonymous {
+	if status.ScopeLabel != trayZH.ScopeLabel+trayZH.ScopeRemoteAnonymous {
 		t.Fatalf("scope = %q, want the anonymous warning", status.ScopeLabel)
 	}
 }
@@ -72,7 +72,7 @@ func TestTrayStatusPublishedWithoutARoutableAddress(t *testing.T) {
 	cfg.RemoteAccess = true
 	cfg.Port = 8787
 
-	status := describeTrayStatus("0.0.0.0:8787", cfg, true, lanIP(""))
+	status := describeTrayStatus("0.0.0.0:8787", cfg, true, lanIP(""), trayZH)
 
 	if status.LANLabel != "" {
 		t.Fatalf("LAN label = %q, want empty when no interface answers", status.LANLabel)
@@ -96,22 +96,22 @@ func TestTrayStatusReportsPendingRemoteChanges(t *testing.T) {
 		{
 			name:   "remote turned on after launch waits for a restart",
 			listen: "127.0.0.1:50451", remote: true, passwordSet: true,
-			wantScope: scopeLocalOnly + pendingRestart,
+			wantScope: trayZH.ScopeLocalOnly + trayZH.PendingRestart,
 		},
 		{
 			name:   "remote turned off after launch still serves the network",
 			listen: "0.0.0.0:8787", remote: false, passwordSet: true,
-			wantScope: scopeRemotePassword + pendingRestart,
+			wantScope: trayZH.ScopeRemotePassword + trayZH.PendingRestart,
 		},
 		{
 			name:   "remote without a password explains the blocker",
 			listen: "127.0.0.1:50451", remote: true, passwordSet: false,
-			wantScope: scopeLocalOnly + pendingNeedsPassword,
+			wantScope: trayZH.ScopeLocalOnly + trayZH.PendingNeedsPassword,
 		},
 		{
 			name:   "anonymous remote needs no password to be pending",
 			listen: "127.0.0.1:50451", remote: true, anonymous: true, passwordSet: false,
-			wantScope: scopeLocalOnly + pendingRestart,
+			wantScope: trayZH.ScopeLocalOnly + trayZH.PendingRestart,
 		},
 	}
 	for _, tc := range cases {
@@ -120,16 +120,16 @@ func TestTrayStatusReportsPendingRemoteChanges(t *testing.T) {
 			cfg.RemoteAccess = tc.remote
 			cfg.RemoteAllowAnonymous = tc.anonymous
 			cfg.Port = 8787
-			status := describeTrayStatus(tc.listen, cfg, tc.passwordSet, lanIP(""))
-			if status.ScopeLabel != trayScopeLabel+tc.wantScope {
-				t.Fatalf("scope = %q, want %q", status.ScopeLabel, trayScopeLabel+tc.wantScope)
+			status := describeTrayStatus(tc.listen, cfg, tc.passwordSet, lanIP(""), trayZH)
+			if status.ScopeLabel != trayZH.ScopeLabel+tc.wantScope {
+				t.Fatalf("scope = %q, want %q", status.ScopeLabel, trayZH.ScopeLabel+tc.wantScope)
 			}
 		})
 	}
 }
 
 func TestTrayStatusSurvivesAnUnparsableAddress(t *testing.T) {
-	status := describeTrayStatus("not-an-address", config.Default(), false, nil)
+	status := describeTrayStatus("not-an-address", config.Default(), false, nil, trayZH)
 
 	if status.LocalURL != "" {
 		t.Fatalf("local URL = %q, want empty for an address we cannot read", status.LocalURL)
@@ -137,7 +137,7 @@ func TestTrayStatusSurvivesAnUnparsableAddress(t *testing.T) {
 	if !strings.Contains(status.LocalLabel, "not-an-address") {
 		t.Fatalf("local label = %q", status.LocalLabel)
 	}
-	if status.ScopeLabel != trayScopeLabel+scopeUnknown {
+	if status.ScopeLabel != trayZH.ScopeLabel+trayZH.ScopeUnknown {
 		t.Fatalf("scope = %q", status.ScopeLabel)
 	}
 }
@@ -147,7 +147,7 @@ func TestTrayStatusToleratesAMissingLANLookup(t *testing.T) {
 	cfg.RemoteAccess = true
 	cfg.Port = 8787
 
-	status := describeTrayStatus("0.0.0.0:8787", cfg, true, nil)
+	status := describeTrayStatus("0.0.0.0:8787", cfg, true, nil, trayZH)
 
 	if status.LANLabel != "" {
 		t.Fatalf("LAN label = %q", status.LANLabel)

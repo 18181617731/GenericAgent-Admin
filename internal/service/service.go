@@ -53,21 +53,27 @@ type Manager struct {
 // HasRunningProcesses reports whether this manager currently owns at least one
 // live process. It deliberately only considers processes started or adopted by
 // this manager; unrelated GenericAgent processes are outside its ownership.
-func (m *Manager) HasRunningProcesses() bool {
+func (m *Manager) HasRunningProcesses() bool { return m.RunningProcessCount() > 0 }
+
+// RunningProcessCount counts those same processes, for callers that have to
+// say how many of them an action would touch. It reads the process table
+// rather than the discovered service list, so it stays cheap enough to poll.
+func (m *Manager) RunningProcessCount() int {
 	if m == nil {
-		return false
+		return 0
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	running := 0
 	for _, p := range m.procs {
 		if p == nil || p.cmd == nil || p.cmd.Process == nil || p.ret != nil {
 			continue
 		}
 		if processAlive(p.cmd.Process.Pid) {
-			return true
+			running++
 		}
 	}
-	return false
+	return running
 }
 
 func NewManager(gaRoot string, bufferLines int) *Manager {
