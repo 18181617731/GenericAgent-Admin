@@ -12,6 +12,26 @@ test('scroll follow pauses only for upward movement and resumes at the bottom', 
   assert.equal(scrollFollowAction({ nearBottom: true, previousScrollTop: 300, scrollTop: 420 }), 'resume')
 })
 
+test('scroll follow ignores the offset the app moved itself', () => {
+  assert.equal(scrollFollowAction({
+    nearBottom: false, previousScrollTop: 320, scrollTop: 300, programmatic: true,
+  }), 'preserve')
+})
+
+test('scroll follow survives content that collapses above the reader', () => {
+  // A tool card folding shut pulls the offset up without anyone scrolling; the
+  // shorter page is what gives it away.
+  assert.equal(scrollFollowAction({
+    nearBottom: false, previousScrollTop: 900, scrollTop: 600,
+    previousScrollHeight: 4000, scrollHeight: 3400,
+  }), 'preserve')
+  // Same move while the page keeps growing is a reader walking back up.
+  assert.equal(scrollFollowAction({
+    nearBottom: false, previousScrollTop: 900, scrollTop: 600,
+    previousScrollHeight: 4000, scrollHeight: 4200,
+  }), 'pause')
+})
+
 test('resume targets the tail placeholder and never a stale empty assistant mid-history', () => {
   const stale = { id:'stale-mid', role:'assistant', content:'' }
   const tail = { id:'tail-live', role:'assistant', content:'' }

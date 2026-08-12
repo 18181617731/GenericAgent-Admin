@@ -95,7 +95,16 @@ const timelineKey = (v) => {
   const d = dateFromTimestamp(v)
   return d ? `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}` : 'unknown'
 }
-const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
+// One distance decides every follow question: within this much of the end
+// counts as reading the newest output.
+const FOLLOW_END_GAP = 32
+// A scroll the app asked for lands a frame or two later; until then its events
+// must not be read as the reader moving.
+const FOLLOW_SETTLE_MS = 200
+const isNearBottom = (el, gap = FOLLOW_END_GAP) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
+// Nothing to follow, and nothing to offer a way back to, when the thread fits
+// on screen.
+const threadCanScroll = (el) => Boolean(el) && (el.scrollHeight - el.clientHeight) > FOLLOW_END_GAP
 const parseBTWDisplay = (value) => {
   const raw = String(value || '')
   const match = raw.match(/^\s*(?:>\s*)?(?:🟡\s*)?\/btw(?:[ \t]+([\s\S]*))?\s*$/i)
@@ -3129,7 +3138,6 @@ export default function ChatApp() {
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const [streamClock, setStreamClock] = useState(() => Date.now())
   const threadRef = useRef(null)
-  const endRef = useRef(null)
   const composerWrapRef = useRef(null)
   const fileRef = useRef(null)
   const promptRef = useRef(null)
@@ -3171,6 +3179,8 @@ export default function ChatApp() {
   const scrollModeRef = useRef('auto')
   const autoFollowRef = useRef(true)
   const previousScrollTopRef = useRef(0)
+  const previousScrollHeightRef = useRef(0)
+  const followSettleUntilRef = useRef(0)
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
@@ -4748,33 +4758,51 @@ export default function ChatApp() {
   }
 
   const scrollToThreadEnd = (behavior = 'auto') => {
-    endRef.current?.scrollIntoView({ behavior, block:'end' })
-    if (threadRef.current) previousScrollTopRef.current = threadRef.current.scrollTop
+    const thread = threadRef.current
+    if (!thread) return
+    // The thread keeps a strip of padding under the last message for the
+    // floating composer. Scrolling an end marker into view stops at the marker
+    // and leaves that strip below the fold, which parks the newest output
+    // behind the composer and keeps the thread permanently short of its own
+    // bottom; scrolling the container itself lands on both.
+    thread.scrollTo({ top: thread.scrollHeight, behavior })
+    previousScrollTopRef.current = thread.scrollTop
+    previousScrollHeightRef.current = thread.scrollHeight
+    followSettleUntilRef.current = Date.now() + FOLLOW_SETTLE_MS
   }
   const setFollowState = (enabled) => {
     autoFollowRef.current = enabled
     setAutoFollow(enabled)
-    setShowFollow(!enabled)
+    setShowFollow(!enabled && threadCanScroll(threadRef.current))
   }
   const resumeFollow = () => {
     setFollowState(true)
     scrollToThreadEnd('auto')
   }
+  // A gesture away from the end stops the chase straight away, including one
+  // made from the very bottom: a wheel event arrives before the page has moved,
+  // so waiting for the scroll would let the next chunk pull the reader back
+  // down first.
+  const pauseFollow = () => {
+    if (!autoFollowRef.current || !threadCanScroll(threadRef.current)) return
+    setFollowState(false)
+  }
   const updateFollowFromScroll = () => {
     const thread = threadRef.current
     if (!thread) return
-    const scrollTop = thread.scrollTop
+    const { scrollTop, scrollHeight } = thread
     const action = scrollFollowAction({
-      nearBottom: isNearBottom(thread, 20),
+      nearBottom: isNearBottom(thread),
       previousScrollTop: previousScrollTopRef.current,
       scrollTop,
+      previousScrollHeight: previousScrollHeightRef.current,
+      scrollHeight,
+      programmatic: Date.now() < followSettleUntilRef.current,
     })
     previousScrollTopRef.current = scrollTop
+    previousScrollHeightRef.current = scrollHeight
     if (action === 'resume' && !autoFollowRef.current) setFollowState(true)
-    else if (action === 'pause' && autoFollowRef.current) setFollowState(false)
-  }
-  const breakFollow = () => {
-    if (autoFollowRef.current && !isNearBottom(threadRef.current, 12)) setFollowState(false)
+    else if (action === 'pause') pauseFollow()
   }
 
   useLayoutEffect(() => {
@@ -4782,8 +4810,10 @@ export default function ChatApp() {
       const behavior = scrollModeRef.current || 'auto'
       scrollModeRef.current = 'auto'
       scrollToThreadEnd(behavior)
-    } else if (!isNearBottom(threadRef.current)) {
-      setShowFollow(true)
+    } else {
+      // Content that shrank or a thread that no longer scrolls leaves nothing
+      // to go back to, so the button follows the thread rather than the flag.
+      setShowFollow(!isNearBottom(threadRef.current) && threadCanScroll(threadRef.current))
     }
   }, [messages, busy, autoFollow])
 
@@ -5085,7 +5115,7 @@ export default function ChatApp() {
         </div>}
       </div>
       <div className={`oa-workspace ${loopRailOpen ? 'has-loop' : ''} ${btwRailOpen && btwMessages.length > 0 ? 'has-btw' : ''} ${!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen) ? 'has-launchers' : ''}`}>
-        <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
+        <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) pauseFollow() }} onTouchMove={()=>{ if (!isNearBottom(threadRef.current)) pauseFollow() }}>
           {messages.length === 0 && <div className="oa-empty">
             <h1>今天想让 GenericAgent 做什么？</h1>
             <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
@@ -5115,8 +5145,7 @@ export default function ChatApp() {
               </div>
             })}
           </div>}
-          {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
-          <div ref={endRef}/>
+          {showFollow && <div className="oa-follow-row"><button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow}><ChevronDown size={16}/>{isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')}</button></div>}
         </section>
         {loopRailOpen && <aside className="oa-loop-rail" id="oa-loop-rail" aria-label={ct('Loop 控制', 'Loop controls')}>
           <header className="oa-loop-rail-head">

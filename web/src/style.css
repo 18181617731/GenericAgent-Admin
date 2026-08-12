@@ -16007,6 +16007,25 @@ html[data-theme="light"] #admin-sidebar {
   .oa-btw-rail { overflow: hidden; }
 }
 
+/* While a run is streaming, the button says the thread is still moving without
+   the reader having to guess from a static pill. */
+.oa-follow-btn.is-live::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--oa-green, #10a37f);
+  animation: oa-follow-live 1.5s ease-in-out infinite;
+}
+@keyframes oa-follow-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oa-follow-btn.is-live::before { animation: none; }
+}
+
 /* A user message used to reserve a 32px lane under the bubble for its action
    row, which is empty until the pointer arrives. The row now hangs in the gap
    before the next message, which is padding and covers nothing. Touch devices
