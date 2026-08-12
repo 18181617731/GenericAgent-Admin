@@ -8,7 +8,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -4978,7 +4978,7 @@ export default function ChatApp() {
         </div>
       })()}
       <div className="oa-sidebar-foot">
-        <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>{ct('返回管理台', 'Back to admin')}</button>
+        <button onClick={()=>window.location.href='/admin'}><Settings size={15}/>{ct('设置', 'Settings')}</button>
       </div>
     </aside>
     <div className={`oa-sidebar-backdrop ${collapsed ? '' : 'is-visible'}`} aria-hidden={collapsed} onClick={()=>setCollapsed(true)} />
