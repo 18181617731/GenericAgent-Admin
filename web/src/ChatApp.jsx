@@ -24,7 +24,7 @@ import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManage
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
-import { groupRecentSessions } from './lib/chatSessionGroups.js'
+import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -55,12 +55,25 @@ const loopStopReasonText = reason => {
     server_restart: ct('\u670d\u52a1\u91cd\u542f\u540e\u5df2\u6682\u505c', 'Paused after a server restart'),
     controller_error: ct('\u63a7\u5236\u6a21\u578b\u8c03\u7528\u5931\u8d25', 'Controller request failed'),
     controller_protocol_error: ct('\u63a7\u5236\u6a21\u578b\u8fd4\u56de\u683c\u5f0f\u5f02\u5e38', 'Controller returned an invalid decision format'),
+    controller_stalled: ct('\u63a7\u5236\u6a21\u578b\u91cd\u590d\u540c\u4e00\u6b65\uff0c\u5df2\u505c\u6b62\u7a7a\u8f6c', 'Controller repeated the same step; stopped to avoid spinning'),
     persist_error: ct('\u4fdd\u5b58 Loop \u72b6\u6001\u5931\u8d25', 'Failed to persist Loop state'),
   }
   const label = labels[code]
   if (!label) return raw
   return detail ? `${label}\uff1a${detail}` : label
 }
+
+const loopPhaseLabel = phase => ({
+  started: ct('已启动', 'Started'),
+  checking: ct('检查中', 'Checking'),
+  retry: ct('重新询问', 'Re-asking'),
+  continue: ct('继续推进', 'Continuing'),
+  complete: ct('已完成', 'Completed'),
+  error: ct('异常', 'Error'),
+  paused: ct('已暂停', 'Paused'),
+  stalled: ct('空转已停', 'Stopped spinning'),
+  stopped: ct('已停止', 'Stopped'),
+}[phase] || ct('活动', 'Activity'))
 
 const timestampMs = (v) => {
   if (v instanceof Date) return v.getTime()
@@ -145,6 +158,21 @@ const formatAge = (ts) => {
   if (diff < 3600000) return ct(`${Math.floor(diff/60000)}分钟前`, `${Math.floor(diff/60000)} min ago`)
   if (diff < 86400000) return ct(`${Math.floor(diff/3600000)}小时前`, `${Math.floor(diff/3600000)} hr ago`)
   return d.toLocaleDateString(chatLocale(), { month:'short', day:'numeric' })
+}
+const sessionAgeText = (ts) => {
+  const age = sessionAge(ts)
+  if (!age) return ''
+  const { value } = age
+  const plural = value === 1 ? '' : 's'
+  switch (age.unit) {
+    case 'minute': return ct(`${value} 分钟前`, `${value} min ago`)
+    case 'hour': return ct(`${value} 小时前`, `${value} hr ago`)
+    case 'day': return ct(`${value} 天前`, `${value} day${plural} ago`)
+    case 'week': return ct(`${value} 周前`, `${value} week${plural} ago`)
+    case 'month': return ct(`${value} 个月前`, `${value} month${plural} ago`)
+    case 'year': return ct(`${value} 年前`, `${value} year${plural} ago`)
+    default: return ct('刚刚', 'Just now')
+  }
 }
 const modelLabel = (m) => m?.label || [m?.name || m?.var_name || `${ct('模型', 'Model')} ${m?.index || ''}`, m?.model].filter(Boolean).join(' · ')
 const modelProvider = (m) => {
@@ -4980,7 +5008,7 @@ export default function ChatApp() {
         <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
       </div> : <button className="oa-session" onClick={()=>openSession(session.id)} title={shortTitle(session)}>
         <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}{session.pinned && <Pin className="oa-session-pin" size={12} aria-label={ct('\u5df2\u7f6e\u9876', 'Pinned')}/>}<b>{shortTitle(session)}</b>{sidebarLoop && <em className="oa-session-loop-badge" title={ct(`Loop 进行中 · 第 ${sidebarLoop.round}/${sidebarLoop.maxRounds} 轮`, `Loop active · round ${sidebarLoop.round}/${sidebarLoop.maxRounds}`)}>Loop {sidebarLoop.round}/{sidebarLoop.maxRounds}</em>}{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
-        <small><Clock3 size={11}/>{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
+        <small title={fmtTime(session.updated_at)}>{session.running ? <em className="oa-session-running-label">{ct('运行中', 'Running')}</em> : sessionAgeText(session.updated_at)}</small>
       </button>}
       {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={(event)=>{
         event.stopPropagation()
@@ -5210,6 +5238,7 @@ export default function ChatApp() {
             {showFollow && <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')} aria-label={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')}><ChevronDown size={16}/></button>}
           </div>}
         </section>
+        {loopRailOpen && <div className="oa-loop-backdrop" onClick={()=>setLoopRailOpen(false)} aria-hidden="true"/>}
         {loopRailOpen && <aside className="oa-loop-rail" id="oa-loop-rail" aria-label={ct('Loop 控制', 'Loop controls')}>
           <header className="oa-loop-rail-head">
             <div className="oa-btw-title">
@@ -5245,7 +5274,7 @@ export default function ChatApp() {
                   <div className="oa-loop-record-mark" aria-hidden="true" />
                   <div className="oa-loop-record-body">
                     <div className="oa-loop-record-meta">
-                      <b>{record.phase === 'started' ? ct('已启动', 'Started') : record.phase === 'checking' ? ct('检查中', 'Checking') : record.phase === 'continue' ? ct('继续推进', 'Continuing') : record.phase === 'complete' ? ct('已完成', 'Completed') : record.phase === 'error' ? ct('异常', 'Error') : record.phase === 'paused' ? ct('已暂停', 'Paused') : record.phase === 'stopped' ? ct('已停止', 'Stopped') : ct('活动', 'Activity')}</b>
+                      <b>{loopPhaseLabel(record.phase)}</b>
                       <span>{record.atMS ? fmtTime(record.atMS) : ct('刚刚', 'Just now')}</span>
                       <span>{ct(`第 ${record.round} 轮`, `Round ${record.round}`)}</span>
                     </div>
