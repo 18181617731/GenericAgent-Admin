@@ -486,7 +486,7 @@ func effectiveVersion() string {
 	if v != "" && v != "dev" && v != "unknown" {
 		return formalVersion(v)
 	}
-	if out, ok := gitOutput("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"); ok {
+	if out, ok := gitOutput("tag", "--merged", "HEAD", "--sort=-version:refname", "--list", "v[0-9]*"); ok {
 		out = strings.TrimSpace(out)
 		if out != "" {
 			return formalVersion(out)

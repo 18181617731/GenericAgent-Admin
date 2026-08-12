@@ -8,6 +8,7 @@ This file records manually curated release changes for GenericAgent Admin Go.
 - Recognize labeled screenshot and evidence image paths in tool output and render them as inline previews.
 - Support local PNG, JPEG, WebP, BMP, and SVG result previews while filtering out fenced tool output, device paths, upload history, remote URLs, and unlabeled arbitrary paths.
 - Add regression coverage for labeled image extraction and chat attachment rendering.
+- Make build metadata choose the highest release tag reachable through a merge commit, avoiding an apparent version rollback after synchronization.
 
 ## v1.0.67 - 2026-08-11
 

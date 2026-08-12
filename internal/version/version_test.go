@@ -541,7 +541,7 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 	}
 	script := string(data)
 	want := []string{
-		`git tag --merged HEAD --sort^=-version:refname --list^=v[0-9]*`,
+		`git tag --merged HEAD --sort^=-version:refname --list v[0-9]*`,
 		`git rev-parse --short HEAD`,
 		`Get-Date`,
 		`where npm.cmd`,

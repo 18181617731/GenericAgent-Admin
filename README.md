@@ -213,7 +213,7 @@ dist\cmd\frontends\worldline.py
 
 `build.bat` 会执行前端构建，然后用 `go build` 生成 exe，并通过 `-ldflags -X` 写入版本元数据：
 
-- `internal/version.Version`：来自最近的正式语义版本 tag（`git describe --tags --abbrev=0 --match=v[0-9]*`），失败时为 `dev`；提交号和 UTC 构建时间单独展示，不再把 `-8-g<commit>-dirty` 等开发信息混入正式版本号。
+- `internal/version.Version`：来自当前提交可达的最高正式语义版本 tag（`git tag --merged HEAD --sort=-version:refname --list v[0-9]*`），失败时为 `dev`；提交号和 UTC 构建时间单独展示，不再把 `-8-g<commit>-dirty` 等开发信息混入正式版本号。
 - `internal/version.Commit`：来自 `git rev-parse --short HEAD`，失败时为 `unknown`。
 - `internal/version.Date`：UTC 构建时间，如 `2026-06-01T12:00:00Z`。
 
