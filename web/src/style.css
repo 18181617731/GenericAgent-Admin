@@ -15874,7 +15874,13 @@ html[data-theme="light"] #admin-sidebar {
    below that the workspace stacks vertically and keeps its own rules.
    ========================================================================== */
 
-.oa-chat { --oa-chat-measure: 840px; }
+.oa-chat {
+  --oa-chat-measure: 840px;
+  /* Height of the floating composer, kept current by ChatApp; the fallback is
+     an empty single-line one. The composer's own top padding is the gap the
+     last message rests against, so nothing is added on top of it here. */
+  --oa-composer-h: 110px;
+}
 
 /* The topbar earns a hairline so the thread has an edge to scroll against,
    and the title steps back to label weight now that it no longer competes
@@ -15894,14 +15900,19 @@ html[data-theme="light"] #admin-sidebar {
 @media (min-width: 921px) {
   .oa-main { position: relative; }
 
-  /* The thread owns the full column height; the padding keeps the last
-     message readable above the floating composer. */
-  .oa-thread { padding: 0 0 176px; }
-  .oa-follow-row { bottom: 150px; }
+  /* The thread reserves exactly the composer's height, so scrolling to the end
+     leaves the last line resting on the composer's top edge rather than
+     hidden under it. */
+  .oa-thread { padding: 0 0 var(--oa-composer-h); }
+
+  /* A sticky child is anchored inside the scroller's padding box, which the
+     reservation above just moved to the composer's top edge; the pill then
+     floats 12px over it. */
+  .oa-follow-row { bottom: 12px; }
 
   .oa-empty {
     width: min(var(--oa-chat-measure), calc(100% - 48px));
-    min-height: calc(100% - 150px);
+    min-height: 100%;
     margin: 0 auto;
     padding: 24px 24px 0;
     display: flex;
@@ -15927,8 +15938,8 @@ html[data-theme="light"] #admin-sidebar {
     margin: 0 auto !important;
     z-index: 14;
     width: min(var(--oa-chat-measure), calc(100% - 48px)) !important;
-    padding: 26px 0 18px;
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--surface-strong) 44%);
+    padding: 18px 0 18px !important;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--surface-strong) 44%) !important;
     pointer-events: none;
     container-type: inline-size;
   }
@@ -15994,6 +16005,18 @@ html[data-theme="light"] #admin-sidebar {
     box-shadow: 0 16px 40px rgba(0, 0, 0, .09);
   }
   .oa-btw-rail { overflow: hidden; }
+}
+
+/* A user message used to reserve a 32px lane under the bubble for its action
+   row, which is empty until the pointer arrives. The row now hangs in the gap
+   before the next message, which is padding and covers nothing. Touch devices
+   keep the lane: there the row is always on screen. */
+@media (hover: hover) {
+  .oa-message.user { padding-bottom: 14px; }
+  .oa-message.user .oa-msg-meta { bottom: -14px; }
+  /* Back-to-back user messages leave no gap to hang in. */
+  .oa-message.user:has(+ .oa-message.user) { padding-bottom: 32px; }
+  .oa-message.user:has(+ .oa-message.user) .oa-msg-meta { bottom: 4px; }
 }
 
 /* When a rail squeezes the floating composer, the tool buttons drop their

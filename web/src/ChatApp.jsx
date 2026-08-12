@@ -3130,6 +3130,7 @@ export default function ChatApp() {
   const [streamClock, setStreamClock] = useState(() => Date.now())
   const threadRef = useRef(null)
   const endRef = useRef(null)
+  const composerWrapRef = useRef(null)
   const fileRef = useRef(null)
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
@@ -4798,6 +4799,21 @@ export default function ChatApp() {
     return () => observer.disconnect()
   }, [lastThreadMessageId, sid])
 
+  // The composer floats over the thread, so the thread has to reserve room for
+  // it and the follow button has to clear it. Attachments, the send queue, and
+  // a grown textarea all change that height, so it is measured rather than
+  // guessed.
+  useEffect(() => {
+    const wrap = composerWrapRef.current
+    const root = chatScope.current
+    if (!wrap || !root || typeof ResizeObserver === 'undefined') return
+    const apply = () => root.style.setProperty('--oa-composer-h', `${Math.round(wrap.getBoundingClientRect().height)}px`)
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(wrap)
+    return () => observer.disconnect()
+  }, [])
+
   useGSAP(() => {
     if (prefersReducedMotion()) return
     const q = gsap.utils.selector(chatScope)
@@ -5210,7 +5226,7 @@ export default function ChatApp() {
         </div>}
       </div>
 
-      <footer className="oa-composer-wrap">
+      <footer className="oa-composer-wrap" ref={composerWrapRef}>
         <PlanTodoCard plan={planState}/>
         {queuedMessages.length > 0 && <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('待发送队列', 'Send queue')}>
           <div className="oa-queue-guide-hint">
