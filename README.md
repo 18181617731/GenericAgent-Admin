@@ -134,6 +134,20 @@ Open the URL printed on startup, or run `go run . --port 8787` to pin a loopback
 - **Service Management:** Start/stop worker, monitor logs, check process status
 - **Chat Interface:** `/chat` entrypoint with streaming, usage tracking, model switching
 
+### Choosing an Autonomy Mode
+
+Three features keep an agent working without new input. They are not interchangeable:
+
+| Mode | Runs in | Decides "done" |
+| :--- | :--- | :--- |
+| **Loop** (chat rail) | The open chat session | A separate controller model, once per round |
+| **Goal Mode** | A detached GA process with its own state dir | GA's `reflect/goal_mode.py` |
+| **UltraPlan** (`/ultraplan`) | A single turn's tool loop | The main agent itself |
+
+Pick Loop when you want to watch and interrupt, and everything to stay in one thread; Goal Mode when the job is long and nobody needs to sit with it; UltraPlan when one multi-phase plan can be carried by the agent alone.
+
+Loop spends one extra full-context controller call per round, so keep the round limit tight. It stops itself at the round limit, when the controller asks for the same next step twice in a row, or when you press stop.
+
 ### For Administrators
 
 - **Goal Mode:** Persistent goals (JSON), BBS team board, sync UI
@@ -385,6 +399,20 @@ go run .
 
 - **服务管理：** 启动/停止 worker，监控日志，检查进程状态
 - **聊天界面：** `/chat` 入口，流式响应，用量跟踪，模型切换
+
+### 三种自动推进模式怎么选
+
+有三个功能都能让 Agent 在没有新输入的情况下继续干活，它们并不等价：
+
+| 模式 | 运行位置 | 谁判断"做完了" |
+| :--- | :--- | :--- |
+| **Loop**（聊天右栏） | 当前打开的会话内 | 独立的控制模型，每轮判一次 |
+| **Goal 模式** | 独立的 GA 进程，自带状态目录 | GA 自己的 `reflect/goal_mode.py` |
+| **UltraPlan**（`/ultraplan`） | 单个 turn 的工具循环内 | 主 Agent 自己 |
+
+想边看边随时介入、并且产物都留在同一条会话里，用 Loop；任务长、不需要盯着，用 Goal 模式；一个多阶段计划 Agent 自己就能扛下来，用 UltraPlan。
+
+Loop 每轮会额外花一次全量上下文的控制模型调用，轮次上限别设太大。它会在达到轮次上限、控制模型连续两次给出同一个下一步、或你手动停止时自行结束。
 
 ### 面向管理员
 

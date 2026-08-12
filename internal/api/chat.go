@@ -165,15 +165,17 @@ type chatLoopRecord struct {
 }
 
 type chatLoopState struct {
-	Enabled          bool             `json:"enabled"`
-	Status           string           `json:"status"`
-	Epoch            int64            `json:"epoch"`
-	Round            int              `json:"round"`
-	MaxRounds        int              `json:"max_rounds"`
-	StopReason       string           `json:"stop_reason,omitempty"`
-	ControllerPrompt string           `json:"controller_prompt,omitempty"`
-	ControllerLLMNo  int              `json:"controller_llm_no"`
-	Records          []chatLoopRecord `json:"records,omitempty"`
+	Enabled               bool             `json:"enabled"`
+	Status                string           `json:"status"`
+	Epoch                 int64            `json:"epoch"`
+	Round                 int              `json:"round"`
+	MaxRounds             int              `json:"max_rounds"`
+	StopReason            string           `json:"stop_reason,omitempty"`
+	ControllerPrompt      string           `json:"controller_prompt,omitempty"`
+	ControllerLLMNo       int              `json:"controller_llm_no"`
+	Records               []chatLoopRecord `json:"records,omitempty"`
+	LastPromptFingerprint string           `json:"last_prompt_fingerprint,omitempty"`
+	RepeatStreak          int              `json:"repeat_streak,omitempty"`
 }
 
 type chatSession struct {
