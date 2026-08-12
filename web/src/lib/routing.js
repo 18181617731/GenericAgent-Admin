@@ -1,4 +1,4 @@
-export const NAV_ITEMS = ['overview','instances','chat','files','tasks','memory','channels','autonomous','usage','goals','models','settings','logs']
+export const NAV_ITEMS = ['overview','instances','files','tasks','memory','channels','autonomous','usage','goals','models','settings','logs']
 export const ROUTE_TABS = NAV_ITEMS
 export const TASK_SUB_TABS = ['services','scheduled','runs','reports']
 
@@ -6,6 +6,7 @@ const TAB_ALIASES = {
   '': 'overview',
   home: 'overview',
   index: 'overview',
+  chat: 'overview',
   task: 'tasks',
   tasks: 'tasks',
   config: 'settings',
@@ -30,7 +31,10 @@ const routeParts = () => {
   const base = baseURL()
   let path = window.location.pathname || '/'
   if (base && base !== '/' && path.startsWith(base)) path = path.slice(base.length) || '/'
-  return path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const parts = path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  // Admin console is mounted under /admin; the prefix itself carries no tab info.
+  if (parts[0] === 'admin') parts.shift()
+  return parts
 }
 
 export const parseRoute = () => {
@@ -49,5 +53,5 @@ export const buildRoute = (tab, taskSubTab = 'services') => {
   const safeTab = ROUTE_TABS.includes(tab) ? tab : 'overview'
   const suffix = safeTab === 'tasks' ? `/${TASK_SUB_TABS.includes(taskSubTab) ? taskSubTab : 'services'}` : ''
   const base = baseURL()
-  return `${base}/${safeTab}${suffix}`.replace(/\/+/g, '/')
+  return `${base}/admin/${safeTab}${suffix}`.replace(/\/+/g, '/')
 }

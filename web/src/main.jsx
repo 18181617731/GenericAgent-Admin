@@ -8,8 +8,11 @@ import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
 import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
 
-const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
-const Root = lazy(() => (isChat ? import('./ChatApp.jsx') : import('./App.jsx')))
+// Chat is the primary interface: it owns "/" (and legacy "/chat").
+// The admin console lives under "/admin" and acts as the settings area.
+const rootPath = window.location.pathname.replace(/\/+$/, '')
+const isAdmin = rootPath === '/admin' || rootPath.startsWith('/admin/')
+const Root = lazy(() => (isAdmin ? import('./App.jsx') : import('./ChatApp.jsx')))
 
 const storedLanguage = () => localStorage.getItem('ga-admin-lang-explicit') === '1' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 
