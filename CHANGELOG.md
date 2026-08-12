@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.68 - 2026-08-12
+
+### Inline result previews in chat
+- Recognize labeled screenshot and evidence image paths in assistant results, including Chinese labels and paths separated by formatting blank lines.
+- Render local PNG, JPEG, WebP, BMP, and SVG results directly in the current conversation with full-size preview and download actions.
+- Keep fenced tool output, device paths, upload history, remote URLs, and unlabeled arbitrary paths out of the preview gallery.
+
 ## v1.0.65 - 2026-08-10
 
 ### Simplified project TODO overview

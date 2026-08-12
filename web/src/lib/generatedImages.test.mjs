@@ -45,6 +45,21 @@ test('keeps explicit image markup and labeled generated-image output', () => {
   ])
 })
 
+test('extracts screenshots from evidence labels across a blank line', () => {
+  const path = String.raw`G:\MygenericAgent\temp\projects\evidence\turn75_final_read_screen.png`
+  const content = [
+    '\u8bc1\u636e\u5df2\u4fdd\u5b58\uff1a',
+    '',
+    `- \u622a\u56fe\uff1a ${path}`,
+  ].join('\n')
+  assert.deepEqual(extractGeneratedImagePaths(content), [path])
+})
+
+test('extracts screenshot result labels in English', () => {
+  const path = String.raw`C:\tmp\evidence\final-screen.svg`
+  assert.deepEqual(extractGeneratedImagePaths(`Screenshot: ${path}`), [path])
+})
+
 test('builds safe encoded preview and download endpoints', () => {
   const path = String.raw`G:\MygenericAgent\temp\成品 1.png`
   assert.equal(generatedImageURL(path), `/api/files/image?path=${encodeURIComponent(path)}`)

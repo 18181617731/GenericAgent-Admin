@@ -580,6 +580,12 @@ func (s *Server) startTMWebDriverMaster() (int, []string, error) {
 // launcher that exits 9009.
 func resolvePythonForRoot(gaRoot, configured string) string {
 	if configured = strings.TrimSpace(configured); configured != "" {
+		// Keep a configured command name exactly as entered. A configured path
+		// is still validated so a deleted interpreter can fall back to the
+		// managed virtualenv for this GA root.
+		if !strings.ContainsAny(configured, `\/`) && !filepath.IsAbs(configured) {
+			return configured
+		}
 		if path, err := executablePath(configured); err == nil {
 			return path
 		}

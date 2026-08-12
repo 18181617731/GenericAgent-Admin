@@ -33,6 +33,7 @@ type chatMessage struct {
 	ID              string                   `json:"id"`
 	Role            string                   `json:"role"`
 	Content         string                   `json:"content"`
+	Outputs         []string                 `json:"outputs,omitempty"`
 	ModelID         string                   `json:"model_id,omitempty"`
 	LLMNo           *int                     `json:"llm_no,omitempty"`
 	Files           []map[string]interface{} `json:"files,omitempty"`

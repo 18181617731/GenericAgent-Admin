@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import { CheckCircle2, CircleHelp, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Star, Trash2, X } from 'lucide-react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertTriangle, CheckCircle2, CircleHelp, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Settings2, Star, Trash2, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 
@@ -78,6 +78,9 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
   const [notice, setNotice] = useState('')
   const [editor, setEditor] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const deleteCancelRef = useRef(null)
+  const deleteTriggerRef = useRef(null)
   const [templateAvailable, setTemplateAvailable] = useState(false)
   const [useTemplate, setUseTemplate] = useState(false)
   const [templateFile, setTemplateFile] = useState(null)

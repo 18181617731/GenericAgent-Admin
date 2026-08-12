@@ -3,13 +3,13 @@ import { createPortal } from 'react-dom'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
-import { createStreamDeltaBatcher, isBTWCommand, mergeFinalStreamMessage, pickResumePlaceholderId, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -55,6 +55,26 @@ const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedi
 const chatLanguage = () => typeof localStorage !== 'undefined' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 const ct = (zh, en) => chatLanguage() === 'en' ? en : zh
 const chatLocale = () => chatLanguage() === 'en' ? 'en-US' : 'zh-CN'
+const loopStopReasonText = reason => {
+  const raw = String(reason || '').trim()
+  if (!raw) return ''
+  const separator = raw.indexOf(':')
+  const code = separator >= 0 ? raw.slice(0, separator).trim() : raw
+  const detail = separator >= 0 ? raw.slice(separator + 1).trim() : ''
+  const labels = {
+    user: ct('\u5df2\u624b\u52a8\u505c\u6b62', 'Stopped manually'),
+    max_rounds: ct('\u5df2\u8fbe\u5230\u6700\u5927\u8f6e\u6b21', 'Maximum rounds reached'),
+    controller_complete: ct('\u63a7\u5236\u6a21\u578b\u5224\u5b9a\u76ee\u6807\u5df2\u5b8c\u6210', 'Controller marked the objective complete'),
+    controller_no_action: ct('\u63a7\u5236\u6a21\u578b\u672a\u7ed9\u51fa\u53ef\u6267\u884c\u7684\u4e0b\u4e00\u6b65', 'Controller returned no actionable next step'),
+    server_restart: ct('\u670d\u52a1\u91cd\u542f\u540e\u5df2\u6682\u505c', 'Paused after a server restart'),
+    controller_error: ct('\u63a7\u5236\u6a21\u578b\u8c03\u7528\u5931\u8d25', 'Controller request failed'),
+    controller_protocol_error: ct('\u63a7\u5236\u6a21\u578b\u8fd4\u56de\u683c\u5f0f\u5f02\u5e38', 'Controller returned an invalid decision format'),
+    persist_error: ct('\u4fdd\u5b58 Loop \u72b6\u6001\u5931\u8d25', 'Failed to persist Loop state'),
+  }
+  const label = labels[code]
+  if (!label) return raw
+  return detail ? `${label}\uff1a${detail}` : label
+}
 const ChatFeatureHelp = ({ text }) => <span className="oa-chat-help" aria-hidden="true" data-tooltip={text} title={text}><CircleHelp size={13}/></span>
 export const ChatFileScopeContext = createContext({ workspace: '', gaRoot: '' })
 
@@ -2997,6 +3017,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
   const [llmNo, setLlmNo] = useState(0)
+  const [loopControllerLlmNo, setLoopControllerLlmNo] = useState(null)
   const [modelSwitching, setModelSwitching] = useState(false)
   const [reasoningEffort, setReasoningEffort] = useState('off')
   const [extraSysPrompts, setExtraSysPrompts] = useState([])
@@ -4922,13 +4943,22 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const contextHelpText = ct('查看本次对话实际发给模型的上下文快照，包括原始历史、工作状态等；这不是长期记忆。', 'View the context snapshot actually sent to the model, including raw history and working state. This is not long-term memory.')
   const worldlineHelpText = ct('查看当前对话的分支历史。选择可切换的节点后，会恢复该节点对应的对话和工作区状态；对话运行中不能切换。', 'View conversation branches. Switching to a mapped node restores its conversation and workspace state; switching is disabled while a reply is running.')
 
-  const renderSidebarSession = session => <div key={session.id} className={`oa-session-row ${session.id === sid ? 'active' : ''} ${session.running ? 'is-running' : ''}`}>
+  const loopControllerModel = Number(loopState?.epoch) > 0
+    ? llms.find(model => model.index === Number(loopState?.controller_llm_no))
+    : null
+  const loopControllerModelLabel = loopControllerModel
+    ? `${modelProvider(loopControllerModel)} / ${runtimeModelLabel(loopControllerModel)}`
+    : ct('尚未选择', 'Not selected')
+  const renderSidebarSession = session => {
+    const sidebarLoop = loopSidebarView(session.loop)
+    return <div key={session.id} className={`oa-session-row ${session.id === sid ? 'active' : ''} ${session.running ? 'is-running' : ''}`}>
     {editing === session.id ? <div className="oa-rename">
       <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') saveRename(session.id); if(event.key==='Escape') setEditing('') }}/>
       <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
     </div> : <button className="oa-session" onClick={()=>selectSidebarSession(session.id)} title={shortTitle(session)}>
       <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(session)}</b>{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
       <small><Clock3 size={11}/>{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
+      {sidebarLoop && <em className="oa-session-loop-badge" title={`Loop active · round ${sidebarLoop.round}/${sidebarLoop.maxRounds}`}>Loop {sidebarLoop.round}/{sidebarLoop.maxRounds}</em>}
     </button>}
     {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={event => {
       event.stopPropagation()
@@ -4938,6 +4968,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setMenuOpen(session.id)
     }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16} /></button>}
   </div>
+  }
 
   return <ChatFileScopeContext.Provider value={{ workspace: current?.workspace || '', gaRoot: cfg?.ga_root || cfg?.GARoot || '' }}>
     <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
@@ -5109,6 +5140,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           onSwitch={switchWorldline}
         />
       )}
+      <div className={`oa-workspace ${loopRailOpen ? 'has-loop' : ''} ${btwRailOpen && btwMessages.length > 0 ? 'has-btw' : ''} ${!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen) ? 'has-launchers' : ''}`}>
       <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
         {messages.length === 0 && <div className="oa-empty">
           <h1>今天想让 GenericAgent 做什么？</h1>
@@ -5119,6 +5151,64 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
+        {loopRailOpen && <aside className="oa-loop-rail" id="oa-loop-rail" aria-label={ct('Loop controls', 'Loop controls')}>
+          <header className="oa-loop-rail-head">
+            <div className="oa-btw-title">
+              <span>LOOP</span>
+              <b>{loopState?.enabled ? ct('自动推进中', 'Auto advancing') : ct('自动推进', 'Auto advance')}</b>
+              {loopState?.enabled && <em>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</em>}
+            </div>
+            <button type="button" className="oa-btw-toggle" onClick={() => setLoopRailOpen(false)} aria-expanded="true" aria-controls="oa-loop-rail" title={ct('收起 Loop 栏', 'Collapse Loop rail')}><ChevronRight size={15}/><span>{ct('收起', 'Collapse')}</span></button>
+          </header>
+          <section className={`oa-loop-panel ${loopState?.enabled ? 'is-active' : ''}`}>
+            <div className="oa-loop-summary" aria-live="polite">
+              <span className="oa-loop-orbit"><Orbit size={17} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/></span>
+              <div>
+                <b>{loopState?.enabled ? ct('正在持续完成目标', 'Continuing toward the objective') : ct('由监督模型推进下一轮', 'Let a controller advance the next turn')}</b>
+                <span>{loopState?.enabled ? ct(`第 ${Number(loopState.round) || 0} 轮，最多 ${Number(loopState.max_rounds) || loopMaxRounds} 轮`, `Round ${Number(loopState.round) || 0} of ${Number(loopState.max_rounds) || loopMaxRounds}`) : ct('设定目标和最多轮次后启动', 'Set an objective and round limit to begin')}</span>
+                <small className="oa-loop-model">{ct('控制模型：', 'Controller: ')}{loopControllerModelLabel}</small>
+              </div>
+            </div>
+            {!loopState?.enabled && loopState?.stop_reason && <div className={`oa-loop-terminal ${loopState?.status === 'error' ? 'is-error' : ''}`} role={loopState?.status === 'error' ? 'alert' : 'status'}>
+              <strong>{loopState?.status === 'error' ? ct('Loop 异常停止', 'Loop stopped with an error') : (loopState?.status === 'completed' ? ct('Loop 已结束', 'Loop finished') : ct('Loop 已停止', 'Loop stopped'))}</strong>
+              <span>{loopStopReasonText(loopState.stop_reason)}</span>
+            </div>}
+            <section className="oa-loop-records" aria-label={ct('监察记录', 'Observer activity')}>
+              <div className="oa-loop-records-head">
+                <div><span>{ct('监察记录', 'Observer activity')}</span><small>{ct('只显示摘要与下一步', 'Summaries and next steps only')}</small></div>
+                {loopRecords.length > 0 && <em>{loopRecords.length}</em>}
+              </div>
+              {loopRecords.length > 0 ? <div className="oa-loop-records-list">
+                {loopRecords.map(record => <article className={`oa-loop-record ${record.phase === 'error' ? 'is-error' : ''}`} key={record.key} role={record.phase === 'error' ? 'alert' : undefined}>
+                  <div className="oa-loop-record-mark" aria-hidden="true"/>
+                  <div className="oa-loop-record-body">
+                    <div className="oa-loop-record-meta"><b>{record.phase}</b><span>{record.atMS ? fmtTime(record.atMS) : ct('刚刚', 'Just now')}</span><span>{ct(`第 ${record.round} 轮`, `Round ${record.round}`)}</span></div>
+                    <p>{record.summary}</p>
+                    {record.prompt && <div className="oa-loop-record-prompt"><span>{ct('下一步', 'Next step')}</span><strong>{record.prompt}</strong></div>}
+                  </div>
+                </article>)}
+              </div> : <div className="oa-loop-records-empty">{ct('尚无监察记录', 'No observer activity yet')}</div>}
+            </section>
+            <button className={`oa-loop-toggle ${loopState?.enabled ? 'is-active' : ''}`} type="button" onClick={() => loopState?.enabled ? stopLoop() : setLoopConfigOpen(open => !open)} disabled={loopUpdating} aria-expanded={!loopState?.enabled ? loopConfigOpen : undefined} aria-controls={!loopState?.enabled ? 'oa-loop-config' : undefined}>
+              {loopState?.enabled ? <Square size={13}/> : <Orbit size={14}/>}<span>{loopState?.enabled ? (loopUpdating ? ct('停止中…', 'Stopping…') : ct('停止 Loop', 'Stop Loop')) : (loopConfigOpen ? ct('收起设置', 'Hide settings') : ct('配置 Loop', 'Configure Loop'))}</span>
+            </button>
+            {loopConfigOpen && !loopState?.enabled && <div className="oa-loop-config" id="oa-loop-config" role="group" aria-label={ct('Loop 设置', 'Loop settings')}>
+              <label><span>{ct('目标', 'Objective')}</span><textarea value={loopObjective} onChange={e => setLoopObjective(e.target.value)} placeholder={prompt.trim() || ct('描述 Loop 应持续完成的目标', 'Describe the objective Loop should keep pursuing')} rows={3}/></label>
+              <label><span>{ct('控制模型', 'Controller model')}</span><CustomSelect value={loopControllerLlmNo ?? llmNo} onChange={value => setLoopControllerLlmNo(Number(value))} disabled={!llms.length} ariaLabel={ct('Loop 控制模型', 'Loop controller model')} options={llms.map(model => ({ value:model.index, label:`${modelProvider(model)} / ${runtimeModelLabel(model)}` }))}/></label>
+              <label className="oa-loop-rounds"><span>{ct('最多轮次', 'Maximum rounds')}</span><input type="number" min="1" max="100" value={loopMaxRounds} onChange={e => setLoopMaxRounds(e.target.value)}/></label>
+              <div className="oa-loop-config-actions"><small>{ct('留空目标时使用当前输入内容', 'Uses the current message when objective is empty')}</small><button type="button" onClick={startLoop} disabled={loopUpdating || !(loopObjective.trim() || prompt.trim())}>{loopUpdating ? ct('启动中…', 'Starting…') : ct('启动 Loop', 'Start Loop')}</button></div>
+            </div>}
+          </section>
+        </aside>}
+        {btwRailOpen && btwMessages.length > 0 && <aside className="oa-btw-rail" id="oa-btw-rail" aria-label={ct('侧问', 'Side questions')}>
+          <header><div className="oa-btw-title"><span>BTW</span><b>{ct('侧问', 'Side questions')}</b><em>{btwMessages.length}</em></div><button type="button" className="oa-btw-toggle" onClick={() => setBtwRailOpen(false)} aria-expanded="true" aria-controls="oa-btw-rail" title={ct('收起侧问栏', 'Collapse side-question rail')}><ChevronRight size={15}/><span>{ct('收起', 'Collapse')}</span></button></header>
+          <div className="oa-btw-rail-list" id="oa-btw-rail-list">{btwMessages.map(message => <ChatMessage key={message.id} message={message} pending={false} onRetryBTW={() => sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)} clockNow={streamClock}/>)}</div>
+        </aside>}
+        {(!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen)) && <div className="oa-rail-launchers" aria-label={ct('已收起的右侧栏', 'Collapsed right rails')}>
+          {!loopRailOpen && <button type="button" className="oa-btw-collapsed oa-loop-collapsed" onClick={() => setLoopRailOpen(true)} aria-expanded="false" aria-controls="oa-loop-rail" title={ct('展开 Loop 栏', 'Expand Loop rail')}><Orbit size={15}/><span>LOOP</span>{loopState?.enabled && <b>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</b>}</button>}
+          {btwMessages.length > 0 && !btwRailOpen && <button type="button" className="oa-btw-collapsed oa-btw-only-collapsed" onClick={() => setBtwRailOpen(true)} aria-expanded="false" aria-controls="oa-btw-rail" title={ct('展开侧问栏', 'Expand side-question rail')}><MessageSquarePlus size={15}/><span>BTW</span><b>{btwMessages.length}</b></button>}
+        </div>}
+      </div>
 
       <footer className="oa-composer-wrap">
         <PlanTodoCard plan={planState}/>

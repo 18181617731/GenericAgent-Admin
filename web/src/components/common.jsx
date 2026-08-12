@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Activity, ChevronRight, CircleCheckBig, Eye, PackageCheck, Play, RefreshCw, Square, Terminal, TriangleAlert, Wrench } from 'lucide-react'
+import { Activity, ChevronRight, CircleCheckBig, Eye, ExternalLink, PackageCheck, Play, RefreshCw, Square, Terminal, TriangleAlert, Wrench } from 'lucide-react'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './ModelProviderCascade.jsx'
 import { observabilitySummary } from '../lib/observability.js'
 import { firstRuntimeModel, runtimeModelDescription } from '../lib/modelDefaults.js'
@@ -82,7 +82,7 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel,
     </div>}
   </article>
 }
-export function ChannelServiceTable({ services = [], emptyMessage, onStart, onStop, onLogs, onAutostart, onReflectStart, t, actionState = null }) {
+export function ChannelServiceTable({ services = [], emptyMessage, onStart, onStop, onLogs, onAutostart, onReflectStart, onOpenHub, t, actionState = null }) {
   if (!services.length) return <div className="channel-service-empty">{emptyMessage || t.hints.noFrontend}</div>
   const isReflectService = (svc) => svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
   return <div className="channel-service-list">{services.map(svc => {
