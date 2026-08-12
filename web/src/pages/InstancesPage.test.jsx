@@ -31,6 +31,24 @@ describe('InstancesPage', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/instances', expect.objectContaining({ headers: expect.any(Object) }))
   })
 
+  it('explains what instances are and how to use them from the help control', async () => {
+    globalThis.fetch = vi.fn(() => reply(initialPayload))
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    await screen.findByRole('heading', { name: 'Primary' })
+    const helpButton = screen.getByRole('button', { name: 'Learn how GA instances work' })
+    expect(helpButton.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('tooltip').textContent).toContain('Each instance maps to an isolated GenericAgent directory and Python environment.')
+
+    await user.click(helpButton)
+    expect(helpButton.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('tooltip').textContent).toContain('Set as default')
+
+    await user.keyboard('{Escape}')
+    expect(helpButton.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('opens model configuration for the selected instance', async () => {
     globalThis.fetch = vi.fn(() => reply(initialPayload))
     const onConfigureModels = vi.fn()

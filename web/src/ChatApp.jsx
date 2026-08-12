@@ -4983,7 +4983,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const selectedModelNo = activeModel?.index ?? llmNo
   const providerGroups = useMemo(() => buildModelProviderGroups(llms), [llms])
   const selectedProvider = findModelProviderValue(providerGroups, selectedModelNo) || (activeModel ? modelProvider(activeModel) : '')
-  const loopControllerModel = llms.find(model => model.index === (loopControllerLlmNo ?? llmNo)) || activeModel || llms[0]
+  const loopControllerModel = llms.find(model => model.index === (
+    loopControllerLlmNo ?? (Number(loopState?.epoch) > 0 ? Number(loopState?.controller_llm_no) : llmNo)
+  )) || activeModel || llms[0]
   const loopControllerModelLabel = loopControllerModel
     ? `${modelProvider(loopControllerModel)} / ${runtimeModelLabel(loopControllerModel)}`
     : ct('未发现模型', 'No models found')

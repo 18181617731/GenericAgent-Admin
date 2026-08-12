@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.68 - 2026-08-12
+
+### Inline result previews in chat
+- Recognize labeled screenshot and evidence image paths in tool output and render them as inline previews.
+- Support local PNG, JPEG, WebP, BMP, and SVG result previews while filtering out fenced tool output, device paths, upload history, remote URLs, and unlabeled arbitrary paths.
+- Add regression coverage for labeled image extraction and chat attachment rendering.
+
 ## v1.0.67 - 2026-08-11
 
 ### Loop 首轮执行与可操作示例
