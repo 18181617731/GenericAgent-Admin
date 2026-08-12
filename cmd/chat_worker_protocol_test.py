@@ -50,7 +50,7 @@ class FakeAgent:
         self.handler = SimpleNamespace(working={"checkpoint": "restored"})
         output = queue.Queue()
         output.put({"next": "res"})
-        output.put({"done": "resumed"})
+        output.put({"done": "resumed", "outputs": ["segment one", "segment two"]})
         return output
 
 
@@ -87,6 +87,7 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertFalse(any(event.get("type") == "btw_done" for event in self.events))
         done = next(event for event in self.events if event.get("type") == "done")
         self.assertEqual(done["message"]["content"], "resumed")
+        self.assertEqual(done["message"]["outputs"], ["segment one", "segment two"])
         self.assertEqual(done["message"]["model_id"], "official-model")
         self.assertEqual(done["raw_history"][-1]["content"][0]["text"], "resumed")
         self.assertEqual(done["history_info"], [{"role": "assistant", "summary": "official resume state"}])

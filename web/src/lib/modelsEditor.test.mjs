@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   API_MODE_OPTIONS,
+  SERVICE_TIER_OPTIONS,
   THINKING_TYPE_OPTIONS,
   addModelConfigs,
   createModelConfig,
@@ -162,6 +163,7 @@ test('modelProtocolFields distinguishes native and legacy protocol capabilities'
 
 test('protocol-specific selects expose only supported values', () => {
   assert.deepEqual(optionValues(API_MODE_OPTIONS), ['chat_completions', 'responses'])
+  assert.deepEqual(optionValues(SERVICE_TIER_OPTIONS), ['auto', 'default', 'priority', 'flex'])
   assert.deepEqual(optionValues(THINKING_TYPE_OPTIONS), ['adaptive', 'enabled', 'disabled'])
   assert.deepEqual(optionValues(reasoningEffortOptions('native_oai')), ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
   assert.deepEqual(optionValues(reasoningEffortOptions('oai')), ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])

@@ -180,3 +180,68 @@
     transition: none !important;
   }
 }
+
+
+/* Mobile finish for the scoped admin navigation rail. */
+@media (max-width: 900px) {
+  .app > #admin-sidebar {
+    width: min(88vw, 316px) !important;
+    padding: max(16px, env(safe-area-inset-top, 0px)) 14px max(14px, env(safe-area-inset-bottom, 0px)) !important;
+    background: var(--sidebar-bg) !important;
+    border-right-color: var(--sidebar-line) !important;
+    box-shadow: 14px 0 38px rgba(0, 0, 0, .16);
+  }
+
+  #admin-sidebar .admin-sidebar-heading {
+    align-items: center;
+    margin: 0 2px 14px;
+  }
+
+  #admin-sidebar .admin-sidebar-heading .brand { margin: 0; }
+
+  #admin-sidebar .admin-sidebar-close {
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    color: var(--muted) !important;
+    background: transparent !important;
+    border: 1px solid var(--sidebar-line) !important;
+    border-radius: 10px;
+  }
+
+  #admin-sidebar .admin-sidebar-close:hover {
+    color: var(--text) !important;
+    background: var(--sidebar-hover) !important;
+  }
+
+  .app > #admin-sidebar .lang-switch { margin: 0 0 12px; }
+
+  .app > #admin-sidebar nav {
+    width: 100%;
+    flex: 0 0 auto;
+    gap: 3px;
+    margin: 0;
+    padding: 10px 0;
+  }
+
+  .app > #admin-sidebar nav button {
+    min-height: 44px;
+    padding: 9px 10px;
+    font-size: 13.5px;
+  }
+
+  .app > #admin-sidebar > .refresh {
+    min-height: 42px;
+    margin-top: 12px;
+  }
+
+  .app > .admin-sidebar-scrim {
+    background: color-mix(in srgb, #07110f 52%, transparent) !important;
+    backdrop-filter: blur(2px);
+  }
+}
+
+@media (max-width: 420px) {
+  .app > #admin-sidebar { width: min(91vw, 316px) !important; }
+}

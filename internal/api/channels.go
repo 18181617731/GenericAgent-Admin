@@ -30,6 +30,7 @@ type channelProfile struct {
 	ID          string         `json:"id"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
+	Testable    bool           `json:"testable"`
 	Fields      []channelField `json:"fields"`
 }
 
@@ -55,12 +56,18 @@ type channelTestEndpointSet struct {
 	Feishu   string
 	WeCom    string
 	DingTalk string
+	Discord  string
+	QQ       string
+	Telegram string
 }
 
 var channelTestEndpoints = channelTestEndpointSet{
 	Feishu:   "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
 	WeCom:    "https://qyapi.weixin.qq.com/cgi-bin/gettoken",
 	DingTalk: "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+	Discord:  "https://discord.com/api/v10/users/@me",
+	QQ:       "https://bots.qq.com/app/getAppAccessToken",
+	Telegram: "https://api.telegram.org",
 }
 
 var channelTestHTTPClient = &http.Client{Timeout: 12 * time.Second}
@@ -68,22 +75,37 @@ var channelTestHTTPClient = &http.Client{Timeout: 12 * time.Second}
 const maxChannelTestResponseBytes = 1 << 20
 
 var channelDefinitions = []channelProfile{
-	{ID: "feishu", Name: "飞书 / Lark", Description: "机器人应用凭据、用户白名单与公开访问开关。", Fields: []channelField{
+	{ID: "feishu", Name: "飞书 / Lark", Description: "机器人应用凭据、用户白名单与兼容公开访问开关。", Testable: true, Fields: []channelField{
 		{Name: "fs_app_id", Label: "App ID", Placeholder: "cli_xxx"},
-		{Name: "fs_app_secret", Label: "App Secret", Secret: true, Placeholder: "留空则保留 mykey.py 已有值"},
-		{Name: "fs_allowed_users", Label: "Allowed Users", Placeholder: "user1,user2 或留空", Type: "list"},
-		{Name: "fs_public_access", Label: "Public Access", Type: "bool"},
+		{Name: "fs_app_secret", Label: "App Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "fs_allowed_users", Label: "允许用户", Type: "list", Placeholder: "ou_xxx,ou_yyy；留空或 * 为公开访问"},
+		{Name: "fs_public_access", Label: "公开访问（兼容）", Type: "bool", Value: "false"},
 	}},
-	{ID: "wecom", Name: "企业微信", Description: "企业微信机器人/应用通道凭据与允许用户。", Fields: []channelField{
-		{Name: "wecom_bot_id", Label: "Bot ID / Agent ID", Placeholder: "ww/openapi id"},
-		{Name: "wecom_secret", Label: "Secret", Secret: true, Placeholder: "留空则保留 mykey.py 已有值"},
-		{Name: "wecom_allowed_users", Label: "Allowed Users", Placeholder: "user1,user2 或留空", Type: "list"},
+	{ID: "wecom", Name: "企业微信", Description: "企业微信机器人/应用通道凭据、欢迎语与允许用户。", Testable: true, Fields: []channelField{
+		{Name: "wecom_bot_id", Label: "Bot ID / Agent ID", Placeholder: "1000002"},
+		{Name: "wecom_secret", Label: "Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "wecom_welcome_message", Label: "欢迎语", Placeholder: "可选"},
+		{Name: "wecom_allowed_users", Label: "允许用户", Type: "list", Placeholder: "userid1,userid2"},
 	}},
-	{ID: "dingtalk", Name: "钉钉", Description: "钉钉机器人/应用通道 client 凭据与允许用户。", Fields: []channelField{
-		{Name: "dingtalk_client_id", Label: "Client ID", Placeholder: "dingxxx"},
-		{Name: "dingtalk_client_secret", Label: "Client Secret", Secret: true, Placeholder: "留空则保留 mykey.py 已有值"},
-		{Name: "dingtalk_allowed_users", Label: "Allowed Users", Placeholder: "user1,user2 或留空", Type: "list"},
+	{ID: "dingtalk", Name: "钉钉", Description: "钉钉机器人/应用通道 client 凭据与允许用户。", Testable: true, Fields: []channelField{
+		{Name: "dingtalk_client_id", Label: "Client ID"},
+		{Name: "dingtalk_client_secret", Label: "Client Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "dingtalk_allowed_users", Label: "允许用户", Type: "list", Placeholder: "userid1,userid2"},
 	}},
+	{ID: "discord", Name: "Discord", Description: "Discord Bot Token 与允许用户；可复用全局 proxy 配置。", Testable: true, Fields: []channelField{
+		{Name: "discord_bot_token", Label: "Bot Token", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "discord_allowed_users", Label: "允许用户", Type: "list", Placeholder: "user_id1,user_id2"},
+	}},
+	{ID: "qq", Name: "QQ", Description: "QQ 开放平台机器人 App ID、App Secret 与允许用户。", Testable: true, Fields: []channelField{
+		{Name: "qq_app_id", Label: "App ID"},
+		{Name: "qq_app_secret", Label: "App Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "qq_allowed_users", Label: "允许用户", Type: "list", Placeholder: "user_id1,user_id2"},
+	}},
+	{ID: "telegram", Name: "Telegram", Description: "Telegram Bot Token 与允许用户；可复用全局 proxy 配置。", Testable: true, Fields: []channelField{
+		{Name: "tg_bot_token", Label: "Bot Token", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "tg_allowed_users", Label: "允许用户", Type: "list", Placeholder: "user_id1,user_id2"},
+	}},
+	{ID: "wechat", Name: "微信", Description: "无需 mykey 凭据；启动 wechatapp.py 后按日志中的二维码扫码登录。", Testable: false, Fields: []channelField{}},
 }
 
 func (s *Server) channels(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +221,14 @@ func testChannelCredentials(profileID string, values map[string]string) (bool, s
 		return testWeComCredentials(values["wecom_bot_id"], values["wecom_secret"])
 	case "dingtalk":
 		return testDingTalkCredentials(values["dingtalk_client_id"], values["dingtalk_client_secret"])
+	case "discord":
+		return testDiscordCredentials(values["discord_bot_token"])
+	case "qq":
+		return testQQCredentials(values["qq_app_id"], values["qq_app_secret"])
+	case "telegram":
+		return testTelegramCredentials(values["tg_bot_token"])
+	case "wechat":
+		return false, "微信使用扫码登录，无需测试凭据"
 	default:
 		return false, "unknown channel profile"
 	}
@@ -264,6 +294,82 @@ func testDingTalkCredentials(clientID, clientSecret string) (bool, string) {
 		return true, "钉钉凭据验证通过"
 	}
 	return false, redactChannelTestMessage(firstStringFromJSON(payload, "errmsg", "msg", "message"), clientSecret)
+}
+
+func testDiscordCredentials(token string) (bool, string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false, "Bot Token 不能为空"
+	}
+	req, err := http.NewRequest(http.MethodGet, channelTestEndpoints.Discord, nil)
+	if err != nil {
+		return false, redactChannelTestMessage(err.Error(), token)
+	}
+	req.Header.Set("Authorization", "Bot "+token)
+	status, payload, err := executeChannelTestRequest(req)
+	if err != nil {
+		return false, redactChannelTestMessage(err.Error(), token)
+	}
+	if status >= 200 && status < 300 && firstStringFromJSON(payload, "id") != "" {
+		return true, "Discord 凭据验证通过"
+	}
+	return false, redactChannelTestMessage(firstStringFromJSON(payload, "message", "error"), token)
+}
+
+func testQQCredentials(appID, appSecret string) (bool, string) {
+	appID, appSecret = strings.TrimSpace(appID), strings.TrimSpace(appSecret)
+	if appID == "" || appSecret == "" {
+		return false, "App ID 和 App Secret 不能为空"
+	}
+	body, _ := json.Marshal(map[string]string{"appId": appID, "clientSecret": appSecret})
+	status, payload, err := channelTestRequestJSON(http.MethodPost, channelTestEndpoints.QQ, body)
+	if err != nil {
+		return false, redactChannelTestMessage(err.Error(), appSecret)
+	}
+	if status >= 200 && status < 300 && firstStringFromJSON(payload, "access_token") != "" {
+		return true, "QQ 凭据验证通过"
+	}
+	return false, redactChannelTestMessage(firstStringFromJSON(payload, "message", "error", "msg"), appSecret)
+}
+
+func testTelegramCredentials(token string) (bool, string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false, "Bot Token 不能为空"
+	}
+	endpoint := strings.TrimRight(channelTestEndpoints.Telegram, "/") + "/bot" + url.PathEscape(token) + "/getMe"
+	status, payload, err := channelTestRequestJSON(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, redactChannelTestMessage(err.Error(), token)
+	}
+	if status >= 200 && status < 300 {
+		if ok, _ := payload["ok"].(bool); ok {
+			return true, "Telegram 凭据验证通过"
+		}
+	}
+	return false, redactChannelTestMessage(firstStringFromJSON(payload, "description", "message", "error"), token)
+}
+
+func executeChannelTestRequest(req *http.Request) (int, map[string]interface{}, error) {
+	resp, err := channelTestHTTPClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxChannelTestResponseBytes+1))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	if len(raw) > maxChannelTestResponseBytes {
+		return resp.StatusCode, nil, fmt.Errorf("channel test response body too large")
+	}
+	payload := map[string]interface{}{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return resp.StatusCode, nil, err
+		}
+	}
+	return resp.StatusCode, payload, nil
 }
 
 func redactChannelTestMessage(message string, secrets ...string) string {

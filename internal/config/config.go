@@ -38,6 +38,8 @@ type InstanceConfig struct {
 	EffectivePython string `json:"effective_python,omitempty"`
 	InitStatus      string `json:"init_status,omitempty"`
 	InitError       string `json:"init_error,omitempty"`
+	InitStage       string `json:"init_stage,omitempty"`
+	InitProgress    int    `json:"init_progress,omitempty"`
 }
 
 const (
@@ -74,6 +76,12 @@ type AppConfig struct {
 	// It tracks the model last picked in Admin Chat so a new conversation keeps
 	// using it instead of silently falling back to the first configured model.
 	ChatDefaultLLMNo int `json:"chat_default_llm_no,omitempty"`
+	// PythonFallbackRoots lists other GA roots (or interpreter paths) that may
+	// lend an interpreter when this config's own root has no usable one. A fresh
+	// instance is a bare GA checkout with no .venv, so the only interpreter that
+	// can import GA's dependencies often belongs to a sibling instance. This is
+	// runtime-only wiring derived from the instance registry, never persisted.
+	PythonFallbackRoots []string `json:"-"`
 }
 
 func validInstanceID(id string) bool {
@@ -392,6 +400,11 @@ func cloneAppConfig(cfg AppConfig) AppConfig {
 		copy(cloned, cfg.ExtraSystemPromptPresets)
 		cfg.ExtraSystemPromptPresets = cloned
 	}
+	if cfg.PythonFallbackRoots != nil {
+		cloned := make([]string, len(cfg.PythonFallbackRoots))
+		copy(cloned, cfg.PythonFallbackRoots)
+		cfg.PythonFallbackRoots = cloned
+	}
 	return cfg
 }
 
@@ -452,6 +465,12 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		}
 		instance.InitStatus = strings.ToLower(strings.TrimSpace(instance.InitStatus))
 		instance.InitError = strings.TrimSpace(instance.InitError)
+		instance.InitStage = strings.ToLower(strings.TrimSpace(instance.InitStage))
+		if instance.InitProgress < 0 {
+			instance.InitProgress = 0
+		} else if instance.InitProgress > 100 {
+			instance.InitProgress = 100
+		}
 		instances = append(instances, instance)
 	}
 	if len(instances) == 0 && cfg.GARoot != "" {

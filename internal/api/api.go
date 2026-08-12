@@ -26,6 +26,7 @@ import (
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/modelconfig"
+	"genericagent-admin-go/internal/pyfind"
 	"genericagent-admin-go/internal/service"
 )
 
@@ -44,6 +45,7 @@ type Server struct {
 	ChatWorkers             map[string]*chatWorker
 	ChatTitleJobs           map[string]bool
 	ChatRuntimes            *chatRuntimeRegistry
+	ChatRuntime             *chatRuntime
 	BaseCfgStore            *config.Store
 	titleBackfillStarted    bool
 	autonomousCleanupStop   chan struct{}
@@ -51,6 +53,9 @@ type Server struct {
 	chatSessionMutationHook func()
 	chatExactSaveHook       func(chatSession) error
 	chatWorldlineRPCHook    func(string, map[string]interface{}) error
+	chatHubBridgeMu         sync.Mutex
+	chatHubBridgeCmd        *exec.Cmd
+	chatHubBridgeServer     *http.Server
 	instanceInstallMu       sync.Mutex
 	instanceInstallWG       sync.WaitGroup
 	instanceInstallTasks    map[string]*instanceInstallTask
@@ -67,7 +72,7 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
 		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
-		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes,
+		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes, ChatRuntime: defaultRuntime,
 		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
 	server.resumeInstanceInstalls()
@@ -184,8 +189,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/ga/processes", s.gaProcesses)
 	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.killGAProcess))
 	mux.HandleFunc("/api/ga/processes/adopt", s.requireDangerousConfirm(s.adoptGAProcess))
-	mux.HandleFunc("/api/models", s.models)
-	mux.HandleFunc("/api/models/raw", s.modelsRaw)
+	mux.HandleFunc("/api/models", s.withModelInstance((*Server).models))
+	mux.HandleFunc("/api/models/raw", s.withModelInstance((*Server).modelsRaw))
 	mux.HandleFunc("/api/models/preview", s.modelsPreview)
 	mux.HandleFunc("/api/models/discover", s.modelsDiscover)
 	mux.HandleFunc("/api/models/probe", s.modelsProbe)
@@ -570,6 +575,9 @@ func (s *Server) startTMWebDriverMaster() (int, []string, error) {
 	return cmd.Process.Pid, []string{python, "-c", code}, nil
 }
 
+// resolvePythonForRoot picks the interpreter for a GA root. The order lives in
+// pyfind, which skips the Microsoft Store python stub instead of handing back a
+// launcher that exits 9009.
 func resolvePythonForRoot(gaRoot, configured string) string {
 	if configured = strings.TrimSpace(configured); configured != "" {
 		if path, err := executablePath(configured); err == nil {
@@ -594,6 +602,22 @@ func resolvePythonForRoot(gaRoot, configured string) string {
 		}
 	}
 	return "python"
+}
+
+// resolveUsablePythonForRoot is resolvePythonForRoot plus a dependency check.
+// Path-only resolution is enough while provisioning, but running GA code needs
+// an interpreter that can actually import GA's dependencies: a fresh instance
+// has no .venv, so the path-only answer can be a bare interpreter that fails on
+// "import requests". An explicitly configured interpreter is always honored as
+// is, so an operator's choice is never silently overridden.
+func resolveUsablePythonForRoot(gaRoot, configured string, fallbacks []string) string {
+	if strings.TrimSpace(configured) != "" {
+		return resolvePythonForRoot(gaRoot, configured)
+	}
+	if py := pyfind.ResolveUsable(gaRoot, configured, fallbacks); py != "" {
+		return py
+	}
+	return resolvePythonForRoot(gaRoot, configured)
 }
 
 func (s *Server) buildTMWebDriverStatus() tmwebdriverStatusResponse {

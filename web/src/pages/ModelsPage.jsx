@@ -33,6 +33,7 @@ import {
   nextFailoverGroupName,
   normalizeFailoverGroups,
   API_MODE_OPTIONS,
+  SERVICE_TIER_OPTIONS,
   THINKING_TYPE_OPTIONS,
   addModelConfigs,
   isModelConfigEnabled,
@@ -226,6 +227,12 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
               <label className="model-field">
                 <span className="model-field-label">{text.apiMode}</span>
                 <Select allowClear value={config.api_mode || undefined} onChange={api_mode => onChange({ api_mode })} placeholder={text.inherit} options={API_MODE_OPTIONS} />
+              </label>
+            )}
+            {fields.serviceTier && (
+              <label className="model-field">
+                <span className="model-field-label">{text.serviceTier}</span>
+                <Select allowClear value={config.service_tier || undefined} onChange={service_tier => onChange({ service_tier })} placeholder={text.inherit} options={SERVICE_TIER_OPTIONS} />
               </label>
             )}
             {fields.thinkingType && (
@@ -1043,6 +1050,8 @@ export function Models({
   getProfileKey,
   onRevealKey,
   onClearRevealedKey,
+  modelInstance,
+  modelInstanceLabel,
 }) {
   const text = t.models
   const [addOpen, setAddOpen] = useState(false)
@@ -1701,6 +1710,13 @@ export function Models({
           <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
         </div>
       </header>
+
+      {modelInstance && <Alert
+        type="info"
+        showIcon
+        message={`${modelInstanceLabel}: ${modelInstance.name || modelInstance.id} (${modelInstance.id})`}
+        className="model-page-alert"
+      />}
 
       <div className="model-summary-line" aria-label={text.configSummary}>
         <div className="model-summary-status">

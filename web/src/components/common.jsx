@@ -98,7 +98,7 @@ export function ChannelServiceTable({ services = [], emptyMessage, onStart, onSt
     <ServiceMeta svc={svc} compact t={t}/>
     <div className="channel-service-actions">
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label>
-      <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button></div>
+      <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>{svc.name === 'frontends/hub.py' && <button type="button" onClick={onOpenHub} title="打开 Hub 面板"><ExternalLink size={14}/>Hub</button>}</div>
     </div>
     {state?.message && <div className={`service-action-status ${state.status || ''}`} role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
       <span>{state.message}</span>

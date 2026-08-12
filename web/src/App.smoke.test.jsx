@@ -425,6 +425,70 @@ describe('plan todo card disclosure', () => {
 })
 
 describe('channel frontend gates', () => {
+  test('ChannelsPage leaves the page heading to the app shell', async () => {
+    globalThis.fetch = vi.fn(() => Promise.resolve(jsonResponse({ profiles: [] })))
+
+    const { container } = render(
+      <ChannelsPage
+        frontendSvcs={[]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(container.querySelector('.channels-layout')).toBeTruthy())
+    expect(container.querySelector('header, h1, h2')).toBeNull()
+    expect(container.querySelector('.channel-console-metrics')).toBeTruthy()
+  })
+
+  test('ChannelsPage switches accessible task tabs with pointer and keyboard', async () => {
+    globalThis.fetch = vi.fn(() => Promise.resolve(jsonResponse({ profiles: [] })))
+
+    const { container } = render(
+      <ChannelsPage
+        frontendSvcs={[]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={vi.fn()}
+      />,
+    )
+
+    const configTab = await screen.findByRole('tab', { name: /Channel config/i })
+    const servicesTab = screen.getByRole('tab', { name: /Service management/i })
+    const configPanel = container.querySelector('#channel-panel-config')
+    const servicesPanel = container.querySelector('#channel-panel-services')
+
+    expect(configTab.getAttribute('aria-selected')).toBe('true')
+    expect(configTab.tabIndex).toBe(0)
+    expect(configPanel.hidden).toBe(false)
+    expect(servicesPanel.hidden).toBe(true)
+
+    fireEvent.click(servicesTab)
+    expect(servicesTab.getAttribute('aria-selected')).toBe('true')
+    expect(servicesTab.tabIndex).toBe(0)
+    expect(configPanel.hidden).toBe(true)
+    expect(servicesPanel.hidden).toBe(false)
+
+    fireEvent.keyDown(servicesTab, { key: 'ArrowRight' })
+    expect(configTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(configTab)
+
+    fireEvent.keyDown(configTab, { key: 'End' })
+    expect(servicesTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(servicesTab)
+
+    fireEvent.keyDown(servicesTab, { key: 'Home' })
+    expect(configTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(configTab)
+  })
+
   test('ChannelServiceTable routes reflect service start through onReflectStart', () => {
     const onStart = vi.fn()
     const onReflectStart = vi.fn()
@@ -1438,6 +1502,12 @@ describe('operator shell feedback', () => {
     const files = await screen.findByRole('button', { name: /文件|Files/i })
     const usage = screen.getByRole('button', { name: /用量总览|Usage/i })
     const overview = screen.getByRole('button', { name: /^(总览|Overview)$/i })
+    const pageHeader = document.querySelector('.admin-page-header')
+    expect(document.querySelectorAll('.admin-page-header')).toHaveLength(1)
+    expect(pageHeader?.querySelector('.admin-page-icon')?.getAttribute('aria-hidden')).toBe('true')
+    expect(pageHeader?.querySelector('.admin-page-meta')?.getAttribute('aria-label')).toMatch(/服务状态|Service status/i)
+    expect(pageHeader?.querySelector('.admin-page-health')?.getAttribute('role')).toBe('status')
+    expect(pageHeader?.querySelector('h2')?.textContent).toMatch(/总览|Overview/i)
     expect(overview.getAttribute('aria-current')).toBe('page')
     expect(usage.tagName).toBe('BUTTON')
     expect(usage.disabled).toBe(false)
@@ -1447,6 +1517,8 @@ describe('operator shell feedback', () => {
     fireEvent.click(files)
     expect(files.getAttribute('aria-current')).toBe('page')
     expect(files.disabled).toBe(false)
+    expect(document.querySelectorAll('.admin-page-header')).toHaveLength(1)
+    expect(document.querySelector('.admin-page-header h2')?.textContent).toMatch(/文件|Files/i)
   })
 
   test('overview hides duplicate cards and keeps actionable summary cards', async () => {
@@ -1593,6 +1665,7 @@ describe('operator shell feedback', () => {
     })
 
     render(<App />)
+    fireEvent.click(await screen.findByRole('tab', { name: /服务管理|Service management/i }))
     const alphaLabel = await screen.findByText('alpha-ui')
     const betaLabel = screen.getByText('beta-ui')
     const alphaCard = alphaLabel.closest('article')

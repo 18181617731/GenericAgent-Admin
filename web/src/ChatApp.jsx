@@ -12,6 +12,9 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
+import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
+import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
+import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
@@ -21,6 +24,8 @@ import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
+import { hubSessions } from './lib/chatHubSessions.js'
+import { groupRecentSessions } from './lib/chatSessionGroups.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -2966,8 +2971,15 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       window.removeEventListener('resize', closeAboveBreakpoint)
     }
   }, [mobileToolsOpen])
+  const [loopRailOpen, setLoopRailOpen] = useState(true)
   const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
+  const [loopState, setLoopState] = useState(null)
+  const [loopConfigOpen, setLoopConfigOpen] = useState(false)
+  const [loopObjective, setLoopObjective] = useState('')
+  const [loopMaxRounds, setLoopMaxRounds] = useState(10)
+  const [loopUpdating, setLoopUpdating] = useState(false)
+  const loopRecords = useMemo(() => normalizeLoopRecords(loopState), [loopState])
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
   const [subagents, setSubagents] = useState([])
@@ -3001,8 +3013,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
+  const [sessionManagerView, setSessionManagerView] = useState('all')
   const [selectedSessionIds, setSelectedSessionIds] = useState([])
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [hubUpdatingSessionId, setHubUpdatingSessionId] = useState('')
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
@@ -3298,6 +3312,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setWorkingState(ev.working && typeof ev.working === 'object' ? ev.working : null)
     }
     if (Object.prototype.hasOwnProperty.call(ev, 'plan')) setPlanState(ev.plan || null)
+    if (ev.type === 'loop' && ev.loop && typeof ev.loop === 'object') {
+      setLoopState(ev.loop)
+      setSessions(xs => updateSessionLoop(xs, sessionId, ev.loop))
+      if (ev.loop.status === 'error' && ev.loop.stop_reason) {
+        setErr(ct(`Loop \u5df2\u5f02\u5e38\u505c\u6b62\uff1a${loopStopReasonText(ev.loop.stop_reason)}`, `Loop stopped with an error: ${loopStopReasonText(ev.loop.stop_reason)}`))
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
       setSessions(xs => xs.map(x => x.id === sessionId ? {
         ...x,
@@ -3461,45 +3482,85 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     let cursor = 0
     let replay = false
     let commandPatch = null
+    let terminal = false
+    let currentRun = { pendingId, startedAtMs:0 }
     while (isActiveSession(sessionId)) {
       let completed = false
       let eventCount = 0
-      try {
-        const outcome = await readStream(res, pendingId, clientUserID, sessionId)
-        eventCount = outcome.eventCount
-        cursor += eventCount
-        if (outcome.commandPatch) commandPatch = outcome.commandPatch
-        completed = true
-        if (outcome.terminal) return commandPatch
-      } catch (e) {
-        const partial = e?.chatStreamOutcome
-        if (partial) {
-          eventCount = partial.eventCount
+      if (res) {
+        try {
+          const outcome = await readStream(res, pendingId, clientUserID, sessionId)
+          eventCount = outcome.eventCount
           cursor += eventCount
-          if (partial.commandPatch) commandPatch = partial.commandPatch
-          if (partial.terminal) return commandPatch
+          if (outcome.commandPatch) commandPatch = outcome.commandPatch
+          completed = true
+          terminal = Boolean(outcome.terminal)
+        } catch (e) {
+          const partial = e?.chatStreamOutcome
+          if (partial) {
+            eventCount = partial.eventCount
+            cursor += eventCount
+            if (partial.commandPatch) commandPatch = partial.commandPatch
+            terminal = Boolean(partial.terminal)
+          }
+          if (e?.name === 'AbortError' || signal?.aborted) throw e
         }
-        if (e?.name === 'AbortError' || signal?.aborted) throw e
+        res = null
       }
-      if (!isActiveSession(sessionId)) return commandPatch
 
       let state = null
-      while (!state && isActiveSession(sessionId)) {
-        try {
-          state = await chatApi(`/api/chat/state/${sessionId}`, { signal })
-        } catch (e) {
-          if (e?.name === 'AbortError' || signal?.aborted) throw e
-          await waitForStreamRetry(signal)
+      try {
+        state = await chatApi(`/api/chat/state/${sessionId}`, { signal })
+        if (!isActiveSession(sessionId)) return commandPatch
+        if (state.loop && typeof state.loop === 'object') {
+          setLoopState(state.loop)
+          setSessions(xs => updateSessionLoop(xs, sessionId, state.loop))
         }
+      } catch (e) {
+        if (e?.name === 'AbortError' || signal?.aborted) throw e
+        await waitForStreamRetry(signal)
+        continue
       }
-      if (!state || !isActiveSession(sessionId)) return commandPatch
-      if (shouldFinishStreamFollow({ running:state.running, replay, completed, eventCount })) return commandPatch
-      if (state.running) await waitForStreamRetry(signal, 120)
+
+      const availableRun = {
+        pendingId: state.pending_assistant_id || '',
+        startedAtMs: state.run_started_at_ms || 0,
+      }
+      const action = decideStreamFollow({
+        running:Boolean(state.running),
+        loop:state.loop,
+        currentRun,
+        availableRun,
+        terminal,
+      })
+      if (action === 'finish') return commandPatch
+      if (action === 'wait') {
+        await waitForStreamRetry(signal)
+        continue
+      }
+
+      const nextRun = !sameStreamRun(currentRun, availableRun)
+      if (nextRun) {
+        currentRun = availableRun
+        pendingId = availableRun.pendingId || `resume-${Date.now()}`
+        cursor = 0
+        replay = false
+        terminal = false
+        setMessages(xs => isActiveSession(sessionId) && !xs.some(m => m.id === pendingId)
+          ? [...xs, { id:pendingId, role:'assistant', content:'', streaming:true }]
+          : xs)
+      } else {
+        currentRun = { ...currentRun, ...availableRun }
+      }
 
       while (isActiveSession(sessionId)) {
         try {
           res = await chatFetch(`/api/chat/stream/${sessionId}?from=${cursor}`, { signal })
-          if (res.status === 204) return commandPatch
+          if (res.status === 204) {
+            res = null
+            await waitForStreamRetry(signal)
+            break
+          }
           if (!res.ok) throw new Error(await res.text())
           replay = true
           break
@@ -3510,6 +3571,48 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       }
     }
     return commandPatch
+  }
+
+  const startLoop = async () => {
+    const id = activeSidRef.current
+    const objective = (loopObjective || prompt).trim()
+    if (!id) { setErr(ct('请先创建或打开一个会话。', 'Create or open a chat first.')); return }
+    if (!objective) { setErr(ct('请填写 Loop 目标。', 'Enter a Loop objective.')); setLoopConfigOpen(true); return }
+    const maxRounds = Math.min(100, Math.max(1, Number(loopMaxRounds) || 10))
+    const controllerLlmNo = llms.some(model => model.index === loopControllerLlmNo) ? loopControllerLlmNo : llmNo
+    setLoopUpdating(true)
+    setErr('')
+    try {
+      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, max_rounds:maxRounds, controller_llm_no:controllerLlmNo }) })
+      setLoopObjective(objective)
+      setLoopMaxRounds(maxRounds)
+      setLoopControllerLlmNo(controllerLlmNo)
+      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, max_rounds:maxRounds, controller_prompt:objective, controller_llm_no:controllerLlmNo }
+      setLoopState(nextLoopState)
+      setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
+      setLoopConfigOpen(false)
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setLoopUpdating(false)
+    }
+  }
+
+  const stopLoop = async () => {
+    const id = activeSidRef.current
+    if (!id) return
+    setLoopUpdating(true)
+    setErr('')
+    try {
+      const result = await chatApi(`/api/chat/loop/${id}/stop`, { method:'POST', body:'{}' })
+      const nextLoopState = result.loop || { ...loopState, enabled:false, status:'stopped', stop_reason:'user' }
+      setLoopState(nextLoopState)
+      setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setLoopUpdating(false)
+    }
   }
 
   const cancelRun = async (id = sid) => {
@@ -3524,7 +3627,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     finally { setBusy(false); setStreamingSid(''); if (id) loadSessions(id).catch(()=>{}) }
   }
 
-  const attachRunningStream = async (id) => {
+  const attachRunningStream = async (id, { waitForRun = false } = {}) => {
     if (!id) return
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
@@ -3535,10 +3638,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     let sessionForNotification = null
     // Resolve the placeholder id up-front: `followChatStream` below reads `pendingId` right
     // after `await fetch`, which may win the race against the state updater.
-    const knownId = pickResumePlaceholderId(messagesRef.current)
+    const knownId = waitForRun ? '' : pickResumePlaceholderId(messagesRef.current)
     if (knownId) pendingId = knownId
     setBusy(true); setStreamingSid(id); setAutoFollow(true); setShowFollow(false)
-    setMessages(xs => {
+    if (!waitForRun) setMessages(xs => {
       const existingId = pickResumePlaceholderId(xs)
       if (existingId) {
         pendingId = existingId
@@ -3547,9 +3650,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       return [...xs, { id:pendingId, role:'assistant', content:'', created_at:Math.floor(Date.now()/1000), run_started_at_ms:Date.now() }]
     })
     try {
-      const res = await chatFetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
-      if (res.status === 204) return
-      if (!res.ok) throw new Error(await res.text())
+      let res = null
+      if (!waitForRun) {
+        res = await chatFetch(`/api/chat/stream/${id}`, { signal: ctrl.signal })
+        if (res.status === 204) return
+        if (!res.ok) throw new Error(await res.text())
+      }
       await followChatStream(res, pendingId, '', id, ctrl.signal)
       streamCompleted = true
       if (isActiveSession(id)) {
@@ -3575,6 +3681,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
 
+  useEffect(() => {
+    if (!sid || !isLoopFollowActive(loopState) || streamAbortRef.current) return
+    void attachRunningStream(sid, { waitForRun:true })
+  }, [sid, streamingSid, loopState?.enabled, loopState?.status])
+
   const loadChatState = async (id = '', openToken = openSeqRef.current) => {
     const st = await chatApi(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
@@ -3594,6 +3705,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setReasoningEffort(nextReasoningEffort)
     setExtraSysPrompts(nextExtraSysPrompts)
     setExtraSysPromptPresetID(nextExtraSysPromptPresetID)
+    const nextLoopState = st.loop && typeof st.loop === 'object' ? st.loop : null
+    setLoopState(nextLoopState)
+    if (id && nextLoopState) setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
+    const savedControllerLlmNo = Number(nextLoopState?.controller_llm_no)
+    setLoopControllerLlmNo(Number(nextLoopState?.epoch) > 0 && nextLlms.some(model => model.index === savedControllerLlmNo) ? savedControllerLlmNo : null)
+    if (st.loop?.controller_prompt) setLoopObjective(st.loop.controller_prompt)
+    if (Number.isFinite(Number(st.loop?.max_rounds))) setLoopMaxRounds(Math.min(100, Math.max(1, Number(st.loop.max_rounds))))
     if (id && st.running) {
       attachRunningStream(id)
     } else if (id && streamingSid && streamingSid !== id) {
@@ -3621,6 +3739,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const d = await chatApi(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
     activeSidRef.current = d.id
+    persistSelectedChatSessionID(chatInstanceRef.current, d.id)
     scrollModeRef.current = 'auto'
     setSid(d.id)
     setMessages(d.messages || [])
@@ -3753,9 +3872,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
     if (open) {
-      const next = prefer || list[0]?.id || ''
+      const restored = loadSelectedChatSessionID(chatInstanceRef.current)
+      const next = chooseChatSessionID(list, prefer, restored)
       if (next) await openSession(next, false)
-      else await loadChatState('', openSeqRef.current)
+      else {
+        persistSelectedChatSessionID(chatInstanceRef.current, '')
+        await loadChatState('', openSeqRef.current)
+      }
     } else if (!prefer && !sid) {
       await loadChatState('', openSeqRef.current)
     }
@@ -3809,6 +3932,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const openSessionManager = () => {
+    setSessionManagerView('all')
     setSessionManagerOpen(true)
     setSelectedSessionIds([])
     setEditing('')
@@ -3832,9 +3956,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (batchDeleting) return
     setSelectedSessionIds(ids => {
       const selected = new Set(ids)
-      return sessions.length > 0 && sessions.every(session => selected.has(session.id))
-        ? []
-        : sessions.map(session => session.id)
+      const visibleIds = managedSessions.map(session => session.id)
+      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selected.has(id))
+      visibleIds.forEach(id => allVisibleSelected ? selected.delete(id) : selected.add(id))
+      return [...selected]
     })
   }
 
@@ -3904,6 +4029,37 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const d = await chatApi(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
     setSessions(xs => xs.map(x => x.id === id ? { ...x, title:d.title, updated_at:d.updated_at } : x))
     setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
+  }
+
+  const setSessionPinned = async (session) => {
+    if (!session?.id) return
+    const pinned = !session.pinned
+    setMenuOpen(''); setMenuPos(null); setErr('')
+    setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned } : x))
+    try {
+      const d = await chatApi(`/api/chat/pin/${session.id}`, { method:'PATCH', body:JSON.stringify({ pinned }) })
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned:Boolean(d.pinned) } : x))
+      setNotice(d.pinned ? ct('\u5df2\u7f6e\u9876\u4f1a\u8bdd', 'Session pinned') : ct('\u5df2\u53d6\u6d88\u7f6e\u9876', 'Session unpinned'))
+    } catch (e) {
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned:!pinned } : x))
+      setErr(e.message || String(e))
+    }
+  }
+
+  const setSessionHubEnabled = async (session) => {
+    if (!session?.id || hubUpdatingSessionId) return
+    const enabled = !session.hub_enabled
+    setHubUpdatingSessionId(session.id)
+    setMenuOpen(''); setMenuPos(null); setErr('')
+    try {
+      const d = await chatApi(`/api/chat/hub/${session.id}`, { method:'PATCH', body:JSON.stringify({ enabled }) })
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, hub_enabled:Boolean(d.hub_enabled) } : x))
+      setNotice(d.hub_enabled ? ct('会话已入驻 Hub', 'Session joined Hub') : ct('会话已退出 Hub', 'Session left Hub'))
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setHubUpdatingSessionId('')
+    }
   }
 
   const saveModel = async (next) => {
@@ -4726,6 +4882,18 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const q = sidebarSearch.trim().toLowerCase()
     return sessions.filter(s => (s.title || '').toLowerCase().includes(q))
   }, [sessions, sidebarSearch])
+  const recentSessionGroups = useMemo(() => groupRecentSessions(filteredSessions), [filteredSessions])
+  const recentGroupLabels = {
+    pinned: ct('\u7f6e\u9876', 'Pinned'),
+    today: ct('\u4eca\u5929', 'Today'),
+    yesterday: ct('\u6628\u5929', 'Yesterday'),
+    this_week: ct('\u672c\u5468', 'This week'),
+    last_week: ct('\u4e0a\u5468', 'Last week'),
+    this_month: ct('\u672c\u6708', 'This month'),
+    older: ct('\u66f4\u65e9', 'Older'),
+  }
+  const managedHubSessions = useMemo(() => hubSessions(sessions), [sessions])
+  const managedSessions = sessionManagerView === 'hub' ? managedHubSessions : sessions
   const filteredProjectGroups = useMemo(() => {
     if (!sidebarSearch.trim()) return projectSessionGroups
     const q = sidebarSearch.trim().toLowerCase()
@@ -4733,7 +4901,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [projectSessionGroups, sidebarSearch])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
   const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
-  const allSessionsSelected = sessions.length > 0 && selectedSessionCount === sessions.length
+  const visibleSelectedSessionCount = managedSessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
+  const allSessionsSelected = managedSessions.length > 0 && visibleSelectedSessionCount === managedSessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
   const providerGroups = useMemo(() => buildModelProviderGroups(llms), [llms])
@@ -4815,7 +4984,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       </div>
       {sidebarTab === 'history' ? <>
         <div className="oa-session-list">
-          {filteredSessions.map(renderSidebarSession)}
+          {recentSessionGroups.map(group => <section className={`oa-recent-group oa-recent-group-${group.key}`} key={group.key}>
+            <div className="oa-recent-group-head">{group.key === 'pinned' && <Pin size={12}/>}<span>{recentGroupLabels[group.key]}</span><small>{group.sessions.length}</small></div>
+            <div className="oa-recent-group-body">{group.sessions.map(renderSidebarSession)}</div>
+          </section>)}
           {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
       </> : <div className="oa-session-list oa-project-list">
@@ -4848,6 +5020,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         if (!s) return null
         return <div className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
           <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
+          <button onClick={()=>setSessionPinned(s)}><Pin size={14}/>{s.pinned ? ct('\u53d6\u6d88\u7f6e\u9876', 'Unpin') : ct('\u7f6e\u9876', 'Pin')}</button>
+          <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>
           <button className="danger" onClick={()=>deleteSession(s.id)}><Trash2 size={14}/>{ct('删除', 'Delete')}</button>
         </div>
       })()}
@@ -5153,25 +5327,35 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <button className="oa-icon-btn oa-session-manager-dialog-close" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label={ct('关闭会话管理', 'Close session manager')} autoFocus><X size={17}/></button>
         </header>
         <div className="oa-session-manager-dialog-tools">
-          <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (selectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!sessions.length || batchDeleting}>
-            <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && selectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
+          <div className="oa-session-manager-filter" role="group" aria-label={ct('会话筛选', 'Session filter')}>
+            <button type="button" className={sessionManagerView === 'all' ? 'is-active' : ''} onClick={()=>setSessionManagerView('all')} disabled={batchDeleting}>{ct('全部', 'All')}<small>{sessions.length}</small></button>
+            <button type="button" className={sessionManagerView === 'hub' ? 'is-active' : ''} onClick={()=>setSessionManagerView('hub')} disabled={batchDeleting}>Hub<small>{managedHubSessions.length}</small></button>
+          </div>
+          <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (visibleSelectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!managedSessions.length || batchDeleting}>
+            <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && visibleSelectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
             <span>{allSessionsSelected ? ct('取消全选', 'Clear selection') : ct('全选', 'Select all')}</span>
           </button>
-          <span className="oa-session-selected-count">{ct('已选', 'Selected')} {selectedSessionCount} / {sessions.length}</span>
+          <span className="oa-session-selected-count">{ct('已选', 'Selected')} {visibleSelectedSessionCount} / {managedSessions.length}</span>
         </div>
         <div className="oa-session-manager-dialog-list">
-          {sessions.map(s => {
+          {managedSessions.map(s => {
             const selected = selectedSessionIdSet.has(s.id)
+            const hubUpdating = hubUpdatingSessionId === s.id
             const sourceLabel = s.title_source === 'generated' ? 'AI' : s.title_source === 'manual' ? '手动' : '旧标题'
-            return <button key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`} type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
-              <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
-              <span className="oa-session-dialog-copy">
-                <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
-                <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
-              </span>
-            </button>
+            return <div key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`}>
+              <button className="oa-session-manager-dialog-select" type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting || Boolean(hubUpdatingSessionId)}>
+                <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
+                <span className="oa-session-dialog-copy">
+                  <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                  <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
+                </span>
+              </button>
+              <button className={`oa-session-dialog-hub-action ${s.hub_enabled ? 'is-leave' : ''}`} type="button" onClick={()=>setSessionHubEnabled(s)} disabled={batchDeleting || Boolean(hubUpdatingSessionId)} aria-label={s.hub_enabled ? ct(`退出 Hub：${shortTitle(s)}`, `Leave Hub: ${shortTitle(s)}`) : ct(`入驻 Hub：${shortTitle(s)}`, `Join Hub: ${shortTitle(s)}`)}>
+                <Bot size={13}/><span>{hubUpdating ? ct('处理中…', 'Updating…') : s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</span>
+              </button>
+            </div>
           })}
-          {!sessions.length && <div className="oa-session-manager-dialog-empty">{ct('暂无历史会话', 'No session history')}</div>}
+          {!managedSessions.length && <div className="oa-session-manager-dialog-empty">{sessionManagerView === 'hub' ? ct('暂无会话入驻 Hub', 'No sessions have joined Hub') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
         <footer className="oa-session-manager-dialog-foot">
           <small>{ct('删除后无法恢复', 'Deleted sessions cannot be recovered')}</small>

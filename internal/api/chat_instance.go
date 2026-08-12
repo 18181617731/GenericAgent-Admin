@@ -23,12 +23,14 @@ func (e *chatInstanceNotFoundError) Error() string {
 // Keeping the mutexes with the maps prevents request-scoped Server copies from
 // accidentally copying a live mutex.
 type chatRuntime struct {
-	chatMu    sync.Mutex
-	sessionMu sync.Mutex
-	usageMu   sync.Mutex
-	runs      map[string]*chatRun
-	workers   map[string]*chatWorker
-	titleJobs map[string]bool
+	chatMu           sync.Mutex
+	sessionMu        sync.Mutex
+	usageMu          sync.Mutex
+	runs             map[string]*chatRun
+	workers          map[string]*chatWorker
+	titleJobs        map[string]bool
+	loopRecoveryOnce sync.Once
+	loopRecoveryErr  error
 }
 
 type chatRuntimeRegistry struct {
@@ -80,6 +82,7 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		ChatWorkers:             s.ChatWorkers,
 		ChatTitleJobs:           s.ChatTitleJobs,
 		ChatRuntimes:            s.ChatRuntimes,
+		ChatRuntime:             s.ChatRuntime,
 		BaseCfgStore:            baseStore,
 		titleBackfillStarted:    s.titleBackfillStarted,
 		chatSessionMutationHook: s.chatSessionMutationHook,
@@ -93,8 +96,34 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		clone.ChatRuns = runtime.runs
 		clone.ChatWorkers = runtime.workers
 		clone.ChatTitleJobs = runtime.titleJobs
+		clone.ChatRuntime = runtime
 	}
 	return clone
+}
+
+// pythonFallbackRoots lists the interpreters and GA roots that may lend an
+// interpreter to the instance identified by skipID: every sibling instance's
+// configured python and root, plus the base config's own python and root.
+// Order matters, callers probe these in sequence.
+func pythonFallbackRoots(base config.AppConfig, skipID string) []string {
+	var out []string
+	add := func(v string) {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	for _, sibling := range base.Instances {
+		if sibling.ID == skipID {
+			continue
+		}
+		add(sibling.PythonPath)
+		add(sibling.EffectivePython)
+		add(sibling.GARoot)
+	}
+	add(base.PythonPath)
+	add(base.EffectivePython)
+	add(base.GARoot)
+	return out
 }
 
 func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) {
@@ -122,6 +151,16 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 	cfg.GARoot = instance.GARoot
 	cfg.PythonPath = instance.PythonPath
 	cfg.EffectivePython = instance.EffectivePython
+	// A freshly created instance is a bare GA checkout: no .venv of its own, so
+	// the only interpreter that can import GA's dependencies usually belongs to
+	// another instance. Carry those roots so interpreter resolution can borrow
+	// one instead of falling back to a bare launcher that lacks requests.
+	cfg.PythonFallbackRoots = pythonFallbackRoots(baseStore.Snapshot(), instance.ID)
+	// NewRuntimeStore normalizes the legacy GARoot/Python compatibility fields
+	// from DefaultInstanceID. Scope the derived request configuration to the
+	// selected instance so normalization cannot restore the global default.
+	cfg.DefaultInstanceID = instanceID
+	cfg.Instances = []config.InstanceConfig{instance}
 	runtimeID := instanceID
 	if instanceID == "default" {
 		// The migrated legacy instance keeps both the legacy data directory and
@@ -156,6 +195,10 @@ func (s *Server) withChatInstance(next func(*Server, http.ResponseWriter, *http.
 				status = http.StatusNotFound
 			}
 			bad(w, status, err.Error())
+			return
+		}
+		if err := chatServer.recoverChatLoopsAfterRestart(); err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		setResolvedInstanceHeader(w, instanceID)
