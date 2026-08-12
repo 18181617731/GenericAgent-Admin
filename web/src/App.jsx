@@ -69,6 +69,9 @@ export default function App() {
   const [notice, setNotice] = useState(null)
   const [observability, setObservability] = useState(null)
   const [observabilityError, setObservabilityError] = useState('')
+  // The server binds an ephemeral port by default, so the real address comes
+  // from the health endpoint instead of the configured host/port pair.
+  const [listenAddress, setListenAddress] = useState('')
   const appScope = useRef(null)
 
   const t = I18N[lang] || I18N.en
@@ -126,6 +129,7 @@ export default function App() {
       request('/api/risk/catalog'),
     ])
     setObservability(buildObservabilitySnapshot({ health: apiHealth, inventory: inv, risks }))
+    setListenAddress(apiHealth?.listen?.address || '')
     setObservabilityError('')
   }
 
@@ -256,7 +260,7 @@ export default function App() {
             <div className="admin-page-copy"><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div>
           </div>
           <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}>
-            <span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span>
+            <span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{listenAddress || (lang === 'zh' ? '本机' : 'local')}</span></span>
             <span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span>
           </div>
         </header>

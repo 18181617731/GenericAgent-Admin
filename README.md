@@ -105,16 +105,14 @@ Extract and create `config.local.json` in the same directory:
 
 ```json
 {
-  "ga_root": "E:/Work/GenericAgent",
-  "host": "127.0.0.1",
-  "port": 8787
+  "ga_root": "E:/Work/GenericAgent"
 }
 ```
 
-**Windows:** Double-click `ga-admin.exe` or run `ga-admin.exe --no-browser` for headless mode.  
-**Linux/macOS:** Run `./ga-admin` or `./ga-admin --no-browser`.
+**Windows:** Double-click `ga-admin.exe`. The UI opens in a native desktop window backed by the WebView2 runtime (preinstalled on Windows 11 and current Windows 10), and the app keeps running in the system tray after you close the window. Run `ga-admin.exe --no-window` to use your default browser instead, or `ga-admin.exe --no-browser` to start without opening any UI.  
+**Linux/macOS:** Run `./ga-admin` or `./ga-admin --no-browser`. These platforms still open the UI in your default browser.
 
-Open `http://127.0.0.1:8787` in your browser.
+By default the server listens on `127.0.0.1` with a random port, so nothing is exposed to the network and local access needs no password. The address of the running process is printed at startup and written to `runtime.local.json`; open that URL if you want a second view of the UI. To reach the admin server from another device, turn on remote access in **Settings** (see [Remote access](#remote-access)).
 
 #### Method 2 — Local Development Build
 
@@ -125,7 +123,7 @@ npm --prefix web run build
 go run .
 ```
 
-Open `http://127.0.0.1:8787`.
+Open the URL printed on startup, or run `go run . --port 8787` to pin a loopback port. The Vite dev server (`npm --prefix web run dev`) proxies `/api` to the port recorded in `runtime.local.json`, so it follows the random port automatically.
 
 ---
 
@@ -157,12 +155,24 @@ Open `http://127.0.0.1:8787`.
 ### CLI Flags
 
 - `--headless` / `--server-only` / `--no-browser`: Run without opening browser
+- `--no-window`: Use the system browser instead of the native desktop window (Windows only; other platforms always use the browser)
 - `--app-root <path>`: Override GA root directory (default: from `config.local.json`)
-- `--port <port>`: Override HTTP port (default: 8787)
+- `--port <port>`: Pin the listen port for this launch instead of the random loopback port
 
 ### Environment Variables
 
-- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`: HTTP Basic Auth for non-localhost access
+- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`: Fix the credential for remote access. When both are set the password cannot be changed from the UI.
+- `GA_ADMIN_NO_WINDOW`: Same as `--no-window`
+
+### Remote access
+
+The admin server can run processes and read and write files, so it stays on loopback unless you opt out:
+
+- **Default.** Binds `127.0.0.1` on a random port. Requests from this machine never need a password, and no other device can connect.
+- **Remote access on, password required.** Binds every interface on `port`. Remote clients must authenticate with HTTP Basic Auth; local requests still skip it. Set the password in **Settings → Remote access** first — a launch that requires a password without having one falls back to loopback and logs why.
+- **Remote access on, anonymous allowed.** Binds every interface with no authentication at all. Only appropriate on a network you fully trust.
+
+Changes to the listen address take effect on the next start. Each run records where it actually bound in `runtime.local.json` (URL, address, port, PID); the file is removed on a clean shutdown and overwritten on the next start.
 
 ### Configuration
 
@@ -171,7 +181,8 @@ Place `config.local.json` in the executable directory:
 ```json
 {
   "ga_root": "/path/to/GenericAgent",
-  "host": "127.0.0.1",
+  "remote_access": false,
+  "remote_allow_anonymous": false,
   "port": 8787,
   "service_autostart": ["worker"],
   "slash_commands": [
@@ -180,7 +191,7 @@ Place `config.local.json` in the executable directory:
 }
 ```
 
-See `config.example.json` for all available options.
+`host` and `port` only apply while `remote_access` is `true`; a loopback launch always takes a random port. See `config.example.json` for all available options.
 
 The repository ignores:
 
@@ -212,6 +223,7 @@ git diff --check
 - `npm run verify` runs `lint + test:lib + build` (skips `test:ui`)
 - `web/src/lib/*.test.mjs` are auto-discovered by `npm run test:lib`
 - Test files do not need `package.json` registration
+- After changing `assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
 
 ---
 
@@ -345,16 +357,14 @@ ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
 
 ```json
 {
-  "ga_root": "E:/Work/GenericAgent",
-  "host": "127.0.0.1",
-  "port": 8787
+  "ga_root": "E:/Work/GenericAgent"
 }
 ```
 
-**Windows：** 双击 `ga-admin.exe` 或运行 `ga-admin.exe --no-browser`（无头模式）。  
-**Linux/macOS：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`。
+**Windows：** 双击 `ga-admin.exe`。界面会在原生桌面窗口中打开（基于 WebView2 运行时，Windows 11 与较新的 Windows 10 已预装），关闭窗口后程序继续驻留系统托盘。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
+**Linux/macOS：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`，这两个平台仍使用默认浏览器打开界面。
 
-浏览器打开 `http://127.0.0.1:8787`。
+默认监听 `127.0.0.1` 的随机端口：不对外暴露，本机访问也不需要密码。实际地址会在启动日志中打印，同时写入 `runtime.local.json`；需要再开一个界面视图时用它。要从其它设备访问，请在**设置**中开启远程访问（见[远程访问](#远程访问)）。
 
 #### 方法二 — 本地开发构建
 
@@ -365,7 +375,7 @@ npm --prefix web run build
 go run .
 ```
 
-浏览器打开 `http://127.0.0.1:8787`。
+浏览器打开启动日志中给出的地址；若想固定本机端口，可运行 `go run . --port 8787`。Vite 开发服务器（`npm --prefix web run dev`）会把 `/api` 代理到 `runtime.local.json` 中记录的端口，因此随机端口也能自动跟上。
 
 ---
 
@@ -397,12 +407,24 @@ go run .
 ### CLI 参数
 
 - `--headless` / `--server-only` / `--no-browser`：无浏览器模式运行
+- `--no-window`：改用系统浏览器而非原生桌面窗口（仅 Windows 有窗口模式，其它平台始终用浏览器）
 - `--app-root <路径>`：覆盖 GA 根目录（默认从 `config.local.json` 读取）
-- `--port <端口>`：覆盖 HTTP 端口（默认 8787）
+- `--port <端口>`：本次启动固定监听端口，替代默认的本机随机端口
 
 ### 环境变量
 
-- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`：非 localhost 访问的 HTTP Basic Auth
+- `GA_ADMIN_AUTH_USER` / `GA_ADMIN_AUTH_PASSWORD`：固定远程访问使用的凭据；两者都设置后界面上无法再修改密码
+- `GA_ADMIN_NO_WINDOW`：等同于 `--no-window`
+
+### 远程访问
+
+管理端可以执行进程、读写文件，因此默认只监听本机，需要显式放开：
+
+- **默认。** 监听 `127.0.0.1` 的随机端口。本机请求永远不需要密码，其它设备也连不上。
+- **开启远程访问 + 需要密码。** 在所有网卡上监听 `port`。远程客户端必须通过 HTTP Basic Auth 认证，本机请求仍然免密。请先在**设置 → 远程访问**中设置密码；若配置要求密码却没有设置，启动时会退回本机监听并在日志中说明原因。
+- **开启远程访问 + 允许匿名。** 在所有网卡上监听且完全不做认证，只适合完全可信的网络。
+
+监听地址的修改在下次启动时生效。每次运行都会把实际绑定信息（URL、地址、端口、PID）写入 `runtime.local.json`，正常退出时删除，下次启动时覆盖。
 
 ### 配置
 
@@ -411,7 +433,8 @@ go run .
 ```json
 {
   "ga_root": "/path/to/GenericAgent",
-  "host": "127.0.0.1",
+  "remote_access": false,
+  "remote_allow_anonymous": false,
   "port": 8787,
   "service_autostart": ["worker"],
   "slash_commands": [
@@ -420,7 +443,7 @@ go run .
 }
 ```
 
-参见 `config.example.json` 获取所有可用选项。
+`host` 与 `port` 只在 `remote_access` 为 `true` 时生效；本机监听始终使用随机端口。参见 `config.example.json` 获取所有可用选项。
 
 仓库忽略：
 
@@ -452,6 +475,7 @@ git diff --check
 - `npm run verify` 运行 `lint + test:lib + build`（跳过 `test:ui`）
 - `web/src/lib/*.test.mjs` 由 `npm run test:lib` 自动发现
 - 测试文件无需 `package.json` 注册
+- 修改 `assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
 
 ---
 

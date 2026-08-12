@@ -28,7 +28,17 @@ import (
 //go:embed web/dist
 var webFS embed.FS
 
+// The Windows executable carries the app icon in a resource section so that
+// Explorer, the taskbar, and pinned shortcuts show it. The .syso files are
+// committed because every build path needs them, including a plain `go build`;
+// regenerate them after changing the icon:
+//
+//go:generate go run github.com/akavel/rsrc@v0.10.2 -ico assets/tray_windows.ico -arch amd64 -o rsrc_windows_amd64.syso
+//go:generate go run github.com/akavel/rsrc@v0.10.2 -ico assets/tray_windows.ico -arch arm64 -o rsrc_windows_arm64.syso
+
 func main() {
+	// Has to happen before anything can put a window on screen.
+	enableHiDPI()
 	launch := parseLaunchOptions()
 	cwd, err := appRoot(launch.AppRoot)
 	if err != nil {
@@ -46,13 +56,6 @@ func main() {
 	if err := tryPortableAutoInit(cwd, cfgStore); err != nil {
 		log.Printf("portable auto-init: %v", err)
 	}
-	if launch.PortSet {
-		if err := cfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
-			cfg.Port = launch.Port
-		}); err != nil {
-			log.Fatalf("apply command-line port override: %v", err)
-		}
-	}
 	version.SetRepoURL(cfgStore.Snapshot().UpdateRepoURL)
 	svc := service.NewManagerWithPython(cfgStore.Snapshot().GARoot, cfgStore.Snapshot().EffectivePython, cfgStore.Snapshot().BufferLines)
 	models := modelconfig.NewStore(cwd)
@@ -62,49 +65,73 @@ func main() {
 	}
 	srv := api.New(cfgStore, svc, models, static)
 	srv.StartAutomaticChatTitleBackfill()
-	auth, err := newAuthManager(cwd, os.Getenv("GA_ADMIN_AUTH_USER"), os.Getenv("GA_ADMIN_AUTH_PASSWORD"))
+	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv), cfgStore)
 	if err != nil {
 		log.Fatalf("initialize admin authentication: %v", err)
 	}
-	addr := fmt.Sprintf("%s:%d", cfgStore.Snapshot().Host, cfgStore.Snapshot().Port)
-	url := "http://" + addr
-	server := newHTTPServer(addr, auth.middleware(srv.Routes()))
+	srv.PasswordConfigured = auth.PasswordConfigured
+
+	portOverride := 0
+	if launch.PortSet {
+		portOverride = launch.Port
+	}
+	listener, err := openAdminListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
+	if err != nil {
+		log.Fatal(err)
+	}
+	url := localURL(listener)
+	srv.SetListenAddress(listener.Addr().String(), url)
+	if err := writeRuntimeInfo(cwd, listener); err != nil {
+		log.Printf("record runtime address: %v", err)
+	}
+	server := newHTTPServer(listener.Addr().String(), auth.middleware(srv.Routes()))
 	go srv.StartAutostartServices()
 	go srv.StartChatHubBridge()
 	go func() {
-		log.Printf("GenericAgent Admin Go listening on %s", url)
+		log.Printf("GenericAgent Admin Go listening on %s (bound to %s)", url, listener.Addr())
 		if launch.Headless {
 			log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
 		}
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen %s failed: %v; if the port is occupied, edit config.local.json and change port", addr, err)
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("serve %s failed: %v", listener.Addr(), err)
 		}
 	}()
 
 	if launch.Headless {
-		waitForShutdownSignal(server, srv.ShutdownCleanup)
+		waitForShutdownSignal(server, func() {
+			srv.ShutdownCleanup()
+			removeRuntimeInfo(cwd)
+		})
 		return
 	}
 
+	ui := newAppUI(cwd, launch.NoWindow)
 	if !launch.NoBrowser {
-		go func() { time.Sleep(500 * time.Millisecond); openBrowser(url) }()
+		go func() { time.Sleep(500 * time.Millisecond); ui.OpenAdmin(url) }()
 	}
-	runTray(url,
-		func() { openBrowser(url) },
-		func() { openBrowser(url + "/chat") },
-		func() { srv.StopManagedServices() },
-		func() {
+	runTray(trayApp{
+		OpenAdmin:    func() { ui.OpenAdmin(url) },
+		OpenChat:     func() { ui.OpenChat(url) },
+		OpenSettings: func() { ui.OpenSettings(url) },
+		StopServices: func() { srv.StopManagedServices() },
+		Status: func() trayStatus {
+			return describeTrayStatus(listener.Addr().String(), cfgStore.Snapshot(), auth.PasswordConfigured(), primaryLANAddress)
+		},
+		Exit: func() {
+			ui.CloseAll()
 			srv.ShutdownCleanup()
+			removeRuntimeInfo(cwd)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			_ = server.Shutdown(ctx)
 		},
-	)
+	})
 }
 
 type launchOptions struct {
 	Headless  bool
 	NoBrowser bool
+	NoWindow  bool
 	AppRoot   string
 	Port      int
 	PortSet   bool
@@ -126,19 +153,25 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-func isIPv4LoopbackRemote(remoteAddr string) bool {
+// isLoopbackRemote reports whether a request came from this machine. Remote
+// access binds a dual-stack wildcard socket, so a local browser that resolves
+// localhost to ::1 must be recognised as local just like one that picks
+// 127.0.0.1; otherwise enabling remote access would start prompting the owner
+// for a password on their own desktop.
+func isLoopbackRemote(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		return false
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.To4() != nil && ip.IsLoopback()
+	return ip != nil && ip.IsLoopback()
 }
 
 func parseLaunchOptions() launchOptions {
 	headlessFlag := flag.Bool("headless", false, "run without browser or tray; intended for Linux servers")
 	serverOnlyFlag := flag.Bool("server-only", false, "alias for --headless")
 	noBrowserFlag := flag.Bool("no-browser", false, "do not open the web UI automatically")
+	noWindowFlag := flag.Bool("no-window", false, "open the web UI in the system browser instead of a native desktop window")
 	appRootFlag := flag.String("app-root", "", "override the directory containing config.local.json")
 	portFlag := flag.Int("port", 0, "override HTTP listen port for this launch (1-65535)")
 	flag.Parse()
@@ -161,6 +194,7 @@ func parseLaunchOptions() launchOptions {
 	return launchOptions{
 		Headless:  headless,
 		NoBrowser: *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
+		NoWindow:  *noWindowFlag || envBool("GA_ADMIN_NO_WINDOW"),
 		AppRoot:   strings.TrimSpace(*appRootFlag),
 		Port:      *portFlag,
 		PortSet:   portSet,

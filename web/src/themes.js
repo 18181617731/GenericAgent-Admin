@@ -73,6 +73,10 @@ export const applyThemeToDocument = (value, documentRef = globalThis.document) =
     root.dataset.theme = theme.id
     root.dataset.colorScheme = theme.colorScheme
   }
+  // Inside the desktop window the title bar is painted by the OS, not by CSS.
+  // The host binds this function so the frame can follow the palette; in a
+  // plain browser it simply does not exist.
+  globalThis.gaNativeTheme?.(theme.colorScheme === 'dark')
   return theme
 }
 

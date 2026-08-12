@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"genericagent-admin-go/internal/config"
 )
 
 func authRequest(handler http.Handler, method, path, remote, user, password string, body any) *httptest.ResponseRecorder {
@@ -32,85 +34,169 @@ func authRequest(handler http.Handler, method, path, remote, user, password stri
 	return recorder
 }
 
+func testConfigStore(t *testing.T, root string, update func(*config.AppConfig)) *config.Store {
+	t.Helper()
+	store := config.NewStore(root)
+	if update != nil {
+		if err := store.UpdateRuntime(update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store
+}
+
+// okHandler stands in for the application behind the auth middleware.
+func okHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+}
+
 func TestAuthManagerRequiresEnvironmentPair(t *testing.T) {
-	if _, err := newAuthManager(t.TempDir(), "admin", ""); err == nil {
+	root := t.TempDir()
+	if _, err := newAuthManager(root, "admin", "", testConfigStore(t, root, nil)); err == nil {
 		t.Fatal("expected incomplete environment credentials to fail")
 	}
-	manager, err := newAuthManager(t.TempDir(), "operator", "configured-secret")
+	manager, err := newAuthManager(root, "operator", "configured-secret", testConfigStore(t, root, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manager.mustChange || !manager.external {
-		t.Fatalf("environment manager state = mustChange %v, external %v", manager.mustChange, manager.external)
+	if !manager.external || !manager.PasswordConfigured() {
+		t.Fatalf("environment manager state = external %v, configured %v", manager.external, manager.PasswordConfigured())
 	}
 }
 
-func TestAuthMiddlewareRequiresFirstRunSetup(t *testing.T) {
-	manager, err := newAuthManager(t.TempDir(), "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if manager.initialized || manager.authenticatePassword("admin", "admin") {
-		t.Fatal("fresh app root must not expose a default credential")
-	}
-
-	reached := false
-	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = true
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	for _, tc := range []struct {
-		name     string
-		remote   string
-		user     string
-		password string
-	}{
-		{name: "remote anonymous", remote: "192.168.1.2:5000"},
-		{name: "remote guessed default", remote: "192.168.1.2:5000", user: "admin", password: "admin"},
-		{name: "loopback anonymous", remote: "127.0.0.1:5000"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := authRequest(handler, http.MethodGet, "/api/config", tc.remote, tc.user, tc.password, nil)
-			if got.Code != http.StatusPreconditionRequired {
-				t.Fatalf("request before setup = %d, want 428", got.Code)
-			}
-		})
-	}
-	if reached {
-		t.Fatal("protected API reached the application before setup")
-	}
-
-	if got := authRequest(handler, http.MethodGet, "/", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
-		t.Fatalf("anonymous first-run SPA request = %d, reached %v", got.Code, reached)
-	}
-	status := authRequest(handler, http.MethodGet, "/api/auth/status", "192.168.1.2:5000", "", "", nil)
-	if status.Code != http.StatusOK ||
-		!bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":true`)) ||
-		!bytes.Contains(status.Body.Bytes(), []byte(`"initialized":false`)) {
-		t.Fatalf("status = %d %s", status.Code, status.Body.String())
-	}
-}
-
-func TestChangePasswordPersistsAndSwitchesCredentials(t *testing.T) {
+func TestLocalAccessNeedsNoPassword(t *testing.T) {
 	root := t.TempDir()
-	manager, err := newAuthManager(root, "", "")
+	manager, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-	weakPassword := "Abc1234"
-	weakBody := changePasswordRequest{CurrentPassword: "admin", NewPassword: weakPassword, ConfirmPassword: weakPassword}
-	weak := authRequest(handler, http.MethodPost, "/api/auth/change-password", "127.0.0.1:5000", "", "", weakBody)
-	if weak.Code != http.StatusBadRequest || !bytes.Contains(weak.Body.Bytes(), []byte(`"minimumLength":8`)) {
-		t.Fatalf("seven-character password = %d %s, want 400 with minimumLength 8", weak.Code, weak.Body.String())
+	if manager.PasswordConfigured() {
+		t.Fatal("a fresh app root must not carry a password")
 	}
-	newPassword := "Abc12345"
-	body := changePasswordRequest{CurrentPassword: "admin", NewPassword: newPassword, ConfirmPassword: newPassword}
-	changed := authRequest(handler, http.MethodPost, "/api/auth/change-password", "127.0.0.1:5000", "", "", body)
-	if changed.Code != http.StatusOK {
-		t.Fatalf("change password = %d %s", changed.Code, changed.Body.String())
+	handler := manager.middleware(okHandler())
+
+	for _, path := range []string{"/", "/api/config", "/api/chat/sessions"} {
+		if got := authRequest(handler, http.MethodGet, path, "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent {
+			t.Fatalf("loopback %s = %d, want 204", path, got.Code)
+		}
 	}
+}
+
+// Remote access binds a dual-stack socket, so the same desktop browser may
+// arrive over ::1. It is still the local machine and must stay password-free.
+func TestIPv6LoopbackCountsAsLocal(t *testing.T) {
+	root := t.TempDir()
+	store := testConfigStore(t, root, func(cfg *config.AppConfig) {
+		cfg.RemoteAccess = true
+		cfg.Port = 8787
+	})
+	manager, err := newAuthManager(root, "", "", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+	password := "Abc12345"
+	if got := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{NewPassword: password, ConfirmPassword: password}); got.Code != http.StatusOK {
+		t.Fatalf("set password = %d %s", got.Code, got.Body.String())
+	}
+
+	if got := authRequest(handler, http.MethodGet, "/api/config", "[::1]:5000", "", "", nil); got.Code != http.StatusNoContent {
+		t.Fatalf("IPv6 loopback = %d, want 204", got.Code)
+	}
+	// A v4-mapped remote address is loopback only when the mapped address is.
+	if got := authRequest(handler, http.MethodGet, "/api/config", "[::ffff:192.168.1.2]:5000", "", "", nil); got.Code != http.StatusUnauthorized {
+		t.Fatalf("v4-mapped LAN address = %d, want 401", got.Code)
+	}
+	if got := authRequest(handler, http.MethodGet, "/api/config", "[fe80::1]:5000", "", "", nil); got.Code != http.StatusUnauthorized {
+		t.Fatalf("link-local address = %d, want 401", got.Code)
+	}
+}
+
+func TestRemoteAccessFailsClosedWithoutPassword(t *testing.T) {
+	root := t.TempDir()
+	manager, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+
+	got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "", "", nil)
+	if got.Code != http.StatusUnauthorized {
+		t.Fatalf("remote request without a password = %d, want 401", got.Code)
+	}
+	if got.Header().Get("WWW-Authenticate") == "" {
+		t.Fatal("401 response is missing the Basic challenge")
+	}
+	if guessed := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "admin", nil); guessed.Code != http.StatusUnauthorized {
+		t.Fatalf("guessed default credential = %d, want 401", guessed.Code)
+	}
+}
+
+func TestRemoteAccessAllowsAnonymousWhenOptedIn(t *testing.T) {
+	root := t.TempDir()
+	store := testConfigStore(t, root, func(cfg *config.AppConfig) {
+		cfg.RemoteAccess = true
+		cfg.RemoteAllowAnonymous = true
+	})
+	manager, err := newAuthManager(root, "", "", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+
+	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusNoContent {
+		t.Fatalf("anonymous remote request = %d, want 204", got.Code)
+	}
+}
+
+func TestPasswordEndpointRejectsUnauthenticatedRemoteClients(t *testing.T) {
+	root := t.TempDir()
+	store := testConfigStore(t, root, func(cfg *config.AppConfig) {
+		cfg.RemoteAccess = true
+		cfg.RemoteAllowAnonymous = true
+	})
+	manager, err := newAuthManager(root, "", "", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+
+	// An anonymous remote client reaches the rest of the API, but must not be
+	// able to claim the password and lock the owner out.
+	body := setPasswordRequest{NewPassword: "Abc12345", ConfirmPassword: "Abc12345"}
+	got := authRequest(handler, http.MethodPost, authPasswordPath, "192.168.1.2:5000", "", "", body)
+	if got.Code != http.StatusUnauthorized {
+		t.Fatalf("remote password change = %d, want 401", got.Code)
+	}
+	if manager.PasswordConfigured() {
+		t.Fatal("remote client managed to set a password")
+	}
+}
+
+func TestSetPasswordPersistsAndAuthenticatesRemoteClients(t *testing.T) {
+	root := t.TempDir()
+	manager, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+
+	weak := "Abc1234"
+	weakResponse := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{NewPassword: weak, ConfirmPassword: weak})
+	if weakResponse.Code != http.StatusBadRequest || !bytes.Contains(weakResponse.Body.Bytes(), []byte(`"minimumLength":8`)) {
+		t.Fatalf("seven-character password = %d %s, want 400 with minimumLength 8", weakResponse.Code, weakResponse.Body.String())
+	}
+
+	// The first password needs no current password: only this machine can set it.
+	password := "Abc12345"
+	created := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{NewPassword: password, ConfirmPassword: password})
+	if created.Code != http.StatusOK {
+		t.Fatalf("set first password = %d %s", created.Code, created.Body.String())
+	}
+
 	path := filepath.Join(root, authStateFilename)
 	info, err := os.Stat(path)
 	if err != nil {
@@ -123,22 +209,113 @@ func TestChangePasswordPersistsAndSwitchesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(data, []byte(newPassword)) || bytes.Contains(data, []byte(`"password"`)) {
+	if bytes.Contains(data, []byte(password)) || bytes.Contains(data, []byte(`"password"`)) {
 		t.Fatal("auth file contains a plaintext password field or value")
 	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "admin", nil); got.Code != http.StatusUnauthorized {
-		t.Fatalf("old credential after change = %d, want 401", got.Code)
+
+	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "wrong-secret", nil); got.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong credential = %d, want 401", got.Code)
 	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", newPassword, nil); got.Code != http.StatusNoContent {
-		t.Fatalf("new credential after change = %d, want 204", got.Code)
+	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", password, nil); got.Code != http.StatusNoContent {
+		t.Fatalf("correct credential = %d, want 204", got.Code)
 	}
 
-	reloaded, err := newAuthManager(root, "", "")
+	reloaded, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.passwordChangeRequired() || !reloaded.authenticatePassword("admin", newPassword) {
+	if !reloaded.PasswordConfigured() || !reloaded.authenticatePassword("admin", password) {
 		t.Fatal("persisted credential was not restored")
+	}
+}
+
+func TestChangePasswordRequiresCurrentPasswordOnceSet(t *testing.T) {
+	root := t.TempDir()
+	manager, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+	first := "Abc12345"
+	if got := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{NewPassword: first, ConfirmPassword: first}); got.Code != http.StatusOK {
+		t.Fatalf("set first password = %d", got.Code)
+	}
+
+	next := "Xyz98765"
+	blocked := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{CurrentPassword: "not-it", NewPassword: next, ConfirmPassword: next})
+	if blocked.Code != http.StatusUnauthorized {
+		t.Fatalf("change with wrong current password = %d, want 401", blocked.Code)
+	}
+	allowed := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{CurrentPassword: first, NewPassword: next, ConfirmPassword: next})
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("change with correct current password = %d %s", allowed.Code, allowed.Body.String())
+	}
+	if !manager.authenticatePassword("admin", next) {
+		t.Fatal("new password does not authenticate")
+	}
+}
+
+func TestRemovePasswordIsBlockedWhileRemoteAccessNeedsIt(t *testing.T) {
+	root := t.TempDir()
+	store := testConfigStore(t, root, nil)
+	manager, err := newAuthManager(root, "", "", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+	password := "Abc12345"
+	if got := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{NewPassword: password, ConfirmPassword: password}); got.Code != http.StatusOK {
+		t.Fatalf("set password = %d", got.Code)
+	}
+
+	if err := store.UpdateRuntime(func(cfg *config.AppConfig) { cfg.RemoteAccess = true }); err != nil {
+		t.Fatal(err)
+	}
+	blocked := authRequest(handler, http.MethodDelete, authPasswordPath, "127.0.0.1:5000", "", "", nil)
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("remove password while remote access needs it = %d, want 409", blocked.Code)
+	}
+
+	if err := store.UpdateRuntime(func(cfg *config.AppConfig) { cfg.RemoteAccess = false }); err != nil {
+		t.Fatal(err)
+	}
+	removed := authRequest(handler, http.MethodDelete, authPasswordPath, "127.0.0.1:5000", "", "", nil)
+	if removed.Code != http.StatusOK {
+		t.Fatalf("remove password = %d %s", removed.Code, removed.Body.String())
+	}
+	if manager.PasswordConfigured() {
+		t.Fatal("password survived removal")
+	}
+	if _, err := os.Stat(filepath.Join(root, authStateFilename)); !os.IsNotExist(err) {
+		t.Fatalf("auth state file still exists: %v", err)
+	}
+}
+
+func TestAuthStatusReportsPasswordState(t *testing.T) {
+	root := t.TempDir()
+	manager, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.middleware(okHandler())
+
+	before := authRequest(handler, http.MethodGet, authStatusPath, "127.0.0.1:5000", "", "", nil)
+	if before.Code != http.StatusOK || !bytes.Contains(before.Body.Bytes(), []byte(`"passwordSet":false`)) {
+		t.Fatalf("status before setup = %d %s", before.Code, before.Body.String())
+	}
+
+	password := "Abc12345"
+	if got := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "",
+		setPasswordRequest{NewPassword: password, ConfirmPassword: password}); got.Code != http.StatusOK {
+		t.Fatalf("set password = %d", got.Code)
+	}
+	after := authRequest(handler, http.MethodGet, authStatusPath, "127.0.0.1:5000", "", "", nil)
+	if after.Code != http.StatusOK || !bytes.Contains(after.Body.Bytes(), []byte(`"passwordSet":true`)) {
+		t.Fatalf("status after setup = %d %s", after.Code, after.Body.String())
 	}
 }
 

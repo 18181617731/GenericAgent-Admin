@@ -14267,130 +14267,6 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
 }
 
 
-/* First-run administrator credential gate */
-.auth-gate,
-.auth-gate-state {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 32px 18px;
-  position: relative;
-  z-index: 1;
-}
-.auth-gate-state { color: var(--muted); font-size: 14px; }
-.auth-card {
-  width: min(100%, 440px);
-  padding: 32px;
-  border: 1px solid var(--border);
-  border-top: 3px solid var(--accent);
-  border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
-  box-shadow: var(--shadow);
-}
-.auth-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: -12px -12px 18px 0;
-}
-.auth-toolbar .theme-picker { min-width: 0; }
-.auth-language {
-  display: flex;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-}
-.auth-card .auth-language button {
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 0;
-  border-radius: calc(var(--radius-sm) - 3px);
-  color: var(--muted);
-  background: transparent;
-  font-size: 11px;
-}
-.auth-card .auth-language button[aria-pressed="true"] {
-  color: var(--strong);
-  background: var(--surface-strong);
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--shadow-color) 18%, transparent);
-}
-.auth-kicker {
-  margin: 0 0 10px;
-  color: var(--accent-text);
-  font: 700 11px/1.2 var(--mono);
-  letter-spacing: .13em;
-}
-.auth-card h1 { margin: 0; color: var(--strong); font-size: clamp(24px, 5vw, 32px); line-height: 1.12; letter-spacing: -.03em; }
-.auth-copy { margin: 14px 0 24px; color: var(--muted); line-height: 1.65; }
-.auth-card form { display: grid; gap: 15px; }
-.auth-card label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 650; }
-.auth-card input {
-  width: 100%;
-  height: 42px;
-  padding: 0 12px;
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--input-bg);
-  outline: none;
-}
-.auth-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-.auth-card input[readonly] { color: var(--muted); border-style: dashed; cursor: default; }
-.auth-card button {
-  min-height: 42px;
-  padding: 9px 16px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  color: var(--text-on-accent);
-  background: var(--accent);
-  font-weight: 700;
-  cursor: pointer;
-}
-.auth-card button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-.auth-card button:disabled { cursor: wait; opacity: .58; }
-
-/* Restore theme-picker-trigger gradient (overridden by .auth-card button) */
-.auth-card .theme-picker-trigger {
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--surface-strong) 92%, transparent),
-      var(--surface-muted));
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-strong));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent),
-    var(--shadow-tiny);
-}
-.auth-card .theme-picker-trigger:hover {
-  border-color: var(--accent);
-  background:
-    linear-gradient(180deg,
-      var(--surface-strong),
-      color-mix(in srgb, var(--surface-strong) 70%, var(--surface-muted)));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 65%, transparent),
-    0 8px 20px -7px color-mix(in srgb, var(--accent) 30%, transparent),
-    0 2px 6px rgba(0, 0, 0, .05);
-}
-html[data-color-scheme="dark"] .auth-card .theme-picker-trigger {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent),
-    0 1px 3px rgba(0, 0, 0, .24);
-}
-html[data-color-scheme="dark"] .auth-card .theme-picker-trigger:hover {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent),
-    0 8px 20px -7px color-mix(in srgb, var(--accent) 42%, transparent),
-    0 2px 6px rgba(0, 0, 0, .28);
-}
-.auth-error { margin: 0; padding: 10px 12px; border-left: 3px solid var(--error); color: var(--error); background: color-mix(in srgb, var(--error) 8%, transparent); font-size: 13px; line-height: 1.45; }
-.auth-note { margin: 20px 0 0; color: var(--muted-2); font-size: 11px; line-height: 1.55; }
-@media (max-width: 520px) {
-  .auth-gate { align-items: start; padding: 18px 12px; }
-  .auth-card { padding: 24px 18px; }
-}
-
 /*  ============================================================
     Assistant footer: the "Total" usage row and the message
     actions (copy / continue) share one baseline at the end of
@@ -15970,6 +15846,11 @@ html[data-theme="light"] #admin-sidebar {
 .set-dirty.is-dirty { color: var(--warn, #b45309); }
 .set-path { margin: 0; padding: 0 18px 14px; }
 .set-path code { font-size: 11px; word-break: break-all; }
+/* Access-password form inside the remote-access settings card. */
+.set-password-form { display: grid; gap: 9px; width: 100%; max-width: 360px; }
+.set-password-user { color: var(--muted); font-size: 12px; }
+.set-password-user code { font-size: 11px; }
+.set-password-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .set-page .update-progress { padding: 12px 18px; }
 .set-page .mini-log { margin: 0 18px 12px; }
 
@@ -15981,4 +15862,149 @@ html[data-theme="light"] #admin-sidebar {
   .set-card-head { padding: 13px 14px; }
   .set-row, .set-note, .set-card-footer { padding-right: 14px; padding-left: 14px; }
   .set-stat { padding: 11px 14px; }
+}
+
+/* ==========================================================================
+   Chat layout redesign (2026-08-12)
+
+   One reading measure shared by the thread, the empty state, and the
+   composer; the composer floats over the thread instead of reserving a grid
+   row; collapsed rails are floating pills instead of a 42px gutter; open
+   rails read as inset cards. Everything positional is scoped to >=921px —
+   below that the workspace stacks vertically and keeps its own rules.
+   ========================================================================== */
+
+.oa-chat { --oa-chat-measure: 840px; }
+
+/* The topbar earns a hairline so the thread has an edge to scroll against,
+   and the title steps back to label weight now that it no longer competes
+   with a subtitle. */
+.oa-topbar { border-bottom: 1px solid color-mix(in srgb, var(--border, var(--n-ededed)) 72%, transparent); }
+.oa-title b { font-size: 15.5px; font-weight: 650; }
+
+/* Everything centered in the thread shares the same column. */
+.oa-timeline,
+.oa-follow-row { width: min(var(--oa-chat-measure), calc(100% - 48px)); }
+
+@media (min-width: 901px) {
+  .oa-chat { grid-template-columns: 300px minmax(0, 1fr); }
+  .oa-sidebar { width: 300px; }
+}
+
+@media (min-width: 921px) {
+  .oa-main { position: relative; }
+
+  /* The thread owns the full column height; the padding keeps the last
+     message readable above the floating composer. */
+  .oa-thread { padding: 0 0 176px; }
+  .oa-follow-row { bottom: 150px; }
+
+  .oa-empty {
+    width: min(var(--oa-chat-measure), calc(100% - 48px));
+    min-height: calc(100% - 150px);
+    margin: 0 auto;
+    padding: 24px 24px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .oa-empty h1 { margin: 0 0 10px; font-size: 32px; line-height: 1.2; font-weight: 600; letter-spacing: -.015em; }
+  .oa-empty p { margin: 0; max-width: 36em; }
+
+  /* Floating composer. Centered with left/right + margin because a
+     transform here would become the containing block of the fixed-position
+     dialogs rendered inside the wrap. */
+  /* The !importants push back a legacy pass (see the .oa-composer-wrap block
+     near line 3126) that pins the wrap with margin-right and an !important
+     width of its own. */
+  .oa-composer-wrap {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0 auto !important;
+    z-index: 14;
+    width: min(var(--oa-chat-measure), calc(100% - 48px)) !important;
+    padding: 26px 0 18px;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--surface-strong) 44%);
+    pointer-events: none;
+    container-type: inline-size;
+  }
+  .oa-composer-wrap > * { pointer-events: auto; }
+
+  /* When a rail is open the composer centers on the thread column, not on
+     the whole main area, so it never slides under the rail. The max() keeps
+     it usable on small windows even if that means touching the rail. */
+  .oa-workspace.has-loop + .oa-composer-wrap { right: 300px; width: min(var(--oa-chat-measure), max(calc(100% - 348px), 420px)) !important; }
+  .oa-workspace.has-btw + .oa-composer-wrap { right: 320px; width: min(var(--oa-chat-measure), max(calc(100% - 368px), 420px)) !important; }
+  .oa-workspace.has-loop.has-btw + .oa-composer-wrap { right: 620px; width: min(var(--oa-chat-measure), max(calc(100% - 668px), 420px)) !important; }
+
+  /* Collapsed rails no longer cost a gutter column. */
+  .oa-workspace.has-launchers { grid-template-columns: minmax(0, 1fr); }
+  .oa-workspace.has-loop { grid-template-columns: minmax(0, 1fr) 300px; }
+  .oa-workspace.has-btw { grid-template-columns: minmax(0, 1fr) 320px; }
+  .oa-workspace.has-loop.has-btw { grid-template-columns: minmax(0, 1fr) 300px 320px; }
+  .oa-workspace.has-loop.has-launchers { grid-template-columns: minmax(0, 1fr) 300px; }
+  .oa-workspace.has-btw.has-launchers { grid-template-columns: minmax(0, 1fr) 320px; }
+
+  .oa-rail-launchers {
+    position: absolute;
+    top: 12px;
+    right: 18px;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+  }
+  .oa-workspace.has-loop .oa-rail-launchers { right: 318px; }
+  .oa-workspace.has-btw .oa-rail-launchers { right: 338px; }
+  .oa-rail-launchers .oa-btw-collapsed {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 13px;
+    border: 1px solid var(--border, var(--n-dedede));
+    border-radius: 999px;
+    writing-mode: horizontal-tb;
+    letter-spacing: .1em;
+    background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .10);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .oa-rail-launchers .oa-btw-collapsed:hover {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent, #10a37f) 40%, var(--border, var(--n-dedede)));
+  }
+
+  /* Open rails sit inside the workspace as cards instead of flush columns. */
+  .oa-loop-rail,
+  .oa-btw-rail {
+    margin: 12px 16px 16px 0;
+    border: 1px solid var(--border, var(--n-dedede));
+    border-radius: 16px;
+    background: var(--surface-strong);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, .09);
+  }
+  .oa-btw-rail { overflow: hidden; }
+}
+
+/* When a rail squeezes the floating composer, the tool buttons drop their
+   labels instead of wrapping the bar onto a second, misaligned row. */
+@container (max-width: 700px) {
+  .oa-composer .oa-attach-btn > span { display: none !important; }
+  .oa-composer .oa-attach-btn {
+    width: 34px !important;
+    min-width: 34px !important;
+    flex: 0 0 34px !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
 }

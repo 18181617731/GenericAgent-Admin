@@ -36,6 +36,10 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
+		if err := s.validateRemoteAccess(c); err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
 		if err := s.saveConfigAndReconcile(c); err != nil {
 			bad(w, 400, err.Error())
 			return
@@ -44,6 +48,20 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bad(w, 405, "method not allowed")
+}
+
+// validateRemoteAccess refuses a remote-access configuration that nobody could
+// authenticate against. Saving it would publish the server to the network with
+// a credential check that can never succeed, which reads as a lockout to the
+// operator and as an open door to everyone else once they relax the setting.
+func (s *Server) validateRemoteAccess(cfg config.AppConfig) error {
+	if !cfg.RemoteAccess || cfg.RemoteAllowAnonymous {
+		return nil
+	}
+	if s.passwordConfigured() {
+		return nil
+	}
+	return errors.New("remote access requires an admin password: set one first, or allow anonymous remote access")
 }
 
 type setupPathReq struct {

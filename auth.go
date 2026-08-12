@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"genericagent-admin-go/internal/config"
 )
 
 const (
@@ -24,6 +26,8 @@ const (
 	authSaltBytes        = 16
 	minimumAdminPassword = 8
 	maximumAuthBodyBytes = 64 << 10
+	authStatusPath       = "/api/auth/status"
+	authPasswordPath     = "/api/auth/password"
 )
 
 type authDiskState struct {
@@ -33,102 +37,119 @@ type authDiskState struct {
 	Iterations int    `json:"iterations"`
 }
 
+// authManager guards non-loopback access to the admin server. Requests from
+// this machine are always trusted: the admin server binds loopback unless the
+// operator explicitly turns on remote access, so a local request already
+// implies local control of the account.
 type authManager struct {
-	mu          sync.RWMutex
-	path        string
-	username    string
-	password    string
-	salt        []byte
-	hash        []byte
-	iterations  int
-	mustChange  bool
-	initialized bool
-	external    bool
+	mu         sync.RWMutex
+	path       string
+	cfg        *config.Store
+	username   string
+	password   string
+	salt       []byte
+	hash       []byte
+	iterations int
+	configured bool
+	external   bool
 }
 
-func newAuthManager(appRoot, envUser, envPassword string) (*authManager, error) {
-	manager := &authManager{path: filepath.Join(appRoot, authStateFilename)}
+func newAuthManager(appRoot, envUser, envPassword string, cfg *config.Store) (*authManager, error) {
+	manager := &authManager{path: filepath.Join(appRoot, authStateFilename), cfg: cfg, username: defaultAuthUser}
 	if (envUser == "") != (envPassword == "") {
 		return nil, errors.New("GA_ADMIN_AUTH_USER and GA_ADMIN_AUTH_PASSWORD must be set together")
 	}
 	if envUser != "" {
 		manager.username = envUser
 		manager.password = envPassword
-		manager.initialized = true
+		manager.configured = true
 		manager.external = true
 		return manager, nil
 	}
 
 	data, err := os.ReadFile(manager.path)
-	if err == nil {
-		var state authDiskState
-		if err := json.Unmarshal(data, &state); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", authStateFilename, err)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// No password yet. That is the normal state for a loopback-only
+			// install and must not block anything.
+			return manager, nil
 		}
-		salt, saltErr := base64.RawStdEncoding.DecodeString(state.Salt)
-		hash, hashErr := base64.RawStdEncoding.DecodeString(state.Hash)
-		if saltErr != nil || hashErr != nil || state.Username == "" || len(salt) < authSaltBytes || len(hash) != sha256.Size || state.Iterations < 100000 {
-			return nil, fmt.Errorf("invalid %s", authStateFilename)
-		}
-		manager.username = state.Username
-		manager.salt = salt
-		manager.hash = hash
-		manager.iterations = state.Iterations
-		manager.initialized = true
-		return manager, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read %s: %w", authStateFilename, err)
 	}
-	manager.username = defaultAuthUser
-	manager.mustChange = true
+	var state authDiskState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", authStateFilename, err)
+	}
+	salt, saltErr := base64.RawStdEncoding.DecodeString(state.Salt)
+	hash, hashErr := base64.RawStdEncoding.DecodeString(state.Hash)
+	if saltErr != nil || hashErr != nil || state.Username == "" || len(salt) < authSaltBytes || len(hash) != sha256.Size || state.Iterations < 100000 {
+		return nil, fmt.Errorf("invalid %s", authStateFilename)
+	}
+	manager.username = state.Username
+	manager.salt = salt
+	manager.hash = hash
+	manager.iterations = state.Iterations
+	manager.configured = true
 	return manager, nil
 }
 
 func (a *authManager) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		isStatus := r.URL.Path == "/api/auth/status"
-		isPasswordChange := r.URL.Path == "/api/auth/change-password"
-		isAPI := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/")
+		local := isLoopbackRemote(r.RemoteAddr)
 
-		if a.setupRequired() {
-			switch {
-			case isStatus:
-				a.handleStatus(w, r)
-				return
-			case isPasswordChange:
-				a.handleChangePassword(w, r)
-				return
-			case isAPI:
-				writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true, "initialized": false})
-				return
-			default:
-				next.ServeHTTP(w, r)
+		if r.URL.Path == authPasswordPath {
+			// Setting the credential is a local-machine operation. Were an
+			// anonymous remote client allowed to do it, whoever reached the
+			// port first could lock the owner out of their own admin server.
+			if !local && !a.authenticateRequest(r) {
+				a.challenge(w)
 				return
 			}
-		}
-
-		if !isIPv4LoopbackRemote(r.RemoteAddr) && !a.authenticateRequest(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
-			w.Header().Set("Cache-Control", "no-store")
-			http.Error(w, "authentication required", http.StatusUnauthorized)
+			a.handlePassword(w, r)
 			return
 		}
 
-		if isStatus {
+		if !local && !a.authorize(w, r) {
+			return
+		}
+		if r.URL.Path == authStatusPath {
 			a.handleStatus(w, r)
-			return
-		}
-		if isPasswordChange {
-			a.handleChangePassword(w, r)
-			return
-		}
-		if a.passwordChangeRequired() && isAPI {
-			writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true, "initialized": true})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authorize reports whether a non-loopback request may proceed, answering it
+// with a challenge when it may not.
+func (a *authManager) authorize(w http.ResponseWriter, r *http.Request) bool {
+	if a.anonymousRemoteAllowed() {
+		return true
+	}
+	if a.authenticateRequest(r) {
+		return true
+	}
+	a.challenge(w)
+	return false
+}
+
+func (a *authManager) challenge(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, "authentication required", http.StatusUnauthorized)
+}
+
+// anonymousRemoteAllowed reports whether remote clients may skip the password.
+// When no password has been configured this stays false, so an unfinished
+// remote setup fails closed with a challenge instead of opening the server.
+func (a *authManager) anonymousRemoteAllowed() bool {
+	a.mu.RLock()
+	external := a.external
+	a.mu.RUnlock()
+	if external {
+		return false
+	}
+	return a.cfg.Snapshot().RemoteAllowAnonymous
 }
 
 func (a *authManager) authenticateRequest(r *http.Request) bool {
@@ -138,26 +159,17 @@ func (a *authManager) authenticateRequest(r *http.Request) bool {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if !a.initialized || !secureEqual(user, a.username) {
+	if !a.configured || !secureEqual(user, a.username) {
 		return false
 	}
-	if a.password != "" {
-		return secureEqual(password, a.password)
-	}
-	candidate := derivePasswordHash([]byte(password), a.salt, a.iterations)
-	return subtle.ConstantTimeCompare(candidate, a.hash) == 1
+	return a.passwordMatchesLocked(password)
 }
 
-func (a *authManager) setupRequired() bool {
+// PasswordConfigured reports whether a credential exists for remote clients.
+func (a *authManager) PasswordConfigured() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return !a.initialized
-}
-
-func (a *authManager) passwordChangeRequired() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.mustChange
+	return a.configured
 }
 
 func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -168,26 +180,37 @@ func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	writeAuthJSON(w, http.StatusOK, map[string]any{"username": a.username, "mustChangePassword": a.mustChange, "initialized": a.initialized, "managedByEnvironment": a.external})
+	writeAuthJSON(w, http.StatusOK, map[string]any{
+		"username":             a.username,
+		"passwordSet":          a.configured,
+		"managedByEnvironment": a.external,
+	})
 }
 
-type changePasswordRequest struct {
+type setPasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
 	ConfirmPassword string `json:"confirmPassword"`
 }
 
-func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
+func (a *authManager) handlePassword(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		a.handleSetPassword(w, r)
+	case http.MethodDelete:
+		a.handleRemovePassword(w)
+	default:
+		w.Header().Set("Allow", http.MethodPost+", "+http.MethodDelete)
 		writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
 	}
+}
+
+func (a *authManager) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		writeAuthJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "json_required"})
 		return
 	}
-	var req changePasswordRequest
+	var req setPasswordRequest
 	decoder := json.NewDecoder(io.LimitReader(r.Body, maximumAuthBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
@@ -209,7 +232,7 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "managed_by_environment"})
 		return
 	}
-	if a.initialized && !a.passwordMatchesLocked(req.CurrentPassword) {
+	if a.configured && !a.passwordMatchesLocked(req.CurrentPassword) {
 		writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "current_password_incorrect"})
 		return
 	}
@@ -229,14 +252,43 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 	a.salt = salt
 	a.hash = hash
 	a.iterations = authHashIterations
-	a.mustChange = false
-	a.initialized = true
-	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": false, "initialized": true})
+	a.configured = true
+	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "passwordSet": true})
+}
+
+func (a *authManager) handleRemovePassword(w http.ResponseWriter) {
+	cfg := a.cfg.Snapshot()
+	if cfg.RemoteAccess && !cfg.RemoteAllowAnonymous {
+		// Removing the credential here would leave remote access permanently
+		// unanswerable; the operator has to relax remote access first.
+		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "password_required_by_remote_access"})
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.external {
+		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "managed_by_environment"})
+		return
+	}
+	if err := os.Remove(a.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeAuthJSON(w, http.StatusInternalServerError, map[string]string{"error": "password_update_failed"})
+		return
+	}
+	a.password = ""
+	a.salt = nil
+	a.hash = nil
+	a.iterations = 0
+	a.configured = false
+	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "passwordSet": false})
 }
 
 func (a *authManager) passwordMatchesLocked(password string) bool {
 	if a.password != "" {
 		return secureEqual(password, a.password)
+	}
+	if len(a.hash) == 0 {
+		return false
 	}
 	candidate := derivePasswordHash([]byte(password), a.salt, a.iterations)
 	return subtle.ConstantTimeCompare(candidate, a.hash) == 1

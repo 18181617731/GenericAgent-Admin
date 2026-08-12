@@ -3,29 +3,27 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
 
+const readJSON = (file) => {
+  try {
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8'))
+  } catch (error) {
+    console.warn(`Failed to load ${path.basename(file)}, ignoring:`, error.message)
+  }
+  return null
+}
+
 // 动态读取 config.local.json，fallback 到默认值
 function loadBackendConfig() {
-  const configPath = path.resolve(__dirname, '../config.local.json')
-  try {
-    if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-      return {
-        backendPort: config.port || 8787,
-        backendProxyHost: config.backend_proxy_host || '127.0.0.1',
-        viteHost: config.vite_host || '127.0.0.1',
-        vitePort: config.vite_port || 5173,
-        viteAllowedHosts: config.vite_allowed_hosts || []
-      }
-    }
-  } catch (error) {
-    console.warn('Failed to load config.local.json, using defaults:', error.message)
-  }
-  // 默认值：本地开发配置
-  return { 
-    backendPort: 8787,
-    backendProxyHost: '127.0.0.1',
-    viteHost: '127.0.0.1',
-    vitePort: 5173
+  const config = readJSON(path.resolve(__dirname, '../config.local.json')) || {}
+  // 后端默认监听随机端口，实际端口写在 runtime.local.json 里；优先用它。
+  // 也可以用 `go run . --port 8787` 固定端口后走 config.local.json/默认值。
+  const runtime = readJSON(path.resolve(__dirname, '../runtime.local.json'))
+  return {
+    backendPort: runtime?.port || config.port || 8787,
+    backendProxyHost: config.backend_proxy_host || '127.0.0.1',
+    viteHost: config.vite_host || '127.0.0.1',
+    vitePort: config.vite_port || 5173,
+    viteAllowedHosts: config.vite_allowed_hosts || []
   }
 }
 

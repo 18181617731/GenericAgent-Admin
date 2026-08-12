@@ -5,7 +5,6 @@ import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
-import { AuthGate } from './components/AuthGate.jsx'
 import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
 
 // Chat is the primary interface: it owns "/" (and legacy "/chat").
@@ -36,12 +35,6 @@ function LocalizedRoot() {
   useEffect(() => {
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
   }, [lang])
-  const chooseLanguage = nextLanguage => {
-    const activeLanguage = nextLanguage === 'en' ? 'en' : 'zh'
-    localStorage.setItem('ga-admin-lang-explicit', '1')
-    localStorage.setItem('ga-admin-lang', activeLanguage)
-    setLang(activeLanguage)
-  }
   const loading = lang === 'en' ? 'Loading interface…' : '正在加载界面…'
   const activeTheme = getTheme(colorMode)
   const algorithm = antdTheme[`${activeTheme.antdAlgorithm}Algorithm`] || antdTheme.defaultAlgorithm
@@ -55,11 +48,9 @@ function LocalizedRoot() {
     },
   }}>
     <ErrorBoundary>
-      <AuthGate lang={lang} theme={colorMode} onLanguageChange={chooseLanguage} onThemeChange={setColorMode}>
-        <Suspense fallback={<RouteFallback label={loading} />}>
-          <Root />
-        </Suspense>
-      </AuthGate>
+      <Suspense fallback={<RouteFallback label={loading} />}>
+        <Root />
+      </Suspense>
     </ErrorBoundary>
   </ConfigProvider>
 }
