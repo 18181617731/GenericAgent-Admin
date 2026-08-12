@@ -8,7 +8,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -96,15 +96,24 @@ const timelineKey = (v) => {
   return d ? `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}` : 'unknown'
 }
 // One distance decides every follow question: within this much of the end
-// counts as reading the newest output.
-const FOLLOW_END_GAP = 32
+// counts as reading the newest output. It clears the row these buttons sit in,
+// which takes its own space at the end of the thread, so a reader parked at
+// the bottom is not told they have fallen behind by the button offering to
+// take them there.
+const FOLLOW_END_GAP = 56
 // A scroll the app asked for lands a frame or two later; until then its events
-// must not be read as the reader moving.
+// must not be read as the reader moving. An animated one keeps arriving for
+// as long as it runs.
 const FOLLOW_SETTLE_MS = 200
+const SMOOTH_SETTLE_MS = 700
 const isNearBottom = (el, gap = FOLLOW_END_GAP) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
 // Nothing to follow, and nothing to offer a way back to, when the thread fits
 // on screen.
 const threadCanScroll = (el) => Boolean(el) && (el.scrollHeight - el.clientHeight) > FOLLOW_END_GAP
+// Where a jump parks the message it lands on, and how far its top must have
+// cleared the edge to count as being behind the reader at all.
+const JUMP_TOP_MARGIN = 12
+const SENT_ABOVE_EPSILON = 2
 const parseBTWDisplay = (value) => {
   const raw = String(value || '')
   const match = raw.match(/^\s*(?:>\s*)?(?:🟡\s*)?\/btw(?:[ \t]+([\s\S]*))?\s*$/i)
@@ -3126,6 +3135,7 @@ export default function ChatApp() {
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
+  const [showJumpSent, setShowJumpSent] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
   const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
@@ -4757,6 +4767,13 @@ export default function ChatApp() {
     setNotice(ct('已切换 GA 实例', 'GA instance switched'))
   }
 
+  // The scroll events an app-driven move produces arrive over the frames that
+  // follow it, and they are ours rather than the reader's for that whole time.
+  const markProgrammaticScroll = (thread, settleMs) => {
+    previousScrollTopRef.current = thread.scrollTop
+    previousScrollHeightRef.current = thread.scrollHeight
+    followSettleUntilRef.current = Date.now() + settleMs
+  }
   const scrollToThreadEnd = (behavior = 'auto') => {
     const thread = threadRef.current
     if (!thread) return
@@ -4766,9 +4783,7 @@ export default function ChatApp() {
     // behind the composer and keeps the thread permanently short of its own
     // bottom; scrolling the container itself lands on both.
     thread.scrollTo({ top: thread.scrollHeight, behavior })
-    previousScrollTopRef.current = thread.scrollTop
-    previousScrollHeightRef.current = thread.scrollHeight
-    followSettleUntilRef.current = Date.now() + FOLLOW_SETTLE_MS
+    markProgrammaticScroll(thread, behavior === 'smooth' ? SMOOTH_SETTLE_MS : FOLLOW_SETTLE_MS)
   }
   const setFollowState = (enabled) => {
     autoFollowRef.current = enabled
@@ -4787,9 +4802,44 @@ export default function ChatApp() {
     if (!autoFollowRef.current || !threadCanScroll(threadRef.current)) return
     setFollowState(false)
   }
+  const cardTopOffset = (card) => (
+    card.getBoundingClientRect().top - threadRef.current.getBoundingClientRect().top
+  )
+  // What a reader sent is where a turn begins, and an answer can run for
+  // screens past it. The nearest one behind the view is the start of what is
+  // on screen; taking it again and again walks the conversation back a turn
+  // at a time.
+  const previousSentCard = () => {
+    const thread = threadRef.current
+    if (!thread) return null
+    let previous = null
+    for (const card of thread.querySelectorAll('.oa-message.user')) {
+      if (cardTopOffset(card) >= -SENT_ABOVE_EPSILON) break
+      previous = card
+    }
+    return previous
+  }
+  const syncJumpSent = () => setShowJumpSent(Boolean(previousSentCard()))
+  const jumpToPreviousSent = () => {
+    if (!previousSentCard()) return
+    // Reading a turn from its start is incompatible with being carried to the
+    // end of the newest one, so this leaves the reader in charge.
+    if (autoFollowRef.current) setFollowState(false)
+    // Letting go of the end takes a commit, and the follow it cancels still
+    // has one jump to the bottom left in it. Measuring and moving a frame
+    // later means landing on the message rather than being overruled.
+    requestAnimationFrame(() => {
+      const thread = threadRef.current
+      const card = previousSentCard()
+      if (!thread || !card) return
+      thread.scrollTo({ top: thread.scrollTop + cardTopOffset(card) - JUMP_TOP_MARGIN, behavior: 'smooth' })
+      markProgrammaticScroll(thread, SMOOTH_SETTLE_MS)
+    })
+  }
   const updateFollowFromScroll = () => {
     const thread = threadRef.current
     if (!thread) return
+    syncJumpSent()
     const { scrollTop, scrollHeight } = thread
     const action = scrollFollowAction({
       nearBottom: isNearBottom(thread),
@@ -4801,8 +4851,15 @@ export default function ChatApp() {
     })
     previousScrollTopRef.current = scrollTop
     previousScrollHeightRef.current = scrollHeight
-    if (action === 'resume' && !autoFollowRef.current) setFollowState(true)
-    else if (action === 'pause') pauseFollow()
+    if (action === 'resume' && !autoFollowRef.current) {
+      setFollowState(true)
+      return
+    }
+    if (action === 'pause') pauseFollow()
+    // Once paused, the button tracks the thread rather than the moment it was
+    // paused: it exists to close a gap, and the reader can close that gap by
+    // hand at any point.
+    if (!autoFollowRef.current) setShowFollow(threadCanScroll(thread) && !isNearBottom(thread))
   }
 
   useLayoutEffect(() => {
@@ -4815,6 +4872,7 @@ export default function ChatApp() {
       // to go back to, so the button follows the thread rather than the flag.
       setShowFollow(!isNearBottom(threadRef.current) && threadCanScroll(threadRef.current))
     }
+    syncJumpSent()
   }, [messages, busy, autoFollow])
 
   const lastThreadMessageId = messages.reduce((id, message) => message.kind === 'btw' ? id : message.id, '')
@@ -5145,7 +5203,10 @@ export default function ChatApp() {
               </div>
             })}
           </div>}
-          {showFollow && <div className="oa-follow-row"><button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow}><ChevronDown size={16}/>{isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')}</button></div>}
+          {(showJumpSent || showFollow) && <div className="oa-follow-row">
+            {showJumpSent && <button className="oa-follow-btn" type="button" onClick={jumpToPreviousSent} title={ct('跳到上一条发送', 'Previous message you sent')} aria-label={ct('跳到上一条发送', 'Previous message you sent')}><ChevronUp size={16}/></button>}
+            {showFollow && <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')} aria-label={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')}><ChevronDown size={16}/></button>}
+          </div>}
         </section>
         {loopRailOpen && <aside className="oa-loop-rail" id="oa-loop-rail" aria-label={ct('Loop 控制', 'Loop controls')}>
           <header className="oa-loop-rail-head">

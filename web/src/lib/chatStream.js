@@ -19,8 +19,11 @@ export const scrollFollowAction = ({
   programmatic = false,
   epsilon = 1,
 }) => {
-  if (nearBottom) return 'resume'
+  // A scroll the app performs says nothing about what the reader wants, and it
+  // passes through the end of the thread on its way anywhere, so it must not
+  // be allowed to answer either question.
   if (programmatic) return 'preserve'
+  if (nearBottom) return 'resume'
   if (Number(scrollHeight) < Number(previousScrollHeight)) return 'preserve'
   if (Number(scrollTop) < Number(previousScrollTop) - epsilon) return 'pause'
   return 'preserve'

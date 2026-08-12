@@ -15892,6 +15892,10 @@ html[data-theme="light"] #admin-sidebar {
 .oa-timeline,
 .oa-follow-row { width: min(var(--oa-chat-measure), calc(100% - 48px)); }
 
+/* The buttons hold the right edge of that column rather than its middle,
+   where they would sit on top of the lines being read. */
+.oa-follow-row { justify-content: flex-end; gap: 8px; }
+
 @media (min-width: 901px) {
   .oa-chat { grid-template-columns: 300px minmax(0, 1fr); }
   .oa-sidebar { width: 300px; }
@@ -16007,14 +16011,26 @@ html[data-theme="light"] #admin-sidebar {
   .oa-btw-rail { overflow: hidden; }
 }
 
+/* Both controls float over the thread, where a label costs more room than it
+   explains; the icon carries the direction and the title carries the rest. */
+.oa-follow-row .oa-follow-btn {
+  position: relative !important;
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
 /* While a run is streaming, the button says the thread is still moving without
    the reader having to guess from a static pill. */
 .oa-follow-btn.is-live::before {
   content: "";
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
+  border: 2px solid var(--surface-strong, #fff);
   background: var(--oa-green, #10a37f);
   animation: oa-follow-live 1.5s ease-in-out infinite;
 }

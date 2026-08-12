@@ -16,6 +16,11 @@ test('scroll follow ignores the offset the app moved itself', () => {
   assert.equal(scrollFollowAction({
     nearBottom: false, previousScrollTop: 320, scrollTop: 300, programmatic: true,
   }), 'preserve')
+  // A jump away from the end starts at the end, and those first pixels must
+  // not be mistaken for a reader settling back into following.
+  assert.equal(scrollFollowAction({
+    nearBottom: true, previousScrollTop: 3850, scrollTop: 3845, programmatic: true,
+  }), 'preserve')
 })
 
 test('scroll follow survives content that collapses above the reader', () => {
