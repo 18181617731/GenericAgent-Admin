@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.69 - 2026-08-12
+
+### Latest merged build
+- 发布合并后的最新代码，包含 Loop 首轮执行修复、移动端聊天布局优化，以及聊天结果图片预览改进。
+- 保留实例管理帮助入口、控制模型状态同步和 Python 解释器失效回退等稳定性修复。
+- 通过 Go、前端 lint、库测试、UI 回归和生产构建验证后发布 Windows 安装包。
+
 ## v1.0.68 - 2026-08-12
 
 ### Inline result previews in chat
