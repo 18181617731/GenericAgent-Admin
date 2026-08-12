@@ -15703,6 +15703,37 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 
 #admin-sidebar .theme-picker-trigger-copy b { font-size: 12.5px; }
 
+/* Chat is the product's home; the admin sidebar leads with a way back to it. */
+#admin-sidebar .admin-back-to-chat {
+  width: 100%;
+  min-height: 38px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 620;
+  background: var(--sidebar-accent, var(--accent));
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+#admin-sidebar .admin-back-to-chat:hover {
+  background: color-mix(in srgb, var(--sidebar-accent, var(--accent)) 86%, #000);
+  transform: none;
+  box-shadow: none;
+}
+
+#admin-sidebar .admin-back-to-chat:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: 2px;
+}
+
 #admin-sidebar nav {
   display: grid;
   gap: 2px;
@@ -15732,11 +15763,11 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   box-shadow: none;
 }
 
-#admin-sidebar nav button:nth-child(4),
-#admin-sidebar nav button:nth-child(11) { margin-top: 7px; }
+#admin-sidebar nav button:nth-child(3),
+#admin-sidebar nav button:nth-child(10) { margin-top: 7px; }
 
-#admin-sidebar nav button:nth-child(4)::before,
-#admin-sidebar nav button:nth-child(11)::before {
+#admin-sidebar nav button:nth-child(3)::before,
+#admin-sidebar nav button:nth-child(10)::before {
   content: "";
   position: absolute;
   top: -5px;
