@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
 import { modelLabel } from '../lib/format'
-import { orderedRuntimeModels } from '../lib/modelDefaults.js'
+import { isGeneratedModelName, orderedRuntimeModels } from '../lib/modelDefaults.js'
 import { filterModelProviderGroups, modelGroupStats } from '../lib/ux'
 
 const DEFAULT_PROVIDER_VALUE = '__ga_default_provider__'
@@ -18,9 +18,9 @@ export const modelProvider = model => {
 }
 
 export const runtimeModelLabel = model => {
-  const displayName = String(model?.display_name || model?.displayName || '').trim()
-  if (displayName) return displayName
-  const configuredLabel = String(model?.label || '').trim()
+  const configuredLabel = [model?.display_name, model?.displayName, model?.label]
+    .map(value => String(value ?? '').trim())
+    .find(value => value && !isGeneratedModelName(value))
   if (configuredLabel) return configuredLabel
   const modelName = String(model?.model || '').trim()
   if (modelName) return modelName

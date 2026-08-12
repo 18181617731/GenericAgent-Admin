@@ -1,3 +1,5 @@
+import { isGeneratedModelName } from './modelDefaults.js'
+
 const text = value => String(value ?? '').trim()
 
 const DEFAULT_MODEL_PROTOCOL = 'native_oai'
@@ -97,7 +99,7 @@ const internalModelNameRe = /^(?:(?:native_)?(?:oai|claude)|api|config|cookie)_c
 export const modelConfigDisplayName = config => {
   const model = text(config?.model)
   const displayName = text(config?.display_name) || text(config?.displayName) || text(config?.name)
-  if (!displayName || displayName === model || /^\d+$/.test(displayName) || internalModelNameRe.test(displayName)) return ''
+  if (!displayName || displayName === model || /^\d+$/.test(displayName) || isGeneratedModelName(displayName)) return ''
   return displayName
 }
 

@@ -538,6 +538,39 @@ func TestAnnotateChatLLMProvidersMatchesDuplicateModelsByRuntimeEndpoint(t *test
 	}
 }
 
+func TestAnnotateChatLLMProvidersFallsBackToModelIDForGeneratedNames(t *testing.T) {
+	order := 0
+	profiles := []modelconfig.Profile{{
+		Type:    "native_oai",
+		Name:    "官gpt",
+		APIBase: "https://official.example/v1",
+		ModelConfigs: []modelconfig.ModelConfig{{
+			Model:     "gpt-5.6-sol",
+			Name:      "native_oai_config18_2",
+			SortOrder: &order,
+		}},
+	}}
+	llms := []map[string]interface{}{{
+		"index":    0,
+		"name":     "native_oai_config18_2",
+		"model":    "gpt-5.6-sol",
+		"provider": "NativeOAISession",
+		"apibase":  "https://official.example/v1",
+	}}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	if got := llms[0]["provider"]; got != "官gpt" {
+		t.Fatalf("provider=%v want 官gpt: %#v", got, llms)
+	}
+	if got := llms[0]["display_name"]; got != "gpt-5.6-sol" {
+		t.Fatalf("display_name=%v want model ID fallback: %#v", got, llms)
+	}
+	if got := llms[0]["label"]; got != "gpt-5.6-sol" {
+		t.Fatalf("label=%v want model ID fallback: %#v", got, llms)
+	}
+}
+
 func TestChatProviderDisplayNamePrefersConfiguredNameAndFallsBackToVariable(t *testing.T) {
 	cases := []struct {
 		profile modelconfig.Profile

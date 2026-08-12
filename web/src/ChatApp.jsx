@@ -141,7 +141,10 @@ const messageModelIdentity = (message, models = []) => {
     ? indexed
     : models.find(model => runtimeModelMatches(model, modelID))
   const provider = matched ? modelProvider(matched) : ''
-  const model = modelID || (matched ? runtimeModelLabel(matched) : '')
+  // Prefer the current runtime label when the recorded ID is an internal
+  // variable name or an old provider alias. Keep the recorded ID only when
+  // the model is no longer present in the current configuration.
+  const model = matched ? (runtimeModelLabel(matched) || modelID) : modelID
   const label = [provider, model].filter(Boolean).join(' · ') || '未知模型'
   const details = [`模型：${model || '未知'}`]
   if (provider) details.unshift(`服务商：${provider}`)

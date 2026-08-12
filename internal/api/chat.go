@@ -1625,21 +1625,49 @@ func applyChatProviderModel(item map[string]interface{}, configured chatProvider
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
 	}
-	if configured.displayName != "" {
-		item["display_name"] = configured.displayName
-		item["label"] = configured.displayName
+	// The runtime name is often an internal generated variable such as
+	// native_oai_config18_2. The configuration page shows the model ID when no
+	// human display name exists, so the chat picker must use the same fallback.
+	displayName := chatModelDisplayName(configured)
+	if displayName != "" {
+		item["display_name"] = displayName
+		item["label"] = displayName
 	} else {
 		delete(item, "display_name")
-		// fallback to name when display_name is empty
-		if name, ok := item["name"].(string); ok && strings.TrimSpace(name) != "" {
-			item["label"] = name
-		}
+		delete(item, "label")
 	}
 	if configured.reasoningEffort != "" {
 		item["reasoning_effort"] = configured.reasoningEffort
 	} else {
 		delete(item, "reasoning_effort")
 	}
+}
+
+func chatModelDisplayName(configured chatProviderModel) string {
+	displayName := strings.TrimSpace(configured.displayName)
+	if displayName == "" || displayName == strings.TrimSpace(configured.model) || isInternalChatModelName(displayName) {
+		return strings.TrimSpace(configured.model)
+	}
+	return displayName
+}
+
+func isInternalChatModelName(value string) bool {
+	name := strings.ToLower(strings.TrimSpace(value))
+	for _, prefix := range []string{
+		"native_oai_config",
+		"native_claude_config",
+		"oai_config",
+		"claude_config",
+		"api_config",
+		"config_config",
+		"cookie_config",
+		"vision_config",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func chatProviderMatchesRuntime(configured chatProviderModel, item map[string]interface{}) bool {
@@ -1675,7 +1703,7 @@ func chatProviderDisplayName(profile modelconfig.Profile) string {
 		return displayName
 	}
 	name := strings.TrimSpace(profile.VarName)
-	for _, prefix := range []string{"native_oai_config", "native_claude_config", "oai_config", "claude_config"} {
+	for _, prefix := range []string{"native_oai_config", "native_claude_config", "oai_config", "claude_config", "api_config", "config_config", "cookie_config", "vision_config"} {
 		if strings.HasPrefix(name, prefix) {
 			name = strings.TrimPrefix(name, prefix)
 			name = strings.TrimPrefix(name, "_")

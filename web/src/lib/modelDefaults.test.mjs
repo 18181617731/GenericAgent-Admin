@@ -25,3 +25,9 @@ test('uses configured display names and provider details in runtime labels', () 
   assert.equal(modelDisplayName(model), '自费帅主模型')
   assert.equal(runtimeModelDescription(model), '自费帅 API · 自费帅主模型 · #4')
 })
+
+test('falls back to the model ID when a runtime display name is generated', () => {
+  const model = { index: 13, model: 'gpt-5.6-luna', name: 'native_oai_config18_4', display_name: 'native_oai_config18_4' }
+  assert.equal(modelDisplayName(model), 'gpt-5.6-luna')
+  assert.equal(runtimeModelDescription(model), 'gpt-5.6-luna · #13')
+})

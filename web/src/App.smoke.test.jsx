@@ -3,6 +3,7 @@ import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
+import { buildModelProviderGroups } from './components/ModelProviderCascade.jsx'
 import App, { ChannelsPage, I18N } from './App.jsx'
 import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, WorldlinePanel } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
@@ -964,6 +965,38 @@ describe('chat response model identity', () => {
 
     const badge = container.querySelector('.oa-model-id')
     expect(badge?.textContent).toBe('自费帅API gpt · gpt-5.6-sol')
+  })
+
+  test('uses the configured model ID when the runtime name is an internal variable', () => {
+    const groups = buildModelProviderGroups([{
+      index: 13,
+      provider: '官gpt',
+      model: 'gpt-5.6-luna',
+      name: 'native_oai_config18_4',
+      display_name: 'native_oai_config18_4',
+      label: 'native_oai_config18_4',
+    }])
+    expect(groups[0].models[0].label).toBe('gpt-5.6-luna')
+  })
+
+  test('normalizes an historical internal model name to the current configured label', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'a4', role: 'assistant', content: 'Finished', model_id: 'native_oai_config18_4', llm_no: 13, created_at: 0 }}
+        models={[{
+          index: 13,
+          provider: '官gpt',
+          model: 'gpt-5.6-luna',
+          name: 'native_oai_config18_4',
+          display_name: 'gpt-5.6-luna',
+          label: 'gpt-5.6-luna',
+        }]}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.oa-model-id')?.textContent).toBe('官gpt · gpt-5.6-luna')
   })
 
   test('continues live elapsed time from the persisted backend start after refresh', () => {

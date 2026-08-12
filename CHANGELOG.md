@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.70 - 2026-08-12
+
+### Consistent model names in chat
+- Use configured model IDs when runtime-generated names such as `native_oai_config18_2` are not human display names.
+- Keep the model selector, assistant message badges, config descriptions, and historical messages on the same provider/model naming scheme.
+- Add regression coverage for generated runtime names and historical model aliases.
+
 ## v1.0.68 - 2026-08-12
 
 ### Inline result previews in chat

@@ -13,6 +13,10 @@ export const orderedRuntimeModels = (models = []) => (Array.isArray(models) ? mo
   })
   .map(item => item.model)
 
+const generatedModelNameRe = /^(?:(?:native_)?(?:oai|claude)|api|config|cookie|vision)_config[A-Za-z0-9_]*$/i
+
+export const isGeneratedModelName = value => generatedModelNameRe.test(String(value ?? '').trim())
+
 export const firstRuntimeModel = (models = []) => orderedRuntimeModels(models)[0] || null
 
 export const firstRuntimeModelNo = (models = [], fallback = 0) => {
@@ -24,8 +28,11 @@ export const firstRuntimeModelNo = (models = [], fallback = 0) => {
 }
 
 export const modelDisplayName = (model, fallback = '') => {
-  const display = String(model?.display_name || model?.displayName || model?.label || model?.name || model?.model || '').trim()
-  return display || fallback
+  const configured = [model?.display_name, model?.displayName, model?.label, model?.name]
+    .map(value => String(value ?? '').trim())
+    .find(value => value && !isGeneratedModelName(value))
+  const modelID = String(model?.model || '').trim()
+  return configured || modelID || fallback
 }
 
 export const runtimeModelProvider = (model, fallback = '未分组服务商') => {
@@ -33,6 +40,7 @@ export const runtimeModelProvider = (model, fallback = '未分组服务商') => 
   if (provider) return provider
   const name = String(model?.name || '').trim()
   const modelName = String(model?.model || '').trim()
+  if (isGeneratedModelName(name)) return fallback
   if (name && modelName && name.endsWith(`/${modelName}`)) return name.slice(0, -(modelName.length + 1))
   const split = name.lastIndexOf('/')
   return (split > 0 ? name.slice(0, split) : name) || fallback
