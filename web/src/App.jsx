@@ -105,7 +105,7 @@ export default function App() {
   }
   const services = useServices({ t, setMsg, setBusy })
   const logStream = useLogStream({ active: tab === 'logs' })
-  const version = useVersionUpdates({ t, lang, setMsg, setBusy, reload: () => load() })
+  const version = useVersionUpdates({ t, lang, setMsg, setBusy })
   const files = useFiles({ t, setMsg, setBusy, onOpen: () => setTab('files') })
   const schedule = useSchedule({ t, lang, setMsg, setBusy, onOpenSection: (section) => { setTab('tasks'); setTaskSection(section) } })
   const goals = useGoals({ t, lang, setMsg, setBusy, active: tab === 'goals' })

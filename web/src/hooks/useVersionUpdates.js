@@ -10,15 +10,15 @@ import {
   versionMatchesExpectedRelease,
 } from '../lib/versionUpdatePolling'
 
-// GA Admin releases, GA source (git) updates, and the login autostart entry.
-// These three all answer "is this install current and how does it come up".
-export function useVersionUpdates({ t, lang, setMsg, setBusy, reload }) {
+// GA Admin releases, GA source status, and the login autostart entry. These
+// three all answer "is this install current and how does it come up". Pulling
+// the GA source is deliberately absent: GA updates itself from `/update`.
+export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
   const [info, setInfo] = useState(null)
   const [check, setCheck] = useState(null)
   const [status, setStatus] = useState(null)
   const [busy, setVersionBusy] = useState(false)
   const [gitBusy, setGitBusy] = useState(false)
-  const [gitResult, setGitResult] = useState(null)
   const [gitStatus, setGitStatus] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const restartGraceUntil = useRef(0)
@@ -34,17 +34,20 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, reload }) {
   }
 
   // Loaded alongside the workspace boot sequence so the shell can render the
-  // version card without a second round trip.
+  // version card without a second round trip. The local git status comes along
+  // because it decides whether the GA source card applies at all.
   const loadSnapshot = async () => {
-    const [auto, ver, stat] = await Promise.all([
+    const [auto, ver, stat, git] = await Promise.all([
       api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })),
       api('/api/version/info').catch(e => ({ error:e.message })),
       api('/api/version/status').catch(() => null),
+      api('/api/ga/git-status').catch(() => ({ available: false, reason: 'unreachable' })),
     ])
     setAutostart(auto)
     setInfo(ver)
+    setGitStatus(git)
     if (stat?.id || stat?.stage) setStatus(stat)
-    return { autostart: auto, info: ver, status: stat }
+    return { autostart: auto, info: ver, status: stat, gitStatus: git }
   }
 
   useEffect(() => {
@@ -106,22 +109,12 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, reload }) {
     try {
       const d = await api('/api/ga/git-status?remote=1')
       setGitStatus(d)
-      setMsg(d.upstream_configured === false
-        ? t.overview.sourceMissingMessage
-        : (d.latest ? t.overview.sourceCurrentMessage : t.overview.sourceBehindMessage(d.behind || 0)))
+      setMsg(d.available === false
+        ? t.overview.sourceUnavailableMessage
+        : (d.upstream_configured === false
+            ? t.overview.sourceMissingMessage
+            : (d.latest ? t.overview.sourceCurrentMessage : t.overview.sourceBehindMessage(d.behind || 0))))
     } catch (e) { setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally { setGitBusy(false) }
-  }
-
-  const updateSource = async () => {
-    if (!confirmDanger('ga-git-update', t.overview.sourceCheckConfirm)) return
-    setGitBusy(true); setMsg('')
-    try {
-      const d = await api('/api/ga/git-update', { dangerous:true, method:'POST', body: '{}' })
-      setGitResult(d)
-      setMsg(d.changed ? t.overview.sourceUpdatedMessage(d.before, d.after) : t.overview.sourceCurrentMessage)
-      setGitStatus(await api('/api/ga/git-status'))
-      await reload?.()
-    } catch (e) { setMsg(e.message) } finally { setGitBusy(false) }
   }
 
   const toggleAutostart = async () => {
@@ -139,7 +132,7 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, reload }) {
   }
 
   return {
-    info, check, status, busy, gitBusy, gitResult, gitStatus, autostart,
-    loadSnapshot, refreshStatus, checkVersion, updateVersion, checkSource, updateSource, toggleAutostart,
+    info, check, status, busy, gitBusy, gitStatus, autostart,
+    loadSnapshot, refreshStatus, checkVersion, updateVersion, checkSource, toggleAutostart,
   }
 }

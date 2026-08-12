@@ -1055,7 +1055,6 @@ func hasMutatingMethod(methods map[string]bool) bool {
 func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 	return []dangerousConfirmRouteCase{
 		{http.MethodPost, "/api/version/update", `{}`},
-		{http.MethodPost, "/api/ga/git-update", `{}`},
 		{http.MethodPost, "/api/ga/git-mirror", `{}`},
 		{http.MethodPost, "/api/tmwebdriver/repair", `{}`},
 		{http.MethodPost, "/api/tmwebdriver/install-deps", `{}`},

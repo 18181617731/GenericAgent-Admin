@@ -294,6 +294,54 @@ func TestGaGitStatusRejectsNonGET(t *testing.T) {
 	}
 }
 
+// The console hides its GA source card when git cannot answer, so these cases
+// must be a normal 200 with available=false rather than an error the UI has to
+// guess about.
+func TestGaGitStatusReportsUnavailable(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		root    string
+		gitPath func() (string, error)
+		reason  string
+	}{
+		{name: "no root", root: "", gitPath: func() (string, error) { return "git", nil }, reason: gitUnavailableNoRoot},
+		{name: "git missing", root: repo, gitPath: func() (string, error) { return "", errors.New("not found") }, reason: gitUnavailableNoGit},
+		{name: "not a repo", root: t.TempDir(), gitPath: func() (string, error) { return "git", nil }, reason: gitUnavailableNoRepo},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newConfigTestServer(t)
+			updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) { cfg.GARoot = tc.root })
+			oldLook := lookGitPathFunc
+			t.Cleanup(func() { lookGitPathFunc = oldLook })
+			lookGitPathFunc = tc.gitPath
+			oldRunGit := runGitCommandFunc
+			t.Cleanup(func() { runGitCommandFunc = oldRunGit })
+			runGitCommandFunc = func(ctx context.Context, root string, args ...string) (string, error) {
+				t.Fatalf("git must not run when unavailable: %s", strings.Join(args, " "))
+				return "", nil
+			}
+
+			rr := httptest.NewRecorder()
+			s.Routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/ga/git-status", nil))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status=%d want=200 body=%s", rr.Code, rr.Body.String())
+			}
+			var got map[string]interface{}
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["available"] != false || got["reason"] != tc.reason {
+				t.Fatalf("unexpected payload: %#v", got)
+			}
+		})
+	}
+}
+
 func TestGaGitStatusRejectsMalformedAheadBehind(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
@@ -365,7 +413,9 @@ func TestGaGitStatusHandlesMissingUpstream(t *testing.T) {
 	}
 }
 
-func TestGaGitUpdateRejectsMissingUpstreamBeforePull(t *testing.T) {
+// Updating the GA checkout is GA's own job (the /update chat command), so the
+// Admin server must not expose a git pull of its own.
+func TestGaGitUpdateEndpointIsNotServed(t *testing.T) {
 	s := newConfigTestServer(t)
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
@@ -378,23 +428,8 @@ func TestGaGitUpdateRejectsMissingUpstreamBeforePull(t *testing.T) {
 	oldRunGit := runGitCommandFunc
 	t.Cleanup(func() { runGitCommandFunc = oldRunGit })
 	runGitCommandFunc = func(ctx context.Context, root string, args ...string) (string, error) {
-		joined := strings.Join(args, " ")
-		switch joined {
-		case "rev-parse --short HEAD":
-			return "abc1234", nil
-		case "branch --show-current":
-			return "main", nil
-		case "status --short", "fetch --all --prune":
-			return "", nil
-		case "rev-parse --abbrev-ref --symbolic-full-name @{u}":
-			return "fatal: no upstream configured for branch 'main'", errors.New("exit status 128")
-		case "pull --ff-only":
-			t.Fatal("pull must not run without an upstream branch")
-			return "", nil
-		default:
-			t.Fatalf("unexpected git command: %s", joined)
-			return "", nil
-		}
+		t.Fatalf("the admin server must not run git for GA updates: %s", strings.Join(args, " "))
+		return "", nil
 	}
 
 	rr := httptest.NewRecorder()
@@ -402,11 +437,15 @@ func TestGaGitUpdateRejectsMissingUpstreamBeforePull(t *testing.T) {
 	markDangerous(req)
 	s.Routes().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d want=400 body=%s", rr.Code, rr.Body.String())
+	// Unregistered API paths fall through to the static handler, which rejects
+	// anything but GET, so an absent route answers 404 or 405 - never 200.
+	if rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d want=404 or 405 body=%s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "has no upstream") {
-		t.Fatalf("expected actionable missing-upstream error, body=%s", rr.Body.String())
+	for _, entry := range riskCatalogItems {
+		if entry.Path == "/api/ga/git-update" {
+			t.Fatal("risk catalog still advertises /api/ga/git-update")
+		}
 	}
 }
 

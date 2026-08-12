@@ -430,8 +430,38 @@ var runGitCommandFunc = func(ctx context.Context, root string, args ...string) (
 	return text, nil
 }
 
+// Reasons GA source status cannot be produced at all. The console hides its GA
+// source card for these instead of showing an error nobody can act on there.
+const (
+	gitUnavailableNoRoot = "no_root"
+	gitUnavailableNoGit  = "git_missing"
+	gitUnavailableNoRepo = "not_a_repo"
+)
+
+var lookGitPathFunc = func() (string, error) { return exec.LookPath("git") }
+
+// gaGitRepoExists also accepts a .git file, which is how worktrees and
+// submodules point at their real git directory.
+func gaGitRepoExists(abs string) bool {
+	st, err := os.Stat(filepath.Join(abs, ".git"))
+	return err == nil && (st.IsDir() || st.Mode().IsRegular())
+}
+
+func gaGitUnavailableReason(abs string) string {
+	if strings.TrimSpace(abs) == "" {
+		return gitUnavailableNoRoot
+	}
+	if _, err := lookGitPathFunc(); err != nil {
+		return gitUnavailableNoGit
+	}
+	if !gaGitRepoExists(abs) {
+		return gitUnavailableNoRepo
+	}
+	return ""
+}
+
 func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}, error) {
-	if st, err := os.Stat(filepath.Join(abs, ".git")); err != nil || !st.IsDir() {
+	if !gaGitRepoExists(abs) {
 		return nil, errors.New("GA root is not a git repository")
 	}
 	branch, _ := runGitCommand(ctx, abs, "branch", "--show-current")
@@ -472,6 +502,7 @@ func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}
 		"upstream": strings.TrimSpace(upstream), "upstream_configured": upstreamConfigured,
 		"ahead": ahead, "behind": behind, "latest": upstreamConfigured && behind == 0,
 		"dirty": strings.TrimSpace(status) != "", "status": status,
+		"available": true,
 	}, nil
 }
 
@@ -481,13 +512,17 @@ func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
-	if root == "" {
-		bad(w, 400, "ga_root is not configured")
-		return
+	abs := root
+	if root != "" {
+		resolved, err := filepath.Abs(root)
+		if err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+		abs = resolved
 	}
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		bad(w, 400, err.Error())
+	if reason := gaGitUnavailableReason(abs); reason != "" {
+		writeJSON(w, map[string]interface{}{"ok": true, "available": false, "reason": reason, "root": abs})
 		return
 	}
 
@@ -516,54 +551,6 @@ func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
 		st["fetch_error"] = strings.TrimSpace(fetchOut + "\n" + fetchErr.Error())
 	}
 	writeJSON(w, st)
-}
-
-func (s *Server) gaGitUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		bad(w, 405, "method not allowed")
-		return
-	}
-	root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
-	if root == "" {
-		bad(w, 400, "ga_root is not configured")
-		return
-	}
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		bad(w, 400, err.Error())
-		return
-	}
-	if st, err := os.Stat(filepath.Join(abs, ".git")); err != nil || !st.IsDir() {
-		bad(w, 400, "GA root is not a git repository")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
-	defer cancel()
-	before, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
-	branch, _ := runGitCommand(ctx, abs, "branch", "--show-current")
-	statusBefore, _ := runGitCommand(ctx, abs, "status", "--short")
-	fetchOut, err := runGitCommand(ctx, abs, "fetch", "--all", "--prune")
-	if err != nil {
-		bad(w, 500, strings.TrimSpace(fetchOut+"\n"+err.Error()))
-		return
-	}
-	upstream, upstreamErr := runGitCommand(ctx, abs, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-	if upstreamErr != nil || strings.TrimSpace(upstream) == "" {
-		bad(w, 400, "current GA branch has no upstream; configure a tracking branch before updating")
-		return
-	}
-	pullOut, err := runGitCommand(ctx, abs, "pull", "--ff-only")
-	if err != nil {
-		bad(w, 500, strings.TrimSpace(pullOut+"\n"+err.Error()))
-		return
-	}
-	after, _ := runGitCommand(ctx, abs, "rev-parse", "--short", "HEAD")
-	statusAfter, _ := runGitCommand(ctx, abs, "status", "--short")
-	writeJSON(w, map[string]interface{}{
-		"ok": true, "root": abs, "branch": branch, "before": before, "after": after,
-		"changed": before != after, "status_before": statusBefore, "status_after": statusAfter,
-		"fetch": fetchOut, "pull": pullOut,
-	})
 }
 
 func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {

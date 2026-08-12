@@ -1240,6 +1240,7 @@ describe('operator shell feedback', () => {
       '/api/observability/inventory': {},
       '/api/observability/risks': {},
       '/api/services': { services: [] },
+      '/api/ga/git-status': { ok: true, available: true, branch: 'main', commit: 'abc1234', upstream: 'origin/main', upstream_configured: true, latest: true },
     }
     return jsonResponse(payloads[path] ?? {})
   }
@@ -1337,12 +1338,30 @@ describe('operator shell feedback', () => {
 
     expect(await screen.findByText('Version management')).toBeTruthy()
     expect(screen.getByText('Read-only observability')).toBeTruthy()
-    expect(screen.getByText('GA source update')).toBeTruthy()
+    expect(screen.getByText('GA source')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Run \/update in chat/i })).toBeTruthy()
     expect(screen.queryByText('只读观测')).toBeNull()
     expect(screen.queryByText('版本管理')).toBeNull()
-    expect(screen.queryByText('GA 源代码更新')).toBeNull()
+    expect(screen.queryByText('GA 源代码')).toBeNull()
     expect(document.documentElement.lang).toBe('en')
     expect(window.localStorage.getItem('ga-admin-lang')).toBe('en')
+  })
+
+  test('hides GA source status when git cannot answer', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/ga/git-status') return jsonResponse({ ok: true, available: false, reason: 'git_missing' })
+      return shellPayload(url)
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^(总览|Overview)$/i }))
+
+    expect(await screen.findByText('版本管理')).toBeTruthy()
+    expect(screen.queryByText('GA 源代码')).toBeNull()
+    expect(screen.queryByRole('button', { name: /检查是否最新/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /去对话执行 \/update/i })).toBeNull()
   })
 
   test('refresh shows pending, success, and a recoverable error', async () => {

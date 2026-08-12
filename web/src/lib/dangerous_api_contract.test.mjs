@@ -42,6 +42,21 @@ test('version update UI keeps destructive update behind status-aware controls', 
   assert.match(source, /api\('\/api\/version\/status'\)/)
 })
 
+test('GA source updates stay with GA: the console only reads git status', () => {
+  const source = frontendSource()
+  assert.doesNotMatch(source, /\/api\/ga\/git-update/)
+  assert.match(source, /api\('\/api\/ga\/git-status\?remote=1'\)/)
+  assert.match(source, /<code>\/update<\/code>/)
+  assert.match(source, /copy\.sourceSelfUpdateCta/)
+})
+
+test('the GA source card disappears when git cannot answer', () => {
+  const source = frontendSource()
+  assert.match(source, /const sourceAvailable = gitStatus\?\.available !== false/)
+  assert.match(source, /\{sourceAvailable && <SettingsSection title=\{copy\.sourceTitle\}/)
+  assert.match(source, /api\('\/api\/ga\/git-status'\)\.catch/)
+})
+
 const internalApiDir = new URL('../../../internal/api/', import.meta.url)
 const backendApi = readFileSync(new URL('api.go', internalApiDir), 'utf8')
 const backendSources = readdirSync(internalApiDir)
