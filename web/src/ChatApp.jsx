@@ -3081,7 +3081,9 @@ export default function ChatApp() {
       window.removeEventListener('resize', closeAboveBreakpoint)
     }
   }, [mobileToolsOpen])
-  const [loopRailOpen, setLoopRailOpen] = useState(true)
+  // The Loop rail starts collapsed: its launcher already reports the round and
+  // spins while a loop runs, so an idle session need not give up the width.
+  const [loopRailOpen, setLoopRailOpen] = useState(false)
   const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [loopState, setLoopState] = useState(null)

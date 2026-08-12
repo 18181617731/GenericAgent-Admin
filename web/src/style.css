@@ -15893,8 +15893,15 @@ html[data-theme="light"] #admin-sidebar {
 .oa-follow-row { width: min(var(--oa-chat-measure), calc(100% - 48px)); }
 
 /* The buttons hold the right edge of that column rather than its middle,
-   where they would sit on top of the lines being read. */
-.oa-follow-row { justify-content: flex-end; gap: 8px; }
+   where they would sit on top of the lines being read, and they stack the way
+   they move: back through the conversation above, forward to the newest
+   output below. */
+.oa-follow-row {
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 @media (min-width: 901px) {
   .oa-chat { grid-template-columns: 300px minmax(0, 1fr); }
