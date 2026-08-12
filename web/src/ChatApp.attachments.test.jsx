@@ -78,6 +78,18 @@ describe('chat file attachments', () => {
     expect(screen.queryByRole('dialog', { name:'生成图片预览' })).toBeNull()
   })
 
+  test('renders a screenshot result from a labeled evidence path', () => {
+    const path = String.raw`C:\tmp\evidence\final-screen.png`
+    const { container } = render(
+      <GeneratedImageGallery content={['Evidence saved:', '', `- Screenshot: ${path}`].join('\n')} />,
+    )
+
+    const thumb = container.querySelector('.oa-generated-image-thumb')
+    expect(thumb).toBeTruthy()
+    expect(thumb?.getAttribute('title')).toBe(path)
+    expect(thumb?.querySelector('img')?.getAttribute('src')).toBe(`/api/files/image?path=${encodeURIComponent(path)}`)
+  })
+
   test('adds the active chat instance to saved upload image URLs', () => {
     const { container } = render(
       <ChatMessage
