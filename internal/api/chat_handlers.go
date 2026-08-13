@@ -41,7 +41,8 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned, "loop": cs.Loop})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	writeJSON(w, map[string]interface{}{"sessions": items, "projects": discoverProjectNames(s.CfgStore.Snapshot().GARoot)})
+	projects, pinnedProjects := chatProjectNamesFor(s.CfgStore.Snapshot())
+	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "pinned_projects": pinnedProjects})
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +97,15 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatState(w, r, parts[1])
+			return
+		}
+	case "projects":
+		if len(parts) == 1 && r.Method == http.MethodPost {
+			s.chatCreateProject(w, r)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "pin" && r.Method == http.MethodPatch {
+			s.chatSetProjectPinned(w, r)
 			return
 		}
 	case "btw":
@@ -683,35 +693,12 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 	default:
 		name, ok := validProjectModeName(arg)
 		if !ok {
-			reply = "进入 Project Mode 失败：项目名必须是 1 个安全的目录名称（不能包含路径分隔符、冒号、控制字符或 `.` / `..`）。"
+			reply = "进入 Project Mode 失败：" + errProjectNameInvalid.Error() + "。"
 			break
 		}
-		gaRoot := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
-		if gaRoot == "" {
-			reply = "进入 Project Mode 失败：GA Root 未配置。"
-			break
-		}
-		projectDir := projectModeWorkspace(s.CfgStore.Snapshot(), name)
-		if st, err := os.Lstat(projectDir); err == nil {
-			if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
-				reply = fmt.Sprintf("进入 Project Mode 失败：项目路径不是安全目录：`%s`", projectDir)
-				break
-			}
-		} else if !os.IsNotExist(err) {
-			reply = fmt.Sprintf("进入 Project Mode 失败：无法检查项目目录：%v", err)
-			break
-		} else if err := os.MkdirAll(projectDir, 0755); err != nil {
-			reply = fmt.Sprintf("进入 Project Mode 失败：无法创建项目目录：%v", err)
-			break
-		}
-		memoryPath := filepath.Join(projectDir, "project_memory.md")
-		if f, err := os.OpenFile(memoryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644); err == nil {
-			if closeErr := f.Close(); closeErr != nil {
-				reply = fmt.Sprintf("进入 Project Mode 失败：无法初始化项目记忆：%v", closeErr)
-				break
-			}
-		} else if !os.IsExist(err) {
-			reply = fmt.Sprintf("进入 Project Mode 失败：无法初始化项目记忆：%v", err)
+		projectDir, memoryPath, err := ensureProjectMode(s.CfgStore.Snapshot(), name)
+		if err != nil {
+			reply = fmt.Sprintf("进入 Project Mode 失败：%v。", err)
 			break
 		}
 		cs.ProjectMode = name

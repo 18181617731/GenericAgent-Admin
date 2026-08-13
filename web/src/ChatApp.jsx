@@ -6,10 +6,11 @@ import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollo
 import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
+import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, FolderPlus, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -3019,9 +3020,13 @@ export default function ChatApp() {
   const [chatInstancesLoading, setChatInstancesLoading] = useState(true)
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
+  const [pinnedProjects, setPinnedProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
   const [sidebarSearch, setSidebarSearch] = useState('')
   const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
+  const [projectDraftOpen, setProjectDraftOpen] = useState(false)
+  const [projectDraftName, setProjectDraftName] = useState('')
+  const [projectCreating, setProjectCreating] = useState(false)
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
@@ -3876,6 +3881,7 @@ export default function ChatApp() {
     const list = d.sessions || []
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
+    setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
     if (open) {
       const restored = loadSelectedChatSessionID(chatInstanceRef.current)
       const next = chooseChatSessionID(list, prefer, restored)
@@ -3915,6 +3921,66 @@ export default function ChatApp() {
 
   const newProjectSession = async (projectMode) => {
     await createSession(projectMode)
+  }
+
+  // Pinned first, so the projects someone actually works in stop sinking under
+  // the alphabetical ones. Applied optimistically: the row should jump the moment
+  // it is clicked, and the next list refresh confirms it.
+  const toggleProjectPinned = async (name, pinned) => {
+    setPinnedProjects(current => pinned
+      ? Array.from(new Set(current.concat(name)))
+      : current.filter(existing => existing !== name))
+    try {
+      const d = await chatApi('/api/chat/projects/pin', { method:'PATCH', body: JSON.stringify({ name, pinned }) })
+      if (Array.isArray(d?.pinned_projects)) setPinnedProjects(d.pinned_projects)
+    } catch (e) {
+      if (e.name !== 'AbortError') setErr(e.message || String(e))
+      await loadSessions(activeSidRef.current || '').catch(() => {})
+    }
+  }
+
+  const openProjectDraft = () => {
+    setSidebarTab('projects')
+    setProjectDraftName('')
+    setProjectDraftOpen(true)
+  }
+
+  const closeProjectDraft = () => {
+    setProjectDraftOpen(false)
+    setProjectDraftName('')
+  }
+
+  // Creating a project used to require typing /project <name> into the composer.
+  // Land the user in a usable state instead: make the directory, then open a
+  // chat already bound to it.
+  const createProject = async () => {
+    const name = projectDraftName.trim()
+    const problem = projectNameError(name)
+    if (problem) {
+      setErr(projectNameErrorText(problem, ct))
+      return
+    }
+    if (projects.some(existing => existing === name)) {
+      setErr(ct(`项目 ${name} 已存在。`, `Project ${name} already exists.`))
+      return
+    }
+    setProjectCreating(true)
+    setErr('')
+    try {
+      const d = await chatApi('/api/chat/projects', { method:'POST', body: JSON.stringify({ name }) })
+      const created = String(d?.name || name)
+      setProjects(Array.isArray(d.projects) ? d.projects : projects.concat(created))
+      setExpandedProjectNames(current => new Set(current).add(created))
+      closeProjectDraft()
+      await createSession(created)
+      setNotice(d?.created === false
+        ? ct(`项目 ${created} 已存在，已在其中新建对话`, `Project ${created} already existed; started a chat in it`)
+        : ct(`已创建项目 ${created}，并新建了一个对话`, `Created project ${created} and started a chat in it`))
+    } catch (e) {
+      if (e.name !== 'AbortError') setErr(e.message || String(e))
+    } finally {
+      setProjectCreating(false)
+    }
   }
 
   const deleteSession = async (id) => {
@@ -4735,6 +4801,7 @@ export default function ChatApp() {
         if (!stopped) {
           setSessions(d.sessions || [])
           setProjects(Array.isArray(d.projects) ? d.projects : [])
+          setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
         }
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
@@ -4953,7 +5020,7 @@ export default function ChatApp() {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out', clearProps: 'transform,opacity,visibility' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
-  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
+  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions, pinnedProjects), [projects, sessions, pinnedProjects])
   const filteredSessions = useMemo(() => {
     if (!sidebarSearch.trim()) return sessions
     const q = sidebarSearch.trim().toLowerCase()
@@ -5085,12 +5152,36 @@ export default function ChatApp() {
           </section>)}
           {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
-      </> : <div className="oa-session-list oa-project-list">
+      </> : <>
+        <div className="oa-session-manager-head">
+          <span className="oa-session-manager-title">{ct('项目', 'Projects')}</span>
+          <button className="oa-session-manage-open" type="button" onClick={openProjectDraft} disabled={projectCreating || projectDraftOpen}>
+            <FolderPlus size={13}/>{ct('新建项目', 'New project')}
+          </button>
+        </div>
+        {projectDraftOpen && <form className="oa-project-draft" onSubmit={e=>{ e.preventDefault(); createProject() }}>
+          <input
+            autoFocus
+            type="text"
+            value={projectDraftName}
+            onChange={e=>setProjectDraftName(e.target.value)}
+            onKeyDown={e=>{ if (e.key === 'Escape') { e.preventDefault(); closeProjectDraft() } }}
+            placeholder={ct('项目名，例如 alpha', 'Project name, e.g. alpha')}
+            aria-label={ct('新项目名称', 'New project name')}
+            disabled={projectCreating}
+          />
+          <button className="oa-project-draft-save" type="submit" disabled={projectCreating || !projectDraftName.trim()}>{projectCreating ? ct('创建中…', 'Creating…') : ct('创建', 'Create')}</button>
+          <button type="button" onClick={closeProjectDraft} disabled={projectCreating}>{ct('取消', 'Cancel')}</button>
+        </form>}
+        <div className="oa-session-list oa-project-list">
         {filteredProjectGroups.map((group, index) => {
           const expanded = expandedProjectNames.has(group.name)
           const bodyId = `oa-project-sessions-${index}`
           const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
-          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'}`} key={group.name}>
+          const pinLabel = group.pinned
+            ? ct(`取消置顶 ${group.name}`, `Unpin ${group.name}`)
+            : ct(`置顶 ${group.name}`, `Pin ${group.name}`)
+          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'} ${group.pinned ? 'is-pinned' : ''}`} key={group.name}>
             <div className="oa-project-head">
               <button className="oa-project-toggle" type="button" onClick={()=>setExpandedProjectNames(current => {
                 const next = new Set(current)
@@ -5100,6 +5191,7 @@ export default function ChatApp() {
               })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
                 <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
               </button>
+              <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={()=>toggleProjectPinned(group.name, !group.pinned)} aria-pressed={group.pinned} title={pinLabel} aria-label={pinLabel}><Pin size={14}/></button>
               <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
             </div>
             <div className="oa-project-body" id={bodyId} hidden={!expanded}>
@@ -5108,8 +5200,15 @@ export default function ChatApp() {
             </div>
           </section>
         })}
-        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span></div>}
-      </div>}
+        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty">
+          <FolderOpen size={20}/>
+          <span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span>
+          {!sidebarSearch && !projectDraftOpen && <button className="oa-projects-empty-cta" type="button" onClick={openProjectDraft} disabled={projectCreating}>
+            <FolderPlus size={14}/>{ct('新建项目', 'New project')}
+          </button>}
+        </div>}
+        </div>
+      </>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
