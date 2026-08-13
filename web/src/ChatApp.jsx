@@ -3150,6 +3150,8 @@ export default function ChatApp() {
   const [extraPromptSaving, setExtraPromptSaving] = useState(false)
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
+  const menuRef = useRef(null)
+  const menuTriggerRef = useRef(null)
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
@@ -4080,6 +4082,43 @@ export default function ChatApp() {
       setBatchDeleting(false)
     }
   }
+
+  const closeSessionMenu = ({ restoreFocus = false } = {}) => {
+    setMenuOpen('')
+    setMenuPos(null)
+    if (restoreFocus) menuTriggerRef.current?.focus()
+    menuTriggerRef.current = null
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    // The menu is a fixed layer placed at the coordinates the row had when it
+    // opened, so anything that happens elsewhere dismisses it: a pointer that
+    // lands outside, Escape, or a scroll that would leave it behind. The
+    // trigger is excluded because it closes the menu through its own toggle.
+    const onPointerDown = (event) => {
+      if (menuRef.current?.contains(event.target)) return
+      if (event.target?.closest?.('.oa-session-more')) return
+      closeSessionMenu()
+    }
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeSessionMenu({ restoreFocus: true })
+    }
+    const onScroll = (event) => {
+      if (menuRef.current?.contains(event.target)) return
+      closeSessionMenu()
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [menuOpen])
 
   const startRename = (s) => { setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null) }
   const saveRename = async (id) => {
@@ -5012,8 +5051,9 @@ export default function ChatApp() {
       </button>}
       {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={(event)=>{
         event.stopPropagation()
-        if (menuOpen === session.id) { setMenuOpen(''); setMenuPos(null); return }
+        if (menuOpen === session.id) { closeSessionMenu(); return }
         const rect = event.currentTarget.getBoundingClientRect()
+        menuTriggerRef.current = event.currentTarget
         setMenuPos({ top: Math.max(8, rect.top - 78), left: Math.max(8, rect.right - 136) })
         setMenuOpen(session.id)
       }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16}/></button>}
@@ -5104,7 +5144,7 @@ export default function ChatApp() {
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
-        return <div className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
+        return <div ref={menuRef} className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
           <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
           <button onClick={()=>setSessionPinned(s)}><Pin size={14}/>{s.pinned ? ct('\u53d6\u6d88\u7f6e\u9876', 'Unpin') : ct('\u7f6e\u9876', 'Pin')}</button>
           <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>
