@@ -10,17 +10,24 @@ export function OverviewPage({
   const copy = t.overview
   const { info, check, status, busy, gitBusy, gitStatus } = version
   const updateMessage = status?.error || (status?.stage === 'queued' ? copy.updateQueued : (status?.message || status?.stage))
-  const sourceState = gitStatus?.error
-    ? copy.checkFailed
-    : (gitStatus
-        ? (gitStatus.upstream_configured === false
-            ? copy.upstreamMissing
-            : (gitStatus.latest ? copy.current : copy.sourceStatusBehind(gitStatus.behind || 0)))
-        : copy.notChecked)
   const missingCore = observability?.missingCore || []
-  // Without git, or with a GA root that is not a checkout, there is no source
-  // status to read and nothing GA could pull, so the whole card is hidden.
+  // Without git, or with a GA root that is not a checkout, there is no branch or
+  // upstream to report. The card still has something to say — where the root is
+  // and that GA updates itself via /update — so it stays, and only the rows that
+  // need git go away.
   const sourceAvailable = gitStatus?.available !== false
+  const sourceUnavailableReason = sourceAvailable
+    ? ''
+    : (copy.sourceUnavailableReasons?.[gitStatus?.reason] || copy.sourceUnavailableMessage)
+  const sourceState = !sourceAvailable
+    ? copy.sourceUnavailable
+    : (gitStatus?.error
+        ? copy.checkFailed
+        : (gitStatus
+            ? (gitStatus.upstream_configured === false
+                ? copy.upstreamMissing
+                : (gitStatus.latest ? copy.current : copy.sourceStatusBehind(gitStatus.behind || 0)))
+            : copy.notChecked))
 
   return <SettingsPage>
     <SettingsSection
@@ -80,14 +87,15 @@ export function OverviewPage({
       </SettingFooter>
     </SettingsSection>
 
-    {sourceAvailable && <SettingsSection title={copy.sourceTitle} description={copy.sourceDescription} icon={<GitPullRequest size={17}/>}>
+    <SettingsSection title={copy.sourceTitle} description={copy.sourceDescription} icon={<GitPullRequest size={17}/>}>
       <SettingRow label={copy.gitUpdate} hint={gitStatus?.root || ''}>
-        <span className={`set-state ${gitStatus?.error ? 'is-off' : (gitStatus?.latest ? 'is-on' : '')}`}>{sourceState}</span>
+        <span className={`set-state ${(gitStatus?.error || !sourceAvailable) ? 'is-off' : (gitStatus?.latest ? 'is-on' : '')}`}>{sourceState}</span>
       </SettingRow>
-      <SettingRow label={copy.branch} hint={gitStatus?.upstream ? `${copy.upstream}: ${gitStatus.upstream} · ${copy.ahead} ${gitStatus.ahead || 0} / ${copy.behind} ${gitStatus.behind || 0}` : ''}>
+      {sourceAvailable && <SettingRow label={copy.branch} hint={gitStatus?.upstream ? `${copy.upstream}: ${gitStatus.upstream} · ${copy.ahead} ${gitStatus.ahead || 0} / ${copy.behind} ${gitStatus.behind || 0}` : ''}>
         <code>{gitStatus?.branch || '-'} · {gitStatus?.commit || '-'}</code>
-      </SettingRow>
-      {gitStatus?.upstream_configured === false && <SettingNote tone="warn">{copy.upstreamHelp}</SettingNote>}
+      </SettingRow>}
+      {!sourceAvailable && <SettingNote tone="warn">{sourceUnavailableReason}</SettingNote>}
+      {sourceAvailable && gitStatus?.upstream_configured === false && <SettingNote tone="warn">{copy.upstreamHelp}</SettingNote>}
       {gitStatus?.dirty && <SettingNote tone="warn">{copy.dirty}</SettingNote>}
       {gitStatus?.error && <SettingNote tone="error">{gitStatus.error}</SettingNote>}
       {gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}
@@ -95,12 +103,12 @@ export function OverviewPage({
         {copy.sourceSelfUpdateBefore}<code>/update</code>{copy.sourceSelfUpdateAfter}
       </SettingNote>
       <SettingFooter>
-        <button type="button" onClick={version.checkSource} disabled={gitBusy}>{gitBusy ? t.busy : copy.checkLatest}</button>
+        {sourceAvailable && <button type="button" onClick={version.checkSource} disabled={gitBusy}>{gitBusy ? t.busy : copy.checkLatest}</button>}
         <button className="primary" type="button" onClick={() => { window.location.href = '/' }}>
           <MessageSquare size={14} aria-hidden="true"/>{copy.sourceSelfUpdateCta}
         </button>
       </SettingFooter>
-    </SettingsSection>}
+    </SettingsSection>
   </SettingsPage>
 }
 

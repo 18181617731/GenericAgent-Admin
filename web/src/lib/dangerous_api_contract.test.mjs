@@ -50,10 +50,16 @@ test('GA source updates stay with GA: the console only reads git status', () => 
   assert.match(source, /copy\.sourceSelfUpdateCta/)
 })
 
-test('the GA source card disappears when git cannot answer', () => {
+// Without git there is still a GA root to show and /update to point at, so the
+// card stays and only the git-dependent rows go: the branch row and the check
+// button.
+test('the GA source card keeps its place when git cannot answer', () => {
   const source = frontendSource()
   assert.match(source, /const sourceAvailable = gitStatus\?\.available !== false/)
-  assert.match(source, /\{sourceAvailable && <SettingsSection title=\{copy\.sourceTitle\}/)
+  assert.match(source, /\n    <SettingsSection title=\{copy\.sourceTitle\}/)
+  assert.doesNotMatch(source, /\{sourceAvailable && <SettingsSection title=\{copy\.sourceTitle\}/)
+  assert.match(source, /\{sourceAvailable && <SettingRow label=\{copy\.branch\}/)
+  assert.match(source, /\{sourceAvailable && <button type="button" onClick=\{version\.checkSource\}/)
   assert.match(source, /api\('\/api\/ga\/git-status'\)\.catch/)
 })
 
