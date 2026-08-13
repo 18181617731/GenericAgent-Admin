@@ -582,11 +582,17 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		return
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
-	llms, err := s.listGARuntimeLLMs(s.CfgStore.Snapshot())
+	cfg := s.CfgStore.Snapshot()
+	llms, err := s.listGARuntimeLLMs(cfg)
 	markChatLLMActive(llms, cs.Settings.LLMNo)
-	backend := map[string]string{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
+	backend := map[string]interface{}{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
 		backend["warning"] = err.Error()
+	}
+	// An empty list is the single most confusing first-run state, so say why it
+	// is empty instead of leaving the picker to render a bare "no models found".
+	if payload := chatDiagnosisPayload(diagnoseChatLLMList(cfg, len(llms), err)); payload != nil {
+		backend["diagnosis"] = payload
 	}
 	running := s.chatRunActive(sid)
 	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})

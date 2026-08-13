@@ -6352,6 +6352,95 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
   .oa-prompt-preset-footer > button:first-child { flex: 1; margin-right: 0; }
 }
 
+/* Empty model list explainer: sits at the top of the composer, because that is
+   where the user notices the picker says "no models found". */
+.oa-model-alert {
+  order: -1;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0 0 2px;
+  padding: 10px 12px;
+  border: 1px solid rgba(217, 119, 6, .28);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(217, 119, 6, .10), rgba(217, 119, 6, .04));
+  font-size: 12.5px;
+}
+.oa-model-alert.is-fixable {
+  border-color: rgba(37, 99, 235, .28);
+  background: linear-gradient(135deg, rgba(37, 99, 235, .10), rgba(37, 99, 235, .04));
+}
+.oa-model-alert-copy {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.oa-model-alert-copy b {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 800;
+}
+.oa-model-alert-copy span {
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.oa-model-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.oa-model-alert-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.oa-model-alert-actions button.is-primary {
+  border-color: transparent;
+  background: var(--d-171717, #171717);
+  color: var(--d-on, #fff);
+  font-weight: 700;
+}
+.oa-model-alert-actions button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.oa-model-alert-detail {
+  flex: 1 1 100%;
+}
+.oa-model-alert-detail summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.oa-model-alert-detail pre {
+  margin: 6px 0 0;
+  max-height: 160px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .05);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .oa-ultraplan-mode {
   order: 1;
   grid-column: 1 / -1;

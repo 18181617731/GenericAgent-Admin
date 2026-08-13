@@ -5,6 +5,7 @@ import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction } from './lib/chatStream.js'
 import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
+import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -3075,6 +3076,8 @@ export default function ChatApp() {
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
+  const [chatBackend, setChatBackend] = useState(null)
+  const [depsRepairing, setDepsRepairing] = useState(false)
   const [llmNo, setLlmNo] = useState(0)
   const [loopControllerLlmNo, setLoopControllerLlmNo] = useState(null)
   const [reasoningEffort, setReasoningEffort] = useState('off')
@@ -3762,6 +3765,7 @@ export default function ChatApp() {
     const nextExtraSysPrompts = Array.isArray(st.extra_sys_prompts) ? st.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : []
     const nextExtraSysPromptPresetID = String(st.extra_sys_prompt_preset_id || '').trim()
     setLlms(nextLlms)
+    setChatBackend(st.backend && typeof st.backend === 'object' ? st.backend : null)
     const resolvedNextNo = nextLlms.some(m => m.index === nextNo) ? nextNo : (nextLlms[0]?.index ?? 0)
     setLlmNo(resolvedNextNo)
     setReasoningEffort(nextReasoningEffort)
@@ -4104,6 +4108,30 @@ export default function ChatApp() {
     if (!sid) return
     await chatApi(`/api/chat/settings/${sid}`, { method:'POST', body: JSON.stringify({ llm_no: next, reasoning_effort: reasoningEffort }) })
     setNotice(ct('模型已切换', 'Model changed'))
+  }
+
+  // A model list that came back empty is worth explaining: the cause is almost
+  // always a missing pip package, a GA root that is not one, or a GA that has no
+  // model configured yet, and each has a different next step.
+  const modelDiagnosis = !llms.length ? (chatBackend?.diagnosis || null) : null
+
+  const installChatPythonDeps = async () => {
+    const packages = (modelDiagnosis?.install_packages || []).join(' ')
+    if (!modelDiagnosis?.fixable || !packages) return
+    if (!confirmDanger('chat-python-install-deps', ct(`为 ${modelDiagnosis.python} 安装缺失依赖：${packages}？将执行 pip install。`, `Install missing dependencies into ${modelDiagnosis.python}: ${packages}? This runs pip install.`))) return
+    setDepsRepairing(true)
+    setErr('')
+    setNotice(ct('正在安装依赖，首次安装可能需要一两分钟…', 'Installing dependencies; the first run can take a minute or two…'))
+    try {
+      const d = await chatApi('/api/chat/python/install-deps', { dangerous:true, method:'POST', body:'{}' })
+      if (d?.ok) setNotice(ct(`依赖安装完成，已发现 ${d.llm_count} 个模型`, `Dependencies installed; found ${d.llm_count} models`))
+      else { setNotice(''); setErr(d?.error || d?.diagnosis?.hint || ct('依赖安装失败', 'Dependency install failed')) }
+      await loadChatState(activeSidRef.current || '')
+    } catch (e) {
+      if (e.name !== 'AbortError') { setNotice(''); setErr(e.message || String(e)) }
+    } finally {
+      setDepsRepairing(false)
+    }
   }
 
   const saveReasoningEffort = async (value) => {
@@ -5482,6 +5510,25 @@ export default function ChatApp() {
                 <button type="button" onClick={()=>removeAttachment(attachment.id)} title={ct('移除附件', 'Remove attachment')} aria-label={ct(`移除附件 ${name}`, `Remove attachment ${name}`)}><X size={12}/></button>
               </div>
             })}
+          </div>}
+          {modelDiagnosis && <div className={`oa-model-alert ${modelDiagnosis.fixable ? 'is-fixable' : ''}`} role="status" aria-live="polite">
+            <div className="oa-model-alert-copy">
+              <b><CircleHelp size={14}/>{modelDiagnosisTitle(modelDiagnosis, ct)}</b>
+              <span>{modelDiagnosisAdvice(modelDiagnosis, ct)}</span>
+            </div>
+            <div className="oa-model-alert-actions">
+              {modelDiagnosis.fixable && <button className="is-primary" type="button" onClick={installChatPythonDeps} disabled={depsRepairing}>
+                <Download size={14}/>{depsRepairing ? ct('安装中…', 'Installing…') : ct('一键安装依赖', 'Install dependencies')}
+              </button>}
+              <button type="button" onClick={()=>loadChatState(activeSidRef.current || '').catch(e=>setErr(e.message || String(e)))} disabled={depsRepairing}>
+                <RotateCw size={14}/>{ct('重新检测', 'Re-check')}
+              </button>
+              {modelDiagnosis.install_command && <CopyButton text={modelDiagnosis.install_command} compact/>}
+            </div>
+            {modelDiagnosis.detail && <details className="oa-model-alert-detail">
+              <summary>{ct('查看 Python 输出', 'Show Python output')}</summary>
+              <pre>{modelDiagnosis.detail}</pre>
+            </details>}
           </div>}
           {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>{ct('将以规划模式执行，并在完成后展示 run 目录与日志摘要', 'Runs in planning mode and shows the run directory and log summary when complete')}</b></div>}
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={ct('向 GenericAgent 发送消息，可选择/粘贴/拖拽任意文件…', 'Message GenericAgent; select, paste, or drag any file…')} rows={1}/>

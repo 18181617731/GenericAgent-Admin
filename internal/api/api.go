@@ -190,6 +190,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
+	mux.HandleFunc("/api/chat/python/install-deps", s.requireDangerousConfirm(s.withChatInstance((*Server).chatPythonInstallDeps)))
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
@@ -273,6 +274,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
+	{Path: "/api/chat/python/install-deps", Level: "dangerous", Action: "install_chat_python_deps", Reason: "runs pip install with Tsinghua PyPI mirror for the GA runtime imports the chat interpreter reports missing"},
 }
 
 func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
@@ -619,10 +621,7 @@ func tmwebdriverPythonModules() []string {
 }
 
 func tmwebdriverModuleToPipPackage(module string) string {
-	if module == "simple_websocket_server" {
-		return "simple-websocket-server"
-	}
-	return module
+	return pipPackageForModule(module)
 }
 
 func tmwebdriverPipPackages(modules []string) []string {

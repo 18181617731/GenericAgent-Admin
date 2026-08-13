@@ -1401,12 +1401,12 @@ print(json.dumps(items, ensure_ascii=False))`
 	cmd.Env = pythonEnvWithAdminProxy(cfg, "PYTHONUNBUFFERED=1", "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return []map[string]interface{}{}, fmt.Errorf("list GA LLMs failed: %v: %s", err, strings.TrimSpace(string(out)))
+		return []map[string]interface{}{}, &chatLLMListError{Stage: "list GA LLMs failed", Python: py, Root: root, Output: string(out), Err: err}
 	}
 	clean := bytes.TrimSpace(out)
 	llms, parseErr := parseLLMJSONArrayFromMixedOutput(clean)
 	if parseErr != nil {
-		return []map[string]interface{}{}, fmt.Errorf("parse GA LLMs failed: %v: %s", parseErr, strings.TrimSpace(string(out)))
+		return []map[string]interface{}{}, &chatLLMListError{Stage: "parse GA LLMs failed", Python: py, Root: root, Output: string(out), Err: parseErr}
 	}
 	if draft, importErr := s.loadModelsFromOfficialMyKey(false); importErr == nil {
 		annotateChatLLMProviders(llms, draft.Profiles)

@@ -21,6 +21,7 @@ import (
 	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/ga"
+	"genericagent-admin-go/internal/pyfind"
 )
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
@@ -665,6 +666,9 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
 		return
 	}
+	// A new virtualenv is a new interpreter path; drop memoized probe answers so
+	// it is judged on its own merits.
+	pyfind.ResetProbeCache()
 	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	cfg.PythonPath = setupVenvPython(root)
@@ -706,6 +710,11 @@ func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
 	python := pythonForSetup(root, s.CfgStore.Snapshot())
 	emit(setupStreamEvent{Type: "start", Line: fmt.Sprintf("%s -m pip install -e .", python)})
 	code, err := runSetupCommandStreamFunc(ctx, root, emit, python, "-m", "pip", "install", "-e", ".")
+	// Interpreter usability is memoized for the life of the process. Without
+	// this the interpreter that just gained GA's dependencies keeps being
+	// judged by its pre-install answer, and chat keeps reporting no models
+	// until the app restarts.
+	pyfind.ResetProbeCache()
 	if err != nil {
 		emit(setupStreamEvent{Type: "done", OK: false, Code: code, Error: err.Error()})
 		return
