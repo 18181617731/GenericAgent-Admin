@@ -51,10 +51,11 @@ func okHandler() http.Handler {
 }
 
 func TestAuthManagerRequiresEnvironmentPair(t *testing.T) {
-	if _, err := newAuthManager(t.TempDir(), "admin", "", ""); err == nil {
+	root := t.TempDir()
+	if _, err := newAuthManager(root, "admin", "", testConfigStore(t, root, nil)); err == nil {
 		t.Fatal("expected incomplete environment credentials to fail")
 	}
-	manager, err := newAuthManager(t.TempDir(), "operator", "configured-secret", "")
+	manager, err := newAuthManager(root, "operator", "configured-secret", testConfigStore(t, root, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,91 +64,21 @@ func TestAuthManagerRequiresEnvironmentPair(t *testing.T) {
 	}
 }
 
-func TestAuthDisabledByDefaultAllowsRemoteAccess(t *testing.T) {
-	manager, err := newAuthManager(t.TempDir(), "", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if manager.enabled {
-		t.Fatal("authentication should be disabled by default")
-	}
-	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-	if got := authRequest(handler, http.MethodGet, "/api/config", "100.93.123.76:5000", "", "", nil); got.Code != http.StatusNoContent {
-		t.Fatalf("remote request without credentials = %d, want 204", got.Code)
-	}
-	status := authRequest(handler, http.MethodGet, "/api/auth/status", "100.93.123.76:5000", "", "", nil)
-	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"authEnabled":false`)) {
-		t.Fatalf("status = %d %s", status.Code, status.Body.String())
-	}
-}
-
-func TestAuthDisabledMiddlewareAlwaysAllowsRemoteAccess(t *testing.T) {
-	reached := false
-	handler := authDisabledMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = true
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	if got := authRequest(handler, http.MethodGet, "/api/config", "100.93.123.76:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
-		t.Fatalf("remote request without credentials = %d, reached %v; want 204 and reached", got.Code, reached)
-	}
-	status := authRequest(handler, http.MethodGet, "/api/auth/status", "100.93.123.76:5000", "", "", nil)
-	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"authEnabled":false`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":false`)) {
-		t.Fatalf("status = %d %s", status.Code, status.Body.String())
-	}
-	if got := authRequest(handler, http.MethodPost, "/api/auth/change-password", "100.93.123.76:5000", "admin", "admin", changePasswordRequest{}); got.Code != http.StatusConflict || !bytes.Contains(got.Body.Bytes(), []byte(`"auth_disabled"`)) {
-		t.Fatalf("change password = %d %s", got.Code, got.Body.String())
-	}
-}
-
-func TestAuthMiddlewareDefaultCredentialAndGate(t *testing.T) {
-	manager, err := newAuthManager(t.TempDir(), "", "", "true")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reached := false
-	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = true
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusUnauthorized {
-		t.Fatalf("remote request without credentials = %d, want 401", got.Code)
-	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "wrong", nil); got.Code != http.StatusUnauthorized {
-		t.Fatalf("remote request with wrong credentials = %d, want 401", got.Code)
-	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "admin", "admin", nil); got.Code != http.StatusPreconditionRequired {
-		t.Fatalf("remote request before password change = %d, want 428", got.Code)
-	}
-	if got := authRequest(handler, http.MethodGet, "/api/config", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
-		t.Fatalf("loopback API before password change = %d, reached %v", got.Code, reached)
-	}
-	if got := authRequest(handler, http.MethodGet, "/", "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent || !reached {
-		t.Fatalf("loopback SPA request = %d, reached %v", got.Code, reached)
-	}
-	status := authRequest(handler, http.MethodGet, "/api/auth/status", "127.0.0.1:5000", "", "", nil)
-	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"mustChangePassword":false`)) {
-		t.Fatalf("status = %d %s", status.Code, status.Body.String())
-	}
-	remoteStatus := authRequest(handler, http.MethodGet, "/api/auth/status", "192.168.1.2:5000", "admin", "admin", nil)
-	if remoteStatus.Code != http.StatusOK || !bytes.Contains(remoteStatus.Body.Bytes(), []byte(`"mustChangePassword":true`)) {
-		t.Fatalf("remote status = %d %s", remoteStatus.Code, remoteStatus.Body.String())
-	}
-}
-
-func TestChangePasswordPersistsAndSwitchesCredentials(t *testing.T) {
+func TestLocalAccessNeedsNoPassword(t *testing.T) {
 	root := t.TempDir()
-	manager, err := newAuthManager(root, "", "", "true")
+	manager, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := manager.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-	newPassword := "correct horse battery staple"
-	body := changePasswordRequest{CurrentPassword: "admin", NewPassword: newPassword, ConfirmPassword: newPassword}
-	changed := authRequest(handler, http.MethodPost, "/api/auth/change-password", "127.0.0.1:5000", "", "", body)
-	if changed.Code != http.StatusOK {
-		t.Fatalf("change password = %d %s", changed.Code, changed.Body.String())
+	if manager.PasswordConfigured() {
+		t.Fatal("a fresh app root must not carry a password")
+	}
+	handler := manager.middleware(okHandler())
+
+	for _, path := range []string{"/", "/api/config", "/api/chat/sessions"} {
+		if got := authRequest(handler, http.MethodGet, path, "127.0.0.1:5000", "", "", nil); got.Code != http.StatusNoContent {
+			t.Fatalf("loopback %s = %d, want 204", path, got.Code)
+		}
 	}
 }
 
@@ -289,7 +220,7 @@ func TestSetPasswordPersistsAndAuthenticatesRemoteClients(t *testing.T) {
 		t.Fatalf("correct credential = %d, want 204", got.Code)
 	}
 
-	reloaded, err := newAuthManager(root, "", "", "true")
+	reloaded, err := newAuthManager(root, "", "", testConfigStore(t, root, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

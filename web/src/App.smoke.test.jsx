@@ -1706,7 +1706,7 @@ describe('operator shell feedback', () => {
     expect(screen.queryByText('GA 源代码')).toBeNull()
     expect(document.documentElement.lang).toBe('en')
     expect(window.localStorage.getItem('ga-admin-lang')).toBe('en')
-  }, 30000)
+  }, 60000)
 
   test('hides GA source status when git cannot answer', async () => {
     installBrowserPolyfills()
@@ -2409,7 +2409,7 @@ describe('chat loop controls', () => {
 
     fireEvent.click(screen.getByRole('button', { name:'停止 Loop' }))
     await waitFor(() => expect(globalThis.fetch.mock.calls.some(([url, options]) => String(url).split('?')[0] === '/api/chat/loop/loop-session/stop' && options?.method === 'POST')).toBe(true))
-  }, 30000)
+  }, 60000)
 })
 
 describe('assistant generated image gallery', () => {

@@ -10,7 +10,7 @@ const serviceReturnCode = (svc) => svc?.returncode ?? svc?.return_code ?? '-'
 const serviceStartedAt = (svc) => svc?.started_at || '-'
 const serviceLogPath = (svc) => svc?.log_path || svc?.log || ''
 
-function ServiceMeta({ svc, llms = [], onModel, t }) {
+function ServiceMeta({ svc, llms = [], onModel, t, compact = false }) {
   const cmd = serviceCommand(svc)
   const logPath = serviceLogPath(svc)
   const text = t?.service || {}
@@ -82,6 +82,15 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel,
     </div>}
   </article>
 }
+
+// Only facts that say something the row does not already say: the service
+// name is the frontend script, so a stopped one stays a single line.
+const channelServiceFacts = (svc, text) => [
+  svc.running && ['PID', servicePid(svc)],
+  svc.running && svc.started_at && [text.startedAt, serviceStartedAt(svc)],
+  !svc.running && (svc.returncode ?? svc.return_code) != null && [text.returnCode, serviceReturnCode(svc)],
+].filter(Boolean)
+
 export function ChannelServiceTable({ services = [], emptyMessage, onStart, onStop, onLogs, onAutostart, onReflectStart, onOpenHub, t, actionState = null }) {
   if (!services.length) return <div className="channel-service-empty">{emptyMessage || t.hints.noFrontend}</div>
   const isReflectService = (svc) => svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
@@ -102,6 +111,7 @@ export function ChannelServiceTable({ services = [], emptyMessage, onStart, onSt
           <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label>
         </span>
       </div>
+      <ServiceMeta svc={svc} compact t={t}/>
       <dl className="channel-service-facts">
         {channelServiceFacts(svc, t?.service || {}).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={String(value)}>{String(value)}</dd></div>)}
       </dl>

@@ -18,7 +18,7 @@ test('parseRoute keeps Goal Mode independent from scheduled tasks', () => {
 })
 
 test('parseRoute prefers hash routes', () => {
-  setLocation('http://localhost/admin/settings#/tasks/reports')
+  setLocation('http://localhost/settings#/tasks/reports')
   assert.deepEqual(parseRoute(), { tab: 'tasks', taskSubTab: 'reports' })
 })
 
@@ -38,7 +38,7 @@ test('usage overview has a stable refreshable route', () => {
 })
 
 test('GA instances has a stable refreshable route', () => {
-  setLocation('http://localhost/admin/instances')
+  setLocation('http://localhost/instances')
   assert.deepEqual(parseRoute(), { tab: 'instances', taskSubTab: 'services' })
-  assert.equal(buildRoute('instances'), '/admin/instances')
+  assert.equal(buildRoute('instances'), '/instances')
 })

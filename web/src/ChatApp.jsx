@@ -9,7 +9,7 @@ import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -3136,6 +3136,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const [streamClock, setStreamClock] = useState(() => Date.now())
   const threadRef = useRef(null)
+  const endRef = useRef(null)
   const composerWrapRef = useRef(null)
   const fileRef = useRef(null)
   const promptRef = useRef(null)
@@ -4964,6 +4965,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     previousScrollHeightRef.current = thread.scrollHeight
     followSettleUntilRef.current = Date.now() + settleMs
   }
+  const moveThread = (thread, options) => {
+    if (typeof thread.scrollTo === 'function') thread.scrollTo(options)
+    else thread.scrollTop = options.top
+  }
   const scrollToThreadEnd = (behavior = 'auto') => {
     const thread = threadRef.current
     if (!thread) return
@@ -4972,7 +4977,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     // and leaves that strip below the fold, which parks the newest output
     // behind the composer and keeps the thread permanently short of its own
     // bottom; scrolling the container itself lands on both.
-    thread.scrollTo({ top: thread.scrollHeight, behavior })
+    moveThread(thread, { top: thread.scrollHeight, behavior })
     markProgrammaticScroll(thread, behavior === 'smooth' ? SMOOTH_SETTLE_MS : FOLLOW_SETTLE_MS)
   }
   const setFollowState = (enabled) => {
@@ -4992,6 +4997,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (!autoFollowRef.current || !threadCanScroll(threadRef.current)) return
     setFollowState(false)
   }
+  const breakFollow = pauseFollow
   const cardTopOffset = (card) => (
     card.getBoundingClientRect().top - threadRef.current.getBoundingClientRect().top
   )
@@ -5022,7 +5028,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       const thread = threadRef.current
       const card = previousSentCard()
       if (!thread || !card) return
-      thread.scrollTo({ top: thread.scrollTop + cardTopOffset(card) - JUMP_TOP_MARGIN, behavior: 'smooth' })
+      moveThread(thread, { top: thread.scrollTop + cardTopOffset(card) - JUMP_TOP_MARGIN, behavior: 'smooth' })
       markProgrammaticScroll(thread, SMOOTH_SETTLE_MS)
     })
   }
@@ -5298,6 +5304,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>
       })()}
       <div className="oa-sidebar-foot">
+        <button className="oa-admin-back" type="button" onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>{ct('返回管理台', 'Back to admin')}</button>
         <button onClick={()=>window.location.href='/admin'}><Settings size={15}/>{ct('设置', 'Settings')}</button>
       </div>
     </aside>

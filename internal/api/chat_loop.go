@@ -476,8 +476,9 @@ type chatLoopRunRequest struct {
 	summary        string
 }
 
-func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg, pendingMsg chatMessage, startedAtMS int64) (chatSession, bool, error) {
+func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg, pendingMsg chatMessage, startedAtMS int64) (chatSession, bool, *chatLoopState, error) {
 	var cs chatSession
+	var terminalLoop *chatLoopState
 	owned, saveErr := s.saveChatRunPending(req.sid, token, pendingMsg.ID, startedAtMS, func() error {
 		s.SessionMu.Lock()
 		defer s.SessionMu.Unlock()
@@ -502,7 +503,7 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 			terminalLoop = &finished
 			return errChatLoopStale
 		}
-		fingerprint := chatLoopPromptFingerprint(prompt)
+		fingerprint := chatLoopPromptFingerprint(req.prompt)
 		if fingerprint != "" && fingerprint == latest.Loop.LastPromptFingerprint {
 			latest.Loop.RepeatStreak++
 		} else {
@@ -539,7 +540,7 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 		cs = latest
 		return nil
 	})
-	return cs, owned, saveErr
+	return cs, owned, terminalLoop, saveErr
 }
 
 func (s *Server) launchChatLoopRun(req chatLoopRunRequest, token *chatRun, cs chatSession, userMsg, pendingMsg chatMessage, runStartedAtMS int64) {
@@ -591,9 +592,12 @@ func (s *Server) queueChatLoopRun(req chatLoopRunRequest) {
 	runStartedAtMS := time.Now().UnixMilli()
 	userMsg := chatMessage{ID: newChatID(), Role: "user", Content: req.prompt, CreatedAt: time.Now().Unix()}
 	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}
-	cs, owned, saveErr := s.saveChatLoopRun(req, token, userMsg, pendingMsg, runStartedAtMS)
+	cs, owned, terminalLoop, saveErr := s.saveChatLoopRun(req, token, userMsg, pendingMsg, runStartedAtMS)
 	if !owned || saveErr != nil {
 		s.endChatRunOwned(req.sid, token)
+		if terminalLoop != nil {
+			s.publishChatLoopState(req.sid, *terminalLoop)
+		}
 		if saveErr != nil && !errors.Is(saveErr, errChatLoopStale) {
 			s.finishChatLoop(req.sid, req.epoch, chatLoopStatusError, "persist_error: "+saveErr.Error())
 		}

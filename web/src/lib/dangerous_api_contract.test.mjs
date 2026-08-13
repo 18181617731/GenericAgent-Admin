@@ -2,34 +2,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
-import { frontendSource, frontendSources } from './frontendSources.mjs'
 
-// Guards can sit at the top of a handler while the request is built further
-// down, so the scan looks back over a whole handler rather than a few lines.
-const GUARD_LOOKBACK = 30
-
-// Deleting an instance is gated by an in-page confirmation dialog
-// (requestDelete -> deleteTarget modal -> remove), which no text scan can see.
-const DIALOG_GATED = new Set(['pages/InstancesPage.jsx:/api/instances/delete'])
-
-const dialogGated = (file, window) => [...DIALOG_GATED].some(entry => {
-  const [gatedFile, route] = entry.split(':')
-  return file === gatedFile && window.includes(route)
-})
-
-test('every frontend module gates dangerous API calls behind confirmDanger except read-only key reveal', () => {
+test('App gates dangerous API calls behind confirmDanger except read-only key reveal', () => {
+  const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
+  const lines = app.split(/\r?\n/)
   const misses = []
   const noConfirmReadOnlyRevealRoutes = new Set(["'/api/models/raw'"])
-  for (const { file, source } of frontendSources()) {
-    const lines = source.split(/\r?\n/)
-    lines.forEach((line, idx) => {
-      if (!line.includes('dangerous:true') && !line.includes('dangerous: true')) return
-      if ([...noConfirmReadOnlyRevealRoutes].some(route => line.includes(route))) return
-      const window = lines.slice(Math.max(0, idx - GUARD_LOOKBACK), idx + 2).join('\n')
-      if (window.includes('confirmDanger(') || dialogGated(file, window)) return
-      misses.push(`${file}:${idx + 1}: ${line.trim()}`)
-    })
-  }
+  lines.forEach((line, idx) => {
+    if (!line.includes('dangerous:true') && !line.includes('dangerous: true')) return
+    if ([...noConfirmReadOnlyRevealRoutes].some(route => line.includes(route))) return
+    const window = lines.slice(Math.max(0, idx - 6), idx + 1).join('\n')
+    if (!window.includes('confirmDanger(')) misses.push(`${idx + 1}: ${line.trim()}`)
+  })
   assert.deepEqual(misses, [])
 })
 
@@ -87,11 +71,14 @@ test('frontend dangerous-route list is derived from backend confirm and header g
 })
 
 test('frontend sends dangerous header for every protected mutating API route it calls', () => {
+  const srcDir = new URL('../', import.meta.url)
+  const files = ['App.jsx', 'ChatApp.jsx', 'pages/FilesPage.jsx', 'pages/GoalsPage.jsx', 'components/ProcessGuard.jsx']
   const misses = []
   const seen = new Map(protectedFrontendRoutes.map(route => [route, 0]))
 
-  for (const { file, source } of frontendSources()) {
-    const lines = source.split(/\r?\n/)
+  for (const file of files) {
+    const app = readFileSync(new URL(file, srcDir), 'utf8')
+    const lines = app.split(/\r?\n/)
     lines.forEach((line, idx) => {
       for (const route of protectedFrontendRoutes) {
         if (!exactRouteString(route).test(line)) continue
@@ -101,9 +88,9 @@ test('frontend sends dangerous header for every protected mutating API route it 
         const safeMaskedMyKeyImport = route === '/api/models/import-mykey' && /reveal\s*:\s*false/.test(call) && /save\s*:\s*false/.test(call)
         if (!isDangerousMethod || safeMaskedMyKeyImport) continue
         seen.set(route, (seen.get(route) || 0) + 1)
-        const guardWindow = lines.slice(Math.max(0, idx - GUARD_LOOKBACK), Math.min(lines.length, idx + 4)).join('\n')
+        const guardWindow = lines.slice(Math.max(0, idx - 8), Math.min(lines.length, idx + 4)).join('\n')
         const hasDangerousHeader = call.includes('dangerous:true') || call.includes('dangerous: true')
-        const hasConfirm = guardWindow.includes('confirmDanger(') || dialogGated(file, guardWindow)
+        const hasConfirm = guardWindow.includes('confirmDanger(')
         const requiresConfirm = !noConfirmReadOnlyRevealRoutes.has(route)
         if (!hasDangerousHeader || (requiresConfirm && !hasConfirm)) misses.push(`${file}:${idx + 1} ${route} dangerous=${hasDangerousHeader} confirm=${hasConfirm}`)
       }

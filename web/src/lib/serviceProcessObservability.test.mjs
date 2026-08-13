@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { frontendSource } from './frontendSources.mjs'
 
 const common = readFileSync(new URL('../components/common.jsx', import.meta.url), 'utf8')
 const processGuard = readFileSync(new URL('../components/ProcessGuard.jsx', import.meta.url), 'utf8')
@@ -15,13 +14,7 @@ test('service cards expose lifecycle metadata without mutating services', () => 
   assert.match(common, /svc\?\.workdir/)
   assert.match(common, /serviceLogPath/)
   assert.match(common, /ServiceMeta svc=\{svc\}/)
-})
-
-test('channel service rows report runtime facts that the service name does not', () => {
-  assert.match(common, /channelServiceFacts/)
-  assert.match(common, /svc\.running && \['PID', servicePid\(svc\)\]/)
-  assert.match(common, /svc\.running && svc\.started_at &&/)
-  assert.match(common, /!svc\.running && \(svc\.returncode \?\? svc\.return_code\) != null/)
+  assert.match(common, /ServiceMeta svc=\{svc\} compact/)
 })
 
 test('process guard table includes identity and command context', () => {

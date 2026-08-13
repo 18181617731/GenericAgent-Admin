@@ -5,21 +5,13 @@ import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
+import { AuthGate } from './components/AuthGate.jsx'
 import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
 import { applyUIScaleToDocument, DEFAULT_UI_SCALE, getInitialUIScale, stepUIScale, UI_SCALE_STORAGE_KEY } from './lib/uiScale.js'
 import { registerNotificationServiceWorker } from './lib/notifications.js'
 
-// Chat is the primary interface: it owns "/" (and legacy "/chat").
-// The admin console lives under "/admin" and acts as the settings area.
-const rootPath = window.location.pathname.replace(/\/+$/, '')
-const isAdmin = rootPath === '/admin' || rootPath.startsWith('/admin/')
-// Each route imports on its own line because the build pairs one dependency
-// list, stylesheets included, with one dynamic import expression. Choosing
-// between two imports inside a single expression left both sharing the chat
-// list, so the admin bundle's stylesheet was never linked in a build.
-const AdminRoot = lazy(() => import('./App.jsx'))
-const ChatRoot = lazy(() => import('./ChatApp.jsx'))
-const Root = isAdmin ? AdminRoot : ChatRoot
+const isChat = window.location.pathname.replace(/\/+$/, '') === '/chat'
+const Root = lazy(() => (isChat ? import('./ChatApp.jsx') : import('./App.jsx')))
 
 void registerNotificationServiceWorker()
 

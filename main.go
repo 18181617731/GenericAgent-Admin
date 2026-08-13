@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"genericagent-admin-go/internal/api"
-	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
@@ -52,8 +51,10 @@ func main() {
 	if err := cfgStore.Load(); err != nil {
 		log.Printf("load config: %v", err)
 	}
-	if _, err := autostart.MigrateCurrent(cwd); err != nil {
-		log.Printf("migrate autostart entry: %v", err)
+	// Portable bundle bootstrap is idempotent and also repairs bundles created
+	// by older versions that may have persisted bootstrap_done=true too early.
+	if err := tryPortableAutoInit(cwd, cfgStore); err != nil {
+		log.Printf("portable auto-init: %v", err)
 	}
 	version.SetRepoURL(cfgStore.Snapshot().UpdateRepoURL)
 	svc := service.NewManagerWithPython(cfgStore.Snapshot().GARoot, cfgStore.Snapshot().EffectivePython, cfgStore.Snapshot().BufferLines)
@@ -63,19 +64,38 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := api.New(cfgStore, svc, models, static)
-	addrs := adminListenAddresses(cfgStore.Snapshot().Host, cfgStore.Snapshot().Port, discoverTailscaleIPv4())
-	url := "http://" + addrs[0]
-	server := newHTTPServer(addrs[0], authDisabledMiddleware(srv.Routes()))
-	srv.StartAutostartServices()
-	srv.StartAutonomousMaintenance()
-	activeAddrs, err := startHTTPListeners(server, addrs)
+	srv.StartAutomaticChatTitleBackfill()
+	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv), cfgStore)
 	if err != nil {
-		log.Fatalf("start HTTP service: %v; if the port is occupied, edit config.local.json and change port", err)
+		log.Fatalf("initialize admin authentication: %v", err)
 	}
-	logListenURLs(activeAddrs)
-	if launch.Headless {
-		log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
+	srv.PasswordConfigured = auth.PasswordConfigured
+
+	portOverride := 0
+	if launch.PortSet {
+		portOverride = launch.Port
 	}
+	listener, err := openAdminListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
+	if err != nil {
+		log.Fatal(err)
+	}
+	url := localURL(listener)
+	srv.SetListenAddress(listener.Addr().String(), url)
+	if err := writeRuntimeInfo(cwd, listener); err != nil {
+		log.Printf("record runtime address: %v", err)
+	}
+	server := newHTTPServer(listener.Addr().String(), auth.middleware(srv.Routes()))
+	go srv.StartAutostartServices()
+	go srv.StartChatHubBridge()
+	go func() {
+		log.Printf("GenericAgent Admin Go listening on %s (bound to %s)", url, listener.Addr())
+		if launch.Headless {
+			log.Printf("headless/server-only mode enabled; open %s from another browser if needed", url)
+		}
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("serve %s failed: %v", listener.Addr(), err)
+		}
+	}()
 
 	if launch.Headless {
 		waitForShutdownSignal(server, func() {
@@ -120,6 +140,8 @@ type launchOptions struct {
 const (
 	adminReadHeaderTimeout = 10 * time.Second
 	adminIdleTimeout       = 120 * time.Second
+	authUserEnv            = "GA_ADMIN_AUTH_USER"
+	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

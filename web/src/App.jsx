@@ -1,8 +1,9 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, MessageSquare, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
+import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
+import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
@@ -43,7 +44,9 @@ import { NotificationCenter } from './components/NotificationUI.jsx'
 import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
 import { collectNotificationEvents, buildNotificationSnapshot } from './lib/notificationMonitor.js'
 import { publishNotification } from './lib/notifications.js'
+import { useLogStream } from './hooks/useLogStream.js'
 import { SettingsPage } from './pages/SettingsPage.jsx'
+import { LogsPage } from './pages/LogsPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
@@ -69,8 +72,9 @@ export const I18N = withUpstreamI18n({
   zh: {
     appName: 'GA Admin', autostart: '开机自启', autostartService: '自启动', backup: '写操作会自动备份', browse: '选择目录', busy: '执行中', cancel: '取消', checkEnv: '检查 Python / Git', clear: '清空', close: '关闭', copy: '复制', create: '创建', delete: '删除', disableAutostart: '关闭自启', disabled: '停用', download: '下载', empty: '暂无', enableAutostart: '开启自启', enabled: '启用', envMissing: '环境缺失', envReady: '环境已就绪', error: '错误', hide: '隐藏', installDone: 'GA 已安装并配置', installGA: '安装 GA', installPath: '安装目录', language: '语言', loading: '加载中…', logs: '日志', mainNavigation: '主导航', read: '读取', ready: '就绪', refresh: '刷新', remove: '删除', retry: '重试', root: 'GenericAgent 根目录', running: '运行中', save: '保存', saveTitleModel: '保存标题模型', search: '搜索', setupDesc: '请选择已有 GA 根目录，或一键安装到新目录。', setupOk: 'GA 路径已配置', setupTitle: '首次配置 GenericAgent', show: '显示', start: '启动', stop: '停止', stopped: '已停止', switchTheme: '切换主题', tagline: 'GenericAgent 本地管理面板', tail: '尾读', titleModel: '对话标题模型', titleModelDisabled: '禁用自动标题生成', titleModelFollowConversation: '跟随当前对话模型', titleModelHelp: '新会话和旧会话的标题生成使用此模型，可与对话模型不同。', titleModelSaved: '标题模型设置已保存', unsupported: '不支持', validateRoot: '验证并使用',
     serviceDesc: { scheduler: '定时任务调度器：每 120 秒扫描 sche_tasks/ 中的任务，按 once/daily/weekly/every_Nh 等周期到期触发，并归档 L4 会话记录。', autonomous: '自主待机驱动：每 30 分钟检测一次，当用户离开超过 30 分钟，便提示智能体按自动化 SOP 自行推进任务。' },
-    nav: { overview: '总览', chat: '对话', notifications: '消息通知', files: '文件', tasks: '定时任务', memory: '记忆', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '配置', logs: '日志' },
+    nav: { overview: '总览', chat: '对话', notifications: '消息通知', files: '文件', tasks: '定时任务', memory: '记忆', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '常规', logs: '日志' },
     desc: { overview: '从 GA 的功能域理解并接管生命周期。', chat: '迁移自 reactapp 的 GA 原生对话、文件上传和流式聊天界面。', notifications: '集中查看后台执行结果，并配置站内、浏览器和声音提醒。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', tasks: '管理 sche_tasks 定时任务、调度服务和执行记录。', memory: '分层记忆、SOP 与工具能力索引。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '管理反思与自主运行服务，查看自主进化报告。', usage: '汇总本地对话的 Token 用量、模型分布和每日活动。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 中的模型配置。', settings: '配置 GA 根目录、Python、聊天数据目录与 Chat Python 代理。', logs: '进程状态与输出日志。' },
+    logsPage: { serviceList: '服务列表', noSelection: '未选择服务', selectPrompt: '在左侧选择一个服务，即可实时查看它的输出。', noOutput: '该进程尚未输出日志。', output: name => `${name} 的日志输出`, filter: '过滤日志行', filterPlaceholder: '过滤包含…', clearFilter: '清除过滤', noMatches: keyword => `没有包含“${keyword}”的行。`, lineCount: n => `${n} 行`, matchCount: (shown, total) => `${shown} / ${total} 行匹配`, follow: '跟随', wrap: '换行', jumpLatest: '回到最新', copied: '已复制', reconnect: '重新连接', interrupted: '日志流已中断。', streamLabels: { live: '实时', connecting: '连接中', reconnecting: '重连中', idle: '未连接' } },
     cards: { processes: '进程', running: '运行中', stopped: '已停止', memoryLayers: '记忆层', sopTools: 'SOP/工具', schedule: '定时任务', enabledTasks: '已启用', reports: '报告', coreFiles: '核心文件', reflect: '反思脚本', health: 'GA 健康', capabilities: '能力', risks: '风险', version: '版本管理' },
     lists: { serviceGroups: '服务域', coreFiles: '核心文件', reflect: 'Reflect / Autonomous', frontends: '前端 / 通道', memory: '记忆层级', sop: 'SOP 与工具', scheduleService: '调度服务', frontendServices: '前端服务', reflectServices: '反思与自主服务', reflectScripts: '反思脚本', scheduledTasks: '定时任务', recentReports: '执行记录', processes: '进程', generatedPreview: '记录详情', riskHints: '接管提示', autostart: '开机自启', capabilities: '能力地图', readiness: '运行前检查', fileList: '文件列表', filePreview: '文件预览', searchResults: '搜索结果', editor: '编辑器' },
     hints: { rootSaved: 'GA 根目录已保存', fileSaved: '文件已保存并备份旧文件', taskSaved: '任务已保存并备份旧文件', taskDeleted: '任务已删除并备份', taskToggled: '任务状态已更新', modelsSaved: 'mykey.py 已备份并保存', savedSecret: '已保存；输入新值可替换', secret: 'API Key / Token', noFrontend: '未发现前端服务', noReflect: '未发现反思或自主服务', noScheduler: '未发现 reflect/scheduler.py 调度服务', noTasks: '暂无 sche_tasks/*.json', noLogs: '暂无日志', previewHelp: '点击“预览”查看配置；点击“保存”会先备份再更新 GA 的 mykey.py。', modelSource: '来源', secretHidden: '已隐藏真实密钥', addProfile: '新增 Profile', preview: '预览', writeMykey: '保存 mykey.py', filePath: '相对路径', searchText: '搜索文本', tailLines: '尾部行数', newTaskId: 'new_task', jsonHelp: 'JSON 需为对象；保存/删除会生成 .bak 时间戳。', autostartEnabled: '已开启：用户登录后自动启动 GA Admin。', autostartDisabled: '未开启：需要手动启动 GA Admin。', autostartUnsupported: '当前平台暂不支持自动注册。', autostartChanged: '开机自启状态已更新', goalObjectiveRequired: '目标不能为空', goalObjectiveTooLarge: '目标超过 16384 字节', goalBudgetInteger: '预算分钟必须是整数', goalBudgetPositive: '预算分钟必须大于 0', goalBudgetTooLarge: '预算分钟不能超过 43200', goalTurnsInteger: '最大轮次必须是整数', goalTurnsNonNegative: '最大轮次不能为负数', goalTurnsTooLarge: '最大轮次不能超过 10000', goalLLMInteger: 'LLM # 必须是整数', goalLLMNonNegative: 'LLM # 不能为负数', goalPythonHelp: 'Python 留空时自动选择：GA 根目录 .venv、venv、uv 缓存解释器、PATH python/python3；填写后按该路径启动并记录到 Goal 状态。', goalHiveHelp: 'Hive 模式会按 GA 官方逻辑启动 Goal Master、临时 BBS 与一个 worker；GA Admin 只做上层管理。', goalStarted: 'Goal 已启动', goalStopped: 'Goal 已停止', goalDeleted: 'Goal 已删除', goalDeleteConfirm: '确定删除 Goal {id}？会删除状态和日志文件；运行中的目标请先停止。', goalDeleteRunning: '运行中的 Goal 不能删除，请先停止。', goalStopConfirm: '确认停止 Goal {id}？将按可用控制级别停止。', goalStopExactConfirm: '确认停止 Admin Goal {id}？将仅终止该 Goal 记录的精确 PID {pid}。', goalStopSoftConfirm: '确认软停止外部 Goal {id}？不会杀进程，只写入状态文件 stopped_by_admin，让 Goal 循环自行退出。', goalOutputTruncated: '仅显示输出尾部，前面内容已截断', goalOutputCapped: '请求字节数超过后端上限，已按上限读取', goalOutputDefault: '未指定读取字节数，已使用默认值', goalOutputBytesInteger: '输出字节数必须是整数', goalOutputBytesNonNegative: '输出字节数不能为负数', goalOutputBytesTooLarge: '输出字节数不能超过 1048576', goalOutputCopied: '输出已复制', goalOutputCleared: '输出已清空', goalOutputLogMissing: '日志文件尚未创建，当前无可读取输出' },
@@ -85,6 +89,7 @@ export const I18N = withUpstreamI18n({
     serviceDesc: { scheduler: 'Scheduled-task runner: scans sche_tasks/ every 120s and fires tasks when their once/daily/weekly/every_Nh cadence is due, also archiving L4 session logs.', autonomous: 'Idle autonomy driver: checks every 30 min and, once the user has been away for over 30 min, prompts the agent to advance tasks on its own per the automation SOP.' },
     nav: { overview: 'Overview', chat: 'Chat', notifications: 'Notifications', files: 'Files', tasks: 'Scheduled tasks', memory: 'Memory', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Goal Mode', models: 'Models', settings: 'Settings', logs: 'Logs' },
     desc: { overview: 'Understand and take over GA lifecycle by native domains.', chat: 'GA native conversation, uploads and streaming UI migrated from reactapp.', notifications: 'Review background results and configure in-app, browser, and sound alerts.', files: 'Safely browse text files inside GA root with tail and search.', tasks: 'Manage sche_tasks schedules, the scheduler service, and execution records.', memory: 'Layered memory, SOPs and utility indexes.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Manage reflection and autonomous services and review their reports.', usage: 'Summarize local chat token usage, model distribution, and daily activity.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Configure GA root, Python, chat data directory, and Chat Python proxy.', logs: 'Process state and output logs.' },
+    logsPage: { serviceList: 'Service list', noSelection: 'No service selected', selectPrompt: 'Select a service on the left to watch its output in real time.', noOutput: 'This process has not produced any logs yet.', output: name => `${name} log output`, filter: 'Filter log lines', filterPlaceholder: 'Filter contains…', clearFilter: 'Clear filter', noMatches: keyword => `No lines contain “${keyword}”.`, lineCount: n => `${n} lines`, matchCount: (shown, total) => `${shown} / ${total} lines match`, follow: 'Follow', wrap: 'Wrap', jumpLatest: 'Jump to latest', copied: 'Copied', reconnect: 'Reconnect', interrupted: 'The log stream was interrupted.', streamLabels: { live: 'Live', connecting: 'Connecting', reconnecting: 'Reconnecting', idle: 'Not connected' } },
     cards: { processes: 'Processes', running: 'Running', stopped: 'Stopped', memoryLayers: 'Memory layers', sopTools: 'SOP/tools', schedule: 'Scheduled jobs', enabledTasks: 'Enabled', reports: 'Reports', coreFiles: 'Core files', reflect: 'Reflect scripts', health: 'GA health', capabilities: 'Capabilities', risks: 'Risks' },
     lists: { serviceGroups: 'Service domains', coreFiles: 'Core files', reflect: 'Reflect / Autonomous', frontends: 'Frontends / Channels', memory: 'Memory layers', sop: 'SOPs and tools', scheduleService: 'Scheduler service', frontendServices: 'Frontend services', reflectServices: 'Reflection and autonomous services', reflectScripts: 'Reflect scripts', scheduledTasks: 'Scheduled tasks', recentReports: 'Execution records', processes: 'Processes', generatedPreview: 'Record details', riskHints: 'Takeover hints', autostart: 'Autostart', capabilities: 'Capability map', readiness: 'Readiness', fileList: 'Files', filePreview: 'Preview', searchResults: 'Search results', editor: 'Editor' },
     hints: { rootSaved: 'GA root saved', fileSaved: 'File saved with backup', taskSaved: 'Task saved with backup', taskDeleted: 'Task deleted with backup', taskToggled: 'Task state updated', modelsSaved: 'mykey.py backed up and written', savedSecret: 'Saved; type a new value to replace', secret: 'API Key / Token', noFrontend: 'No frontend service found', noReflect: 'No reflection or autonomous service found', noScheduler: 'reflect/scheduler.py was not found', noTasks: 'No sche_tasks/*.json', noLogs: 'No logs', previewHelp: 'Preview generated config; writing mykey.py backs up first.', modelSource: 'Source', secretHidden: 'Real secret hidden', addProfile: 'Add profile', preview: 'Preview', writeMykey: 'Write mykey.py', filePath: 'relative path', searchText: 'search text', tailLines: 'tail lines', newTaskId: 'new_task', jsonHelp: 'JSON must be an object; save/delete creates timestamped .bak.', autostartEnabled: 'Enabled: GA Admin starts automatically after user login.', autostartDisabled: 'Disabled: GA Admin must be started manually.', autostartUnsupported: 'Autostart registration is not supported on this platform.', autostartChanged: 'Autostart status updated', goalObjectiveRequired: 'Objective is required', goalObjectiveTooLarge: 'Objective exceeds 16384 bytes', goalBudgetInteger: 'Budget minutes must be an integer', goalBudgetPositive: 'Budget minutes must be positive', goalBudgetTooLarge: 'Budget minutes exceeds 43200', goalTurnsInteger: 'Max turns must be an integer', goalTurnsNonNegative: 'Max turns must be non-negative', goalTurnsTooLarge: 'Max turns cannot exceed 10000', goalLLMInteger: 'LLM # must be an integer', goalLLMNonNegative: 'LLM # cannot be negative', goalPythonHelp: 'Leave Python empty to auto-select GA root .venv, venv, uv cached interpreter, then PATH python/python3; a custom path is used for launch and recorded in Goal state.', goalHiveHelp: 'Hive mode starts the Goal Master, a temporary BBS, and one worker using the official GA flow; GA Admin only manages it from above.', goalStarted: 'Goal started', goalStopped: 'Goal stopped', goalDeleted: 'Goal deleted', goalDeleteConfirm: 'Delete Goal {id}? This removes state and log files; stop running goals first.', goalDeleteRunning: 'Running goals cannot be deleted; stop it first.', goalStopConfirm: 'Stop Goal {id}? GA Admin will use the available control level.', goalStopExactConfirm: 'Stop Admin Goal {id}? Only the exact PID {pid} recorded for this Goal will be terminated.', goalStopSoftConfirm: 'Soft-stop external Goal {id}? This will not kill the process; it only writes stopped_by_admin to the state file so the Goal loop can exit itself.', goalOutputTruncated: 'Showing tail only; earlier output was truncated', goalOutputCapped: 'Requested bytes exceeded backend limit; reading at the cap', goalOutputDefault: 'No byte limit specified; using default', goalOutputBytesInteger: 'Output bytes must be an integer', goalOutputBytesNonNegative: 'Output bytes cannot be negative', goalOutputBytesTooLarge: 'Output bytes cannot exceed 1048576', goalOutputCopied: 'Output copied', goalOutputCleared: 'Output cleared', goalOutputLogMissing: 'Log file has not been created yet; no output is available' },
@@ -178,7 +183,7 @@ const OverviewPage = ({
   t, lang, services, guardianSvcs, serviceActionStates, schedule, observability, observabilityError, refreshObservability,
   versionInfo, versionCheck, versionStatus, versionBusy, checkVersion, updateVersion,
   refreshVersionStatus, setMsg, gitStatus, gitResult, gitBusy, busy, checkGASource,
-  updateGASource, autostart, toggleAutostart, root, overview, gitSyncView,
+  autostart, toggleAutostart, root, overview, gitSyncView,
   repairGARuntime, runtimeRepairing, runtimeRepairResult, onServiceStart, onServiceStop, onServiceLogs, onServiceAutostart,
   onNavigate, onNavigateTaskSubTab,
 }) => {
@@ -187,6 +192,7 @@ const OverviewPage = ({
     ? text.updateQueued
     : (versionStatus?.message || versionStatus?.stage))
   const sourceStatus = gitSyncView?.label || text.notChecked
+  const sourceAvailable = gitStatus?.available !== false
 
   return <section className="overview-page">
     <div className="stats overview-stats">
@@ -241,7 +247,7 @@ const OverviewPage = ({
         </div>
       </Panel>
 
-      <Panel title={text.sourceTitle} className="overview-panel overview-panel-source">
+      {sourceAvailable && <Panel title={text.sourceTitle} className="overview-panel overview-panel-source">
         <div className="version-card">
           <div className="version-head">
             <GitPullRequest size={18}/>
@@ -260,10 +266,12 @@ const OverviewPage = ({
           {gitResult?.sync_output && <pre className="mini-log">{gitResult.sync_output}</pre>}
           <div className="actions">
             <button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : text.checkLatest}</button>
-            <button onClick={updateGASource} disabled={gitBusy || busy || !gitSyncView?.canSync}>{gitBusy ? t.busy : text.updateSource}</button>
+            <button onClick={() => { window.location.href = buildRoute('chat') }} disabled={gitBusy || busy}>
+              {lang === 'en' ? 'Run /update in chat' : '去对话执行 /update'}
+            </button>
           </div>
         </div>
-      </Panel>
+      </Panel>}
 
       <Panel title={t.lists.autostart} className="overview-panel overview-panel-autostart">
         <div className="autostart-card">
@@ -284,34 +292,6 @@ const OverviewPage = ({
 export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const defaultLang = 'zh'
   const [lang, setLang] = useState(() => localStorage.getItem('ga-admin-lang-explicit') === '1' ? (localStorage.getItem('ga-admin-lang') || defaultLang) : defaultLang)
-  const [theme, setTheme] = useState(getInitialTheme)
-  const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
-  const initialRoute = useMemo(() => parseRoute(), [])
-  const [tab, setTab] = useState(initialRoute.tab)
-  const [taskSection, setTaskSection] = useState(initialRoute.taskSubTab)
-  const [cfg, setCfg] = useState(null)
-  const [savedCfg, setSavedCfg] = useState(null)
-  const [root, setRoot] = useState('')
-  const [health, setHealth] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [booting, setBooting] = useState(true)
-  const [notice, setNotice] = useState(null)
-  const [observability, setObservability] = useState(null)
-  const [observabilityError, setObservabilityError] = useState('')
-  // The server binds an ephemeral port by default, so the real address comes
-  // from the health endpoint instead of the configured host/port pair.
-  const [listenAddress, setListenAddress] = useState('')
-  const appScope = useRef(null)
-
-  const t = I18N[lang] || I18N.en
-  const text = SETTINGS_TEXT[lang] || SETTINGS_TEXT.en
-
-  const setMsg = (message, kind) => {
-    const value = String(message || '')
-    const inferredKind = /(?:失败|错误|无效|error|failed|invalid)/i.test(value) ? 'error' : (/^(?:正在|加载|保存中|启动中)/.test(value) ? 'pending' : 'success')
-    setNotice(value ? { message: value, kind: kind || inferredKind } : null)
-  }
-
   const chooseLang = (nextLang) => {
     localStorage.setItem('ga-admin-lang-explicit', '1')
     localStorage.setItem('ga-admin-lang', nextLang)
@@ -319,7 +299,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLang(nextLang)
     window.dispatchEvent(new CustomEvent('ga-admin-language-change', { detail: nextLang }))
   }
-
+  const [theme, setTheme] = useState(getInitialTheme)
+  const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
     localStorage.setItem('ga-admin-theme', activeTheme.id)
@@ -343,8 +324,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const initialRoute = useMemo(() => parseRoute(), [])
   const [tab, setTab] = useState(initialRoute.tab)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [cfg, setCfg] = useState(null), [persistedCfg, setPersistedCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([]), [logs, setLogs] = useState([])
-  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [notice, setNotice] = useState(null), [selected, setSelected] = useState('')
+  const [cfg, setCfg] = useState(null), [persistedCfg, setPersistedCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([])
+  const [root, setRoot] = useState(''), [installRoot, setInstallRoot] = useState(''), [busy, setBusy] = useState(false), [booting, setBooting] = useState(true), [notice, setNotice] = useState(null)
   const msg = notice?.message || ''
   const setMsg = (message, kind) => {
     const value = String(message || '')
@@ -353,9 +334,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       : (/^(?:正在|加载|保存中|启动中)/.test(value) ? 'pending' : 'success')
     setNotice(value ? { message: value, kind: kind || inferredKind } : null)
   }
-  const [logStreamState, setLogStreamState] = useState('idle'), [logStreamNonce, setLogStreamNonce] = useState(0), [followLogs, setFollowLogs] = useState(true)
   const [serviceActionStates, setServiceActionStates] = useState({})
-  const logViewRef = useRef(null)
+  const logStream = useLogStream({ active: tab === 'logs' })
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
@@ -394,14 +374,21 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const versionUpdateNeedsReload = useRef(false)
   const versionObservedRunning = useRef(false)
   const allowUnloadRef = useRef(false)
+  const activeTabRef = useRef(tab)
+  activeTabRef.current = tab
   const dismissMessage = useCallback(() => setNotice(null), [])
 
   useGSAP(() => {
-    if (tab === 'chat' || prefersReducedMotion()) return
+    const q = gsap.utils.selector(appScope)
+    const animatedTargets = '.main > header, .stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page, .autonomous-page'
+    if (tab === 'chat' || tab === 'overview' || prefersReducedMotion()) {
+      gsap.set(q(animatedTargets), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
+      return
+    }
     const ctx = gsap.context(() => {
-      const q = gsap.utils.selector(appScope)
       let tl
       const play = () => {
+        if (activeTabRef.current !== tab) return
         tl = gsap.timeline({ defaults: { ease: 'power2.out', duration: 0.28 } })
         tl.from(q('.main > header'), { y: 8, autoAlpha: 0, clearProps: 'transform,opacity,visibility' })
           .from(q('.stats .stat, .panel, .workspace, .logs-layout, .goals-page, .settings-page, .autonomous-page'), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
@@ -451,17 +438,22 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (!quiet) setScheduleLoading(false)
     }
   }
-  const services = useServices({ t, setMsg, setBusy })
-  const logStream = useLogStream({ active: tab === 'logs' })
-  const version = useVersionUpdates({ t, lang, setMsg, setBusy })
-  const files = useFiles({ t, setMsg, setBusy, onOpen: () => setTab('files') })
-  const schedule = useSchedule({ t, lang, setMsg, setBusy, onOpenSection: (section) => { setTab('tasks'); setTaskSection(section) } })
-  const goals = useGoals({ t, lang, setMsg, setBusy, active: tab === 'goals' })
-  const models = useModelsConfig({ t, lang, setMsg, setBusy, active: tab === 'models' })
-  const titleModel = useTitleModel({ t, lang, setMsg, active: tab === 'chat', fallbackProfiles: models.persistedProfiles })
 
-  const inventory = health?.inventory || {}
-  const scheduleSummary = schedule.data || inventory.schedule || {}
+  const loadLLMs = async () => { try { const d = await api('/api/chat/state'); setLLMs(d.llms || []) } catch(e){ console.error('加载模型列表失败:', e) } }
+  const refreshTMWebDriverStatus = async () => {
+    const d = await api('/api/tmwebdriver/status')
+    setTmwdStatus(d)
+    return d
+  }
+  const repairTMWebDriver = async () => {
+    if (!confirmDanger('tmwebdriver-repair', lang === 'zh' ? '启动或修复 TMWebDriver master 进程？' : 'Start or repair the TMWebDriver master process?')) return
+    setBusy(true); setMsg('正在启动 TMWebDriver master…')
+    try {
+      const d = await api('/api/tmwebdriver/repair', { dangerous:true, method:'POST', body: '{}' })
+      setTmwdStatus(d.status)
+      setMsg(d.message || (d.started ? `已启动 TMWebDriver master PID ${d.pid}` : 'TMWebDriver master 已在运行'))
+    } catch(e){ setMsg(`TMWebDriver 修复失败：${e.message}`) } finally{ setBusy(false) }
+  }
 
   const readObservability = async (healthOverride = null) => {
     const request = (endpoint) => {
@@ -471,11 +463,12 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     const [apiHealth, inventory, risks] = await Promise.all([
       healthOverride || request('/api/ga/health'),
       request('/api/ga/inventory'),
-      request('/api/risk/catalog'),
+      request('/api/risk/catalog')
     ])
-    setObservability(buildObservabilitySnapshot({ health: apiHealth, inventory: inv, risks }))
-    setListenAddress(apiHealth?.listen?.address || '')
+    const snapshot = buildObservabilitySnapshot({ health: apiHealth, inventory, risks })
+    setObservability(snapshot)
     setObservabilityError('')
+    return snapshot
   }
 
   const repairGARuntime = async () => {
@@ -499,23 +492,26 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setBooting(true)
     setNotice({ kind: 'pending', message: t.overview.refreshing })
     try {
-      const [c, h] = await Promise.all([
+      const [c, h, auto, ver, vstat] = await Promise.all([
         api('/api/config'),
         api('/api/ga/health'),
-        version.loadSnapshot(),
+        api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })),
+        api('/api/version/info').catch(e => ({ error:e.message })),
+        api('/api/version/status').catch(() => null)
       ])
       const visibleVersionStatus = (vstat?.id || vstat?.stage) && !shouldHideCompletedVersionProgress(vstat, ver?.version) ? vstat : null
       setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setVersionStatus(visibleVersionStatus)
       await readObservability(h).catch(e => { setObservability(null); setObservabilityError(e.message) })
       if (!h?.ok && !h?.root) {
-        setServices([]); setLogs([]); setFileList([])
+        setServices([]); setFileList([])
         return
       }
       const svc = await api('/api/services')
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
       setServices(serviceList)
-      if (selected && !serviceList.some(service => service.name === selected)) setSelected('')
-      if (tab === 'goals') {
+      const source = await api('/api/ga/git-status').catch(error => ({ ok: false, available: false, reason: error.message }))
+      setGitStatus(source)
+       if (tab === 'goals') {
         const goalData = await api('/api/goals/list').catch(() => ({ goals: [] }))
         const goalItems = goalData.goals || []
         setGoals(goalItems)
@@ -531,8 +527,6 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     } finally { setBooting(false) }
   }
   useEffect(() => { load() }, [])
-
-  // Route-scoped data: each page pulls what it needs the first time it opens.
   useEffect(() => {
     if (!health?.root) return undefined
     notificationMonitorRef.current = { snapshot: null, busy: false }
@@ -620,97 +614,26 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setPendingServiceName('')
   }
 
-  useGSAP(() => {
-    if (prefersReducedMotion()) return
-    const ctx = gsap.context(() => {
-      const q = gsap.utils.selector(appScope)
-      let tl
-      const targets = '.stats .stat, .panel, .workspace, .log-workbench, .goals-page, .set-card'
-      const play = () => {
-        tl = gsap.timeline({ defaults: { ease: 'power2.out', duration: 0.28 } })
-        tl.from(q('.main > header'), { y: 8, autoAlpha: 0, clearProps: 'transform,opacity,visibility' })
-          .from(q(targets), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
-      }
-      const raf = window.requestAnimationFrame(play)
-      const guard = window.setTimeout(() => {
-        gsap.set(q(`.main > header, ${targets}`), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
-      }, 900)
-      return () => { window.cancelAnimationFrame(raf); window.clearTimeout(guard); tl?.kill() }
-    }, appScope)
-    return () => ctx.revert()
-  }, { scope: appScope, dependencies: [tab, lang] })
-
-  const saveConfig = async () => {
-    if (!confirmDanger('config-save', lang === 'zh' ? '保存 GA Admin 配置？会写入配置文件并可能切换 GA 根目录。' : 'Save the GA Admin configuration? This writes the configuration file and may switch the GA root.')) return
-    setBusy(true)
+  const serviceAction = async (name, action, params = null) => {
+    if (!confirmDanger(`service-${action}`, t.service.confirmAction(action, name))) return
+    const pendingMessage = t.service.pending(action, name)
+    setServiceActionStates(current => ({ ...current, [name]: { status: 'pending', action, message: pendingMessage } }))
     try {
-      const c = await api('/api/config', { dangerous:true, method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) })
-      setCfg(c); setSavedCfg(c)
-      setMsg(t.hints.rootSaved)
+      const body = { name }
+      if (params) body.params = params
+      await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) })
       await load()
       setServiceActionStates(current => ({ ...current, [name]: { status: 'success', action, message: t.service.success(action, name) } }))
-      if (selected === name) setLogStreamNonce(value => value + 1)
+      if (logStream.selected === name) logStream.retry()
     } catch (e) {
       setServiceActionStates(current => ({ ...current, [name]: { status: 'error', action, message: t.service.failed(action, name, e.message) } }))
     }
   }
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', t.service.autostartConfirm(name, enabled))) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const setServiceModel = async (name, llm_no) => { setBusy(true); try { const body = { name, llm_no: llm_no === '' || llm_no === null || llm_no === undefined ? null : Number(llm_no) }; const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify(body) }); setServices(d.services || []); setMsg(t.service.modelUpdated) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const loadServiceLogs = (name = selected) => {
-    if (!name) return
-    setSelected(name)
-    setFollowLogs(true)
-    setLogStreamNonce(value => value + 1)
-  }
+  const loadServiceLogs = (name = logStream.selected) => { if (name) logStream.select(name) }
   const viewServiceLogs = (name) => { setTab('logs'); loadServiceLogs(name) }
   const openHub = () => window.open('http://127.0.0.1:19737', '_blank', 'noopener,noreferrer')
-
-  useEffect(() => {
-    if (tab !== 'logs' || !selected) {
-      setLogStreamState('idle')
-      return undefined
-    }
-    const maxLines = clampTailLines(tailLines, 20, 2000)
-    const source = new EventSource(`/api/logs/${encodeURIComponent(selected)}/stream?lines=${maxLines}`)
-    const readPayload = (event) => {
-      try { return JSON.parse(event.data) } catch { return null }
-    }
-    setLogs([])
-    setLogStreamState('connecting')
-    source.onopen = () => setLogStreamState('live')
-    source.addEventListener('snapshot', (event) => {
-      const payload = readPayload(event)
-      setLogs(Array.isArray(payload?.lines) ? payload.lines.map(String).slice(-maxLines) : [])
-    })
-    source.addEventListener('reset', (event) => {
-      const payload = readPayload(event)
-      setLogs(Array.isArray(payload?.lines) ? payload.lines.map(String).slice(-maxLines) : [])
-    })
-    source.addEventListener('log', (event) => {
-      const payload = readPayload(event)
-      if (payload?.line === undefined) return
-      setLogs(current => [...current, String(payload.line)].slice(-maxLines))
-    })
-    source.onerror = () => setLogStreamState('reconnecting')
-    return () => {
-      source.close()
-      setLogStreamState('idle')
-    }
-  }, [tab, selected, tailLines, logStreamNonce])
-
-  useEffect(() => {
-    if (!followLogs || tab !== 'logs') return undefined
-    const frame = window.requestAnimationFrame(() => {
-      const view = logViewRef.current
-      if (view) view.scrollTop = view.scrollHeight
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [logs, followLogs, tab])
-
-  const handleLogScroll = (event) => {
-    const view = event.currentTarget
-    setFollowLogs(view.scrollHeight - view.scrollTop - view.clientHeight < 48)
-  }
   const pickGoalId = (items = [], preferred = '') => {
     if (preferred && items.some(g => g.id === preferred)) return preferred
     return items.find(g => g.running)?.id || items[0]?.id || ''
@@ -1240,6 +1163,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
   const navigateTo = nextTab => {
     setMobileNavOpen(false)
+    setAdminSidebarOpen(false)
     dismissMessage()
     if (nextTab === 'chat') {
       if (hasUnsavedChanges && !window.confirm('当前有未保存的文件、任务或配置更改。进入独立 Chat 页面将放弃这些更改，是否继续？')) return false
@@ -1336,6 +1260,11 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     }} />
   }
 
+  const serviceStatus = <div className="admin-service-status" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}>
+    <span className="admin-service-endpoint"><Server size={13} aria-hidden="true"/><span>{cfg?.host && cfg?.port ? `${cfg.host}:${cfg.port}` : (lang === 'zh' ? '本机' : 'local')}</span></span>
+    <span role="status" aria-live="polite" className={`admin-service-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-service-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span>
+  </div>
+
   const overviewPage = <OverviewPage
     t={t}
     lang={lang}
@@ -1382,26 +1311,28 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const moduleTodo = module => <ModuleTodoPanel module={module} lang={lang} onNavigate={navigateTo} onOpenSource={openTodoSource}/>
 
   return <>
-    {services.pickerOpen && <div className="modal-overlay" onClick={services.closePicker}>
+    {showLLMPicker && <div className="modal-overlay" onClick={() => setShowLLMPicker(false)}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-head"><h3>选择反思模型</h3><button className="modal-close" onClick={() => setShowLLMPicker(false)}>✕</button></div>
         <p className="muted">即将启动反思服务：{pendingServiceName}</p>
         <ModelCascadePicker models={llms} value={reflectLLMNo} placement="bottom" onChange={value => setReflectLLMNo(String(value))}/>
         <div className="modal-actions">
-          <button onClick={services.confirmReflectStart}><Play size={14}/>{t.start}</button>
-          <button onClick={services.closePicker}>{t.cancel}</button>
+          <button onClick={confirmReflectStart}><Play size={14}/>{t.start}</button>
+          <button onClick={() => setShowLLMPicker(false)}>{t.cancel}</button>
         </div>
       </div>
     </div>}
-    <div ref={appScope} className={`app app-tab-${tab}`} aria-busy={booting || busy || versionBusy || undefined}>
-    <aside className="sidebar">
-      <div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div>
-      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
+    <div ref={appScope} className={`app app-tab-${tab} ${adminSidebarOpen ? 'admin-sidebar-open' : ''}`} aria-busy={booting || busy || versionBusy || undefined}>
+    <button type="button" className="admin-sidebar-scrim" aria-label={lang === 'zh' ? '关闭管理导航' : 'Close admin navigation'} onClick={() => setAdminSidebarOpen(false)} />
+    <aside id="admin-sidebar" className="sidebar">
+      <div className="admin-sidebar-heading"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><button type="button" className="admin-sidebar-close" aria-label={lang === 'zh' ? '收起管理导航' : 'Collapse admin navigation'} onClick={() => setAdminSidebarOpen(false)}><PanelLeftClose size={20} aria-hidden="true"/></button></div>
+      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} aria-label={lang === 'zh' ? '中文' : 'Chinese'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} aria-label={lang === 'en' ? 'English' : 'English'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{navLabel(tab)}</span><ChevronDown size={17}/></button>
       <nav aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
+      {serviceStatus}
     </aside>
-    <main className="main">{tab === 'chat' ? <header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header> : <header className="admin-page-header">
+    <main className="main"><div className="admin-mobile-bar"><button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={() => setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button><span>{t.appName}</span>{serviceStatus}</div>{tab === 'chat' ? <header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header> : <header className="admin-page-header">
       <div className="admin-page-heading"><span className="admin-page-icon" aria-hidden="true">{icon(tab)}</span><div className="admin-page-copy"><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div></div>
       <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}><span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span><span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div>
     </header>}
@@ -1527,54 +1458,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
       {tab==='settings' && <><SettingsPage t={t} lang={lang} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft} uiScale={uiScale} onUiScaleChange={onUiScaleChange}/>{moduleTodo('settings')}</>}
       {tab==='models' && <><Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>{moduleTodo('models')}</>}
-      {tab==='logs' && <><section className="logs-page">
-        <div className="logs-layout">
-          <Panel title={t.lists.processes} className="logs-side">
-            <div className="logs-toolbar">
-              <label>{t.hints.tailLines}<input type="number" min="20" max="2000" value={tailLines} onChange={e=>setTailLines(Number(e.target.value) || 200)}/></label>
-              <button disabled={!selected} onClick={()=>loadServiceLogs(selected)}><RefreshCw size={14}/>{t.refresh}</button>
-            </div>
-            <div className="logs-service-list">
-              {services.map(s => <button className={selected===s.name?'log-service active':'log-service'} key={s.name} onClick={()=>loadServiceLogs(s.name)}>
-                <span className={s.running?'dot running':'dot'}></span>
-                <span className="log-service-copy"><span className="log-service-name">{s.name}</span><small>{s.kind}{s.pid ? ` · PID ${s.pid}` : ''}</small></span>
-              </button>)}
-            </div>
-          </Panel>
-          <Panel title={`Logs · ${selected || '-'}`} className="log-panel">
-            <div className="log-head">
-              <div className="log-meta">
-                <div className={`stream-state ${logStreamState}`}><span></span>{logStreamState === 'live' ? (lang === 'zh' ? '实时传输' : 'Live') : logStreamState === 'reconnecting' ? (lang === 'zh' ? '正在重连' : 'Reconnecting') : logStreamState === 'connecting' ? (lang === 'zh' ? '正在连接' : 'Connecting') : (lang === 'zh' ? '未连接' : 'Idle')}</div>
-                <span className="log-count">{logs.length} lines · UTF-8</span>
-                {selected && <p className="muted log-command" title={services.find(s=>s.name===selected)?.command?.join(' ')}>{services.find(s=>s.name===selected)?.command?.join(' ')}</p>}
-              </div>
-              <div className="actions log-actions">
-                <button className={followLogs ? 'active' : ''} disabled={!selected} aria-pressed={followLogs} onClick={()=>setFollowLogs(value=>!value)}><Activity size={14}/>{lang === 'zh' ? '跟随' : 'Follow'}</button>
-                <button disabled={!logs.length} onClick={()=>setLogs([])}><Trash2 size={14}/>{t.clear}</button>
-                <button disabled={!selected || services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'start')}><Play size={14}/>{t.start}</button>
-                <button disabled={!selected || !services.find(s=>s.name===selected)?.running} onClick={()=>serviceAction(selected,'stop')}><Square size={14}/>{t.stop}</button>
-              </div>
-            </div>
-            {!selected ? <div className="log-selection-empty">{lang === 'zh' ? '选择一个服务以查看日志' : 'Select a service to view logs'}</div> : <>
-              <div className="log-stream-controls">
-                <span className={`stream-state ${logStreamState}`} role="status">
-                  {logStreamState === 'connecting' ? (lang === 'zh' ? '正在连接日志流' : 'Connecting to log stream') :
-                    logStreamState === 'live' ? (lang === 'zh' ? '日志流已连接' : 'Log stream live') :
-                      logStreamState === 'reconnecting' ? (lang === 'zh' ? '日志流连接中断' : 'Log stream interrupted') :
-                        (lang === 'zh' ? '日志流空闲' : 'Log stream idle')}
-                </span>
-                <span className={`log-follow-status ${followLogs ? 'following' : 'paused'}`}>{followLogs ? (lang === 'zh' ? '自动跟随' : 'Following') : (lang === 'zh' ? '已暂停跟随' : 'Follow paused')}</span>
-              </div>
-              {logStreamState === 'reconnecting' && <div className="log-stream-error" role="alert">
-                <span>{lang === 'zh' ? '日志流连接已中断，可重试。' : 'The log stream was interrupted. You can retry.'}</span>
-                <button type="button" onClick={() => setLogStreamNonce(value => value + 1)}>{t.retry || (lang === 'zh' ? '重试' : 'Retry')}</button>
-              </div>}
-              {!logs.length && logStreamState === 'live' && <p className="log-output-empty">{lang === 'zh' ? '当前没有日志输出' : 'No log output yet'}</p>}
-              <pre ref={logViewRef} onScroll={handleLogScroll} className="log-view">{logs.join('\n')}</pre>
-            </>}
-          </Panel>
-        </div>
-      </section>{moduleTodo('logs')}</>}        </Suspense>
+       {tab==='logs' && <><LogsPage t={t} services={services} stream={logStream} onStart={name=>serviceAction(name, 'start')} onStop={name=>serviceAction(name, 'stop')}/>{moduleTodo('logs')}</>}        </Suspense>
   </ErrorBoundary>
     </main>
   </div>
@@ -1597,7 +1481,9 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   const [serviceFilter, setServiceFilter] = useState('all')
   const [msg, setMsg] = useState(null)
   const [activeView, setActiveView] = useState('config')
+  const [selectedId, setSelectedId] = useState('')
   const tabRefs = useRef({})
+  const baseline = useRef({})
   const text = t.channels
   const selectView = view => {
     setActiveView(view)
@@ -1618,7 +1504,8 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
     setLoading(true)
     try {
       const d = await api('/api/channels')
-      setConfig(d)
+       baseline.current = Object.fromEntries((d?.profiles || []).map(profile => [profile.id, (profile.fields || []).map(field => String(field.value ?? '')).join('\u001f')]))
+       setConfig(d)
       return d
     } catch (e) {
       setMsg({ kind: 'error', text: text.loadFailed(e.message) })
@@ -1641,7 +1528,8 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
     setSaving(true); setMsg({ kind: 'pending', text: text.saving })
     try {
       const d = await api('/api/channels', { dangerous:true, method:'PUT', body: JSON.stringify({ profiles: config?.profiles || [] }) })
-      setConfig(d)
+       baseline.current = Object.fromEntries((d?.profiles || []).map(profile => [profile.id, (profile.fields || []).map(field => String(field.value ?? '')).join('\u001f')]))
+       setConfig(d)
       setMsg({ kind: 'success', text: text.saved(d.path) })
     } catch (e) { setMsg({ kind: 'error', text: text.saveFailed(e.message) }) } finally { setSaving(false) }
   }
@@ -1656,6 +1544,11 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
   }
   const profiles = config?.profiles || []
   const configuredCount = profiles.filter(profile => (profile.fields || []).some(field => field.has_value || String(field.value || '').trim())).length
+  const dirtyIds = new Set(Object.entries(Object.fromEntries(profiles.map(profile => [profile.id, (profile.fields || []).map(field => String(field.value ?? '')).join('\u001f')]))).filter(([id, value]) => baseline.current[id] !== value).map(([id]) => id))
+  const selected = profiles.find(profile => profile.id === selectedId) || profiles[0] || null
+  useEffect(() => {
+    if (!selected && selectedId) setSelectedId('')
+  }, [selected, selectedId])
   const channelTone = id => ({ feishu:'#3370ff', wecom:'#07c160', dingtalk:'#1677ff', discord:'#5865f2', qq:'#12b7f5', telegram:'#229ed9', wechat:'#2aae67' }[id] || '#6b7280')
   const channelMark = profile => ({ feishu:'飞', wecom:'企', dingtalk:'钉', discord:'D', qq:'Q', telegram:'T', wechat:'微' }[profile.id] || profileName(profile).slice(0, 1).toUpperCase())
   const allFrontendSvcs = frontendSvcs || []
@@ -1677,7 +1570,7 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
       <div><span>{configuredCount}</span><small>{text.savedField}</small></div>
       <div className={runningCount ? 'is-live' : ''}><span>{runningCount}<i/></span><small>{text.running} / {frontendSvcs.length}</small></div>
     </div>
-    <div className="channel-view-tabs" role="tablist" aria-label={text.channelViews}>
+    <div className="channel-view-tabs channel-tabs" role="tablist" aria-label={text.channelViews}>
       <button
         ref={node => { tabRefs.current.config = node }}
         id="channel-tab-config"
@@ -1727,14 +1620,23 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
             <button className="primary channel-save-button" onClick={save} disabled={saving || loading || !config}><Save size={15}/>{saving ? t.busy : t.save}</button>
           </div>
         </div>
-        <div className="channel-config-path">
+        <div className="channel-config-path channel-commit-path">
           <span className="channel-path-light"/>
           <span>{config?.path ? text.configFile : (loading ? text.loadingConfig : text.noConfigPath)}</span>
           {config?.path && <code title={config.path}>{config.path}</code>}
         </div>
         {msg && <p className={`${msg.kind === 'error' ? 'err' : 'ok'} channel-message`}>{msg.text}</p>}
+        {dirtyIds.size > 0 && <p className="channel-message channel-dirty-message" role="status">{text.pendingChanges?.(dirtyIds.size) || `${dirtyIds.size} channel${dirtyIds.size === 1 ? '' : 's'} with unsaved changes`}</p>}
         <div className="channel-config-list">
-          {profiles.map((profile, profileIndex) => {
+          <div className="channel-rail" role="group" aria-label={text.channelList || text.keyConfig}>
+            {profiles.map(profile => <button type="button" key={profile.id} aria-current={selected?.id === profile.id ? 'true' : undefined} onClick={() => setSelectedId(profile.id)}>
+              <span className="channel-mark" aria-hidden="true">{channelMark(profile)}</span>
+              <span>{profileName(profile)}</span>
+              {dirtyIds.has(profile.id) && <span title={text.unsaved}>{text.unsaved}</span>}
+            </button>)}
+          </div>
+          {(selected ? [selected] : []).map(profile => {
+            const profileIndex = profiles.findIndex(item => item.id === profile.id)
             const completedFields = (profile.fields || []).filter(field => field.has_value || String(field.value || '').trim()).length
             return <article className="channel-config-card" key={profile.id} style={{ '--channel-tone': channelTone(profile.id) }}>
               <div className="channel-config-head">
@@ -1751,10 +1653,10 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
                 {(profile.fields || []).map(field => <label key={field.name}>
                   <span>{fieldLabel(field)}<small>{field.name}{field.secret && field.has_value ? ` · ${text.savedField}` : ''}</small></span>
                   {field.secret
-                    ? <SecretInput value={field.value || ''} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
+                    ? <SecretInput value={field.value || ''} label={fieldLabel(field)} onChange={v=>patchField(profile.id, field.name, v)} t={t}/>
                     : field.type === 'bool'
-                      ? <select value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
-                      : <input value={field.value || ''} placeholder={fieldPlaceholder(field)} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
+                      ? <select aria-label={fieldLabel(field)} value={String(field.value || 'false').toLowerCase()} onChange={e=>patchField(profile.id, field.name, e.target.value)}><option value="false">False</option><option value="true">True</option></select>
+                      : <input aria-label={fieldLabel(field)} value={field.value || ''} placeholder={fieldPlaceholder(field)} onChange={e=>patchField(profile.id, field.name, e.target.value)}/>}
                 </label>)}
               </div>
             </article>

@@ -21,11 +21,10 @@ import (
 
 const (
 	defaultAuthUser      = "admin"
-	defaultAuthPassword  = "admin"
 	authStateFilename    = "auth.local.json"
 	authHashIterations   = 210000
 	authSaltBytes        = 16
-	minimumAdminPassword = 12
+	minimumAdminPassword = 8
 	maximumAuthBodyBytes = 64 << 10
 	authStatusPath       = "/api/auth/status"
 	authPasswordPath     = "/api/auth/password"
@@ -45,29 +44,25 @@ type authDiskState struct {
 type authManager struct {
 	mu         sync.RWMutex
 	path       string
-	enabled    bool
+	cfg        *config.Store
 	username   string
 	password   string
 	salt       []byte
 	hash       []byte
 	iterations int
-	mustChange bool
+	configured bool
 	external   bool
 }
 
-func newAuthManager(appRoot, envUser, envPassword, envEnabled string) (*authManager, error) {
-	manager := &authManager{path: filepath.Join(appRoot, authStateFilename)}
+func newAuthManager(appRoot, envUser, envPassword string, cfg *config.Store) (*authManager, error) {
+	manager := &authManager{path: filepath.Join(appRoot, authStateFilename), cfg: cfg, username: defaultAuthUser}
 	if (envUser == "") != (envPassword == "") {
 		return nil, errors.New("GA_ADMIN_AUTH_USER and GA_ADMIN_AUTH_PASSWORD must be set together")
-	}
-	manager.enabled = parseAuthEnabled(envEnabled) || envUser != ""
-	if !manager.enabled {
-		manager.username = defaultAuthUser
-		return manager, nil
 	}
 	if envUser != "" {
 		manager.username = envUser
 		manager.password = envPassword
+		manager.configured = true
 		manager.external = true
 		return manager, nil
 	}
@@ -79,88 +74,46 @@ func newAuthManager(appRoot, envUser, envPassword, envEnabled string) (*authMana
 			// install and must not block anything.
 			return manager, nil
 		}
-		salt, saltErr := base64.RawStdEncoding.DecodeString(state.Salt)
-		hash, hashErr := base64.RawStdEncoding.DecodeString(state.Hash)
-		if saltErr != nil || hashErr != nil || state.Username == "" || len(salt) < authSaltBytes || len(hash) != sha256.Size || state.Iterations < 100000 {
-			return nil, fmt.Errorf("invalid %s", authStateFilename)
-		}
-		manager.username = state.Username
-		manager.salt = salt
-		manager.hash = hash
-		manager.iterations = state.Iterations
-		return manager, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read %s: %w", authStateFilename, err)
 	}
-	manager.username = defaultAuthUser
-	manager.password = defaultAuthPassword
-	manager.mustChange = true
-	return manager, nil
-}
-
-func parseAuthEnabled(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "y", "on":
-		return true
-	default:
-		return false
+	var state authDiskState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", authStateFilename, err)
 	}
-}
-
-// Authentication is intentionally disabled for the production server. Keep
-// the two auth API endpoints available because the frontend checks auth status
-// before rendering and older clients may still call the password endpoint.
-func authDisabledMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/auth/status":
-			if r.Method != http.MethodGet {
-				w.Header().Set("Allow", http.MethodGet)
-				writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-				return
-			}
-			writeAuthJSON(w, http.StatusOK, map[string]any{
-				"authEnabled":          false,
-				"username":             defaultAuthUser,
-				"mustChangePassword":   false,
-				"managedByEnvironment": false,
-			})
-			return
-		case "/api/auth/change-password":
-			if r.Method != http.MethodPost {
-				w.Header().Set("Allow", http.MethodPost)
-				writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-				return
-			}
-			writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "auth_disabled"})
-			return
-		default:
-			next.ServeHTTP(w, r)
-		}
-	})
+	salt, saltErr := base64.RawStdEncoding.DecodeString(state.Salt)
+	hash, hashErr := base64.RawStdEncoding.DecodeString(state.Hash)
+	if saltErr != nil || hashErr != nil || state.Username == "" || len(salt) < authSaltBytes || len(hash) != sha256.Size || state.Iterations < 100000 {
+		return nil, fmt.Errorf("invalid %s", authStateFilename)
+	}
+	manager.username = state.Username
+	manager.salt = salt
+	manager.hash = hash
+	manager.iterations = state.Iterations
+	manager.configured = true
+	return manager, nil
 }
 
 func (a *authManager) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		loopback := isIPv4LoopbackRemote(r.RemoteAddr)
-		if a.enabled && !loopback && !a.authenticateRequest(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="GA Admin", charset="UTF-8"`)
-			w.Header().Set("Cache-Control", "no-store")
-			http.Error(w, "authentication required", http.StatusUnauthorized)
+		local := isLoopbackRemote(r.RemoteAddr)
+
+		if r.URL.Path == authPasswordPath {
+			// Setting the credential is a local-machine operation. Were an
+			// anonymous remote client allowed to do it, whoever reached the
+			// port first could lock the owner out of their own admin server.
+			if !local && !a.authenticateRequest(r) {
+				a.challenge(w)
+				return
+			}
+			a.handlePassword(w, r)
 			return
 		}
 
-		if r.URL.Path == "/api/auth/status" {
+		if !local && !a.authorize(w, r) {
+			return
+		}
+		if r.URL.Path == authStatusPath {
 			a.handleStatus(w, r)
-			return
-		}
-		if r.URL.Path == "/api/auth/change-password" {
-			a.handleChangePassword(w, r)
-			return
-		}
-		if a.enabled && !loopback && a.passwordChangeRequired() && strings.HasPrefix(r.URL.Path, "/api/") {
-			writeAuthJSON(w, http.StatusPreconditionRequired, map[string]any{"error": "password_change_required", "mustChangePassword": true})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -200,25 +153,23 @@ func (a *authManager) anonymousRemoteAllowed() bool {
 }
 
 func (a *authManager) authenticateRequest(r *http.Request) bool {
-	if !a.enabled {
-		return true
-	}
 	user, password, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if !secureEqual(user, a.username) {
+	if !a.configured || !secureEqual(user, a.username) {
 		return false
 	}
 	return a.passwordMatchesLocked(password)
 }
 
-func (a *authManager) passwordChangeRequired() bool {
+// PasswordConfigured reports whether a credential exists for remote clients.
+func (a *authManager) PasswordConfigured() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.mustChange
+	return a.configured
 }
 
 func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -229,8 +180,11 @@ func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	mustChange := a.mustChange && !isIPv4LoopbackRemote(r.RemoteAddr)
-	writeAuthJSON(w, http.StatusOK, map[string]any{"authEnabled": a.enabled, "username": a.username, "mustChangePassword": mustChange, "managedByEnvironment": a.external})
+	writeAuthJSON(w, http.StatusOK, map[string]any{
+		"username":             a.username,
+		"passwordSet":          a.configured,
+		"managedByEnvironment": a.external,
+	})
 }
 
 type setPasswordRequest struct {
@@ -249,10 +203,9 @@ func (a *authManager) handlePassword(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", http.MethodPost+", "+http.MethodDelete)
 		writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 	}
-	if !a.enabled {
-		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "auth_disabled"})
-		return
-	}
+}
+
+func (a *authManager) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		writeAuthJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "json_required"})
 		return
@@ -268,7 +221,7 @@ func (a *authManager) handlePassword(w http.ResponseWriter, r *http.Request) {
 		writeAuthJSON(w, http.StatusBadRequest, map[string]string{"error": "password_confirmation_mismatch"})
 		return
 	}
-	if len(req.NewPassword) < minimumAdminPassword || len(req.NewPassword) > 256 || secureEqual(req.NewPassword, defaultAuthPassword) {
+	if len(req.NewPassword) < minimumAdminPassword || len(req.NewPassword) > 256 {
 		writeAuthJSON(w, http.StatusBadRequest, map[string]any{"error": "weak_password", "minimumLength": minimumAdminPassword})
 		return
 	}
@@ -279,7 +232,7 @@ func (a *authManager) handlePassword(w http.ResponseWriter, r *http.Request) {
 		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "managed_by_environment"})
 		return
 	}
-	if !a.passwordMatchesLocked(req.CurrentPassword) {
+	if a.configured && !a.passwordMatchesLocked(req.CurrentPassword) {
 		writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "current_password_incorrect"})
 		return
 	}
@@ -299,8 +252,35 @@ func (a *authManager) handlePassword(w http.ResponseWriter, r *http.Request) {
 	a.salt = salt
 	a.hash = hash
 	a.iterations = authHashIterations
-	a.mustChange = false
-	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": false})
+	a.configured = true
+	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "passwordSet": true})
+}
+
+func (a *authManager) handleRemovePassword(w http.ResponseWriter) {
+	cfg := a.cfg.Snapshot()
+	if cfg.RemoteAccess && !cfg.RemoteAllowAnonymous {
+		// Removing the credential here would leave remote access permanently
+		// unanswerable; the operator has to relax remote access first.
+		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "password_required_by_remote_access"})
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.external {
+		writeAuthJSON(w, http.StatusConflict, map[string]string{"error": "managed_by_environment"})
+		return
+	}
+	if err := os.Remove(a.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeAuthJSON(w, http.StatusInternalServerError, map[string]string{"error": "password_update_failed"})
+		return
+	}
+	a.password = ""
+	a.salt = nil
+	a.hash = nil
+	a.iterations = 0
+	a.configured = false
+	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "passwordSet": false})
 }
 
 func (a *authManager) passwordMatchesLocked(password string) bool {

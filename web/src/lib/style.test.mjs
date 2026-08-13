@@ -96,8 +96,10 @@ test('mobile chat navigation and tools stay fixed inside the iPhone viewport', (
 
 test('desktop chat keeps the composer under the transcript and gives sidebars breathing room', () => {
   assert.match(css, /\.oa-main\.has-loop\s*\{[^}]*--oa-chat-rail-width\s*:\s*320px/i)
-  assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*width\s*:\s*min\([^;]*var\(--oa-chat-rail-width/i)
+  assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*justify-self\s*:\s*start/i)
+  assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*width\s*:\s*calc\(100%\s*-\s*var\(--oa-chat-rail-width\)/i)
   assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*margin-right\s*:\s*var\(--oa-chat-rail-width/i)
+  assert.match(css, /\.oa-main\s*>\s*\.oa-composer-wrap\s*\{[^}]*padding-left\s*:\s*max\(20px/i)
   assert.match(css, /\.oa-chat\s+\.oa-sidebar\s*\{[^}]*padding\s*:\s*14px\s+14px\s+12px/i)
   assert.match(css, /\.oa-chat\s+\.oa-session-list\s*\{[^}]*padding\s*:\s*4px\s+3px\s+12px/i)
   assert.match(css, /\.oa-workspace\.has-loop\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+320px/i)

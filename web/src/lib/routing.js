@@ -6,14 +6,10 @@ const TAB_ALIASES = {
   '': 'overview',
   home: 'overview',
   index: 'overview',
-  // The standalone memory page was removed; its files live under GA root.
-  memory: 'files',
   task: 'tasks',
   tasks: 'tasks',
   runs: 'goals',
   config: 'settings',
-  general: 'settings',
-  about: 'overview',
 }
 
 const TASK_ROUTE_ALIASES = {
@@ -33,10 +29,7 @@ const routeParts = () => {
   const base = baseURL()
   let path = window.location.pathname || '/'
   if (base && base !== '/' && path.startsWith(base)) path = path.slice(base.length) || '/'
-  const parts = path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
-  // Admin console is mounted under /admin; the prefix itself carries no tab info.
-  if (parts[0] === 'admin') parts.shift()
-  return parts
+  return path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
 }
 
 export const parseRoute = () => {
@@ -57,5 +50,5 @@ export const buildRoute = (tab, taskSubTab = 'scheduled') => {
   const safeTab = ROUTE_TABS.includes(tab) ? tab : 'overview'
   const suffix = safeTab === 'tasks' ? `/${TASK_SUB_TABS.includes(taskSubTab) ? taskSubTab : 'scheduled'}` : ''
   const base = baseURL()
-  return `${base}/admin/${safeTab}${suffix}`.replace(/\/+/g, '/')
+  return `${base}/${safeTab}${suffix}`.replace(/\/+/g, '/')
 }

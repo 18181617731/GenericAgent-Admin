@@ -17140,8 +17140,13 @@ html { --ga-ui-scale: 1; }
 
   .oa-main > .oa-composer-wrap {
     box-sizing: border-box;
-    width: min(var(--oa-chat-measure), calc(100% - var(--oa-chat-rail-width) - 40px)) !important;
+    justify-self: start !important;
+    width: calc(100% - var(--oa-chat-rail-width)) !important;
+    max-width: none !important;
+    margin-left: 0 !important;
     margin-right: var(--oa-chat-rail-width) !important;
+    padding-left: max(20px, calc((100% - var(--oa-chat-rail-width) - var(--oa-chat-measure)) / 2)) !important;
+    padding-right: max(20px, calc((100% - var(--oa-chat-rail-width) - var(--oa-chat-measure)) / 2)) !important;
   }
 
   .oa-chat .oa-sidebar {
