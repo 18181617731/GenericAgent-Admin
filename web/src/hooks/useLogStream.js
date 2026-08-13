@@ -10,6 +10,7 @@ export function useLogStream({ active }) {
   const [streamState, setStreamState] = useState('idle')
   const [nonce, setNonce] = useState(0)
   const [follow, setFollow] = useState(true)
+  const [filter, setFilter] = useState('')
   const viewRef = useRef(null)
 
   const setTailLines = (value) => setTailLinesRaw(clampTailLines(value))
@@ -60,7 +61,8 @@ export function useLogStream({ active }) {
       if (view) view.scrollTop = view.scrollHeight
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [lines, follow, active])
+    // `filter` changes which lines are rendered, so following has to re-anchor.
+  }, [lines, follow, active, filter])
 
   const handleScroll = (event) => {
     const view = event.currentTarget
@@ -71,6 +73,7 @@ export function useLogStream({ active }) {
     selected, select, lines, clear,
     tailLines, setTailLines,
     streamState, retry,
+    filter, setFilter,
     follow, setFollow, handleScroll, viewRef,
   }
 }

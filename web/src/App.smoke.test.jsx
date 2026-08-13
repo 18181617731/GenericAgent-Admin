@@ -132,7 +132,40 @@ describe('channel frontend gates', () => {
 
     await waitFor(() => expect(container.querySelector('.channels-layout')).toBeTruthy())
     expect(container.querySelector('header, h1, h2')).toBeNull()
-    expect(container.querySelector('.channel-console-metrics')).toBeTruthy()
+    expect(container.querySelector('.channel-tabs [role="tab"]')).toBeTruthy()
+  })
+
+  test('ChannelsPage edits one channel at a time and keeps the write target in reach', async () => {
+    const profiles = [
+      { id: 'feishu', name: 'Feishu', testable: true, fields: [{ name: 'fs_app_id', label: 'App ID', value: 'cli_a' }] },
+      { id: 'telegram', name: 'Telegram', testable: true, fields: [{ name: 'tg_bot_token', label: 'Bot Token', secret: true, has_value: false, value: '' }] },
+    ]
+    globalThis.fetch = vi.fn(() => Promise.resolve(jsonResponse({ path: '/ga/mykey.py', profiles })))
+
+    const { container } = render(
+      <ChannelsPage
+        frontendSvcs={[]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={vi.fn()}
+      />,
+    )
+
+    const feishuEntry = await screen.findByRole('button', { name: /Lark/ })
+    expect(feishuEntry.getAttribute('aria-current')).toBe('true')
+    expect(screen.getByLabelText('App ID')).toBeTruthy()
+    expect(screen.queryByLabelText('Bot Token')).toBeNull()
+    expect(container.querySelector('.channel-commit-path code').textContent).toBe('/ga/mykey.py')
+
+    fireEvent.click(screen.getByRole('button', { name: /Telegram/ }))
+    expect(screen.getByLabelText('Bot Token')).toBeTruthy()
+    expect(screen.queryByLabelText('App ID')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Bot Token'), { target: { value: 'token-1' } })
+    expect((await screen.findByRole('status')).textContent).toMatch(/1 channel with unsaved changes/i)
   })
 
   test('ChannelsPage switches accessible task tabs with pointer and keyboard', async () => {
@@ -1551,9 +1584,48 @@ describe('operator shell feedback', () => {
     fireEvent.scroll(logView)
     const follow = screen.getByRole('button', { name: /Follow|\u8ddf\u968f/i })
     expect(follow.getAttribute('aria-pressed')).toBe('false')
-    expect(document.querySelector('.log-follow-status.paused')).toBeTruthy()
+    // Scrolling away from the tail offers a way back instead of a status line.
+    expect(document.querySelector('.log-jump')).toBeTruthy()
     fireEvent.click(follow)
     expect(follow.getAttribute('aria-pressed')).toBe('true')
+    expect(document.querySelector('.log-jump')).toBeFalsy()
+  })
+
+  test('log filtering hides non-matching lines but keeps their tail position', async () => {
+    installBrowserPolyfills()
+    window.history.replaceState({}, '', '/logs')
+    const services = [{ name: 'alpha-worker', kind: 'task', running: true, pid: 42, command: ['agentmain'] }]
+    globalThis.fetch = vi.fn((url) => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/services') return Promise.resolve(jsonResponse({ services }))
+      return Promise.resolve(shellPayload(url))
+    })
+
+    const streams = []
+    class FakeEventSource {
+      constructor(url) { this.url = url; this.listeners = {}; this.close = vi.fn(); streams.push(this) }
+      addEventListener(name, handler) { this.listeners[name] = handler }
+      emit(name, payload) { this.listeners[name]?.({ data: JSON.stringify(payload) }) }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    render(<App />)
+    fireEvent.click((await screen.findByText('alpha-worker')).closest('button'))
+    await waitFor(() => expect(streams).toHaveLength(1))
+    streams[0].onopen()
+    streams[0].emit('snapshot', { lines: ['boot ok', 'ERROR disk full', 'still going'] })
+
+    await waitFor(() => expect(document.querySelectorAll('.log-line')).toHaveLength(3))
+    expect(document.querySelector('.log-line.is-error')).toBeTruthy()
+
+    const filter = screen.getByRole('searchbox')
+    fireEvent.change(filter, { target: { value: 'disk' } })
+    await waitFor(() => expect(document.querySelectorAll('.log-line')).toHaveLength(1))
+    expect(document.querySelector('.log-line-no').textContent).toBe('2')
+    expect(document.querySelector('.log-view mark').textContent).toBe('disk')
+
+    fireEvent.change(filter, { target: { value: 'nothing-matches' } })
+    await waitFor(() => expect(document.querySelector('.log-output-empty')).toBeTruthy())
   })
 })
 

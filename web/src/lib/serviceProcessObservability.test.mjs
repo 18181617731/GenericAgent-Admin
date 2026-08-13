@@ -14,7 +14,13 @@ test('service cards expose lifecycle metadata without mutating services', () => 
   assert.match(common, /svc\?\.workdir/)
   assert.match(common, /serviceLogPath/)
   assert.match(common, /ServiceMeta svc=\{svc\}/)
-  assert.match(common, /ServiceMeta svc=\{svc\} compact/)
+})
+
+test('channel service rows report runtime facts that the service name does not', () => {
+  assert.match(common, /channelServiceFacts/)
+  assert.match(common, /svc\.running && \['PID', servicePid\(svc\)\]/)
+  assert.match(common, /svc\.running && svc\.started_at &&/)
+  assert.match(common, /!svc\.running && \(svc\.returncode \?\? svc\.return_code\) != null/)
 })
 
 test('process guard table includes identity and command context', () => {
