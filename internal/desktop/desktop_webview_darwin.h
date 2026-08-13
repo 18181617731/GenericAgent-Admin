@@ -7,11 +7,14 @@
 extern "C" {
 #endif
 
-// Go callbacks. cgo generates the implementations from //export functions.
+// Go callbacks. cgo generates the implementations from //export functions, and
+// re-declares them in _cgo_export.h next to this header. A Go *C.char always
+// comes out as a plain char*, so these must not say const: the two declarations
+// would then disagree and _cgo_export.h would not compile.
 extern void goDesktopReady(int32_t id);
 extern void goDesktopClosed(int32_t id);
-extern void goDesktopFailed(int32_t id, const char *err);
-extern void goDesktopMessage(int32_t id, const char *json);
+extern void goDesktopFailed(int32_t id, char *err);
+extern void goDesktopMessage(int32_t id, char *json);
 
 // ga_desktop_window_create opens an NSWindow with a WKWebView on the AppKit
 // main thread. title, url, and bind_name_json are copied before the call

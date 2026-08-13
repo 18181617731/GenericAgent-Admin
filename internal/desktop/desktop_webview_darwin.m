@@ -34,7 +34,7 @@ static void ga_desktop_forget(int32_t id);
 	NSString *text = (NSString *)message.body;
 	const char *json = [text UTF8String];
 	if (json != NULL) {
-		goDesktopMessage(self.windowID, json);
+		goDesktopMessage(self.windowID, (char *)json);
 	}
 }
 
