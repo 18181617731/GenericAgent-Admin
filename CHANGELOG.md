@@ -2,6 +2,12 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.73 - 2026-08-13
+
+### Corrected release package
+- Rebuild the Windows release from the current `main` service architecture so upgrades retain the configured `8787` listener and existing remote-access entrypoint.
+- Replace the mismatched release artifact that was built from an unrelated branch and could start on an ephemeral local port after upgrade.
+
 ## v1.0.72 - 2026-08-13
 
 ### Document previews from assistant results
