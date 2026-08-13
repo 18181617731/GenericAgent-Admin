@@ -968,7 +968,7 @@ body::before { display:none !important; }
   position:sticky;
   top:0;
   padding:8px;
-  background:var(--surface-muted) !important;
+  background:var(--surface-muted);
   border-right:1px solid var(--n-ededed);
   box-shadow:none !important;
 }
@@ -1028,7 +1028,9 @@ nav button.active, nav button:hover {
 .message { background:var(--n-fff7ed); border-color:#fed7aa; box-shadow:none; }
 
 .main { flex:1; padding:0; background:var(--surface-strong); overflow:auto; }
-.main > section, .main > div:not(.oa-chat) { width:100%; max-width:none; margin:0; padding:24px 32px 40px; }
+/* Page wrappers carry the gutter, since .main itself has none. The sticky bar
+   is a shell element rather than a page, so it keeps its own compact box. */
+.main > section, .main > div:not(.oa-chat):not(.admin-mobile-bar) { width:100%; max-width:none; margin:0; padding:24px 32px 40px; }
 header {
   margin:0 0 20px;
   padding:16px 0 18px;
@@ -1130,17 +1132,18 @@ html[data-theme="light"] .oa-chat {
   will-change:transform,opacity;
 }
 .oa-sidebar::before,.oa-main::before{display:none}
-.oa-side-head{height:48px;padding:0 4px;display:flex;align-items:center;gap:8px}
-.oa-sidebar-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;border-radius:10px;background:var(--n-ececec);color:var(--muted);transition:background .12s}
+.oa-side-head{height:40px;padding:0 4px;display:flex;align-items:center;gap:7px}
+.oa-sidebar-search{flex:1;min-width:0;display:flex;align-items:center;gap:7px;padding:0 10px;height:32px;border-radius:9px;background:var(--n-ececec);color:var(--muted);transition:background .12s}
 .oa-sidebar-search:focus-within{background:var(--n-e0e0e0)}
 .oa-sidebar-search svg{flex:0 0 auto;opacity:.5}
-.oa-sidebar-search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:14px;outline:none}
+.oa-sidebar-search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:12.5px;outline:none}
 .oa-sidebar-search input::placeholder{color:var(--muted);opacity:.6}
-.oa-search-clear{width:20px;height:20px;padding:0;border-radius:6px;color:var(--muted);flex:0 0 auto;transition:background .12s,color .12s}
+.oa-search-clear{width:19px;height:19px;padding:0;border-radius:6px;color:var(--muted);flex:0 0 auto;transition:background .12s,color .12s}
 .oa-search-clear:hover{background:rgba(0,0,0,.08);color:var(--text)}
 .oa-icon-btn{width:36px;height:36px;min-height:36px;border-radius:10px;color: var(--muted);flex:0 0 auto}
+.oa-side-head .oa-icon-btn{width:32px;height:32px;min-height:32px;border-radius:9px}
 .oa-icon-btn:hover,.oa-sidebar-foot button:hover{background:var(--n-ececec)}
-.oa-new-chat{width:36px;min-width:36px;height:36px;min-height:36px;border:0!important;border-radius:10px;background:var(--d-171717)!important;color:var(--d-on)!important;box-shadow:0 4px 12px rgba(0,0,0,.15),inset 0 1px rgba(255,255,255,.08)!important;font-weight:600;justify-content:center;padding:0;letter-spacing:0;flex:0 0 auto;transition:background .14s,transform .14s,box-shadow .14s}
+.oa-new-chat{width:32px;min-width:32px;height:32px;min-height:32px;border:0!important;border-radius:9px;background:var(--d-171717)!important;color:var(--d-on)!important;box-shadow:0 4px 12px rgba(0,0,0,.15),inset 0 1px rgba(255,255,255,.08)!important;font-weight:600;justify-content:center;padding:0;letter-spacing:0;flex:0 0 auto;transition:background .14s,transform .14s,box-shadow .14s}
 .oa-new-chat svg{opacity:.85}
 .oa-new-chat:hover{background:var(--d-000000)!important;transform:translateY(-1px)!important;box-shadow:0 6px 18px rgba(0,0,0,.22)!important}
 .oa-session:hover,.oa-session-row.active .oa-session{background:rgba(0,0,0,.06)!important;transform:none}
@@ -1157,10 +1160,10 @@ html[data-color-scheme="dark"] .oa-session-title .oa-session-loop-badge{border-c
 .oa-session-row:hover .oa-session-more,.oa-session-row.active .oa-session-more,.oa-session-more.is-open{opacity:1;pointer-events:auto}
 .oa-session-more:hover,.oa-session-more.is-open{background:var(--n-d9d9d9)!important;color: var(--text)}
 .oa-empty-list{margin:14px 10px;color: var(--muted);font-size:13px}
-.oa-session-manager-head{min-height:28px;padding:0 6px 0 10px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.oa-session-manager-head{min-height:24px;padding:0 6px 0 9px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px}
 .oa-session-manager-title{display:flex;align-items:center;gap:6px;font-weight:600;letter-spacing:.01em}
-.oa-session-manager-title small{min-width:19px;height:19px;padding:0 6px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:var(--n-e7e7e7);color:var(--i-666666);font-size:10.5px;font-weight:650;font-variant-numeric:tabular-nums}
-.oa-session-manage-open{margin-left:auto;min-height:26px;padding:0 7px;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;font-weight:600;cursor:pointer;transition:background .12s,color .12s}
+.oa-session-manager-title small{min-width:17px;height:17px;padding:0 5px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:var(--n-e7e7e7);color:var(--i-666666);font-size:10px;font-weight:650;font-variant-numeric:tabular-nums}
+.oa-session-manage-open{margin-left:auto;min-height:22px;padding:0 6px;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;font-weight:600;cursor:pointer;transition:background .12s,color .12s}
 .oa-session-manage-open:hover:not(:disabled){background:var(--n-e7e7e7);color:var(--text)}
 .oa-session-manage-open:disabled{opacity:.42;cursor:not-allowed;background:transparent}
 .oa-session-check{width:18px;height:18px;flex:0 0 18px;border:1.5px solid #b8b8b8;border-radius:5px;background:var(--n-ffffff);display:inline-flex;align-items:center;justify-content:center;color:#fff;transition:background .12s,border-color .12s,transform .12s}
@@ -2700,7 +2703,7 @@ pre, code { font-variant-ligatures: none; }
   .sidebar { position: relative; width: 100%; min-width: 0; height: auto; max-height: none; border-right: 0; border-bottom: 1px solid var(--ga-line); }
   nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .main { height: auto; min-height: 100vh; overflow: visible; }
-  .main > section, .main > div:not(.oa-chat) { padding: 18px 14px 28px; }
+  .main > section, .main > div:not(.oa-chat):not(.admin-mobile-bar) { padding: 18px 14px 28px; }
   .native-chat, .logs-page { height: auto; min-height: 0; overflow: visible; }
   .chat-grid { grid-template-columns: 1fr; }
   .chat-sessions { max-height: 260px; }
@@ -3511,7 +3514,7 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
 
 /* === Quiet Console: non-chat refinement (2026-06)
    Scoped to every GA Admin route except /chat. The aim is calm, readable tooling — not decoration. */
-.app:not(.app-tab-chat) {
+.app {
   --quiet-bg: #f7f8fb;
   --quiet-panel: var(--g-ffffffa92);
   --quiet-panel-solid: #ffffff;
@@ -3532,59 +3535,59 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
     linear-gradient(180deg, #fbfcff 0%, var(--quiet-bg) 100%);
 }
 
-.app:not(.app-tab-chat) > .sidebar,
-.app:not(.app-tab-chat) > .main { position: relative; z-index: 1; }
+.app > .sidebar,
+.app > .main { position: relative; z-index: 1; }
 
-.app:not(.app-tab-chat) .sidebar {
+.app .sidebar {
   background: var(--q-ffffffa78);
   border-right: 1px solid var(--quiet-line);
   box-shadow: 8px 0 28px rgba(15, 23, 42, .045);
   backdrop-filter: blur(18px) saturate(1.05);
 }
-.app:not(.app-tab-chat) .brand {
+.app .brand {
   padding: 10px;
   border-radius: 18px;
   background: var(--q-f8fafca72);
   border: 1px solid rgba(15, 23, 42, .06);
 }
-.app:not(.app-tab-chat) .brand svg { color: var(--quiet-accent); }
-.app:not(.app-tab-chat) .brand h1 { letter-spacing: -.035em; }
-.app:not(.app-tab-chat) .brand p { color: var(--quiet-muted); }
+.app .brand svg { color: var(--quiet-accent); }
+.app .brand h1 { letter-spacing: -.035em; }
+.app .brand p { color: var(--quiet-muted); }
 
-.app:not(.app-tab-chat) .sidebar nav button {
+.app .sidebar nav button {
   border-radius: 12px;
   color: var(--muted);
   border: 1px solid transparent;
   background: transparent;
 }
-.app:not(.app-tab-chat) .sidebar nav button:focus-visible,
+.app .sidebar nav button:focus-visible,
 .task-subtabs button:focus-visible {
   outline: 2px solid var(--accent, #18735f);
   outline-offset: 2px;
 }
 
-.app:not(.app-tab-chat) .sidebar nav button:hover {
+.app .sidebar nav button:hover {
   color: var(--text);
   background: var(--q-f1f5f9a92);
   border-color: rgba(15, 23, 42, .06);
   transform: translateX(1px);
 }
-.app:not(.app-tab-chat) .sidebar nav button.active {
+.app .sidebar nav button.active {
   color: var(--text);
   background: var(--surface-strong);
   border-color: rgba(15, 118, 110, .20);
   box-shadow: inset 3px 0 0 var(--quiet-accent), 0 8px 20px rgba(15, 23, 42, .06);
 }
-.app:not(.app-tab-chat) .sidebar nav button svg { color: inherit; opacity: .78; }
-.app:not(.app-tab-chat) .lang-switch,
-.app:not(.app-tab-chat) .refresh,
-.app:not(.app-tab-chat) .message {
+.app .sidebar nav button svg { color: inherit; opacity: .78; }
+.app .lang-switch,
+.app .refresh,
+.app .message {
   border-color: var(--quiet-line);
   background: var(--q-ffffffa68);
 }
 
-.app:not(.app-tab-chat) .main { padding: 24px clamp(18px, 2.3vw, 32px) 34px; }
-.app:not(.app-tab-chat) .main > header {
+.app .main { padding: 24px clamp(18px, 2.3vw, 32px) 34px; }
+.app .main > header {
   margin-bottom: 18px;
   padding: 16px 18px;
   border-radius: 22px;
@@ -3593,36 +3596,36 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
   box-shadow: 0 10px 28px rgba(15, 23, 42, .055);
   backdrop-filter: blur(16px) saturate(1.04);
 }
-.app:not(.app-tab-chat) .main > header h2 {
+.app .main > header h2 {
   font-size: clamp(26px, 2.8vw, 38px);
   line-height: 1.03;
   letter-spacing: -.05em;
 }
-.app:not(.app-tab-chat) .main > header p { color: var(--quiet-muted); }
-.app:not(.app-tab-chat) .badges span,
-.app:not(.app-tab-chat) .ok,
-.app:not(.app-tab-chat) .err,
-.app:not(.app-tab-chat) .warn {
+.app .main > header p { color: var(--quiet-muted); }
+.app .badges span,
+.app .ok,
+.app .err,
+.app .warn {
   border-radius: 999px;
 }
-.app:not(.app-tab-chat) .badges span { background: var(--q-f8fafca86); }
+.app .badges span { background: var(--q-f8fafca86); }
 
-.app:not(.app-tab-chat) .stats { gap: 14px; }
-.app:not(.app-tab-chat) .stat,
-.app:not(.app-tab-chat) .panel,
-.app:not(.app-tab-chat) .service-card,
-.app:not(.app-tab-chat) .task-row,
-.app:not(.app-tab-chat) .goal-row,
-.app:not(.app-tab-chat) .profile,
-.app:not(.app-tab-chat) .entry,
-.app:not(.app-tab-chat) .root-box,
-.app:not(.app-tab-chat) .version-card,
-.app:not(.app-tab-chat) .tmwd-card {
+.app .stats { gap: 14px; }
+.app .stat,
+.app .panel,
+.app .service-card,
+.app .task-row,
+.app .goal-row,
+.app .profile,
+.app .entry,
+.app .root-box,
+.app .version-card,
+.app .tmwd-card {
   border: 1px solid var(--quiet-line);
   background: var(--quiet-panel);
   box-shadow: var(--quiet-shadow);
 }
-.app:not(.app-tab-chat) .version-card {
+.app .version-card {
   border-color: rgba(15,118,110,.22);
   background:
     radial-gradient(circle at 94% 4%, rgba(37,99,235,.20), transparent 34%),
@@ -3630,20 +3633,20 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
     linear-gradient(135deg, var(--g-ecfdf5a96), var(--g-ffffffa88) 48%, var(--g-eff6ffa94));
   box-shadow: 0 18px 42px rgba(15, 118, 110, .12), inset 0 1px var(--q-ffffffa92);
 }
-.app:not(.app-tab-chat) .panel { border-radius: 20px; }
-.app:not(.app-tab-chat) .panel h3,
-.app:not(.app-tab-chat) section > h3 { letter-spacing: -.025em; }
-.app:not(.app-tab-chat) .stat { border-radius: 18px; }
-.app:not(.app-tab-chat) .stat svg {
+.app .panel { border-radius: 20px; }
+.app .panel h3,
+.app section > h3 { letter-spacing: -.025em; }
+.app .stat { border-radius: 18px; }
+.app .stat svg {
   color: var(--quiet-accent);
   background: var(--quiet-accent-soft);
   border-radius: 14px;
   padding: 7px;
 }
-.app:not(.app-tab-chat) .grid2,
-.app:not(.app-tab-chat) .workspace,
-.app:not(.app-tab-chat) .logs-layout,
-.app:not(.app-tab-chat) .goals-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+.app .grid2,
+.app .workspace,
+.app .logs-layout,
+.app .goals-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
 .profile-body { display: grid; gap: 12px; margin-top: 12px; }
 .profile-add { border-style: dashed; }
 .discover-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: nowrap; }
@@ -3659,82 +3662,82 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
 .add-btn { width: max-content; }
 
 
-.app:not(.app-tab-chat) .hit,
-.app:not(.app-tab-chat) .file-list button,
-.app:not(.app-tab-chat) .logs-service-list button { border-radius: 12px; }
-.app:not(.app-tab-chat) button:not(.secondary):not(.active):not(:disabled):hover,
-.app:not(.app-tab-chat) .file-list button:hover,
-.app:not(.app-tab-chat) .hit:hover,
-.app:not(.app-tab-chat) .service-card:hover,
-.app:not(.app-tab-chat) .task-row:hover,
-.app:not(.app-tab-chat) .goal-row:hover,
-.app:not(.app-tab-chat) .profile:hover,
-.app:not(.app-tab-chat) .entry:hover {
+.app .hit,
+.app .file-list button,
+.app .logs-service-list button { border-radius: 12px; }
+.app button:not(.secondary):not(.active):not(:disabled):hover,
+.app .file-list button:hover,
+.app .hit:hover,
+.app .service-card:hover,
+.app .task-row:hover,
+.app .goal-row:hover,
+.app .profile:hover,
+.app .entry:hover {
   transform: translateY(-1px);
   border-color: var(--quiet-line-strong);
   box-shadow: 0 14px 32px rgba(15, 23, 42, .085);
 }
 
-.app:not(.app-tab-chat) input,
-.app:not(.app-tab-chat) select,
-.app:not(.app-tab-chat) textarea {
+.app input,
+.app select,
+.app textarea {
   border-color: var(--quiet-line);
   border-radius: 12px;
   background: var(--q-ffffffa90);
 }
-.app:not(.app-tab-chat) input:focus,
-.app:not(.app-tab-chat) select:focus,
-.app:not(.app-tab-chat) textarea:focus {
+.app input:focus,
+.app select:focus,
+.app textarea:focus {
   border-color: rgba(15, 118, 110, .42);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, .11);
 }
-.app:not(.app-tab-chat) pre,
-.app:not(.app-tab-chat) .log-view,
-.app:not(.app-tab-chat) .file-editor {
+.app pre,
+.app .log-view,
+.app .file-editor {
   border-color: rgba(15, 23, 42, .12);
   background: #0f172a;
   color: #dbeafe;
   text-shadow: none;
   border-radius: 16px;
 }
-.app:not(.app-tab-chat) code {
+.app code {
   color: var(--i-0f766e);
   background: rgba(15, 118, 110, .08);
   text-shadow: none;
 }
-.app:not(.app-tab-chat) pre code { color: inherit; background: transparent; }
+.app pre code { color: inherit; background: transparent; }
 
-.app:not(.app-tab-chat) .channel-table,
-.app:not(.app-tab-chat) table { border-collapse: separate; border-spacing: 0 6px; }
-.app:not(.app-tab-chat) .channel-table th,
-.app:not(.app-tab-chat) table th {
+.app .channel-table,
+.app table { border-collapse: separate; border-spacing: 0 6px; }
+.app .channel-table th,
+.app table th {
   color: var(--quiet-muted);
   font-size: 11px;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-.app:not(.app-tab-chat) .channel-table td,
-.app:not(.app-tab-chat) table td {
+.app .channel-table td,
+.app table td {
   background: var(--q-ffffffa78);
   border-top: 1px solid var(--quiet-line);
   border-bottom: 1px solid var(--quiet-line);
 }
-.app:not(.app-tab-chat) .channel-table td:first-child,
-.app:not(.app-tab-chat) table td:first-child { border-left: 1px solid var(--quiet-line); border-radius: 12px 0 0 12px; }
-.app:not(.app-tab-chat) .channel-table td:last-child,
-.app:not(.app-tab-chat) table td:last-child { border-right: 1px solid var(--quiet-line); border-radius: 0 12px 12px 0; }
+.app .channel-table td:first-child,
+.app table td:first-child { border-left: 1px solid var(--quiet-line); border-radius: 12px 0 0 12px; }
+.app .channel-table td:last-child,
+.app table td:last-child { border-right: 1px solid var(--quiet-line); border-radius: 0 12px 12px 0; }
 
-.app:not(.app-tab-chat) .goal-row.running { border-color: rgba(15, 118, 110, .28); box-shadow: 0 12px 30px rgba(15,118,110,.10); }
-.app:not(.app-tab-chat) .goal-row.selected { outline: 2px solid rgba(15, 118, 110, .18); outline-offset: 2px; }
-.app:not(.app-tab-chat) .log-service.active,
-.app:not(.app-tab-chat) .file-list button:focus-visible,
-.app:not(.app-tab-chat) .hit:focus-visible {
+.app .goal-row.running { border-color: rgba(15, 118, 110, .28); box-shadow: 0 12px 30px rgba(15,118,110,.10); }
+.app .goal-row.selected { outline: 2px solid rgba(15, 118, 110, .18); outline-offset: 2px; }
+.app .log-service.active,
+.app .file-list button:focus-visible,
+.app .hit:focus-visible {
   border-color: rgba(15, 118, 110, .30);
   background: var(--q-f0fdfaa82);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, .10);
 }
-.app:not(.app-tab-chat) .profile { border-radius: 18px; padding: 14px; }
-.app:not(.app-tab-chat) .root-box.settings-root-box { border-radius: 20px; }
+.app .profile { border-radius: 18px; padding: 14px; }
+.app .root-box.settings-root-box { border-radius: 20px; }
 
 .setup-shell {
   background:
@@ -3751,12 +3754,12 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app:not(.app-tab-chat) *, .setup-shell * { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+  .app *, .setup-shell * { transition-duration: .001ms !important; animation-duration: .001ms !important; }
 }
 
 @media (max-width: 900px) {
-  .app:not(.app-tab-chat) .main { padding: 18px 14px 24px; }
-  .app:not(.app-tab-chat) .main > header { border-radius: 20px; }
+  .app .main { padding: 18px 14px 24px; }
+  .app .main > header { border-radius: 20px; }
 }
 
 
@@ -4233,8 +4236,8 @@ html[data-color-scheme="dark"] .theme-picker--compact .theme-picker-trigger:hove
   .theme-picker-trigger:hover .theme-picker-trigger-icon,
   .theme-picker-trigger:hover .theme-picker-trigger-preview { transform: none; }
 }
-html[data-color-scheme="dark"] .app:not(.app-tab-chat) .sidebar nav button.active,
-html[data-color-scheme="dark"] .app:not(.app-tab-chat) .sidebar nav button:hover {
+html[data-color-scheme="dark"] .app .sidebar nav button.active,
+html[data-color-scheme="dark"] .app .sidebar nav button:hover {
   background: var(--surface-muted) !important;
   border-color: var(--border);
   color: var(--text) !important;
@@ -4512,14 +4515,17 @@ html[data-color-scheme="dark"] .oa-tools-act:hover:not(:disabled) { background: 
 .oa-sidebar-instance select {
   width:100%;
   min-width:0;
-  height:36px;
-  padding:0 30px 0 10px;
+  height:32px;
+  padding:0 28px 0 10px;
   border:1px solid var(--oa-line-strong);
-  border-radius:10px;
+  border-radius:9px;
   color:var(--oa-text);
   background:var(--oa-panel);
   font:inherit;
-  font-size:13px;
+  font-size:12.5px;
+  /* The wrapper is bold because of its eyebrow label; the value it holds is not
+     a heading, so it steps back to the weight the session titles below use. */
+  font-weight:600;
   cursor:pointer;
 }
 .oa-sidebar-instance select:disabled { opacity:.6; cursor:not-allowed; }
@@ -4865,7 +4871,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
     background: var(--surface-strong);
   }
   .sidebar,
-  .app:not(.app-tab-chat) .sidebar {
+  .app .sidebar {
     position: sticky;
     top: 0;
     z-index: 60;
@@ -4884,7 +4890,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
     backdrop-filter: blur(16px) saturate(1.08);
   }
   .brand,
-  .app:not(.app-tab-chat) .brand {
+  .app .brand {
     grid-column: 1;
     min-width: 0;
     padding: 6px 7px;
@@ -4922,7 +4928,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   }
   .sidebar nav::-webkit-scrollbar { height: 0; }
   .sidebar nav button,
-  .app:not(.app-tab-chat) .sidebar nav button {
+  .app .sidebar nav button {
     flex: 0 0 auto;
     min-height: 42px;
     min-width: 72px;
@@ -4936,7 +4942,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   .sidebar nav button span:not(.nav-pop) { font-size: 12px; }
   .sidebar nav button svg { width: 16px; height: 16px; }
   .sidebar nav button.active,
-  .app:not(.app-tab-chat) .sidebar nav button.active {
+  .app .sidebar nav button.active {
     box-shadow: inset 0 -3px 0 var(--quiet-accent, var(--green)), 0 8px 18px rgba(15,23,42,.06);
   }
   .nav-pop { display: none; }
@@ -4960,14 +4966,14 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   .message { max-height: 68px; overflow: auto; font-size: 12px; }
 
   .main,
-  .app:not(.app-tab-chat) .main {
+  .app .main {
     flex: 1 1 auto;
     width: 100%;
     min-width: 0;
     padding: 14px 12px calc(22px + env(safe-area-inset-bottom));
     overflow: visible;
   }
-  .app:not(.app-tab-chat) .main > header,
+  .app .main > header,
   .main > header {
     display: grid;
     gap: 10px;
@@ -4976,7 +4982,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
     border-radius: 18px;
   }
   .main > header h2,
-  .app:not(.app-tab-chat) .main > header h2 {
+  .app .main > header h2 {
     font-size: clamp(20px, 6vw, 27px);
     line-height: 1.08;
     word-break: break-word;
@@ -5127,20 +5133,20 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 @media (max-width: 560px) {
   :root { --radius-lg: 18px; --radius-md: 14px; }
   .sidebar,
-  .app:not(.app-tab-chat) .sidebar {
+  .app .sidebar {
     max-height: 52svh;
     padding-left: 8px;
     padding-right: 8px;
   }
   .lang-switch { min-width: 74px; }
   .sidebar nav button,
-  .app:not(.app-tab-chat) .sidebar nav button {
+  .app .sidebar nav button {
     min-width: 62px;
     padding: 8px 9px;
   }
   .sidebar nav button span:not(.nav-pop) { font-size: 11.5px; }
   .main,
-  .app:not(.app-tab-chat) .main { padding-left: 9px; padding-right: 9px; }
+  .app .main { padding-left: 9px; padding-right: 9px; }
   .stats { grid-template-columns: 1fr; }
   .stat { min-height: 78px; }
 .panel,
@@ -7944,8 +7950,8 @@ html[data-color-scheme="dark"] .overview-page .overview-panel .autostart-head sv
   max-width: 1080px;
   color: var(--text);
 }
-.app:not(.app-tab-chat) .settings-page input,
-.app:not(.app-tab-chat) .settings-page select {
+.app .settings-page input,
+.app .settings-page select {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -7957,8 +7963,8 @@ html[data-color-scheme="dark"] .overview-page .overview-panel .autostart-head sv
   background: var(--surface-strong);
   box-shadow: none;
 }
-.app:not(.app-tab-chat) .settings-page input:focus,
-.app:not(.app-tab-chat) .settings-page select:focus {
+.app .settings-page input:focus,
+.app .settings-page select:focus {
   border-color: rgba(16, 163, 127, .48);
   box-shadow: 0 0 0 3px rgba(16, 163, 127, .10);
 }
@@ -10690,7 +10696,7 @@ html[data-color-scheme="dark"] {
   --q-ffffffa92: rgba(32, 36, 42, .92);
 }
 
-html[data-color-scheme="dark"] .app:not(.app-tab-chat) {
+html[data-color-scheme="dark"] .app {
   --quiet-bg: #191c21;
   --quiet-panel: rgba(32, 36, 42, .92);
   --quiet-panel-solid: #20242a;
@@ -11683,34 +11689,34 @@ html[data-color-scheme="dark"] .oa-session-dialog-title .oa-session-hub-badge {
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));
   gap:4px;
-  margin:2px 0 10px;
+  margin:2px 0 8px;
   padding:3px;
   border:1px solid var(--oa-line);
-  border-radius:12px;
+  border-radius:10px;
   background:rgba(0,0,0,.035);
 }
 .oa-sidebar-tabs button {
   min-width:0;
-  min-height:36px;
-  padding:0 9px;
+  min-height:30px;
+  padding:0 8px;
   border:0;
-  border-radius:9px;
+  border-radius:8px;
   background:transparent;
   color:var(--oa-muted);
   display:flex;
   align-items:center;
   justify-content:center;
-  gap:6px;
+  gap:5px;
   font:inherit;
-  font-size:12px;
+  font-size:11.5px;
   font-weight:680;
   cursor:pointer;
   transition:background .16s ease,color .16s ease,box-shadow .16s ease;
 }
 .oa-sidebar-tabs button span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .oa-sidebar-tabs button small {
-  min-width:18px;
-  height:18px;
+  min-width:16px;
+  height:16px;
   padding:0 5px;
   border-radius:999px;
   background:rgba(0,0,0,.06);
@@ -11718,7 +11724,7 @@ html[data-color-scheme="dark"] .oa-session-dialog-title .oa-session-hub-badge {
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  font-size:10px;
+  font-size:9.5px;
   font-variant-numeric:tabular-nums;
 }
 .oa-sidebar-tabs button:hover { color:var(--text); background:rgba(255,255,255,.58); }
@@ -13014,13 +13020,15 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 /* ===== Admin page header =====
    The sidebar already names and icons the current route, so this is only a
    label line: title plus the route's one-line description, no card chrome. */
-.app:not(.app-tab-chat) .main > .admin-page-header {
+.app .main > .admin-page-header {
   display: flex;
   align-items: baseline;
   justify-content: flex-start;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin: 0 0 14px;
+  /* The gutter is a margin so the rule under the title stops where the page
+     content starts, instead of running the full width of the column. */
+  margin: 18px 32px 14px;
   padding: 0 0 10px;
   /* Undo the card chrome the generic `.main > header` rules still apply. */
   border: 0;
@@ -13030,7 +13038,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   box-shadow: none;
   backdrop-filter: none;
 }
-.app:not(.app-tab-chat) .main > .admin-page-header h2 {
+.app .main > .admin-page-header h2 {
   margin: 0;
   color: var(--text);
   font-size: 17px;
@@ -13038,12 +13046,15 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   line-height: 1.25;
   letter-spacing: -.01em;
 }
-.app:not(.app-tab-chat) .main > .admin-page-header p {
+.app .main > .admin-page-header p {
   min-width: 0;
   margin: 0;
   color: var(--quiet-muted);
   font-size: 12.5px;
   line-height: 1.45;
+}
+@media (max-width: 860px) {
+  .app .main > .admin-page-header { margin: 14px 14px 12px; }
 }
 
 /* Service status: global, so the shell shows it once instead of every route. */
@@ -13164,11 +13175,14 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
    A restrained navigation rail for the admin shell. Keep every selector
    anchored to #admin-sidebar so route content and /chat remain untouched. */
 #admin-sidebar {
-  --sidebar-accent: var(--accent-text, #0f766e);
-  --sidebar-bg: color-mix(in srgb, var(--surface-strong) 94%, var(--bg-soft));
+  /* The rail marks the current route with ink, not with the theme's accent:
+     an accent meant for text turns muddy as a fill or a tint, and each theme
+     picks a different hue for it. */
+  --sidebar-accent: var(--text);
+  --sidebar-bg: color-mix(in srgb, var(--bg-soft) 62%, var(--surface-strong));
   --sidebar-control: color-mix(in srgb, var(--surface-strong) 88%, var(--surface-muted));
   --sidebar-hover: color-mix(in srgb, var(--text) 5%, transparent);
-  --sidebar-active: color-mix(in srgb, var(--sidebar-accent) 10%, var(--surface-strong));
+  --sidebar-active: color-mix(in srgb, var(--text) 5%, var(--surface-strong));
   --sidebar-line: color-mix(in srgb, var(--border) 82%, transparent);
   box-sizing: border-box;
   width: 280px;
@@ -13197,7 +13211,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 }
 
 #admin-sidebar .brand,
-.app:not(.app-tab-chat) #admin-sidebar .brand {
+.app #admin-sidebar .brand {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
@@ -13216,13 +13230,14 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   box-sizing: border-box;
   width: 38px;
   height: 38px;
-  padding: 2px;
-  flex: 0 0 38px;
   object-fit: contain;
   object-position: center;
-  background: #f7f7f5;
-  border: 1px solid rgba(15, 23, 42, .08);
-  border-radius: 11px;
+  /* The mark is a transparent PNG and carries its own silhouette, so it sits on
+     the rail directly. A plate behind it only draws a square that belongs to no
+     theme: neutral grey reads cold against the warm cream, near-white glares in
+     the dark. */
+  background: none;
+  border: 0;
 }
 
 #admin-sidebar .brand > div { min-width: 0; }
@@ -13258,10 +13273,12 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
   align-items: center;
   justify-content: flex-start;
   gap: 9px;
-  color: #fff;
+  color: var(--d-on);
   font-size: 13px;
   font-weight: 620;
-  background: var(--sidebar-accent, var(--accent));
+  /* The same ink every other primary button uses, so the one filled control
+     in the rail belongs to the same family. */
+  background: var(--d-111111);
   border: 1px solid transparent;
   border-radius: 10px;
   box-shadow: none;
@@ -13269,7 +13286,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 }
 
 #admin-sidebar .admin-back-to-chat:hover {
-  background: color-mix(in srgb, var(--sidebar-accent, var(--accent)) 86%, #000);
+  background: color-mix(in srgb, var(--d-111111) 88%, var(--surface-strong));
   transform: none;
   box-shadow: none;
 }
@@ -13289,7 +13306,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 }
 
 #admin-sidebar nav button,
-.app:not(.app-tab-chat) #admin-sidebar nav button {
+.app #admin-sidebar nav button {
   position: relative;
   width: 100%;
   min-height: 38px;
@@ -13334,7 +13351,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 }
 
 #admin-sidebar nav button:hover,
-.app:not(.app-tab-chat) #admin-sidebar nav button:hover {
+.app #admin-sidebar nav button:hover {
   color: var(--text);
   background: var(--sidebar-hover);
   border-color: transparent;
@@ -13346,7 +13363,7 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 
 #admin-sidebar nav button.active,
 #admin-sidebar nav button[aria-current="page"],
-.app:not(.app-tab-chat) #admin-sidebar nav button.active {
+.app #admin-sidebar nav button.active {
   color: var(--text);
   background: var(--sidebar-active);
   border-color: color-mix(in srgb, var(--sidebar-accent) 18%, transparent);
@@ -13418,12 +13435,6 @@ html[data-color-scheme="dark"] .instances-page button.primary { color: #092f2b; 
 @media (prefers-reduced-motion: reduce) {
   #admin-sidebar > .refresh:disabled svg { animation: none; }
   #admin-sidebar nav button > svg { transition: none; }
-}
-
-/* Light admin navigation stays neutral; gold remains available to the wider theme. */
-html[data-theme="light"] #admin-sidebar {
-  --sidebar-accent: #0f766e;
-  --sidebar-active: color-mix(in srgb, var(--text) 5%, var(--surface-strong));
 }
 
 /* /chat sidebar refinement: quiet hierarchy and theme-aware surfaces. */
@@ -13515,17 +13526,17 @@ html[data-theme="light"] #admin-sidebar {
 .oa-sidebar-instance select {
   appearance:none;
   -webkit-appearance:none;
-  height:38px;
-  padding:0 34px 0 12px;
-  border-radius:11px;
+  height:32px;
+  padding:0 30px 0 11px;
+  border-radius:9px;
   background-image:none;
   transition:border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
 }
 .oa-sidebar-instance::after {
   content:"";
   position:absolute;
-  right:14px;
-  bottom:15px;
+  right:13px;
+  bottom:13px;
   width:7px;
   height:7px;
   border-right:1.5px solid var(--oa-muted);
@@ -13544,6 +13555,8 @@ html[data-theme="light"] #admin-sidebar {
 }
 .oa-sidebar-instance:has(select:disabled)::after { opacity:.45; }
 
+/* On a touch screen the rail is a drawer operated by thumb, so its controls keep
+   the taller box even though the desktop rail reads better compact. */
 @media (max-width:680px) {
   .oa-sidebar-instance select {
     height:36px;
@@ -13551,6 +13564,13 @@ html[data-theme="light"] #admin-sidebar {
     padding-right:32px;
   }
   .oa-sidebar-instance::after { right:13px; bottom:14px; }
+  .oa-side-head { height:44px; }
+  .oa-sidebar-search,
+  .oa-new-chat,
+  .oa-side-head .oa-icon-btn { height:36px; min-height:36px; }
+  .oa-new-chat { width:36px; min-width:36px; }
+  .oa-side-head .oa-icon-btn { width:36px; }
+  .oa-sidebar-tabs button { min-height:34px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

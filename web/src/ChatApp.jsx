@@ -5037,7 +5037,7 @@ export default function ChatApp() {
       </label>
       <div className="oa-side-head">
         <div className="oa-sidebar-search">
-          <Search size={16}/>
+          <Search size={15}/>
           <input
             type="text"
             placeholder={ct('搜索会话...', 'Search sessions...')}
@@ -5053,15 +5053,15 @@ export default function ChatApp() {
           disabled={batchDeleting}
           title={ct('新对话', 'New chat')}
           aria-label={ct('新对话', 'New chat')}
-        ><MessageSquarePlus size={17}/></button>
-        <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
+        ><MessageSquarePlus size={16}/></button>
+        <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={16}/></button>
       </div>
       <div className="oa-sidebar-tabs" role="tablist" aria-label={ct('会话视图', 'Session views')}>
         <button type="button" role="tab" aria-selected={sidebarTab === 'history'} className={sidebarTab === 'history' ? 'active' : ''} onClick={()=>setSidebarTab('history')}>
-          <Clock3 size={14}/><span>{ct('历史', 'History')}</span><small>{sessions.length}</small>
+          <Clock3 size={13}/><span>{ct('历史', 'History')}</span><small>{sessions.length}</small>
         </button>
         <button type="button" role="tab" aria-selected={sidebarTab === 'projects'} className={sidebarTab === 'projects' ? 'active' : ''} onClick={()=>setSidebarTab('projects')}>
-          <FolderOpen size={14}/><span>{ct('项目', 'Projects')}</span><small>{projectSessionGroups.length}</small>
+          <FolderOpen size={13}/><span>{ct('项目', 'Projects')}</span><small>{projectSessionGroups.length}</small>
         </button>
       </div>
       {sidebarTab === 'history' ? <>

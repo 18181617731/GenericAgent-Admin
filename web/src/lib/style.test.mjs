@@ -67,7 +67,7 @@ test('language controls reserve stable space for translated labels', () => {
   assert.match(segmented, /white-space\s*:\s*nowrap/i)
   assert.match(
     css,
-    /html\[data-color-scheme="dark"\] \.app:not\(\.app-tab-chat\) \.sidebar nav button\.active,[\s\S]*?\{[^}]*background:\s*var\(--surface-muted\)\s*!important[^}]*color:\s*var\(--text\)\s*!important/s,
+    /html\[data-color-scheme="dark"\] \.app \.sidebar nav button\.active,[\s\S]*?\{[^}]*background:\s*var\(--surface-muted\)\s*!important[^}]*color:\s*var\(--text\)\s*!important/s,
   )
 })
 
