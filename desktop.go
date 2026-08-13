@@ -15,13 +15,14 @@ import (
 // backend, so callers fall back to the system browser.
 var errDesktopWindowUnsupported = errors.New("native desktop window is not supported on this platform")
 
-// Creating a WebView2 window downloads nothing but does spin up a browser
-// process, so allow a generous startup budget before giving up on the wait.
+// Creating a native webview window downloads nothing but does spin up a
+// browser process, so allow a generous startup budget before giving up on
+// the wait.
 const desktopWindowStartTimeout = 30 * time.Second
 
 // nativeThemeBinding is the function the page calls to tell its host window
 // which palette is on screen. It is declared here so the web bundle and the
-// Windows backend cannot drift apart silently.
+// native window backends cannot drift apart silently.
 const nativeThemeBinding = "gaNativeTheme"
 
 const (
@@ -167,8 +168,10 @@ func (d *desktopWindows) Open(spec desktopWindowSpec) {
 	started := make(chan error, 1)
 	var report sync.Once
 	go func() {
-		// The window owns this OS thread for its whole lifetime: WebView2
-		// delivers messages to the thread that created the window.
+		// The window owns this OS thread for its whole lifetime. WebView2
+		// delivers messages to the thread that created the window; on macOS
+		// this goroutine only waits, because AppKit already owns the main
+		// thread via the tray.
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		err := d.run(spec, func(win desktopWindow) {
