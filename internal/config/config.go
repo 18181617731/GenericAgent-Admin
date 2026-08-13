@@ -3,13 +3,19 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 )
+
+// DefaultRemotePort is the fixed port suggested when a user first turns on
+// remote access.
+const DefaultRemotePort = 8787
 
 type SlashCommandItem struct {
 	Cmd     string `json:"cmd"`
@@ -49,10 +55,23 @@ const (
 )
 
 type AppConfig struct {
-	GARoot                   string                    `json:"ga_root"`
-	ChatDataDir              string                    `json:"chat_data_dir"`
-	Host                     string                    `json:"host"`
-	Port                     int                       `json:"port"`
+	GARoot      string `json:"ga_root"`
+	ChatDataDir string `json:"chat_data_dir"`
+	// Host is only consulted when RemoteAccess is on. Loopback-only launches
+	// always bind 127.0.0.1 regardless of this value.
+	Host string `json:"host"`
+	// Port is the fixed port used when RemoteAccess is on. Loopback-only
+	// launches ignore it and let the OS assign an ephemeral port instead, so
+	// the admin server never squats on a well-known port or collides with one.
+	Port int `json:"port"`
+	// RemoteAccess exposes the admin server beyond loopback. It is off by
+	// default: everything the admin server can do (run processes, read and
+	// write files) is reachable by anyone who can reach the port.
+	RemoteAccess bool `json:"remote_access"`
+	// RemoteAllowAnonymous drops the password requirement for remote clients.
+	// The flag is phrased as an opt-out so that a config which predates remote
+	// access, or one that simply omits the key, still demands a password.
+	RemoteAllowAnonymous     bool                      `json:"remote_allow_anonymous"`
 	LogTailLines             int                       `json:"log_tail_lines"`
 	BufferLines              int                       `json:"buffer_lines"`
 	PythonPath               string                    `json:"python_path"`
@@ -82,6 +101,50 @@ type AppConfig struct {
 	// can import GA's dependencies often belongs to a sibling instance. This is
 	// runtime-only wiring derived from the instance registry, never persisted.
 	PythonFallbackRoots []string `json:"-"`
+}
+
+// ListenAddress reports the TCP address the admin server should bind.
+//
+// Without remote access the server stays on loopback and asks the OS for an
+// ephemeral port, so it never squats on a well-known port and never fails to
+// start because something else already holds one. Remote access trades that
+// away for a fixed, reachable port. A non-zero portOverride (the --port flag)
+// pins the port in either mode.
+func ListenAddress(cfg AppConfig, portOverride int) string {
+	host := "127.0.0.1"
+	port := 0
+	if cfg.RemoteAccess {
+		host = remoteListenHost(cfg.Host)
+		port = cfg.Port
+		if port < 1 || port > 65535 {
+			port = DefaultRemotePort
+		}
+	}
+	if portOverride > 0 {
+		port = portOverride
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// remoteListenHost resolves the interface remote access binds to. Remote
+// access on a loopback interface is a contradiction, so a loopback host is
+// widened to every interface rather than silently serving nobody.
+func remoteListenHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || IsLoopbackHost(host) {
+		return "0.0.0.0"
+	}
+	return host
+}
+
+// IsLoopbackHost reports whether host names the local machine only.
+func IsLoopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func validInstanceID(id string) bool {
@@ -118,6 +181,9 @@ func validateRuntimePath(name, path string, wantDir bool) error {
 func Validate(cfg AppConfig) error {
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return fmt.Errorf("port must be between 0 and 65535")
+	}
+	if cfg.RemoteAccess && (cfg.Port < 1 || cfg.Port > 65535) {
+		return fmt.Errorf("remote_access requires a fixed port between 1 and 65535")
 	}
 	if cfg.LogTailLines < 0 {
 		return fmt.Errorf("log_tail_lines must be positive")

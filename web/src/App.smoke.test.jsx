@@ -7,6 +7,7 @@ import App, { ChannelsPage, I18N } from './App.jsx'
 import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, WorldlinePanel } from './ChatApp.jsx'
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
+import { draftChangeSummary } from './lib/modelsEditor.js'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 import { UsagePage } from './pages/UsagePage.jsx'
@@ -442,7 +443,40 @@ describe('channel frontend gates', () => {
 
     await waitFor(() => expect(container.querySelector('.channels-layout')).toBeTruthy())
     expect(container.querySelector('header, h1, h2')).toBeNull()
-    expect(container.querySelector('.channel-console-metrics')).toBeTruthy()
+    expect(container.querySelector('.channel-tabs [role="tab"]')).toBeTruthy()
+  })
+
+  test('ChannelsPage edits one channel at a time and keeps the write target in reach', async () => {
+    const profiles = [
+      { id: 'feishu', name: 'Feishu', testable: true, fields: [{ name: 'fs_app_id', label: 'App ID', value: 'cli_a' }] },
+      { id: 'telegram', name: 'Telegram', testable: true, fields: [{ name: 'tg_bot_token', label: 'Bot Token', secret: true, has_value: false, value: '' }] },
+    ]
+    globalThis.fetch = vi.fn(() => Promise.resolve(jsonResponse({ path: '/ga/mykey.py', profiles })))
+
+    const { container } = render(
+      <ChannelsPage
+        frontendSvcs={[]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+        onReflectStart={vi.fn()}
+      />,
+    )
+
+    const feishuEntry = await screen.findByRole('button', { name: /Lark/ })
+    expect(feishuEntry.getAttribute('aria-current')).toBe('true')
+    expect(screen.getByLabelText('App ID')).toBeTruthy()
+    expect(screen.queryByLabelText('Bot Token')).toBeNull()
+    expect(container.querySelector('.channel-commit-path code').textContent).toBe('/ga/mykey.py')
+
+    fireEvent.click(screen.getByRole('button', { name: /Telegram/ }))
+    expect(screen.getByLabelText('Bot Token')).toBeTruthy()
+    expect(screen.queryByLabelText('App ID')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Bot Token'), { target: { value: 'token-1' } })
+    expect((await screen.findByRole('status')).textContent).toMatch(/1 channel with unsaved changes/i)
   })
 
   test('ChannelsPage switches accessible task tabs with pointer and keyboard', async () => {
@@ -677,85 +711,118 @@ const validModelProfile = {
 function ModelsHarness({
   initialProfile = validModelProfile,
   discoverModels = vi.fn(async () => ({ models: [] })),
-  saveModelProfile,
-  modelSaveStatus = {},
-  failoverGroups = [],
-  onSaveFailoverGroups = vi.fn(async () => true),
+  initialFailoverGroups = [],
+  saveState = {},
+  saveAll = vi.fn(async () => true),
+  discardDraft = vi.fn(),
 }) {
-  const [profiles, setProfiles] = React.useState([{ ...initialProfile }])
+  const persisted = React.useRef([{ ...initialProfile, client_id: 'profile-key' }])
+  const persistedGroups = React.useRef(initialFailoverGroups)
+  const [profiles, setProfiles] = React.useState(persisted.current)
+  const [failoverGroups, setFailoverGroups] = React.useState(initialFailoverGroups)
+  // Mirrors the hook: the saved name has to survive a rename so that the
+  // change count reports one edit rather than an add plus a removal.
   const patchProfile = (idx, patch) => {
-    setProfiles(current => current.map((profile, index) => (
-      index === idx ? { ...profile, ...patch } : profile
-    )))
+    setProfiles(current => current.map((profile, index) => {
+      if (index !== idx) return profile
+      const next = { ...profile, ...patch }
+      if (patch.var_name !== undefined && next.previous_var_name === undefined && profile.var_name) {
+        next.previous_var_name = profile.var_name
+      }
+      return next
+    }))
   }
 
   return (
     <Models
       t={I18N.zh}
       profiles={profiles}
-      persistedProfiles={[{ ...initialProfile }]}
       setProfiles={setProfiles}
       patchProfile={patchProfile}
+      addModelProfiles={vi.fn(() => [])}
+      removeModelProfile={vi.fn()}
       importModels={vi.fn()}
       previewModels={vi.fn()}
       discoverModels={discoverModels}
-      saveModelProfile={saveModelProfile}
-      modelSaveStatus={modelSaveStatus}
       failoverGroups={failoverGroups}
-      onSaveFailoverGroups={onSaveFailoverGroups}
+      setFailoverGroups={setFailoverGroups}
+      changes={draftChangeSummary(profiles, persisted.current, failoverGroups, persistedGroups.current)}
+      saveState={saveState}
+      saveAll={saveAll}
+      discardDraft={discardDraft}
       riskCatalog={[]}
-      getProfileKey={() => 'profile-key'}
+      getProfileKey={(idx, profile) => profile?.client_id || `profile-${idx}`}
     />
   )
 }
 
-describe('Models provider editor', () => {
-  test('keeps focus in the provider name while its controlled value changes', () => {
+// The provider drawer renders in a body portal, so its fields are read from
+// the document rather than the render container.
+const openProviderDrawer = () => fireEvent.click(document.querySelector('.model-connection-card'))
+const providerNameInput = () => document.querySelector('.model-field--provider input')
+const openAddModel = () => fireEvent.click(screen.getByRole('button', { name: /添加模型$/ }))
+
+describe('Models call list', () => {
+  test('lists every model as a call slot numbered by --llm-no', () => {
     installBrowserPolyfills()
+    render(<ModelsHarness initialProfile={{
+      ...validModelProfile,
+      models: ['demo-model', 'demo-model-2'],
+      model_configs: [{ model: 'demo-model' }, { model: 'demo-model-2' }],
+    }} />)
 
-    const { container } = render(<ModelsHarness />)
-    const nameInput = container.querySelector('.model-field--provider input')
-    nameInput.focus()
-    expect(document.activeElement).toBe(nameInput)
-
-    fireEvent.change(nameInput, { target: { value: 'renamed' } })
-
-    const updatedNameInput = container.querySelector('.model-field--provider input')
-    expect(updatedNameInput.value).toBe('renamed')
-    expect(document.activeElement).toBe(updatedNameInput)
+    const slots = [...document.querySelectorAll('.model-call-slot strong')]
+    expect(slots.map(slot => slot.textContent)).toEqual(['0', '1'])
+    expect(document.querySelector('.model-call-row .model-call-title strong').textContent).toBe('demo-model')
   })
 
   test('edits a model display name without changing its model ID', () => {
     installBrowserPolyfills()
-    const initialProfile = {
+    render(<ModelsHarness initialProfile={{
       ...validModelProfile,
       model_configs: [{ model: 'demo-model', name: 'Demo Friendly' }],
-    }
-    const { container } = render(<ModelsHarness initialProfile={initialProfile} />)
+    }} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+    fireEvent.click(screen.getByRole('button', { name: /^配置: / }))
     const displayNameInput = screen.getByLabelText('显示名称')
     expect(displayNameInput.value).toBe('Demo Friendly')
 
     fireEvent.change(displayNameInput, { target: { value: 'Renamed Friendly' } })
 
     expect(screen.getByLabelText('显示名称').value).toBe('Renamed Friendly')
-    expect(container.querySelector('.model-config-display-name')?.textContent).toBe('Renamed Friendly')
-    expect(container.querySelector('.model-config-id')?.textContent).toBe('demo-model')
+    expect(document.querySelector('.model-call-title strong').textContent).toBe('Renamed Friendly')
+    expect(document.querySelector('.model-call-sub em').textContent).toBe('demo-model')
   })
 
-  test('shows discovery pending then empty state with a recovery action', async () => {
+  test('keeps focus in the provider name while its controlled value changes', () => {
+    installBrowserPolyfills()
+
+    render(<ModelsHarness />)
+    openProviderDrawer()
+    const nameInput = providerNameInput()
+    nameInput.focus()
+    expect(document.activeElement).toBe(nameInput)
+
+    fireEvent.change(nameInput, { target: { value: 'renamed' } })
+
+    const updatedNameInput = providerNameInput()
+    expect(updatedNameInput.value).toBe('renamed')
+    expect(document.activeElement).toBe(updatedNameInput)
+  })
+
+  test('shows discovery pending then an empty state that can be retried', async () => {
     installBrowserPolyfills()
     let resolveDiscovery
     const discoverModels = vi.fn(() => new Promise(resolve => { resolveDiscovery = resolve }))
     render(<ModelsHarness discoverModels={discoverModels} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '获取模型' }))
-    expect(await screen.findByText('正在获取模型')).toBeTruthy()
+    openAddModel()
+    fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
+    expect(await screen.findByText(/正在获取模型/)).toBeTruthy()
 
     resolveDiscovery({ models: [] })
     expect(await screen.findByText(/没有发现新的模型/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '重新获取' }))
+    fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
     expect(discoverModels).toHaveBeenCalledTimes(2)
   })
 
@@ -766,7 +833,8 @@ describe('Models provider editor', () => {
       .mockResolvedValueOnce({ models: [] })
     render(<ModelsHarness discoverModels={discoverModels} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '获取模型' }))
+    openAddModel()
+    fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
     expect(await screen.findByText('无法获取候选模型')).toBeTruthy()
     expect(screen.getByText('upstream unavailable')).toBeTruthy()
 
@@ -775,20 +843,27 @@ describe('Models provider editor', () => {
     expect(await screen.findByText(/没有发现新的模型/)).toBeTruthy()
   })
 
-  test('inserts a discovered candidate into the profile', async () => {
+  test('appends a discovered candidate to the end of the call list', async () => {
     installBrowserPolyfills()
     const discoverModels = vi.fn(async () => ({ models: ['new-model'] }))
-    const { container } = render(<ModelsHarness discoverModels={discoverModels} />)
+    render(<ModelsHarness discoverModels={discoverModels} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '获取模型' }))
+    openAddModel()
+    fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
     fireEvent.click(await screen.findByRole('button', { name: '添加模型 new-model' }))
 
-    await waitFor(() => expect(container.textContent).toContain('new-model'))
+    await waitFor(() => {
+      const titles = [...document.querySelectorAll('.model-call-title strong')]
+      expect(titles.map(title => title.textContent)).toEqual(['demo-model', 'new-model'])
+    })
   })
 
-  test('shows invalid profile errors and API key warning separately', () => {
+  test('shows invalid provider errors and the API key warning in its drawer', () => {
     installBrowserPolyfills()
     render(<ModelsHarness initialProfile={{ ...validModelProfile, var_name: '', apibase: '', apikey: '' }} />)
+
+    expect(screen.getByText(/有服务商存在阻断项/)).toBeTruthy()
+    openProviderDrawer()
 
     expect(screen.getByText('此服务商暂时不能保存')).toBeTruthy()
     expect(screen.getByText('必须填写变量名')).toBeTruthy()
@@ -797,36 +872,46 @@ describe('Models provider editor', () => {
     expect(screen.getByText(/API Key 为空/)).toBeTruthy()
   })
 
-  test('shows pending and successful per-profile save feedback', () => {
+  test('collects edits into one draft that only the page-level save writes', () => {
     installBrowserPolyfills()
-    const { rerender } = render(<ModelsHarness modelSaveStatus={{ 'profile-key': { status: 'saving' } }} />)
-    expect(screen.getByText('正在保存此服务商')).toBeTruthy()
+    const saveAll = vi.fn(async () => true)
+    render(<ModelsHarness saveAll={saveAll} />)
 
-    rerender(<ModelsHarness modelSaveStatus={{ 'profile-key': { status: 'saved', savedAt: 1 } }} />)
-    expect(screen.getByText('已保存到 mykey.py')).toBeTruthy()
+    expect(screen.getByText('与 mykey.py 一致')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '保存到 mykey.py' }).disabled).toBe(true)
+
+    openProviderDrawer()
+    fireEvent.change(providerNameInput(), { target: { value: 'renamed' } })
+
+    expect(screen.getByText('1 处未保存改动')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '保存到 mykey.py' }))
+    expect(saveAll).toHaveBeenCalledTimes(1)
   })
 
-  test('shows failed save detail and retries the same profile', () => {
+  test('reports a failed save at the top of the page and keeps the draft', () => {
     installBrowserPolyfills()
-    const saveModelProfile = vi.fn(async () => true)
-    render(
-      <ModelsHarness
-        saveModelProfile={saveModelProfile}
-        modelSaveStatus={{ 'profile-key': { status: 'error', error: 'disk is read-only' } }}
-      />,
-    )
+    render(<ModelsHarness saveState={{ status: 'error', error: 'disk is read-only' }} />)
 
-    expect(screen.getByText('此服务商保存失败')).toBeTruthy()
+    openProviderDrawer()
+    fireEvent.change(providerNameInput(), { target: { value: 'renamed' } })
+
+    expect(screen.getByText('保存失败')).toBeTruthy()
     expect(screen.getByText('disk is read-only')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '重试保存' }))
-    expect(saveModelProfile).toHaveBeenCalledWith(0, 'profile-key')
+    expect(screen.getByText('1 处未保存改动')).toBeTruthy()
+    expect(providerNameInput().value).toBe('renamed')
   })
 
   test('keeps failover groups independently collapsed and expands a newly added group', () => {
     installBrowserPolyfills()
+    const twoModels = {
+      ...validModelProfile,
+      models: ['demo-model', 'demo-model-2'],
+      model_configs: [{ model: 'demo-model' }, { model: 'demo-model-2' }],
+    }
     render(
       <ModelsHarness
-        failoverGroups={[
+        initialProfile={twoModels}
+        initialFailoverGroups={[
           {
             var_name: 'mixin_config_primary',
             members: [{ provider_var_name: validModelProfile.var_name, model: validModelProfile.model }],
@@ -843,35 +928,34 @@ describe('Models provider editor', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '\u6545\u969c\u8f6c\u79fb' }))
-
-    let groups = [...document.querySelectorAll('.model-failover-group')]
-    let toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    const readGroups = () => [...document.querySelectorAll('.model-call-row.is-failover')]
+    let groups = readGroups()
+    let toggles = groups.map(group => group.querySelector('.model-call-toggle'))
     expect(groups).toHaveLength(2)
     expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
-    expect(groups.every(group => !group.querySelector('.model-failover-group-body'))).toBe(true)
+    expect(groups.every(group => !group.querySelector('.model-row-body'))).toBe(true)
 
     fireEvent.click(toggles[0])
-    groups = [...document.querySelectorAll('.model-failover-group')]
-    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    groups = readGroups()
+    toggles = groups.map(group => group.querySelector('.model-call-toggle'))
     expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
-    expect(groups[0].querySelector('.model-failover-group-body')).toBeTruthy()
-    expect(groups[1].querySelector('.model-failover-group-body')).toBeNull()
+    expect(groups[0].querySelector('.model-row-body')).toBeTruthy()
+    expect(groups[1].querySelector('.model-row-body')).toBeNull()
 
     fireEvent.click(toggles[1])
     fireEvent.click(toggles[0])
-    groups = [...document.querySelectorAll('.model-failover-group')]
-    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    groups = readGroups()
+    toggles = groups.map(group => group.querySelector('.model-call-toggle'))
     expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true'])
-    expect(groups[0].querySelector('.model-failover-group-body')).toBeNull()
-    expect(groups[1].querySelector('.model-failover-group-body')).toBeTruthy()
+    expect(groups[0].querySelector('.model-row-body')).toBeNull()
+    expect(groups[1].querySelector('.model-row-body')).toBeTruthy()
 
-    fireEvent.click(document.querySelector('.model-failover-section:not(.model-failover-group) > .model-failover-section-head button'))
-    groups = [...document.querySelectorAll('.model-failover-group')]
-    toggles = groups.map(group => group.querySelector('.model-failover-group-toggle'))
+    fireEvent.click(screen.getByRole('button', { name: '新建故障转移组' }))
+    groups = readGroups()
+    toggles = groups.map(group => group.querySelector('.model-call-toggle'))
     expect(groups).toHaveLength(3)
     expect(toggles.map(toggle => toggle?.getAttribute('aria-expanded'))).toEqual(['false', 'true', 'true'])
-    expect(groups[2].querySelector('.model-failover-group-body')).toBeTruthy()
+    expect(groups[2].querySelector('.model-row-body')).toBeTruthy()
   })
 
   test('groups failover candidates by provider and keeps the full model identity visible', () => {
@@ -1486,6 +1570,7 @@ describe('operator shell feedback', () => {
       '/api/observability/inventory': {},
       '/api/observability/risks': {},
       '/api/services': { services: [] },
+      '/api/ga/git-status': { ok: true, available: true, branch: 'main', commit: 'abc1234', upstream: 'origin/main', upstream_configured: true, latest: true },
     }
     return jsonResponse(payloads[path] ?? {})
   }
@@ -1504,9 +1589,17 @@ describe('operator shell feedback', () => {
     const overview = screen.getByRole('button', { name: /^(总览|Overview)$/i })
     const pageHeader = document.querySelector('.admin-page-header')
     expect(document.querySelectorAll('.admin-page-header')).toHaveLength(1)
-    expect(pageHeader?.querySelector('.admin-page-icon')?.getAttribute('aria-hidden')).toBe('true')
-    expect(pageHeader?.querySelector('.admin-page-meta')?.getAttribute('aria-label')).toMatch(/服务状态|Service status/i)
-    expect(pageHeader?.querySelector('.admin-page-health')?.getAttribute('role')).toBe('status')
+    // The header is a label line only: the service status belongs to the shell,
+    // which renders one copy for the sidebar and one for the collapsed bar.
+    expect(pageHeader?.querySelector('.admin-service-status')).toBeNull()
+    const statuses = document.querySelectorAll('.admin-service-status')
+    expect(statuses).toHaveLength(2)
+    expect(document.querySelector('#admin-sidebar > .admin-service-status')).toBeTruthy()
+    expect(document.querySelector('.admin-mobile-bar > .admin-service-status')).toBeTruthy()
+    statuses.forEach(status => {
+      expect(status.getAttribute('aria-label')).toMatch(/服务状态|Service status/i)
+      expect(status.querySelector('.admin-service-health')?.getAttribute('role')).toBe('status')
+    })
     expect(pageHeader?.querySelector('h2')?.textContent).toMatch(/总览|Overview/i)
     expect(overview.getAttribute('aria-current')).toBe('page')
     expect(usage.tagName).toBe('BUTTON')
@@ -1599,18 +1692,38 @@ describe('operator shell feedback', () => {
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'EN' }))
+    fireEvent.click(await screen.findByRole('button', { name: '常规' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
+    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Overview$/i }))
 
     expect(await screen.findByText('Version management')).toBeTruthy()
     expect(screen.getByText('Read-only observability')).toBeTruthy()
-    expect(screen.getByText('GA source update')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Appearance/i })).toBeTruthy()
+    expect(screen.getByText('GA source')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Run \/update in chat/i })).toBeTruthy()
     expect(screen.queryByText('只读观测')).toBeNull()
     expect(screen.queryByText('版本管理')).toBeNull()
-    expect(screen.queryByText('GA 源代码更新')).toBeNull()
+    expect(screen.queryByText('GA 源代码')).toBeNull()
     expect(document.documentElement.lang).toBe('en')
     expect(window.localStorage.getItem('ga-admin-lang')).toBe('en')
   }, 30000)
+
+  test('hides GA source status when git cannot answer', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/ga/git-status') return jsonResponse({ ok: true, available: false, reason: 'git_missing' })
+      return shellPayload(url)
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^(总览|Overview)$/i }))
+
+    expect(await screen.findByText('版本管理')).toBeTruthy()
+    expect(screen.queryByText('GA 源代码')).toBeNull()
+    expect(screen.queryByRole('button', { name: /检查是否最新/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /去对话执行 \/update/i })).toBeNull()
+  })
 
   test('refresh shows pending, success, and a recoverable error', async () => {
     installBrowserPolyfills()
@@ -1740,9 +1853,48 @@ describe('operator shell feedback', () => {
     fireEvent.scroll(logView)
     const follow = screen.getByRole('button', { name: /Follow|\u8ddf\u968f/i })
     expect(follow.getAttribute('aria-pressed')).toBe('false')
-    expect(document.querySelector('.log-follow-status.paused')).toBeTruthy()
+    // Scrolling away from the tail offers a way back instead of a status line.
+    expect(document.querySelector('.log-jump')).toBeTruthy()
     fireEvent.click(follow)
     expect(follow.getAttribute('aria-pressed')).toBe('true')
+    expect(document.querySelector('.log-jump')).toBeFalsy()
+  })
+
+  test('log filtering hides non-matching lines but keeps their tail position', async () => {
+    installBrowserPolyfills()
+    window.history.replaceState({}, '', '/logs')
+    const services = [{ name: 'alpha-worker', kind: 'task', running: true, pid: 42, command: ['agentmain'] }]
+    globalThis.fetch = vi.fn((url) => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/services') return Promise.resolve(jsonResponse({ services }))
+      return Promise.resolve(shellPayload(url))
+    })
+
+    const streams = []
+    class FakeEventSource {
+      constructor(url) { this.url = url; this.listeners = {}; this.close = vi.fn(); streams.push(this) }
+      addEventListener(name, handler) { this.listeners[name] = handler }
+      emit(name, payload) { this.listeners[name]?.({ data: JSON.stringify(payload) }) }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    render(<App />)
+    fireEvent.click((await screen.findByText('alpha-worker')).closest('button'))
+    await waitFor(() => expect(streams).toHaveLength(1))
+    streams[0].onopen()
+    streams[0].emit('snapshot', { lines: ['boot ok', 'ERROR disk full', 'still going'] })
+
+    await waitFor(() => expect(document.querySelectorAll('.log-line')).toHaveLength(3))
+    expect(document.querySelector('.log-line.is-error')).toBeTruthy()
+
+    const filter = screen.getByRole('searchbox')
+    fireEvent.change(filter, { target: { value: 'disk' } })
+    await waitFor(() => expect(document.querySelectorAll('.log-line')).toHaveLength(1))
+    expect(document.querySelector('.log-line-no').textContent).toBe('2')
+    expect(document.querySelector('.log-view mark').textContent).toBe('disk')
+
+    fireEvent.change(filter, { target: { value: 'nothing-matches' } })
+    await waitFor(() => expect(document.querySelector('.log-output-empty')).toBeTruthy())
   })
 })
 

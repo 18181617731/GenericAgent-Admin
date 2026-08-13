@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +15,14 @@ import (
 const (
 	chatLoopDefaultMaxRounds = 10
 	chatLoopMaxRounds        = 100
+
+	// The controller occasionally answers in prose instead of the decision
+	// protocol. One corrective re-ask costs far less than dropping a loop that
+	// was otherwise healthy.
+	chatLoopControllerAttempts = 2
+	// A controller that keeps asking for the identical next step is spinning,
+	// not progressing, and would otherwise burn every remaining round.
+	chatLoopMaxPromptRepeats = 2
 
 	chatLoopStatusWaiting    = "waiting"
 	chatLoopStatusRunning    = "running"
@@ -115,6 +125,23 @@ The only valid response shapes are:
 <next_prompt>specific next action</next_prompt>
 
 Do not output both elements. Do not use placeholders such as ellipses, "continue", "none", or "TBD" as the next prompt. Do not add prose outside the chosen XML element.`, objective, round, maxRounds)
+}
+
+func chatLoopControllerRetryPrompt(objective string, round, maxRounds int) string {
+	return chatLoopControllerPrompt(objective, round, maxRounds) + `
+
+Your previous reply was rejected because it did not contain exactly one usable loop_complete or next_prompt element. Answer again with that single element and nothing else.`
+}
+
+// chatLoopPromptFingerprint identifies a next step without storing its text, so
+// repeat detection never duplicates controller output into persisted state.
+func chatLoopPromptFingerprint(prompt string) string {
+	normalized := strings.ToLower(strings.Join(strings.Fields(prompt), " "))
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
 }
 
 type chatLoopDecision struct {
@@ -355,7 +382,6 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 	state := cs.Loop
 	cmdReq := map[string]interface{}{
 		"op":                "btw",
-		"prompt":            chatLoopControllerPrompt(state.ControllerPrompt, state.Round, state.MaxRounds),
 		"history":           cs.Messages,
 		"raw_history":       cs.RawHistory,
 		"history_info":      cs.HistoryInfo,
@@ -367,14 +393,29 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 		"reasoning_effort":  cs.Settings.ReasoningEffort,
 		"ga_root":           s.CfgStore.Snapshot().GARoot,
 	}
-	msg, err := runOneShotBTWWorkerFunc(s.CfgStore.Snapshot(), sid+"-loop", cmdReq)
-	if err != nil {
-		s.finishChatLoop(sid, epoch, chatLoopStatusError, "controller_error: "+err.Error())
-		return
+	var decision chatLoopDecision
+	var parseErr error
+	for attempt := 0; attempt < chatLoopControllerAttempts; attempt++ {
+		if attempt == 0 {
+			cmdReq["prompt"] = chatLoopControllerPrompt(state.ControllerPrompt, state.Round, state.MaxRounds)
+		} else {
+			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round, state.MaxRounds)
+		}
+		msg, err := runOneShotBTWWorkerFunc(s.CfgStore.Snapshot(), sid+"-loop", cmdReq)
+		if err != nil {
+			s.finishChatLoop(sid, epoch, chatLoopStatusError, "controller_error: "+err.Error())
+			return
+		}
+		decision, parseErr = parseChatLoopDecision(msg.Content)
+		if parseErr == nil {
+			break
+		}
+		if attempt+1 < chatLoopControllerAttempts && !s.recordChatLoopRetry(sid, epoch) {
+			return
+		}
 	}
-	decision, err := parseChatLoopDecision(msg.Content)
-	if err != nil {
-		s.finishChatLoop(sid, epoch, chatLoopStatusError, "controller_protocol_error: "+err.Error())
+	if parseErr != nil {
+		s.finishChatLoop(sid, epoch, chatLoopStatusError, "controller_protocol_error: "+parseErr.Error())
 		return
 	}
 	if decision.Complete {
@@ -386,6 +427,25 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 		return
 	}
 	s.continueChatLoop(sid, epoch, decision.Prompt)
+}
+
+// recordChatLoopRetry reports whether the loop is still live and owned by this
+// evaluation, so a stopped loop never spends a second controller call. The
+// record itself is advisory: failing to persist it must not strand the loop.
+func (s *Server) recordChatLoopRetry(sid string, epoch int64) bool {
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil || !cs.Loop.Enabled || cs.Loop.Epoch != epoch || cs.Loop.Status != chatLoopStatusEvaluating {
+		s.SessionMu.Unlock()
+		return false
+	}
+	appendChatLoopRecord(&cs.Loop, "retry", "Controller reply was unusable; asking once more.", "")
+	saved := saveChatSessionLocked(s.CfgStore.Snapshot(), cs) == nil
+	s.SessionMu.Unlock()
+	if saved {
+		s.publishChatLoopState(sid, cs.Loop)
+	}
+	return true
 }
 
 func (s *Server) finishChatLoop(sid string, epoch int64, status, reason string) {
@@ -438,6 +498,28 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 			if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
 				return err
 			}
+			finished := latest.Loop
+			terminalLoop = &finished
+			return errChatLoopStale
+		}
+		fingerprint := chatLoopPromptFingerprint(prompt)
+		if fingerprint != "" && fingerprint == latest.Loop.LastPromptFingerprint {
+			latest.Loop.RepeatStreak++
+		} else {
+			latest.Loop.RepeatStreak = 0
+		}
+		latest.Loop.LastPromptFingerprint = fingerprint
+		if latest.Loop.RepeatStreak >= chatLoopMaxPromptRepeats {
+			latest.Loop.Enabled = false
+			latest.Loop.Status = chatLoopStatusStopped
+			latest.Loop.StopReason = "controller_stalled"
+			appendChatLoopRecord(&latest.Loop, "stalled", "Controller kept asking for the same next step.", "")
+			latest.Loop.Epoch++
+			if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
+				return err
+			}
+			finished := latest.Loop
+			terminalLoop = &finished
 			return errChatLoopStale
 		}
 		latest.Loop.Round++

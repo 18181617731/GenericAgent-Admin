@@ -202,6 +202,71 @@ export const removeModelConfig = (profile = {}, index) => withModelConfigs(
   profileModelConfigs(profile).filter((_, rowIndex) => rowIndex !== index),
 )
 
+// Fields the editor keeps for its own bookkeeping. They never reach mykey.py,
+// so a draft that differs only in these is not a change the user made.
+const DRAFT_ONLY_KEYS = ['client_id', 'previous_var_name', 'provider_sort_order']
+
+const sortedKeys = value => {
+  if (Array.isArray(value)) return value.map(sortedKeys)
+  if (!value || typeof value !== 'object') return value
+  return Object.keys(value).sort().reduce((sorted, key) => {
+    if (value[key] === undefined) return sorted
+    sorted[key] = sortedKeys(value[key])
+    return sorted
+  }, {})
+}
+
+const canonical = value => JSON.stringify(sortedKeys(value))
+
+// comparableProfile strips bookkeeping and folds the three ways a profile can
+// carry its models into one, so a profile read from mykey.py and the same
+// profile after a round trip through the editor compare equal.
+const comparableProfile = (profile = {}) => {
+  const next = { ...profile, model_configs: profileModelConfigs(profile) }
+  DRAFT_ONLY_KEYS.forEach(key => delete next[key])
+  delete next.models
+  delete next.model
+  return canonical(next)
+}
+
+const providerIdentity = profile => text(profile?.previous_var_name) || text(profile?.var_name)
+
+// draftChangeSummary counts what a save would write. Providers are matched by
+// variable name rather than position so that reordering the list is reported
+// once, not as an edit to every provider it shifted.
+export const draftChangeSummary = (draftProfiles = [], persistedProfiles = [], draftGroups = [], persistedGroups = []) => {
+  const persistedByName = new Map(persistedProfiles.map(profile => [text(profile?.var_name), profile]))
+  const matched = new Set()
+  let added = 0
+  let edited = 0
+
+  draftProfiles.forEach(profile => {
+    const identity = providerIdentity(profile)
+    const persisted = persistedByName.get(identity)
+    if (!persisted) {
+      added += 1
+      return
+    }
+    matched.add(identity)
+    if (comparableProfile(profile) !== comparableProfile(persisted)) edited += 1
+  })
+
+  const removed = persistedProfiles.filter(profile => !matched.has(text(profile?.var_name))).length
+  const draftOrder = draftProfiles.map(providerIdentity).filter(name => matched.has(name))
+  const persistedOrder = persistedProfiles.map(profile => text(profile?.var_name)).filter(name => matched.has(name))
+  const reordered = draftOrder.join('\u0000') !== persistedOrder.join('\u0000')
+  const failover = canonical(normalizeFailoverGroups(draftGroups)) !== canonical(normalizeFailoverGroups(persistedGroups))
+
+  return {
+    added,
+    edited,
+    removed,
+    reordered,
+    failover,
+    total: added + edited + removed + (reordered ? 1 : 0) + (failover ? 1 : 0),
+  }
+}
+
 export const orderedProviderProfiles = (profiles = []) => profiles
   .map((profile, index) => ({ profile, index, order: Number.isInteger(profile?.provider_sort_order) ? profile.provider_sort_order : index }))
   .sort((left, right) => left.order - right.order || left.index - right.index)
@@ -273,37 +338,6 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
   return [...modelRows, ...failoverRows].sort((left, right) => left.order - right.order)
 }
 
-export const mergePersistedModelOrder = (draftProfiles = [], persistedProfiles = []) => {
-  const persistedOrders = new Map()
-  let persistedCount = 0
-
-  persistedProfiles.forEach((profile, profileIndex) => {
-    profileModelConfigs(profile).forEach(config => {
-      const key = `${profileIndex}\0${modelIdOf(config)}`
-      const orders = persistedOrders.get(key) || []
-      orders.push(Number.isInteger(config.sort_order) ? config.sort_order : persistedCount)
-      persistedOrders.set(key, orders)
-      persistedCount += 1
-    })
-  })
-
-  const consumed = new Map()
-  let draftOnlyOrder = persistedCount
-  return draftProfiles.map((profile, profileIndex) => withModelConfigs(
-    profile,
-    profileModelConfigs(profile).map(config => {
-      const key = `${profileIndex}\0${modelIdOf(config)}`
-      const occurrence = consumed.get(key) || 0
-      const persistedOrder = persistedOrders.get(key)?.[occurrence]
-      consumed.set(key, occurrence + 1)
-      return {
-        ...config,
-        sort_order: persistedOrder === undefined ? draftOnlyOrder++ : persistedOrder,
-      }
-    }),
-  ))
-}
-
 export const FAILOVER_VAR_PREFIX = 'mixin_config_'
 
 export const failoverGroupSuffix = value => {
@@ -372,66 +406,6 @@ export const nextFailoverGroupName = (groups = []) => {
   return failoverGroupVarName(suffix)
 }
 
-export const remapFailoverGroupReferences = (groups = [], changes = []) => {
-  const mappings = (Array.isArray(changes) ? changes : [])
-    .map(change => ({
-      fromProvider: text(change?.from_provider_var_name),
-      fromModel: text(change?.from_model),
-      toProvider: text(change?.to_provider_var_name),
-      toModel: text(change?.to_model),
-    }))
-    .filter(change => change.fromProvider && change.fromModel && change.toProvider && change.toModel)
-  if (!mappings.length) return normalizeFailoverGroups(groups)
-  return normalizeFailoverGroups(groups).map(group => ({
-    ...group,
-    members: group.members.map(member => {
-      const change = mappings.find(candidate => (
-        candidate.fromProvider === member.provider_var_name && candidate.fromModel === member.model
-      ))
-      return change ? { provider_var_name: change.toProvider, model: change.toModel } : member
-    }),
-  }))
-}
-
-const FAILOVER_FIELDS = [
-  'failover_order',
-  'failover_max_retries',
-  'failover_base_delay',
-  'failover_spring_back',
-]
-
-export const mergePersistedFailoverConfig = (draftProfiles = [], persistedProfiles = []) => {
-  const byIdentity = new Map()
-  const bySlot = new Map()
-  persistedProfiles.forEach((profile, profileIndex) => {
-    profileModelConfigs(profile).forEach((config, configIndex) => {
-      const metadata = Object.fromEntries(FAILOVER_FIELDS
-        .filter(key => config[key] !== undefined)
-        .map(key => [key, config[key]]))
-      const identity = `${text(profile.var_name)}\0${modelIdOf(config)}`
-      const matches = byIdentity.get(identity) || []
-      matches.push(metadata)
-      byIdentity.set(identity, matches)
-      bySlot.set(`${profileIndex}:${configIndex}`, metadata)
-    })
-  })
-
-  const consumed = new Map()
-  return draftProfiles.map((profile, profileIndex) => withModelConfigs(
-    profile,
-    profileModelConfigs(profile).map((config, configIndex) => {
-      const identity = `${text(profile.var_name)}\0${modelIdOf(config)}`
-      const occurrence = consumed.get(identity) || 0
-      const matches = byIdentity.get(identity)
-      const metadata = matches?.[occurrence] || bySlot.get(`${profileIndex}:${configIndex}`) || {}
-      consumed.set(identity, occurrence + 1)
-      const next = { ...config }
-      FAILOVER_FIELDS.forEach(key => delete next[key])
-      return { ...next, ...metadata }
-    }),
-  ))
-}
-
 export const moveOrderedItem = (items = [], fromIndex, toIndex) => {
   if (
     !Number.isInteger(fromIndex)
@@ -447,17 +421,6 @@ export const moveOrderedItem = (items = [], fromIndex, toIndex) => {
   const [moved] = next.splice(fromIndex, 1)
   next.splice(toIndex, 0, moved)
   return next
-}
-
-export const applyModelOrder = (profiles = [], orderedRows = []) => {
-  const orderById = new Map(orderedRows.map((row, order) => [row.id, order]))
-  return profiles.map((profile, profileIndex) => withModelConfigs(
-    profile,
-    profileModelConfigs(profile).map((config, configIndex) => {
-      const sortOrder = orderById.get(`${profileIndex}:${configIndex}`)
-      return sortOrder === undefined ? { ...config } : { ...config, sort_order: sortOrder }
-    }),
-  ))
 }
 
 export const applyModelAndFailoverOrder = (profiles = [], failoverGroups = [], orderedRows = []) => {
@@ -479,37 +442,4 @@ export const applyModelAndFailoverOrder = (profiles = [], failoverGroups = [], o
   })
 
   return { profiles: nextProfiles, failoverGroups: nextFailoverGroups }
-}
-
-
-export const orderedFailoverRows = (profiles = []) => orderedModelRows(profiles)
-  .map(row => ({ ...row, config: profileModelConfigs(profiles[row.profileIndex])[row.configIndex] }))
-  .filter(row => Number.isInteger(row.config.failover_order) && row.config.failover_order >= 0)
-  .sort((left, right) => left.config.failover_order - right.config.failover_order)
-
-export const applyFailoverConfig = (profiles = [], orderedRows = [], settings = {}) => {
-  const orderById = new Map(orderedRows.map((row, order) => [row.id, order]))
-  return profiles.map((profile, profileIndex) => withModelConfigs(
-    profile,
-    profileModelConfigs(profile).map((config, configIndex) => {
-      const next = { ...config }
-      const order = orderById.get(`${profileIndex}:${configIndex}`)
-      if (order === undefined) {
-        delete next.failover_order
-        delete next.failover_max_retries
-        delete next.failover_base_delay
-        delete next.failover_spring_back
-        return next
-      }
-      next.failover_order = order
-      next.failover_max_retries = settings.maxRetries
-      next.failover_base_delay = settings.baseDelay
-      if (settings.springBack === undefined || settings.springBack === null || settings.springBack === '') {
-        delete next.failover_spring_back
-      } else {
-        next.failover_spring_back = settings.springBack
-      }
-      return next
-    }),
-  ))
 }

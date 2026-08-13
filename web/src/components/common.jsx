@@ -10,7 +10,7 @@ const serviceReturnCode = (svc) => svc?.returncode ?? svc?.return_code ?? '-'
 const serviceStartedAt = (svc) => svc?.started_at || '-'
 const serviceLogPath = (svc) => svc?.log_path || svc?.log || ''
 
-function ServiceMeta({ svc, compact = false, llms = [], onModel, t }) {
+function ServiceMeta({ svc, llms = [], onModel, t }) {
   const cmd = serviceCommand(svc)
   const logPath = serviceLogPath(svc)
   const text = t?.service || {}
@@ -90,21 +90,26 @@ export function ChannelServiceTable({ services = [], emptyMessage, onStart, onSt
     const isPending = state?.status === 'pending'
     const startAction = isReflectService(svc) && onReflectStart ? onReflectStart : onStart
     const retryAction = state?.action === 'stop' ? onStop : startAction
-    return <article className={`channel-service-card ${svc.running ? 'is-running' : 'is-stopped'}`} key={svc.name} aria-busy={isPending || undefined}>
-    <div className="channel-service-main">
-      <div><b>{svc.name}</b><small>{svc.kind}</small></div>
-      <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
-    </div>
-    <ServiceMeta svc={svc} compact t={t}/>
-    <div className="channel-service-actions">
-      <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{svc.autostart ? t.enabled : t.disabled}</label>
-      <div className="svc-actions"><button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button><button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button><button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>{svc.name === 'frontends/hub.py' && <button type="button" onClick={onOpenHub} title="打开 Hub 面板"><ExternalLink size={14}/>Hub</button>}</div>
-    </div>
-    {state?.message && <div className={`service-action-status ${state.status || ''}`} role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
-      <span>{state.message}</span>
-      {state.status === 'error' && <button type="button" onClick={() => retryAction?.(svc.name)}>{t.retry || 'Retry'}</button>}
-    </div>}
-  </article>
+    return <article className={`channel-service-row ${svc.running ? 'is-running' : 'is-stopped'}`} key={svc.name} aria-busy={isPending || undefined}>
+      <div className="channel-service-line">
+        <span className="channel-service-id"><b>{svc.name}</b><small>{svc.kind}</small></span>
+        <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
+        <span className="channel-service-controls">
+          <button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button>
+          <button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
+          <button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>
+          {svc.name === 'frontends/hub.py' && <button type="button" onClick={onOpenHub} title="打开 Hub 面板"><ExternalLink size={14}/>Hub</button>}
+          <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label>
+        </span>
+      </div>
+      <dl className="channel-service-facts">
+        {channelServiceFacts(svc, t?.service || {}).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={String(value)}>{String(value)}</dd></div>)}
+      </dl>
+      {state?.message && <div className={`service-action-status ${state.status || ''}`} role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
+        <span>{state.message}</span>
+        {state.status === 'error' && <button type="button" onClick={() => retryAction?.(svc.name)}>{t.retry || 'Retry'}</button>}
+      </div>}
+    </article>
   })}</div>
 }
 
@@ -171,4 +176,4 @@ export function ObservabilityCard({ snapshot, error = '', onRefresh, onRepair, r
   </section>
 }
 
-export function SecretInput({ value, onChange, t }) { const [show, setShow] = useState(false); return <div className="secret-row"><input type={show ? 'text' : 'password'} value={value || ''} placeholder={t.hints.savedSecret} onChange={e => onChange(e.target.value)} /><button type="button" onClick={() => setShow(!show)}>{show ? t.hide : t.show}</button></div> }
+export function SecretInput({ value, onChange, label, t }) { const [show, setShow] = useState(false); return <div className="secret-row"><input type={show ? 'text' : 'password'} aria-label={label} value={value || ''} placeholder={t.hints.savedSecret} onChange={e => onChange(e.target.value)} /><button type="button" onClick={() => setShow(!show)}>{show ? t.hide : t.show}</button></div> }

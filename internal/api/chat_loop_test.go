@@ -373,6 +373,166 @@ func TestAppendChatLoopRecordBoundsHistoryAndUnicode(t *testing.T) {
 	}
 }
 
+func TestChatLoopPromptFingerprintIgnoresCaseAndSpacing(t *testing.T) {
+	base := chatLoopPromptFingerprint("Run the failing tests again")
+	if base == "" {
+		t.Fatal("fingerprint of a real prompt is empty")
+	}
+	if got := chatLoopPromptFingerprint("  run   the failing\ttests\nagain "); got != base {
+		t.Fatalf("fingerprint is sensitive to case or spacing: %q vs %q", got, base)
+	}
+	if got := chatLoopPromptFingerprint("run the passing tests again"); got == base {
+		t.Fatal("different prompts share a fingerprint")
+	}
+	if got := chatLoopPromptFingerprint("   "); got != "" {
+		t.Fatalf("blank prompt fingerprint = %q, want empty", got)
+	}
+	if strings.Contains(base, "run") {
+		t.Fatalf("fingerprint leaks prompt text: %q", base)
+	}
+}
+
+func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "loop-controller-retry"
+	const unusableReply = "Sure, I think the agent should probably keep going for a while."
+	cs := chatSession{ID: sid, Loop: chatLoopState{
+		Enabled:          true,
+		Status:           chatLoopStatusEvaluating,
+		Epoch:            3,
+		Round:            1,
+		MaxRounds:        5,
+		ControllerPrompt: "ship the release",
+	}}
+	saveChatLoopTestSession(t, s, cs)
+
+	old := runOneShotBTWWorkerFunc
+	defer func() { runOneShotBTWWorkerFunc = old }()
+	var prompts []string
+	runOneShotBTWWorkerFunc = func(_ config.AppConfig, _ string, req map[string]interface{}) (chatMessage, error) {
+		prompt, _ := req["prompt"].(string)
+		prompts = append(prompts, prompt)
+		if len(prompts) == 1 {
+			return chatMessage{Content: unusableReply}, nil
+		}
+		return chatMessage{Content: "<loop_complete>everything shipped</loop_complete>"}, nil
+	}
+
+	s.evaluateChatLoop(sid, 3, cs)
+
+	if len(prompts) != 2 {
+		t.Fatalf("controller calls = %d, want 2", len(prompts))
+	}
+	if strings.Contains(prompts[0], "previous reply was rejected") {
+		t.Fatalf("first attempt already carried the corrective instruction: %q", prompts[0])
+	}
+	if !strings.Contains(prompts[1], "previous reply was rejected") {
+		t.Fatalf("retry attempt lost the corrective instruction: %q", prompts[1])
+	}
+	persisted, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusCompleted || persisted.Loop.StopReason != "controller_complete" {
+		t.Fatalf("loop after successful retry = %#v", persisted.Loop)
+	}
+	retries := 0
+	for _, record := range persisted.Loop.Records {
+		if record.Phase == "retry" {
+			retries++
+			if record.Summary != "Controller reply was unusable; asking once more." || record.Prompt != "" {
+				t.Fatalf("retry record = %#v", record)
+			}
+		}
+	}
+	if retries != 1 {
+		t.Fatalf("retry records = %d, want 1: %#v", retries, persisted.Loop.Records)
+	}
+	recordsJSON, err := json.Marshal(persisted.Loop.Records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(recordsJSON, []byte(unusableReply)) {
+		t.Fatalf("controller output leaked into observer records: %s", recordsJSON)
+	}
+}
+
+func TestEvaluateChatLoopFailsAfterRetryBudget(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "loop-controller-retry-budget"
+	cs := chatSession{ID: sid, Loop: chatLoopState{
+		Enabled:          true,
+		Status:           chatLoopStatusEvaluating,
+		Epoch:            2,
+		MaxRounds:        5,
+		ControllerPrompt: "ship the release",
+	}}
+	saveChatLoopTestSession(t, s, cs)
+
+	old := runOneShotBTWWorkerFunc
+	defer func() { runOneShotBTWWorkerFunc = old }()
+	calls := 0
+	runOneShotBTWWorkerFunc = func(config.AppConfig, string, map[string]interface{}) (chatMessage, error) {
+		calls++
+		return chatMessage{Content: "still not following the protocol"}, nil
+	}
+
+	s.evaluateChatLoop(sid, 2, cs)
+
+	if calls != chatLoopControllerAttempts {
+		t.Fatalf("controller calls = %d, want %d", calls, chatLoopControllerAttempts)
+	}
+	persisted, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusError {
+		t.Fatalf("loop after exhausted retries = %#v", persisted.Loop)
+	}
+	if !strings.HasPrefix(persisted.Loop.StopReason, "controller_protocol_error") {
+		t.Fatalf("stop reason = %q", persisted.Loop.StopReason)
+	}
+}
+
+func TestContinueChatLoopStopsARepeatingController(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "loop-controller-stalled"
+	const repeated = "Run the failing tests again"
+	saveChatLoopTestSession(t, s, chatSession{ID: sid, Loop: chatLoopState{
+		Enabled:               true,
+		Status:                chatLoopStatusEvaluating,
+		Epoch:                 5,
+		Round:                 2,
+		MaxRounds:             50,
+		ControllerPrompt:      "make the suite green",
+		LastPromptFingerprint: chatLoopPromptFingerprint(repeated),
+		RepeatStreak:          chatLoopMaxPromptRepeats - 1,
+	}})
+
+	s.continueChatLoop(sid, 5, "  run the FAILING tests   again ")
+
+	persisted, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusStopped || persisted.Loop.StopReason != "controller_stalled" {
+		t.Fatalf("stalled loop = %#v", persisted.Loop)
+	}
+	if persisted.Loop.Round != 2 {
+		t.Fatalf("stalled loop consumed a round: %#v", persisted.Loop)
+	}
+	if persisted.Loop.Epoch != 6 {
+		t.Fatalf("stalled loop epoch = %d, want 6", persisted.Loop.Epoch)
+	}
+	if len(persisted.Messages) != 0 {
+		t.Fatalf("stalled loop queued messages: %#v", persisted.Messages)
+	}
+	last := persisted.Loop.Records[len(persisted.Loop.Records)-1]
+	if last.Phase != "stalled" || last.Prompt != "" {
+		t.Fatalf("stalled record = %#v", last)
+	}
+}
+
 func TestFinishChatLoopRecordDoesNotExposeControllerOutput(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-record-redaction"

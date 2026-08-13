@@ -1,6 +1,7 @@
 /dist/
 /.tools/
 /web/dist/
+/data/webview/
 *.exe
 config.local.json
 *.local.json

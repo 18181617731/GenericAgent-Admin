@@ -4,8 +4,27 @@ export const shouldFinishStreamFollow = ({ running, replay, completed, eventCoun
   !running && replay && completed && eventCount === 0
 )
 
-export const scrollFollowAction = ({ nearBottom, previousScrollTop, scrollTop, epsilon = 1 }) => {
+// Only a reader moving away from the end means to stop following. The scroll
+// offset alone cannot say that: a card collapsing above the viewport, or the
+// thread being trimmed, drags the offset up with nobody touching anything, and
+// the jump the app makes itself after each chunk arrives here too. So the
+// decision also needs the content height, which only a reader leaves alone,
+// and a note about who asked for the scroll.
+export const scrollFollowAction = ({
+  nearBottom,
+  previousScrollTop,
+  scrollTop,
+  previousScrollHeight,
+  scrollHeight,
+  programmatic = false,
+  epsilon = 1,
+}) => {
+  // A scroll the app performs says nothing about what the reader wants, and it
+  // passes through the end of the thread on its way anywhere, so it must not
+  // be allowed to answer either question.
+  if (programmatic) return 'preserve'
   if (nearBottom) return 'resume'
+  if (Number(scrollHeight) < Number(previousScrollHeight)) return 'preserve'
   if (Number(scrollTop) < Number(previousScrollTop) - epsilon) return 'pause'
   return 'preserve'
 }

@@ -284,6 +284,34 @@ const OverviewPage = ({
 export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const defaultLang = 'zh'
   const [lang, setLang] = useState(() => localStorage.getItem('ga-admin-lang-explicit') === '1' ? (localStorage.getItem('ga-admin-lang') || defaultLang) : defaultLang)
+  const [theme, setTheme] = useState(getInitialTheme)
+  const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
+  const initialRoute = useMemo(() => parseRoute(), [])
+  const [tab, setTab] = useState(initialRoute.tab)
+  const [taskSection, setTaskSection] = useState(initialRoute.taskSubTab)
+  const [cfg, setCfg] = useState(null)
+  const [savedCfg, setSavedCfg] = useState(null)
+  const [root, setRoot] = useState('')
+  const [health, setHealth] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [booting, setBooting] = useState(true)
+  const [notice, setNotice] = useState(null)
+  const [observability, setObservability] = useState(null)
+  const [observabilityError, setObservabilityError] = useState('')
+  // The server binds an ephemeral port by default, so the real address comes
+  // from the health endpoint instead of the configured host/port pair.
+  const [listenAddress, setListenAddress] = useState('')
+  const appScope = useRef(null)
+
+  const t = I18N[lang] || I18N.en
+  const text = SETTINGS_TEXT[lang] || SETTINGS_TEXT.en
+
+  const setMsg = (message, kind) => {
+    const value = String(message || '')
+    const inferredKind = /(?:失败|错误|无效|error|failed|invalid)/i.test(value) ? 'error' : (/^(?:正在|加载|保存中|启动中)/.test(value) ? 'pending' : 'success')
+    setNotice(value ? { message: value, kind: kind || inferredKind } : null)
+  }
+
   const chooseLang = (nextLang) => {
     localStorage.setItem('ga-admin-lang-explicit', '1')
     localStorage.setItem('ga-admin-lang', nextLang)
@@ -291,8 +319,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLang(nextLang)
     window.dispatchEvent(new CustomEvent('ga-admin-language-change', { detail: nextLang }))
   }
-  const [theme, setTheme] = useState(getInitialTheme)
-  const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
+
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
     localStorage.setItem('ga-admin-theme', activeTheme.id)
@@ -424,22 +451,17 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (!quiet) setScheduleLoading(false)
     }
   }
+  const services = useServices({ t, setMsg, setBusy })
+  const logStream = useLogStream({ active: tab === 'logs' })
+  const version = useVersionUpdates({ t, lang, setMsg, setBusy })
+  const files = useFiles({ t, setMsg, setBusy, onOpen: () => setTab('files') })
+  const schedule = useSchedule({ t, lang, setMsg, setBusy, onOpenSection: (section) => { setTab('tasks'); setTaskSection(section) } })
+  const goals = useGoals({ t, lang, setMsg, setBusy, active: tab === 'goals' })
+  const models = useModelsConfig({ t, lang, setMsg, setBusy, active: tab === 'models' })
+  const titleModel = useTitleModel({ t, lang, setMsg, active: tab === 'chat', fallbackProfiles: models.persistedProfiles })
 
-  const loadLLMs = async () => { try { const d = await api('/api/chat/state'); setLLMs(d.llms || []) } catch(e){ console.error('加载模型列表失败:', e) } }
-  const refreshTMWebDriverStatus = async () => {
-    const d = await api('/api/tmwebdriver/status')
-    setTmwdStatus(d)
-    return d
-  }
-  const repairTMWebDriver = async () => {
-    if (!confirmDanger('tmwebdriver-repair', lang === 'zh' ? '启动或修复 TMWebDriver master 进程？' : 'Start or repair the TMWebDriver master process?')) return
-    setBusy(true); setMsg('正在启动 TMWebDriver master…')
-    try {
-      const d = await api('/api/tmwebdriver/repair', { dangerous:true, method:'POST', body: '{}' })
-      setTmwdStatus(d.status)
-      setMsg(d.message || (d.started ? `已启动 TMWebDriver master PID ${d.pid}` : 'TMWebDriver master 已在运行'))
-    } catch(e){ setMsg(`TMWebDriver 修复失败：${e.message}`) } finally{ setBusy(false) }
-  }
+  const inventory = health?.inventory || {}
+  const scheduleSummary = schedule.data || inventory.schedule || {}
 
   const readObservability = async (healthOverride = null) => {
     const request = (endpoint) => {
@@ -449,12 +471,11 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     const [apiHealth, inventory, risks] = await Promise.all([
       healthOverride || request('/api/ga/health'),
       request('/api/ga/inventory'),
-      request('/api/risk/catalog')
+      request('/api/risk/catalog'),
     ])
-    const snapshot = buildObservabilitySnapshot({ health: apiHealth, inventory, risks })
-    setObservability(snapshot)
+    setObservability(buildObservabilitySnapshot({ health: apiHealth, inventory: inv, risks }))
+    setListenAddress(apiHealth?.listen?.address || '')
     setObservabilityError('')
-    return snapshot
   }
 
   const repairGARuntime = async () => {
@@ -478,12 +499,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setBooting(true)
     setNotice({ kind: 'pending', message: t.overview.refreshing })
     try {
-      const [c, h, auto, ver, vstat] = await Promise.all([
+      const [c, h] = await Promise.all([
         api('/api/config'),
         api('/api/ga/health'),
-        api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })),
-        api('/api/version/info').catch(e => ({ error:e.message })),
-        api('/api/version/status').catch(() => null)
+        version.loadSnapshot(),
       ])
       const visibleVersionStatus = (vstat?.id || vstat?.stage) && !shouldHideCompletedVersionProgress(vstat, ver?.version) ? vstat : null
       setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setVersionStatus(visibleVersionStatus)
@@ -512,6 +531,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     } finally { setBooting(false) }
   }
   useEffect(() => { load() }, [])
+
+  // Route-scoped data: each page pulls what it needs the first time it opens.
   useEffect(() => {
     if (!health?.root) return undefined
     notificationMonitorRef.current = { snapshot: null, busy: false }
@@ -599,14 +620,33 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setPendingServiceName('')
   }
 
-  const serviceAction = async (name, action, params = null) => {
-    if (!confirmDanger(`service-${action}`, t.service.confirmAction(action, name))) return
-    const pendingMessage = t.service.pending(action, name)
-    setServiceActionStates(current => ({ ...current, [name]: { status: 'pending', action, message: pendingMessage } }))
+  useGSAP(() => {
+    if (prefersReducedMotion()) return
+    const ctx = gsap.context(() => {
+      const q = gsap.utils.selector(appScope)
+      let tl
+      const targets = '.stats .stat, .panel, .workspace, .log-workbench, .goals-page, .set-card'
+      const play = () => {
+        tl = gsap.timeline({ defaults: { ease: 'power2.out', duration: 0.28 } })
+        tl.from(q('.main > header'), { y: 8, autoAlpha: 0, clearProps: 'transform,opacity,visibility' })
+          .from(q(targets), { y: 10, autoAlpha: 0, stagger: 0.025, clearProps: 'transform,opacity,visibility' }, '-=0.12')
+      }
+      const raf = window.requestAnimationFrame(play)
+      const guard = window.setTimeout(() => {
+        gsap.set(q(`.main > header, ${targets}`), { autoAlpha: 1, clearProps: 'transform,opacity,visibility' })
+      }, 900)
+      return () => { window.cancelAnimationFrame(raf); window.clearTimeout(guard); tl?.kill() }
+    }, appScope)
+    return () => ctx.revert()
+  }, { scope: appScope, dependencies: [tab, lang] })
+
+  const saveConfig = async () => {
+    if (!confirmDanger('config-save', lang === 'zh' ? '保存 GA Admin 配置？会写入配置文件并可能切换 GA 根目录。' : 'Save the GA Admin configuration? This writes the configuration file and may switch the GA root.')) return
+    setBusy(true)
     try {
-      const body = { name }
-      if (params) body.params = params
-      await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) })
+      const c = await api('/api/config', { dangerous:true, method: 'PUT', body: JSON.stringify({ ...cfg, ga_root: root }) })
+      setCfg(c); setSavedCfg(c)
+      setMsg(t.hints.rootSaved)
       await load()
       setServiceActionStates(current => ({ ...current, [name]: { status: 'success', action, message: t.service.success(action, name) } }))
       if (selected === name) setLogStreamNonce(value => value + 1)
@@ -1342,14 +1382,14 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const moduleTodo = module => <ModuleTodoPanel module={module} lang={lang} onNavigate={navigateTo} onOpenSource={openTodoSource}/>
 
   return <>
-    {showLLMPicker && <div className="modal-overlay" onClick={() => setShowLLMPicker(false)}>
+    {services.pickerOpen && <div className="modal-overlay" onClick={services.closePicker}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-head"><h3>选择反思模型</h3><button className="modal-close" onClick={() => setShowLLMPicker(false)}>✕</button></div>
         <p className="muted">即将启动反思服务：{pendingServiceName}</p>
         <ModelCascadePicker models={llms} value={reflectLLMNo} placement="bottom" onChange={value => setReflectLLMNo(String(value))}/>
         <div className="modal-actions">
-          <button onClick={confirmReflectStart}><Play size={14}/>{t.start}</button>
-          <button onClick={() => setShowLLMPicker(false)}>{t.cancel}</button>
+          <button onClick={services.confirmReflectStart}><Play size={14}/>{t.start}</button>
+          <button onClick={services.closePicker}>{t.cancel}</button>
         </div>
       </div>
     </div>}

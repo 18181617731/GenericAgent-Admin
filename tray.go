@@ -4,67 +4,140 @@ package main
 
 import (
 	_ "embed"
+	"log"
 	"runtime"
 	"sync"
+	"time"
 
-	"github.com/getlantern/systray"
+	"fyne.io/systray"
 )
 
+// One icon serves the tray, the taskbar, and every desktop window.
+//
 //go:embed assets/tray_windows.ico
-var trayIconWindows []byte
+var appIconICO []byte
 
 //go:embed assets/tray.png
-var trayIconPNG []byte
+var appIconPNG []byte
 
-func runTray(appURL string, onOpen func(), onOpenChat func(), onStopServices func(), onExit func()) {
+// The bound address is fixed for the process lifetime, but remote access, the
+// password, and the set of running services all change while the process runs,
+// so the menu re-reads them instead of rendering once at startup.
+const trayRefreshInterval = 3 * time.Second
+
+func runTray(app trayApp) {
+	text := trayLanguage()
 	var exitOnce sync.Once
+	quit := func() {
+		exitOnce.Do(func() {
+			if app.Exit != nil {
+				app.Exit()
+			}
+		})
+	}
 
 	systray.Run(func() {
 		if runtime.GOOS == "windows" {
-			systray.SetIcon(trayIconWindows)
+			systray.SetIcon(appIconICO)
 		} else {
-			systray.SetIcon(trayIconPNG)
+			systray.SetIcon(appIconPNG)
 		}
 		systray.SetTitle("GA")
-		systray.SetTooltip("GenericAgent Admin")
+		systray.SetTooltip(text.AppName)
 
-		openItem := systray.AddMenuItem("打开 Admin", "Open GenericAgent Admin")
-		chatItem := systray.AddMenuItem("打开 Chat", "Open GenericAgent Chat")
-		stopItem := systray.AddMenuItem("停止所有服务", "Stop all managed services")
+		// A left click opens the primary interface; the menu stays on the right
+		// button, which is what happens when no secondary handler is set.
+		systray.SetOnTapped(func() { run(app.OpenChat) })
+
+		chatItem := systray.AddMenuItem(text.OpenChat, text.OpenChatTip)
+		settingsItem := systray.AddMenuItem(text.OpenSettings, text.OpenSettingsTip)
 		systray.AddSeparator()
-		exitItem := systray.AddMenuItem("退出 Admin", "Quit GenericAgent Admin")
+		// The default listen port is random, so the tray is the only place a
+		// user can read, and take, the address of the running server.
+		localItem := systray.AddMenuItem("", text.CopyLocalTip)
+		lanItem := systray.AddMenuItem("", text.CopyLANTip)
+		scopeItem := systray.AddMenuItem("", text.ScopeTip)
+		scopeItem.Disable()
+		// Stop and Quit share this section so that hiding Stop cannot leave two
+		// separators stacked on each other.
+		systray.AddSeparator()
+		stopItem := systray.AddMenuItem("", text.StopTip)
+		exitItem := systray.AddMenuItem(text.Exit, text.ExitTip)
+
+		status := app.status()
+		render := func() {
+			status = app.status()
+			localItem.SetTitle(status.LocalLabel)
+			systray.SetTooltip(status.Tooltip)
+
+			// Every remaining row earns its place by carrying something the
+			// user can act on; anything that would only restate the safe
+			// default leaves the menu instead of greying out inside it.
+			show(lanItem, status.LANLabel != "", status.LANLabel)
+			show(scopeItem, status.ScopeAlert, status.ScopeLabel)
+
+			running := app.runningServices()
+			show(stopItem, running > 0, stopServicesLabel(text, running))
+		}
+		render()
+
+		copyAddress := func(item *systray.MenuItem, url string) {
+			if url == "" {
+				return
+			}
+			if err := copyToClipboard(url); err != nil {
+				log.Printf("tray: %v", err)
+				return
+			}
+			// A copy changes nothing on screen, so the entry acknowledges it
+			// until the next refresh restores the address.
+			item.SetTitle(text.Copied + url)
+		}
 
 		go func() {
+			// One goroutine owns every menu item, so the periodic refresh
+			// cannot race the click handlers that also rewrite titles.
+			refresh := time.NewTicker(trayRefreshInterval)
+			defer refresh.Stop()
 			for {
 				select {
-				case <-openItem.ClickedCh:
-					if onOpen != nil {
-						go onOpen()
-					}
+				case <-refresh.C:
+					render()
 				case <-chatItem.ClickedCh:
-					if onOpenChat != nil {
-						go onOpenChat()
-					}
+					run(app.OpenChat)
+				case <-settingsItem.ClickedCh:
+					run(app.OpenSettings)
+				case <-localItem.ClickedCh:
+					copyAddress(localItem, status.LocalURL)
+				case <-lanItem.ClickedCh:
+					copyAddress(lanItem, status.LANURL)
 				case <-stopItem.ClickedCh:
-					if onStopServices != nil {
-						go onStopServices()
-					}
+					run(app.StopServices)
 				case <-exitItem.ClickedCh:
-					exitOnce.Do(func() {
-						if onExit != nil {
-							onExit()
-						}
-						systray.Quit()
-					})
+					quit()
+					systray.Quit()
 					return
 				}
 			}
 		}()
-	}, func() {
-		exitOnce.Do(func() {
-			if onExit != nil {
-				onExit()
-			}
-		})
-	})
+	}, quit)
+}
+
+// run keeps a click from blocking the menu on work that may open a window or
+// stop a process tree.
+func run(action func()) {
+	if action != nil {
+		go action()
+	}
+}
+
+// show gives an entry its current wording, or takes it out of the menu when it
+// has nothing left to say.
+func show(item *systray.MenuItem, visible bool, title string) {
+	if !visible {
+		item.Hide()
+		return
+	}
+	item.SetTitle(title)
+	item.Show()
 }

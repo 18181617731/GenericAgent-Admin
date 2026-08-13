@@ -25,7 +25,7 @@ import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManage
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
-import { groupRecentSessions } from './lib/chatSessionGroups.js'
+import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -79,6 +79,18 @@ const loopStopReasonText = reason => {
 const ChatFeatureHelp = ({ text }) => <span className="oa-chat-help" aria-hidden="true" data-tooltip={text} title={text}><CircleHelp size={13}/></span>
 export const ChatFileScopeContext = createContext({ workspace: '', gaRoot: '' })
 
+const loopPhaseLabel = phase => ({
+  started: ct('已启动', 'Started'),
+  checking: ct('检查中', 'Checking'),
+  retry: ct('重新询问', 'Re-asking'),
+  continue: ct('继续推进', 'Continuing'),
+  complete: ct('已完成', 'Completed'),
+  error: ct('异常', 'Error'),
+  paused: ct('已暂停', 'Paused'),
+  stalled: ct('空转已停', 'Stopped spinning'),
+  stopped: ct('已停止', 'Stopped'),
+}[phase] || ct('活动', 'Activity'))
+
 const timestampMs = (v) => {
   if (v instanceof Date) return v.getTime()
   if (typeof v === 'number') return Number.isFinite(v) ? (Math.abs(v) < 1e12 ? v * 1000 : v) : NaN
@@ -112,7 +124,25 @@ const timelineKey = (v) => {
   const d = dateFromTimestamp(v)
   return d ? `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}` : 'unknown'
 }
-const isNearBottom = (el, gap = 96) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
+// One distance decides every follow question: within this much of the end
+// counts as reading the newest output. It clears the row these buttons sit in,
+// which takes its own space at the end of the thread, so a reader parked at
+// the bottom is not told they have fallen behind by the button offering to
+// take them there.
+const FOLLOW_END_GAP = 56
+// A scroll the app asked for lands a frame or two later; until then its events
+// must not be read as the reader moving. An animated one keeps arriving for
+// as long as it runs.
+const FOLLOW_SETTLE_MS = 200
+const SMOOTH_SETTLE_MS = 700
+const isNearBottom = (el, gap = FOLLOW_END_GAP) => !el || (el.scrollHeight - el.scrollTop - el.clientHeight) <= gap
+// Nothing to follow, and nothing to offer a way back to, when the thread fits
+// on screen.
+const threadCanScroll = (el) => Boolean(el) && (el.scrollHeight - el.clientHeight) > FOLLOW_END_GAP
+// Where a jump parks the message it lands on, and how far its top must have
+// cleared the edge to count as being behind the reader at all.
+const JUMP_TOP_MARGIN = 12
+const SENT_ABOVE_EPSILON = 2
 const parseBTWDisplay = (value) => {
   const raw = String(value || '')
   const match = raw.match(/^\s*(?:>\s*)?(?:🟡\s*)?\/btw(?:[ \t]+([\s\S]*))?\s*$/i)
@@ -3076,6 +3106,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [extraPromptSaving, setExtraPromptSaving] = useState(false)
   const [menuOpen, setMenuOpen] = useState('')
   const [menuPos, setMenuPos] = useState(null)
+  const menuRef = useRef(null)
+  const menuTriggerRef = useRef(null)
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
@@ -3091,6 +3123,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
+  const [showJumpSent, setShowJumpSent] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
   const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
@@ -3103,7 +3136,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [isMobile, setIsMobile] = useState(() => isMobileViewport())
   const [streamClock, setStreamClock] = useState(() => Date.now())
   const threadRef = useRef(null)
-  const endRef = useRef(null)
+  const composerWrapRef = useRef(null)
   const fileRef = useRef(null)
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
@@ -3147,6 +3180,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const scrollModeRef = useRef('auto')
   const autoFollowRef = useRef(true)
   const previousScrollTopRef = useRef(0)
+  const previousScrollHeightRef = useRef(0)
+  const followSettleUntilRef = useRef(0)
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
@@ -4097,6 +4132,43 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
 
+  const closeSessionMenu = ({ restoreFocus = false } = {}) => {
+    setMenuOpen('')
+    setMenuPos(null)
+    if (restoreFocus) menuTriggerRef.current?.focus()
+    menuTriggerRef.current = null
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    // The menu is a fixed layer placed at the coordinates the row had when it
+    // opened, so anything that happens elsewhere dismisses it: a pointer that
+    // lands outside, Escape, or a scroll that would leave it behind. The
+    // trigger is excluded because it closes the menu through its own toggle.
+    const onPointerDown = (event) => {
+      if (menuRef.current?.contains(event.target)) return
+      if (event.target?.closest?.('.oa-session-more')) return
+      closeSessionMenu()
+    }
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeSessionMenu({ restoreFocus: true })
+    }
+    const onScroll = (event) => {
+      if (menuRef.current?.contains(event.target)) return
+      closeSessionMenu()
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [menuOpen])
+
   const startRename = (s) => { setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null) }
   const saveRename = async (id) => {
     const title = draftTitle.trim()
@@ -4885,34 +4957,99 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setNotice(ct('已切换 GA 实例', 'GA instance switched'))
   }
 
+  // The scroll events an app-driven move produces arrive over the frames that
+  // follow it, and they are ours rather than the reader's for that whole time.
+  const markProgrammaticScroll = (thread, settleMs) => {
+    previousScrollTopRef.current = thread.scrollTop
+    previousScrollHeightRef.current = thread.scrollHeight
+    followSettleUntilRef.current = Date.now() + settleMs
+  }
   const scrollToThreadEnd = (behavior = 'auto') => {
-    endRef.current?.scrollIntoView({ behavior, block:'end' })
-    if (threadRef.current) previousScrollTopRef.current = threadRef.current.scrollTop
+    const thread = threadRef.current
+    if (!thread) return
+    // The thread keeps a strip of padding under the last message for the
+    // floating composer. Scrolling an end marker into view stops at the marker
+    // and leaves that strip below the fold, which parks the newest output
+    // behind the composer and keeps the thread permanently short of its own
+    // bottom; scrolling the container itself lands on both.
+    thread.scrollTo({ top: thread.scrollHeight, behavior })
+    markProgrammaticScroll(thread, behavior === 'smooth' ? SMOOTH_SETTLE_MS : FOLLOW_SETTLE_MS)
   }
   const setFollowState = (enabled) => {
     autoFollowRef.current = enabled
     setAutoFollow(enabled)
-    setShowFollow(!enabled)
+    setShowFollow(!enabled && threadCanScroll(threadRef.current))
   }
   const resumeFollow = () => {
     setFollowState(true)
     scrollToThreadEnd('auto')
   }
+  // A gesture away from the end stops the chase straight away, including one
+  // made from the very bottom: a wheel event arrives before the page has moved,
+  // so waiting for the scroll would let the next chunk pull the reader back
+  // down first.
+  const pauseFollow = () => {
+    if (!autoFollowRef.current || !threadCanScroll(threadRef.current)) return
+    setFollowState(false)
+  }
+  const cardTopOffset = (card) => (
+    card.getBoundingClientRect().top - threadRef.current.getBoundingClientRect().top
+  )
+  // What a reader sent is where a turn begins, and an answer can run for
+  // screens past it. The nearest one behind the view is the start of what is
+  // on screen; taking it again and again walks the conversation back a turn
+  // at a time.
+  const previousSentCard = () => {
+    const thread = threadRef.current
+    if (!thread) return null
+    let previous = null
+    for (const card of thread.querySelectorAll('.oa-message.user')) {
+      if (cardTopOffset(card) >= -SENT_ABOVE_EPSILON) break
+      previous = card
+    }
+    return previous
+  }
+  const syncJumpSent = () => setShowJumpSent(Boolean(previousSentCard()))
+  const jumpToPreviousSent = () => {
+    if (!previousSentCard()) return
+    // Reading a turn from its start is incompatible with being carried to the
+    // end of the newest one, so this leaves the reader in charge.
+    if (autoFollowRef.current) setFollowState(false)
+    // Letting go of the end takes a commit, and the follow it cancels still
+    // has one jump to the bottom left in it. Measuring and moving a frame
+    // later means landing on the message rather than being overruled.
+    requestAnimationFrame(() => {
+      const thread = threadRef.current
+      const card = previousSentCard()
+      if (!thread || !card) return
+      thread.scrollTo({ top: thread.scrollTop + cardTopOffset(card) - JUMP_TOP_MARGIN, behavior: 'smooth' })
+      markProgrammaticScroll(thread, SMOOTH_SETTLE_MS)
+    })
+  }
   const updateFollowFromScroll = () => {
     const thread = threadRef.current
     if (!thread) return
-    const scrollTop = thread.scrollTop
+    syncJumpSent()
+    const { scrollTop, scrollHeight } = thread
     const action = scrollFollowAction({
-      nearBottom: isNearBottom(thread, 20),
+      nearBottom: isNearBottom(thread),
       previousScrollTop: previousScrollTopRef.current,
       scrollTop,
+      previousScrollHeight: previousScrollHeightRef.current,
+      scrollHeight,
+      programmatic: Date.now() < followSettleUntilRef.current,
     })
     previousScrollTopRef.current = scrollTop
-    if (action === 'resume' && !autoFollowRef.current) setFollowState(true)
-    else if (action === 'pause' && autoFollowRef.current) setFollowState(false)
-  }
-  const breakFollow = () => {
-    if (autoFollowRef.current && !isNearBottom(threadRef.current, 12)) setFollowState(false)
+    previousScrollHeightRef.current = scrollHeight
+    if (action === 'resume' && !autoFollowRef.current) {
+      setFollowState(true)
+      return
+    }
+    if (action === 'pause') pauseFollow()
+    // Once paused, the button tracks the thread rather than the moment it was
+    // paused: it exists to close a gap, and the reader can close that gap by
+    // hand at any point.
+    if (!autoFollowRef.current) setShowFollow(threadCanScroll(thread) && !isNearBottom(thread))
   }
 
   useLayoutEffect(() => {
@@ -4920,9 +5057,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       const behavior = scrollModeRef.current || 'auto'
       scrollModeRef.current = 'auto'
       scrollToThreadEnd(behavior)
-    } else if (!isNearBottom(threadRef.current)) {
-      setShowFollow(true)
+    } else {
+      // Content that shrank or a thread that no longer scrolls leaves nothing
+      // to go back to, so the button follows the thread rather than the flag.
+      setShowFollow(!isNearBottom(threadRef.current) && threadCanScroll(threadRef.current))
     }
+    syncJumpSent()
   }, [messages, busy, autoFollow])
 
   const lastThreadMessageId = messages.reduce((id, message) => message.kind === 'btw' ? id : message.id, '')
@@ -4936,6 +5076,21 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     observer.observe(tail)
     return () => observer.disconnect()
   }, [lastThreadMessageId, sid])
+
+  // The composer floats over the thread, so the thread has to reserve room for
+  // it and the follow button has to clear it. Attachments, the send queue, and
+  // a grown textarea all change that height, so it is measured rather than
+  // guessed.
+  useEffect(() => {
+    const wrap = composerWrapRef.current
+    const root = chatScope.current
+    if (!wrap || !root || typeof ResizeObserver === 'undefined') return
+    const apply = () => root.style.setProperty('--oa-composer-h', `${Math.round(wrap.getBoundingClientRect().height)}px`)
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(wrap)
+    return () => observer.disconnect()
+  }, [])
 
   useGSAP(() => {
     if (prefersReducedMotion()) return
@@ -5047,8 +5202,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       </button>}
       {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={event => {
         event.stopPropagation()
-        if (menuOpen === session.id) { setMenuOpen(''); setMenuPos(null); return }
+        if (menuOpen === session.id) { closeSessionMenu(); return }
         const rect = event.currentTarget.getBoundingClientRect()
+        menuTriggerRef.current = event.currentTarget
         setMenuPos({ top: Math.max(8, rect.top - 78), left: Math.max(8, rect.right - 136) })
         setMenuOpen(session.id)
       }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16} /></button>}
@@ -5091,8 +5247,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           disabled={batchDeleting}
           title={ct('新对话', 'New chat')}
           aria-label={ct('新对话', 'New chat')}
-        ><MessageSquarePlus size={17}/></button>
-        <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={18}/></button>
+        ><MessageSquarePlus size={16}/></button>
+        <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={16}/></button>
       </div>
       <div className="oa-session-manager-head">
         <span className="oa-session-manager-title">{ct('历史会话', 'History')} <small>{sessions.length}</small></span>
@@ -5134,7 +5290,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
-        return <div className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
+        return <div ref={menuRef} className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
           <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
           <button onClick={()=>setSessionPinned(s)}><Pin size={14}/>{s.pinned ? ct('\u53d6\u6d88\u7f6e\u9876', 'Unpin') : ct('\u7f6e\u9876', 'Pin')}</button>
           <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>
@@ -5142,7 +5298,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>
       })()}
       <div className="oa-sidebar-foot">
-        <button onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>{ct('返回管理台', 'Back to admin')}</button>
+        <button onClick={()=>window.location.href='/admin'}><Settings size={15}/>{ct('设置', 'Settings')}</button>
       </div>
     </aside>
     {!collapsed && <button className="oa-sidebar-backdrop" type="button" aria-label="关闭侧栏" onClick={()=>setCollapsed(true)}/>}
@@ -5323,7 +5479,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       </div>}
       </div>
 
-      <footer className="oa-composer-wrap">
+      <footer className="oa-composer-wrap" ref={composerWrapRef}>
         <PlanTodoCard plan={planState}/>
         {queuedMessages.length > 0 && <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('待发送队列', 'Send queue')}>
           <div className="oa-queue-guide-hint">

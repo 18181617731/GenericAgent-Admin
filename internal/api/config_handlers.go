@@ -36,6 +36,10 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
+		if err := s.validateRemoteAccess(c); err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
 		if err := s.saveConfigAndReconcile(c); err != nil {
 			bad(w, 400, err.Error())
 			return
@@ -47,6 +51,20 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bad(w, 405, "method not allowed")
+}
+
+// validateRemoteAccess refuses a remote-access configuration that nobody could
+// authenticate against. Saving it would publish the server to the network with
+// a credential check that can never succeed, which reads as a lockout to the
+// operator and as an open door to everyone else once they relax the setting.
+func (s *Server) validateRemoteAccess(cfg config.AppConfig) error {
+	if !cfg.RemoteAccess || cfg.RemoteAllowAnonymous {
+		return nil
+	}
+	if s.passwordConfigured() {
+		return nil
+	}
+	return errors.New("remote access requires an admin password: set one first, or allow anonymous remote access")
 }
 
 type setupPathReq struct {
@@ -433,8 +451,38 @@ var runGitCommandFunc = func(ctx context.Context, root string, args ...string) (
 	return text, nil
 }
 
+// Reasons GA source status cannot be produced at all. The console hides its GA
+// source card for these instead of showing an error nobody can act on there.
+const (
+	gitUnavailableNoRoot = "no_root"
+	gitUnavailableNoGit  = "git_missing"
+	gitUnavailableNoRepo = "not_a_repo"
+)
+
+var lookGitPathFunc = func() (string, error) { return exec.LookPath("git") }
+
+// gaGitRepoExists also accepts a .git file, which is how worktrees and
+// submodules point at their real git directory.
+func gaGitRepoExists(abs string) bool {
+	st, err := os.Stat(filepath.Join(abs, ".git"))
+	return err == nil && (st.IsDir() || st.Mode().IsRegular())
+}
+
+func gaGitUnavailableReason(abs string) string {
+	if strings.TrimSpace(abs) == "" {
+		return gitUnavailableNoRoot
+	}
+	if _, err := lookGitPathFunc(); err != nil {
+		return gitUnavailableNoGit
+	}
+	if !gaGitRepoExists(abs) {
+		return gitUnavailableNoRepo
+	}
+	return ""
+}
+
 func gaGitStatusForRoot(ctx context.Context, abs string) (map[string]interface{}, error) {
-	if st, err := os.Stat(filepath.Join(abs, ".git")); err != nil || !st.IsDir() {
+	if !gaGitRepoExists(abs) {
 		return nil, errors.New("GA root is not a git repository")
 	}
 	branch, _ := runGitCommand(ctx, abs, "branch", "--show-current")
@@ -494,13 +542,17 @@ func (s *Server) gaGitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
-	if root == "" {
-		bad(w, 400, "ga_root is not configured")
-		return
+	abs := root
+	if root != "" {
+		resolved, err := filepath.Abs(root)
+		if err != nil {
+			bad(w, 400, err.Error())
+			return
+		}
+		abs = resolved
 	}
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		bad(w, 400, err.Error())
+	if reason := gaGitUnavailableReason(abs); reason != "" {
+		writeJSON(w, map[string]interface{}{"ok": true, "available": false, "reason": reason, "root": abs})
 		return
 	}
 

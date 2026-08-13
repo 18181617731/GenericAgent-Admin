@@ -18,6 +18,29 @@ const startOfWeek = (date) => {
 
 export const RECENT_SESSION_GROUP_KEYS = ['pinned', 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'older']
 
+const AGE_UNITS = [
+  { unit: 'minute', ms: 60000, upTo: 3600000 },
+  { unit: 'hour', ms: 3600000, upTo: 86400000 },
+  { unit: 'day', ms: 86400000, upTo: 7 * 86400000 },
+  { unit: 'week', ms: 7 * 86400000, upTo: 30 * 86400000 },
+  { unit: 'month', ms: 30 * 86400000, upTo: 365 * 86400000 },
+  { unit: 'year', ms: 365 * 86400000, upTo: Infinity },
+]
+
+// A session row is scanned for how recently it was touched, and the day it
+// happened is already the group heading above it, so the age is reported on its
+// own scale rather than as a date. Callers name the unit in their own language.
+export function sessionAge(updatedAt, now = Date.now()) {
+  const ms = timestampMs(updatedAt)
+  if (!Number.isFinite(ms)) return null
+  const elapsed = now - ms
+  if (elapsed < 60000) return { unit: 'now', value: 0 }
+  for (const { unit, ms: size, upTo } of AGE_UNITS) {
+    if (elapsed < upTo) return { unit, value: Math.floor(elapsed / size) }
+  }
+  return { unit: 'year', value: Math.floor(elapsed / (365 * 86400000)) }
+}
+
 export function groupRecentSessions(sessions, now = new Date()) {
   const groups = Object.fromEntries(RECENT_SESSION_GROUP_KEYS.map(key => [key, []]))
   const today = startOfDay(now)

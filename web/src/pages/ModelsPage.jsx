@@ -9,15 +9,14 @@ import {
   FileCode2,
   GripVertical,
   Layers,
-  ListOrdered,
   Network,
+  Plug,
   Plus,
   RefreshCw,
   Settings2,
   ShieldCheck,
   Trash2,
   UploadCloud,
-  X,
 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Collapse, Drawer, Input, Modal, Progress, Radio, Select, Space, Tag } from 'antd'
@@ -29,9 +28,7 @@ import {
   FAILOVER_VAR_PREFIX,
   failoverGroupSuffix,
   failoverGroupVarName,
-  migrateFailoverGroupNames,
   nextFailoverGroupName,
-  normalizeFailoverGroups,
   API_MODE_OPTIONS,
   SERVICE_TIER_OPTIONS,
   THINKING_TYPE_OPTIONS,
@@ -41,7 +38,6 @@ import {
   modelConfigDisplayName,
   modelProtocolFields,
   moveOrderedItem,
-  orderedFailoverRows,
   orderedModelAndFailoverRows,
   orderedModelRows,
   profileModelConfigs,
@@ -83,14 +79,12 @@ const LEGACY_PROTOCOLS = [
 const protocolMeta = (value, t) => {
   const meta = LEGACY_PROTOCOLS.find(item => item.value === value) || OFFICIAL_PROTOCOLS[0]
   const localized = t?.models?.protocols?.[meta.value]
-  return localized ? { ...meta, label: localized[0], shortLabel: localized[0], help: localized[1] || meta.help } : meta
+  // shortLabel stays the bare protocol name: it goes on chips and cards where
+  // the parenthetical from the full label would not fit.
+  return localized ? { ...meta, label: localized[0], help: localized[1] || meta.help } : meta
 }
 const protocolLabel = (value, t) => protocolMeta(value, t)?.shortLabel || value || 'Native OAI'
 const supportsModelDiscovery = value => !!protocolMeta(value)?.discover
-const nextVarName = (protocol, profiles = []) => nextProviderVarName(
-  protocolMeta(protocol)?.prefix || 'native_oai_config',
-  profiles,
-)
 
 const modelIdOf = value => String(value?.id || value?.name || value || '').trim()
 const uniqueModels = values => {
@@ -106,16 +100,8 @@ const isMaskedSecret = value => {
   const secret = String(value || '').trim()
   return /^\*{4,}$/.test(secret) || /\*{2,}/.test(secret)
 }
-
-function StatusTag({ result, t }) {
-  const text = t.models
-  if (!result) return null
-  const errors = result.errors?.length || 0
-  const warnings = result.warnings?.length || 0
-  if (errors) return <Tag color="error">{text.blockItems(errors)}</Tag>
-  if (warnings) return <Tag color="warning">{text.reminders(warnings)}</Tag>
-  return <Tag color="success">{text.valid}</Tag>
-}
+const memberKeyOf = member => `${String(member?.provider_var_name || member?.providerVarName || '')}\u0000${String(member?.model || '')}`
+const providerState = result => (result?.errors?.length ? 'error' : result?.warnings?.length ? 'warning' : 'ready')
 
 function optionalNumber(value) {
   if (value === '' || value === null || value === undefined) return undefined
@@ -137,9 +123,11 @@ function OptionalBoolSelect({ value, onChange, t, trueLabel, falseLabel }) {
   )
 }
 
-function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
+// Every model carries the same handful of transport settings; the rest depend
+// on the provider's protocol, so they are kept in their own group instead of
+// being mixed into one long grid.
+function ModelParams({ config, protocol, onChange, t }) {
   const text = t.models
-  const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
   const enabled = isModelConfigEnabled(config)
   const displayName = modelConfigDisplayName(config)
@@ -173,25 +161,6 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
                 : null}
           </div>
         </div>
-        <Button
-          type="text"
-          className="model-config-action model-config-toggle"
-          onClick={() => setConfigOpen(open => !open)}
-          aria-expanded={configOpen}
-        >
-          <span>{configOpen ? text.collapse : text.configure}</span>
-          <ChevronDown size={13} className="model-config-chevron" aria-hidden="true" />
-        </Button>
-        <Button
-          danger
-          type="text"
-          className="model-config-action model-config-delete"
-          icon={<Trash2 size={13} />}
-          onClick={onRemove}
-          aria-label={text.deleteModel(config.model || index + 1)}
-        >
-          {t.delete}
-        </Button>
       </div>
 
       {configOpen && (
@@ -256,7 +225,7 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
           </div>
         </div>
       )}
-    </article>
+    </div>
   )
 }
 
@@ -268,21 +237,11 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
   const existing = new Set(configs.map(config => modelIdOf(config)))
   const candidates = uniqueModels(discovered).filter(model => !existing.has(model))
 
-  const addModels = values => onChange(addModelConfigs(profile, values))
-  const addDraft = () => {
-    const model = draft.trim()
-    if (!model) return
-    addModels([model])
-    setDraft('')
-  }
-  const openDiscover = () => {
-    setDiscoverOpen(true)
-    onDiscover?.()
-  }
-  const addCandidates = values => {
-    addModels(values)
-    if (values.length === candidates.length) setDiscoverOpen(false)
-  }
+function FailoverGroupBody({ group, groupIndex, candidates, candidateMap, sensors, patchGroup, toggleMember, moveMember, removeMember, text }) {
+  const selectedKeys = new Set((group.members || []).map(memberKeyOf))
+  const selectedFamilies = new Set((group.members || [])
+    .map(member => candidateMap.get(memberKeyOf(member))?.family)
+    .filter(Boolean))
 
   return (
     <section className="model-config-editor">
@@ -337,29 +296,93 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
 
       <div className="model-quick-add">
         <Input
-          value={draft}
-          onChange={event => setDraft(event.target.value)}
-          onPressEnter={addDraft}
-          placeholder={text.manualModel}
-          aria-label={text.manualModel}
+          addonBefore={FAILOVER_VAR_PREFIX}
+          value={failoverGroupSuffix(group.var_name)}
+          onChange={event => patchGroup(groupIndex, { var_name: failoverGroupVarName(event.target.value) })}
         />
-        <Button icon={<Plus size={14} />} onClick={addDraft} disabled={!draft.trim()}>{text.addModel}</Button>
+      </label>
+
+      <div className="model-subsection">
+        <div className="model-subsection-head">
+          <strong>{text.failoverCandidates}</strong>
+          <span>{group.members?.length || 0} / {candidates.length}</span>
+        </div>
+        <p className="model-subsection-help">{text.failoverCandidatesHelp}</p>
+        <div className="model-failover-candidates">
+          {candidates.length ? candidates.map(candidate => {
+            const key = memberKeyOf({ provider_var_name: candidate.providerVarName, model: candidate.model })
+            const selected = selectedKeys.has(key)
+            const locked = selectedFamilies.size > 0 && !selectedFamilies.has(candidate.family)
+            return (
+              <button
+                type="button"
+                key={candidate.id}
+                className={`model-failover-candidate${selected ? ' is-selected' : ''}`}
+                disabled={locked && !selected}
+                aria-pressed={selected}
+                onClick={() => toggleMember(groupIndex, candidate)}
+              >
+                <span className="model-failover-check">{selected ? <CheckCircle2 size={15} /> : null}</span>
+                <span><strong>{candidate.model || text.missingModelId}</strong><small>{providerDisplayName(candidate.providerVarName) || text.unnamed} · {candidate.protocol}</small></span>
+              </button>
+            )
+          }) : <div className="model-hint-block">{text.failoverNoCandidates}</div>}
+        </div>
       </div>
 
-      <Modal
-        className="model-discover-modal"
-        title={text.fetchModels}
-        open={discoverOpen}
-        onCancel={() => setDiscoverOpen(false)}
-        footer={null}
-        width={620}
-        destroyOnHidden
-      >
-        <div className="model-discover-modal-head">
-          <span>{busy ? text.fetchingModels : discoveryError ? text.fetchFailed : text.discovered(candidates.length)}</span>
-          <Button size="small" type="primary" onClick={() => addCandidates(candidates)} disabled={busy || !!discoveryError || !candidates.length}>
-            {text.addAll}
-          </Button>
+      <div className="model-subsection">
+        <div className="model-subsection-head"><strong>{text.failoverPriority}</strong></div>
+        <p className="model-subsection-help">{text.failoverPriorityHelp}</p>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={({ active, over }) => {
+            if (!over || active.id === over.id) return
+            const members = group.members || []
+            const from = members.findIndex(member => memberKeyOf(member) === active.id)
+            const to = members.findIndex(member => memberKeyOf(member) === over.id)
+            if (from !== -1 && to !== -1) moveMember(groupIndex, from, to)
+          }}
+        >
+          <SortableContext items={(group.members || []).map(memberKeyOf)} strategy={verticalListSortingStrategy}>
+            <div className="model-failover-priority" role="list" aria-label={text.failoverPriority}>
+              {(group.members || []).map((member, memberIndex) => (
+                <SortableMemberRow
+                  key={memberKeyOf(member)}
+                  member={member}
+                  memberIndex={memberIndex}
+                  groupIndex={groupIndex}
+                  groupLength={group.members.length}
+                  candidate={candidateMap.get(memberKeyOf(member))}
+                  moveMember={moveMember}
+                  removeMember={removeMember}
+                  text={text}
+                />
+              ))}
+              {!group.members?.length && <div className="model-hint-block">{text.failoverNeedsTwo}</div>}
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
+
+      <div className="model-subsection">
+        <div className="model-subsection-head"><strong>{text.failoverPolicy}</strong></div>
+        <div className="model-params-grid">
+          <label className="model-field">
+            <span className="model-field-label">{text.failoverRetries}</span>
+            <Input type="number" min="0" step="1" value={group.max_retries ?? 10} onChange={event => patchGroup(groupIndex, { max_retries: event.target.value })} />
+            <small>{text.failoverRetriesHelp}</small>
+          </label>
+          <label className="model-field">
+            <span className="model-field-label">{text.failoverDelay}</span>
+            <Input type="number" min="0" step="0.1" value={group.base_delay ?? 0.5} onChange={event => patchGroup(groupIndex, { base_delay: event.target.value })} />
+            <small>{text.failoverDelayHelp}</small>
+          </label>
+          <label className="model-field">
+            <span className="model-field-label">{text.failoverSpring}</span>
+            <Input type="number" min="1" step="1" value={group.spring_back ?? ''} placeholder={text.failoverSpringPlaceholder} onChange={event => patchGroup(groupIndex, { spring_back: event.target.value })} />
+            <small>{text.failoverSpringHelp}</small>
+          </label>
         </div>
         {busy ? (
           <div className="model-discover-modal-state" role="status"><RefreshCw size={18} className="is-spinning" />{text.fetching}</div>
@@ -391,11 +414,118 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
   )
 }
 
-function ProfileCard({
-  profile: p,
-  idx,
-  profileKey,
-  result,
+// One row is one callable slot: its position in this list is the --llm-no the
+// agent is started with, which is the only number the operator ever quotes.
+function CallRow({ row, index, total, expanded, onToggle, moveRow, onOpenProvider, onRemove, text, t, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id })
+  const style = {
+    transform: DndCSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : undefined,
+    position: 'relative',
+  }
+  const failover = row.type === 'failover'
+  const label = failover ? row.varName : (row.model || row.variableName)
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      role="listitem"
+      className={`model-call-row${isDragging ? ' is-dragging' : ''}${failover ? ' is-failover' : ''}${expanded ? ' is-expanded' : ''}`}
+    >
+      <div className="model-call-main">
+        <span {...attributes} {...listeners} className="model-drag-handle" aria-label={`${text.reorderRow}: ${label}`} title={text.reorderRow}>
+          <GripVertical size={16} aria-hidden="true" />
+        </span>
+        <div className="model-call-slot" aria-label={`--llm-no ${index}`}>
+          <strong>{index}</strong>
+          <span>--llm-no</span>
+        </div>
+        <div className="model-call-copy">
+          <span className="model-call-title">
+            {failover && <Network size={13} aria-hidden="true" />}
+            <strong title={label}>{row.displayName || label || text.missingModelId}</strong>
+            {failover && <Tag color="purple">{text.failoverGroup}</Tag>}
+          </span>
+          <span className="model-call-sub">
+            <code title={failover ? row.varName : row.variableName}>{failover ? row.varName : row.variableName}</code>
+            {failover
+              ? <em>{text.failoverMembersCount(row.members?.length || 0)}</em>
+              : row.displayName && <em title={row.model}>{row.model}</em>}
+          </span>
+        </div>
+        {!failover && (
+          <button type="button" className="model-call-provider" onClick={onOpenProvider} title={text.openProvider}>
+            <Plug size={12} aria-hidden="true" />
+            <span>{providerDisplayName(row.providerVarName) || text.unnamed}</span>
+          </button>
+        )}
+        <div className="model-call-actions">
+          <Button
+            type="text"
+            size="small"
+            className="model-call-toggle"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? text.collapse : text.configure}: ${label}`}
+          >
+            <span>{expanded ? text.collapse : text.configure}</span>
+            <ChevronDown size={13} aria-hidden="true" />
+          </Button>
+          <Button type="text" size="small" icon={<ArrowUp size={15} />} aria-label={`${text.moveUp} ${label}`} title={text.moveUp} disabled={index === 0} onClick={() => moveRow(index, index - 1)} />
+          <Button type="text" size="small" icon={<ArrowDown size={15} />} aria-label={`${text.moveDown} ${label}`} title={text.moveDown} disabled={index === total - 1} onClick={() => moveRow(index, index + 1)} />
+          <Button danger type="text" size="small" icon={<Trash2 size={14} />} aria-label={`${t.delete} ${label}`} title={failover ? text.removeGroup : text.removeModel} onClick={onRemove} />
+        </div>
+      </div>
+      {expanded && children}
+    </div>
+  )
+}
+
+// The provider form is the same whether it is being created or edited; only
+// the footer differs, so both live behind one drawer.
+function ProviderForm({ draft, profiles, editingIndex, onChange, t }) {
+  const text = t.models
+  const meta = protocolMeta(draft.type || DEFAULT_PROTOCOL, t)
+  return (
+    <>
+      <label className="model-field model-field--provider">
+        <span className="model-field-label">{text.name}</span>
+        <Input
+          value={providerDisplayName(draft.var_name)}
+          onChange={event => onChange({
+            var_name: providerVarNameFromDisplayName(event.target.value, meta.prefix, draft.var_name),
+          })}
+          placeholder={text.nameExample}
+        />
+        <small>{text.nameHelp}</small>
+      </label>
+      <label className="model-field">
+        <span className="model-field-label">{text.protocol}</span>
+        <Select
+          value={draft.type || DEFAULT_PROTOCOL}
+          onChange={value => onChange({
+            type: value,
+            var_name: providerVarNameOnProtocolChange(draft.var_name, protocolMeta(value)?.prefix, profiles, editingIndex),
+          })}
+          options={OFFICIAL_PROTOCOLS.map(item => protocolMeta(item.value, t))}
+        />
+        <small>{meta.help}</small>
+      </label>
+      <label className="model-field">
+        <span className="model-field-label">BaseURL</span>
+        <Input value={draft.apibase || ''} onChange={event => onChange({ apibase: event.target.value })} placeholder="https://api.example.com/v1" />
+      </label>
+    </>
+  )
+}
+
+function ProviderDrawer({
+  open,
+  mode,
+  profile,
+  index,
   profiles,
   patchProfile,
   removeProfile,
@@ -405,8 +535,6 @@ function ProfileCard({
   revealBusy,
   onRevealKey,
   onClearRevealedKey,
-  onSave,
-  saveState,
   t,
 }) {
   const text = t.models
@@ -547,23 +675,15 @@ function ProfileCard({
             <span className="model-source-base">{p.apibase || text.baseMissing}</span>
           </div>
         </div>
-        <Space size={8} className="model-source-actions">
-          <StatusTag result={result} t={t} />
-          {dirty && <span className="model-save-state is-dirty">{text.unsaved}</span>}
-          {!dirty && saveOk && <span className="model-save-state is-saved">{text.saved}</span>}
-          {saveError && <span className="model-save-state is-error">{text.saveFailed}</span>}
-          <Button
-            type="primary"
-            icon={<CheckCircle2 size={14} />}
-            loading={saveBusy}
-            disabled={saveBusy || result?.errors?.length > 0}
-            onClick={save}
-          >
-            {t.save}
-          </Button>
-          <Button danger type="text" icon={<Trash2 size={15} />} onClick={() => removeProfile(idx)} title={text.deleteProviderTitle} />
-        </Space>
-      </header>
+      ) : (
+        <div className="model-drawer-footer">
+          <Button danger icon={<Trash2 size={14} />} onClick={onRemove}>{text.deleteProviderTitle}</Button>
+          <Button type="primary" onClick={onClose}>{t.close}</Button>
+        </div>
+      )}
+    >
+      <div className="model-drawer-body">
+        <ProviderForm draft={profile || {}} profiles={profiles} editingIndex={creating ? undefined : index} onChange={onChange} t={t} />
 
       <div className="model-source-body">
         <div className="model-workflow-heading model-workflow-heading--fields">
@@ -673,7 +793,8 @@ function ProfileCard({
             action={<Button size="small" onClick={save} disabled={!!result?.errors?.length} loading={saveBusy}>{text.retrySave}</Button>}
             className="model-inline-alert"
           />
-        )}
+        </label>
+
         {result?.errors?.length > 0 && (
           <Alert
             type="error"
@@ -692,10 +813,6 @@ function ProfileCard({
             className="model-inline-alert"
           />
         )}
-      </div>
-    </article>
-  )
-}
 
 function AddProfileForm({ profiles, addModelProfiles, t, onClose, onAdded }) {
   const text = t.models
@@ -865,16 +982,13 @@ function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, 
               </strong>
               <span>{row.members?.length || 0} {text.failoverMembers || 'members'}</span>
             </div>
-            {row.members && row.members.length > 0 && (
-              <div className="model-failover-members">
-                {row.members.map((member, memberIndex) => (
-                  <div key={memberIndex} className="model-failover-member">
-                    <span className="model-failover-member-index">{memberIndex + 1}.</span>
-                    <code>{member.provider_var_name || member.model || JSON.stringify(member)}</code>
-                  </div>
+            {configs.length ? (
+              <div className="model-tag-list">
+                {configs.map((config, configIndex) => (
+                  <span key={`${config.model}-${configIndex}`} className="model-tag">{config.model}</span>
                 ))}
               </div>
-            )}
+            ) : <div className="model-hint-block">{text.providerNoModels}</div>}
           </div>
         </>
       ) : (
@@ -904,18 +1018,72 @@ function SortableOrderRow({ row, index, orderRows, orderSaving, moveModelOrder, 
           onClick={() => moveModelOrder(index, index + 1)}
         />
       </div>
-    </div>
+    </Drawer>
   )
 }
 
-function SortableFailoverMemberRow({ memberKey, member, memberIndex, groupIndex, groupLength, failoverSaving, candidate, moveFailoverMember, toggleFailoverMember, patchFailoverGroup, group, text, providerDisplayName }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: memberKey })
-  const style = {
-    transform: DndCSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 100 : undefined,
-    opacity: isDragging ? 0.85 : 1,
+// Adding a model is one flow: pick the provider, then take model IDs from the
+// provider's own catalog or type them in. Every pick lands in the draft
+// immediately, so the list behind the dialog grows as you work.
+function AddModelModal({ open, profiles, initialIndex, onClose, onAdd, discoverModels, onCreateProvider, t }) {
+  const text = t.models
+  const [providerIndex, setProviderIndex] = useState(initialIndex ?? 0)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [fetched, setFetched] = useState(false)
+  const [discovered, setDiscovered] = useState([])
+  const [added, setAdded] = useState([])
+
+  const profile = profiles[providerIndex]
+  const existing = new Set(profileModelConfigs(profile || {}).map(config => config.model))
+  const candidates = uniqueModels(discovered).filter(model => !existing.has(model))
+
+  const selectProvider = index => {
+    setProviderIndex(index)
+    setDiscovered([])
+    setFetched(false)
+    setError('')
+    setAdded([])
   }
+
+  const add = values => {
+    const models = uniqueModels(values).filter(model => !existing.has(model))
+    if (!models.length) return
+    onAdd(providerIndex, models)
+    setAdded(current => [...current, ...models])
+  }
+
+  const addDraft = () => {
+    const model = draft.trim()
+    if (!model) return
+    add([model])
+    setDraft('')
+  }
+
+  const discover = async () => {
+    if (!profile) return
+    setBusy(true)
+    setError('')
+    try {
+      const key = String(profile.apikey || '').trim()
+      const response = await discoverModels({
+        protocol: profile.type || DEFAULT_PROTOCOL,
+        baseUrl: profile.apibase,
+        apiKey: key && !isMaskedSecret(key) ? key : undefined,
+        varName: profile.var_name,
+      })
+      setDiscovered(response?.models || [])
+      setFetched(true)
+    } catch (failure) {
+      setError(String(failure?.message || failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const canDiscover = Boolean(profile?.apibase) && supportsModelDiscovery(profile?.type || DEFAULT_PROTOCOL)
+
   return (
     <div ref={setNodeRef} style={style} role="listitem" className={`model-failover-priority-row${isDragging ? ' is-dragging' : ''}`}>
       <span
@@ -1023,25 +1191,24 @@ function FailoverCandidatePicker({ candidates = [], selectedKeys, selectedFamili
 export function Models({
   t,
   profiles,
-  persistedProfiles = [],
   setProfiles,
   patchProfile,
   addModelProfiles,
-  deleteModelProfile,
+  removeModelProfile,
   importModels,
   previewModels,
-  saveModelProfile,
-  onSaveModelOrder,
-  onSaveProviderOrder,
   failoverGroups = [],
-  onSaveFailoverGroups,
+  setFailoverGroups,
   discoverModels,
   probeModels,
   modelProbeProviders = [],
   onSaveModelProbeProviders,
   onSaveModelProfiles,
   modelPreview,
-  modelSaveStatus = {},
+  changes = { total: 0 },
+  saveState = {},
+  saveAll,
+  discardDraft,
   importLoading = false,
   riskCatalog,
   riskCatalogError,
@@ -1054,7 +1221,7 @@ export function Models({
   modelInstanceLabel,
 }) {
   const text = t.models
-  const [addOpen, setAddOpen] = useState(false)
+  const [expanded, setExpanded] = useState(() => new Set())
   const [previewOpen, setPreviewOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [orderOpen, setOrderOpen] = useState(false)
@@ -1095,17 +1262,8 @@ export function Models({
   const [probeScopeSaving, setProbeScopeSaving] = useState(false)
   const [effectiveProbeProviders, setEffectiveProbeProviders] = useState(() => normalizeModelProbeProviderKeys(modelProbeProviders))
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
-  const providerMotionKey = profile => {
-    if (profile?.client_id) return `client:${profile.client_id}`
-    if (!profile || typeof profile !== 'object') return `provider:${String(profile)}`
-    if (!providerMotionKeysRef.current.has(profile)) {
-      providerMotionKeySeedRef.current += 1
-      providerMotionKeysRef.current.set(profile, `local:${providerMotionKeySeedRef.current}`)
-    }
-    return providerMotionKeysRef.current.get(profile)
-  }
-  providerProfilesRef.current = profiles
-  saveProviderOrderRef.current = onSaveProviderOrder
+
+  const profileKeyId = (idx, profile) => getProfileKey?.(idx, profile) || profile?.client_id || `provider-index-${idx}`
   const validation = validateModelProfiles(profiles)
   const summary = modelValidationSummary(validation)
   const risk = modelRiskCatalog(riskCatalog, riskCatalogError)
@@ -1185,14 +1343,19 @@ export function Models({
       window.clearTimeout(providerHoldTimerRef.current)
       providerHoldTimerRef.current = null
     }
-    setProviderHoldIndex(null)
-  }
+  )), [profiles, failoverGroups])
 
-  const releaseProviderPointer = interaction => {
-    const target = interaction?.captureTarget
-    const pointerId = interaction?.pointerId
-    if (target?.hasPointerCapture?.(pointerId)) target.releasePointerCapture(pointerId)
-  }
+  const candidates = useMemo(() => orderedModelRows(profiles).map(row => {
+    const protocol = String(profiles[row.profileIndex]?.type || DEFAULT_PROTOCOL)
+    return { ...row, protocol, family: protocol.startsWith('native_') ? 'native' : 'legacy' }
+  }), [profiles])
+  const candidateMap = useMemo(
+    () => new Map(candidates.map(candidate => [
+      memberKeyOf({ provider_var_name: candidate.providerVarName, model: candidate.model }),
+      candidate,
+    ])),
+    [candidates],
+  )
 
   const finishProviderDrag = async (interaction = providerInteractionRef.current) => {
     const wasActive = Boolean(interaction?.active)
@@ -1421,18 +1584,19 @@ export function Models({
   ]))
   const failoverValidation = (() => {
     const names = new Set()
-    for (let groupIndex = 0; groupIndex < failoverDrafts.length; groupIndex += 1) {
-      const group = failoverDrafts[groupIndex]
+    for (let groupIndex = 0; groupIndex < failoverGroups.length; groupIndex += 1) {
+      const group = failoverGroups[groupIndex]
       const suffix = failoverGroupSuffix(group.var_name).trim()
       const name = failoverGroupVarName(suffix)
-      if (!/^[A-Za-z0-9_]+$/.test(suffix)) return `${text.failoverGroup || 'Failover group'} ${groupIndex + 1}: ${text.errors?.varNameInvalid || 'invalid variable name'}`
-      if (names.has(name)) return `${text.failoverGroup || 'Failover group'} ${groupIndex + 1}: ${text.errors?.varNameDuplicate || 'duplicate variable name'}`
+      if (!/^[A-Za-z0-9_]+$/.test(suffix)) return `${text.failoverGroup} ${groupIndex + 1}: ${text.errors.varNameInvalid}`
+      if (names.has(name)) return `${text.failoverGroup} ${groupIndex + 1}: ${text.errors.varNameDuplicate}`
       names.add(name)
-      if (!Array.isArray(group.members) || group.members.length < 2) return `${name}: ${text.failoverNeedsTwo}`
+      const members = Array.isArray(group.members) ? group.members : []
+      if (members.length < 2) return `${name}: ${text.failoverNeedsTwo}`
       const families = new Set()
-      for (const member of group.members) {
-        const candidate = failoverCandidateMap.get(failoverMemberKey(member))
-        if (!candidate) return `${name}: ${text.failoverMissingMember || 'A selected model is no longer available.'}`
+      for (const member of members) {
+        const candidate = candidateMap.get(memberKeyOf(member))
+        if (!candidate) return `${name}: ${text.failoverMissingMember}`
         families.add(candidate.family)
       }
       if (families.size > 1) return `${name}: ${text.failoverSameFamily}`
@@ -1447,127 +1611,144 @@ export function Models({
     }
     return ''
   })()
-  const nextFailoverGroupUiKey = () => `failover-group-${++failoverGroupKeySeedRef.current}`
-  const toggleFailoverGroup = groupKey => {
-    setFailoverGroupExpanded(current => {
-      const next = new Set(current)
-      if (next.has(groupKey)) next.delete(groupKey)
-      else next.add(groupKey)
-      return next
-    })
+
+  const blocked = summary.errors > 0 || Boolean(failoverError)
+  const saving = saveState.status === 'saving'
+
+  const toggleRow = id => setExpanded(current => {
+    const next = new Set(current)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+
+  const applyRowOrder = (nextProfiles, nextGroups, orderedRows) => {
+    const next = applyModelAndFailoverOrder(nextProfiles, nextGroups, orderedRows)
+    setProfiles(next.profiles)
+    setFailoverGroups(next.failoverGroups)
   }
-  const openFailover = () => {
-    setFailoverDrafts(migrateFailoverGroupNames(normalizeFailoverGroups(failoverGroups)).map(group => ({
+  const moveRow = (from, to) => applyRowOrder(profiles, failoverGroups, moveOrderedItem(rows, from, to))
+  const dragRow = ({ active, over }) => {
+    if (!over || active.id === over.id) return
+    const from = rows.findIndex(row => row.id === active.id)
+    const to = rows.findIndex(row => row.id === over.id)
+    if (from === -1 || to === -1) return
+    applyRowOrder(profiles, failoverGroups, arrayMove(rows, from, to))
+  }
+
+  // Whatever is added lands at the end of the call list, so an existing
+  // --llm-no never shifts under the operator.
+  const appendRows = (nextProfiles, nextGroups) => {
+    const known = new Set(rows.map(row => row.id))
+    const fresh = orderedModelAndFailoverRows(nextProfiles, nextGroups).filter(row => !known.has(row.id))
+    applyRowOrder(nextProfiles, nextGroups, [...rows, ...fresh])
+  }
+
+  const patchModelConfigs = (profileIndex, nextProfile) => patchProfile(profileIndex, {
+    model: nextProfile.model,
+    models: nextProfile.models,
+    model_configs: nextProfile.model_configs,
+  })
+
+  const addModels = (profileIndex, models) => {
+    const profile = profiles[profileIndex]
+    if (!profile) return
+    const next = addModelConfigs(profile, models)
+    appendRows(profiles.map((item, index) => index === profileIndex ? next : item), failoverGroups)
+  }
+
+  const removeModel = row => {
+    const profile = profiles[row.profileIndex]
+    const config = profileModelConfigs(profile || {})[row.configIndex]
+    if (!window.confirm(text.removeModelConfirm(config?.model || row.variableName))) return
+    const key = memberKeyOf({ provider_var_name: profile?.var_name, model: config?.model })
+    setFailoverGroups(groups => groups.map(group => ({
       ...group,
-      _ui_key: nextFailoverGroupUiKey(),
-      members: group.members.map(member => ({ ...member })),
-      max_retries: group.max_retries ?? 10,
-      base_delay: group.base_delay ?? 0.5,
-      spring_back: group.spring_back ?? '',
+      members: (group.members || []).filter(member => memberKeyOf(member) !== key),
     })))
-    setFailoverGroupExpanded(new Set())
-    setFailoverError('')
-    setFailoverOpen(true)
+    patchModelConfigs(row.profileIndex, removeModelConfig(profile, row.configIndex))
   }
-  const closeFailover = () => {
-    if (failoverSaving) return
-    setFailoverOpen(false)
-    setFailoverDrafts([])
-    setFailoverGroupExpanded(new Set())
-    setFailoverError('')
+
+  const addGroup = () => {
+    const group = { var_name: nextFailoverGroupName(failoverGroups), members: [], max_retries: 10, base_delay: 0.5 }
+    const nextGroups = [...failoverGroups, group]
+    appendRows(profiles, nextGroups)
+    setExpanded(current => new Set(current).add(`failover:${failoverGroups.length}`))
   }
-  const addFailoverGroup = () => {
-    const groupKey = nextFailoverGroupUiKey()
-    setFailoverDrafts(current => [...current, {
-      _ui_key: groupKey,
-      var_name: nextFailoverGroupName(current),
-      members: [],
-      max_retries: 10,
-      base_delay: 0.5,
-      spring_back: '',
-    }])
-    setFailoverGroupExpanded(current => new Set(current).add(groupKey))
-    setFailoverError('')
+  const patchGroup = (groupIndex, patch) => setFailoverGroups(current => current.map(
+    (group, index) => index === groupIndex ? { ...group, ...patch } : group,
+  ))
+  const removeGroup = groupIndex => {
+    if (!window.confirm(text.removeGroupConfirm(failoverGroups[groupIndex]?.var_name || ''))) return
+    setFailoverGroups(current => current.filter((_, index) => index !== groupIndex))
   }
-  const patchFailoverGroup = (groupIndex, patch) => {
-    setFailoverDrafts(current => current.map((group, index) => index === groupIndex ? { ...group, ...patch } : group))
-    setFailoverError('')
-  }
-  const removeFailoverGroup = groupIndex => {
-    const groupKey = failoverDrafts[groupIndex]?._ui_key
-    setFailoverDrafts(current => current.filter((_, index) => index !== groupIndex))
-    if (groupKey) {
-      setFailoverGroupExpanded(current => {
-        const next = new Set(current)
-        next.delete(groupKey)
-        return next
-      })
-    }
-    setFailoverError('')
-  }
-  const moveFailoverGroup = (fromIndex, toIndex) => {
-    setFailoverDrafts(current => moveOrderedItem(current, fromIndex, toIndex))
-    setFailoverError('')
-  }
-  const toggleFailoverMember = (groupIndex, candidate) => {
-    const key = failoverMemberKey({ provider_var_name: candidate.providerVarName, model: candidate.model })
-    setFailoverDrafts(current => current.map((group, index) => {
+  const toggleMember = (groupIndex, candidate) => {
+    const key = memberKeyOf({ provider_var_name: candidate.providerVarName, model: candidate.model })
+    setFailoverGroups(current => current.map((group, index) => {
       if (index !== groupIndex) return group
       const members = Array.isArray(group.members) ? group.members : []
-      const selected = members.some(member => failoverMemberKey(member) === key)
       return {
         ...group,
-        members: selected
-          ? members.filter(member => failoverMemberKey(member) !== key)
+        members: members.some(member => memberKeyOf(member) === key)
+          ? members.filter(member => memberKeyOf(member) !== key)
           : [...members, { provider_var_name: candidate.providerVarName, model: candidate.model }],
       }
     }))
-    setFailoverError('')
   }
-  const moveFailoverMember = (groupIndex, fromIndex, toIndex) => {
-    setFailoverDrafts(current => current.map((group, index) => index === groupIndex
-      ? { ...group, members: moveOrderedItem(group.members, fromIndex, toIndex) }
-      : group))
-    setFailoverError('')
+  const moveMember = (groupIndex, from, to) => patchGroup(groupIndex, {
+    members: moveOrderedItem(failoverGroups[groupIndex]?.members || [], from, to),
+  })
+  const removeMember = (groupIndex, memberIndex) => patchGroup(groupIndex, {
+    members: (failoverGroups[groupIndex]?.members || []).filter((_, index) => index !== memberIndex),
+  })
+
+  const openProvider = index => {
+    setProviderDrawer({ mode: 'edit', index })
+    setProviderDraft(null)
   }
-  const saveFailover = async () => {
-    if (!onSaveFailoverGroups) {
-      setFailoverError(text.failoverSaveMissing)
-      return
-    }
-    if (failoverValidation) {
-      setFailoverError(failoverValidation)
-      return
-    }
-    const nextGroups = failoverDrafts.map(group => {
-      const normalized = {
-        var_name: String(group.var_name || '').trim(),
-        members: group.members.map(member => ({
-          provider_var_name: String(member.provider_var_name || '').trim(),
-          model: String(member.model || '').trim(),
-        })),
-        max_retries: Number(group.max_retries),
-        base_delay: Number(group.base_delay),
-      }
-      if (group.spring_back !== '' && group.spring_back !== undefined && group.spring_back !== null) normalized.spring_back = Number(group.spring_back)
-      return normalized
+  const openNewProvider = () => {
+    setAddModelIndex(null)
+    setProviderDraft({
+      ...emptyProfile(profiles.length, DEFAULT_PROTOCOL),
+      var_name: nextProviderVarName(protocolMeta(DEFAULT_PROTOCOL)?.prefix, profiles),
+      type: DEFAULT_PROTOCOL,
+      apibase: '',
+      apikey: '',
+      model: '',
+      models: [],
+      model_configs: [],
     })
-    setFailoverSaving(true)
-    setFailoverError('')
-    try {
-      const ok = await onSaveFailoverGroups(nextGroups)
-      if (!ok) {
-        setFailoverError(text.failoverSaveFailed)
-        return
-      }
-      setFailoverOpen(false)
-      setFailoverDrafts([])
-    } catch (error) {
-      setFailoverError(error?.message || text.failoverSaveFailed)
-    } finally {
-      setFailoverSaving(false)
-    }
+    setProviderDrawer({ mode: 'create' })
   }
+  const createProvider = () => {
+    if (!providerDisplayName(providerDraft?.var_name || '') || !String(providerDraft?.apibase || '').trim()) {
+      window.alert(text.providerFormIncomplete)
+      return
+    }
+    addModelProfiles([{ ...providerDraft, apibase: providerDraft.apibase.trim() }])
+    setProviderDrawer(null)
+    // A provider only matters once it has models, so keep the flow going.
+    setAddModelIndex(profiles.length)
+  }
+  const removeProvider = index => {
+    const profile = profiles[index]
+    const name = providerDisplayName(profile?.var_name) || text.provider(index + 1)
+    if (!window.confirm(text.deleteConfirm(name, profileModels(profile).length))) return
+    setFailoverGroups(groups => groups.map(group => ({
+      ...group,
+      members: (group.members || []).filter(member => member.provider_var_name !== profile?.var_name),
+    })))
+    removeModelProfile(index)
+    setProviderDrawer(null)
+  }
+
+  // The drawer keeps rendering its last subject while it slides shut, so the
+  // form does not blank out on the way out.
+  if (providerDrawer) closingDrawer.current = providerDrawer
+  const shownDrawer = providerDrawer || closingDrawer.current
+  const drawerIndex = shownDrawer?.mode === 'edit' ? shownDrawer.index : undefined
+  const drawerProfile = shownDrawer?.mode === 'create' ? providerDraft : profiles[drawerIndex]
+  const drawerKey = drawerProfile && drawerIndex !== undefined ? profileKeyId(drawerIndex, drawerProfile) : ''
 
   const openProbeScope = () => {
     const allKeys = profiles.map(modelProbeProviderKey)
@@ -1691,20 +1872,21 @@ export function Models({
           </Button>
           <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}>重新读取</Button>
           <Button
-            icon={<ListOrdered size={14} />}
-            onClick={openModelOrder}
-            disabled={!persistedOrderCount}
-            title={persistedOrderCount ? text.orderAvailable : text.orderUnavailable}
+            icon={<RotateCcw size={14} />}
+            disabled={!changes.total || saving}
+            onClick={() => { if (changes.total && window.confirm(text.discardConfirm)) discardDraft() }}
           >
-            {text.modelOrder}
+            {text.discard}
           </Button>
           <Button
-            icon={<Network size={14} />}
-            onClick={openFailover}
-            disabled={!persistedOrderCount}
-            title={persistedOrderCount ? text.failoverAvailable : text.orderUnavailable}
+            type="primary"
+            icon={<Save size={14} />}
+            loading={saving}
+            disabled={blocked || !changes.total}
+            title={blocked ? text.saveBlocked : undefined}
+            onClick={() => saveAll()}
           >
-            {text.failover}
+            {text.saveAll}
           </Button>
           <Button icon={<FileCode2 size={14} />} onClick={openPreview}>配置预览</Button>
           <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
@@ -1717,6 +1899,9 @@ export function Models({
         message={`${modelInstanceLabel}: ${modelInstance.name || modelInstance.id} (${modelInstance.id})`}
         className="model-page-alert"
       />}
+      {summary.errors > 0 && <Alert type="error" showIcon message={text.pageHasErrors} className="model-page-alert" />}
+      {failoverError && <Alert type="error" showIcon message={failoverError} className="model-page-alert" />}
+      {saveState.status === 'error' && <Alert type="error" showIcon message={text.saveFailed} description={saveState.error} className="model-page-alert" />}
 
       <div className="model-summary-line" aria-label={text.configSummary}>
         <div className="model-summary-status">
@@ -1817,6 +2002,15 @@ export function Models({
               )
             })}
           </div>
+          <Space size={8}>
+            <Button icon={<Network size={14} />} onClick={addGroup} disabled={candidates.length < 2} title={candidates.length < 2 ? text.failoverNeedsTwo : undefined}>
+              {text.addFailoverGroup}
+            </Button>
+            <Button type="primary" icon={<Plus size={15} />} onClick={() => setAddModelIndex(0)} disabled={!profiles.length}>
+              {text.addModel}
+            </Button>
+          </Space>
+        </header>
 
           {providerOrderError && (
             <Alert type="error" showIcon title={providerOrderError} className="model-provider-order-alert" />
@@ -1869,19 +2063,55 @@ export function Models({
                   t={t}
                 />
               </div>
+            </SortableContext>
+          </DndContext>
+        ) : (
+          <div className="model-empty-state">
+            <Layers size={34} strokeWidth={1.2} className="model-empty-icon" />
+            <strong>{importLoading ? text.loadingMykey : profiles.length ? text.callListEmpty : text.noProviders}</strong>
+            <span>{importLoading ? text.loadingHelp : profiles.length ? text.callListEmptyHelp : text.noProvidersHelp}</span>
+            {!importLoading && (
+              profiles.length
+                ? <Button type="primary" icon={<Plus size={15} />} onClick={() => setAddModelIndex(0)}>{text.addModel}</Button>
+                : <Button type="primary" icon={<Plus size={15} />} onClick={openNewProvider}>{text.addProvider}</Button>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="model-connections" aria-label={text.connections}>
+        <header className="model-connections-head">
+          <div>
+            <strong>{text.connections}</strong>
+            <span>{text.connectionsHelp}</span>
+          </div>
+          <Button icon={<Plus size={14} />} onClick={openNewProvider}>{text.addProvider}</Button>
+        </header>
+        <div className="model-connection-grid">
+          {profiles.map((profile, index) => {
+            const state = providerState(validation[index])
+            return (
+              <button
+                type="button"
+                key={profileKeyId(index, profile)}
+                className={`model-connection-card is-${state}`}
+                onClick={() => openProvider(index)}
+              >
+                <span className="model-connection-title">
+                  <strong>{providerDisplayName(profile.var_name) || text.provider(index + 1)}</strong>
+                  <i className={`is-${state}`} title={state === 'error' ? text.stateError : state === 'warning' ? text.stateWarning : text.stateReady} />
+                </span>
+                <span className="model-connection-base">{profile.apibase || text.baseMissing}</span>
+                <span className="model-connection-meta">
+                  <em>{protocolLabel(profile.type || DEFAULT_PROTOCOL, t)}</em>
+                  <b>{text.modelCount(profileModels(profile).length)}</b>
+                </span>
+              </button>
             )
           })}
-
-          {!profiles.length && !addOpen && (
-            <div className="model-empty-state">
-              <Layers size={36} strokeWidth={1.2} className="model-empty-icon" />
-              <strong>{importLoading ? text.loadingMykey : text.noProviders}</strong>
-              <span>{importLoading ? text.loadingHelp : text.noProvidersHelp}</span>
-              {!importLoading && <Button type="primary" icon={<Plus size={15} />} onClick={openAdd}>{text.addProvider}</Button>}
-            </div>
-          )}
-        </section>
-      </div>
+          {!profiles.length && <div className="model-hint-block">{text.noProvidersHelp}</div>}
+        </div>
+      </section>
 
       <Collapse ghost items={riskItems} className="model-risk-collapse" />
 

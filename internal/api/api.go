@@ -31,22 +31,29 @@ import (
 )
 
 type Server struct {
-	CfgStore                *config.Store
-	Svc                     *service.Manager
-	InstanceManagers        *instanceManagerRegistry
-	Models                  *modelconfig.Store
-	Static                  fs.FS
-	ReactApp                *reactAppBridge
-	ChatMu                  *sync.Mutex
-	SessionMu               *sync.Mutex
-	UsageMu                 *sync.Mutex
-	ConfigMu                *sync.Mutex
-	ChatRuns                map[string]*chatRun
-	ChatWorkers             map[string]*chatWorker
-	ChatTitleJobs           map[string]bool
-	ChatRuntimes            *chatRuntimeRegistry
-	ChatRuntime             *chatRuntime
-	BaseCfgStore            *config.Store
+	CfgStore         *config.Store
+	Svc              *service.Manager
+	InstanceManagers *instanceManagerRegistry
+	Models           *modelconfig.Store
+	Static           fs.FS
+	ReactApp         *reactAppBridge
+	ChatMu           *sync.Mutex
+	SessionMu        *sync.Mutex
+	UsageMu          *sync.Mutex
+	ConfigMu         *sync.Mutex
+	ChatRuns         map[string]*chatRun
+	ChatWorkers      map[string]*chatWorker
+	ChatTitleJobs    map[string]bool
+	ChatRuntimes     *chatRuntimeRegistry
+	ChatRuntime      *chatRuntime
+	BaseCfgStore     *config.Store
+	// PasswordConfigured reports whether an admin password exists. The
+	// credential itself lives outside this package, so remote-access settings
+	// ask through this hook before they can be saved.
+	PasswordConfigured      func() bool
+	listenMu                sync.RWMutex
+	listenAddress           string
+	listenURL               string
 	titleBackfillStarted    bool
 	autonomousCleanupStop   chan struct{}
 	autonomousCleanupOnce   sync.Once
@@ -113,6 +120,31 @@ func (s *Server) autonomousReportCleanupLoop() {
 			return
 		}
 	}
+}
+
+// SetListenAddress records where the server actually bound. The default
+// ephemeral port is only known after binding, so the UI reads it from here
+// rather than from the configured port.
+func (s *Server) SetListenAddress(address, url string) {
+	s.listenMu.Lock()
+	defer s.listenMu.Unlock()
+	s.listenAddress = address
+	s.listenURL = url
+}
+
+func (s *Server) ListenAddress() (address, url string) {
+	s.listenMu.RLock()
+	defer s.listenMu.RUnlock()
+	return s.listenAddress, s.listenURL
+}
+
+// passwordConfigured answers conservatively when the hook is missing so that
+// remote access cannot be enabled by a server that cannot check credentials.
+func (s *Server) passwordConfigured() bool {
+	if s.PasswordConfigured == nil {
+		return false
+	}
+	return s.PasswordConfigured()
 }
 
 func (s *Server) Routes() http.Handler {
@@ -1110,10 +1142,42 @@ func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
 
 // StopManagedServices stops GenericAgent child services managed by the Admin UI.
 func (s *Server) StopManagedServices() {
-	if s == nil || s.Svc == nil {
-		return
+	for _, manager := range s.managedServiceManagers() {
+		manager.StopAll()
 	}
-	s.Svc.StopAll()
+}
+
+// RunningManagedServices counts what StopManagedServices would stop, so a menu
+// entry can say how much is at stake before someone clicks it.
+func (s *Server) RunningManagedServices() int {
+	running := 0
+	for _, manager := range s.managedServiceManagers() {
+		running += manager.RunningProcessCount()
+	}
+	return running
+}
+
+// managedServiceManagers lists every manager whose processes this Admin owns.
+// Each configured instance runs its own, and the default manager stays in the
+// list because it serves a single-instance setup on its own; leaving the extra
+// instances out would strand their children when the Admin exits.
+func (s *Server) managedServiceManagers() []*service.Manager {
+	if s == nil {
+		return nil
+	}
+	seen := map[*service.Manager]bool{}
+	managers := make([]*service.Manager, 0, 2)
+	for _, manager := range s.InstanceManagers.managers() {
+		if manager == nil || seen[manager] {
+			continue
+		}
+		seen[manager] = true
+		managers = append(managers, manager)
+	}
+	if s.Svc != nil && !seen[s.Svc] {
+		managers = append(managers, s.Svc)
+	}
+	return managers
 }
 
 // ShutdownCleanup stops child processes before the Admin process exits.

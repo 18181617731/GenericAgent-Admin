@@ -59,9 +59,10 @@
   .admin-sidebar-close,
   .admin-sidebar-toggle {
     display: inline-flex;
-    width: 42px;
-    min-width: 42px;
-    height: 42px;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
     padding: 0;
     align-items: center;
     justify-content: center;
@@ -134,16 +135,18 @@
     min-width: 0;
   }
 
+  /* The bar spans the main column edge to edge: .main has no padding of its
+     own, and the page below brings its own gutter. */
   .admin-mobile-bar {
     position: sticky;
     top: 0;
     z-index: 30;
     display: flex;
-    min-height: 58px;
-    margin: -20px -20px 20px;
-    padding: 8px 14px;
+    min-height: 50px;
+    margin: 0;
+    padding: 6px 14px;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     border-bottom: 1px solid var(--border);
     background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
     backdrop-filter: blur(14px);
@@ -151,6 +154,7 @@
 
   .admin-mobile-bar > span {
     overflow: hidden;
+    min-width: 0;
     color: var(--text);
     font-size: 15px;
     font-weight: 700;
@@ -165,12 +169,7 @@
   }
 
   .admin-mobile-bar {
-    margin: -16px -16px 16px;
     padding-inline: 10px;
-  }
-
-  .app > .main > header {
-    gap: 12px;
   }
 }
 
@@ -225,11 +224,8 @@
     padding: 10px 0;
   }
 
-  .app > #admin-sidebar nav button {
-    min-height: 44px;
-    padding: 9px 10px;
-    font-size: 13.5px;
-  }
+  /* Row sizing belongs to the rail in style.css, which keeps it the same in
+     the drawer as on the desktop rail. */
 
   .app > #admin-sidebar > .refresh {
     min-height: 42px;

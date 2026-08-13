@@ -92,16 +92,14 @@ Extract and create `config.local.json` in the same directory:
 
 ```json
 {
-  "ga_root": "E:/Work/GenericAgent",
-  "host": "127.0.0.1",
-  "port": 8787
+  "ga_root": "E:/Work/GenericAgent"
 }
 ```
 
-**Windows:** Double-click `ga-admin.exe` or run `ga-admin.exe --no-browser` for headless mode.  
-**Linux/macOS:** Run `./ga-admin` or `./ga-admin --no-browser`.
+**Windows:** Double-click `ga-admin.exe`. The UI opens in a native desktop window backed by the WebView2 runtime (preinstalled on Windows 11 and current Windows 10), and the app keeps running in the system tray after you close the window. Run `ga-admin.exe --no-window` to use your default browser instead, or `ga-admin.exe --no-browser` to start without opening any UI.  
+**Linux/macOS:** Run `./ga-admin` or `./ga-admin --no-browser`. These platforms still open the UI in your default browser.
 
-Open `http://127.0.0.1:8787` in your browser.
+By default the server listens on `127.0.0.1` with a random port, so nothing is exposed to the network and local access needs no password. The address of the running process is printed at startup and written to `runtime.local.json`; open that URL if you want a second view of the UI. To reach the admin server from another device, turn on remote access in **Settings** (see [Remote access](#remote-access)).
 
 #### Method 2 — Local Development Build
 
@@ -112,7 +110,7 @@ npm --prefix web run build
 go run .
 ```
 
-Open `http://127.0.0.1:8787`.
+Open the URL printed on startup, or run `go run . --port 8787` to pin a loopback port. The Vite dev server (`npm --prefix web run dev`) proxies `/api` to the port recorded in `runtime.local.json`, so it follows the random port automatically.
 
 ---
 
@@ -122,6 +120,20 @@ Open `http://127.0.0.1:8787`.
 
 - **Service Management:** Start/stop worker, monitor logs, check process status
 - **Chat Interface:** `/chat` entrypoint with streaming, usage tracking, model switching
+
+### Choosing an Autonomy Mode
+
+Three features keep an agent working without new input. They are not interchangeable:
+
+| Mode | Runs in | Decides "done" |
+| :--- | :--- | :--- |
+| **Loop** (chat rail) | The open chat session | A separate controller model, once per round |
+| **Goal Mode** | A detached GA process with its own state dir | GA's `reflect/goal_mode.py` |
+| **UltraPlan** (`/ultraplan`) | A single turn's tool loop | The main agent itself |
+
+Pick Loop when you want to watch and interrupt, and everything to stay in one thread; Goal Mode when the job is long and nobody needs to sit with it; UltraPlan when one multi-phase plan can be carried by the agent alone.
+
+Loop spends one extra full-context controller call per round, so keep the round limit tight. It stops itself at the round limit, when the controller asks for the same next step twice in a row, or when you press stop.
 
 ### For Administrators
 
@@ -144,8 +156,9 @@ Open `http://127.0.0.1:8787`.
 ### CLI Flags
 
 - `--headless` / `--server-only` / `--no-browser`: Run without opening browser
+- `--no-window`: Use the system browser instead of the native desktop window (Windows only; other platforms always use the browser)
 - `--app-root <path>`: Override GA root directory (default: from `config.local.json`)
-- `--port <port>`: Override HTTP port (default: 8787)
+- `--port <port>`: Pin the listen port for this launch instead of the random loopback port
 
 ### Environment Variables
 
@@ -159,7 +172,8 @@ Place `config.local.json` in the executable directory:
 ```json
 {
   "ga_root": "/path/to/GenericAgent",
-  "host": "127.0.0.1",
+  "remote_access": false,
+  "remote_allow_anonymous": false,
   "port": 8787,
   "service_autostart": ["worker"],
   "slash_commands": [
@@ -286,6 +300,7 @@ git diff --check
 - `npm run verify` runs `lint + test:lib + build` (skips `test:ui`)
 - `web/src/lib/*.test.mjs` are auto-discovered by `npm run test:lib`
 - Test files do not need `package.json` registration
+- After changing `assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
 
 ---
 
@@ -433,16 +448,14 @@ ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
 
 ```json
 {
-  "ga_root": "E:/Work/GenericAgent",
-  "host": "127.0.0.1",
-  "port": 8787
+  "ga_root": "E:/Work/GenericAgent"
 }
 ```
 
-**Windows：** 双击 `ga-admin.exe` 或运行 `ga-admin.exe --no-browser`（无头模式）。  
-**Linux/macOS：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`。
+**Windows：** 双击 `ga-admin.exe`。界面会在原生桌面窗口中打开（基于 WebView2 运行时，Windows 11 与较新的 Windows 10 已预装），关闭窗口后程序继续驻留系统托盘。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
+**Linux/macOS：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`，这两个平台仍使用默认浏览器打开界面。
 
-浏览器打开 `http://127.0.0.1:8787`。
+默认监听 `127.0.0.1` 的随机端口：不对外暴露，本机访问也不需要密码。实际地址会在启动日志中打印，同时写入 `runtime.local.json`；需要再开一个界面视图时用它。要从其它设备访问，请在**设置**中开启远程访问（见[远程访问](#远程访问)）。
 
 #### 方法二 — 本地开发构建
 
@@ -453,7 +466,7 @@ npm --prefix web run build
 go run .
 ```
 
-浏览器打开 `http://127.0.0.1:8787`。
+浏览器打开启动日志中给出的地址；若想固定本机端口，可运行 `go run . --port 8787`。Vite 开发服务器（`npm --prefix web run dev`）会把 `/api` 代理到 `runtime.local.json` 中记录的端口，因此随机端口也能自动跟上。
 
 ---
 
@@ -463,6 +476,20 @@ go run .
 
 - **服务管理：** 启动/停止 worker，监控日志，检查进程状态
 - **聊天界面：** `/chat` 入口，流式响应，用量跟踪，模型切换
+
+### 三种自动推进模式怎么选
+
+有三个功能都能让 Agent 在没有新输入的情况下继续干活，它们并不等价：
+
+| 模式 | 运行位置 | 谁判断"做完了" |
+| :--- | :--- | :--- |
+| **Loop**（聊天右栏） | 当前打开的会话内 | 独立的控制模型，每轮判一次 |
+| **Goal 模式** | 独立的 GA 进程，自带状态目录 | GA 自己的 `reflect/goal_mode.py` |
+| **UltraPlan**（`/ultraplan`） | 单个 turn 的工具循环内 | 主 Agent 自己 |
+
+想边看边随时介入、并且产物都留在同一条会话里，用 Loop；任务长、不需要盯着，用 Goal 模式；一个多阶段计划 Agent 自己就能扛下来，用 UltraPlan。
+
+Loop 每轮会额外花一次全量上下文的控制模型调用，轮次上限别设太大。它会在达到轮次上限、控制模型连续两次给出同一个下一步、或你手动停止时自行结束。
 
 ### 面向管理员
 
@@ -485,8 +512,9 @@ go run .
 ### CLI 参数
 
 - `--headless` / `--server-only` / `--no-browser`：无浏览器模式运行
+- `--no-window`：改用系统浏览器而非原生桌面窗口（仅 Windows 有窗口模式，其它平台始终用浏览器）
 - `--app-root <路径>`：覆盖 GA 根目录（默认从 `config.local.json` 读取）
-- `--port <端口>`：覆盖 HTTP 端口（默认 8787）
+- `--port <端口>`：本次启动固定监听端口，替代默认的本机随机端口
 
 ### 环境变量
 
@@ -500,7 +528,8 @@ go run .
 ```json
 {
   "ga_root": "/path/to/GenericAgent",
-  "host": "127.0.0.1",
+  "remote_access": false,
+  "remote_allow_anonymous": false,
   "port": 8787,
   "service_autostart": ["worker"],
   "slash_commands": [
@@ -509,7 +538,7 @@ go run .
 }
 ```
 
-参见 `config.example.json` 获取所有可用选项。
+`host` 与 `port` 只在 `remote_access` 为 `true` 时生效；本机监听始终使用随机端口。参见 `config.example.json` 获取所有可用选项。
 
 仓库忽略：
 
@@ -541,6 +570,7 @@ git diff --check
 - `npm run verify` 运行 `lint + test:lib + build`（跳过 `test:ui`）
 - `web/src/lib/*.test.mjs` 由 `npm run test:lib` 自动发现
 - 测试文件无需 `package.json` 注册
+- 修改 `assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
 
 ---
 
