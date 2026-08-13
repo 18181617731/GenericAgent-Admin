@@ -238,7 +238,7 @@ git diff --check
 - `npm run verify` runs `lint + test:lib + build` (skips `test:ui`)
 - `web/src/lib/*.test.mjs` are auto-discovered by `npm run test:lib`
 - Test files do not need `package.json` registration
-- After changing `assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
+- After changing `internal/appicon/assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
 
 ---
 
@@ -505,7 +505,7 @@ git diff --check
 - `npm run verify` 运行 `lint + test:lib + build`（跳过 `test:ui`）
 - `web/src/lib/*.test.mjs` 由 `npm run test:lib` 自动发现
 - 测试文件无需 `package.json` 注册
-- 修改 `assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
+- 修改 `internal/appicon/assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
 
 ---
 

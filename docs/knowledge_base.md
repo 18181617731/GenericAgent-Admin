@@ -13,7 +13,7 @@
 | 语言 | Go 1.23 + JSX (Vite) |
 | 模块 | `genericagent-admin-go` |
 | 唯一外部依赖 | `github.com/getlantern/systray v1.2.2` |
-| 目录结构 | `main.go` + `internal/` (7子包) + `web/` (Vite前端) + `cmd/` (Python辅助) |
+| 目录结构 | `main.go` + `internal/` (14子包) + `web/` (Vite前端) + `cmd/` (Python辅助) |
 
 **一句话**: 一个用 Go 标准库构建的Web 管理面板，通过 HTTP API 管理 GenericAgent (Python) 进程、文件、BBS、定时任务、自行更新。
 
@@ -23,8 +23,7 @@
 
 ```
 GenericAgent-Admin/
-├── main.go                     # 入口: 解析参数 → 初始化和启动 → 信号处理
-├── tray.go / tray_linux.go     # 系统托盘 (systray)
+├── main.go                     # 入口(根目录唯一 .go): 解析参数 → 初始化和启动 → 信号处理
 ├── config.dev.json             # 开发配置 (ga_root, host, port, ...)
 ├── config.example.json         # 配置模板
 ├── build.bat                   # Windows 构建脚本
@@ -59,7 +58,24 @@ GenericAgent-Admin/
 │   │   ├── export.go            # 宠物导出
 │   │
 │   ├── modelconfig/      # 模型配置
-│   └── autostart/        # 开机自启 (Windows/Linux)
+│   ├── autostart/        # 开机自启 (Windows/Linux)
+│   │
+│   ├── desktop/          # 原生桌面窗口 (WebView2 / WKWebView) + 系统浏览器兜底
+│   │   ├── desktop.go           # UI 入口, 每个窗口名最多一个窗口
+│   │   ├── desktop_windows.go / desktop_host_windows.go / desktop_chrome_windows.go
+│   │   ├── desktop_darwin.go + desktop_webview_darwin.h/.m  # cgo
+│   │   └── desktop_theme.go     # 记住上次的标题栏配色
+│   │
+│   ├── tray/             # 系统托盘 (systray), Linux 无托盘时退化为等信号
+│   │   ├── tray.go / tray_linux.go
+│   │   ├── trayinfo.go          # 菜单文案与访问范围提示
+│   │   └── traylang*.go         # 跟随系统语言
+│   │
+│   ├── adminauth/        # 非 loopback 访问的密码保护
+│   ├── adminhttp/        # 监听地址决策 + runtime.local.json + HTTP server
+│   ├── clipboard/        # 跨平台复制 (clip / pbcopy / wl-copy)
+│   └── appicon/          # 内嵌应用图标 (托盘/任务栏/窗口共用)
+│       └── assets/              # 图标源文件与生成产物
 │
 ├── web/                  # Vite + React 前端
 │   ├── vite.config.js          # Vite 配置 (proxy 到后端)
@@ -90,7 +106,6 @@ GenericAgent-Admin/
 ├── cmd/
 │   └── chat_worker.py          # Python 聊天 worker (独立进程)
 │
-├── assets/
 │
 ├── release/                    # 构建产物
 └── temp/ / tmp/                # 临时文件
