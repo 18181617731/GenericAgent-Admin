@@ -151,6 +151,7 @@
 
   .admin-mobile-bar > span {
     overflow: hidden;
+    min-width: 0;
     color: var(--text);
     font-size: 15px;
     font-weight: 700;
@@ -167,10 +168,6 @@
   .admin-mobile-bar {
     margin: -16px -16px 16px;
     padding-inline: 10px;
-  }
-
-  .app > .main > header {
-    gap: 12px;
   }
 }
 

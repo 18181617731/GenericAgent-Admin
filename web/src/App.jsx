@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, FileCode2, FolderCog, Globe2, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Server, SlidersHorizontal, Sparkles, Target, Terminal } from 'lucide-react'
+import { Activity, BarChart3, BrainCircuit, FileCode2, FolderCog, Globe2, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Server, SlidersHorizontal, Sparkles, Target, Terminal } from 'lucide-react'
 import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import { api } from './lib/api'
@@ -42,7 +42,7 @@ const NAV_ICONS = {
   overview: <Activity size={16}/>,
   settings: <SlidersHorizontal size={16}/>,
   chat: <Sparkles size={16}/>,
-  models: <Server size={16}/>,
+  models: <BrainCircuit size={16}/>,
   instances: <Server size={16}/>,
   channels: <Globe2 size={16}/>,
   tasks: <Terminal size={16}/>,
@@ -212,6 +212,15 @@ export default function App() {
     }} />
   }
 
+  // The listen address and health belong to the whole console, not to a route,
+  // so they sit in the shell chrome. Both copies are rendered but the layout
+  // only ever shows one: the mobile bar is hidden on desktop, and the sidebar
+  // is hidden while the drawer is closed.
+  const serviceStatus = <div className="admin-service-status" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}>
+    <span className="admin-service-endpoint"><Server size={13} aria-hidden="true"/><span>{listenAddress || (lang === 'zh' ? '本机' : 'local')}</span></span>
+    <span role="status" aria-live="polite" className={`admin-service-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-service-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span>
+  </div>
+
   return <>
     {services.pickerOpen && <div className="modal-overlay" onClick={services.closePicker}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
@@ -248,21 +257,17 @@ export default function App() {
         </nav>
         <button type="button" className="refresh" onClick={load} disabled={booting}><RefreshCw size={15} aria-hidden="true"/>{booting ? t.busy : t.refresh}</button>
         <StatusNotice kind={notice?.kind} message={notice?.message} retryLabel={t.retry} dismissLabel={t.close} onRetry={notice?.kind === 'error' ? load : undefined} onDismiss={notice?.kind === 'success' ? ()=>setNotice(null) : undefined}/>
+        {serviceStatus}
       </aside>
       <main className="main">
         <div className="admin-mobile-bar">
           <button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={()=>setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button>
           <span>{t.appName}</span>
+          {serviceStatus}
         </div>
         <header className="admin-page-header">
-          <div className="admin-page-heading">
-            <span className="admin-page-icon" aria-hidden="true">{NAV_ICONS[tab]}</span>
-            <div className="admin-page-copy"><h2>{t.nav[tab]}</h2><p>{t.desc[tab]}</p></div>
-          </div>
-          <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}>
-            <span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{listenAddress || (lang === 'zh' ? '本机' : 'local')}</span></span>
-            <span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span>
-          </div>
+          <h2>{t.nav[tab]}</h2>
+          <p>{t.desc[tab]}</p>
         </header>
         <ErrorBoundary resetKey={tab}>
           <Suspense fallback={<RouteFallback label={t.loading} />}>
@@ -295,7 +300,7 @@ export default function App() {
               onToggleAutostart={version.toggleAutostart}
             />}
             {tab==='chat' && <ChatSettingsPage t={t} text={text} titleModel={titleModel}/>}
-            {tab==='models' && <Models t={t} profiles={models.profiles} persistedProfiles={models.persistedProfiles} setProfiles={models.setProfiles} patchProfile={models.patchProfile} addModelProfiles={models.addProfiles} importModels={models.importModels} previewModels={models.previewModels} saveModelProfile={models.saveProfile} onSaveModelOrder={models.saveModelOrder} failoverGroups={models.failoverGroups} onSaveFailoverGroups={models.saveFailoverGroups} onSaveProviderOrder={models.saveProviderOrder} deleteModelProfile={models.deleteProfile} discoverModels={models.discoverModels} modelPreview={models.preview} modelSaveStatus={models.saveStatus} importLoading={models.importLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={models.revealedKeys} revealBusy={models.keyBusy} getProfileKey={models.getProfileKey} onRevealKey={models.revealKey} onClearRevealedKey={models.clearRevealedKey} modelInstance={models.instance} modelInstanceLabel={lang === 'zh' ? '当前实例' : 'Current instance'}/>}
+            {tab==='models' && <Models t={t} profiles={models.profiles} setProfiles={models.setProfiles} patchProfile={models.patchProfile} addModelProfiles={models.addProfiles} removeModelProfile={models.removeProfile} importModels={models.importModels} previewModels={models.previewModels} failoverGroups={models.failoverGroups} setFailoverGroups={models.setFailoverGroups} discoverModels={models.discoverModels} modelPreview={models.preview} changes={models.changes} saveState={models.saveState} saveAll={models.saveAll} discardDraft={models.discardDraft} importLoading={models.importLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={models.revealedKeys} revealBusy={models.keyBusy} getProfileKey={models.getProfileKey} onRevealKey={models.revealKey} onClearRevealedKey={models.clearRevealedKey} modelInstance={models.instance} modelInstanceLabel={lang === 'zh' ? '当前实例' : 'Current instance'}/>}
             {tab==='instances' && <InstancesPage lang={lang} onConfigureModels={openModels}/>}
             {tab==='channels' && <ChannelsPage frontendSvcs={services.frontendSvcs} t={t} actionStates={services.actionStates} onStart={startService} onStop={stopService} onLogs={viewServiceLogs} onAutostart={services.toggleAutostart} onReflectStart={services.startReflectService} onOpenHub={()=>window.open('http://127.0.0.1:19737', '_blank', 'noopener,noreferrer')}/>}
             {tab==='tasks' && <TasksPage
