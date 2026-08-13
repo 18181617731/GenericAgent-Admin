@@ -11,7 +11,13 @@ import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './th
 // The admin console lives under "/admin" and acts as the settings area.
 const rootPath = window.location.pathname.replace(/\/+$/, '')
 const isAdmin = rootPath === '/admin' || rootPath.startsWith('/admin/')
-const Root = lazy(() => (isAdmin ? import('./App.jsx') : import('./ChatApp.jsx')))
+// Each route imports on its own line because the build pairs one dependency
+// list, stylesheets included, with one dynamic import expression. Choosing
+// between two imports inside a single expression left both sharing the chat
+// list, so the admin bundle's stylesheet was never linked in a build.
+const AdminRoot = lazy(() => import('./App.jsx'))
+const ChatRoot = lazy(() => import('./ChatApp.jsx'))
+const Root = isAdmin ? AdminRoot : ChatRoot
 
 const storedLanguage = () => localStorage.getItem('ga-admin-lang-explicit') === '1' && localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh'
 
