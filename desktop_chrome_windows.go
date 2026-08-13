@@ -96,6 +96,8 @@ const (
 	iconSmall = 0
 	iconBig   = 1
 
+	smCXScreen = 0
+	smCYScreen = 1
 	smCXIcon   = 11
 	smCYIcon   = 12
 	smCXSmIcon = 49
