@@ -1,9 +1,9 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ChatFileScopeContext, ChatMessage, GeneratedImageGallery, extractToolResultFilePath, resolveChatToolFilePath } from './ChatApp.jsx'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { ChatFileScopeContext, ChatMessage, DocumentPreviewGallery, GeneratedImageGallery, extractToolResultFilePath, resolveChatToolFilePath } from './ChatApp.jsx'
 
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('chat file attachments', () => {
   test('renders image uploads with the responsive message image classes', () => {
@@ -165,6 +165,53 @@ describe('chat file attachments', () => {
     const download = screen.getByRole('link', { name:'下载文件 report.pdf' })
     expect(download.getAttribute('href')).toBe('/api/files/download?path=C%3A%2Ftmp%2Freport.pdf')
     expect(download.getAttribute('download')).toBe('report.pdf')
+  })
+
+  test('turns a path-only document result into a selectable in-conversation preview', async () => {
+    const path = String.raw`G:\MygenericAgent\temp\projects\闲鱼\综合报告.md`
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ name:'综合报告.md', path, size:42, content:'# 综合报告\n\n正文内容' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DocumentPreviewGallery content={['已合并至：', '', '```text', path, '```'].join('\n')} />)
+
+    expect(screen.getByText('综合报告.md')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name:'预览文档 综合报告.md' }))
+    expect(screen.getByRole('dialog', { name:'文档预览 综合报告.md' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name:'综合报告' })).toBeTruthy()
+    expect(screen.getByText('正文内容')).toBeTruthy()
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/files/read?path=${encodeURIComponent(path)}`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+
+    await waitFor(() => expect(screen.getByRole('link', { name:'下载文档' }).getAttribute('href'))
+      .toBe(`/api/files/download?path=${encodeURIComponent(path)}`))
+    fireEvent.keyDown(document, { key:'Escape' })
+    expect(screen.queryByRole('dialog', { name:'文档预览 综合报告.md' })).toBeNull()
+  })
+
+  test('allows choosing another document while the preview is open', async () => {
+    const first = String.raw`C:\tmp\first.md`
+    const second = String.raw`C:\tmp\second.txt`
+    const fetchMock = vi.fn(async (url) => ({
+      ok: true,
+      text: async () => JSON.stringify({
+        content: url.includes(encodeURIComponent(second)) ? '第二份正文' : '# 第一份正文',
+        size: 20,
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DocumentPreviewGallery content={['结果文档：', '', '```text', first, second, '```'].join('\n')} />)
+    fireEvent.click(screen.getByRole('button', { name:'预览文档 first.md' }))
+    expect(await screen.findByRole('heading', { name:'第一份正文' })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('combobox', { name:'选择文档' }), { target:{ value:second } })
+    expect(await screen.findByText('第二份正文')).toBeTruthy()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   test('renders assistant image files as image-only preview cards', () => {

@@ -42,6 +42,7 @@ import { clearSessionSearchHistory, loadSessionSearchHistory, saveSessionSearchH
 import { primeChatCompletionTone } from './lib/chatCompletionTone.js'
 import { buildChatNotification, latestUserPrompt } from './lib/chatNotification.js'
 import { publishNotification } from './lib/notifications.js'
+import { documentPathName, extractDocumentPaths, isDocumentPath, isMarkdownDocumentPath } from './lib/documentPaths.js'
 import { NotificationCenter } from './components/NotificationUI.jsx'
 import SessionSearchDialog from './components/SessionSearchDialog.jsx'
 
@@ -385,6 +386,7 @@ function FileAttachment({ path, resolvedPath = '' }) {
   const displayPath = String(path || '').trim()
   const fileScope = useContext(ChatFileScopeContext)
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
+  const [documentPreviewOpen, setDocumentPreviewOpen] = useState(false)
   const clean = resolveChatToolFilePath(resolvedPath || displayPath, fileScope)
   const name = displayPath.split(/[\\/]/).filter(Boolean).pop() || displayPath || ct('文件', 'File')
   const extMatch = name.match(/\.([^.]+)$/)
@@ -394,6 +396,7 @@ function FileAttachment({ path, resolvedPath = '' }) {
   const visual = getFileVisual(name)
   const { kind, Icon } = visual
   const isImage = kind === 'image'
+  const isDocument = isDocumentPath(displayPath)
   const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
   const open = async (mode) => {
     if (!confirmDanger('chat-file-open', ct(`使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`, `Open ${mode === 'folder' ? 'the containing folder' : 'this file'} in the desktop system: ${clean}?`))) return
@@ -404,17 +407,19 @@ function FileAttachment({ path, resolvedPath = '' }) {
     }
   }
   const imageLabel = ct(`查看图片 ${name}`, `View image ${name}`)
+  const documentLabel = ct(`预览文档 ${name}`, `Preview document ${name}`)
   return <>
     <span className={`oa-file-card oa-file-kind-${kind}`} title={displayPath || clean}>
-    <button type="button" className="oa-file-leading" onClick={() => isImage ? setImagePreviewOpen(true) : open('file')} aria-label={isImage ? imageLabel : ct(`打开文件 ${name}`, `Open file ${name}`)}>
+    <button type="button" className="oa-file-leading" onClick={() => isImage ? setImagePreviewOpen(true) : isDocument ? setDocumentPreviewOpen(true) : open('file')} aria-label={isImage ? imageLabel : isDocument ? documentLabel : ct(`打开文件 ${name}`, `Open file ${name}`)}>
       <Icon className="oa-file-fallback-icon" size={19}/>
       {isImage && <img src={imageUrl} alt="" loading="lazy" onError={(e)=>{ e.currentTarget.style.display='none' }} />}
     </button>
     {!isImage && <span className="oa-file-meta">
         <span className="oa-file-name-row"><b>{name}</b><small>{extension}</small></span>
         <em>{directory || ct('本地文件', 'Local file')}</em>
-      </span>}
+    </span>}
     <span className="oa-file-actions">
+      {isDocument && <button type="button" onClick={() => setDocumentPreviewOpen(true)} title={documentLabel} aria-label={documentLabel}><FileText size={15}/></button>}
       <a href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></a>
       <button type="button" onClick={() => open('file')} title={ct('打开文件', 'Open file')} aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
       <button type="button" onClick={() => open('folder')} title={ct('打开所在位置', 'Open containing folder')} aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
@@ -422,6 +427,7 @@ function FileAttachment({ path, resolvedPath = '' }) {
     </span>
     </span>
     {isImage && <ImagePreviewDialog images={[{ name, src:imageUrl }]} activeIndex={imagePreviewOpen ? 0 : -1} onClose={() => setImagePreviewOpen(false)} />}
+    {isDocument && <DocumentPreviewDialog paths={[displayPath]} activePath={documentPreviewOpen ? displayPath : ''} onClose={() => setDocumentPreviewOpen(false)} />}
   </>
 }
 
@@ -2422,6 +2428,105 @@ export function ImagePreviewDialog({ images = [], activeIndex = -1, onClose, onC
   )
 }
 
+const documentPreviewText = (detail) => String(detail?.content || '')
+const documentDownloadURL = (path = '') => `/api/files/download?path=${encodeURIComponent(String(path || ''))}`
+
+export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({ paths = [], activePath = '', onSelect, onClose }) {
+  const fileScope = useContext(ChatFileScopeContext)
+  const [detail, setDetail] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const cleanPath = useMemo(() => resolveChatToolFilePath(activePath, fileScope), [activePath, fileScope])
+  const name = documentPathName(activePath)
+
+  useEffect(() => {
+    if (!activePath || !cleanPath) return undefined
+    let alive = true
+    setLoading(true)
+    setError('')
+    setDetail(null)
+    api(`/api/files/read?path=${encodeURIComponent(cleanPath)}`)
+      .then(next => { if (alive) setDetail(next || {}) })
+      .catch(nextError => { if (alive) setError(nextError?.message || String(nextError)) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [activePath, cleanPath])
+
+  useEffect(() => {
+    if (!activePath) return undefined
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose?.() }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [activePath, onClose])
+
+  if (!activePath || typeof document === 'undefined') return null
+  const content = documentPreviewText(detail)
+  const binary = content === '[binary or non-utf8 file]'
+  const empty = !loading && !error && detail && !content
+  return createPortal(
+    <div className="oa-document-preview-layer" role="dialog" aria-modal="true" aria-label={`文档预览 ${name}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
+      <section className="oa-document-preview-dialog">
+        <header className="oa-document-preview-head">
+          <div className="oa-document-preview-title"><FileText size={18}/><div><b>{ct('文档预览', 'Document preview')}</b><span title={activePath}>{activePath}</span></div></div>
+          <button type="button" onClick={onClose} aria-label="关闭文档预览" title="关闭文档预览" autoFocus><X size={18}/></button>
+        </header>
+        {paths.length > 1 && <div className="oa-document-preview-picker"><label htmlFor="oa-document-preview-select">{ct('选择文档', 'Choose a document')}</label><select id="oa-document-preview-select" value={activePath} onChange={(event) => onSelect?.(event.target.value)}>{paths.map(path => <option key={path} value={path}>{documentPathName(path)}</option>)}</select></div>}
+        <div className="oa-document-preview-body">
+          {loading && <div className="oa-document-preview-state">{ct('正在读取文档…', 'Loading document…')}</div>}
+          {!loading && error && <div className="oa-document-preview-state is-error" role="alert">{ct(`无法预览：${error}`, `Unable to preview: ${error}`)}</div>}
+          {!loading && !error && binary && <div className="oa-document-preview-state">{ct('这是二进制文档，当前无法在对话中显示正文。可以下载后查看。', 'This is a binary document and cannot be rendered in the conversation. Download it to view the contents.')}</div>}
+          {!loading && !error && !binary && empty && <div className="oa-document-preview-state">{ct('文档为空。', 'The document is empty.')}</div>}
+          {!loading && !error && !binary && !empty && (isMarkdownDocumentPath(activePath) ? <div className="oa-document-markdown"><TextMarkdown text={content}/></div> : <pre className="oa-document-preview-pre">{content}</pre>)}
+        </div>
+        <footer className="oa-document-preview-foot">
+          <span>{detail?.truncated ? ct('内容过长，仅显示前部分。', 'Content is long; only the beginning is shown.') : (detail?.size ? `${Math.round(detail.size / 1024)} KB` : '')}</span>
+          <a href={documentDownloadURL(cleanPath)} download={name}><Download size={15}/>{ct('下载文档', 'Download')}</a>
+        </footer>
+      </section>
+    </div>,
+    document.body,
+  )
+})
+
+export function DocumentPreviewGallery({ content = '' }) {
+  const fileScope = useContext(ChatFileScopeContext)
+  const paths = useMemo(() => extractDocumentPaths(content), [content])
+  const [activePath, setActivePath] = useState('')
+  useEffect(() => {
+    if (activePath && !paths.includes(activePath)) setActivePath('')
+  }, [activePath, paths])
+  if (!paths.length) return null
+  return <>
+    <section className="oa-document-results" aria-label="可预览文档">
+      <header><span><FileText size={15}/><b>{ct('结果文档', 'Result documents')}</b></span><em>{paths.length}</em></header>
+      <div className="oa-document-results-list">
+        {paths.map(path => {
+          const name = documentPathName(path)
+          const visual = getFileVisual(name)
+          const Icon = visual.Icon
+          const clean = resolveChatToolFilePath(path, fileScope)
+          return <div className="oa-document-result-card" key={path}>
+            <button type="button" className="oa-document-result-main" onClick={() => setActivePath(path)} aria-label={`预览文档 ${name}`} title={path}>
+              <span className="oa-document-result-icon"><Icon size={18}/></span>
+              <span><b>{name}</b><small title={path}>{path}</small></span>
+            </button>
+            <div className="oa-document-result-actions">
+              <button type="button" onClick={() => setActivePath(path)}>{ct('预览', 'Preview')}</button>
+              <a href={documentDownloadURL(clean)} download={name}>{ct('下载', 'Download')}</a>
+            </div>
+          </div>
+        })}
+      </div>
+    </section>
+    <DocumentPreviewDialog paths={paths} activePath={activePath} onSelect={setActivePath} onClose={() => setActivePath('')} />
+  </>
+}
+
 function initWorldline(sid = '') {
   return { sid, status: 'idle', data: null, error: null, switchingNodeId: '' }
 }
@@ -2783,7 +2888,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <><GeneratedImageGallery content={m.content}/><DocumentPreviewGallery content={m.content}/></>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
       </div>

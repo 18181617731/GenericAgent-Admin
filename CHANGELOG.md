@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.72 - 2026-08-13
+
+### Document previews from assistant results
+- Recognize explicit local document paths in result labels and standalone result code blocks.
+- Show path-only Markdown and text documents as selectable result cards inside the current conversation.
+- Load the selected document safely in a preview dialog, render Markdown, and keep download access for binary or unsupported documents.
+
 ## v1.0.71 - 2026-08-13
 
 ### Persistent FRP tunnel after reboot
