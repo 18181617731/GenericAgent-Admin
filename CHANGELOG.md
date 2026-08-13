@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.71 - 2026-08-13
+
+### Persistent FRP tunnel after reboot
+- Run the Windows FRP tunnel through a supervisor that does not depend on the user's browser proxy being ready at logon.
+- Retry the tunnel automatically when the network or frpc process is temporarily unavailable, keeping mobile access recoverable after a reboot.
+- Add the deployment script used by the `GenericAgent-Admin-FRP` scheduled task.
+
 ## v1.0.70 - 2026-08-12
 
 ### Consistent model names in chat
