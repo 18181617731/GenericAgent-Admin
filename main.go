@@ -107,10 +107,9 @@ func main() {
 
 	ui := newAppUI(cwd, launch.NoWindow)
 	if !launch.NoBrowser {
-		go func() { time.Sleep(500 * time.Millisecond); ui.OpenAdmin(url) }()
+		go func() { time.Sleep(500 * time.Millisecond); ui.OpenChat(url) }()
 	}
 	runTray(trayApp{
-		OpenAdmin:    func() { ui.OpenAdmin(url) },
 		OpenChat:     func() { ui.OpenChat(url) },
 		OpenSettings: func() { ui.OpenSettings(url) },
 		StopServices: func() { srv.StopManagedServices() },

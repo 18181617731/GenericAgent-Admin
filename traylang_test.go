@@ -25,10 +25,10 @@ func TestTrayLanguageFollowsTheLocaleTag(t *testing.T) {
 // A locale lookup that fails must not silently switch a user's tray to a
 // language they never asked for.
 func TestTrayLanguageKeepsChineseWhenThePlatformStaysSilent(t *testing.T) {
-	if trayTextForLocale("").OpenAdmin != trayZH.OpenAdmin {
+	if trayTextForLocale("").OpenChat != trayZH.OpenChat {
 		t.Fatal("an unknown locale did not keep the Chinese menu")
 	}
-	if trayTextForLocale("en-US").OpenAdmin != trayEN.OpenAdmin {
+	if trayTextForLocale("en-US").OpenChat != trayEN.OpenChat {
 		t.Fatal("an English locale did not switch the menu")
 	}
 }
@@ -41,20 +41,14 @@ func TestTrayLocalePrefersTheExplicitOverride(t *testing.T) {
 	}
 }
 
+// The entry is only in the menu while something is running, so the label only
+// has to name the count it would end.
 func TestStopServicesLabelCountsWhatItWouldStop(t *testing.T) {
-	if got := stopServicesLabel(trayZH, 0); got != trayZH.StopIdle {
-		t.Fatalf("idle label = %q", got)
-	}
 	if got := stopServicesLabel(trayZH, 3); !strings.Contains(got, "3") {
 		t.Fatalf("running label = %q, want the count", got)
 	}
 	if got := stopServicesLabel(trayEN, 1); got != "Stop all services (1 running)" {
 		t.Fatalf("english running label = %q", got)
-	}
-	// A negative count can only come from a broken provider; it must not read
-	// as services that are somehow running.
-	if got := stopServicesLabel(trayEN, -2); got != trayEN.StopIdle {
-		t.Fatalf("negative count label = %q", got)
 	}
 }
 

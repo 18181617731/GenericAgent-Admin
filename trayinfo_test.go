@@ -128,6 +128,25 @@ func TestTrayStatusReportsPendingRemoteChanges(t *testing.T) {
 	}
 }
 
+// The scope row costs a line of menu, so only a server that is reachable from
+// the network, or out of step with its config, is allowed to take one.
+func TestTrayStatusFlagsOnlyAScopeWorthShowing(t *testing.T) {
+	if describeTrayStatus("127.0.0.1:50451", config.Default(), false, lanIP(testLAN), trayZH).ScopeAlert {
+		t.Fatal("a local-only server in step with its config asked for a scope row")
+	}
+
+	cfg := config.Default()
+	cfg.RemoteAccess = true
+	cfg.Port = 8787
+	if !describeTrayStatus("0.0.0.0:8787", cfg, true, lanIP(testLAN), trayZH).ScopeAlert {
+		t.Fatal("a published server did not ask for a scope row")
+	}
+	// Remote access was switched on but this process is still on loopback.
+	if !describeTrayStatus("127.0.0.1:50451", cfg, true, lanIP(""), trayZH).ScopeAlert {
+		t.Fatal("a pending remote change did not ask for a scope row")
+	}
+}
+
 func TestTrayStatusSurvivesAnUnparsableAddress(t *testing.T) {
 	status := describeTrayStatus("not-an-address", config.Default(), false, nil, trayZH)
 

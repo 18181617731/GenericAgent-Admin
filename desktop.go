@@ -25,15 +25,15 @@ const desktopWindowStartTimeout = 30 * time.Second
 const nativeThemeBinding = "gaNativeTheme"
 
 const (
-	adminWindowName   = "admin"
-	chatWindowName    = "chat"
-	settingsRoute     = "/admin/settings"
-	adminWindowWidth  = 1280
-	adminWindowHeight = 860
-	chatWindowWidth   = 1100
-	chatWindowHeight  = 820
-	minWindowWidth    = 900
-	minWindowHeight   = 600
+	adminWindowName = "admin"
+	chatWindowName  = "chat"
+	settingsRoute   = "/admin/settings"
+	// Chat and the admin console are both full working surfaces, so they open
+	// at the same size rather than ranking one as a side panel.
+	windowWidth     = 1280
+	windowHeight    = 860
+	minWindowWidth  = 900
+	minWindowHeight = 600
 )
 
 type desktopWindowSpec struct {
@@ -73,36 +73,28 @@ func newAppUI(appRoot string, browserOnly bool) *appUI {
 	return &appUI{windows: newDesktopWindows(dataPath, openBrowser)}
 }
 
-func (u *appUI) OpenAdmin(baseURL string) {
+// OpenChat opens the primary interface, which the web bundle serves at the
+// root path.
+func (u *appUI) OpenChat(baseURL string) {
 	u.open(desktopWindowSpec{
-		Name:   adminWindowName,
-		Title:  "GenericAgent Admin",
+		Name:   chatWindowName,
+		Title:  "GenericAgent Chat",
 		URL:    loopbackURL(baseURL),
-		Width:  adminWindowWidth,
-		Height: adminWindowHeight,
+		Width:  windowWidth,
+		Height: windowHeight,
 	})
 }
 
-// OpenSettings reuses the admin window but always lands on the settings page,
-// since the tray offers it as a shortcut to a specific destination.
+// OpenSettings is the only way in to the admin console, so it names the page it
+// wants: a window left on another tab is sent back to settings.
 func (u *appUI) OpenSettings(baseURL string) {
 	u.open(desktopWindowSpec{
 		Name:    adminWindowName,
 		Title:   "GenericAgent Admin",
 		URL:     loopbackURL(baseURL) + settingsRoute,
-		Width:   adminWindowWidth,
-		Height:  adminWindowHeight,
+		Width:   windowWidth,
+		Height:  windowHeight,
 		Reroute: true,
-	})
-}
-
-func (u *appUI) OpenChat(baseURL string) {
-	u.open(desktopWindowSpec{
-		Name:   chatWindowName,
-		Title:  "GenericAgent Chat",
-		URL:    loopbackURL(baseURL) + "/chat",
-		Width:  chatWindowWidth,
-		Height: chatWindowHeight,
 	})
 }
 

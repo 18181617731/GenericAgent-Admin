@@ -17,7 +17,6 @@ const trayTooltipSeparator = " · "
 type trayText struct {
 	AppName string
 
-	OpenAdmin, OpenAdminTip       string
 	OpenChat, OpenChatTip         string
 	OpenSettings, OpenSettingsTip string
 	Exit, ExitTip                 string
@@ -25,8 +24,9 @@ type trayText struct {
 	CopyLocalTip, CopyLANTip, ScopeTip string
 	Copied                             string
 
-	// StopRunningFmt takes the number of live services; StopIdle covers none.
-	StopIdle, StopRunningFmt, StopTip string
+	// StopRunningFmt takes the number of live services. There is no wording for
+	// none, because an idle entry leaves the menu rather than greying out.
+	StopRunningFmt, StopTip string
 
 	AddressLabel, LANLabel, ScopeLabel string
 
@@ -39,9 +39,8 @@ type trayText struct {
 var trayZH = trayText{
 	AppName: "GenericAgent Admin",
 
-	OpenAdmin: "打开 Admin", OpenAdminTip: "打开管理界面",
 	OpenChat: "打开 Chat", OpenChatTip: "打开对话界面",
-	OpenSettings: "打开设置", OpenSettingsTip: "远程访问与访问密码都在设置页",
+	OpenSettings: "打开设置", OpenSettingsTip: "打开管理台的设置页：远程访问与访问密码都在这里",
 	Exit: "退出 Admin", ExitTip: "退出 GenericAgent Admin",
 
 	CopyLocalTip: "点击复制本机地址",
@@ -49,7 +48,6 @@ var trayZH = trayText{
 	ScopeTip:     "在设置页修改远程访问",
 	Copied:       "已复制 ",
 
-	StopIdle:       "停止所有服务（无运行中）",
 	StopRunningFmt: "停止所有服务（%d 个运行中）",
 	StopTip:        "停止所有由 Admin 托管的服务",
 
@@ -67,9 +65,8 @@ var trayZH = trayText{
 var trayEN = trayText{
 	AppName: "GenericAgent Admin",
 
-	OpenAdmin: "Open Admin", OpenAdminTip: "Open the admin interface",
 	OpenChat: "Open Chat", OpenChatTip: "Open the chat interface",
-	OpenSettings: "Open Settings", OpenSettingsTip: "Remote access and the access password live on the settings page",
+	OpenSettings: "Open Settings", OpenSettingsTip: "Open the admin settings page, where remote access and the access password live",
 	Exit: "Quit Admin", ExitTip: "Quit GenericAgent Admin",
 
 	CopyLocalTip: "Click to copy the local address",
@@ -77,7 +74,6 @@ var trayEN = trayText{
 	ScopeTip:     "Change remote access on the settings page",
 	Copied:       "Copied ",
 
-	StopIdle:       "Stop all services (none running)",
 	StopRunningFmt: "Stop all services (%d running)",
 	StopTip:        "Stop every service the Admin manages",
 
@@ -93,16 +89,13 @@ var trayEN = trayText{
 }
 
 // stopServicesLabel keeps the entry honest about what clicking it would end.
+// The tray only shows the entry while something is running.
 func stopServicesLabel(text trayText, running int) string {
-	if running <= 0 {
-		return text.StopIdle
-	}
 	return fmt.Sprintf(text.StopRunningFmt, running)
 }
 
 // trayApp is what the tray can do on behalf of the running admin server.
 type trayApp struct {
-	OpenAdmin    func()
 	OpenChat     func()
 	OpenSettings func()
 	StopServices func()
@@ -138,6 +131,10 @@ type trayStatus struct {
 	LANURL     string
 	LANLabel   string
 	ScopeLabel string
+	// ScopeAlert marks a scope the user should see in the menu: reachable from
+	// the network, or out of step with the config. A plain local-only server is
+	// the safe default and says so in the tooltip instead of taking a row.
+	ScopeAlert bool
 	Tooltip    string
 }
 
@@ -150,6 +147,7 @@ func describeTrayStatus(listenAddr string, cfg config.AppConfig, passwordSet boo
 		return trayStatus{
 			LocalLabel: text.AddressLabel + listenAddr,
 			ScopeLabel: text.ScopeLabel + text.ScopeUnknown,
+			ScopeAlert: true,
 			Tooltip:    text.AppName,
 		}
 	}
@@ -175,10 +173,10 @@ func describeTrayStatus(listenAddr string, cfg config.AppConfig, passwordSet boo
 			scope = text.ScopeRemoteAnonymous
 		}
 	}
-	if pending := pendingRemoteChange(published, cfg, passwordSet, text); pending != "" {
-		scope += pending
-	}
+	pending := pendingRemoteChange(published, cfg, passwordSet, text)
+	scope += pending
 	status.ScopeLabel = text.ScopeLabel + scope
+	status.ScopeAlert = published || pending != ""
 
 	reachable := localAddr
 	if status.LANURL != "" {

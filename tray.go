@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/getlantern/systray"
+	"fyne.io/systray"
 )
 
 // One icon serves the tray, the taskbar, and every desktop window.
@@ -45,7 +45,10 @@ func runTray(app trayApp) {
 		systray.SetTitle("GA")
 		systray.SetTooltip(text.AppName)
 
-		openItem := systray.AddMenuItem(text.OpenAdmin, text.OpenAdminTip)
+		// A left click opens the primary interface; the menu stays on the right
+		// button, which is what happens when no secondary handler is set.
+		systray.SetOnTapped(func() { run(app.OpenChat) })
+
 		chatItem := systray.AddMenuItem(text.OpenChat, text.OpenChatTip)
 		settingsItem := systray.AddMenuItem(text.OpenSettings, text.OpenSettingsTip)
 		systray.AddSeparator()
@@ -55,34 +58,26 @@ func runTray(app trayApp) {
 		lanItem := systray.AddMenuItem("", text.CopyLANTip)
 		scopeItem := systray.AddMenuItem("", text.ScopeTip)
 		scopeItem.Disable()
+		// Stop and Quit share this section so that hiding Stop cannot leave two
+		// separators stacked on each other.
 		systray.AddSeparator()
 		stopItem := systray.AddMenuItem("", text.StopTip)
-		systray.AddSeparator()
 		exitItem := systray.AddMenuItem(text.Exit, text.ExitTip)
 
 		status := app.status()
 		render := func() {
 			status = app.status()
 			localItem.SetTitle(status.LocalLabel)
-			scopeItem.SetTitle(status.ScopeLabel)
 			systray.SetTooltip(status.Tooltip)
 
-			running := app.runningServices()
-			stopItem.SetTitle(stopServicesLabel(text, running))
-			// Nothing to stop is worth saying with the entry itself rather
-			// than with a click that would do nothing.
-			if running > 0 {
-				stopItem.Enable()
-			} else {
-				stopItem.Disable()
-			}
+			// Every remaining row earns its place by carrying something the
+			// user can act on; anything that would only restate the safe
+			// default leaves the menu instead of greying out inside it.
+			show(lanItem, status.LANLabel != "", status.LANLabel)
+			show(scopeItem, status.ScopeAlert, status.ScopeLabel)
 
-			if status.LANLabel == "" {
-				lanItem.Hide()
-				return
-			}
-			lanItem.SetTitle(status.LANLabel)
-			lanItem.Show()
+			running := app.runningServices()
+			show(stopItem, running > 0, stopServicesLabel(text, running))
 		}
 		render()
 
@@ -108,8 +103,6 @@ func runTray(app trayApp) {
 				select {
 				case <-refresh.C:
 					render()
-				case <-openItem.ClickedCh:
-					run(app.OpenAdmin)
 				case <-chatItem.ClickedCh:
 					run(app.OpenChat)
 				case <-settingsItem.ClickedCh:
@@ -136,4 +129,15 @@ func run(action func()) {
 	if action != nil {
 		go action()
 	}
+}
+
+// show gives an entry its current wording, or takes it out of the menu when it
+// has nothing left to say.
+func show(item *systray.MenuItem, visible bool, title string) {
+	if !visible {
+		item.Hide()
+		return
+	}
+	item.SetTitle(title)
+	item.Show()
 }
