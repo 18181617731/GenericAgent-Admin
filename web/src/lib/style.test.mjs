@@ -224,6 +224,11 @@ test('theme-specific metadata and settings actions keep readable foregrounds', (
   assert.match(darkSettingsPrimary, /color\s*:\s*#062e25/i)
 })
 
+test('turn toggles stay left aligned when usage metadata is absent', () => {
+  const toggleRules = ruleBodies('.oa-turn-toggle').join('\n')
+  assert.match(toggleRules, /justify-content\s*:\s*flex-start/i)
+})
+
 test('mobile turn headers hide token metadata while keeping the current status readable', () => {
   assert.match(
     css,
