@@ -12,15 +12,15 @@ const TOOL_LABELS = { python: 'Python', git: 'Git', uv: 'uv', npm: 'npm' }
 // whose absence is framed as missing rather than optional.
 const REQUIRED_TOOLS = new Set(['python'])
 
-function ToolStatus({ tool, label, required, text }) {
-  const detail = tool.version || tool.path || tool.error || text.env.notSelected
-  const color = tool.ok ? 'green' : required ? 'orange' : 'blue'
-  const state = tool.ok ? text.env.available : required ? text.env.missing : text.env.optional
+function ToolStatus({ tool, label, required, probed, text }) {
+  const state = !probed ? text.env.checking : tool.ok ? text.env.available : required ? text.env.missing : text.env.optional
+  const color = !probed ? undefined : tool.ok ? 'green' : required ? 'orange' : 'blue'
+  const detail = probed ? tool.version || tool.path || tool.error || text.env.notSelected : ''
   return <Descriptions size="small" column={1}>
     <Descriptions.Item label={label}>
       <Space wrap>
         <Tag color={color}>{state}</Tag>
-        <Text type={tool.ok ? undefined : required ? 'warning' : 'secondary'}>{detail}</Text>
+        {detail && <Text type={tool.ok ? undefined : required ? 'warning' : 'secondary'}>{detail}</Text>}
       </Space>
     </Descriptions.Item>
   </Descriptions>
@@ -68,20 +68,20 @@ export default function SetupWizard({ initialRoot = '', lang = 'zh', text, onCom
         extra={env.checked ? <Text type="secondary" className="setup-env-checked">{copy.env.checkedAt(env.checked)}</Text> : null}>
         <Row gutter={[12, 8]}>
           {TOOL_ORDER.map(name => <Col xs={24} md={12} key={name}>
-            <ToolStatus tool={env[name]} label={TOOL_LABELS[name]} required={REQUIRED_TOOLS.has(name)} text={copy} />
+            <ToolStatus tool={env[name]} label={TOOL_LABELS[name]} required={REQUIRED_TOOLS.has(name)} probed={env.probed} text={copy} />
           </Col>)}
         </Row>
         <Space wrap>
           <Button icon={<RefreshCw size={15}/>} onClick={wizard.refresh} disabled={working} loading={busy === 'setup-refresh'}>
             {copy.env.recheck}
           </Button>
-          {!env.python.ok && <Button type="primary" icon={<Download size={15}/>} onClick={wizard.installPython}
+          {env.probed && !env.python.ok && <Button type="primary" icon={<Download size={15}/>} onClick={wizard.installPython}
             disabled={working || !env.canInstallPython} loading={busy === 'setup-python-install'}>
             {copy.env.installPython}
           </Button>}
         </Space>
         <Paragraph type="secondary" className="setup-env-hint">
-          {env.error || (!env.python.ok && !env.canInstallPython ? copy.env.pythonInstallerUnavailable : copy.env.hint)}
+          {env.error || (env.probed && !env.python.ok && !env.canInstallPython ? copy.env.pythonInstallerUnavailable : copy.env.hint)}
         </Paragraph>
       </Card>
 

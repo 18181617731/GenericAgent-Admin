@@ -7,6 +7,12 @@ import { SETUP_TEXT } from '../lib/i18n.js'
 
 const copy = SETUP_TEXT.en
 
+// Every test here renders the whole antd wizard and drives it through mocked
+// fetches. That lands close enough to vitest's 5s default that whichever test
+// happens to run under load fails, so the file takes one larger budget instead
+// of each test rediscovering the limit.
+vi.setConfig({ testTimeout: 20000 })
+
 // antd's responsive Steps queries matchMedia, which jsdom does not implement.
 const installMatchMedia = () => {
   Object.defineProperty(window, 'matchMedia', {
@@ -94,6 +100,30 @@ describe('first-run wizard step model', () => {
     expect(screen.getByText(copy.env.checkedAt(HEALTHY_ENV.checked))).toBeTruthy()
   })
 
+  // The probe shells out to four binaries, so it is slow enough to watch. While
+  // it runs the wizard must not accuse the machine of lacking Python, which is
+  // both alarming and frequently wrong.
+  it('says it is still checking rather than calling Python missing before the probe answers', async () => {
+    let releaseEnv
+    const pendingEnv = new Promise(resolve => { releaseEnv = resolve })
+    globalThis.fetch = vi.fn((url) => {
+      const path = String(url)
+      if (path.includes('/api/setup/env')) return pendingEnv
+      if (path.includes('/api/setup/state')) return reply(readyState({ ga_root: '' }))
+      return reply({ ok: true })
+    })
+    renderWizard()
+
+    await waitFor(() => expect(screen.getAllByText(copy.env.checking).length).toBe(4))
+    expect(screen.queryByText(copy.env.missing)).toBeNull()
+    expect(screen.queryByText(copy.env.pythonInstallerUnavailable)).toBeNull()
+    expect(screen.queryByRole('button', { name: new RegExp(copy.env.installPython, 'i') })).toBeNull()
+
+    releaseEnv(await reply(HEALTHY_ENV))
+    await waitFor(() => expect(screen.getByText('Python 3.12.1')).toBeTruthy())
+    expect(screen.queryByText(copy.env.checking)).toBeNull()
+  })
+
   // The wizard is the screen shown when GA health fails, so a saved-but-broken
   // root has to be called out rather than treated as a completed first step.
   it('explains why a configured but unhealthy root cannot finish', async () => {
@@ -137,7 +167,7 @@ describe('first-run wizard step model', () => {
     renderWizard()
     await waitFor(() => expect(button(copy.runtime.finish).disabled).toBe(false))
     expect(screen.queryByText(copy.runtime.blocked.noInterpreter)).toBeNull()
-  }, 20000)
+  })
 
   it('records a failed smoke test against the root and surfaces the error', async () => {
     mockBackend({
@@ -150,7 +180,7 @@ describe('first-run wizard step model', () => {
     await userEvent.click(button(copy.runtime.smoke))
     await waitFor(() => expect(screen.getByText('interpreter exploded')).toBeTruthy())
     expect(button(copy.runtime.finish).disabled).toBe(true)
-  }, 20000)
+  })
 })
 
 describe('first-run wizard actions', () => {

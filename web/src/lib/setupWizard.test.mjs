@@ -70,6 +70,14 @@ test('a failed env probe still yields a renderable env carrying the reason', () 
   assert.equal(setupEnvFailure(null, 'fallback').error, 'fallback')
 })
 
+test('an env is only "probed" once the server has answered, so the placeholder claims nothing', () => {
+  assert.equal(normalizeSetupEnv({}).probed, false)
+  assert.equal(normalizeSetupEnv({ checked: '2026-08-14T09:01:09+08:00', tools: [] }).probed, true)
+  // A probe that failed has still looked at the machine, so the wizard reports
+  // the reason rather than sitting on "checking" forever.
+  assert.equal(setupEnvFailure(new Error('offline'), 'fallback').probed, true)
+})
+
 test('a configured root that fails its health check is not ready', () => {
   const progress = setupProgress({ state: { ga_root: 'C:/ga', health: { ok: false }, venv: { ok: true } } })
   assert.equal(progress.rootReady, false)

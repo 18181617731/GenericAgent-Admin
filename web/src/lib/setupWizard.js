@@ -21,10 +21,16 @@ export const samePath = (a, b) => normalizeRootPath(a).toLowerCase() === normali
 /** Reshape `/api/setup/env` into the flat, camel-cased view the wizard renders. */
 export function normalizeSetupEnv(payload = {}) {
   const tools = Array.isArray(payload.tools) ? payload.tools : []
+  const checked = String(payload.checked || '')
+  const error = String(payload.error || '')
   return {
     ok: payload.ok === true,
-    error: String(payload.error || ''),
-    checked: String(payload.checked || ''),
+    error,
+    checked,
+    // The wizard renders before the probe answers, and the placeholder it starts
+    // from carries neither a timestamp nor an error. Saying "missing" then would
+    // be a claim about the machine that nothing has looked at yet.
+    probed: Boolean(checked || error),
     python: toolNamed(tools, 'python'),
     git: toolNamed(tools, 'git'),
     uv: toolNamed(tools, 'uv'),
