@@ -56,9 +56,9 @@ test('GA source updates stay with GA: the console only reads git status', () => 
 test('the GA source card keeps its place when git cannot answer', () => {
   const source = frontendSource()
   assert.match(source, /const sourceAvailable = gitStatus\?\.available !== false/)
-  assert.match(source, /\n    <SettingsSection title=\{copy\.sourceTitle\}/)
-  assert.doesNotMatch(source, /\{sourceAvailable && <SettingsSection title=\{copy\.sourceTitle\}/)
-  assert.match(source, /\{sourceAvailable && <SettingRow label=\{copy\.branch\}/)
+  assert.match(source, /<Panel area="source" title=\{copy\.sourceTitle\}/)
+  assert.doesNotMatch(source, /\{sourceAvailable && <Panel area="source"/)
+  assert.match(source, /\{sourceAvailable && <div className="overview-kv">\s*<span>\{copy\.branch\}/)
   assert.match(source, /\{sourceAvailable && <button type="button" onClick=\{version\.checkSource\}/)
   assert.match(source, /api\('\/api\/ga\/git-status'\)\.catch/)
 })

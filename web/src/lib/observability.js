@@ -13,20 +13,22 @@ const list = (value) => Array.isArray(value) ? value : []
 const objectEntries = (value) => value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : []
 
 export const buildObservabilitySnapshot = ({ health, inventory, risks } = {}) => {
-  const inv = inventory || health?.inventory || {}
+  // /api/health wraps GA health under `.health`; /api/ga/health is already flat.
+  const gaHealth = health?.health && typeof health.health === 'object' ? health.health : health
+  const inv = inventory || gaHealth?.inventory || {}
   const memory = inv.memory || {}
-  const checks = objectEntries(health?.checks).map(([name, state]) => ({ name, state }))
+  const checks = objectEntries(gaHealth?.checks).map(([name, state]) => ({ name, state }))
   const riskItems = list(risks?.items || risks)
   const writeRiskItems = riskItems.filter(item => item?.level === 'dangerous' || /write|delete|install|pull|save|stop|start/i.test(`${item?.action || ''} ${item?.reason || ''}`))
   const coreFiles = list(inv.core_files)
   const missingCore = coreFiles.filter(item => !item?.exists)
   return {
-    ok: !!health?.ok,
-    root: health?.root || inv.root || '',
-    generatedAt: health?.generated_at || inv.generated_at || '',
+    ok: !!gaHealth?.ok,
+    root: gaHealth?.root || inv.root || '',
+    generatedAt: gaHealth?.generated_at || inv.generated_at || '',
     checks,
-    errors: list(health?.errors),
-    warnings: list(health?.warnings),
+    errors: list(gaHealth?.errors),
+    warnings: list(gaHealth?.warnings),
     coreFiles,
     missingCore,
     tools: list(inv.tools),
