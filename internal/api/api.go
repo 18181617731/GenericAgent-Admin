@@ -180,8 +180,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.scheduleCreate))
 	mux.HandleFunc("/api/schedule/delete", s.requireDangerousConfirm(s.scheduleDelete))
 	mux.HandleFunc("/api/schedule/toggle", s.requireDangerousConfirm(s.scheduleToggle))
-	mux.HandleFunc("/api/schedule/run", s.requireDangerousConfirm(s.scheduleRun))
-	mux.HandleFunc("/api/schedule/run/status", s.scheduleRunStatus)
 	mux.HandleFunc("/api/schedule/artifact", s.scheduleArtifact)
 	mux.HandleFunc("/api/goals/start", s.requireDangerousConfirm(s.goalsStart))
 	mux.HandleFunc("/api/goals/list", s.goalsList)
@@ -313,7 +311,6 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/schedule/create", Level: "dangerous", Action: "create_schedule_task", Reason: "creates scheduled task JSON"},
 	{Path: "/api/schedule/delete", Level: "dangerous", Action: "delete_schedule_task", Reason: "deletes scheduled task JSON"},
 	{Path: "/api/schedule/toggle", Level: "reversible", Action: "toggle_schedule_task", Reason: "enables or disables scheduled task"},
-	{Path: "/api/schedule/run", Level: "dangerous", Action: "run_schedule_task", Reason: "starts a one-off GenericAgent process for the selected scheduled task"},
 	{Path: "/api/goals/start", Level: "dangerous", Action: "start_goal", Reason: "starts autonomous GA goal process"},
 	{Path: "/api/goals/stop", Level: "dangerous", Action: "stop_goal", Reason: "stops autonomous GA goal process by recorded PID"},
 	{Path: "/api/goals/delete", Level: "dangerous", Action: "delete_goal", Reason: "deletes goal state/output files"},

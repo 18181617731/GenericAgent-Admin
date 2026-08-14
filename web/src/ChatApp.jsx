@@ -3096,11 +3096,23 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const cmdDrawerRef = useRef(null)
   const sessionSearchTriggerRef = useRef(null)
   const sidebarToggleRef = useRef(null)
+  const sidebarFocusPendingRef = useRef(false)
   const sessionSearchRequestRef = useRef(0)
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
   const chatInstanceRef = useRef(chatInstanceID)
   const chatRequestEpochRef = useRef(0)
+  useEffect(() => {
+    if (!collapsed || !sidebarFocusPendingRef.current) return undefined
+    sidebarFocusPendingRef.current = false
+    const focusToggle = () => sidebarToggleRef.current?.focus()
+    const frame = window.requestAnimationFrame?.(focusToggle)
+    const timer = frame == null ? window.setTimeout(focusToggle, 0) : null
+    return () => {
+      if (frame != null) window.cancelAnimationFrame?.(frame)
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [collapsed])
   const chatApi = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
     const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
@@ -5510,8 +5522,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       chatInstancesLoading={chatInstancesLoading}
       onSwitchChatInstance={switchChatInstance}
       onCollapse={() => {
+        sidebarFocusPendingRef.current = true
         setCollapsed(true)
-        window.setTimeout(() => sidebarToggleRef.current?.focus(), 0)
       }}
       onNewSession={newSession}
       onOpenSearch={openSessionSearch}
