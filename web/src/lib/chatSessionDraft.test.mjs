@@ -29,7 +29,10 @@ function functionBlock(source, start, end) {
 test('new chat stays out of the session list until its first send', () => {
   const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
 
-  const mainNewSession = functionBlock(main, '  const newSession = async () => {', '  const deleteSession = async')
+  // Scoped to newSession alone. A project chat is persisted by the server the
+  // moment it is created, so newProjectSession does refresh the list, and the
+  // block must not stretch far enough to pick up unrelated project helpers.
+  const mainNewSession = functionBlock(main, '  const newSession = async () => {', '  const newProjectSession = async')
   assert.doesNotMatch(mainNewSession, /setSessions\s*\(/)
   assert.doesNotMatch(mainNewSession, /loadSessions\s*\(/)
 

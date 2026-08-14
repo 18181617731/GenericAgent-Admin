@@ -6,6 +6,8 @@ import ScalePicker from './ScalePicker.jsx'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
 import { cacheReadTokens } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
+import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
+import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -18,6 +20,7 @@ import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
@@ -243,39 +246,34 @@ const slashCommandNextDrawer = (c, nextText = '') => {
 }
 
 
-const tokenizeInlineMarkdown = (text = '') => {
-  const src = String(text || '')
-  const tokens = []
-  // Keep raw HTML escaped by React. The only HTML-shaped token accepted here is
-  // Markdown's commonly used hard line break, <br> (including <br/> variants).
-  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(~~([^~]+)~~)|(<br\s*\/?>)/gi
-  let last = 0, m
-  while ((m = re.exec(src)) !== null) {
-    if (m.index > last) tokens.push({ type:'text', text:src.slice(last, m.index) })
-    if (m[2]) tokens.push({ type:'code', text:m[2] })
-    else if (m[4]) tokens.push({ type:'strong', text:m[4] })
-    else if (m[6]) tokens.push({ type:'em', text:m[6] })
-    else if (m[8] && m[9]) tokens.push({ type:'link', text:m[8], href:m[9] })
-    else if (m[11]) tokens.push({ type:'del', text:m[11] })
-    else if (m[12]) tokens.push({ type:'br' })
-    last = re.lastIndex
-  }
-  if (last < src.length) tokens.push({ type:'text', text:src.slice(last) })
-  return tokens
+// Raw HTML stays escaped by React; parseInline only recognises <br> and
+// <autolink> shapes. Hrefs arrive pre-sanitised by safeUrl().
+const INLINE_EMPHASIS_TAGS = { strong: 'strong', em: 'em', del: 'del' }
+
+function InlineNodes({ nodes = [] }) {
+  return <>
+    {nodes.map((node, i) => {
+      if (node.type === 'text') return <span key={i}>{node.value}</span>
+      if (node.type === 'code') return <code key={i}>{node.value}</code>
+      if (node.type === 'br') return <br key={i} />
+      if (node.type === 'image') {
+        return <img key={i} className="oa-md-image" src={node.src} alt={node.alt}
+          title={node.title || undefined} loading="lazy" />
+      }
+      if (node.type === 'link') {
+        return <a key={i} href={node.href} title={node.title || undefined} target="_blank" rel="noreferrer noopener">
+          <InlineNodes nodes={node.children} />
+        </a>
+      }
+      const Tag = INLINE_EMPHASIS_TAGS[node.type]
+      if (!Tag) return null
+      return <Tag key={i}><InlineNodes nodes={node.children} /></Tag>
+    })}
+  </>
 }
 
 function InlineMarkdown({ text = '' }) {
-  return <>
-    {tokenizeInlineMarkdown(text).map((t, i) => {
-      if (t.type === 'code') return <code key={i}>{t.text}</code>
-      if (t.type === 'strong') return <strong key={i}>{t.text}</strong>
-      if (t.type === 'em') return <em key={i}>{t.text}</em>
-      if (t.type === 'del') return <del key={i}>{t.text}</del>
-      if (t.type === 'br') return <br key={i} />
-      if (t.type === 'link') return <a key={i} href={t.href} target="_blank" rel="noreferrer">{t.text}</a>
-      return <span key={i}>{t.text}</span>
-    })}
-  </>
+  return <InlineNodes nodes={parseInline(text)} />
 }
 
 function CopyButton({ text, compact = false }) {
@@ -1713,43 +1711,8 @@ function ToolCallBlock({ call, onAskReply }) {
   </div>
 }
 
-const splitTableRow = (line = '') => {
-  let src = String(line || '').trim()
-  if (src.startsWith('|')) src = src.slice(1)
-  if (src.endsWith('|') && !src.endsWith('\\|')) src = src.slice(0, -1)
-  const cells = []
-  let cur = ''
-  let escaped = false
-  for (const ch of src) {
-    if (escaped) { cur += ch; escaped = false; continue }
-    if (ch === '\\') { escaped = true; cur += ch; continue }
-    if (ch === '|') { cells.push(cur.trim().replace(/\\\|/g, '|')); cur = ''; continue }
-    cur += ch
-  }
-  cells.push(cur.trim().replace(/\\\|/g, '|'))
-  return cells
-}
-
-const parseTableAlign = (cell = '') => {
-  const s = String(cell || '').trim()
-  if (!/^:?-{3,}:?$/.test(s)) return null
-  if (s.startsWith(':') && s.endsWith(':')) return 'center'
-  if (s.endsWith(':')) return 'right'
-  return 'left'
-}
-
-const parseMarkdownTable = (block = '') => {
-  const lines = String(block || '').split('\n').filter(x => x.trim())
-  if (lines.length < 2 || !lines[0].includes('|') || !lines[1].includes('|')) return null
-  const head = splitTableRow(lines[0])
-  const aligns = splitTableRow(lines[1]).map(parseTableAlign)
-  if (!head.length || aligns.some(x => x === null) || aligns.length < head.length) return null
-  const rows = lines.slice(2).map(splitTableRow).filter(cells => cells.length > 0)
-  return { head, aligns, rows }
-}
-
-function renderMarkdownTable(table, key) {
-  return <div key={key} className="oa-table-wrap">
+function MarkdownTable({ table }) {
+  return <div className="oa-table-wrap">
     <table className="oa-md-table">
       <thead><tr>{table.head.map((cell, i) => <th key={i} style={{ textAlign: table.aligns[i] || 'left' }}><InlineRichText text={cell} /></th>)}</tr></thead>
       <tbody>{table.rows.map((row, r) => <tr key={r}>{table.head.map((_, c) => <td key={c} style={{ textAlign: table.aligns[c] || 'left' }}><InlineRichText text={row[c] || ''} /></td>)}</tr>)}</tbody>
@@ -1757,134 +1720,112 @@ function renderMarkdownTable(table, key) {
   </div>
 }
 
-function renderListBlock(lines, i, ordered) {
-  const itemRe = ordered ? /^\s*(\d+)[.)]\s+/ : /^\s*[-*+]\s+/
-  const Tag = ordered ? 'ol' : 'ul'
-  const shownLines = lines.slice(0, LIST_ITEM_LIMIT)
-  const hidden = Math.max(0, lines.length - shownLines.length)
-  const firstNumber = ordered ? Number(String(lines[0] || '').match(itemRe)?.[1] || 1) : undefined
-  const props = ordered ? { start: firstNumber } : {}
-  return <Tag key={i} className={`oa-list ${ordered ? 'oa-list-ordered' : 'oa-list-unordered'}`} {...props}>
-    {shownLines.map((x,j)=>{
-      const itemNumber = ordered ? Number(String(x || '').match(itemRe)?.[1] || firstNumber + j) : undefined
-      const liProps = ordered ? { value: itemNumber } : {}
-      return <li key={j} {...liProps}><InlineRichText text={x.replace(itemRe, '')} /></li>
-    })}
+// A tight item renders its first paragraph inline so single-line bullets do not
+// gain paragraph margins; anything richer falls back to full block rendering.
+function ListItemBody({ item, tight }) {
+  const blocks = item.blocks || []
+  if (!blocks.length) return null
+  if (tight && blocks[0].type === 'paragraph') {
+    return <>
+      <InlineRichText text={blocks[0].text} />
+      {blocks.length > 1 && <MarkdownNodes blocks={blocks.slice(1)} />}
+    </>
+  }
+  return <MarkdownNodes blocks={blocks} />
+}
+
+function MarkdownList({ list }) {
+  const Tag = list.ordered ? 'ol' : 'ul'
+  const items = list.items.slice(0, LIST_ITEM_LIMIT)
+  const hidden = Math.max(0, list.items.length - items.length)
+  const isTaskList = items.some(item => item.checked !== null)
+  const className = [
+    'oa-list',
+    list.ordered ? 'oa-list-ordered' : 'oa-list-unordered',
+    list.tight ? 'oa-list-tight' : 'oa-list-loose',
+    isTaskList ? 'oa-list-task' : '',
+  ].filter(Boolean).join(' ')
+  return <Tag className={className} start={list.ordered && list.start !== 1 ? list.start : undefined}>
+    {items.map((item, i) => <li key={i} className={item.checked === null ? undefined : `oa-task-item${item.checked ? ' is-done' : ''}`}>
+      {item.checked !== null && <input type="checkbox" checked={item.checked} readOnly tabIndex={-1} aria-hidden="true" />}
+      <ListItemBody item={item} tight={list.tight} />
+    </li>)}
     {hidden > 0 && <li className="oa-md-truncated">{ct(`… 已隐藏 ${hidden.toLocaleString(chatLocale())} 个列表项`, `… ${hidden.toLocaleString(chatLocale())} list items hidden`)}</li>}
   </Tag>
 }
 
-function renderPlainTextBlock(b, key) {
-  const trimmed = String(b || '').trim()
-  if (!trimmed) return null
-  const lines = trimmed.split('\n')
-  const orderedOnly = lines.every(x => /^\s*\d+[.)]\s+/.test(x))
-  const unorderedOnly = lines.every(x => /^\s*[-*+]\s+/.test(x))
-  if (orderedOnly) return renderListBlock(lines, key, true)
-  if (unorderedOnly) return renderListBlock(lines, key, false)
-  const heading = trimmed.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
-  if (heading) {
-    const Tag = `h${heading[1].length}`
-    return <Tag key={key}><InlineRichText text={heading[2]} /></Tag>
-  }
-  if (/^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(trimmed)) return <hr key={key} />
-  return <p key={key}><InlineRichText text={trimmed} /></p>
-}
-
-function renderTextBlock(b, i) {
-  const table = parseMarkdownTable(b)
-  if (table) return renderMarkdownTable(table, i)
-
-  const lines = String(b || '').split('\n')
-  const nodes = []
-  let paragraph = []
-  let list = []
-  let listOrdered = null
-  let seq = 0
-  const flushParagraph = () => {
-    if (!paragraph.length) return
-    const node = renderPlainTextBlock(paragraph.join('\n'), `${i}-p-${seq++}`)
-    if (node) nodes.push(node)
-    paragraph = []
-  }
-  const flushList = () => {
-    if (!list.length) return
-    nodes.push(renderListBlock(list, `${i}-l-${seq++}`, listOrdered === true))
-    list = []
-    listOrdered = null
-  }
-
-  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
-    const line = lines[lineIdx]
-    const nextLine = lines[lineIdx + 1] || ''
-    const isTableStart = line.includes('|') && nextLine.includes('|') && splitTableRow(nextLine).every(cell => parseTableAlign(cell) !== null)
-    const isOrdered = /^\s*\d+[.)]\s+/.test(line)
-    const isUnordered = /^\s*[-*+]\s+/.test(line)
-    const isHeading = /^\s{0,3}#{1,6}\s+/.test(line)
-    const isRule = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(line)
-    if (isTableStart) {
-      flushParagraph()
-      flushList()
-      const tableLines = [line, nextLine]
-      lineIdx += 2
-      while (lineIdx < lines.length && lines[lineIdx].includes('|')) {
-        tableLines.push(lines[lineIdx])
-        lineIdx += 1
+function MarkdownNodes({ blocks = [] }) {
+  return <>
+    {blocks.map((block, i) => {
+      if (block.type === 'paragraph') return <p key={i}><InlineRichText text={block.text} /></p>
+      if (block.type === 'heading') {
+        const Tag = `h${block.depth}`
+        return <Tag key={i}><InlineRichText text={block.text} /></Tag>
       }
-      lineIdx -= 1
-      const nestedTable = parseMarkdownTable(tableLines.join('\n'))
-      if (nestedTable) nodes.push(renderMarkdownTable(nestedTable, `${i}-t-${seq++}`))
-    } else if (isHeading || isRule) {
-      flushParagraph()
-      flushList()
-      const node = renderPlainTextBlock(line, `${i}-b-${seq++}`)
-      if (node) nodes.push(node)
-    } else if (isOrdered || isUnordered) {
-      flushParagraph()
-      const ordered = isOrdered
-      if (list.length && listOrdered !== ordered) flushList()
-      listOrdered = ordered
-      list.push(line)
-    } else {
-      flushList()
-      paragraph.push(line)
-    }
-  }
-  flushParagraph()
-  flushList()
-  if (nodes.length === 1) return nodes[0]
-  if (nodes.length > 1) return <div key={i} className="oa-md-fragment">{nodes}</div>
-  return null
+      if (block.type === 'hr') return <hr key={i} />
+      if (block.type === 'table') return <MarkdownTable key={i} table={block} />
+      if (block.type === 'list') return <MarkdownList key={i} list={block} />
+      if (block.type === 'blockquote') {
+        return <blockquote key={i} className="oa-md-quote"><MarkdownNodes blocks={block.blocks} /></blockquote>
+      }
+      return null
+    })}
+  </>
 }
 
-function TextMarkdown({ text = '', onAskReply }) {
-  const allBlocks = String(text || '').replace(/\r\n/g, '\n').split(/\n{2,}/)
-  const blocks = allBlocks.slice(0, MARKDOWN_BLOCK_LIMIT)
-  const hiddenBlocks = Math.max(0, allBlocks.length - blocks.length)
-  const nodes = []
-  for (let i = 0; i < blocks.length; i++) {
-    const toolCall = parseToolCallBlock(blocks[i])
+// Splits the message into tool segments and prose segments. Tool detection still
+// works on blank-line-separated chunks, but consecutive prose chunks are rejoined
+// so the block parser keeps the blank lines it needs for loose lists, blockquotes
+// and multi-paragraph list items.
+const segmentMarkdownText = (text = '') => {
+  const chunks = String(text || '').replace(/\r\n/g, '\n').split(/\n{2,}/)
+  const visible = chunks.slice(0, MARKDOWN_BLOCK_LIMIT)
+  const hidden = Math.max(0, chunks.length - visible.length)
+  const segments = []
+  const pushProse = (value) => {
+    if (!String(value || '').trim()) return
+    const last = segments[segments.length - 1]
+    if (last?.type === 'prose') last.text += `\n\n${value}`
+    else segments.push({ type: 'prose', text: value })
+  }
+  for (let i = 0; i < visible.length; i += 1) {
+    const toolCall = parseToolCallBlock(visible[i])
     if (toolCall) {
       let j = i + 1
-      while (j < blocks.length) {
-        const args = parseToolArgsBlock(blocks[j])
+      while (j < visible.length) {
+        const args = parseToolArgsBlock(visible[j])
         if (args === null) break
         toolCall.args = [toolCall.args, args].filter(Boolean).join('\n\n')
         j += 1
       }
-      nodes.push(<ToolCallBlock key={i} call={toolCall} onAskReply={onAskReply} />)
+      segments.push({ type: 'tool', call: toolCall })
       i = j - 1
       continue
     }
-    const standaloneArgs = parseToolArgsBlock(blocks[i])
+    const standaloneArgs = parseToolArgsBlock(visible[i])
     if (standaloneArgs !== null) {
-      nodes.push(<ToolCallBlock key={i} call={{ name: 'unknown', args: standaloneArgs }} onAskReply={onAskReply} />)
+      segments.push({ type: 'tool', call: { name: 'unknown', args: standaloneArgs } })
       continue
     }
-    nodes.push(renderTextBlock(blocks[i], i))
+    pushProse(visible[i])
   }
-  if (hiddenBlocks > 0) nodes.push(<div key="__hidden_blocks" className="oa-md-truncated">{ct(`… 已隐藏 ${hiddenBlocks.toLocaleString(chatLocale())} 个内容块，可复制消息查看完整内容。`, `… ${hiddenBlocks.toLocaleString(chatLocale())} content blocks hidden; copy the message to view all.`)}</div>)
-  return <>{nodes}</>
+  return { segments, hidden }
+}
+
+function TextMarkdown({ text = '', onAskReply }) {
+  const { segments, hidden } = useMemo(() => {
+    const parsed = segmentMarkdownText(text)
+    return {
+      ...parsed,
+      segments: parsed.segments.map(seg => seg.type === 'prose' ? { ...seg, blocks: parseBlocks(seg.text) } : seg),
+    }
+  }, [text])
+  return <>
+    {segments.map((seg, i) => seg.type === 'tool'
+      ? <ToolCallBlock key={i} call={seg.call} onAskReply={onAskReply} />
+      : <MarkdownNodes key={i} blocks={seg.blocks} />)}
+    {hidden > 0 && <div className="oa-md-truncated">{ct(`… 已隐藏 ${hidden.toLocaleString(chatLocale())} 个内容块，可复制消息查看完整内容。`, `… ${hidden.toLocaleString(chatLocale())} content blocks hidden; copy the message to view all.`)}</div>}
+  </>
 }
 
 const ULTRAPLAN_DRAWER_DEFAULT_WIDTH = 440
@@ -3023,6 +2964,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [chatInstancesLoading, setChatInstancesLoading] = useState(true)
   const [sessions, setSessions] = useState([])
   const [projects, setProjects] = useState([])
+  const [pinnedProjects, setPinnedProjects] = useState([])
   const [sidebarTab, setSidebarTab] = useState('history')
   const [sidebarSearch, setSidebarSearch] = useState('')
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
@@ -3033,6 +2975,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false)
   const [sessionSearchError, setSessionSearchError] = useState('')
   const [expandedProjectNames, setExpandedProjectNames] = useState(() => new Set())
+  const [projectDraftOpen, setProjectDraftOpen] = useState(false)
+  const [projectDraftName, setProjectDraftName] = useState('')
+  const [projectCreating, setProjectCreating] = useState(false)
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
@@ -3091,6 +3036,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
+  const [chatBackend, setChatBackend] = useState(null)
+  const [depsRepairing, setDepsRepairing] = useState(false)
   const [llmNo, setLlmNo] = useState(0)
   const [loopControllerLlmNo, setLoopControllerLlmNo] = useState(null)
   const [modelSwitching, setModelSwitching] = useState(false)
@@ -3982,6 +3929,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const list = d.sessions || []
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
+    setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
     if (open) {
       const restored = loadSelectedChatSessionID(chatInstanceRef.current)
       const next = chooseChatSessionID(list, prefer, restored)
@@ -4022,6 +3970,66 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const newProjectSession = async (projectMode) => {
     await createSession(projectMode)
+  }
+
+  // Pinned first, so the projects someone actually works in stop sinking under
+  // the alphabetical ones. Applied optimistically: the row should jump the moment
+  // it is clicked, and the next list refresh confirms it.
+  const toggleProjectPinned = async (name, pinned) => {
+    setPinnedProjects(current => pinned
+      ? Array.from(new Set(current.concat(name)))
+      : current.filter(existing => existing !== name))
+    try {
+      const d = await chatApi('/api/chat/projects/pin', { method:'PATCH', body: JSON.stringify({ name, pinned }) })
+      if (Array.isArray(d?.pinned_projects)) setPinnedProjects(d.pinned_projects)
+    } catch (e) {
+      if (e.name !== 'AbortError') setErr(e.message || String(e))
+      await loadSessions(activeSidRef.current || '').catch(() => {})
+    }
+  }
+
+  const openProjectDraft = () => {
+    setSidebarTab('projects')
+    setProjectDraftName('')
+    setProjectDraftOpen(true)
+  }
+
+  const closeProjectDraft = () => {
+    setProjectDraftOpen(false)
+    setProjectDraftName('')
+  }
+
+  // Creating a project used to require typing /project <name> into the composer.
+  // Land the user in a usable state instead: make the directory, then open a
+  // chat already bound to it.
+  const createProject = async () => {
+    const name = projectDraftName.trim()
+    const problem = projectNameError(name)
+    if (problem) {
+      setErr(projectNameErrorText(problem, ct))
+      return
+    }
+    if (projects.some(existing => existing === name)) {
+      setErr(ct(`项目 ${name} 已存在。`, `Project ${name} already exists.`))
+      return
+    }
+    setProjectCreating(true)
+    setErr('')
+    try {
+      const d = await chatApi('/api/chat/projects', { method:'POST', body: JSON.stringify({ name }) })
+      const created = String(d?.name || name)
+      setProjects(Array.isArray(d.projects) ? d.projects : projects.concat(created))
+      setExpandedProjectNames(current => new Set(current).add(created))
+      closeProjectDraft()
+      await createSession(created)
+      setNotice(d?.created === false
+        ? ct(`项目 ${created} 已存在，已在其中新建对话`, `Project ${created} already existed; started a chat in it`)
+        : ct(`已创建项目 ${created}，并新建了一个对话`, `Created project ${created} and started a chat in it`))
+    } catch (e) {
+      if (e.name !== 'AbortError') setErr(e.message || String(e))
+    } finally {
+      setProjectCreating(false)
+    }
   }
 
   const deleteSession = async (id) => {
@@ -4231,6 +4239,30 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setErr(`模型切换失败：${e.message || String(e)}`)
     } finally {
       setModelSwitching(false)
+    }
+  }
+
+  // A model list that came back empty is worth explaining: the cause is almost
+  // always a missing pip package, a GA root that is not one, or a GA that has no
+  // model configured yet, and each has a different next step.
+  const modelDiagnosis = !llms.length ? (chatBackend?.diagnosis || null) : null
+
+  const installChatPythonDeps = async () => {
+    const packages = (modelDiagnosis?.install_packages || []).join(' ')
+    if (!modelDiagnosis?.fixable || !packages) return
+    if (!confirmDanger('chat-python-install-deps', ct(`为 ${modelDiagnosis.python} 安装缺失依赖：${packages}？将执行 pip install。`, `Install missing dependencies into ${modelDiagnosis.python}: ${packages}? This runs pip install.`))) return
+    setDepsRepairing(true)
+    setErr('')
+    setNotice(ct('正在安装依赖，首次安装可能需要一两分钟…', 'Installing dependencies; the first run can take a minute or two…'))
+    try {
+      const d = await chatApi('/api/chat/python/install-deps', { dangerous:true, method:'POST', body:'{}' })
+      if (d?.ok) setNotice(ct(`依赖安装完成，已发现 ${d.llm_count} 个模型`, `Dependencies installed; found ${d.llm_count} models`))
+      else { setNotice(''); setErr(d?.error || d?.diagnosis?.hint || ct('依赖安装失败', 'Dependency install failed')) }
+      await loadChatState(activeSidRef.current || '')
+    } catch (e) {
+      if (e.name !== 'AbortError') { setNotice(''); setErr(e.message || String(e)) }
+    } finally {
+      setDepsRepairing(false)
     }
   }
 
@@ -4890,6 +4922,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         if (!stopped) {
           setSessions(d.sessions || [])
           setProjects(Array.isArray(d.projects) ? d.projects : [])
+          setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
         }
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
@@ -5108,7 +5141,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   useGSAP(() => {
     if (prefersReducedMotion() || !messages.length) return
     const lastMessage = chatScope.current?.querySelector('.oa-message:last-of-type, .oa-turn:last-of-type')
-    if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out' })
+    // clearProps 不能省:否则每条消息都会永久留下内联 transform,消息节点被提升为独立
+    // 合成层后文字改用灰度抗锯齿,和其余文字的清晰度不一致。
+    if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out', clearProps: 'transform,opacity,visibility' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
   const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
@@ -5268,12 +5303,36 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           </section>)}
           {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
-      </> : <div className="oa-session-list oa-project-list">
+      </> : <>
+        <div className="oa-session-manager-head">
+          <span className="oa-session-manager-title">{ct('项目', 'Projects')}</span>
+          <button className="oa-session-manage-open" type="button" onClick={openProjectDraft} disabled={projectCreating || projectDraftOpen}>
+            <FolderPlus size={13}/>{ct('新建项目', 'New project')}
+          </button>
+        </div>
+        {projectDraftOpen && <form className="oa-project-draft" onSubmit={e=>{ e.preventDefault(); createProject() }}>
+          <input
+            autoFocus
+            type="text"
+            value={projectDraftName}
+            onChange={e=>setProjectDraftName(e.target.value)}
+            onKeyDown={e=>{ if (e.key === 'Escape') { e.preventDefault(); closeProjectDraft() } }}
+            placeholder={ct('项目名，例如 alpha', 'Project name, e.g. alpha')}
+            aria-label={ct('新项目名称', 'New project name')}
+            disabled={projectCreating}
+          />
+          <button className="oa-project-draft-save" type="submit" disabled={projectCreating || !projectDraftName.trim()}>{projectCreating ? ct('创建中…', 'Creating…') : ct('创建', 'Create')}</button>
+          <button type="button" onClick={closeProjectDraft} disabled={projectCreating}>{ct('取消', 'Cancel')}</button>
+        </form>}
+        <div className="oa-session-list oa-project-list">
         {filteredProjectGroups.map((group, index) => {
           const expanded = expandedProjectNames.has(group.name)
           const bodyId = `oa-project-sessions-${index}`
           const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
-          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'}`} key={group.name}>
+          const pinLabel = group.pinned
+            ? ct(`取消置顶 ${group.name}`, `Unpin ${group.name}`)
+            : ct(`置顶 ${group.name}`, `Pin ${group.name}`)
+          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'} ${group.pinned ? 'is-pinned' : ''}`} key={group.name}>
             <div className="oa-project-head">
               <button className="oa-project-toggle" type="button" onClick={()=>setExpandedProjectNames(current => {
                 const next = new Set(current)
@@ -5283,6 +5342,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
               })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
                 <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
               </button>
+              <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={()=>toggleProjectPinned(group.name, !group.pinned)} aria-pressed={group.pinned} title={pinLabel} aria-label={pinLabel}><Pin size={14}/></button>
               <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
             </div>
             <div className="oa-project-body" id={bodyId} hidden={!expanded}>
@@ -5291,8 +5351,15 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             </div>
           </section>
         })}
-        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty"><FolderOpen size={20}/><span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span></div>}
-      </div>}
+        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty">
+          <FolderOpen size={20}/>
+          <span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span>
+          {!sidebarSearch && !projectDraftOpen && <button className="oa-projects-empty-cta" type="button" onClick={openProjectDraft} disabled={projectCreating}>
+            <FolderPlus size={14}/>{ct('新建项目', 'New project')}
+          </button>}
+        </div>}
+        </div>
+      </>}
       {!sessionManagerOpen && menuOpen && menuPos && (() => {
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null

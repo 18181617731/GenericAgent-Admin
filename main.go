@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,10 +17,14 @@ import (
 	"syscall"
 	"time"
 
+	"genericagent-admin-go/internal/adminauth"
+	"genericagent-admin-go/internal/adminhttp"
 	"genericagent-admin-go/internal/api"
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/desktop"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
+	"genericagent-admin-go/internal/tray"
 	"genericagent-admin-go/internal/version"
 )
 
@@ -33,12 +36,12 @@ var webFS embed.FS
 // committed because every build path needs them, including a plain `go build`;
 // regenerate them after changing the icon:
 //
-//go:generate go run github.com/akavel/rsrc@v0.10.2 -ico assets/tray_windows.ico -arch amd64 -o rsrc_windows_amd64.syso
-//go:generate go run github.com/akavel/rsrc@v0.10.2 -ico assets/tray_windows.ico -arch arm64 -o rsrc_windows_arm64.syso
+//go:generate go run github.com/akavel/rsrc@v0.10.2 -ico internal/appicon/assets/tray_windows.ico -arch amd64 -o rsrc_windows_amd64.syso
+//go:generate go run github.com/akavel/rsrc@v0.10.2 -ico internal/appicon/assets/tray_windows.ico -arch arm64 -o rsrc_windows_arm64.syso
 
 func main() {
 	// Has to happen before anything can put a window on screen.
-	enableHiDPI()
+	desktop.EnableHiDPI()
 	launch := parseLaunchOptions()
 	cwd, err := appRoot(launch.AppRoot)
 	if err != nil {
@@ -65,7 +68,7 @@ func main() {
 	}
 	srv := api.New(cfgStore, svc, models, static)
 	srv.StartAutomaticChatTitleBackfill()
-	auth, err := newAuthManager(cwd, os.Getenv(authUserEnv), os.Getenv(authPasswordEnv), cfgStore)
+	auth, err := adminauth.New(cwd, cfgStore)
 	if err != nil {
 		log.Fatalf("initialize admin authentication: %v", err)
 	}
@@ -75,16 +78,16 @@ func main() {
 	if launch.PortSet {
 		portOverride = launch.Port
 	}
-	listener, err := openAdminListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
+	listener, err := adminhttp.OpenListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
 	if err != nil {
 		log.Fatal(err)
 	}
-	url := localURL(listener)
+	url := adminhttp.LocalURL(listener)
 	srv.SetListenAddress(listener.Addr().String(), url)
-	if err := writeRuntimeInfo(cwd, listener); err != nil {
+	if err := adminhttp.WriteRuntimeInfo(cwd, listener); err != nil {
 		log.Printf("record runtime address: %v", err)
 	}
-	server := newHTTPServer(listener.Addr().String(), auth.middleware(srv.Routes()))
+	server := adminhttp.NewServer(listener.Addr().String(), auth.Middleware(srv.Routes()))
 	go srv.StartAutostartServices()
 	go srv.StartChatHubBridge()
 	go func() {
@@ -100,31 +103,31 @@ func main() {
 	if launch.Headless {
 		waitForShutdownSignal(server, func() {
 			srv.ShutdownCleanup()
-			removeRuntimeInfo(cwd)
+			adminhttp.RemoveRuntimeInfo(cwd)
 		})
 		return
 	}
 
-	ui := newAppUI(cwd, launch.NoWindow)
+	ui := desktop.NewUI(cwd, launch.NoWindow)
 	if !launch.NoBrowser {
 		go func() { time.Sleep(500 * time.Millisecond); ui.OpenChat(url) }()
 	}
-	runTray(trayApp{
+	tray.Run(tray.App{
 		OpenChat:     func() { ui.OpenChat(url) },
 		OpenSettings: func() { ui.OpenSettings(url) },
 		StopServices: func() { srv.StopManagedServices() },
-		Status: func() trayStatus {
-			return describeTrayStatus(listener.Addr().String(), cfgStore.Snapshot(), auth.PasswordConfigured(), primaryLANAddress, trayLanguage())
-		},
-		RunningServices: func() int { return srv.RunningManagedServices() },
 		Exit: func() {
 			ui.CloseAll()
 			srv.ShutdownCleanup()
-			removeRuntimeInfo(cwd)
+			adminhttp.RemoveRuntimeInfo(cwd)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			_ = server.Shutdown(ctx)
 		},
+		ListenAddr:         listener.Addr().String(),
+		Config:             cfgStore.Snapshot,
+		PasswordConfigured: auth.PasswordConfigured,
+		RunningServices:    srv.RunningManagedServices,
 	})
 }
 
@@ -135,36 +138,6 @@ type launchOptions struct {
 	AppRoot   string
 	Port      int
 	PortSet   bool
-}
-
-const (
-	adminReadHeaderTimeout = 10 * time.Second
-	adminIdleTimeout       = 120 * time.Second
-	authUserEnv            = "GA_ADMIN_AUTH_USER"
-	authPasswordEnv        = "GA_ADMIN_AUTH_PASSWORD"
-)
-
-func newHTTPServer(addr string, handler http.Handler) *http.Server {
-	return &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: adminReadHeaderTimeout,
-		IdleTimeout:       adminIdleTimeout,
-	}
-}
-
-// isLoopbackRemote reports whether a request came from this machine. Remote
-// access binds a dual-stack wildcard socket, so a local browser that resolves
-// localhost to ::1 must be recognised as local just like one that picks
-// 127.0.0.1; otherwise enabling remote access would start prompting the owner
-// for a password on their own desktop.
-func isLoopbackRemote(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func parseLaunchOptions() launchOptions {
@@ -257,20 +230,6 @@ func appRoot(explicitRoot string) (string, error) {
 		return exeDir, nil
 	}
 	return wd, wdErr
-}
-
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	case "darwin":
-		cmd = exec.Command("open", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
-	}
-	hideChildWindow(cmd)
-	_ = cmd.Start()
 }
 
 func resolvePortableBootstrap(cwd string) (bootstrapPy, pythonExe string, ok bool) {

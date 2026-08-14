@@ -1708,7 +1708,9 @@ describe('operator shell feedback', () => {
     expect(window.localStorage.getItem('ga-admin-lang')).toBe('en')
   }, 60000)
 
-  test('hides GA source status when git cannot answer', async () => {
+  // A GA root without git still has a path worth showing and /update to point at,
+  // so only the rows that need git disappear.
+  test('keeps the GA source card without git but drops the branch row and check button', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url) => {
       const path = new URL(url, 'http://localhost').pathname
@@ -1720,9 +1722,30 @@ describe('operator shell feedback', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^(总览|Overview)$/i }))
 
     expect(await screen.findByText('版本管理')).toBeTruthy()
-    expect(screen.queryByText('GA 源代码')).toBeNull()
+    expect(screen.getByText('GA 源代码')).toBeTruthy()
+    expect(screen.getByText('未检测到 git 命令，无法读取分支与更新状态。')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /去对话执行 \/update/i })).toBeTruthy()
+    expect(screen.queryByText('分支')).toBeNull()
     expect(screen.queryByRole('button', { name: /检查是否最新/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: /去对话执行 \/update/i })).toBeNull()
+  })
+
+  test('shows the branch row and check button once git can answer', async () => {
+    installBrowserPolyfills()
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = new URL(url, 'http://localhost').pathname
+      if (path === '/api/ga/git-status') {
+        return jsonResponse({ ok: true, available: true, root: '/ga', branch: 'main', commit: 'abc1234', upstream_configured: true, latest: true })
+      }
+      return shellPayload(url)
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^(总览|Overview)$/i }))
+
+    expect(await screen.findByText('GA 源代码')).toBeTruthy()
+    expect(screen.getByText('分支')).toBeTruthy()
+    expect(screen.getByText(/main · abc1234/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /检查是否最新/i })).toBeTruthy()
   })
 
   test('refresh shows pending, success, and a recoverable error', async () => {

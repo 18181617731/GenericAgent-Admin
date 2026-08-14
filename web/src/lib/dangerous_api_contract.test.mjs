@@ -62,6 +62,9 @@ const noConfirmReadOnlyRevealRoutes = new Set(['/api/models/raw'])
 
 const exactRouteString = (route) => new RegExp(`['"]${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`)
 const mutatingMethod = /method:\s*['"](?:POST|PUT|DELETE)['"]/
+// Chat routes go through chatApi, which appends the instance id before calling
+// api; the guard requirements are identical either way.
+const apiCall = /\bapi\(|\bchatApi\(/
 
 test('frontend dangerous-route list is derived from backend confirm and header gates', () => {
   assert.ok(protectedMutatingRoutes.length > 20, 'expected many backend dangerous routes')
@@ -83,7 +86,7 @@ test('frontend sends dangerous header for every protected mutating API route it 
       for (const route of protectedFrontendRoutes) {
         if (!exactRouteString(route).test(line)) continue
         const call = lines.slice(idx, Math.min(lines.length, idx + 4)).join('\n')
-        if (!call.includes('api(')) continue
+        if (!apiCall.test(call)) continue
         const isDangerousMethod = mutatingMethod.test(call) || alwaysHeaderRoutes.has(route)
         const safeMaskedMyKeyImport = route === '/api/models/import-mykey' && /reveal\s*:\s*false/.test(call) && /save\s*:\s*false/.test(call)
         if (!isDangerousMethod || safeMaskedMyKeyImport) continue
@@ -101,4 +104,5 @@ test('frontend sends dangerous header for every protected mutating API route it 
   assert.ok(seen.get('/api/models/export') > 0, 'models export call should be covered')
   assert.ok(seen.get('/api/ga/processes/kill') > 0, 'process kill call should be covered')
   assert.ok(seen.get('/api/ga/processes/adopt') > 0, 'process adopt call should be covered')
+  assert.ok(seen.get('/api/chat/python/install-deps') > 0, 'chat python dependency repair call should be covered')
 })

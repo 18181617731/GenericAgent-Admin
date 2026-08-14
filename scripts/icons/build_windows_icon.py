@@ -1,4 +1,4 @@
-"""Build assets/tray_windows.ico from the master artwork.
+"""Build internal/appicon/assets/tray_windows.ico from the master artwork.
 
 The Windows shell never scales an icon it can find an exact frame for, so the
 frame list covers every size the display scalings ask for: 32 and 16 at 100%,
@@ -28,9 +28,10 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = ROOT / "assets" / "source_tray_icon.png"
-ICO_OUT = ROOT / "assets" / "tray_windows.ico"
-PNG_OUT = ROOT / "assets" / "tray.png"
+ASSETS = ROOT / "internal" / "appicon" / "assets"
+SOURCE = ASSETS / "source_tray_icon.png"
+ICO_OUT = ASSETS / "tray_windows.ico"
+PNG_OUT = ASSETS / "tray.png"
 
 # 16/32 are the 100% window and shell icons; the rest are those two and the
 # 48/96 shell sizes at 125%, 150%, 175%, 200%, 225%, 250% and 300%.

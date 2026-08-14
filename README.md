@@ -96,8 +96,9 @@ Extract and create `config.local.json` in the same directory:
 }
 ```
 
-**Windows:** Double-click `ga-admin.exe`. The UI opens in a native desktop window backed by the WebView2 runtime (preinstalled on Windows 11 and current Windows 10), and the app keeps running in the system tray after you close the window. Run `ga-admin.exe --no-window` to use your default browser instead, or `ga-admin.exe --no-browser` to start without opening any UI.  
-**Linux/macOS:** Run `./ga-admin` or `./ga-admin --no-browser`. These platforms still open the UI in your default browser.
+**Windows:** Double-click `ga-admin.exe`. The UI opens in a native desktop window backed by the WebView2 runtime (preinstalled on Windows 11 and current Windows 10), and the app keeps running in the system tray after you close the window. Run `ga-admin.exe --no-window` to use your default browser instead, or `ga-admin.exe --no-browser` to start without opening any UI.
+**macOS:** Run `./ga-admin`. The UI opens in a native desktop window backed by WKWebView (built into macOS). Closing the window keeps the app in the menu bar. Use `--no-window` to open your default browser instead, or `--no-browser` to start without opening any UI.
+**Linux:** Run `./ga-admin` or `./ga-admin --no-browser`. Linux still opens the UI in your default browser.
 
 By default the server listens on `127.0.0.1` with a random port, so nothing is exposed to the network and local access needs no password. The address of the running process is printed at startup and written to `runtime.local.json`; open that URL if you want a second view of the UI. To reach the admin server from another device, turn on remote access in **Settings** (see [Remote access](#remote-access)).
 
@@ -156,7 +157,7 @@ Loop spends one extra full-context controller call per round, so keep the round 
 ### CLI Flags
 
 - `--headless` / `--server-only` / `--no-browser`: Run without opening browser
-- `--no-window`: Use the system browser instead of the native desktop window (Windows only; other platforms always use the browser)
+- `--no-window`: Use the system browser instead of the native desktop window (Windows and macOS; Linux always uses the browser)
 - `--app-root <path>`: Override GA root directory (default: from `config.local.json`)
 - `--port <port>`: Pin the listen port for this launch instead of the random loopback port
 
@@ -300,7 +301,7 @@ git diff --check
 - `npm run verify` runs `lint + test:lib + build` (skips `test:ui`)
 - `web/src/lib/*.test.mjs` are auto-discovered by `npm run test:lib`
 - Test files do not need `package.json` registration
-- After changing `assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
+- After changing `internal/appicon/assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
 
 ---
 
@@ -453,7 +454,8 @@ ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
 ```
 
 **Windows：** 双击 `ga-admin.exe`。界面会在原生桌面窗口中打开（基于 WebView2 运行时，Windows 11 与较新的 Windows 10 已预装），关闭窗口后程序继续驻留系统托盘。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
-**Linux/macOS：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`，这两个平台仍使用默认浏览器打开界面。
+**macOS：** 运行 `./ga-admin`。界面会在原生桌面窗口中打开（基于系统自带的 WKWebView）。关闭窗口后程序继续留在菜单栏。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
+**Linux：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`，Linux 仍使用默认浏览器打开界面。
 
 默认监听 `127.0.0.1` 的随机端口：不对外暴露，本机访问也不需要密码。实际地址会在启动日志中打印，同时写入 `runtime.local.json`；需要再开一个界面视图时用它。要从其它设备访问，请在**设置**中开启远程访问（见[远程访问](#远程访问)）。
 
@@ -512,7 +514,7 @@ Loop 每轮会额外花一次全量上下文的控制模型调用，轮次上限
 ### CLI 参数
 
 - `--headless` / `--server-only` / `--no-browser`：无浏览器模式运行
-- `--no-window`：改用系统浏览器而非原生桌面窗口（仅 Windows 有窗口模式，其它平台始终用浏览器）
+- `--no-window`：改用系统浏览器而非原生桌面窗口（Windows 与 macOS；Linux 始终用浏览器）
 - `--app-root <路径>`：覆盖 GA 根目录（默认从 `config.local.json` 读取）
 - `--port <端口>`：本次启动固定监听端口，替代默认的本机随机端口
 
@@ -570,7 +572,7 @@ git diff --check
 - `npm run verify` 运行 `lint + test:lib + build`（跳过 `test:ui`）
 - `web/src/lib/*.test.mjs` 由 `npm run test:lib` 自动发现
 - 测试文件无需 `package.json` 注册
-- 修改 `assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
+- 修改 `internal/appicon/assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
 
 ---
 
