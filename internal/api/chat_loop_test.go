@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"genericagent-admin-go/internal/config"
 )
@@ -124,6 +125,18 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	sid := "loop-start-stop"
 	saveChatLoopTestSession(t, s, chatSession{ID: sid})
 
+	type firstRoundCall struct {
+		sid    string
+		epoch  int64
+		prompt string
+	}
+	calls := make(chan firstRoundCall, 1)
+	oldContinue := continueChatLoopFunc
+	defer func() { continueChatLoopFunc = oldContinue }()
+	continueChatLoopFunc = func(_ *Server, gotSID string, epoch int64, prompt string) {
+		calls <- firstRoundCall{sid: gotSID, epoch: epoch, prompt: prompt}
+	}
+
 	start := httptest.NewRecorder()
 	startReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"Finish the release","max_rounds":999}`))
 	startReq.Header.Set("Content-Type", "application/json")
@@ -137,11 +150,19 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	if err := json.Unmarshal(start.Body.Bytes(), &startPayload); err != nil {
 		t.Fatal(err)
 	}
-	if !startPayload.Loop.Enabled || startPayload.Loop.Status != chatLoopStatusWaiting || startPayload.Loop.MaxRounds != chatLoopMaxRounds {
+	if !startPayload.Loop.Enabled || startPayload.Loop.Status != chatLoopStatusEvaluating || startPayload.Loop.MaxRounds != chatLoopMaxRounds {
 		t.Fatalf("start loop = %#v", startPayload.Loop)
 	}
 	if startPayload.Loop.ControllerPrompt != "Finish the release" || startPayload.Loop.Epoch != 1 {
 		t.Fatalf("start loop metadata = %#v", startPayload.Loop)
+	}
+	select {
+	case call := <-calls:
+		if call.sid != sid || call.epoch != 1 || call.prompt != "Finish the release" {
+			t.Fatalf("first round call = %#v", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("empty chat loop did not schedule its first worker round")
 	}
 
 	stop := httptest.NewRecorder()
