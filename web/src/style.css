@@ -2429,24 +2429,15 @@ html[data-color-scheme="dark"] .oa-file-card .oa-mini-copy:hover{
 .oa-stop svg { fill:currentColor; stroke-width:0; }
 
 
-.setup-shell { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: var(--bg); }
-.setup-card { width: min(560px, 100%); display: grid; gap: 18px; padding: 28px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface-strong); box-shadow: var(--shadow); }
-.setup-brand { align-items: flex-start; }
-.setup-card label { display: grid; gap: 8px; color: var(--muted); font-size: 13px; }
-.setup-card input { width: 100%; border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; background: var(--surface-muted); color: var(--text); }
-.setup-card button { border: 0; border-radius: 14px; padding: 12px 16px; background: var(--text); color: var(--surface-strong); font-weight: 650; cursor: pointer; }
-.setup-card button.secondary { background: var(--surface-muted); color: var(--text); border: 1px solid var(--border); }
-.setup-card button:disabled { opacity: .55; cursor: not-allowed; }
-.setup-divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
-.setup-divider::before, .setup-divider::after { content: ''; height: 1px; background: var(--border); flex: 1; }
-.setup-note { margin: 0; color: var(--muted); font-size: 12px; }
+/* First-run wizard. The shell owns the full-viewport backdrop and the card owns
+   the rhythm between its sections; the themed backdrops live with the palettes
+   further down, and the antd-specific internals sit in the wizard block. */
+.setup-wizard-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); }
+.setup-wizard-card { width: min(1080px, 100%); max-height: calc(100vh - 48px); overflow: auto; border: 1px solid var(--border); border-radius: 24px; background: var(--surface-strong); box-shadow: var(--shadow); }
+.setup-wizard-card > .ant-card-body { display: flex; flex-direction: column; gap: 12px; padding: 20px 22px; }
 
 .setup-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .setup-path-row button { white-space: nowrap; }
-.setup-env { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-muted); }
-.setup-env span { font-size: 13px; padding: 6px 10px; border-radius: 999px; background: var(--surface-strong); border: 1px solid var(--border); }
-.setup-env .ok { color: var(--i-15803d); }
-.setup-env .err { color: var(--i-b91c1c); }
 
 .autostart-card {
   display: grid;
@@ -2641,8 +2632,7 @@ button:not(:disabled):active { transform: translateY(1px); }
 .empty-chat { min-height: 260px; display: grid; place-items: center; color: var(--ga-subtle); }
 
 /* Setup / root config */
-.setup-shell { min-height: 100vh; padding: 28px; display: grid; place-items: center; background: radial-gradient(circle at 20% 0%, rgba(16,163,127,.12), transparent 34rem), var(--n-ffffff); }
-.setup-card { width: min(760px, 100%); max-height: calc(100vh - 56px); overflow: auto; }
+.setup-wizard-shell { padding: 28px; background: radial-gradient(circle at 20% 0%, rgba(16,163,127,.12), transparent 34rem), var(--n-ffffff); }
 .health-summary { margin: 16px 0; padding: 14px 16px; border: 1px solid rgba(180,35,58,.22); border-radius: 16px; background: rgba(180,35,58,.06); color: var(--text); display: grid; gap: 10px; }
 .health-summary strong { display: block; margin-bottom: 6px; color: var(--red); }
 .health-summary ul { margin: 0; padding-left: 20px; }
@@ -3676,13 +3666,13 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
 .app .profile { border-radius: 18px; padding: 14px; }
 .app .root-box.settings-root-box { border-radius: 20px; }
 
-.setup-shell {
+.setup-wizard-shell {
   background:
     radial-gradient(circle at 82% 0%, rgba(37, 99, 235, .075), transparent 28rem),
     radial-gradient(circle at 10% 100%, rgba(15, 118, 110, .075), transparent 30rem),
     linear-gradient(180deg, #fbfcff, #f7f8fb);
 }
-.setup-card {
+.setup-wizard-card {
   border: 1px solid rgba(15,23,42,.10);
   border-radius: 24px;
   background: var(--q-ffffffa90);
@@ -3691,7 +3681,7 @@ html[data-color-scheme="dark"] .oa-guide-btn:hover:not(:disabled){
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app *, .setup-shell * { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+  .app *, .setup-wizard-shell * { transition-duration: .001ms !important; animation-duration: .001ms !important; }
 }
 
 @media (max-width: 900px) {
@@ -4200,7 +4190,6 @@ html[data-color-scheme="dark"] .ok,
 html[data-color-scheme="dark"] .hit,
 html[data-color-scheme="dark"] .service-card em,
 html[data-color-scheme="dark"] .goal-output-stats span,
-html[data-color-scheme="dark"] .setup-env .ok,
 html[data-color-scheme="dark"] .autostart-head span.ok,
 html[data-color-scheme="dark"] .status-pill.running,
 html[data-color-scheme="dark"] .oa-banner,
@@ -4239,7 +4228,6 @@ html[data-color-scheme="dark"] .oa-tool-call.oa-tool-ask-user{
 }
 /* error / danger (red family) */
 html[data-color-scheme="dark"] .message,
-html[data-color-scheme="dark"] .setup-env .err,
 html[data-color-scheme="dark"] .oa-banner.error,
 html[data-color-scheme="dark"] .oa-message.error .oa-content,
 html[data-color-scheme="dark"] .oa-error .oa-bubble,
@@ -5043,12 +5031,12 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   table,
   .process-table { min-width: 680px; }
 
-  .setup-card {
+  .setup-wizard-card {
     width: min(100% - 22px, 720px);
     margin: 12px auto;
-    padding: 18px 14px;
     border-radius: 22px;
   }
+  .setup-wizard-card > .ant-card-body { padding: 18px 14px; }
   .setup-path-row { grid-template-columns: 1fr; }
 }
 
@@ -6023,9 +6011,15 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
   display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;
 }
 
+.setup-wizard-hero { flex: 0 0 auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.setup-wizard-copy { min-width: 0; display: grid; gap: 3px; }
+.setup-wizard-copy h1.ant-typography { margin: 0; font-size: clamp(21px, 2.3vw, 28px); font-weight: 900; letter-spacing: -.01em; }
+.setup-wizard-copy > .ant-typography:last-child { margin: 0; max-width: 78ch; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.eyebrow.ant-typography { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.setup-wizard-status { flex: 0 0 auto; padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-muted); color: var(--text); font-size: 12px; font-weight: 750; white-space: nowrap; }
 .setup-ant-steps { flex: 0 0 auto; margin: 0; padding: 9px 10px 7px; border: 1px solid rgba(23,23,23,.08); border-radius: 18px; background: var(--g-ffffffa58); }
 .setup-ant-steps .ant-steps-item-title { font-weight: 800; font-size: 13px; line-height: 1.2; }
-.setup-ant-steps .ant-steps-item-description { max-width: 170px; color: var(--muted) !important; font-size: 11px; line-height: 1.25; }
+.setup-ant-steps .ant-steps-item-content { max-width: 170px; color: var(--muted) !important; font-size: 11px; line-height: 1.25; }
 .setup-env-card.ant-card { flex: 0 0 auto; border-radius: 18px; overflow: hidden; }
 .setup-env-card > .ant-card-head { min-height: 38px; padding: 0 14px; }
 .setup-env-card > .ant-card-body { padding: 10px 14px; }
@@ -6035,8 +6029,8 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
 .setup-env-card .ant-descriptions-item { padding-bottom: 0 !important; }
 .setup-env-card .ant-space { row-gap: 6px; }
 .setup-env-hint.ant-typography { margin: 7px 0 0; font-size: 12px; line-height: 1.35; }
+.setup-env-checked.ant-typography { font-size: 11px; white-space: nowrap; }
 .setup-grid { margin-top: 0; }
-.setup-grid > .ant-col { }
 .setup-panel.ant-card { border:1px solid var(--border); border-radius:20px; background: var(--g-ffffffa70); box-shadow: none; overflow: hidden; }
 .setup-panel > .ant-card-head { min-height: 44px; padding: 0 14px; border-bottom: 1px solid rgba(23,23,23,.08); }
 .setup-panel .ant-card-head-title { font-weight: 900; font-size: 14px; }
@@ -6050,12 +6044,25 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
 .setup-descriptions code,
 .setup-panel code { white-space: pre-wrap; word-break: break-all; }
 .setup-actions-stack { display:flex; flex-wrap:wrap; gap:8px; }
+.setup-install-hint.ant-typography { font-size: 12px; line-height: 1.4; }
+/* A disabled finish button always states its reason right below the actions. */
+.setup-block-reason.ant-typography { font-size: 12px; line-height: 1.4; }
+.setup-root-warning { margin-top: 5px; font-size: 12px; line-height: 1.4; }
 .setup-message.ant-alert { flex: 0 0 auto; margin-top:0; border-radius:14px; padding: 8px 12px; }
 .setup-log-card.ant-card { flex: 0 0 auto; margin-top:0; border:1px solid var(--border); border-radius:16px; background: var(--g-ffffffa66); overflow: hidden; }
 .setup-log-card > .ant-card-head { min-height: 36px; padding: 0 14px; }
 .setup-log-card > .ant-card-body { padding: 0; }
 .setup-log { margin:0; height: clamp(72px, 10vh, 104px); overflow:auto; background:var(--d-171717); color:#e8e4dc; padding:10px 12px; font-size:11px; line-height:1.38; white-space:pre-wrap; }
-@media (max-width: 920px) { .setup-wizard-shell { padding: 10px; align-items: start; } .setup-wizard-hero { flex-direction:column; gap: 8px; } .setup-wizard-copy > .ant-typography:not(.eyebrow) { display: none; } .setup-ant-steps .ant-steps-item-description { max-width: none; } .setup-wizard-card > .ant-card-body { padding: 12px; } }
+@media (max-width: 920px) {
+  .setup-wizard-shell { padding: 10px; align-items: start; }
+  /* The page scrolls instead of the card once the steps stack vertically. */
+  .setup-wizard-card { max-height: none; }
+  .setup-wizard-hero { flex-direction: column; gap: 8px; }
+  /* Only the intro paragraph is dropped; the heading still names the screen. */
+  .setup-wizard-copy > .ant-typography:last-child { display: none; }
+  .setup-ant-steps .ant-steps-item-content { max-width: none; }
+  .setup-wizard-card > .ant-card-body { padding: 12px; }
+}
 
 
 /* Chat slash command manager */
@@ -11304,7 +11311,7 @@ html[data-color-scheme="dark"] .ant-collapse-arrow,
 html[data-color-scheme="dark"] .ant-select-arrow,
 html[data-color-scheme="dark"] .ant-picker-suffix,
 html[data-color-scheme="dark"] .ant-empty-description,
-html[data-color-scheme="dark"] .ant-steps-item-description,
+html[data-color-scheme="dark"] .ant-steps-item-content,
 html[data-color-scheme="dark"] .ant-form-item-extra {
   color: var(--muted) !important;
 }
@@ -11466,18 +11473,23 @@ html[data-color-scheme="dark"] .ant-select-dropdown {
 /* === Dark theme: gap fixes found by static sweep (round 4) ===
    These four selectors had no dark counterpart at all:
    - .toggle-slider   : #ccc light track stayed light on dark surfaces
-   - .setup-shell     : first-run screen kept its light gradient
+   - .setup-wizard-shell : first-run screen kept its light gradient
    - .model-empty-title : rgba(0,0,0,.55) = dark ink on a dark card
    - .progress-bar    : slate track too faint to read on dark
    Light mode is untouched (all rules are dark-scoped). */
 html[data-color-scheme="dark"] .toggle-slider {
   background: var(--border-strong);
 }
-html[data-color-scheme="dark"] .setup-shell {
+html[data-color-scheme="dark"] .setup-wizard-shell {
   background:
     radial-gradient(circle at 82% 0%, rgba(37, 99, 235, .10), transparent 28rem),
     radial-gradient(circle at 10% 100%, rgba(15, 118, 110, .10), transparent 30rem),
     linear-gradient(180deg, var(--bg), var(--surface-muted));
+}
+html[data-color-scheme="dark"] .setup-wizard-card {
+  border-color: var(--border);
+  background: var(--surface-strong);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .38);
 }
 html[data-color-scheme="dark"] .progress-bar {
   background: rgba(148, 163, 184, .18);

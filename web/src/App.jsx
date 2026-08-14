@@ -7,7 +7,7 @@ import { applyThemeToDocument, getInitialTheme } from './themes'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
-import { I18N, SETTINGS_TEXT } from './lib/i18n'
+import { I18N, SETTINGS_TEXT, SETUP_TEXT } from './lib/i18n'
 import { buildRoute, parseRoute } from './lib/routing'
 import { SETTINGS_GROUPS } from './lib/settingsNav'
 import { modelLabel } from './lib/format'
@@ -206,8 +206,11 @@ export default function App() {
   const openGoal = (id) => { if (id) goals.setSelected(id); setTab('goals') }
 
   if (health && !health.ok) {
-    return <SetupWizard initialRoot={root} t={t} onComplete={(nextCfg) => {
-      if (nextCfg?.ga_root) setRoot(nextCfg.ga_root)
+    // /api/setup/complete answers with {root, config}, so the root comes from the
+    // saved snapshot rather than the top level of the response.
+    return <SetupWizard initialRoot={root} lang={lang} text={SETUP_TEXT[lang]} onComplete={(result) => {
+      const nextRoot = result?.config?.ga_root || result?.root
+      if (nextRoot) setRoot(nextRoot)
       load()
     }} />
   }

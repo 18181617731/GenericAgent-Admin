@@ -118,6 +118,42 @@ test('settings rows render a real switch, a state pill, and stack on narrow scre
 })
 
 
+// The first-run wizard used to render .setup-wizard-* and .eyebrow while the
+// stylesheet only carried a mobile media query for them, so the whole screen
+// leaned on antd defaults at desktop widths.
+test('first-run wizard classes carry base styles, not just a mobile override', () => {
+  const shell = ruleBodies('.setup-wizard-shell').join('\n')
+  assert.match(shell, /min-height\s*:\s*100vh/i)
+  assert.match(shell, /place-items\s*:\s*center/i)
+
+  const card = ruleBodies('.setup-wizard-card').join('\n')
+  assert.match(card, /width\s*:\s*min\(/i)
+  assert.match(card, /overflow\s*:\s*auto/i)
+
+  const body = ruleBodies('.setup-wizard-card > .ant-card-body').join('\n')
+  assert.match(body, /display\s*:\s*flex/i)
+  assert.match(body, /gap\s*:/i)
+
+  assert.match(ruleBodies('.setup-wizard-hero').join('\n'), /display\s*:\s*flex/i)
+  assert.match(ruleBodies('.setup-wizard-copy').join('\n'), /min-width\s*:\s*0/i)
+  assert.match(ruleBodies('.eyebrow.ant-typography').join('\n'), /text-transform\s*:\s*uppercase/i)
+  assert.match(ruleBodies('.setup-wizard-status').join('\n'), /border-radius\s*:\s*999px/i)
+
+  // Both palettes own the backdrop, so the wizard is never a light gradient
+  // behind dark antd surfaces.
+  assert.match(css, /html\[data-color-scheme="dark"\] \.setup-wizard-shell\s*\{/i)
+  assert.match(css, /html\[data-color-scheme="dark"\] \.setup-wizard-card\s*\{/i)
+
+  // Steps renders its per-item copy into -content; -description is antd 5.
+  assert.match(ruleBodies('.setup-ant-steps .ant-steps-item-content').join('\n'), /font-size\s*:/i)
+  assert.doesNotMatch(css, /ant-steps-item-description/i)
+
+  // The pre-antd wizard markup is gone; its selectors must not linger.
+  for (const dead of [/\.setup-shell/, /\.setup-card/, /\.setup-brand/, /\.setup-divider/, /\.setup-note\b/, /\.setup-env\s*\{/]) {
+    assert.doesNotMatch(css, dead, `dead pre-antd setup rule still present: ${dead}`)
+  }
+})
+
 test('theme IDs only select token scopes while color schemes own shared compatibility', () => {
   assert.match(css, /html\[data-color-scheme="light"\]\s*\{\s*color-scheme:\s*light;\s*\}/i)
   assert.match(css, /html\[data-color-scheme="dark"\]\s*\{\s*color-scheme:\s*dark;\s*\}/i)
