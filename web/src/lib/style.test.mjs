@@ -118,39 +118,46 @@ test('settings rows render a real switch, a state pill, and stack on narrow scre
 })
 
 
-// The first-run wizard used to render .setup-wizard-* and .eyebrow while the
-// stylesheet only carried a mobile media query for them, so the whole screen
-// leaned on antd defaults at desktop widths.
-test('first-run wizard classes carry base styles, not just a mobile override', () => {
-  const shell = ruleBodies('.setup-wizard-shell').join('\n')
-  assert.match(shell, /min-height\s*:\s*100vh/i)
+// The first-run screen is a purpose-built setup console. Its structural rules
+// must exist at desktop widths rather than leaning on component-library defaults.
+test('first-run setup console carries its own responsive two-pane layout', () => {
+  const shell = ruleBodies('.setup-console-shell').join('\n')
+  assert.match(shell, /min-height\s*:\s*100(?:s)?vh/i)
   assert.match(shell, /place-items\s*:\s*center/i)
 
-  const card = ruleBodies('.setup-wizard-card').join('\n')
-  assert.match(card, /width\s*:\s*min\(/i)
-  assert.match(card, /overflow\s*:\s*auto/i)
+  const frame = ruleBodies('.setup-console-frame').join('\n')
+  assert.match(frame, /width\s*:\s*min\(/i)
+  assert.match(frame, /height\s*:\s*auto/i)
+  assert.match(frame, /min-height\s*:\s*min\(\s*680px\s*,\s*calc\(\s*100svh\s*-\s*56px\s*\)\s*\)/i)
+  assert.doesNotMatch(frame, /(?:^|\n)\s*height\s*:\s*min\(/i)
+  assert.match(frame, /grid-template-columns\s*:/i)
+  assert.match(frame, /overflow\s*:\s*hidden/i)
 
-  const body = ruleBodies('.setup-wizard-card > .ant-card-body').join('\n')
-  assert.match(body, /display\s*:\s*flex/i)
-  assert.match(body, /gap\s*:/i)
+  const rail = ruleBodies('.setup-console-rail').join('\n')
+  assert.match(rail, /display\s*:\s*flex/i)
+  assert.match(rail, /flex-direction\s*:\s*column/i)
+  assert.match(rail, /border-right\s*:/i)
 
-  assert.match(ruleBodies('.setup-wizard-hero').join('\n'), /display\s*:\s*flex/i)
-  assert.match(ruleBodies('.setup-wizard-copy').join('\n'), /min-width\s*:\s*0/i)
-  assert.match(ruleBodies('.eyebrow.ant-typography').join('\n'), /text-transform\s*:\s*uppercase/i)
-  assert.match(ruleBodies('.setup-wizard-status').join('\n'), /border-radius\s*:\s*999px/i)
+  const main = ruleBodies('.setup-console-main').join('\n')
+  assert.match(main, /overflow\s*:\s*visible/i)
+  assert.doesNotMatch(main, /overflow-y\s*:\s*auto/i)
+  assert.match(ruleBodies('.setup-console-columns').join('\n'), /grid-template-columns\s*:/i)
+  assert.match(ruleBodies('.setup-console-log').join('\n'), /border-top\s*:/i)
 
-  // Both palettes own the backdrop, so the wizard is never a light gradient
-  // behind dark antd surfaces.
-  assert.match(css, /html\[data-color-scheme="dark"\] \.setup-wizard-shell\s*\{/i)
-  assert.match(css, /html\[data-color-scheme="dark"\] \.setup-wizard-card\s*\{/i)
+  // The dark palette owns both setup surfaces instead of leaving a light shell
+  // behind dark controls.
+  assert.match(css, /html\[data-color-scheme="dark"\] \.setup-console-shell\s*\{/i)
+  assert.match(css, /html\[data-color-scheme="dark"\] \.setup-console-rail\s*\{/i)
 
-  // Steps renders its per-item copy into -content; -description is antd 5.
-  assert.match(ruleBodies('.setup-ant-steps .ant-steps-item-content').join('\n'), /font-size\s*:/i)
-  assert.doesNotMatch(css, /ant-steps-item-description/i)
+  // Mobile collapses the workspace to one column and removes the rail divider.
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*900px\)[\s\S]*?\.setup-console-frame\s*\{[^}]*grid-template-columns\s*:\s*1fr/i,
+  )
 
-  // The pre-antd wizard markup is gone; its selectors must not linger.
-  for (const dead of [/\.setup-shell/, /\.setup-card/, /\.setup-brand/, /\.setup-divider/, /\.setup-note\b/, /\.setup-env\s*\{/]) {
-    assert.doesNotMatch(css, dead, `dead pre-antd setup rule still present: ${dead}`)
+  // The removed Card/Steps implementation must not leave competing selectors.
+  for (const dead of [/\.setup-wizard-/, /\.setup-ant-steps/, /\.setup-env-card/, /\.setup-panel\b/]) {
+    assert.doesNotMatch(css, dead, `dead setup rule still present: ${dead}`)
   }
 })
 

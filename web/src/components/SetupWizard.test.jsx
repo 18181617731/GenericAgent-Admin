@@ -81,7 +81,7 @@ const renderWizard = (props = {}) => {
   return render(<SetupWizard lang="en" text={copy} {...props} />)
 }
 
-const button = (name) => screen.getByRole('button', { name: new RegExp(name, 'i') })
+const button = (name) => screen.getByRole('button', { name })
 
 afterEach(() => {
   cleanup()
@@ -203,6 +203,31 @@ describe('first-run wizard actions', () => {
     const [, options] = calls.find(([path]) => path.includes('/api/setup/validate'))
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
     expect(options.method).toBe('POST')
+  })
+
+  it('validates and saves a custom Python executable', async () => {
+    const calls = []
+    const python = 'C:/Python312/python.exe'
+    const version = 'Python 3.12.7'
+    mockBackend({
+      routes: { '/api/setup/python/validate': { ok: true, python, version } },
+      onCall: (path, options) => calls.push([path, options]),
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderWizard()
+
+    const input = await screen.findByPlaceholderText(copy.env.pythonPathPlaceholder)
+    await userEvent.clear(input)
+    await userEvent.type(input, python)
+    await userEvent.click(button(copy.env.usePythonPath))
+
+    await waitFor(() => expect(calls.some(([path]) => path.includes('/api/setup/python/validate'))).toBe(true))
+    expect(confirm).toHaveBeenCalledWith(`[setup-python-validate] ${copy.confirm.pythonPath(python)}`)
+    const [, options] = calls.find(([path]) => path.includes('/api/setup/python/validate'))
+    expect(options.headers['X-GA-Confirm']).toBe('dangerous')
+    expect(options.method).toBe('POST')
+    expect(JSON.parse(options.body)).toEqual({ path: python })
+    await waitFor(() => expect(screen.getByText(copy.messages.pythonPathSaved(python, version))).toBeTruthy())
   })
 
   it('does not call the backend when the confirmation is declined', async () => {
