@@ -2,9 +2,9 @@ import React, { useEffect, useRef } from 'react'
 import { Clock3, FileText, FolderOpen, History, MessageCircle, Search, Trash2, X } from 'lucide-react'
 
 const copyFor = lang => lang === 'en' ? {
-  dialog: 'Search sessions', input: 'Search session titles, messages, or projects', close: 'Close search', history: 'Search history', clear: 'Clear history', recent: 'Recent sessions', results: 'Search results', searching: 'Searching…', empty: 'No matching sessions', noRecent: 'No sessions yet', noHistory: 'No search history yet', messages: 'messages', title: 'Title', content: 'Message', project: 'Project', all: 'All', untitled: 'Untitled session', justNow: 'Just now', searchFailed: 'Search failed. Try again.',
+  dialog: 'Search sessions', input: 'Search session titles, messages, or projects', close: 'Close search', history: 'Search history', clear: 'Clear history', recent: 'Recent sessions', results: 'Search results', searching: 'Searching…', empty: 'No matching sessions', noRecent: 'No sessions yet', noHistory: 'No search history yet', messages: 'messages', title: 'Title', content: 'Message', project: 'Project', archived: 'Archived', all: 'All', untitled: 'Untitled session', justNow: 'Just now', searchFailed: 'Search failed. Try again.',
 } : {
-  dialog: '搜索会话', input: '搜索标题、消息内容或项目', close: '关闭搜索', history: '搜索历史', clear: '清空历史', recent: '最近会话', results: '搜索结果', searching: '搜索中…', empty: '没有找到匹配的会话', noRecent: '暂无会话', noHistory: '还没有搜索记录', messages: '条消息', title: '标题', content: '消息', project: '项目', all: '全部', untitled: '未命名会话', justNow: '刚刚', searchFailed: '搜索失败，请稍后重试。',
+  dialog: '搜索会话', input: '搜索标题、消息内容或项目', close: '关闭搜索', history: '搜索历史', clear: '清空历史', recent: '最近会话', results: '搜索结果', searching: '搜索中…', empty: '没有找到匹配的会话', noRecent: '暂无会话', noHistory: '还没有搜索记录', messages: '条消息', title: '标题', content: '消息', project: '项目', archived: '已归档', all: '全部', untitled: '未命名会话', justNow: '刚刚', searchFailed: '搜索失败，请稍后重试。',
 }
 
 const formatTime = (value, lang) => {
@@ -50,7 +50,7 @@ export default function SessionSearchDialog({ open, lang = 'zh', query = '', sco
       <span className="oa-search-result-copy">
         <b>{title}</b>
         {session.snippet && <small>{session.snippet}</small>}
-        <em><Clock3 size={11}/>{formatTime(session.updated_at, lang)} · {session.count || 0} {copy.messages}{labels.length > 0 && ` · ${labels.join(' · ')}`}{session.project && <span className="oa-search-result-project"><FolderOpen size={11}/>{session.project}</span>}</em>
+        <em><Clock3 size={11}/>{formatTime(session.updated_at, lang)} · {session.count || 0} {copy.messages}{labels.length > 0 && ` · ${labels.join(' · ')}`}{session.project && <span className="oa-search-result-project"><FolderOpen size={11}/>{session.project}</span>}{session.archived && <span className="oa-session-archived-badge">{copy.archived}</span>}</em>
       </span>
       {session.id === currentSessionID && <i className="oa-search-current-mark">✓</i>}
     </button>

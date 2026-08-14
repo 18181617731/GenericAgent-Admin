@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deleteChatSessions, normalizeSessionIds } from './chatSessionManagement.js'
+import { deleteChatSessions, normalizeSessionIds, runChatSessionBatch, sessionBatchResult } from './chatSessionManagement.js'
 
 test('normalizeSessionIds keeps unique non-empty session ids in order', () => {
   assert.deepEqual(normalizeSessionIds(['alpha', '', 'alpha', null, 'beta', '  ', 'gamma']), ['alpha', 'beta', 'gamma'])
@@ -34,4 +34,26 @@ test('deleteChatSessions is a no-op for an empty selection', async () => {
   const result = await deleteChatSessions([], async () => { calls += 1 })
   assert.equal(calls, 0)
   assert.deepEqual(result, { deletedIds: [], failedIds: [], failures: [] })
+})
+
+test('sessionBatchResult keeps failures selected in source order', () => {
+  const result = sessionBatchResult(['one', 'two', 'one', 'three'], [
+    { status:'fulfilled', value:{} },
+    { status:'rejected', reason:new Error('running') },
+    { status:'fulfilled', value:{} },
+  ])
+  assert.deepEqual(result.succeededIds, ['one', 'three'])
+  assert.deepEqual(result.failedIds, ['two'])
+  assert.match(result.failures[0].error.message, /running/)
+})
+
+test('runChatSessionBatch starts every unique action and reports partial failure', async () => {
+  const calls = []
+  const result = await runChatSessionBatch(['one', 'two', 'one'], async id => {
+    calls.push(id)
+    if (id === 'two') throw new Error('failed')
+  })
+  assert.deepEqual(calls, ['one', 'two'])
+  assert.deepEqual(result.succeededIds, ['one'])
+  assert.deepEqual(result.failedIds, ['two'])
 })

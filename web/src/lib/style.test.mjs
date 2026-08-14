@@ -51,6 +51,42 @@ test('interface scale controls are visible and scale the whole workspace', () =>
     css,
     /@media\s*\(max-width:\s*900px\)[\s\S]*?\.oa-chat\s+\.oa-sidebar\s*\{[^}]*width\s*:\s*min\([\s\S]*?var\(--ga-ui-scale-width/i,
   )
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*900px\)[\s\S]*?\.oa-chat,[\s\S]*?\.oa-chat\.is-collapsed\s*\{[^}]*height\s*:\s*calc\(100dvh\s*\*\s*var\(--ga-ui-scale-width/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(min-width:\s*901px\)[\s\S]*?\.oa-chat,[\s\S]*?\.oa-chat\s+\.oa-main,[\s\S]*?\.oa-chat\s+\.oa-sidebar\s*\{[^}]*height\s*:\s*calc\(100dvh\s*\*\s*var\(--ga-ui-scale-width[^}]*!important/i,
+  )
+  assert.match(css, /\.oa-chat \.oa-sidebar-backdrop\s*\{[^}]*width:\s*calc\(100vw \* var\(--ga-ui-scale-width, 1\)\)[^}]*height:\s*calc\(100dvh \* var\(--ga-ui-scale-width, 1\)\)/s)
+  assert.match(css, /\.oa-chat \.oa-session-more\s*\{[^}]*min-height:\s*calc\(44px \* var\(--ga-ui-scale-width, 1\)\)/s)
+  assert.match(css, /\.oa-chat \.oa-session-menu button\s*\{[^}]*min-height:\s*calc\(48px \* var\(--ga-ui-scale-width, 1\)\)/s)
+  assert.match(css, /\.oa-session-search-backdrop,[\s\S]*?\.oa-session-manager-backdrop\s*\{[^}]*width:\s*calc\(100vw \* var\(--ga-ui-scale-width, 1\)\)[^}]*height:\s*calc\(100dvh \* var\(--ga-ui-scale-width, 1\)\)/s)
+})
+
+test('admin sidebar appearance controls use separate rows at desktop width', () => {
+  assert.match(
+    css,
+    /\.app:not\(\.app-tab-chat\)\s+#admin-sidebar\s+\.lang-switch\s*\{[^}]*display\s*:\s*grid[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+auto/i,
+  )
+  assert.match(
+    css,
+    /#admin-sidebar\s+\.lang-switch\s*>\s*\.theme-picker,[\s\S]*?#admin-sidebar\s+\.lang-switch\s*>\s*\.ui-scale-picker\s*\{[^}]*grid-column\s*:\s*1\s*\/\s*-1/i,
+  )
+  assert.match(
+    css,
+    /#admin-sidebar\s+\.ui-scale-picker\s*\{[^}]*display\s*:\s*grid[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)\s+auto/i,
+  )
+  assert.match(css, /#admin-sidebar\s+\.ui-scale-label\s*>\s*span\s*\{[^}]*text-overflow\s*:\s*ellipsis/i)
+  assert.match(
+    css,
+    /html\[data-ui-scale="80"\][\s\S]*?html\[data-ui-scale="90"\][\s\S]*?#admin-sidebar\s+\.ui-scale-picker\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*1fr\)/i,
+  )
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*860px\)[\s\S]*?#admin-sidebar\s+\.lang-switch\s*>\s*\.ui-scale-picker\s*\{[^}]*display\s*:\s*none/i,
+  )
 })
 
 test('mobile feedback stays in document flow and model actions use two columns', () => {
@@ -91,6 +127,7 @@ test('mobile chat navigation and tools stay fixed inside the iPhone viewport', (
     /@media\s*\(max-width:680px\)[\s\S]*?\.notification-filter-scroll\s*\{[^}]*display\s*:\s*grid[^}]*grid-template-columns\s*:\s*repeat\(2,/i,
   )
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-topbar\s*\{[^}]*overflow-x\s*:\s*visible\s*!important[^}]*overflow-y\s*:\s*visible\s*!important/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.notification-popover\s*\{[^}]*left\s*:\s*0[^}]*right\s*:\s*0[^}]*width\s*:\s*auto/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.notification-popover\s*\{[^}]*z-index\s*:\s*1200/i)
 })
 

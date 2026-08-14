@@ -31,6 +31,7 @@ type chatSearchResult struct {
 	Project     string   `json:"project,omitempty"`
 	Workspace   string   `json:"workspace,omitempty"`
 	ProjectMode string   `json:"project_mode,omitempty"`
+	Archived    bool     `json:"archived"`
 	Snippet     string   `json:"snippet,omitempty"`
 	MatchType   string   `json:"match_type"`
 	MatchTypes  []string `json:"match_types"`
@@ -170,6 +171,7 @@ func matchChatSearchSession(cs chatSession, terms []string, scope string) (chatS
 		Project:     project,
 		Workspace:   cs.Workspace,
 		ProjectMode: cs.ProjectMode,
+		Archived:    cs.Archived,
 		MatchType:   matchTypes[0],
 		MatchTypes:  matchTypes,
 	}

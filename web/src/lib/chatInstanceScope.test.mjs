@@ -9,23 +9,26 @@ import {
 } from './chatInstanceScope.js'
 
 const chatSource = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+const sidebarSource = readFileSync(new URL('../components/ChatSidebar.jsx', import.meta.url), 'utf8')
 const chatStyles = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 
 test('renders the instance selector once at the top of the session sidebar', () => {
-  assert.equal((chatSource.match(/className="oa-sidebar-instance"/g) || []).length, 1)
-  assert.equal((chatSource.match(/aria-label=\{ct\('选择 GA 实例'/g) || []).length, 1)
-  const sidebar = chatSource.indexOf('<aside className={`oa-sidebar')
-  const selector = chatSource.indexOf('className="oa-sidebar-instance"', sidebar)
-  const search = chatSource.indexOf('className="oa-sidebar-search"', sidebar)
-  const sidebarEnd = chatSource.indexOf('</aside>', sidebar)
+  assert.equal((sidebarSource.match(/className="oa-sidebar-instance"/g) || []).length, 1)
+  assert.equal((sidebarSource.match(/aria-label=\{ct\('选择 GA 实例'/g) || []).length, 1)
+  const sidebar = sidebarSource.indexOf('<aside')
+  const selector = sidebarSource.indexOf('className="oa-sidebar-instance"', sidebar)
+  const search = sidebarSource.indexOf('className="oa-sidebar-search-action"', sidebar)
+  const sidebarEnd = sidebarSource.indexOf('</aside>', sidebar)
   assert.ok(sidebar >= 0)
   assert.ok(selector > sidebar && selector < search)
   assert.ok(search < sidebarEnd)
-  assert.doesNotMatch(chatSource, /oa-instance-select|oa-mobile-instance-select/)
-  assert.doesNotMatch(chatSource, /刷新会话|Refresh sessions|RefreshCw/)
-  assert.equal((chatStyles.match(/grid-template-columns:\s*320px minmax\(0,1fr\)/g) || []).length, 2)
-  assert.equal((chatStyles.match(/\.oa-sidebar\s*\{[^}]*width:\s*320px/g) || []).length, 2)
-  assert.match(chatStyles, /width:min\(90vw,340px\)\s*!important/)
+  assert.doesNotMatch(sidebarSource, /oa-instance-select|oa-mobile-instance-select/)
+  assert.doesNotMatch(sidebarSource, /刷新会话|Refresh sessions|RefreshCw/)
+  assert.match(chatStyles, /--oa-chat-sidebar-width:\s*calc\(300px \* var\(--ga-ui-scale-width, 1\)\)/)
+  assert.match(chatStyles, /\.oa-chat \.oa-sidebar-wide-action\s*\{[^}]*width:\s*100%/s)
+  assert.match(chatStyles, /width:\s*min\(calc\(88vw \* var\(--ga-ui-scale-width, 1\)\), calc\(340px \* var\(--ga-ui-scale-width, 1\)\)\)\s*!important/)
+  assert.match(chatSource, /const openSessionSearch = \(\) => \{[\s\S]*?if \(isNarrowChatViewport\(\)\) setCollapsed\(true\)/)
+  assert.match(chatSource, /const openSessionManager = async \(\) => \{[\s\S]*?if \(isNarrowChatViewport\(\)\) setCollapsed\(true\)/)
 })
 
 test('addChatInstanceToURL scopes only chat API routes and preserves query/hash', () => {

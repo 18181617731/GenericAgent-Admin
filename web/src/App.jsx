@@ -47,6 +47,7 @@ import { publishNotification } from './lib/notifications.js'
 import { useLogStream } from './hooks/useLogStream.js'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 import { LogsPage } from './pages/LogsPage.jsx'
+import { sourceAvailability } from './pages/OverviewPage.jsx'
 // 页面级代码分割：各 tab 页面按需懒加载，首屏只下载概览/日志所需代码。
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
@@ -191,8 +192,8 @@ const OverviewPage = ({
   const versionMessage = versionStatus?.error || (versionStatus?.stage === 'queued'
     ? text.updateQueued
     : (versionStatus?.message || versionStatus?.stage))
-  const sourceStatus = gitSyncView?.label || text.notChecked
-  const sourceAvailable = gitStatus?.available !== false
+  const { sourceAvailable, sourceUnavailableReason, sourceState } = sourceAvailability(gitStatus, text)
+  const sourceStatus = gitSyncView?.label || sourceState
 
   return <section className="overview-page">
     <div className="stats overview-stats">
@@ -247,7 +248,7 @@ const OverviewPage = ({
         </div>
       </Panel>
 
-      {sourceAvailable && <Panel title={text.sourceTitle} className="overview-panel overview-panel-source">
+      {gitStatus && <Panel title={text.sourceTitle} className="overview-panel overview-panel-source">
         <div className="version-card">
           <div className="version-head">
             <GitPullRequest size={18}/>
@@ -256,8 +257,9 @@ const OverviewPage = ({
           </div>
           <p className="muted">{text.sourceDescription}</p>
           {gitStatus?.root && <code>{gitStatus.root}</code>}
-          <p>{text.branch}: {gitStatus?.branch || '-'}　HEAD: {gitStatus?.commit || gitResult?.after || '-'}</p>
-          {gitStatus?.upstream && <p>{text.upstream}: {gitStatus.upstream}　{text.ahead} {gitStatus.ahead || 0} / {text.behind} {gitStatus.behind || 0}</p>}
+          {sourceAvailable && <div className="overview-kv"><span>{text.branch}</span><code>{gitStatus?.branch || '-'} · {gitStatus?.commit || gitResult?.after || '-'}</code></div>}
+          {sourceAvailable && gitStatus?.upstream && <p>{text.upstream}: {gitStatus.upstream}　{text.ahead} {gitStatus.ahead || 0} / {text.behind} {gitStatus.behind || 0}</p>}
+          {!sourceAvailable && <p className="warn">{sourceUnavailableReason}</p>}
           {gitSyncView?.summary && <p className={gitSyncView.state === 'error' || gitSyncView.state === 'blocked' ? 'err' : (gitSyncView.state === 'synced' ? 'ok' : 'warn')}>{gitSyncView.summary}</p>}
           {gitStatus?.dirty && <p className="warn">{text.dirty}</p>}
           {gitStatus && !gitStatus.strategy_available && <p className="err">{text.strategyMissing}</p>}
@@ -265,7 +267,7 @@ const OverviewPage = ({
           {gitStatus?.fetch_error && <pre className="mini-log">{gitStatus.fetch_error}</pre>}
           {gitResult?.sync_output && <pre className="mini-log">{gitResult.sync_output}</pre>}
           <div className="actions">
-            <button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : text.checkLatest}</button>
+            {sourceAvailable && <button className="secondary" onClick={checkGASource} disabled={gitBusy || busy}>{gitBusy ? t.busy : text.checkLatest}</button>}
             <button onClick={() => { window.location.href = buildRoute('chat') }} disabled={gitBusy || busy}>
               {lang === 'en' ? 'Run /update in chat' : '去对话执行 /update'}
             </button>

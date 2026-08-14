@@ -1030,6 +1030,60 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 }
 
+func TestChatPostUsesOutputsForLiveTerminalContent(t *testing.T) {
+	old := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			decoder := json.NewDecoder(stdinR)
+			for {
+				var request map[string]interface{}
+				if err := decoder.Decode(&request); err != nil {
+					return
+				}
+				if request["op"] == "worldline" {
+					_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "worldline", "tree": map[string]interface{}{"nodes": []interface{}{}}})
+					continue
+				}
+				message := chatMessage{
+					ID:        "outputs-only",
+					Role:      "assistant",
+					Outputs:   []string{"answer from outputs"},
+					CreatedAt: time.Now().Unix(),
+				}
+				_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "done", "message": message})
+			}
+		}()
+		return &chatWorker{SID: "outputs-live", Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() { startChatWorkerFunc = old }()
+
+	s := newGoalTestServer(t, t.TempDir())
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = t.TempDir()
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/outputs-live", strings.NewReader(`{"prompt":"reply"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"content":"answer from outputs"`) {
+		t.Fatalf("live terminal event lost outputs content: %s", rr.Body.String())
+	}
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), "outputs-live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Messages) != 2 || stored.Messages[1].Content != "answer from outputs" {
+		t.Fatalf("stored assistant content=%q want outputs fallback: %#v", stored.Messages[len(stored.Messages)-1].Content, stored.Messages)
+	}
+}
+
 func TestChatWorkerEOFAppendsCurrentTurnToRawHistoryFallback(t *testing.T) {
 	var captured map[string]interface{}
 	old := startChatWorkerFunc

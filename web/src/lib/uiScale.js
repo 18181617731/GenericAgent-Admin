@@ -1,7 +1,7 @@
 export const UI_SCALE_STORAGE_KEY = 'ga-admin-ui-scale'
 export const DEFAULT_UI_SCALE = 1
 export const UI_SCALE_MIN = 0.8
-export const UI_SCALE_MAX = 1.2
+export const UI_SCALE_MAX = 1.25
 export const UI_SCALE_STEP = 0.05
 
 const precision = value => Math.round(value * 100) / 100

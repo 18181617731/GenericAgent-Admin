@@ -10,23 +10,36 @@ export const normalizeSessionIds = (ids = []) => {
   return normalized
 }
 
+export const sessionBatchResult = (ids, settled) => {
+  const normalized = normalizeSessionIds(ids)
+  const succeededIds = []
+  const failedIds = []
+  const failures = []
+  normalized.forEach((id, index) => {
+    const result = settled[index]
+    if (result?.status === 'fulfilled') {
+      succeededIds.push(id)
+      return
+    }
+    const reason = result?.reason
+    failedIds.push(id)
+    failures.push({ id, error:reason instanceof Error ? reason : new Error(String(reason || 'Unknown failure')) })
+  })
+  return { succeededIds, failedIds, failures }
+}
+
+export const runChatSessionBatch = async (ids, actionOne) => {
+  const normalized = normalizeSessionIds(ids)
+  if (normalized.length === 0) return { succeededIds: [], failedIds: [], failures: [] }
+  if (typeof actionOne !== 'function') throw new TypeError('actionOne must be a function')
+  return sessionBatchResult(normalized, await Promise.allSettled(normalized.map(id => actionOne(id))))
+}
+
 export const deleteChatSessions = async (ids, deleteOne) => {
   const normalized = normalizeSessionIds(ids)
   if (normalized.length === 0) return { deletedIds: [], failedIds: [], failures: [] }
   if (typeof deleteOne !== 'function') throw new TypeError('deleteOne must be a function')
 
-  const settled = await Promise.allSettled(normalized.map(id => deleteOne(id)))
-  const deletedIds = []
-  const failedIds = []
-  const failures = []
-  settled.forEach((result, index) => {
-    const id = normalized[index]
-    if (result.status === 'fulfilled') {
-      deletedIds.push(id)
-      return
-    }
-    failedIds.push(id)
-    failures.push({ id, error: result.reason instanceof Error ? result.reason : new Error(String(result.reason)) })
-  })
-  return { deletedIds, failedIds, failures }
+  const result = await runChatSessionBatch(normalized, deleteOne)
+  return { deletedIds:result.succeededIds, failedIds:result.failedIds, failures:result.failures }
 }

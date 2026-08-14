@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,5 +112,66 @@ func TestChatSearchUsesRecentOrderAndSafeValidation(t *testing.T) {
 	}
 	if len(body.Results) != 1 || body.Results[0].ID != "newer" {
 		t.Fatalf("limited results=%+v", body.Results)
+	}
+}
+
+func TestChatSearchIsInstanceScopedAndIncludesArchivedState(t *testing.T) {
+	appRoot := t.TempDir()
+	defaultRoot := filepath.Join(t.TempDir(), "ga-default")
+	betaRoot := filepath.Join(t.TempDir(), "ga-beta")
+	for _, root := range []string{defaultRoot, betaRoot} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = defaultRoot
+	cfg.DefaultInstanceID = "default"
+	cfg.Instances = []config.InstanceConfig{
+		{ID: "default", Name: "Default", GARoot: defaultRoot},
+		{ID: "beta", Name: "Beta", GARoot: betaRoot},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := New(store, nil, nil, nil)
+	for instanceID, session := range map[string]chatSession{
+		"default": {ID: "default-hit", Title: "Shared term", Messages: []chatMessage{{Content: "shared term"}}},
+		"beta":    {ID: "beta-hit", Title: "Shared term", Archived: true, Messages: []chatMessage{{Content: "shared term"}}},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/chat/search?instance_id="+instanceID, nil)
+		resolved, _, err := s.chatServerForRequest(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := saveChatSessionLocked(resolved.CfgStore.Snapshot(), session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		instanceID   string
+		wantID       string
+		wantArchived bool
+	}{
+		{instanceID: "default", wantID: "default-hit", wantArchived: false},
+		{instanceID: "beta", wantID: "beta-hit", wantArchived: true},
+	} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/chat/search?instance_id="+tc.instanceID+"&q=shared", nil)
+		s.Routes().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("instance=%s status=%d body=%s", tc.instanceID, rr.Code, rr.Body.String())
+		}
+		var body struct {
+			Results []chatSearchResult `json:"results"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Results) != 1 || body.Results[0].ID != tc.wantID || body.Results[0].Archived != tc.wantArchived {
+			t.Fatalf("instance=%s results=%+v", tc.instanceID, body.Results)
+		}
 	}
 }

@@ -13,7 +13,7 @@ import {
 test('normalizes interface scale into the supported range', () => {
   assert.equal(normalizeUIScale('0.73'), 0.8)
   assert.equal(normalizeUIScale('1.17'), 1.17)
-  assert.equal(normalizeUIScale('1.4'), 1.2)
+  assert.equal(normalizeUIScale('1.4'), 1.25)
   assert.equal(normalizeUIScale('not-a-number'), DEFAULT_UI_SCALE)
   assert.equal(formatUIScale(1.1), '110%')
 })
@@ -22,7 +22,7 @@ test('steps interface scale without crossing the supported range', () => {
   assert.equal(stepUIScale(1, -1), 0.95)
   assert.equal(stepUIScale(1, 1), 1.05)
   assert.equal(stepUIScale(0.8, -1), 0.8)
-  assert.equal(stepUIScale(1.2, 1), 1.2)
+  assert.equal(stepUIScale(1.25, 1), 1.25)
 })
 
 test('loads and applies a persisted interface scale', () => {

@@ -54,6 +54,19 @@ type chatMessage struct {
 	TaskOutputs     map[string][]string      `json:"task_outputs,omitempty"`
 }
 
+func chatMessageDisplayContent(msg chatMessage) string {
+	if strings.TrimSpace(msg.Content) != "" {
+		return msg.Content
+	}
+	parts := make([]string, 0, len(msg.Outputs))
+	for _, output := range msg.Outputs {
+		if strings.TrimSpace(output) != "" {
+			parts = append(parts, output)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 const (
 	chatReasoningEffortOff     = "off"
 	chatReasoningEffortNone    = "none"
@@ -199,6 +212,7 @@ type chatSession struct {
 	ProjectMode            string                   `json:"project_mode,omitempty"`
 	HubEnabled             bool                     `json:"hub_enabled,omitempty"`
 	Pinned                 bool                     `json:"pinned,omitempty"`
+	Archived               bool                     `json:"archived"`
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 	Loop                   chatLoopState            `json:"loop"`
@@ -619,6 +633,12 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
 			_ = json.Unmarshal(b, &final)
+			if strings.TrimSpace(final.Content) == "" {
+				if content := chatMessageDisplayContent(final); content != "" {
+					final.Content = content
+					msg["content"] = content
+				}
+			}
 			if pendingID != "" {
 				final.ID = pendingID
 			}
@@ -2230,6 +2250,7 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 
 func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) {
 	candidate.Pinned = latest.Pinned
+	candidate.Archived = latest.Archived
 	candidate.Loop = latest.Loop
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {

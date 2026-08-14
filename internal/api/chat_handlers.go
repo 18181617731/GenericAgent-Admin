@@ -16,6 +16,14 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	state := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("state")))
+	if state == "" {
+		state = "active"
+	}
+	if state != "active" && state != "archived" && state != "all" {
+		bad(w, http.StatusBadRequest, "invalid session state")
+		return
+	}
 	items := []map[string]interface{}{}
 	if err := ensureChatDataMigrated(s.CfgStore.Snapshot()); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
@@ -38,7 +46,10 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned, "loop": cs.Loop})
+		if (state == "active" && cs.Archived) || (state == "archived" && !cs.Archived) {
+			continue
+		}
+		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned, "archived": cs.Archived, "loop": cs.Loop})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
 	projects, pinnedProjects := chatProjectNamesFor(s.CfgStore.Snapshot())
@@ -83,6 +94,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 	case "pin":
 		if len(parts) == 2 && r.Method == http.MethodPatch {
 			s.chatSetPinned(w, r, parts[1])
+			return
+		}
+	case "archive":
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.chatSetArchived(w, r, parts[1])
 			return
 		}
 	case "fork":
@@ -512,6 +528,45 @@ func (s *Server) chatSetPinned(w http.ResponseWriter, r *http.Request, sid strin
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "pinned": cs.Pinned})
+}
+
+func (s *Server) chatSetArchived(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Archived bool `json:"archived"`
+	}
+	if err := decode(r, &req); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	// Keep the run check and session mutation in the same lock order used by
+	// chat admission/persistence, so a run cannot start between the check and
+	// the archive write.
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	if run := s.ChatRuns[sid]; run != nil && !run.Done {
+		bad(w, http.StatusConflict, "chat is already running")
+		return
+	}
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cs.Archived = req.Archived
+	// Restoring an archived session must not silently restore its old pin.
+	cs.Pinned = false
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "archived": cs.Archived, "pinned": cs.Pinned, "updated_at": cs.UpdatedAt})
 }
 
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {

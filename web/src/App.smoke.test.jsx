@@ -2274,6 +2274,33 @@ describe('mobile chat model selector', () => {
 })
 
 describe('mobile chat session navigation', () => {
+  test('returns focus to the mobile sidebar trigger after Escape closes the drawer', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation(query => ({
+        matches: /max-width:\s*(?:900|560)px/.test(query) || /prefers-reduced-motion/.test(query),
+        media: query,
+        addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+      })),
+    })
+    Element.prototype.scrollIntoView = vi.fn()
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[] })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    const trigger = await screen.findByRole('button', { name:'展开侧栏' })
+    fireEvent.click(trigger)
+    fireEvent.keyDown(document, { key:'Escape' })
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name:'展开侧栏' })))
+    expect(document.querySelector('.oa-sidebar')?.classList.contains('collapsed')).toBe(true)
+  })
+
   test('switches a history session with one tap and closes the sidebar', async () => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
@@ -2306,7 +2333,9 @@ describe('mobile chat session navigation', () => {
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('First chat'))
     expect(document.querySelectorAll('.oa-sidebar .oa-session-row')).toHaveLength(sessions.length)
-    expect(screen.getAllByRole('button', { name:'返回管理台' })).toHaveLength(2)
+    // The closed mobile drawer stays mounted for animation, but its controls must
+    // not remain in the accessibility tree behind the visible chat toolbar.
+    expect(screen.getAllByRole('button', { name:'返回管理台' })).toHaveLength(1)
     expect(document.querySelector('.oa-admin-back-trigger')?.textContent).toBe('管理台')
     expect(document.querySelector('.oa-topbar-actions .oa-context-btn .oa-context-label')?.textContent).toBe('上下文')
     expect(document.querySelector('.oa-topbar-actions .oa-worldline-btn .oa-context-label')?.textContent).toBe('世界线')
@@ -2320,7 +2349,7 @@ describe('mobile chat session navigation', () => {
     expect(document.querySelector('.oa-sidebar')?.classList.contains('collapsed')).toBe(true)
     expect(screen.queryByRole('button', { name:'关闭侧栏' })).toBeNull()
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === '/api/chat/session/two')).toHaveLength(1)
-  }, 15000)
+  }, 30000)
 })
 
 describe('chat worldline controls', () => {

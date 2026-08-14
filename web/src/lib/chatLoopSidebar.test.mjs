@@ -27,8 +27,10 @@ test('updateSessionLoop patches only the matching session', () => {
 
 test('ChatApp wires loop updates and progress into the sidebar', () => {
   const source = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const listSource = readFileSync(new URL('../components/ChatSessionList.jsx', import.meta.url), 'utf8')
+  const rowSource = readFileSync(new URL('../components/ChatSessionRow.jsx', import.meta.url), 'utf8')
   assert.match(source, /updateSessionLoop\(xs, sessionId, ev\.loop\)/)
   assert.match(source, /updateSessionLoop\(xs, id, nextLoopState\)/)
-  assert.match(source, /loopSidebarView\(session\.loop\)/)
-  assert.match(source, /oa-session-loop-badge/)
+  assert.match(listSource, /loopSidebarView\(session\.loop\)/)
+  assert.match(rowSource, /oa-session-loop-badge/)
 })

@@ -30,3 +30,19 @@ test('session search history persists newest entries and clears safely', () => {
   assert.deepEqual(clearSessionSearchHistory(target), [])
   assert.deepEqual(loadSessionSearchHistory(target), [])
 })
+
+test('session search history stays isolated per instance and preserves legacy default data', () => {
+  const target = storage()
+  target.setItem('ga-admin-chat-search-history-v1', JSON.stringify([{ query:'legacy', scope:'all' }]))
+
+  assert.deepEqual(loadSessionSearchHistory('default', target), [{ query:'legacy', scope:'all' }])
+  assert.deepEqual(loadSessionSearchHistory('alpha', target), [])
+
+  saveSessionSearchHistory('alpha', { query:'alpha-only', scope:'title' }, target)
+  assert.deepEqual(loadSessionSearchHistory('alpha', target), [{ query:'alpha-only', scope:'title' }])
+  assert.deepEqual(loadSessionSearchHistory('default', target), [{ query:'legacy', scope:'all' }])
+
+  clearSessionSearchHistory('alpha', target)
+  assert.deepEqual(loadSessionSearchHistory('alpha', target), [])
+  assert.deepEqual(loadSessionSearchHistory('default', target), [{ query:'legacy', scope:'all' }])
+})

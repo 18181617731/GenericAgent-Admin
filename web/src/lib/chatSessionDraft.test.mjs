@@ -78,18 +78,19 @@ test('chat session draft storage failures do not break the composer', () => {
 
 test('main chat wires reactive draft badges into persistence, sending, and deletion', () => {
   const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const row = readFileSync(new URL('../components/ChatSessionRow.jsx', import.meta.url), 'utf8')
   const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
   assert.match(main, /listChatSessionDraftIds/)
   assert.match(main, /loadChatSessionDraft/)
   assert.match(main, /saveChatSessionDraft/)
   assert.match(main, /clearChatSessionDrafts/)
   assert.match(main, /const \[draftSessionIds, setDraftSessionIds\]/)
-  assert.equal(main.match(/className="oa-session-draft-badge"/g)?.length, 2)
+  assert.equal((main.match(/className="oa-session-draft-badge"/g)?.length || 0) + (row.match(/className="oa-session-draft-badge"/g)?.length || 0), 2)
   assert.match(style, /\.oa-session-title \.oa-session-draft-badge/)
   assert.match(style, /html\[data-color-scheme="dark"\] \.oa-session-title \.oa-session-draft-badge/)
 
   const openSession = functionBlock(main, '  const openSession = async', '  const loadSessions = async')
-  assert.match(openSession, /loadChatSessionDraft\(id\)/)
+  assert.match(openSession, /loadChatSessionDraft\(chatInstanceRef\.current, id\)/)
 
   const promptSetter = functionBlock(main, '  const setSessionPrompt =', '  useEffect(() => { activeSidRef.current = sid }, [sid])')
   assert.match(promptSetter, /persistSessionDraft\(sessionId, next\)/)
@@ -104,6 +105,22 @@ test('main chat wires reactive draft badges into persistence, sending, and delet
 
   const deleteSession = functionBlock(main, '  const deleteSession = async', '  const openSessionManager =')
   assert.match(deleteSession, /clearSessionDrafts\(id\)/)
-  const batchDelete = functionBlock(main, '  const deleteSelectedSessions = async', '  const startRename =')
-  assert.match(batchDelete, /clearSessionDrafts\(result\.deletedIds\)/)
+  const batchAction = functionBlock(main, '  const runSelectedSessionAction = async', '  const archiveSelectedSessions =')
+  assert.match(batchAction, /if \(action === 'delete'\) clearSessionDrafts\(result\.succeededIds\)/)
+})
+
+test('chat session drafts stay isolated per instance and legacy flat data remains default-scoped', () => {
+  const storage = memoryStorage({ [CHAT_SESSION_DRAFTS_STORAGE_KEY]: JSON.stringify({ 'legacy-session': 'legacy draft' }) })
+
+  assert.equal(loadChatSessionDraft('default', 'legacy-session', storage), 'legacy draft')
+  assert.equal(loadChatSessionDraft('alpha', 'legacy-session', storage), '')
+
+  saveChatSessionDraft('alpha', 'shared-session', 'alpha draft', storage)
+  assert.equal(loadChatSessionDraft('alpha', 'shared-session', storage), 'alpha draft')
+  assert.equal(loadChatSessionDraft('default', 'shared-session', storage), '')
+  assert.deepEqual(listChatSessionDraftIds('alpha', storage), ['shared-session'])
+
+  clearChatSessionDrafts('alpha', ['shared-session'], storage)
+  assert.equal(loadChatSessionDraft('alpha', 'shared-session', storage), '')
+  assert.equal(loadChatSessionDraft('default', 'legacy-session', storage), 'legacy draft')
 })

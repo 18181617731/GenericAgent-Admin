@@ -533,6 +533,10 @@ func gitOutput(args ...string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
+	// On Windows a Git child process may keep stdout/stderr pipe handles open
+	// after CommandContext cancels the parent. Bound the subsequent Wait so
+	// version discovery can never stall application startup or the test suite.
+	cmd.WaitDelay = time.Second
 	hideChildWindow(cmd)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	b, err := cmd.Output()

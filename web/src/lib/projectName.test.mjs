@@ -50,7 +50,8 @@ test('the client rules mirror validProjectModeName in the Go handler', () => {
 
 test('the Projects tab offers a way to create the projects it lists', () => {
   const source = frontendSource()
-  assert.match(source, /onClick=\{openProjectDraft\}/)
+  assert.match(source, /onOpenProjectDraft=\{openProjectDraft\}/)
+  assert.match(source, /onClick=\{onOpenProjectDraft\}/)
   assert.match(source, /'\/api\/chat\/projects', \{ method:'POST'/)
   // Creating a project should leave the user in a chat bound to it, not just a
   // new folder in the sidebar.
@@ -61,7 +62,8 @@ test('the Projects tab offers a way to create the projects it lists', () => {
 test('projects can be pinned, and the pin is read back from the sessions payload', () => {
   const source = frontendSource()
   assert.match(source, /'\/api\/chat\/projects\/pin', \{ method:'PATCH'/)
-  assert.match(source, /onClick=\{\(\)=>toggleProjectPinned\(group\.name, !group\.pinned\)\}/)
+  assert.match(source, /onToggleProjectPinned=\{toggleProjectPinned\}/)
+  assert.match(source, /onToggleProjectPinned\?\.\(group\.name, !group\.pinned\)/)
   assert.match(source, /aria-pressed=\{group\.pinned\}/)
   assert.match(source, /setPinnedProjects\(Array\.isArray\(d\.pinned_projects\)/)
   assert.match(source, /groupProjectSessions\(projects, sessions, pinnedProjects\)/)

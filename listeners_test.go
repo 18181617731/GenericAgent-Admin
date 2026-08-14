@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"genericagent-admin-go/internal/adminhttp"
 	"net"
 	"net/http"
 	"net/netip"
@@ -55,7 +56,7 @@ func TestAdminListenAddressesSkipsExtrasForWildcard(t *testing.T) {
 }
 
 func TestStartHTTPListenersServesPrimaryWhenOptionalAddressFails(t *testing.T) {
-	server := newHTTPServer("127.0.0.1:0", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := adminhttp.NewServer("127.0.0.1:0", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	active, err := startHTTPListeners(server, []string{"127.0.0.1:0", "192.0.2.1:0"})
@@ -82,7 +83,7 @@ func TestStartHTTPListenersServesPrimaryWhenOptionalAddressFails(t *testing.T) {
 }
 
 func TestStartHTTPListenersRequiresPrimaryAddress(t *testing.T) {
-	server := newHTTPServer("192.0.2.1:0", http.NewServeMux())
+	server := adminhttp.NewServer("192.0.2.1:0", http.NewServeMux())
 	active, err := startHTTPListeners(server, []string{"192.0.2.1:0"})
 	if err == nil {
 		t.Fatal("startHTTPListeners() error = nil, want primary bind error")

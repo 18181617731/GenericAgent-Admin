@@ -11,7 +11,7 @@ import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -24,7 +24,7 @@ import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
-import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
+import { normalizeSessionIds, runChatSessionBatch } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
@@ -42,11 +42,13 @@ import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitl
 import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
 import { firstRuntimeModelNo } from './lib/modelDefaults.js'
 import { clearSessionSearchHistory, loadSessionSearchHistory, saveSessionSearchHistory, sessionSearchScopeOptions } from './lib/chatSessionSearch.js'
+import { lastUserMessageID, nextActiveSession } from './lib/chatSessionActions.js'
 import { primeChatCompletionTone } from './lib/chatCompletionTone.js'
 import { buildChatNotification, latestUserPrompt } from './lib/chatNotification.js'
 import { publishNotification } from './lib/notifications.js'
 import { NotificationCenter } from './components/NotificationUI.jsx'
 import SessionSearchDialog from './components/SessionSearchDialog.jsx'
+import ChatSidebar from './components/ChatSidebar.jsx'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -2970,7 +2972,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
   const [sessionSearchQuery, setSessionSearchQuery] = useState('')
   const [sessionSearchScope, setSessionSearchScope] = useState('all')
-  const [sessionSearchHistory, setSessionSearchHistory] = useState(() => loadSessionSearchHistory())
+  const [sessionSearchHistory, setSessionSearchHistory] = useState(() => loadSessionSearchHistory(chatInstanceID))
   const [sessionSearchResults, setSessionSearchResults] = useState([])
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false)
   const [sessionSearchError, setSessionSearchError] = useState('')
@@ -2978,7 +2980,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [projectDraftOpen, setProjectDraftOpen] = useState(false)
   const [projectDraftName, setProjectDraftName] = useState('')
   const [projectCreating, setProjectCreating] = useState(false)
-  const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
+  const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds(chatInstanceID)))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
   const [rawHistory, setRawHistory] = useState([])
@@ -3058,10 +3060,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
-  const [sessionManagerView, setSessionManagerView] = useState('all')
+  const [sessionManagerView, setSessionManagerView] = useState('active')
+  const [archivedSessions, setArchivedSessions] = useState([])
   const [selectedSessionIds, setSelectedSessionIds] = useState([])
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [hubUpdatingSessionId, setHubUpdatingSessionId] = useState('')
+  const [sessionActionID, setSessionActionID] = useState('')
+  const sessionActionRef = useRef('')
+  const [archiveUndo, setArchiveUndo] = useState(null)
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
   const [queueEditingId, setQueueEditingId] = useState('')
@@ -3089,6 +3095,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
   const sessionSearchTriggerRef = useRef(null)
+  const sidebarToggleRef = useRef(null)
   const sessionSearchRequestRef = useRef(0)
   const selectedCmdRef = useRef(null)
   const streamAbortRef = useRef(null)
@@ -3133,10 +3140,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
+  useEffect(() => {
+    setSessionSearchHistory(loadSessionSearchHistory(chatInstanceID))
+    setDraftSessionIds(new Set(listChatSessionDraftIds(chatInstanceID)))
+  }, [chatInstanceID])
   const persistSessionDraft = useCallback((sessionId, value) => {
     const id = String(sessionId || '').trim()
     const draft = typeof value === 'string' ? value : String(value || '')
-    saveChatSessionDraft(id, draft)
+    saveChatSessionDraft(chatInstanceRef.current, id, draft)
     if (!id) return
     setDraftSessionIds(current => {
       const hasDraft = Boolean(draft)
@@ -3150,7 +3161,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const clearSessionDrafts = useCallback((sessionIds) => {
     const values = Array.isArray(sessionIds) ? sessionIds : [sessionIds]
     const ids = values.map(value => String(value || '').trim()).filter(Boolean)
-    clearChatSessionDrafts(ids)
+    clearChatSessionDrafts(chatInstanceRef.current, ids)
     if (!ids.length) return
     setDraftSessionIds(current => {
       const next = new Set(current)
@@ -3164,6 +3175,64 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setPrompt(next)
     persistSessionDraft(sessionId, next)
   }, [persistSessionDraft])
+
+  const beginSessionAction = id => {
+    const value = String(id || '').trim()
+    if (!value || sessionActionRef.current) return false
+    sessionActionRef.current = value
+    setSessionActionID(value)
+    return true
+  }
+  const endSessionAction = id => {
+    if (!id || sessionActionRef.current !== id) return
+    sessionActionRef.current = ''
+    setSessionActionID('')
+  }
+  const clearSessionView = ({ noticeText = '' } = {}) => {
+    ++openSeqRef.current
+    activeSidRef.current = ''
+    streamAbortRef.current?.abort?.()
+    streamAbortRef.current = null
+    scrollModeRef.current = 'auto'
+    setSid('')
+    setMessages([])
+    messagesRef.current = []
+    setRawHistory([])
+    setHistoryInfo([])
+    setWorkingState(null)
+    setPlanState(null)
+    setContextOpen(false)
+    setWorldlineOpen(false)
+    setWorldlineState(null)
+    setWorldlineLoading(false)
+    setWorldlineSwitchingId('')
+    setLoopState(null)
+    setLoopObjective('')
+    setLoopObjectiveError(false)
+    setLoopControllerLlmNo(null)
+    setLoopMaxRounds(10)
+    setLoopConfigOpen(false)
+    setExtraSysPrompts([])
+    setExtraSysPromptPresetID('')
+    setExtraPromptSelection('')
+    setExtraPromptTargetSid('')
+    setExtraPromptOpen(false)
+    setAttachments([])
+    setQueuedMessages([])
+    setQueueEditingId('')
+    setQueueDraft('')
+    setGuidingQueueId('')
+    setSubagents([])
+    setBusy(false)
+    setStreamingSid('')
+    setSessionPrompt('', '')
+    setEditing('')
+    setDraftTitle('')
+    setAutoFollow(true)
+    setShowFollow(false)
+    setArchiveUndo(null)
+    if (noticeText) setNotice(noticeText)
+  }
   // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
   const COMPOSER_MAX_H = 160
 
@@ -3756,6 +3825,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const nextExtraSysPrompts = Array.isArray(st.extra_sys_prompts) ? st.extra_sys_prompts.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : []
     const nextExtraSysPromptPresetID = String(st.extra_sys_prompt_preset_id || '').trim()
     setLlms(nextLlms)
+    setChatBackend(st.backend && typeof st.backend === 'object' ? st.backend : null)
     setLlmNo(resolvedNo)
     setReasoningEffort(nextReasoningEffort)
     setExtraSysPrompts(nextExtraSysPrompts)
@@ -3789,7 +3859,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
     setSid(id)
-    setSessionPrompt(loadChatSessionDraft(id), id)
+    setSessionPrompt(loadChatSessionDraft(chatInstanceRef.current, id), id)
     setBusy(false)
     setStreamingSid('')
     setAutoFollow(true)
@@ -3866,7 +3936,18 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSidebarSearch('')
     setSessionSearchError('')
     setSessionSearchOpen(true)
+    if (isNarrowChatViewport()) setCollapsed(true)
   }
+
+  useEffect(() => {
+    const onShortcut = event => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'k') return
+      event.preventDefault()
+      openSessionSearch()
+    }
+    window.addEventListener('keydown', onShortcut)
+    return () => window.removeEventListener('keydown', onShortcut)
+  }, [])
 
   const closeSessionSearch = () => {
     setSessionSearchOpen(false)
@@ -3874,13 +3955,16 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessionSearchScope('all')
     setSessionSearchResults([])
     setSessionSearchError('')
-    window.requestAnimationFrame?.(() => sessionSearchTriggerRef.current?.focus())
+    window.requestAnimationFrame?.(() => {
+      const target = isNarrowChatViewport() ? document.querySelector('.oa-sidebar-toggle') : sessionSearchTriggerRef.current
+      target?.focus?.()
+    })
   }
 
   const submitSessionSearch = () => {
     const query = sessionSearchQuery.trim()
     if (!query) return
-    setSessionSearchHistory(saveSessionSearchHistory({ query, scope: sessionSearchScope }))
+    setSessionSearchHistory(saveSessionSearchHistory(chatInstanceRef.current, { query, scope: sessionSearchScope }))
   }
 
   const selectSessionSearchHistory = entry => {
@@ -3889,7 +3973,27 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessionSearchError('')
   }
 
-  const selectSessionSearchResult = id => {
+  const selectSessionSearchResult = async id => {
+    const result = sessionSearchResults.find(session => session.id === id)
+    if (result?.archived) {
+      if (!beginSessionAction(id)) {
+        setNotice(ct('会话操作进行中，请稍候', 'A session action is already in progress'))
+        return
+      }
+      setErr('')
+      setNotice('')
+      try {
+        await chatApi(`/api/chat/archive/${id}`, { method:'PATCH', body:JSON.stringify({ archived:false }) })
+        await loadSessions(id)
+        closeSessionSearch()
+        await openSession(id)
+      } catch (error) {
+        setErr(error?.message || String(error))
+      } finally {
+        endSessionAction(id)
+      }
+      return
+    }
     closeSessionSearch()
     selectSidebarSession(id)
   }
@@ -3906,7 +4010,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessionSearchError('')
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams({ q: query, scope: sessionSearchScope, limit: '60' })
-      api(`/api/chat/search?${params.toString()}`)
+      chatApi(`/api/chat/search?${params.toString()}`)
         .then(data => {
           if (requestID !== sessionSearchRequestRef.current) return
           setSessionSearchResults(Array.isArray(data?.results) ? data.results : [])
@@ -3921,7 +4025,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         })
     }, 180)
     return () => window.clearTimeout(timer)
-  }, [sessionSearchOpen, sessionSearchQuery, sessionSearchScope])
+  }, [chatApi, chatInstanceID, sessionSearchOpen, sessionSearchQuery, sessionSearchScope])
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
@@ -4032,43 +4136,76 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
 
+  const toggleProject = projectName => setExpandedProjectNames(current => {
+    const next = new Set(current)
+    if (next.has(projectName)) next.delete(projectName)
+    else next.add(projectName)
+    return next
+  })
+
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
-    await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
-    clearSessionDrafts(id)
-    setSessions(xs => xs.filter(x => x.id !== id))
+    if (!beginSessionAction(id)) {
+      setNotice(ct('会话操作进行中，请稍候', 'A session action is already in progress'))
+      return
+    }
+    setErr('')
+    setNotice('')
     setMenuOpen('')
     setMenuPos(null)
-    if (id === sid) {
-      ++openSeqRef.current
-      activeSidRef.current = ''
-      streamAbortRef.current?.abort?.()
-      streamAbortRef.current = null
-      scrollModeRef.current = 'auto'
-      setSid(''); setMessages([]); setBusy(false); setStreamingSid(''); setAutoFollow(true); setShowFollow(false); setNotice(ct('会话已删除', 'Session deleted'))
+    try {
+      await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
+      clearSessionDrafts(id)
+      const activeDeleted = id === sid
+      setSessions(xs => xs.filter(x => x.id !== id))
+      if (activeDeleted) clearSessionView({ noticeText:ct('会话已删除', 'Session deleted') })
+      else setNotice(ct('会话已删除', 'Session deleted'))
+      await loadSessions(activeDeleted ? '' : sid, { open:activeDeleted })
+    } catch (error) {
+      setErr(error?.message || String(error))
+    } finally {
+      endSessionAction(id)
     }
-    setTimeout(() => loadSessions('', { open:true }).catch(()=>{}), 0)
   }
 
-  const openSessionManager = () => {
-    setSessionManagerView('all')
+  const openSessionManager = async () => {
+    if (batchDeleting) return
+    setSessionManagerView('active')
     setSessionManagerOpen(true)
+    if (isNarrowChatViewport()) setCollapsed(true)
     setSelectedSessionIds([])
     setEditing('')
     setDraftTitle('')
     setMenuOpen('')
     setMenuPos(null)
+    setBatchDeleting(true)
+    setErr('')
+    try {
+      const data = await chatApi('/api/chat/sessions?state=archived')
+      setArchivedSessions(Array.isArray(data?.sessions) ? data.sessions : [])
+    } catch (error) {
+      setErr(error?.message || String(error))
+    } finally {
+      setBatchDeleting(false)
+    }
   }
 
   const closeSessionManager = () => {
     if (batchDeleting) return
     setSessionManagerOpen(false)
     setSelectedSessionIds([])
+    if (isNarrowChatViewport()) window.requestAnimationFrame?.(() => document.querySelector('.oa-sidebar-toggle')?.focus?.())
   }
 
   const toggleSessionSelection = (id) => {
     if (!id || batchDeleting) return
     setSelectedSessionIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id])
+  }
+
+  const changeSessionManagerView = view => {
+    if (batchDeleting || view === sessionManagerView) return
+    setSessionManagerView(view)
+    setSelectedSessionIds([])
   }
 
   const toggleAllSessions = () => {
@@ -4082,63 +4219,88 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     })
   }
 
-  const deleteSelectedSessions = async () => {
-    if (batchDeleting) return
-    const available = new Set(sessions.map(session => session.id))
-    const ids = normalizeSessionIds(selectedSessionIds).filter(id => available.has(id))
-    if (!ids.length || !confirmDanger('chat-session-batch-delete', ct(`永久删除已选的 ${ids.length} 个会话？此操作不可恢复。`, `Permanently delete ${ids.length} selected sessions? This cannot be undone.`))) return
+  const refreshManagedSessionLists = async () => {
+    const [activeData, archivedData] = await Promise.all([
+      chatApi('/api/chat/sessions'),
+      chatApi('/api/chat/sessions?state=archived'),
+    ])
+    const active = Array.isArray(activeData?.sessions) ? activeData.sessions : []
+    setSessions(active)
+    setProjects(Array.isArray(activeData?.projects) ? activeData.projects : [])
+    setArchivedSessions(Array.isArray(archivedData?.sessions) ? archivedData.sessions : [])
+    return active
+  }
 
+  const selectedManagedIDs = () => {
+    const available = new Set(managedSessions.map(session => session.id))
+    return normalizeSessionIds(selectedSessionIds).filter(id => available.has(id))
+  }
+
+  const runSelectedSessionAction = async ({ action, actionOne, successText }) => {
+    if (batchDeleting) return
+    const ids = selectedManagedIDs()
+    if (!ids.length) return
+    const currentID = sid
     setBatchDeleting(true)
     setErr('')
     setNotice('')
     try {
-      const result = await deleteChatSessions(ids, id => chatApi(`/api/chat/session/${id}`, { method:'DELETE' }))
-      clearSessionDrafts(result.deletedIds)
-      const deleted = new Set(result.deletedIds)
-      const activeDeleted = deleted.has(sid)
-      if (deleted.size) setSessions(xs => xs.filter(session => !deleted.has(session.id)))
-
-      if (activeDeleted) {
-        ++openSeqRef.current
-        activeSidRef.current = ''
-        streamAbortRef.current?.abort?.()
-        streamAbortRef.current = null
-        scrollModeRef.current = 'auto'
-        setSid('')
-        setMessages([])
-        setRawHistory([])
-        setHistoryInfo([])
-        setWorkingState(null)
-        setPlanState(null)
-        setContextOpen(false)
-        setBusy(false)
-        setStreamingSid('')
-        setAutoFollow(true)
-        setShowFollow(false)
-      }
-
+      const result = await runChatSessionBatch(ids, actionOne)
+      if (action === 'delete') clearSessionDrafts(result.succeededIds)
+      const currentRemoved = (action === 'archive' || action === 'delete') && result.succeededIds.includes(currentID)
+      if (currentRemoved) clearSessionView()
+      let active = sessions.filter(session => !result.succeededIds.includes(session.id) || (action !== 'archive' && action !== 'delete'))
       let refreshError = ''
-      if (deleted.size) {
-        try {
-          await loadSessions(activeDeleted ? '' : sid, { open: activeDeleted })
-        } catch (e) {
-          refreshError = e?.message || String(e)
-        }
+      try { active = await refreshManagedSessionLists() }
+      catch (error) { refreshError = error?.message || String(error) }
+      if (currentRemoved) {
+        const nextID = nextActiveSession(active, currentID)
+        if (nextID) await openSession(nextID)
       }
-
-      if (result.failedIds.length) {
-        setSelectedSessionIds(result.failedIds)
-        const detail = result.failures[0]?.error?.message || ''
-        setErr(ct(`${result.failedIds.length} 个会话删除失败${detail ? `：${detail}` : ''}${refreshError ? `；刷新失败：${refreshError}` : ''}`, `${result.failedIds.length} sessions could not be deleted${detail ? `: ${detail}` : ''}${refreshError ? `; refresh failed: ${refreshError}` : ''}`))
+      setSelectedSessionIds(result.failedIds)
+      if (result.failedIds.length || refreshError) {
+        const detail = result.failures[0]?.error?.message || refreshError
+        setErr(ct(`${result.failedIds.length || ids.length} 个会话处理失败${detail ? `：${detail}` : ''}`, `${result.failedIds.length || ids.length} session action(s) failed${detail ? `: ${detail}` : ''}`))
       } else {
-        setSelectedSessionIds([])
-        setSessionManagerOpen(false)
-        if (refreshError) setErr(ct(`已删除 ${result.deletedIds.length} 个会话，但刷新列表失败：${refreshError}`, `${result.deletedIds.length} sessions deleted, but list refresh failed: ${refreshError}`))
-        else setNotice(ct(`已删除 ${result.deletedIds.length} 个会话`, `${result.deletedIds.length} sessions deleted`))
+        setNotice(successText(result.succeededIds.length))
       }
+    } catch (error) {
+      setErr(error?.message || String(error))
     } finally {
       setBatchDeleting(false)
     }
+  }
+
+  const archiveSelectedSessions = () => runSelectedSessionAction({
+    action:'archive',
+    actionOne:id => {
+      const session = sessions.find(item => item.id === id)
+      if (session?.running) throw new Error(ct('运行中的会话不可归档', 'Running sessions cannot be archived'))
+      return chatApi(`/api/chat/archive/${id}`, { method:'PATCH', body:JSON.stringify({ archived:true }) })
+    },
+    successText:count => ct(`已归档 ${count} 个会话，可在管理中恢复`, `Archived ${count} session(s); restore them from Manage`),
+  })
+
+  const restoreSelectedSessions = () => runSelectedSessionAction({
+    action:'restore',
+    actionOne:id => chatApi(`/api/chat/archive/${id}`, { method:'PATCH', body:JSON.stringify({ archived:false }) }),
+    successText:count => ct(`已恢复 ${count} 个会话`, `Restored ${count} session(s)`),
+  })
+
+  const leaveHubSelectedSessions = () => runSelectedSessionAction({
+    action:'hub',
+    actionOne:id => chatApi(`/api/chat/hub/${id}`, { method:'PATCH', body:JSON.stringify({ enabled:false }) }),
+    successText:count => ct(`${count} 个会话已退出 Hub`, `${count} session(s) left Hub`),
+  })
+
+  const deleteSelectedSessions = async () => {
+    const ids = selectedManagedIDs()
+    if (!ids.length || !confirmDanger('chat-session-batch-delete', ct(`永久删除已选的 ${ids.length} 个会话？此操作不可恢复。`, `Permanently delete ${ids.length} selected sessions? This cannot be undone.`))) return
+    return runSelectedSessionAction({
+      action:'delete',
+      actionOne:id => chatApi(`/api/chat/session/${id}`, { method:'DELETE' }),
+      successText:count => ct(`已删除 ${count} 个会话`, `Deleted ${count} session(s)`),
+    })
   }
 
   const closeSessionMenu = ({ restoreFocus = false } = {}) => {
@@ -4146,6 +4308,25 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setMenuPos(null)
     if (restoreFocus) menuTriggerRef.current?.focus()
     menuTriggerRef.current = null
+  }
+
+  const openSessionMenu = (session, event) => {
+    event.stopPropagation()
+    if (menuOpen === session.id) {
+      closeSessionMenu()
+      return
+    }
+    const rect = event.currentTarget.getBoundingClientRect()
+    const menuWidth = 190
+    const menuHeight = 276
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || menuWidth
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || menuHeight
+    menuTriggerRef.current = event.currentTarget
+    setMenuPos({
+      top: Math.max(8, Math.min(rect.top, viewportHeight - menuHeight - 8)),
+      left: Math.max(8, Math.min(rect.right - menuWidth, viewportWidth - menuWidth - 8)),
+    })
+    setMenuOpen(session.id)
   }
 
   useEffect(() => {
@@ -4178,17 +4359,28 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }, [menuOpen])
 
-  const startRename = (s) => { setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null) }
+  const startRename = (s) => {
+    if (!s?.id || sessionActionRef.current) return
+    setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null)
+  }
   const saveRename = async (id) => {
     const title = draftTitle.trim()
-    if (!title) return
-    const d = await chatApi(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
-    setSessions(xs => xs.map(x => x.id === id ? { ...x, title:d.title, updated_at:d.updated_at } : x))
-    setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
+    if (!title || !beginSessionAction(id)) return
+    setErr('')
+    setNotice('')
+    try {
+      const d = await chatApi(`/api/chat/session/${id}`, { method:'PATCH', body: JSON.stringify({ title }) })
+      setSessions(xs => xs.map(x => x.id === id ? { ...x, title:d.title, updated_at:d.updated_at } : x))
+      setEditing(''); setDraftTitle(''); setNotice(ct('会话已更名', 'Session renamed'))
+    } catch (error) {
+      setErr(error?.message || String(error))
+    } finally {
+      endSessionAction(id)
+    }
   }
 
   const setSessionPinned = async (session) => {
-    if (!session?.id) return
+    if (!session?.id || !beginSessionAction(session.id)) return
     const pinned = !session.pinned
     setMenuOpen(''); setMenuPos(null); setErr('')
     setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned } : x))
@@ -4199,22 +4391,96 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     } catch (e) {
       setSessions(xs => xs.map(x => x.id === session.id ? { ...x, pinned:!pinned } : x))
       setErr(e.message || String(e))
+    } finally {
+      endSessionAction(session.id)
     }
   }
 
   const setSessionHubEnabled = async (session) => {
-    if (!session?.id || hubUpdatingSessionId) return
+    if (!session?.id || hubUpdatingSessionId || !beginSessionAction(session.id)) return
     const enabled = !session.hub_enabled
     setHubUpdatingSessionId(session.id)
     setMenuOpen(''); setMenuPos(null); setErr('')
+    setSessions(xs => xs.map(x => x.id === session.id ? { ...x, hub_enabled:enabled } : x))
     try {
       const d = await chatApi(`/api/chat/hub/${session.id}`, { method:'PATCH', body:JSON.stringify({ enabled }) })
       setSessions(xs => xs.map(x => x.id === session.id ? { ...x, hub_enabled:Boolean(d.hub_enabled) } : x))
       setNotice(d.hub_enabled ? ct('会话已入驻 Hub', 'Session joined Hub') : ct('会话已退出 Hub', 'Session left Hub'))
     } catch (e) {
+      setSessions(xs => xs.map(x => x.id === session.id ? { ...x, hub_enabled:!enabled } : x))
       setErr(e.message || String(e))
     } finally {
       setHubUpdatingSessionId('')
+      endSessionAction(session.id)
+    }
+  }
+
+  const forkSession = async session => {
+    const id = session?.id
+    if (!id || !beginSessionAction(id)) return
+    setMenuOpen(''); setMenuPos(null); setErr(''); setNotice('')
+    try {
+      const source = id === sid ? messagesRef.current : (await chatApi(`/api/chat/session/${id}`)).messages
+      const messageID = lastUserMessageID(source)
+      if (!messageID) {
+        setNotice(ct('当前会话没有可用于分支的用户消息', 'This session has no user message to fork from'))
+        return
+      }
+      const fork = await chatApi(`/api/chat/fork/${id}`, { method:'POST', body:JSON.stringify({ message_id:messageID }) })
+      if (!fork?.id) throw new Error(ct('分支会话创建失败', 'Fork session was not created'))
+      await loadSessions(fork.id, { open:true })
+      setNotice(ct('已创建会话分支', 'Session fork created'))
+    } catch (error) {
+      setErr(error?.message || String(error))
+    } finally {
+      endSessionAction(id)
+    }
+  }
+
+  const archiveSession = async id => {
+    const session = sessions.find(item => item.id === id)
+    if (!id || !session) return
+    if (session.running) {
+      setNotice(ct('会话运行中，暂不可归档', 'Running sessions cannot be archived'))
+      return
+    }
+    if (!beginSessionAction(id)) {
+      setNotice(ct('会话操作进行中，请稍候', 'A session action is already in progress'))
+      return
+    }
+    const previousSessions = sessions
+    const nextID = nextActiveSession(previousSessions, id)
+    setErr(''); setNotice(''); setMenuOpen(''); setMenuPos(null)
+    setSessions(xs => xs.filter(item => item.id !== id))
+    try {
+      await chatApi(`/api/chat/archive/${id}`, { method:'PATCH', body:JSON.stringify({ archived:true }) })
+      if (id === sid) {
+        clearSessionView()
+        if (nextID) await openSession(nextID)
+      }
+      setArchiveUndo({ id, session })
+      setNotice(ct('已归档，可在管理中恢复', 'Archived; restore it from Manage'))
+    } catch (error) {
+      setSessions(previousSessions)
+      setErr(error?.message || String(error))
+    } finally {
+      endSessionAction(id)
+    }
+  }
+
+  const undoArchive = async () => {
+    const pending = archiveUndo
+    if (!pending?.id || !beginSessionAction(pending.id)) return
+    setArchiveUndo(null); setErr(''); setNotice('')
+    try {
+      await chatApi(`/api/chat/archive/${pending.id}`, { method:'PATCH', body:JSON.stringify({ archived:false }) })
+      await loadSessions(pending.id)
+      setNotice(ct('已撤销归档', 'Archive undone'))
+    } catch (error) {
+      setArchiveUndo(pending)
+      setErr(error?.message || String(error))
+    } finally {
+      endSessionAction(pending.id)
     }
   }
 
@@ -4945,8 +5211,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const previousOverflow = document.body.style.overflow
     const onKey = (e) => {
       if (e.key !== 'Escape' || batchDeleting) return
-      setSessionManagerOpen(false)
-      setSelectedSessionIds([])
+      closeSessionManager()
     }
     document.body.style.overflow = 'hidden'
     document.addEventListener('keydown', onKey)
@@ -4972,6 +5237,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setChatInstanceID(nextID)
     setSid('')
     setSessions([])
+    setArchivedSessions([])
     setProjects([])
     setMessages([])
     messagesRef.current = []
@@ -4985,6 +5251,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setWorldlineOpen(false)
     setWorldlineState(null)
     setWorldlineLoading(false)
+    sessionSearchRequestRef.current += 1
+    setSessionSearchResults([])
+    setSessionSearchError('')
     setQueuedMessages([])
     setAttachments([])
     setErr('')
@@ -5165,14 +5434,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     older: ct('\u66f4\u65e9', 'Older'),
   }
   const managedHubSessions = useMemo(() => hubSessions(sessions), [sessions])
-  const managedSessions = sessionManagerView === 'hub' ? managedHubSessions : sessions
+  const managedSessions = sessionManagerView === 'archived' ? archivedSessions : sessionManagerView === 'hub' ? managedHubSessions : sessions
   const filteredProjectGroups = useMemo(() => {
     if (!sidebarSearch.trim()) return projectSessionGroups
     const q = sidebarSearch.trim().toLowerCase()
     return projectSessionGroups.map(g => ({ ...g, sessions: g.sessions.filter(s => (s.title || '').toLowerCase().includes(q)) })).filter(g => g.name.toLowerCase().includes(q) || g.sessions.length > 0)
   }, [projectSessionGroups, sidebarSearch])
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds])
-  const selectedSessionCount = sessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
+  const selectedSessionCount = managedSessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
   const visibleSelectedSessionCount = managedSessions.reduce((count, session) => count + (selectedSessionIdSet.has(session.id) ? 1 : 0), 0)
   const allSessionsSelected = managedSessions.length > 0 && visibleSelectedSessionCount === managedSessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
@@ -5231,151 +5500,65 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const contextHelpText = ct('查看本次对话实际发给模型的上下文快照，包括原始历史、工作状态等；这不是长期记忆。', 'View the context snapshot actually sent to the model, including raw history and working state. This is not long-term memory.')
   const worldlineHelpText = ct('查看当前对话的分支历史。选择可切换的节点后，会恢复该节点对应的对话和工作区状态；对话运行中不能切换。', 'View conversation branches. Switching to a mapped node restores its conversation and workspace state; switching is disabled while a reply is running.')
 
-  const renderSidebarSession = session => {
-    const sidebarLoop = loopSidebarView(session.loop)
-    return <div key={session.id} className={`oa-session-row ${session.id === sid ? 'active' : ''} ${session.running ? 'is-running' : ''} ${session.pinned ? 'is-pinned' : ''}`}>
-      {editing === session.id ? <div className="oa-rename">
-        <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') saveRename(session.id); if(event.key==='Escape') setEditing('') }}/>
-        <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
-      </div> : <button className="oa-session" onClick={()=>selectSidebarSession(session.id)} title={shortTitle(session)}>
-        <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}{session.pinned && <Pin className="oa-session-pin" size={12} aria-label={ct('已置顶', 'Pinned')}/>}<b>{shortTitle(session)}</b>{sidebarLoop && <em className="oa-session-loop-badge" title={ct(`Loop 进行中 · 第 ${sidebarLoop.round}/${sidebarLoop.maxRounds} 轮`, `Loop active · round ${sidebarLoop.round}/${sidebarLoop.maxRounds}`)}>Loop {sidebarLoop.round}/{sidebarLoop.maxRounds}</em>}{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
-        <small><Clock3 size={11}/>{fmtTime(session.updated_at) || ct('刚刚', 'Just now')} · {ct(`${session.count || 0} 条`, `${session.count || 0} messages`)}{session.running && <em className="oa-session-running-label">{ct('运行中', 'Running')}</em>}</small>
-      </button>}
-      {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={event => {
-        event.stopPropagation()
-        if (menuOpen === session.id) { closeSessionMenu(); return }
-        const rect = event.currentTarget.getBoundingClientRect()
-        menuTriggerRef.current = event.currentTarget
-        setMenuPos({ top: Math.max(8, rect.top - 78), left: Math.max(8, rect.right - 136) })
-        setMenuOpen(session.id)
-      }} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16} /></button>}
-    </div>
-  }
-
   return <ChatFileScopeContext.Provider value={{ workspace: current?.workspace || '', gaRoot: cfg?.ga_root || cfg?.GARoot || '' }}>
     <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
-    <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <label className="oa-sidebar-instance" title={ct('切换实例会更新当前侧栏中的会话', 'Switching instances updates the sessions in this sidebar')}>
-        <span>{ct('GA 实例', 'GA instance')}</span>
-        <select
-          aria-label={ct('选择 GA 实例', 'Select GA instance')}
-          value={chatInstanceID}
-          onChange={event=>switchChatInstance(event.target.value)}
-          disabled={chatInstancesLoading || !chatInstances.length}
-        >
-          {chatInstancesLoading && <option value={chatInstanceID}>{ct('加载实例…', 'Loading instances…')}</option>}
-          {!chatInstancesLoading && !chatInstances.length && <option value="">{ct('默认实例', 'Default instance')}</option>}
-          {chatInstances.map(instance => <option key={instance.id} value={instance.id} disabled={instance.initializing}>{instance.name}{instance.initializing ? ct('（初始化中）', ' (initializing)') : ''}</option>)}
-        </select>
-      </label>
-      <div className="oa-side-head">
-        <div className="oa-sidebar-search" onClick={openSessionSearch}>
-          <Search size={16}/>
-          <input
-            type="text"
-            placeholder={ct('搜索会话...', 'Search sessions...')}
-            value=""
-            readOnly
-            ref={sessionSearchTriggerRef}
-            onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openSessionSearch() }}
-            aria-label={ct('搜索会话', 'Search sessions')}
-            aria-haspopup="dialog"
-          />
-        </div>
-        <button
-          className="oa-new-chat"
-          onClick={newSession}
-          disabled={batchDeleting}
-          title={ct('新对话', 'New chat')}
-          aria-label={ct('新对话', 'New chat')}
-        ><MessageSquarePlus size={16}/></button>
-        <button className="oa-icon-btn" onClick={()=>setCollapsed(true)} title={ct('折叠', 'Collapse')}><Menu size={16}/></button>
-      </div>
-      <div className="oa-session-manager-head">
-        <span className="oa-session-manager-title">{ct('历史会话', 'History')} <small>{sessions.length}</small></span>
-        <button className="oa-session-manage-open" type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理', 'Manage')}</button>
-      </div>
-      {sidebarTab === 'history' ? <>
-        <div className="oa-session-list">
-          {recentSessionGroups.map(group => <section className={`oa-recent-group oa-recent-group-${group.key}`} key={group.key}>
-            <div className="oa-recent-group-head">{group.key === 'pinned' && <Pin size={12}/>}<span>{recentGroupLabels[group.key]}</span><small>{group.sessions.length}</small></div>
-            <div className="oa-recent-group-body">{group.sessions.map(renderSidebarSession)}</div>
-          </section>)}
-          {!filteredSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
-        </div>
-      </> : <>
-        <div className="oa-session-manager-head">
-          <span className="oa-session-manager-title">{ct('项目', 'Projects')}</span>
-          <button className="oa-session-manage-open" type="button" onClick={openProjectDraft} disabled={projectCreating || projectDraftOpen}>
-            <FolderPlus size={13}/>{ct('新建项目', 'New project')}
-          </button>
-        </div>
-        {projectDraftOpen && <form className="oa-project-draft" onSubmit={e=>{ e.preventDefault(); createProject() }}>
-          <input
-            autoFocus
-            type="text"
-            value={projectDraftName}
-            onChange={e=>setProjectDraftName(e.target.value)}
-            onKeyDown={e=>{ if (e.key === 'Escape') { e.preventDefault(); closeProjectDraft() } }}
-            placeholder={ct('项目名，例如 alpha', 'Project name, e.g. alpha')}
-            aria-label={ct('新项目名称', 'New project name')}
-            disabled={projectCreating}
-          />
-          <button className="oa-project-draft-save" type="submit" disabled={projectCreating || !projectDraftName.trim()}>{projectCreating ? ct('创建中…', 'Creating…') : ct('创建', 'Create')}</button>
-          <button type="button" onClick={closeProjectDraft} disabled={projectCreating}>{ct('取消', 'Cancel')}</button>
-        </form>}
-        <div className="oa-session-list oa-project-list">
-        {filteredProjectGroups.map((group, index) => {
-          const expanded = expandedProjectNames.has(group.name)
-          const bodyId = `oa-project-sessions-${index}`
-          const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
-          const pinLabel = group.pinned
-            ? ct(`取消置顶 ${group.name}`, `Unpin ${group.name}`)
-            : ct(`置顶 ${group.name}`, `Pin ${group.name}`)
-          return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'} ${group.pinned ? 'is-pinned' : ''}`} key={group.name}>
-            <div className="oa-project-head">
-              <button className="oa-project-toggle" type="button" onClick={()=>setExpandedProjectNames(current => {
-                const next = new Set(current)
-                if (next.has(group.name)) next.delete(group.name)
-                else next.add(group.name)
-                return next
-              })} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
-                <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
-              </button>
-              <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={()=>toggleProjectPinned(group.name, !group.pinned)} aria-pressed={group.pinned} title={pinLabel} aria-label={pinLabel}><Pin size={14}/></button>
-              <button className="oa-project-add" type="button" onClick={()=>newProjectSession(group.name)} disabled={batchDeleting} title={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)} aria-label={ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)}><Plus size={15}/></button>
-            </div>
-            <div className="oa-project-body" id={bodyId} hidden={!expanded}>
-              {group.sessions.map(renderSidebarSession)}
-              {!group.sessions.length && <div className="oa-project-empty">{ct('暂无对话，点击 + 快速开始', 'No chats yet. Click + to start.')}</div>}
-            </div>
-          </section>
-        })}
-        {!filteredProjectGroups.length && <div className="oa-empty-list oa-projects-empty">
-          <FolderOpen size={20}/>
-          <span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span>
-          {!sidebarSearch && !projectDraftOpen && <button className="oa-projects-empty-cta" type="button" onClick={openProjectDraft} disabled={projectCreating}>
-            <FolderPlus size={14}/>{ct('新建项目', 'New project')}
-          </button>}
-        </div>}
-        </div>
-      </>}
-      {!sessionManagerOpen && menuOpen && menuPos && (() => {
-        const s = sessions.find(x => x.id === menuOpen)
-        if (!s) return null
-        return <div ref={menuRef} className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
-          <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
-          <button onClick={()=>setSessionPinned(s)}><Pin size={14}/>{s.pinned ? ct('\u53d6\u6d88\u7f6e\u9876', 'Unpin') : ct('\u7f6e\u9876', 'Pin')}</button>
-          <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>
-          <button className="danger" onClick={()=>deleteSession(s.id)}><Trash2 size={14}/>{ct('删除', 'Delete')}</button>
-        </div>
-      })()}
-      <div className="oa-sidebar-foot">
-        <button className="oa-admin-back" type="button" onClick={()=>window.location.href='/'}><ChevronLeft size={15}/>{ct('返回管理台', 'Back to admin')}</button>
-        <button onClick={()=>window.location.href='/admin'}><Settings size={15}/>{ct('设置', 'Settings')}</button>
-      </div>
-    </aside>
-    {!collapsed && <button className="oa-sidebar-backdrop" type="button" aria-label="关闭侧栏" onClick={()=>setCollapsed(true)}/>}
+    <ChatSidebar
+      collapsed={collapsed}
+      ct={ct}
+      chatInstanceID={chatInstanceID}
+      chatInstances={chatInstances}
+      chatInstancesLoading={chatInstancesLoading}
+      onSwitchChatInstance={switchChatInstance}
+      onCollapse={() => {
+        setCollapsed(true)
+        window.setTimeout(() => sidebarToggleRef.current?.focus(), 0)
+      }}
+      onNewSession={newSession}
+      onOpenSearch={openSessionSearch}
+      searchTriggerRef={sessionSearchTriggerRef}
+      sidebarTab={sidebarTab}
+      onSidebarTabChange={setSidebarTab}
+      projectDraftOpen={projectDraftOpen}
+      projectDraftName={projectDraftName}
+      projectCreating={projectCreating}
+      onOpenProjectDraft={openProjectDraft}
+      onCloseProjectDraft={closeProjectDraft}
+      onProjectDraftNameChange={setProjectDraftName}
+      onCreateProject={createProject}
+      sessions={sessions}
+      projectGroups={filteredProjectGroups}
+      recentGroups={recentSessionGroups}
+      recentGroupLabels={recentGroupLabels}
+      sidebarSearch={sidebarSearch}
+      expandedProjectNames={expandedProjectNames}
+      activeSessionID={sid}
+      editingSessionID={editing}
+      draftTitle={draftTitle}
+      draftSessionIds={draftSessionIds}
+      menuOpen={menuOpen}
+      menuPos={menuPos}
+      menuSession={sessions.find(session => session.id === menuOpen)}
+      menuRef={menuRef}
+      sessionManagerOpen={sessionManagerOpen}
+      batchDeleting={batchDeleting}
+      onOpenSessionManager={openSessionManager}
+      onToggleProject={toggleProject}
+      onToggleProjectPinned={toggleProjectPinned}
+      onNewProjectSession={newProjectSession}
+      onSelectSession={selectSidebarSession}
+      onDraftTitleChange={setDraftTitle}
+      onSaveRename={saveRename}
+      onCancelRename={() => setEditing('')}
+      onOpenMenu={openSessionMenu}
+      onStartRename={startRename}
+      onSetPinned={setSessionPinned}
+      onForkSession={forkSession}
+      onArchiveSession={archiveSession}
+      onSetHubEnabled={setSessionHubEnabled}
+      onDeleteSession={deleteSession}
+      sessionActionID={sessionActionID}
+      formatTime={fmtTime}
+    />
 
     <main className={`oa-main ${loopRailOpen ? 'has-loop' : 'has-launchers'}`}>
       <header className="oa-topbar">
@@ -5386,7 +5569,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             title={ct('返回管理台', 'Back to admin')}
             aria-label={ct('返回管理台', 'Back to admin')}
           ><ChevronLeft size={18}/><span>{ct('管理台', 'Admin')}</span></button>
-          <button className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title={ct('展开侧栏', 'Expand sidebar')} aria-label={ct('展开侧栏', 'Expand sidebar')}><Menu size={18}/></button>
+          <button ref={sidebarToggleRef} className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title={ct('展开侧栏', 'Expand sidebar')} aria-label={ct('展开侧栏', 'Expand sidebar')} aria-controls="oa-chat-sidebar" aria-expanded={!collapsed}><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
         <div className="oa-title"><b title={current ? shortTitle(current) : '新对话'}>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
@@ -5411,6 +5594,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <NotificationCenter lang={chatLanguage()} />
         </div>
       </header>
+
+      {(err || notice) && <div className={`oa-chat-feedback ${err ? 'is-error' : 'is-notice'}`} role={err ? 'alert' : 'status'}>
+        <span>{err || notice}</span>
+        {archiveUndo && !err && <button type="button" onClick={undoArchive} disabled={sessionActionID === archiveUndo.id}>{ct('撤销归档', 'Undo archive')}</button>}
+      </div>}
 
       {mobileToolsOpen && createPortal(<div className="oa-mobile-tools-layer">
         <div className="oa-mobile-tools-backdrop" aria-hidden="true" onClick={()=>setMobileToolsOpen(false)} />
@@ -5708,6 +5896,25 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
               </div>
             })}
           </div>}
+          {modelDiagnosis && <div className={`oa-model-alert ${modelDiagnosis.fixable ? 'is-fixable' : ''}`} role="status" aria-live="polite">
+            <div className="oa-model-alert-copy">
+              <b><CircleHelp size={14}/>{modelDiagnosisTitle(modelDiagnosis, ct)}</b>
+              <span>{modelDiagnosisAdvice(modelDiagnosis, ct)}</span>
+            </div>
+            <div className="oa-model-alert-actions">
+              {modelDiagnosis.fixable && <button className="is-primary" type="button" onClick={installChatPythonDeps} disabled={depsRepairing}>
+                <Download size={14}/>{depsRepairing ? ct('安装中…', 'Installing…') : ct('一键安装依赖', 'Install dependencies')}
+              </button>}
+              <button type="button" onClick={()=>loadChatState(activeSidRef.current || '').catch(e=>setErr(e.message || String(e)))} disabled={depsRepairing}>
+                <RotateCw size={14}/>{ct('重新检测', 'Re-check')}
+              </button>
+              {modelDiagnosis.install_command && <CopyButton text={modelDiagnosis.install_command} compact/>}
+            </div>
+            {modelDiagnosis.detail && <details className="oa-model-alert-detail">
+              <summary>{ct('查看 Python 输出', 'Show Python output')}</summary>
+              <pre>{modelDiagnosis.detail}</pre>
+            </details>}
+          </div>}
           {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>\u5c06\u4ee5\u89c4\u5212\u6a21\u5f0f\u6267\u884c\uff0c\u5e76\u5728\u5b8c\u6210\u540e\u5c55\u793a run \u76ee\u5f55\u4e0e\u65e5\u5fd7\u6458\u8981</b></div>}
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={isMobile ? '发送消息或添加文件…' : '\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
@@ -5745,24 +5952,25 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       onScopeChange={value => setSessionSearchScope(value)}
       onSubmit={submitSessionSearch}
       onSelectHistory={selectSessionSearchHistory}
-      onClearHistory={() => setSessionSearchHistory(clearSessionSearchHistory())}
+      onClearHistory={() => setSessionSearchHistory(clearSessionSearchHistory(chatInstanceRef.current))}
       onSelectSession={selectSessionSearchResult}
       onClose={closeSessionSearch}
     />
     {worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
-        <header className="oa-session-manager-dialog-head">
-          <div className="oa-session-manager-dialog-heading">
-            <h2 id="oa-session-manager-dialog-title">管理历史会话</h2>
-            <p>批量删除不再需要的会话</p>
-          </div>
+         <header className="oa-session-manager-dialog-head">
+           <div className="oa-session-manager-dialog-heading">
+             <h2 id="oa-session-manager-dialog-title">{ct('管理历史会话', 'Manage sessions')}</h2>
+             <p>{ct('批量归档、恢复、管理 Hub 或永久删除会话', 'Archive, restore, manage Hub, or permanently delete sessions')}</p>
+           </div>
           <button className="oa-icon-btn oa-session-manager-dialog-close" type="button" onClick={closeSessionManager} disabled={batchDeleting} aria-label={ct('关闭会话管理', 'Close session manager')} autoFocus><X size={17}/></button>
         </header>
-        <div className="oa-session-manager-dialog-tools">
-          <div className="oa-session-manager-filter" role="group" aria-label={ct('会话筛选', 'Session filter')}>
-            <button type="button" className={sessionManagerView === 'all' ? 'is-active' : ''} onClick={()=>setSessionManagerView('all')} disabled={batchDeleting}>{ct('全部', 'All')}<small>{sessions.length}</small></button>
-            <button type="button" className={sessionManagerView === 'hub' ? 'is-active' : ''} onClick={()=>setSessionManagerView('hub')} disabled={batchDeleting}>Hub<small>{managedHubSessions.length}</small></button>
+         <div className="oa-session-manager-dialog-tools">
+           <div className="oa-session-manager-filter" role="group" aria-label={ct('会话筛选', 'Session filter')}>
+             <button type="button" className={sessionManagerView === 'active' ? 'is-active' : ''} onClick={()=>changeSessionManagerView('active')} disabled={batchDeleting}>{ct('活动', 'Active')}<small>{sessions.length}</small></button>
+             <button type="button" className={sessionManagerView === 'archived' ? 'is-active' : ''} onClick={()=>changeSessionManagerView('archived')} disabled={batchDeleting}>{ct('已归档', 'Archived')}<small>{archivedSessions.length}</small></button>
+             <button type="button" className={sessionManagerView === 'hub' ? 'is-active' : ''} onClick={()=>changeSessionManagerView('hub')} disabled={batchDeleting}>Hub<small>{managedHubSessions.length}</small></button>
           </div>
           <button className="oa-session-select-all" type="button" role="checkbox" aria-checked={allSessionsSelected ? true : (visibleSelectedSessionCount ? 'mixed' : false)} onClick={toggleAllSessions} disabled={!managedSessions.length || batchDeleting}>
             <span className={`oa-session-check ${allSessionsSelected ? 'is-checked' : ''} ${!allSessionsSelected && visibleSelectedSessionCount ? 'is-partial' : ''}`}>{allSessionsSelected && <Check size={12}/>}</span>
@@ -5771,32 +5979,32 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <span className="oa-session-selected-count">{ct('已选', 'Selected')} {visibleSelectedSessionCount} / {managedSessions.length}</span>
         </div>
         <div className="oa-session-manager-dialog-list">
-          {managedSessions.map(s => {
-            const selected = selectedSessionIdSet.has(s.id)
-            const hubUpdating = hubUpdatingSessionId === s.id
-            const sourceLabel = s.title_source === 'generated' ? 'AI' : s.title_source === 'manual' ? '手动' : '旧标题'
-            return <div key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''}`}>
-              <button className="oa-session-manager-dialog-select" type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting || Boolean(hubUpdatingSessionId)}>
-                <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
-                <span className="oa-session-dialog-copy">
-                  <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>当前</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
-                  <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {s.count || 0} 条{s.running && <span>运行中</span>}</small>
-                </span>
-              </button>
-              <button className={`oa-session-dialog-hub-action ${s.hub_enabled ? 'is-leave' : ''}`} type="button" onClick={()=>setSessionHubEnabled(s)} disabled={batchDeleting || Boolean(hubUpdatingSessionId)} aria-label={s.hub_enabled ? ct(`退出 Hub：${shortTitle(s)}`, `Leave Hub: ${shortTitle(s)}`) : ct(`入驻 Hub：${shortTitle(s)}`, `Join Hub: ${shortTitle(s)}`)}>
-                <Bot size={13}/><span>{hubUpdating ? ct('处理中…', 'Updating…') : s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</span>
-              </button>
-            </div>
-          })}
-          {!managedSessions.length && <div className="oa-session-manager-dialog-empty">{sessionManagerView === 'hub' ? ct('暂无会话入驻 Hub', 'No sessions have joined Hub') : ct('暂无历史会话', 'No session history')}</div>}
-        </div>
-        <footer className="oa-session-manager-dialog-foot">
-          <small>{ct('删除后无法恢复', 'Deleted sessions cannot be recovered')}</small>
-          <div>
-            <button className="oa-session-dialog-cancel" type="button" onClick={closeSessionManager} disabled={batchDeleting}>{ct('取消', 'Cancel')}</button>
-            <button className="oa-session-dialog-delete" type="button" onClick={deleteSelectedSessions} disabled={!selectedSessionCount || batchDeleting}>
-              <Trash2 size={15}/><span>{batchDeleting ? ct('正在删除…', 'Deleting…') : ct(`删除所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Delete selected${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span>
-            </button>
+           {managedSessions.map(s => {
+             const selected = selectedSessionIdSet.has(s.id)
+             const sourceLabel = s.title_source === 'generated' ? 'AI' : s.title_source === 'manual' ? ct('手动', 'Manual') : ct('旧标题', 'Legacy')
+             const archived = sessionManagerView === 'archived' || Boolean(s.archived)
+             return <div key={s.id} className={`oa-session-manager-dialog-row ${selected ? 'is-selected' : ''} ${archived ? 'is-archived' : ''}`}>
+               <button className="oa-session-manager-dialog-select" type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
+                 <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
+                 <span className="oa-session-dialog-copy">
+                   <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{archived && <em className="oa-session-archived-badge">{ct('已归档', 'Archived')}</em>}{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>{ct('当前', 'Current')}</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                   <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <span>{ct('运行中', 'Running')}</span>}</small>
+                 </span>
+               </button>
+             </div>
+           })}
+           {!managedSessions.length && <div className="oa-session-manager-dialog-empty">{sessionManagerView === 'hub' ? ct('暂无会话入驻 Hub', 'No sessions have joined Hub') : sessionManagerView === 'archived' ? ct('暂无已归档会话', 'No archived sessions') : ct('暂无活动会话', 'No active sessions')}</div>}
+         </div>
+         <footer className="oa-session-manager-dialog-foot">
+           <small>{ct('删除不可恢复；归档会话可随时恢复', 'Deletion is permanent; archived sessions can be restored')}</small>
+           <div className="oa-session-manager-dialog-actions">
+             <button className="oa-session-dialog-cancel" type="button" onClick={closeSessionManager} disabled={batchDeleting}>{ct('取消', 'Cancel')}</button>
+             {sessionManagerView === 'archived' && <button className="oa-session-dialog-action" type="button" onClick={restoreSelectedSessions} disabled={!selectedSessionCount || batchDeleting}><RotateCw size={15}/><span>{batchDeleting ? ct('处理中…', 'Working…') : ct(`恢复所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Restore selected${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span></button>}
+             {sessionManagerView === 'hub' && <button className="oa-session-dialog-action" type="button" onClick={leaveHubSelectedSessions} disabled={!selectedSessionCount || batchDeleting}><Bot size={15}/><span>{batchDeleting ? ct('处理中…', 'Working…') : ct(`退出 Hub${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Leave Hub${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span></button>}
+             {sessionManagerView !== 'archived' && <button className="oa-session-dialog-action" type="button" onClick={archiveSelectedSessions} disabled={!selectedSessionCount || batchDeleting}><FileArchive size={15}/><span>{batchDeleting ? ct('处理中…', 'Working…') : ct(`归档所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Archive selected${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span></button>}
+             <button className="oa-session-dialog-delete" type="button" onClick={deleteSelectedSessions} disabled={!selectedSessionCount || batchDeleting}>
+               <Trash2 size={15}/><span>{batchDeleting ? ct('处理中…', 'Working…') : ct(`删除所选${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`, `Delete selected${selectedSessionCount ? ` (${selectedSessionCount})` : ''}`)}</span>
+             </button>
           </div>
         </footer>
       </section>
