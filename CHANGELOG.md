@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.78 - 2026-08-15
+
+### Release publication follow-up
+- Keep the Release action target commit tied to the triggering commit while the build job remains pinned to the exact release tag.
+
 ## v1.0.77 - 2026-08-15
 
 ### Release verification follow-up

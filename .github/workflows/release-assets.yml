@@ -240,7 +240,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
-          target_commitish: ${{ needs.prepare.outputs.source_ref }}
+          target_commitish: ${{ github.sha }}
           prerelease: ${{ contains(needs.prepare.outputs.tag, '-alpha') || contains(needs.prepare.outputs.tag, '-beta') || contains(needs.prepare.outputs.tag, '-rc') }}
           files: package/*
           fail_on_unmatched_files: true

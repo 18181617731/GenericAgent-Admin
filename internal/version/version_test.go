@@ -623,7 +623,7 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 go run ./cmd/package-chat-runtime`,
 		`from frontends.worldline import RewindStore, restore_plan, tree_from_store`,
 		`test -f dist/legacy-upgrade/cmd/frontends/worldline.py`,
-		`target_commitish: ${{ needs.prepare.outputs.source_ref }}`,
+		`target_commitish: ${{ github.sha }}`,
 		`needs: [prepare, build]`,
 		`$hostArch = if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64')`,
 		`Skipping execution metadata probe for cross-compiled`,
