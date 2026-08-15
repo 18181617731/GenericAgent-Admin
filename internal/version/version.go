@@ -165,26 +165,40 @@ type CheckResult struct {
 }
 
 type ApplyResult struct {
-	OK         bool   `json:"ok"`
-	Message    string `json:"message"`
-	Script     string `json:"script,omitempty"`
-	Restarting bool   `json:"restarting,omitempty"`
+	OK               bool   `json:"ok"`
+	Message          string `json:"message"`
+	Script           string `json:"script,omitempty"`
+	Restarting       bool   `json:"restarting,omitempty"`
+	CandidateVersion string `json:"candidate_version,omitempty"`
+	ExpectedPort     int    `json:"expected_port,omitempty"`
+	AppRoot          string `json:"app_root,omitempty"`
+}
+
+type ReleaseManifest struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	GOOS    string `json:"goos"`
+	GOARCH  string `json:"goarch"`
+	Asset   string `json:"asset"`
 }
 
 type UpdateStatus struct {
-	ID             string       `json:"id,omitempty"`
-	PID            int          `json:"pid,omitempty"`
-	Running        bool         `json:"running"`
-	Stage          string       `json:"stage"`
-	Progress       int          `json:"progress"`
-	Message        string       `json:"message"`
-	Error          string       `json:"error,omitempty"`
-	Script         string       `json:"script,omitempty"`
-	AppliedVersion string       `json:"applied_version,omitempty"`
-	Check          *CheckResult `json:"check,omitempty"`
-	StartedAt      time.Time    `json:"started_at,omitempty"`
-	UpdatedAt      time.Time    `json:"updated_at,omitempty"`
-	EndedAt        time.Time    `json:"ended_at,omitempty"`
+	ID               string       `json:"id,omitempty"`
+	PID              int          `json:"pid,omitempty"`
+	Running          bool         `json:"running"`
+	Stage            string       `json:"stage"`
+	Progress         int          `json:"progress"`
+	Message          string       `json:"message"`
+	Error            string       `json:"error,omitempty"`
+	Script           string       `json:"script,omitempty"`
+	AppliedVersion   string       `json:"applied_version,omitempty"`
+	CandidateVersion string       `json:"candidate_version,omitempty"`
+	ExpectedPort     int          `json:"expected_port,omitempty"`
+	AppRoot          string       `json:"app_root,omitempty"`
+	Check            *CheckResult `json:"check,omitempty"`
+	StartedAt        time.Time    `json:"started_at,omitempty"`
+	UpdatedAt        time.Time    `json:"updated_at,omitempty"`
+	EndedAt          time.Time    `json:"ended_at,omitempty"`
 }
 
 var (
@@ -419,6 +433,9 @@ func StartApplyLatest() (UpdateStatus, error) {
 func finishApplyStatus(st UpdateStatus, res ApplyResult) UpdateStatus {
 	st.Script = res.Script
 	st.Message = res.Message
+	st.CandidateVersion = res.CandidateVersion
+	st.ExpectedPort = res.ExpectedPort
+	st.AppRoot = res.AppRoot
 	if res.Restarting {
 		st.Running = true
 		st.Stage = "restarting"
@@ -648,6 +665,25 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if err := requireRegularFile(newWorldline, "cmd/frontends/worldline.py"); err != nil {
 		return ApplyResult{}, err
 	}
+	manifest, err := readReleaseManifest(filepath.Join(filepath.Dir(newExe), "release-manifest.json"))
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if err := validateReleaseManifest(manifest, check); err != nil {
+		return ApplyResult{}, err
+	}
+	candidate, err := inspectCandidateExecutable(ctx, newExe)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if err := validateCandidateBuild(candidate, manifest, check); err != nil {
+		return ApplyResult{}, err
+	}
+	launch, err := currentLaunchContext(exe)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	emit("validated", fmt.Sprintf("候选程序校验通过：版本 %s，提交 %s，%s/%s；将通过端口 %d 重启", candidate.Version, candidate.Commit, candidate.GOOS, candidate.GOARCH, launch.Port), 88, &check)
 	worker := filepath.Join(filepath.Dir(exe), "cmd", "chat_worker.py")
 	worldline := filepath.Join(filepath.Dir(exe), "cmd", "frontends", "worldline.py")
 	backup := exe + ".bak"
@@ -659,10 +695,10 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if runtime.GOOS == "windows" {
 		script = filepath.Join(work, "apply-update.ps1")
 		restartScript := filepath.Join(work, "restart-update.ps1")
-		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript(exe, newExe, backup, worker, workerBackup, worldline, worldlineBackup)), 0600); err != nil {
+		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript(exe, newExe, backup, worker, workerBackup, worldline, worldlineBackup, launch, candidate)), 0600); err != nil {
 			return ApplyResult{}, err
 		}
-		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript)
+		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript, launch, candidate)
 	} else {
 		script = filepath.Join(work, "apply-update.sh")
 		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup)
@@ -682,7 +718,133 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, fmt.Errorf("start detached update process: %w", err)
 	}
 	go func() { time.Sleep(500 * time.Millisecond); exitProcess(0) }()
-	return ApplyResult{OK: true, Message: "升级包已就绪，正在重启服务", Script: script, Restarting: true}, nil
+	return ApplyResult{OK: true, Message: "升级包已就绪，正在重启服务", Script: script, Restarting: true, CandidateVersion: candidate.Version, ExpectedPort: launch.Port, AppRoot: launch.AppRoot}, nil
+}
+
+type launchContext struct {
+	AppRoot string
+	Port    int
+}
+
+type localConfigForUpdate struct {
+	Port int `json:"port"`
+}
+
+var inspectCandidateCommand = func(ctx context.Context, path string) *exec.Cmd {
+	return exec.CommandContext(ctx, path, "--version-json")
+}
+
+func inspectCandidateExecutable(ctx context.Context, path string) (BuildInfo, error) {
+	cmd := inspectCandidateCommand(ctx, path)
+	hideChildWindow(cmd)
+	b, err := cmd.Output()
+	if err != nil {
+		return BuildInfo{}, fmt.Errorf("候选程序元数据读取失败（%s）：%w", path, err)
+	}
+	var info BuildInfo
+	if err := json.Unmarshal(bytes.TrimSpace(b), &info); err != nil {
+		return BuildInfo{}, fmt.Errorf("候选程序元数据无效：%w", err)
+	}
+	return info, nil
+}
+
+func readReleaseManifest(path string) (ReleaseManifest, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ReleaseManifest{}, fmt.Errorf("升级包缺少 release-manifest.json：%w", err)
+	}
+	var manifest ReleaseManifest
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("release-manifest.json 无效：%w", err)
+	}
+	if manifest.Version == "" || manifest.Commit == "" || manifest.GOOS == "" || manifest.GOARCH == "" {
+		return ReleaseManifest{}, errors.New("release-manifest.json 缺少 version、commit、goos 或 goarch")
+	}
+	return manifest, nil
+}
+
+func validateReleaseManifest(manifest ReleaseManifest, check CheckResult) error {
+	if check.Latest == nil || check.Asset == nil {
+		return errors.New("升级包校验缺少目标 Release 或资产")
+	}
+	target := formalVersion(check.Latest.TagName)
+	if formalVersion(manifest.Version) != target {
+		return fmt.Errorf("升级包版本校验失败：清单 %s，目标 %s", manifest.Version, target)
+	}
+	if manifest.GOOS != runtime.GOOS || manifest.GOARCH != runtime.GOARCH {
+		return fmt.Errorf("升级包平台校验失败：清单 %s/%s，当前 %s/%s", manifest.GOOS, manifest.GOARCH, runtime.GOOS, runtime.GOARCH)
+	}
+	if check.Asset == nil || manifest.Asset != check.Asset.Name {
+		return fmt.Errorf("升级包资产校验失败：清单 %q，目标 %q", manifest.Asset, check.Asset.Name)
+	}
+	return nil
+}
+
+func validateCandidateBuild(candidate BuildInfo, manifest ReleaseManifest, check CheckResult) error {
+	if check.Latest == nil {
+		return errors.New("候选程序校验缺少目标 Release")
+	}
+	target := formalVersion(check.Latest.TagName)
+	if formalVersion(candidate.Version) != target || formalVersion(candidate.Version) != formalVersion(manifest.Version) {
+		return fmt.Errorf("候选程序版本校验失败：候选 %s，目标 %s", candidate.Version, target)
+	}
+	if candidate.GOOS != runtime.GOOS || candidate.GOARCH != runtime.GOARCH {
+		return fmt.Errorf("候选程序平台校验失败：候选 %s/%s，当前 %s/%s", candidate.GOOS, candidate.GOARCH, runtime.GOOS, runtime.GOARCH)
+	}
+	if strings.TrimSpace(candidate.Commit) == "" || strings.TrimSpace(candidate.Commit) != strings.TrimSpace(manifest.Commit) {
+		return fmt.Errorf("候选程序提交校验失败：候选 %s，清单 %s", candidate.Commit, manifest.Commit)
+	}
+	return nil
+}
+
+func currentLaunchContext(exe string) (launchContext, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return launchContext{}, fmt.Errorf("读取应用目录失败：%w", err)
+	}
+	root = filepath.Clean(root)
+	port := 8787
+	if b, err := os.ReadFile(filepath.Join(root, "config.local.json")); err == nil {
+		var cfg localConfigForUpdate
+		if err := json.Unmarshal(b, &cfg); err == nil && cfg.Port > 0 && cfg.Port <= 65535 {
+			port = cfg.Port
+		}
+	}
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--port" && i+1 < len(args):
+			i++
+			parsed, parseErr := strconv.Atoi(args[i])
+			if parseErr == nil && parsed >= 1 && parsed <= 65535 {
+				port = parsed
+			}
+		case strings.HasPrefix(arg, "--port="):
+			parsed, parseErr := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
+			if parseErr == nil && parsed >= 1 && parsed <= 65535 {
+				port = parsed
+			}
+		case arg == "--app-root" && i+1 < len(args):
+			i++
+			if strings.TrimSpace(args[i]) != "" {
+				root = args[i]
+			}
+		case strings.HasPrefix(arg, "--app-root="):
+			if value := strings.TrimSpace(strings.TrimPrefix(arg, "--app-root=")); value != "" {
+				root = value
+			}
+		}
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return launchContext{}, fmt.Errorf("解析应用目录失败：%w", err)
+	}
+	if port < 1 || port > 65535 {
+		return launchContext{}, fmt.Errorf("应用端口无效：%d", port)
+	}
+	_ = exe
+	return launchContext{AppRoot: root, Port: port}, nil
 }
 
 func updateScriptCommand(goos, script string) *exec.Cmd {
@@ -692,7 +854,8 @@ func updateScriptCommand(goos, script string) *exec.Cmd {
 	return exec.Command("bash", script)
 }
 
-func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript string) string {
+func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript string, options ...interface{}) string {
+	launch, candidate := updateScriptOptions(options...)
 	return fmt.Sprintf(`$Old = %s
 $OldDir = %s
 $New = %s
@@ -704,6 +867,9 @@ $Worldline = %s
 $NewWorldline = %s
 $WorldlineBackup = %s
 $RestartScript = %s
+$LaunchArgs = @('--headless','--no-browser','--port','%d','--app-root',%s)
+$TargetVersion = %s
+$CandidateVersion = %s
 $ErrorActionPreference = 'Stop'
 $LogFile = Join-Path $PSScriptRoot 'apply-update.log'
 $WorkerHadOriginal = $false
@@ -737,7 +903,7 @@ function Restore-OldVersion {
   }
 }
 
-Set-Content -LiteralPath $LogFile -Value "$(Get-Date -Format o) apply started" -Encoding UTF8
+Set-Content -LiteralPath $LogFile -Value "$(Get-Date -Format o) apply started target=$TargetVersion candidate=$CandidateVersion port=%d app_root=%s" -Encoding UTF8
 $Replaced = $false
 for ($attempt = 1; $attempt -le 30; $attempt++) {
   try {
@@ -785,7 +951,7 @@ try {
   Write-ApplyLog "apply failed error=$($_.Exception.Message)"
   Restore-OldVersion
   if (Test-Path -LiteralPath $Old) {
-    Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir -WindowStyle Hidden
+    Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir -WindowStyle Hidden
   }
   exit 1
 }
@@ -801,6 +967,12 @@ try {
 		powerShellSingleQuoted(newWorldline),
 		powerShellSingleQuoted(worldlineBackup),
 		powerShellSingleQuoted(restartScript),
+		launch.Port,
+		powerShellSingleQuoted(launch.AppRoot),
+		powerShellSingleQuoted(candidate.Version),
+		powerShellSingleQuoted(candidate.Version),
+		launch.Port,
+		powerShellSingleQuoted(launch.AppRoot),
 	)
 }
 
@@ -808,7 +980,8 @@ func powerShellSingleQuoted(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func windowsRestartScript(oldExe, newExe, backup, worker, workerBackup, worldline, worldlineBackup string) string {
+func windowsRestartScript(oldExe, newExe, backup, worker, workerBackup, worldline, worldlineBackup string, options ...interface{}) string {
+	launch, candidate := updateScriptOptions(options...)
 	return fmt.Sprintf(`$Old = %s
 $OldDir = %s
 $New = %s
@@ -817,31 +990,43 @@ $Worker = %s
 $WorkerBackup = %s
 $Worldline = %s
 $WorldlineBackup = %s
+$LaunchArgs = @('--headless','--no-browser','--port','%d','--app-root',%s)
+$ExpectedVersion = %s
+$ExpectedPort = %d
+$HealthURL = 'http://127.0.0.1:%d/api/version/info'
 $ErrorActionPreference = 'SilentlyContinue'
 $LogFile = Join-Path $PSScriptRoot 'restart-update.log'
 function Write-RestartLog([string]$Message) {
   Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format o) $Message" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
-Write-RestartLog "launcher started old=$Old"
+Write-RestartLog "launcher started target=$ExpectedVersion expected_port=$ExpectedPort old=$Old"
 Start-Sleep -Seconds 3
 for ($attempt = 1; $attempt -le 10; $attempt++) {
   try {
-    $process = Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+    $process = Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir -WindowStyle Hidden -PassThru -ErrorAction Stop
     Write-RestartLog "attempt=$attempt pid=$($process.Id) started"
   } catch {
     Write-RestartLog "attempt=$attempt start_failed=$($_.Exception.Message)"
     Start-Sleep -Seconds 1
     continue
   }
-  $listener = $null
+    $listener = $null
   for ($probe = 1; $probe -le 30; $probe++) {
     Start-Sleep -Seconds 1
     $process.Refresh()
     if ($process.HasExited) { break }
-    $listener = Get-NetTCPConnection -State Listen -OwningProcess $process.Id -ErrorAction SilentlyContinue | Select-Object -First 1
+    $listener = Get-NetTCPConnection -State Listen -OwningProcess $process.Id -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq $ExpectedPort } | Select-Object -First 1
     if ($listener) {
-      Write-RestartLog "attempt=$attempt probe=$probe pid=$($process.Id) listener=$($listener.LocalPort) verified"
-      exit 0
+      try {
+        $info = Invoke-RestMethod -Uri $HealthURL -TimeoutSec 2 -ErrorAction Stop
+        if ([string]$info.version -eq [string]$ExpectedVersion) {
+          Write-RestartLog "attempt=$attempt probe=$probe pid=$($process.Id) listener=$($listener.LocalPort) version=$($info.version) verified"
+          exit 0
+        }
+        Write-RestartLog "attempt=$attempt probe=$probe pid=$($process.Id) version_mismatch=$($info.version) expected=$ExpectedVersion"
+      } catch {
+        Write-RestartLog "attempt=$attempt probe=$probe pid=$($process.Id) health_failed=$($_.Exception.Message)"
+      }
     }
   }
   Write-RestartLog "attempt=$attempt pid=$($process.Id) listener_missing exited=$($process.HasExited)"
@@ -865,7 +1050,7 @@ if (Test-Path -LiteralPath $WorkerBackup) {
 }
 Move-Item -LiteralPath $Old -Destination $New -Force -ErrorAction SilentlyContinue
 Move-Item -LiteralPath $Backup -Destination $Old -Force -ErrorAction SilentlyContinue
-Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir -WindowStyle Hidden
+Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir -WindowStyle Hidden
 exit 1
 `,
 		powerShellSingleQuoted(oldExe),
@@ -876,7 +1061,28 @@ exit 1
 		powerShellSingleQuoted(workerBackup),
 		powerShellSingleQuoted(worldline),
 		powerShellSingleQuoted(worldlineBackup),
+		launch.Port,
+		powerShellSingleQuoted(launch.AppRoot),
+		powerShellSingleQuoted(candidate.Version),
+		launch.Port,
+		launch.Port,
 	)
+}
+
+func updateScriptOptions(options ...interface{}) (launchContext, BuildInfo) {
+	launch := launchContext{AppRoot: ".", Port: 8787}
+	candidate := BuildInfo{Version: "unknown"}
+	if len(options) > 0 {
+		if value, ok := options[0].(launchContext); ok {
+			launch = value
+		}
+	}
+	if len(options) > 1 {
+		if value, ok := options[1].(BuildInfo); ok {
+			candidate = value
+		}
+	}
+	return launch, candidate
 }
 
 func linuxUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup string) string {

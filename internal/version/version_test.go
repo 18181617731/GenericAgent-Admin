@@ -361,7 +361,7 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 		`$RestartExit = $LASTEXITCODE`,
 		`Write-ApplyLog "restart script exit=$RestartExit"`,
 		`Restore-OldVersion`,
-		`-ArgumentList '--headless','--no-browser'`,
+		`$LaunchArgs = @('--headless','--no-browser','--port','8787','--app-root','.')`,
 		`exit 1`,
 	}
 	for _, sub := range want {
@@ -385,19 +385,21 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
 		`$OldDir = 'C:\Program Files\GA Admin'`,
 		`$LogFile = Join-Path $PSScriptRoot 'restart-update.log'`,
-		`Write-RestartLog "launcher started old=$Old"`,
+		`Write-RestartLog "launcher started target=$ExpectedVersion expected_port=$ExpectedPort old=$Old"`,
 		`Start-Sleep -Seconds 3`,
 		`for ($attempt = 1; $attempt -le 10; $attempt++)`,
 		`for ($probe = 1; $probe -le 30; $probe++)`,
-		`-ArgumentList '--headless','--no-browser'`,
+		`$LaunchArgs = @('--headless','--no-browser','--port','8787','--app-root','.')`,
 		`Get-NetTCPConnection -State Listen -OwningProcess $process.Id`,
+		`Where-Object { $_.LocalPort -eq $ExpectedPort }`,
+		`Invoke-RestMethod -Uri $HealthURL`,
 		`if ($process.HasExited) { break }`,
-		`probe=$probe pid=$($process.Id) listener=$($listener.LocalPort) verified`,
+		`version=$($info.version) verified`,
 		`Stop-Process -Id $process.Id -Force`,
 		`if (Test-Path -LiteralPath $WorldlineBackup)`,
 		`if (Test-Path -LiteralPath $WorkerBackup)`,
 		`Move-Item -LiteralPath $Backup -Destination $Old`,
-		`Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir`,
+		`Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
@@ -621,7 +623,7 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 go run ./cmd/package-chat-runtime`,
 		`from frontends.worldline import RewindStore, restore_plan, tree_from_store`,
 		`test -f dist/legacy-upgrade/cmd/frontends/worldline.py`,
-		`target_commitish: ${{ github.sha }}`,
+		`target_commitish: ${{ needs.prepare.outputs.source_ref }}`,
 		`needs: [prepare, build]`,
 	}
 	for _, item := range want {
@@ -819,6 +821,43 @@ func TestUpdatePayloadRejectsUnexpectedTopLevelLayout(t *testing.T) {
 				t.Fatalf("updatePayload error = %v, want top-level directory error", err)
 			}
 		})
+	}
+}
+
+func TestValidateReleaseManifestRejectsMismatchedAsset(t *testing.T) {
+	check := CheckResult{Latest: &Release{TagName: "v1.0.76"}, Asset: &Asset{Name: "ga-admin-v1.0.76-windows-amd64.zip"}}
+	manifest := ReleaseManifest{Version: "v1.0.76", Commit: "abc1234", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Asset: "ga-admin-v1.0.75-windows-amd64.zip"}
+	if err := validateReleaseManifest(manifest, check); err == nil || !strings.Contains(err.Error(), "资产校验失败") {
+		t.Fatalf("mismatched release asset was accepted: %v", err)
+	}
+}
+
+func TestValidateCandidateBuildRejectsWrongVersionAndPlatform(t *testing.T) {
+	check := CheckResult{Latest: &Release{TagName: "v1.0.76"}, Asset: &Asset{Name: "ga-admin-v1.0.76-windows-amd64.zip"}}
+	manifest := ReleaseManifest{Version: "v1.0.76", Commit: "abc1234", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Asset: check.Asset.Name}
+	candidate := BuildInfo{Version: "v1.0.75", Commit: "abc1234", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
+	if err := validateCandidateBuild(candidate, manifest, check); err == nil || !strings.Contains(err.Error(), "版本校验失败") {
+		t.Fatalf("wrong candidate version was accepted: %v", err)
+	}
+	candidate.Version = "v1.0.76"
+	candidate.GOARCH = "arm64"
+	if err := validateCandidateBuild(candidate, manifest, check); err == nil || !strings.Contains(err.Error(), "平台校验失败") {
+		t.Fatalf("wrong candidate platform was accepted: %v", err)
+	}
+}
+
+func TestWindowsRestartScriptRequiresExpectedPortAndVersionHealth(t *testing.T) {
+	script := windowsRestartScript("old.exe", "new.exe", "old.exe.bak", "worker", "worker.bak", "worldline", "worldline.bak", launchContext{AppRoot: `C:\GA`, Port: 18787}, BuildInfo{Version: "v1.0.76"})
+	for _, want := range []string{
+		`$ExpectedVersion = 'v1.0.76'`,
+		`$ExpectedPort = 18787`,
+		`$HealthURL = 'http://127.0.0.1:18787/api/version/info'`,
+		`Where-Object { $_.LocalPort -eq $ExpectedPort }`,
+		`if ([string]$info.version -eq [string]$ExpectedVersion)`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("restart health contract missing %q in:\n%s", want, script)
+		}
 	}
 }
 

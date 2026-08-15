@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -31,6 +32,12 @@ var webFS embed.FS
 
 func main() {
 	launch := parseLaunchOptions()
+	if launch.VersionJSON {
+		if err := json.NewEncoder(os.Stdout).Encode(version.Current()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	cwd, err := appRoot(launch.AppRoot)
 	if err != nil {
 		log.Fatal(err)
@@ -96,11 +103,12 @@ func main() {
 }
 
 type launchOptions struct {
-	Headless  bool
-	NoBrowser bool
-	AppRoot   string
-	Port      int
-	PortSet   bool
+	Headless    bool
+	NoBrowser   bool
+	AppRoot     string
+	Port        int
+	PortSet     bool
+	VersionJSON bool
 }
 
 const (
@@ -132,6 +140,7 @@ func parseLaunchOptions() launchOptions {
 	noBrowserFlag := flag.Bool("no-browser", false, "do not open the web UI automatically")
 	appRootFlag := flag.String("app-root", "", "override the directory containing config.local.json")
 	portFlag := flag.Int("port", 0, "override HTTP listen port for this launch (1-65535)")
+	versionJSONFlag := flag.Bool("version-json", false, "print build metadata as JSON and exit")
 	flag.Parse()
 
 	portSet := false
@@ -150,11 +159,12 @@ func parseLaunchOptions() launchOptions {
 		log.Printf("no Linux graphical session detected; enabling headless/server-only mode")
 	}
 	return launchOptions{
-		Headless:  headless,
-		NoBrowser: *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
-		AppRoot:   strings.TrimSpace(*appRootFlag),
-		Port:      *portFlag,
-		PortSet:   portSet,
+		Headless:    headless,
+		NoBrowser:   *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
+		AppRoot:     strings.TrimSpace(*appRootFlag),
+		Port:        *portFlag,
+		PortSet:     portSet,
+		VersionJSON: *versionJSONFlag,
 	}
 }
 
