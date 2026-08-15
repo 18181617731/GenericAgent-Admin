@@ -233,11 +233,6 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		appendChatLoopRecord(&cs.Loop, "started", "Loop started.", "")
 		if running {
 			cs.Loop.Status = chatLoopStatusRunning
-		} else if len(cs.Messages) == 0 {
-			// An empty session has no completed run for the controller to evaluate.
-			// Queue the objective itself as the first worker round instead of leaving
-			// the loop waiting forever for a terminal event that cannot arrive.
-			cs.Loop.Status = chatLoopStatusEvaluating
 		}
 		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	}
@@ -247,9 +242,7 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		return
 	}
 
-	if !running && len(cs.Messages) == 0 {
-		go continueChatLoopFunc(s, sid, cs.Loop.Epoch, objective)
-	} else if !running && chatLoopHasTerminalAssistant(cs) {
+	if !running && chatLoopHasTerminalAssistant(cs) {
 		s.afterChatRunTerminal(sid, true)
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "loop": cs.Loop})
@@ -374,10 +367,6 @@ func (s *Server) finishChatLoop(sid string, epoch int64, status, reason string) 
 	if err == nil {
 		s.publishChatLoopState(sid, cs.Loop)
 	}
-}
-
-var continueChatLoopFunc = func(s *Server, sid string, epoch int64, prompt string) {
-	s.continueChatLoop(sid, epoch, prompt)
 }
 
 func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {

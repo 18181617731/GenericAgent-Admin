@@ -1,4 +1,4 @@
-package adminauth
+package main
 
 import (
 	"bytes"

@@ -1086,7 +1086,6 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/setup/complete", `{}`},
 		{http.MethodPost, "/api/setup/install", `{}`},
 		{http.MethodPost, "/api/setup/python/install", `{}`},
-		{http.MethodPost, "/api/setup/python/validate", `{}`},
 		{http.MethodPost, "/api/setup/venv/create", `{}`},
 		{http.MethodPost, "/api/setup/deps/install", `{}`},
 		{http.MethodPost, "/api/setup/smoke", `{}`},
@@ -1105,7 +1104,6 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPut, "/api/models/title-model", `{"invalid_payload":true}`},
 		{http.MethodPut, "/api/channels", `{}`},
 		{http.MethodPut, "/api/extra-system-prompt-presets", `{}`},
-		{http.MethodPost, "/api/chat/python/install-deps", `{}`},
 	}
 }
 

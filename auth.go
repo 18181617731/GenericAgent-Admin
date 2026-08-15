@@ -1,5 +1,4 @@
-// Package adminauth guards non-loopback access to the admin server.
-package adminauth
+package main
 
 import (
 	"crypto/hmac"
@@ -11,19 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-)
-
-// UserEnv and PasswordEnv name the credential an operator can pin from outside
-// the app. They only take effect together.
-const (
-	UserEnv     = "GA_ADMIN_AUTH_USER"
-	PasswordEnv = "GA_ADMIN_AUTH_PASSWORD"
 )
 
 const (
@@ -59,7 +50,7 @@ type authManager struct {
 func newAuthManager(appRoot, envUser, envPassword, envEnabled string) (*authManager, error) {
 	manager := &authManager{path: filepath.Join(appRoot, authStateFilename)}
 	if (envUser == "") != (envPassword == "") {
-		return nil, fmt.Errorf("%s and %s must be set together", UserEnv, PasswordEnv)
+		return nil, errors.New("GA_ADMIN_AUTH_USER and GA_ADMIN_AUTH_PASSWORD must be set together")
 	}
 	manager.enabled = parseAuthEnabled(envEnabled) || envUser != ""
 	if !manager.enabled {
@@ -193,7 +184,7 @@ func (a *authManager) passwordChangeRequired() bool {
 	return a.mustChange
 }
 
-func (a *Manager) handleStatus(w http.ResponseWriter, r *http.Request) {
+func (a *authManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
@@ -271,7 +262,7 @@ func (a *authManager) handleChangePassword(w http.ResponseWriter, r *http.Reques
 	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": false})
 }
 
-func (a *Manager) passwordMatchesLocked(password string) bool {
+func (a *authManager) passwordMatchesLocked(password string) bool {
 	if a.password != "" {
 		return secureEqual(password, a.password)
 	}
@@ -327,20 +318,6 @@ func writePrivateFileAtomic(path string, data []byte) (err error) {
 		return err
 	}
 	return os.Chmod(path, 0600)
-}
-
-// isLoopbackRemote reports whether a request came from this machine. Remote
-// access binds a dual-stack wildcard socket, so a local browser that resolves
-// localhost to ::1 must be recognised as local just like one that picks
-// 127.0.0.1; otherwise enabling remote access would start prompting the owner
-// for a password on their own desktop.
-func isLoopbackRemote(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func secureEqual(got, expected string) bool {

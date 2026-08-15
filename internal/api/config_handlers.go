@@ -21,7 +21,6 @@ import (
 	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/ga"
-	"genericagent-admin-go/internal/pyfind"
 )
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
@@ -690,9 +689,6 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
 		return
 	}
-	// A new virtualenv is a new interpreter path; drop memoized probe answers so
-	// it is judged on its own merits.
-	pyfind.ResetProbeCache()
 	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	cfg.PythonPath = setupVenvPython(root)
@@ -734,11 +730,6 @@ func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
 	python := pythonForSetup(root, s.CfgStore.Snapshot())
 	emit(setupStreamEvent{Type: "start", Line: fmt.Sprintf("%s -m pip install -e .", python)})
 	code, err := runSetupCommandStreamFunc(ctx, root, emit, python, "-m", "pip", "install", "-e", ".")
-	// Interpreter usability is memoized for the life of the process. Without
-	// this the interpreter that just gained GA's dependencies keeps being
-	// judged by its pre-install answer, and chat keeps reporting no models
-	// until the app restarts.
-	pyfind.ResetProbeCache()
 	if err != nil {
 		emit(setupStreamEvent{Type: "done", OK: false, Code: code, Error: err.Error()})
 		return
@@ -835,65 +826,6 @@ func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]interface{}{"ok": h.OK, "root": abs, "health": h})
-}
-
-func (s *Server) setupPythonValidate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		bad(w, 405, "method not allowed")
-		return
-	}
-	var req setupPathReq
-	if err := decode(r, &req); err != nil {
-		bad(w, 400, err.Error())
-		return
-	}
-	candidate := strings.TrimSpace(req.Path)
-	if candidate == "" {
-		bad(w, 400, "Python path is required")
-		return
-	}
-	resolved, err := executablePath(candidate)
-	if err != nil {
-		bad(w, 400, "Python executable not found: "+err.Error())
-		return
-	}
-	resolved, err = filepath.Abs(resolved)
-	if err != nil {
-		bad(w, 400, "resolve Python path: "+err.Error())
-		return
-	}
-	resolved = filepath.Clean(resolved)
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, resolved, "--version")
-	hideChildWindow(cmd)
-	out, err := cmd.CombinedOutput()
-	version := strings.TrimSpace(string(out))
-	if err != nil {
-		message := version
-		if message == "" {
-			message = err.Error()
-		} else {
-			message += ": " + err.Error()
-		}
-		bad(w, 400, message)
-		return
-	}
-	pyfind.ResetProbeCache()
-	cfg := s.CfgStore.Snapshot()
-	cfg.PythonPath = resolved
-	cfg.SyncDefaultInstanceFromLegacy()
-	if err := s.CfgStore.Save(cfg); err != nil {
-		bad(w, 500, err.Error())
-		return
-	}
-	saved := s.CfgStore.Snapshot()
-	writeJSON(w, map[string]interface{}{
-		"ok":      true,
-		"python":  saved.EffectivePython,
-		"version": version,
-		"config":  saved,
-	})
 }
 
 func (s *Server) setupPythonInstall(w http.ResponseWriter, r *http.Request) {

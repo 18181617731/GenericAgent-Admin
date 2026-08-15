@@ -1,6 +1,6 @@
 //go:build !linux
 
-package tray
+package main
 
 import (
 	_ "embed"

@@ -91,21 +91,6 @@ test('buildObservabilitySnapshot keeps stale or null observability payloads empt
   assert.deepEqual(observabilityStats(snapshot).map(x => x.value), [0, 0, 0, 0])
 })
 
-test('buildObservabilitySnapshot unwraps the /api/health envelope so checks are not dropped', () => {
-  const snapshot = buildObservabilitySnapshot({
-    health: {
-      ok: true,
-      health: { ok: true, root: '/ga', checks: { agentmain: 'ok', tools_schema: 'missing' }, errors: ['tools_schema: missing'] },
-    },
-    inventory: { root: '/ga', core_files: [] },
-    risks: { items: [] },
-  })
-  assert.equal(snapshot.ok, true)
-  assert.equal(snapshot.root, '/ga')
-  assert.deepEqual(snapshot.checks.map(item => item.name), ['agentmain', 'tools_schema'])
-  assert.deepEqual(snapshot.errors, ['tools_schema: missing'])
-})
-
 test('buildObservabilitySnapshot accepts array risks and flags write-like stale actions', () => {
   const snapshot = buildObservabilitySnapshot({ risks: [
     { level: 'review', action: 'read_status', reason: 'inspect only' },
