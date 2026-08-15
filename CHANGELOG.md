@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.76 - 2026-08-15
+
+### Verified Windows self-update
+- Validate release manifests and candidate executable metadata before stopping the running service.
+- Preserve the configured application root and port during restart.
+- Require the expected management port and target version from `/api/version/info` before completing an update; failed starts restore all replaced runtime files.
+
 ## v1.0.73 - 2026-08-13
 
 ### Corrected release package
