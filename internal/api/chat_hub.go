@@ -126,6 +126,21 @@ func chatHubTasks(cs chatSession) []map[string]interface{} {
 	return tasks
 }
 
+// chatHubLiveTasks lends Hub the text a run has streamed so far. Only an empty
+// assistant placeholder reaches disk before a turn ends, and Hub tails a step by
+// watching its length grow, so the remote view stays blank for the whole turn
+// unless the in-flight text is offered here as the last segment.
+func chatHubLiveTasks(tasks []map[string]interface{}, partial string) []map[string]interface{} {
+	partial = strings.TrimSpace(partial)
+	if partial == "" || len(tasks) == 0 {
+		return tasks
+	}
+	last := tasks[len(tasks)-1]
+	outputs, _ := last["outputs"].([]string)
+	last["outputs"] = append(outputs, partial)
+	return tasks
+}
+
 func (s *Server) chatHubAPI(token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +172,11 @@ func (s *Server) chatHubAPI(token string) http.Handler {
 		}
 		switch op {
 		case "outputs":
-			writeJSON(w, map[string]interface{}{"tasks": chatHubTasks(cs)})
+			tasks := chatHubTasks(cs)
+			if server.chatRunActive(sid) {
+				tasks = chatHubLiveTasks(tasks, server.chatRunPartialContent(sid))
+			}
+			writeJSON(w, map[string]interface{}{"tasks": tasks})
 		case "state":
 			writeJSON(w, map[string]interface{}{"run": server.chatRunActive(sid)})
 		case "put":

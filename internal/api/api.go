@@ -168,6 +168,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
 	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
+	mux.HandleFunc("/api/setup/python/validate", s.requireDangerousConfirm(s.setupPythonValidate))
 	mux.HandleFunc("/api/setup/python/install", s.requireDangerousConfirm(s.setupPythonInstall))
 	mux.HandleFunc("/api/setup/venv/create", s.requireDangerousConfirm(s.setupVenvCreate))
 	mux.HandleFunc("/api/setup/deps/install", s.requireDangerousConfirm(s.setupDepsInstall))
@@ -203,6 +204,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/usage/export", s.usageExport)
 	mux.HandleFunc("/api/chat/search", s.chatSearch)
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
+	mux.HandleFunc("/api/chat/python/install-deps", s.requireDangerousConfirm(s.withChatInstance((*Server).chatPythonInstallDeps)))
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
@@ -255,6 +257,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/instances/install", Level: "dangerous", Action: "install_instance", Reason: "downloads and extracts the GenericAgent main archive under the app instances directory and registers a new instance"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone or downloads the GenericAgent source archive and changes configured GA root"},
 	{Path: "/api/setup/python/install", Level: "dangerous", Action: "install_python", Reason: "downloads and runs the official Windows Python installer and persists the Python path"},
+	{Path: "/api/setup/python/validate", Level: "dangerous", Action: "validate_python", Reason: "executes the selected Python candidate and persists it after successful validation"},
 	{Path: "/api/setup/venv/create", Level: "dangerous", Action: "create_venv", Reason: "creates or updates a Python virtual environment under the configured GA root"},
 	{Path: "/api/setup/deps/install", Level: "dangerous", Action: "install_dependencies", Reason: "executes pip install in the configured GA root and streams process output"},
 	{Path: "/api/setup/smoke", Level: "dangerous", Action: "run_setup_smoke", Reason: "executes Python in the configured GA root to verify bootstrap readiness"},
@@ -291,6 +294,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
+	{Path: "/api/chat/python/install-deps", Level: "dangerous", Action: "install_chat_python_deps", Reason: "runs pip install with Tsinghua PyPI mirror for the GA runtime imports the chat interpreter reports missing"},
 }
 
 func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {
@@ -676,10 +680,7 @@ func tmwebdriverPythonModules() []string {
 }
 
 func tmwebdriverModuleToPipPackage(module string) string {
-	if module == "simple_websocket_server" {
-		return "simple-websocket-server"
-	}
-	return module
+	return pipPackageForModule(module)
 }
 
 func tmwebdriverPipPackages(modules []string) []string {

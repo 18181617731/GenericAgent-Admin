@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,11 +17,15 @@ import (
 	"syscall"
 	"time"
 
+	"genericagent-admin-go/internal/adminauth"
+	"genericagent-admin-go/internal/adminhttp"
 	"genericagent-admin-go/internal/api"
 	"genericagent-admin-go/internal/autostart"
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/desktop"
 	"genericagent-admin-go/internal/modelconfig"
 	"genericagent-admin-go/internal/service"
+	"genericagent-admin-go/internal/tray"
 	"genericagent-admin-go/internal/version"
 )
 
@@ -214,20 +217,6 @@ func appRoot(explicitRoot string) (string, error) {
 		return exeDir, nil
 	}
 	return wd, wdErr
-}
-
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	case "darwin":
-		cmd = exec.Command("open", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
-	}
-	hideChildWindow(cmd)
-	_ = cmd.Start()
 }
 
 func resolvePortableBootstrap(cwd string) (bootstrapPy, pythonExe string, ok bool) {
