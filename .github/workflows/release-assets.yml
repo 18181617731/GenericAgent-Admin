@@ -144,13 +144,17 @@ jobs:
           if ($manifest.version -ne $env:RELEASE_TAG -or $manifest.goos -ne $env:RELEASE_GOOS -or $manifest.goarch -ne $env:RELEASE_GOARCH) { throw "release manifest mismatch" }
           $expectedCommit = (git rev-parse --short HEAD).Trim()
           if ($manifest.commit -ne $expectedCommit) { throw "release manifest commit $($manifest.commit) != $expectedCommit" }
-          $exe = if ($env:RELEASE_GOOS -eq 'windows') { 'dist/ga-admin.exe' } else { 'dist/ga-admin' }
-          $raw = & $exe --version-json | Out-String
-          $meta = $raw | ConvertFrom-Json
-          if ($meta.version -ne $env:RELEASE_TAG -or $meta.goos -ne $env:RELEASE_GOOS -or $meta.goarch -ne $env:RELEASE_GOARCH -or $meta.commit -ne $expectedCommit) { throw "binary metadata mismatch: $raw" }
+          $hostArch = if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64') { 'arm64' } elseif ($env:PROCESSOR_ARCHITEW6432 -match 'ARM64') { 'arm64' } else { 'amd64' }
+          if ($env:RELEASE_GOOS -eq 'windows' -and $env:RELEASE_GOARCH -eq $hostArch) {
+            $raw = & dist/ga-admin.exe --version-json | Out-String
+            $meta = $raw | ConvertFrom-Json
+            if ($meta.version -ne $env:RELEASE_TAG -or $meta.goos -ne $env:RELEASE_GOOS -or $meta.goarch -ne $env:RELEASE_GOARCH -or $meta.commit -ne $expectedCommit) { throw "binary metadata mismatch: $raw" }
+          } else {
+            Write-Host "Skipping execution metadata probe for cross-compiled $($env:RELEASE_GOOS)/$($env:RELEASE_GOARCH) on host $env:PROCESSOR_ARCHITECTURE; manifest gate passed."
+          }
 
       - name: Verify Windows fixed-port service smoke test
-        if: matrix.goos == 'windows'
+        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
         shell: pwsh
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}

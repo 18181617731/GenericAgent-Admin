@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.77 - 2026-08-15
+
+### Release verification follow-up
+- Keep the Windows arm64 release gate architecture-aware: cross-compiled binaries are validated from the release manifest and are not executed on amd64 runners.
+
 ## v1.0.76 - 2026-08-15
 
 ### Verified Windows self-update

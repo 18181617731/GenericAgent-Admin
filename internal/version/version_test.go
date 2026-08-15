@@ -625,6 +625,9 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`test -f dist/legacy-upgrade/cmd/frontends/worldline.py`,
 		`target_commitish: ${{ needs.prepare.outputs.source_ref }}`,
 		`needs: [prepare, build]`,
+		`$hostArch = if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64')`,
+		`Skipping execution metadata probe for cross-compiled`,
+		`if: matrix.goos == 'windows' && matrix.goarch == 'amd64'`,
 	}
 	for _, item := range want {
 		if !strings.Contains(workflow, item) {
