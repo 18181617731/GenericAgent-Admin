@@ -889,6 +889,65 @@ func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": h.OK, "root": abs, "health": h})
 }
 
+func (s *Server) setupPythonValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req setupPathReq
+	if err := decode(r, &req); err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	candidate := strings.TrimSpace(req.Path)
+	if candidate == "" {
+		bad(w, 400, "Python path is required")
+		return
+	}
+	resolved, err := executablePath(candidate)
+	if err != nil {
+		bad(w, 400, "Python executable not found: "+err.Error())
+		return
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		bad(w, 400, "resolve Python path: "+err.Error())
+		return
+	}
+	resolved = filepath.Clean(resolved)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, resolved, "--version")
+	hideChildWindow(cmd)
+	out, err := cmd.CombinedOutput()
+	version := strings.TrimSpace(string(out))
+	if err != nil {
+		message := version
+		if message == "" {
+			message = err.Error()
+		} else {
+			message += ": " + err.Error()
+		}
+		bad(w, 400, message)
+		return
+	}
+	pyfind.ResetProbeCache()
+	cfg := s.CfgStore.Snapshot()
+	cfg.PythonPath = resolved
+	cfg.SyncDefaultInstanceFromLegacy()
+	if err := s.CfgStore.Save(cfg); err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	saved := s.CfgStore.Snapshot()
+	writeJSON(w, map[string]interface{}{
+		"ok":      true,
+		"python":  saved.EffectivePython,
+		"version": version,
+		"config":  saved,
+	})
+}
+
 func (s *Server) setupPythonInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		bad(w, 405, "method not allowed")

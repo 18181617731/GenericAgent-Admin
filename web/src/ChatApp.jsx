@@ -3024,16 +3024,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [loopConfigOpen])
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
-  const [subagents, setSubagents] = useState([])
-  const subagentLikely = useMemo(() => hasSubagentLaunch(messages), [messages])
-  useEffect(() => {
-    if (!sid || !subagentLikely) { setSubagents([]); return undefined }
-    let alive = true
-    const tick = () => { chatApi(`/api/chat/subagents/${encodeURIComponent(sid)}`).then(res => { if (alive) setSubagents(Array.isArray(res?.subagents) ? res.subagents : []) }).catch(() => {}) }
-    tick()
-    const timer = busy ? setInterval(tick, 5000) : null
-    return () => { alive = false; if (timer) clearInterval(timer) }
-  }, [sid, busy, subagentLikely, chatInstanceID])
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
@@ -5257,7 +5247,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setHistoryInfo([])
     setWorkingState(null)
     setPlanState(null)
-    setSubagents([])
     setBusy(false)
     setStreamingSid('')
     setWorldlineOpen(false)

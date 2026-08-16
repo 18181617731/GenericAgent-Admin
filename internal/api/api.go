@@ -200,6 +200,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
 	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
+	mux.HandleFunc("/api/setup/python/validate", s.requireDangerousConfirm(s.setupPythonValidate))
 	mux.HandleFunc("/api/setup/python/install", s.requireDangerousConfirm(s.setupPythonInstall))
 	mux.HandleFunc("/api/setup/venv/create", s.requireDangerousConfirm(s.setupVenvCreate))
 	mux.HandleFunc("/api/setup/deps/install", s.requireDangerousConfirm(s.setupDepsInstall))
@@ -288,6 +289,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/instances/install", Level: "dangerous", Action: "install_instance", Reason: "downloads and extracts the GenericAgent main archive under the app instances directory and registers a new instance"},
 	{Path: "/api/setup/install", Level: "dangerous", Action: "install_ga", Reason: "runs git clone or downloads the GenericAgent source archive and changes configured GA root"},
 	{Path: "/api/setup/python/install", Level: "dangerous", Action: "install_python", Reason: "downloads and runs the official Windows Python installer and persists the Python path"},
+	{Path: "/api/setup/python/validate", Level: "dangerous", Action: "validate_python", Reason: "executes the selected Python candidate and persists it after successful validation"},
 	{Path: "/api/setup/venv/create", Level: "dangerous", Action: "create_venv", Reason: "creates or updates a Python virtual environment under the configured GA root"},
 	{Path: "/api/setup/deps/install", Level: "dangerous", Action: "install_dependencies", Reason: "executes pip install in the configured GA root and streams process output"},
 	{Path: "/api/setup/smoke", Level: "dangerous", Action: "run_setup_smoke", Reason: "executes Python in the configured GA root to verify bootstrap readiness"},

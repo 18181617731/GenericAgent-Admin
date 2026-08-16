@@ -68,6 +68,7 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
   const [smoke, setSmoke] = useState(null)
   const [rootDraft, setRootDraft] = useState(() => initialRoot || '')
   const [installDraft, setInstallDraft] = useState('')
+  const [pythonDraft, setPythonDraft] = useState('')
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState(null)
   const [logLines, setLogLines] = useState([])
@@ -83,6 +84,7 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     setEnv(nextEnv)
     setEvidence(readSetupEvidence(evidenceStore(), next?.ga_root))
     setRootDraft(current => current || String(next?.ga_root || ''))
+    setPythonDraft(current => current || String(nextEnv?.python?.path || ''))
     return next
   }, [text])
 
@@ -159,6 +161,23 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
       setNotice(result?.ok
         ? { tone: 'success', text: text.messages.installed(result.method) }
         : { tone: 'error', text: text.messages.installedUnhealthy })
+      return result
+    })
+  }
+
+  const validatePython = () => {
+    const candidate = pythonDraft.trim()
+    if (!candidate) return reject(text.env.pythonPathRequired)
+    if (!confirmDanger('setup-python-validate', text.confirm.pythonPath(candidate))) return null
+    return run('setup-python-validate', async () => {
+      const result = await api('/api/setup/python/validate', {
+        dangerous: true,
+        method: 'POST',
+        body: JSON.stringify({ path: candidate }),
+      })
+      setPythonDraft(String(result?.python || candidate))
+      await reload()
+      setNotice({ tone: 'success', text: text.messages.pythonPathSaved(result?.python || candidate, result?.version || '') })
       return result
     })
   }
@@ -256,6 +275,8 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     installDraft,
     setInstallDraft,
     installTarget: installTargetPath(installDraft),
+    pythonDraft,
+    setPythonDraft,
     busy,
     notice,
     logLines,
@@ -263,6 +284,7 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     browse,
     validateRoot,
     installGA,
+    validatePython,
     installPython,
     createVenv,
     installDeps,

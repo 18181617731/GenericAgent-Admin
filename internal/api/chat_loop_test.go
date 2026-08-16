@@ -136,6 +136,18 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 		startChatWorkerFunc = oldStartChatWorker
 	}()
 
+	type firstRoundCall struct {
+		sid    string
+		epoch  int64
+		prompt string
+	}
+	calls := make(chan firstRoundCall, 1)
+	oldContinue := continueChatLoopFunc
+	defer func() { continueChatLoopFunc = oldContinue }()
+	continueChatLoopFunc = func(_ *Server, gotSID string, epoch int64, prompt string) {
+		calls <- firstRoundCall{sid: gotSID, epoch: epoch, prompt: prompt}
+	}
+
 	start := httptest.NewRecorder()
 	startReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"Finish the release","max_rounds":999}`))
 	startReq.Header.Set("Content-Type", "application/json")
