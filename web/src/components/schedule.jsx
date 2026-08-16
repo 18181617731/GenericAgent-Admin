@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronRight, Eye, FileText, Play, Power, Square, Trash2 } from 'lucide-react'
+import { ChevronRight, Eye, FileText, History, LoaderCircle, Play, Power, Square, Trash2 } from 'lucide-react'
 import { effectiveScheduleModelNo, hasScheduleTaskModel } from '../lib/schedule'
 import { firstRuntimeModelNo, runtimeModelDescription } from '../lib/modelDefaults.js'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from './ModelProviderCascade.jsx'
@@ -26,10 +26,11 @@ const taskModelLabel = (task, llms, t, schedulerModelNo) => {
   return `${prefix}${zh ? '：' : ': '}${modelText}`
 }
 
-export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, onEdit, onDelete, selected = false }) {
+export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, onEdit, onDelete, onRun, onReports, runState = null, selected = false }) {
   const id = task.id || task.name || t.tasks.unnamed
   const state = taskState(task)
   const status = taskStateLabel(state, t)
+  const isRunning = runState?.status === 'pending'
   const openTask = () => onEdit?.(id)
   const onKeyDown = event => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -46,6 +47,10 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
         </div>
         <div className="task-card-actions">
           <span className={`task-state-badge ${state}`}>{status}</span>
+          <button type="button" className="task-run" title={isRunning ? t.tasks.runPending : t.tasks.runNow} aria-label={`${isRunning ? t.tasks.runPending : t.tasks.runNow} ${id}`} disabled={isRunning} onClick={event => { event.stopPropagation(); onRun?.(id) }}>
+            {isRunning ? <LoaderCircle size={14} className="is-spinning"/> : <Play size={14}/>}<span>{isRunning ? t.tasks.runPending : t.tasks.runNow}</span>
+          </button>
+          <button type="button" className="task-reports" title={`${t.tasks.reportsAction}：${id}`} aria-label={`${t.tasks.reportsAction} ${id}`} onClick={event => { event.stopPropagation(); onReports?.(id) }}><History size={14}/><span>{t.tasks.reportsAction}</span></button>
           <button type="button" className="task-toggle" title={task.enabled ? t.disabled : t.enabled} aria-label={task.enabled ? t.disabled : t.enabled} onClick={event => { event.stopPropagation(); onToggle?.(id, !task.enabled) }}><Power size={15}/></button>
           <button type="button" className="task-delete" title={`${t.remove} ${id}`} aria-label={`${t.remove} ${id}`} onClick={event => { event.stopPropagation(); onDelete?.(id) }}><Trash2 size={15}/></button>
         </div>
@@ -54,13 +59,18 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
       {!task.enabled && state !== 'error' && <em className="muted">{t.tasks.explicitEnable}</em>}
       {task.error && <em className="err-text">{task.error}</em>}
       {task.next_hint && <em>{task.next_hint}</em>}
+      {runState?.message && <div className={`task-run-status ${runState.status || ''}`} role={runState.status === 'error' ? 'alert' : 'status'} aria-live="polite">{runState.message}</div>}
       <p>{task.prompt || t.empty}</p>
     </article>
   )
 }
 
-export function ScheduleReportTree({ tasks = [], selectedPath, onSelect, t }) {
+export function ScheduleReportTree({ tasks = [], selectedPath, onSelect, focusTaskId, t }) {
   const [expanded, setExpanded] = useState({})
+  useEffect(() => {
+    const id = String(focusTaskId || '').trim()
+    if (id) setExpanded(current => ({ ...current, [id]: true }))
+  }, [focusTaskId])
   return <div className="schedule-report-tree">
     {tasks.length ? tasks.map(task => {
       const id = task.id || task.name || t.tasks.unnamed

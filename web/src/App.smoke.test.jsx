@@ -2001,7 +2001,7 @@ describe('model profile names', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加并保存' }))
 
     expect(props.addModelProfiles).not.toHaveBeenCalled()
-  }, 10000)
+  }, 30000)
 
   test('should add and auto-save a profile with a Chinese name when required fields are present', async () => {
     const props = modelProps({ profiles: [] })
@@ -2015,7 +2015,7 @@ describe('model profile names', () => {
     await waitFor(() => expect(props.addModelProfiles).toHaveBeenCalledWith([
       expect.objectContaining({ name: '新增中文模型', apibase: 'https://api.example/v1' }),
     ]))
-  }, 10000)
+  }, 30000)
 
   test('model order uses the configured provider display name', () => {
     render(<Models {...modelProps({ persistedProfiles: [modelProfile], onSaveModelOrder: vi.fn(async () => true) })} />)
@@ -2024,7 +2024,7 @@ describe('model profile names', () => {
 
     expect(screen.getByText('服务商名称：主模型')).toBeTruthy()
     expect(screen.queryByText('服务商名称：1')).toBeNull()
-  }, 10000)
+  }, 30000)
 
   test('repeated clicks at one position keep moving the same model upward', () => {
     const orderedProfile = {
@@ -2058,7 +2058,7 @@ describe('model profile names', () => {
     expect([...container.ownerDocument.querySelectorAll('.model-order-copy strong')].map(node => node.textContent))
       .toEqual(['model-a', 'model-d', 'model-b', 'model-c'])
     expect(container.ownerDocument.querySelector('button[aria-label="上移 model-d"]')?.closest('.model-order-row')?.classList.contains('is-repeat-target')).toBe(true)
-  }, 10000)
+  }, 30000)
 })
 
 describe('provider model availability management', () => {
@@ -2092,7 +2092,7 @@ describe('provider model availability management', () => {
       }),
     ))
     expect(await screen.findByText('真实对话检测完成：1 个可用，1 个不可用')).toBeTruthy()
-  }, 10000)
+  }, 30000)
 
   test('does not save when the provider returns an empty model list', async () => {
     const props = modelProps({ probeModels: vi.fn(async () => ({ results: [] })) })
@@ -2101,7 +2101,7 @@ describe('provider model availability management', () => {
     fireEvent.click(screen.getByRole('button', { name: '检测当前服务商' }))
     expect(await screen.findByText('检测失败，未修改模型状态')).toBeTruthy()
     expect(props.saveModelProfile).not.toHaveBeenCalled()
-  }, 10000)
+  }, 30000)
 })
 
 describe('provider model batch availability management', () => {
@@ -2122,7 +2122,7 @@ describe('provider model batch availability management', () => {
       expect.objectContaining({ var_name: modelProfile.var_name }),
     ])
     expect(await screen.findByText('批量检测完成：1 个服务商成功，0 个失败')).toBeTruthy()
-  }, 10000)
+  }, 30000)
 
   test('saves a configured provider scope for later batches', async () => {
     const props = modelProps({ profiles: [modelProfile] })

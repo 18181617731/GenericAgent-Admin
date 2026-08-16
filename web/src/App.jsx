@@ -364,6 +364,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const scheduleInitialLoad = useRef(false), scheduleDefaultTaskSelected = useRef(false)
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
+  const [taskRunStates, setTaskRunStates] = useState({}), [scheduleReportTaskId, setScheduleReportTaskId] = useState('')
+  const scheduleRunTimers = useRef(new Map())
   const [goals, setGoals] = useState([]), [goalObjective, setGoalObjective] = useState(''), [goalBudget, setGoalBudget] = useState(480), [goalMaxTurns, setGoalMaxTurns] = useState(200), [goalLLMNo, setGoalLLMNo] = useState(''), [goalHive, setGoalHive] = useState(false), [selectedGoal, setSelectedGoal] = useState(''), [goalOutput, setGoalOutput] = useState(''), [goalOutputMeta, setGoalOutputMeta] = useState(null)
   const [goalOutputBytes, setGoalOutputBytes] = useState(() => localStorage.getItem('ga-admin-goal-output-bytes') || '120000')
   const [goalAutoRefresh, setGoalAutoRefresh] = useState(() => localStorage.getItem('ga-admin-goal-auto-refresh') !== 'false')
@@ -379,6 +381,11 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const activeTabRef = useRef(tab)
   activeTabRef.current = tab
   const dismissMessage = useCallback(() => setNotice(null), [])
+
+  useEffect(() => () => {
+    scheduleRunTimers.current.forEach(timer => clearTimeout(timer))
+    scheduleRunTimers.current.clear()
+  }, [])
 
   useGSAP(() => {
     const q = gsap.utils.selector(appScope)
@@ -744,6 +751,42 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (!confirmDanger('schedule-toggle', lang === 'zh' ? `${enabled ? '启用' : '停用'}计划任务 ${id}？` : `${enabled ? 'Enable' : 'Disable'} scheduled task ${id}?`)) return
     setBusy(true)
     try { await api('/api/schedule/toggle', { dangerous:true, method:'POST', body: JSON.stringify({ id, enabled }) }); setMsg(t.hints.taskToggled); await load() } catch(e){ setMsg(e.message) } finally{ setBusy(false) }
+  }
+
+  const setTaskRunState = (id, state) => setTaskRunStates(current => ({ ...current, [id]: state }))
+  const pollScheduleRun = (id, runID) => {
+    const poll = async () => {
+      try {
+        const status = await api(`/api/schedule/run/status?run_id=${encodeURIComponent(runID)}`)
+        if (status.status === 'starting' || status.status === 'running') {
+          const timer = setTimeout(poll, 1500)
+          scheduleRunTimers.current.set(runID, timer)
+          return
+        }
+        scheduleRunTimers.current.delete(runID)
+        if (status.status === 'completed') {
+          setTaskRunState(id, { status: 'success', message: t.tasks.runCompleted(id) })
+          await loadScheduleTasks({ quiet: true }).catch(() => {})
+        } else {
+          setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, status.error) })
+        }
+      } catch (error) {
+        scheduleRunTimers.current.delete(runID)
+        setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, error.message) })
+      }
+    }
+    poll()
+  }
+  const runTask = async id => {
+    if (!id || !confirmDanger('schedule-run', t.tasks.runConfirm(id))) return
+    setTaskRunState(id, { status: 'pending', message: t.tasks.runPending })
+    try {
+      const d = await api('/api/schedule/run', { dangerous: true, method: 'POST', body: JSON.stringify({ id }) })
+      setTaskRunState(id, { status: 'pending', runId: d.run_id, message: t.tasks.runStarted(id) })
+      pollScheduleRun(id, d.run_id)
+    } catch (error) {
+      setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, error.message) })
+    }
   }
 
   const setTailLines = (value) => setTailLinesRaw(clampTailLines(value))
@@ -1214,6 +1257,12 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setTab('tasks')
     setTaskSubTab(nextSubTab)
   }
+  const openTaskReports = id => {
+    setScheduleReportTaskId(id)
+    setScheduleArtifactTitle('')
+    setScheduleArtifact('')
+    navigateTaskSubTab('reports')
+  }
   const openNotification = item => {
     const route = String(item?.route || 'notifications').replace(/^\/+/, '').split('/')[0]
     if (route === 'tasks' && item?.subtab) {
@@ -1328,7 +1377,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     <button type="button" className="admin-sidebar-scrim" aria-label={lang === 'zh' ? '关闭管理导航' : 'Close admin navigation'} onClick={() => setAdminSidebarOpen(false)} />
     <aside id="admin-sidebar" className="sidebar">
       <div className="admin-sidebar-heading"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><button type="button" className="admin-sidebar-close" aria-label={lang === 'zh' ? '收起管理导航' : 'Collapse admin navigation'} onClick={() => setAdminSidebarOpen(false)}><PanelLeftClose size={20} aria-hidden="true"/></button></div>
-      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} aria-label={lang === 'zh' ? '中文' : 'Chinese'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} aria-label={lang === 'en' ? 'English' : 'English'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang}/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
+      <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} aria-label={lang === 'zh' ? '中文' : 'Chinese'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} aria-label={lang === 'en' ? 'English' : 'English'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang} variant="compact"/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{navLabel(tab)}</span><ChevronDown size={17}/></button>
       <nav aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
@@ -1423,7 +1472,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
               {scheduleLoading
                 ? <p className="muted">{t.busy}</p>
                 : tasks.length
-                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} llms={llms} t={t} schedulerModelNo={schedulerModelNo} selected={taskId === (task.id || task.name)} onToggle={toggleTask} onEdit={loadTask} onDelete={deleteTask}/>)
+                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} llms={llms} t={t} schedulerModelNo={schedulerModelNo} selected={taskId === (task.id || task.name)} onToggle={toggleTask} onEdit={loadTask} onDelete={deleteTask} onRun={runTask} onReports={openTaskReports} runState={taskRunStates[task.id || task.name]}/>)
                   : <p className="muted">{t.hints.noTasks}</p>}
             </div>
           </Panel>
@@ -1446,7 +1495,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
         {taskSubTab==='reports' && <div className="workspace tasks-workspace">
           <Panel title={t.lists.recentReports}>
-            <ScheduleReportTree tasks={tasks} selectedPath={scheduleArtifactTitle} onSelect={path=>readScheduleArtifact(path)} t={t}/>
+            <ScheduleReportTree tasks={tasks} selectedPath={scheduleArtifactTitle} focusTaskId={scheduleReportTaskId} onSelect={path=>readScheduleArtifact(path)} t={t}/>
           </Panel>
           <Panel title={scheduleArtifactTitle || t.lists.generatedPreview}>
             <ScheduleArtifactPreview title={scheduleArtifactTitle} content={scheduleArtifact} empty={t.empty}/>

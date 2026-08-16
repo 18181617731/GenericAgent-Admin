@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.79 - 2026-08-16
+
+### Manual scheduled-task run
+- Add confirmed `POST /api/schedule/run` and `GET /api/schedule/run/status` so operators can launch a scheduled task immediately without waiting for the cron tick.
+- Require `X-GA-Confirm: dangerous` on run, keep run IDs alphanumeric, and persist status/logs under `temp/ga-admin-schedule-runs`.
+- Surface run progress in the schedule UI with i18n strings and regression coverage for confirm, prompt, and safe run IDs.
+
 ## v1.0.69 - 2026-08-12
 
 ### Latest merged build

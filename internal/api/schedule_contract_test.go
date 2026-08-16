@@ -54,6 +54,51 @@ func TestScheduleToggleAndDeleteRequireDangerousConfirm(t *testing.T) {
 	}
 }
 
+func TestScheduleRunRequiresPromptAndUsesSafeRunIDs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sche_tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sche_tasks", "manual.json"), []byte(`{"enabled":false,"schedule":"09:00","repeat":"daily","prompt":"run a harmless check"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/schedule/run", strings.NewReader(`{"id":"manual"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPreconditionRequired || !strings.Contains(rr.Body.String(), "X-GA-Confirm") {
+		t.Fatalf("manual run without confirm status/body = %d %s", rr.Code, rr.Body.String())
+	}
+
+	if !validManualScheduleRunID("manual-123") || validManualScheduleRunID("../escape") || validManualScheduleRunID("manual/run") {
+		t.Fatal("manual run ID validation is unsafe")
+	}
+	if prompt := buildManualSchedulePrompt("manual", "run a harmless check", "sche_tasks/done/2026-08-14_120000_manual.md"); !strings.Contains(prompt, "scheduled_task_sop") || !strings.Contains(prompt, "sche_tasks/done") {
+		t.Fatalf("manual prompt = %q", prompt)
+	}
+}
+
+func TestScheduleRunRejectsEmptyPromptAfterConfirmation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sche_tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sche_tasks", "empty.json"), []byte(`{"enabled":true,"schedule":"09:00","repeat":"daily","prompt":""}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/schedule/run", strings.NewReader(`{"id":"empty"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "prompt is required") {
+		t.Fatalf("empty prompt status/body = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestScheduleReadRoutesRejectNonGETMethods(t *testing.T) {
 	h := newGoalTestServer(t, t.TempDir()).Routes()
 	for _, tc := range []struct {

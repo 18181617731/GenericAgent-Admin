@@ -3067,6 +3067,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
   const [showJumpSent, setShowJumpSent] = useState(false)
+  const [subagents, setSubagents] = useState([])
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
   const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
