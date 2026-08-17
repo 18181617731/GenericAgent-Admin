@@ -150,6 +150,8 @@ export const SETTINGS_TEXT = {
       languageHelp: '切换 GA Admin 的显示语言。',
       theme: '主题',
       themeHelp: '选择配色方案，浏览器会记住选择。',
+      fontAttribution: '本软件使用小米 MiSans 字体。',
+      fontLicense: '查看字体许可协议',
     },
     paths: {
       title: '路径',
@@ -239,6 +241,8 @@ export const SETTINGS_TEXT = {
       languageHelp: 'Switch the display language of GA Admin.',
       theme: 'Theme',
       themeHelp: 'Pick a color scheme; the browser remembers your choice.',
+      fontAttribution: 'This software uses the Xiaomi MiSans font.',
+      fontLicense: 'View font license',
     },
     paths: {
       title: 'Paths',
