@@ -87,6 +87,16 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
+      - name: Reject tracked local secret exports
+        shell: bash
+        run: |
+          forbidden="$(git ls-files | grep -Ei '(^|/)(config\.local\.json|model_profiles\.json|mykey\.py|\.env($|\.)|.*\.(key|pem|pfx|docx|txt)$)' || true)"
+          if [ -n "$forbidden" ]; then
+            echo "::error::Tracked local secret or operator export found:"
+            printf '%s\n' "$forbidden"
+            exit 1
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -104,7 +114,7 @@ jobs:
         shell: bash
         run: |
           cd web
-          npm ci || npm install
+          npm ci
           npm run verify
 
       - name: Build binary

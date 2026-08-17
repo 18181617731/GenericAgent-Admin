@@ -83,10 +83,10 @@ run.bat
 
 ```
 ga-admin-windows-amd64.zip
-ga-admin-linux-amd64.tar.gz
-ga-admin-darwin-amd64.tar.gz  (macOS Intel)
-ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
+ga-admin-windows-arm64.zip
 ```
+
+The automated release currently publishes Windows packages. Build from source on macOS or Linux.
 
 Extract and create `config.local.json` in the same directory:
 
@@ -97,8 +97,8 @@ Extract and create `config.local.json` in the same directory:
 ```
 
 **Windows:** Double-click `ga-admin.exe`. The UI opens in a native desktop window backed by the WebView2 runtime (preinstalled on Windows 11 and current Windows 10), and the app keeps running in the system tray after you close the window. Run `ga-admin.exe --no-window` to use your default browser instead, or `ga-admin.exe --no-browser` to start without opening any UI.
-**macOS:** Run `./ga-admin`. The UI opens in a native desktop window backed by WKWebView (built into macOS). Closing the window keeps the app in the menu bar. Use `--no-window` to open your default browser instead, or `--no-browser` to start without opening any UI.
-**Linux:** Run `./ga-admin` or `./ga-admin --no-browser`. Linux still opens the UI in your default browser.
+**macOS source build:** Run `./ga-admin`. The UI opens in a native desktop window backed by WKWebView (built into macOS). Closing the window keeps the app in the menu bar. Use `--no-window` to open your default browser instead, or `--no-browser` to start without opening any UI.
+**Linux source build:** Run `./ga-admin` or `./ga-admin --no-browser`. Linux still opens the UI in your default browser.
 
 By default the server listens on `127.0.0.1` with a random port, so nothing is exposed to the network and local access needs no password. The address of the running process is printed at startup and written to `runtime.local.json`; open that URL if you want a second view of the UI. To reach the admin server from another device, turn on remote access in **Settings** (see [Remote access](#remote-access)).
 
@@ -145,10 +145,10 @@ Loop spends one extra full-context controller call per round, so keep the round 
 
 ### For Developers
 
-- **Frontend:** React 18 + Vite 6, code-split routes, theme toggle, accessibility
-- **Backend:** Go 1.22+, embedded web assets (`//go:embed web/dist`), subprocess lifecycle
-- **Build:** Single-executable distribution, GitHub Actions CI/CD for 6 platforms
-- **Test:** `npm run verify` (lint + test:lib + build), `go test ./...`
+- **Frontend:** React 19 + Vite 8, code-split routes, theme toggle, accessibility
+- **Backend:** Go 1.23+, embedded web assets (`//go:embed web/dist`), subprocess lifecycle
+- **Build:** Single-executable distribution; the current release workflow publishes Windows amd64/arm64 packages
+- **Test:** `npm run verify` (lint + library/UI tests + build), `go test ./...`
 
 ---
 
@@ -163,8 +163,9 @@ Loop spends one extra full-context controller call per round, so keep the round 
 
 ### Environment Variables
 
-- Authentication is disabled for all access sources. Localhost, LAN, and Tailscale access open the service page directly without a username or password.
-- The legacy `GA_ADMIN_AUTH_ENABLED`, `GA_ADMIN_AUTH_USER`, and `GA_ADMIN_AUTH_PASSWORD` variables are ignored and no longer gate requests.
+- Loopback requests are trusted for local use. When `remote_access` is enabled, remote requests require the configured Basic Auth password unless `remote_allow_anonymous` is explicitly enabled.
+- `GA_ADMIN_AUTH_USER` and `GA_ADMIN_AUTH_PASSWORD` can provide an external credential when set together. `GA_ADMIN_AUTH_ENABLED` is obsolete and has no effect.
+- The API accepts same-origin browser requests only; cross-origin requests are rejected. Do not expose the admin port directly to the public Internet.
 
 ### Configuration
 
@@ -199,15 +200,11 @@ The repository ignores:
 GA_ADMIN_NO_BROWSER=1 ./ga-admin
 ```
 
-无桌面服务器需要远程访问时，请把 `config.local.json` 中的 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`。当前版本不再启用 HTTP Basic Auth，因此本机、局域网和 Tailscale 地址都可以直接打开管理页面，不需要输入账号密码。旧版本生成的 `auth.local.json` 不会被读取，旧的认证环境变量也不会改变访问策略。
+无桌面服务器需要远程访问时，请在设置中启用 `remote_access`，并把 `host` 设为可信网络可访问的地址，例如 `0.0.0.0`。`remote_allow_anonymous` 保持 `false` 时必须先配置密码，否则服务会回退到 loopback 监听。
 
-> 以下密码文件说明仅适用于旧版本，当前版本不会读取或写入该文件。
+设置后的凭据以加盐 PBKDF2 哈希保存到应用数据目录的 `auth.local.json`，不会保存明文密码。不要把这个本地状态文件提交到版本库；备份或迁移应用数据时应将它视为敏感文件。也可以同时设置 `GA_ADMIN_AUTH_USER` 与 `GA_ADMIN_AUTH_PASSWORD`，由环境变量提供远程访问凭据。
 
-设置后的凭据以加盐 PBKDF2 哈希保存到应用数据目录的 `auth.local.json`，不会保存明文密码。不要把这个本地状态文件提交到版本库；备份或迁移应用数据时应将它视为敏感文件。设置或改密会立即使旧凭据失效；从其他设备通过 HTTP Basic Auth 访问时，需要使用当前密码重新认证。
-
-旧版本的认证配置说明已失效：当前版本不会读取 `auth.local.json`，也不会使用 `GA_ADMIN_AUTH_*` 变量启用认证。
-
-旧版认证环境变量示例不再适用于当前版本。所有来源的请求均直接进入服务页面；请通过 Tailscale ACL、操作系统防火墙和 HTTPS 控制访问范围。
+只有在 Tailscale ACL、操作系统防火墙和 HTTPS 已形成可信边界时，才应显式启用 `remote_allow_anonymous`；不要将管理端口直接暴露到公网。
 
 ## 本地构建
 
@@ -298,7 +295,7 @@ git diff --check
 ```
 
 **Notes:**
-- `npm run verify` runs `lint + test:lib + build` (skips `test:ui`)
+- `npm run verify` runs `lint + test:lib + test:ui + build`
 - `web/src/lib/*.test.mjs` are auto-discovered by `npm run test:lib`
 - Test files do not need `package.json` registration
 - After changing `internal/appicon/assets/tray_windows.ico`, run `go generate .` to rebuild the committed `rsrc_windows_*.syso` files that give the Windows executable its icon
@@ -315,22 +312,18 @@ git diff --check
 6. GitHub Actions 根据 tag 构建并上传 Release assets。
 7. 在管理端“版本/更新”能力中验证新版本可发现、可下载且 sha256 校验通过。
 
-### v1.0.0 发布门禁
+### 发布门禁
 
-`v1.0.0` 发布前需要确认：
+每个发布版本前需要确认：
 
 - `git diff --check`、`go test -count=1 ./internal/api`、`go test ./...`、`go build ./...`、`npm.cmd --prefix web test`、`npm.cmd --prefix web run build` 的最终门禁证据。
 - `build.bat` 或等效 workflow 输出不包含 `config.local.json`、`model_profiles.json`、`mykey.py`、`.env`、`*.key` 等本地/私密文件。
 - 发布提交只包含应用代码、构建脚本、文档、测试和必要资源，不包含本地验证产物、临时备份或排查文件。
-- 发布目标分支为 `main`，目标 tag 为 `v1.0.0`。
+- 发布目标 tag 使用当前版本号，例如 `v1.0.80`。
 
 ```
 ga-admin-windows-amd64.zip
 ga-admin-windows-arm64.zip
-ga-admin-linux-amd64.tar.gz
-ga-admin-linux-arm64.tar.gz
-ga-admin-darwin-amd64.tar.gz
-ga-admin-darwin-arm64.tar.gz
 ```
 
 - 页面打开但功能为空：先检查 `config.local.json` 的 `ga_root` 是否指向真实 GenericAgent 根目录。
@@ -422,7 +415,7 @@ This project is used internally within the GenericAgent ecosystem. For external 
 
 ## 🚀 快速开始
 
-> ⚠️ **前置要求：** Python 3.11+（用于 GenericAgent），Node.js 18+ / Go 1.22+（用于开发构建）
+> ⚠️ **前置要求：** Python 3.11+（用于 GenericAgent），Node.js 22+ / Go 1.23+（用于开发构建）
 
 ### 给 LLM Agent 看的
 
@@ -440,10 +433,10 @@ curl -fsSL https://raw.githubusercontent.com/Fwind43/GenericAgent-Admin/main/REA
 
 ```
 ga-admin-windows-amd64.zip
-ga-admin-linux-amd64.tar.gz
-ga-admin-darwin-amd64.tar.gz  (macOS Intel)
-ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
+ga-admin-windows-arm64.zip
 ```
+
+自动发布目前只提供 Windows 包；macOS 与 Linux 请从源码构建。
 
 解压后在同目录创建 `config.local.json`：
 
@@ -454,8 +447,8 @@ ga-admin-darwin-arm64.tar.gz  (macOS Apple Silicon)
 ```
 
 **Windows：** 双击 `ga-admin.exe`。界面会在原生桌面窗口中打开（基于 WebView2 运行时，Windows 11 与较新的 Windows 10 已预装），关闭窗口后程序继续驻留系统托盘。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
-**macOS：** 运行 `./ga-admin`。界面会在原生桌面窗口中打开（基于系统自带的 WKWebView）。关闭窗口后程序继续留在菜单栏。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
-**Linux：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`，Linux 仍使用默认浏览器打开界面。
+**macOS 源码构建：** 运行 `./ga-admin`。界面会在原生桌面窗口中打开（基于系统自带的 WKWebView）。关闭窗口后程序继续留在菜单栏。加 `--no-window` 可改用默认浏览器打开，加 `--no-browser` 则启动时不打开任何界面。
+**Linux 源码构建：** 运行 `./ga-admin` 或 `./ga-admin --no-browser`，Linux 仍使用默认浏览器打开界面。
 
 默认监听 `127.0.0.1` 的随机端口：不对外暴露，本机访问也不需要密码。实际地址会在启动日志中打印，同时写入 `runtime.local.json`；需要再开一个界面视图时用它。要从其它设备访问，请在**设置**中开启远程访问（见[远程访问](#远程访问)）。
 
@@ -502,10 +495,10 @@ Loop 每轮会额外花一次全量上下文的控制模型调用，轮次上限
 
 ### 面向开发者
 
-- **前端：** React 18 + Vite 6，路由代码分割，主题切换，无障碍
-- **后端：** Go 1.22+，嵌入 web 资源（`//go:embed web/dist`），子进程生命周期
-- **构建：** 单可执行文件分发，GitHub Actions CI/CD 支持 6 平台
-- **测试：** `npm run verify`（lint + test:lib + build），`go test ./...`
+- **前端：** React 19 + Vite 8，路由代码分割，主题切换，无障碍
+- **后端：** Go 1.23+，嵌入 web 资源（`//go:embed web/dist`），子进程生命周期
+- **构建：** 单可执行文件分发；当前 release workflow 发布 Windows amd64/arm64 包
+- **测试：** `npm run verify`（lint + 库测试/UI 测试 + build），`go test ./...`
 
 ---
 
@@ -520,8 +513,9 @@ Loop 每轮会额外花一次全量上下文的控制模型调用，轮次上限
 
 ### 环境变量
 
-- 所有访问来源均不启用认证，本机、局域网和 Tailscale 访问无需登录。
-- 旧版 `GA_ADMIN_AUTH_ENABLED`、`GA_ADMIN_AUTH_USER`、`GA_ADMIN_AUTH_PASSWORD` 变量会被忽略，不再拦截请求。
+- 本机 loopback 请求默认信任；启用 `remote_access` 后，远程请求需要已配置的 Basic Auth 密码，除非显式启用 `remote_allow_anonymous`。
+- `GA_ADMIN_AUTH_USER` 与 `GA_ADMIN_AUTH_PASSWORD` 同时设置时可提供外部凭据；旧版 `GA_ADMIN_AUTH_ENABLED` 不再生效。
+- API 只接受同源浏览器请求，跨源请求会被拒绝；不要将管理端口直接暴露到公网。
 
 ### 配置
 
@@ -569,7 +563,7 @@ git diff --check
 ```
 
 **注意：**
-- `npm run verify` 运行 `lint + test:lib + build`（跳过 `test:ui`）
+- `npm run verify` 运行 `lint + test:lib + test:ui + build`
 - `web/src/lib/*.test.mjs` 由 `npm run test:lib` 自动发现
 - 测试文件无需 `package.json` 注册
 - 修改 `internal/appicon/assets/tray_windows.ico` 后运行 `go generate .`，重新生成随仓库提交的 `rsrc_windows_*.syso`（Windows 可执行文件的图标资源）
@@ -580,23 +574,20 @@ git diff --check
 
 1. **验证清洁状态：** 无未提交更改，所有测试通过
 2. **运行验证：** `npm --prefix web run verify && go test ./...`
-3. **提交并打标签：** `git commit -am "release: v0.x.x"` → `git tag v0.x.x`
-4. **推送：** `git push origin main --tags`
+3. **提交并打标签：** `git commit -am "release: v1.0.80"` → `git tag v1.0.80`
+4. **推送：** `git push origin <release-branch> v1.0.80`
 
-GitHub Actions 将构建 6 个平台包并附加到发布：
+GitHub Actions 将构建 2 个 Windows 平台包并附加到发布：
 
 ```
 ga-admin-windows-amd64.zip
 ga-admin-windows-arm64.zip
-ga-admin-linux-amd64.tar.gz
-ga-admin-linux-arm64.tar.gz
-ga-admin-darwin-amd64.tar.gz
-ga-admin-darwin-arm64.tar.gz
 ```
 
 每个包包含：
-- 平台特定可执行文件（`ga-admin` / `ga-admin.exe`）
-- `config.example.json` 模板
+- Windows 可执行文件 `ga-admin.exe`
+- `cmd/chat_worker.py` 与 `cmd/frontends/worldline.py`
+- 包内使用说明 `README.txt`
 - 版本元数据（构建时通过 `-ldflags` 注入）
 
 ---

@@ -242,7 +242,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
-	return recoverPanics(cors(mux))
+	return recoverPanics(mux)
 }
 
 func recoverPanics(next http.Handler) http.Handler {
@@ -256,18 +256,40 @@ func recoverPanics(next http.Handler) http.Handler {
 	})
 }
 
-func cors(next http.Handler) http.Handler {
+// SameOriginGuard rejects browser requests that do not originate from the
+// current Admin host. It must wrap authentication as well as API routes so
+// credential-management endpoints receive the same protection.
+func SameOriginGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GA-Confirm, X-GA-Instance-ID")
-		w.Header().Set("Access-Control-Expose-Headers", "X-GA-Instance-ID")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+		w.Header().Set("Vary", "Origin, Sec-Fetch-Site")
+		if !sameOriginRequest(r) {
+			bad(w, http.StatusForbidden, "cross-origin requests are not allowed")
+			return
+		}
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func sameOriginRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, strings.TrimSpace(r.Host))
 }
 
 type riskCatalogItem struct {

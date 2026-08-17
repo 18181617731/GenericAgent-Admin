@@ -87,7 +87,7 @@ func main() {
 	if err := adminhttp.WriteRuntimeInfo(cwd, listener); err != nil {
 		log.Printf("record runtime address: %v", err)
 	}
-	server := adminhttp.NewServer(listener.Addr().String(), auth.Middleware(srv.Routes()))
+	server := adminhttp.NewServer(listener.Addr().String(), api.SameOriginGuard(auth.Middleware(srv.Routes())))
 	go srv.StartAutostartServices()
 	go srv.StartChatHubBridge()
 	go func() {

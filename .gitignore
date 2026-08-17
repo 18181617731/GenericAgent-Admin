@@ -7,6 +7,15 @@ config.local.json
 *.local.json
 model_profiles.json
 web/node_modules/
+/node_modules/
+.tmp_tests_case/
+/*.txt
+*.docx
+*.key
+*.pem
+*.pfx
+*.secret*
+*.credential*
 .gitnexus
 ga-admin
 .air.toml

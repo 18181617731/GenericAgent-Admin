@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.80 - 2026-08-17
+
+### Security and release hygiene
+- Reject cross-origin browser requests at the Admin API boundary instead of advertising wildcard CORS for file, process, model, and service controls.
+- Add regression coverage for hostile origins, cross-site fetch metadata, and same-origin compatibility.
+- Add a push/PR verification workflow, reject tracked local secret exports during release builds, and require `npm ci` for reproducible frontend dependencies.
+- Align the README with the current authentication behavior, React/Vite versions, test commands, and Windows release matrix.
+
 ## v1.0.79 - 2026-08-16
 
 ### Manual scheduled-task run
