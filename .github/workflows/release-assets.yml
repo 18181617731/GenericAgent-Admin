@@ -90,7 +90,7 @@ jobs:
       - name: Reject tracked local secret exports
         shell: bash
         run: |
-          forbidden="$(git ls-files | grep -Ei '(^|/)(config\.local\.json|model_profiles\.json|mykey\.py|\.env($|\.)|.*\.(key|pem|pfx|docx|txt)$)' || true)"
+          forbidden="$(git ls-files | grep -Ei '(^|/)(config\.local\.json|model_profiles\.json|mykey\.py|\.env($|\.)|.*\.(key|pem|pfx|docx|txt)$)' | grep -Ev '^web/public/fonts/misans/(NOTICE|SHA256SUMS)\.txt$' || true)"
           if [ -n "$forbidden" ]; then
             echo "::error::Tracked local secret or operator export found:"
             printf '%s\n' "$forbidden"

@@ -628,6 +628,7 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`cat > dist/release-manifest.json <<EOF`,
 		`Get-Content -Raw dist/release-manifest.json | ConvertFrom-Json`,
 		`--version-json`,
+		`grep -Ev '^web/public/fonts/misans/(NOTICE|SHA256SUMS)\.txt$'`,
 		`target_commitish: ${{ github.sha }}`,
 		`needs: [prepare, build]`,
 	}
