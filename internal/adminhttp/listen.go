@@ -119,6 +119,24 @@ func WriteRuntimeInfo(appRoot string, listener net.Listener) error {
 	return os.WriteFile(filepath.Join(appRoot, runtimeInfoFilename), append(data, '\n'), 0o644)
 }
 
+// RuntimePortForPID returns the listener recorded by a specific previous
+// process. The PID match prevents an unrelated stale runtime file from pinning
+// a normal launch to the wrong port.
+func RuntimePortForPID(appRoot string, expectedPID int) (int, bool) {
+	if expectedPID <= 0 {
+		return 0, false
+	}
+	data, err := os.ReadFile(filepath.Join(appRoot, runtimeInfoFilename))
+	if err != nil {
+		return 0, false
+	}
+	var info runtimeInfo
+	if json.Unmarshal(data, &info) != nil || info.PID != expectedPID || info.Port < 1 || info.Port > 65535 {
+		return 0, false
+	}
+	return info.Port, true
+}
+
 // RemoveRuntimeInfo clears the record on a clean shutdown.
 func RemoveRuntimeInfo(appRoot string) {
 	if err := os.Remove(filepath.Join(appRoot, runtimeInfoFilename)); err != nil && !os.IsNotExist(err) {

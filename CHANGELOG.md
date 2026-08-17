@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.87 - 2026-08-17
+
+### Update restart continuity
+- Preserve the effective app root, fixed port, headless/browser mode, and Windows argument quoting across successful and rollback restarts.
+- Reclaim the previous listener port when an older updater launches the new binary without its original arguments, allowing the existing upgrade page to advance from 95% to completion.
+- Validate restart handoffs against the previous process ID so stale runtime metadata cannot redirect a normal launch.
+
 ## v1.0.86 - 2026-08-17
 
 ### Multi-turn worldline history

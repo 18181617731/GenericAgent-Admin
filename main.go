@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	version.SetRestartArguments(restartArguments(launch, cwd))
 	if err := os.Chdir(cwd); err != nil {
 		log.Fatalf("chdir %s failed: %v", cwd, err)
 	}
@@ -84,6 +86,11 @@ func main() {
 	portOverride := 0
 	if launch.PortSet {
 		portOverride = launch.Port
+	} else if previousPID, restarting := version.RestartHandoffPID(); restarting {
+		if previousPort, ok := adminhttp.RuntimePortForPID(cwd, previousPID); ok {
+			portOverride = previousPort
+			log.Printf("update restart reusing previous listener port %d", previousPort)
+		}
 	}
 	listener, err := adminhttp.OpenListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
 	if err != nil {
@@ -146,6 +153,24 @@ type launchOptions struct {
 	Port        int
 	PortSet     bool
 	VersionJSON bool
+}
+
+func restartArguments(launch launchOptions, root string) []string {
+	args := make([]string, 0, 9)
+	if launch.Headless {
+		args = append(args, "--headless")
+	}
+	if launch.NoBrowser {
+		args = append(args, "--no-browser")
+	}
+	if launch.NoWindow {
+		args = append(args, "--no-window")
+	}
+	args = append(args, "--app-root", root)
+	if launch.PortSet {
+		args = append(args, "--port", strconv.Itoa(launch.Port))
+	}
+	return args
 }
 
 func writeVersionJSON(w io.Writer) error {

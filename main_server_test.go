@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -44,6 +45,29 @@ func TestAppRootExplicitRootTakesPrecedence(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("appRoot(%q) = %q, want %q", explicit, got, want)
+	}
+}
+
+func TestRestartArgumentsPreserveEffectiveLaunchConfiguration(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "app root with spaces")
+	launch := launchOptions{
+		Headless:  true,
+		NoBrowser: true,
+		NoWindow:  true,
+		Port:      8791,
+		PortSet:   true,
+	}
+
+	got := restartArguments(launch, root)
+	want := []string{
+		"--headless",
+		"--no-browser",
+		"--no-window",
+		"--app-root", root,
+		"--port", "8791",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("restart arguments = %#v, want %#v", got, want)
 	}
 }
 

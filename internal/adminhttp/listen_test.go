@@ -115,3 +115,23 @@ func TestRuntimeInfoRoundTrip(t *testing.T) {
 		t.Fatalf("runtime info file still present: %v", err)
 	}
 }
+
+func TestRuntimePortForPIDReturnsPreviousUpdateListener(t *testing.T) {
+	root := t.TempDir()
+	info := runtimeInfo{Port: 54321, PID: 4242}
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, runtimeInfoFilename), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, ok := RuntimePortForPID(root, 4242)
+	if !ok || port != 54321 {
+		t.Fatalf("RuntimePortForPID() = (%d, %v), want (54321, true)", port, ok)
+	}
+	if _, ok := RuntimePortForPID(root, 4243); ok {
+		t.Fatal("RuntimePortForPID accepted runtime metadata from another process")
+	}
+}

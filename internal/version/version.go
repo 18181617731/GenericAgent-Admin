@@ -36,6 +36,11 @@ const (
 
 var repoLatestURL = defaultRepoLatestURL
 
+var (
+	restartArgsMu     sync.RWMutex
+	restartLaunchArgs []string
+)
+
 // SetRepoURL overrides the default update repo URL (e.g. from config.local.json).
 func SetRepoURL(url string) {
 	url = strings.TrimSpace(url)
@@ -53,6 +58,24 @@ func SetRepoURL(url string) {
 		}
 	}
 	repoLatestURL = url
+}
+
+// SetRestartArguments records the effective server launch configuration so a
+// self-update returns to the same config root, port, and UI mode.
+func SetRestartArguments(args []string) {
+	restartArgsMu.Lock()
+	restartLaunchArgs = append([]string(nil), args...)
+	restartArgsMu.Unlock()
+}
+
+func currentRestartArguments() []string {
+	restartArgsMu.RLock()
+	args := append([]string(nil), restartLaunchArgs...)
+	restartArgsMu.RUnlock()
+	if len(args) == 0 {
+		return []string{"--headless", "--no-browser"}
+	}
+	return args
 }
 
 const (
@@ -220,6 +243,22 @@ func CurrentUpdateStatus() UpdateStatus {
 	updateMu.Lock()
 	defer updateMu.Unlock()
 	return currentStatusLocked()
+}
+
+// RestartHandoffPID identifies an updater-owned process restart before status
+// normalization. Startup uses it to reclaim the prior listener for old
+// updaters that did not preserve launch arguments.
+func RestartHandoffPID() (int, bool) {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	st := readStatusLocked()
+	if !st.Running || st.PID <= 0 || st.PID == os.Getpid() {
+		return 0, false
+	}
+	if st.Stage != "restarting" && st.Stage != "applying" {
+		return 0, false
+	}
+	return st.PID, true
 }
 
 func readStatusLocked() UpdateStatus {
@@ -703,12 +742,13 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	var content string
 	var script string
 	if runtime.GOOS == "windows" {
+		launchArgs := currentRestartArguments()
 		script = filepath.Join(work, "apply-update.ps1")
 		restartScript := filepath.Join(work, "restart-update.ps1")
-		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript(exe, newExe, backup, worker, workerBackup, worldline, worldlineBackup)), 0600); err != nil {
+		if err := writeFileAtomic(restartScript, []byte(windowsRestartScript(exe, newExe, backup, worker, workerBackup, worldline, worldlineBackup, launchArgs...)), 0600); err != nil {
 			return ApplyResult{}, err
 		}
-		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript)
+		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript, launchArgs...)
 	} else {
 		script = filepath.Join(work, "apply-update.sh")
 		content = linuxUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup)
@@ -738,7 +778,7 @@ func updateScriptCommand(goos, script string) *exec.Cmd {
 	return exec.Command("bash", script)
 }
 
-func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript string) string {
+func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup, worldline, newWorldline, worldlineBackup, restartScript string, launchArgs ...string) string {
 	return fmt.Sprintf(`$Old = %s
 $OldDir = %s
 $New = %s
@@ -750,6 +790,7 @@ $Worldline = %s
 $NewWorldline = %s
 $WorldlineBackup = %s
 $RestartScript = %s
+$LaunchArgs = %s
 $ErrorActionPreference = 'Stop'
 $LogFile = Join-Path $PSScriptRoot 'apply-update.log'
 $WorkerHadOriginal = $false
@@ -831,7 +872,7 @@ try {
   Write-ApplyLog "apply failed error=$($_.Exception.Message)"
   Restore-OldVersion
   if (Test-Path -LiteralPath $Old) {
-    Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir -WindowStyle Hidden
+    Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir -WindowStyle Hidden
   }
   exit 1
 }
@@ -847,6 +888,7 @@ try {
 		powerShellSingleQuoted(newWorldline),
 		powerShellSingleQuoted(worldlineBackup),
 		powerShellSingleQuoted(restartScript),
+		powerShellSingleQuoted(windowsLaunchCommandLine(launchArgs)),
 	)
 }
 
@@ -854,7 +896,44 @@ func powerShellSingleQuoted(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func windowsRestartScript(oldExe, newExe, backup, worker, workerBackup, worldline, worldlineBackup string) string {
+func windowsLaunchCommandLine(args []string) string {
+	if len(args) == 0 {
+		args = []string{"--headless", "--no-browser"}
+	}
+	quoted := make([]string, len(args))
+	for index, arg := range args {
+		quoted[index] = quoteWindowsCommandLineArgument(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func quoteWindowsCommandLineArgument(arg string) string {
+	if arg != "" && !strings.ContainsAny(arg, " \t\n\v\"") {
+		return arg
+	}
+	var quoted strings.Builder
+	quoted.WriteByte('"')
+	backslashes := 0
+	for _, char := range arg {
+		switch char {
+		case '\\':
+			backslashes++
+		case '"':
+			quoted.WriteString(strings.Repeat("\\", backslashes*2+1))
+			quoted.WriteRune(char)
+			backslashes = 0
+		default:
+			quoted.WriteString(strings.Repeat("\\", backslashes))
+			quoted.WriteRune(char)
+			backslashes = 0
+		}
+	}
+	quoted.WriteString(strings.Repeat("\\", backslashes*2))
+	quoted.WriteByte('"')
+	return quoted.String()
+}
+
+func windowsRestartScript(oldExe, newExe, backup, worker, workerBackup, worldline, worldlineBackup string, launchArgs ...string) string {
 	return fmt.Sprintf(`$Old = %s
 $OldDir = %s
 $New = %s
@@ -863,6 +942,7 @@ $Worker = %s
 $WorkerBackup = %s
 $Worldline = %s
 $WorldlineBackup = %s
+$LaunchArgs = %s
 $ErrorActionPreference = 'SilentlyContinue'
 $LogFile = Join-Path $PSScriptRoot 'restart-update.log'
 function Write-RestartLog([string]$Message) {
@@ -872,7 +952,7 @@ Write-RestartLog "launcher started old=$Old"
 Start-Sleep -Seconds 3
 for ($attempt = 1; $attempt -le 10; $attempt++) {
   try {
-    $process = Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+    $process = Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir -WindowStyle Hidden -PassThru -ErrorAction Stop
     Write-RestartLog "attempt=$attempt pid=$($process.Id) started"
   } catch {
     Write-RestartLog "attempt=$attempt start_failed=$($_.Exception.Message)"
@@ -911,7 +991,7 @@ if (Test-Path -LiteralPath $WorkerBackup) {
 }
 Move-Item -LiteralPath $Old -Destination $New -Force -ErrorAction SilentlyContinue
 Move-Item -LiteralPath $Backup -Destination $Old -Force -ErrorAction SilentlyContinue
-Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir -WindowStyle Hidden
+Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir -WindowStyle Hidden
 exit 1
 `,
 		powerShellSingleQuoted(oldExe),
@@ -922,6 +1002,7 @@ exit 1
 		powerShellSingleQuoted(workerBackup),
 		powerShellSingleQuoted(worldline),
 		powerShellSingleQuoted(worldlineBackup),
+		powerShellSingleQuoted(windowsLaunchCommandLine(launchArgs)),
 	)
 }
 

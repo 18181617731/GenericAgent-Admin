@@ -361,7 +361,8 @@ func TestWindowsUpdateScriptRollsBackWhenUpdatedProcessCannotStart(t *testing.T)
 		`$RestartExit = $LASTEXITCODE`,
 		`Write-ApplyLog "restart script exit=$RestartExit"`,
 		`Restore-OldVersion`,
-		`-ArgumentList '--headless','--no-browser'`,
+		`$LaunchArgs = '--headless --no-browser'`,
+		`-ArgumentList $LaunchArgs`,
 		`exit 1`,
 	}
 	for _, sub := range want {
@@ -380,6 +381,12 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`C:\Program Files\GA Admin\cmd\chat_worker.py.bak`,
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py`,
 		`C:\Program Files\GA Admin\cmd\frontends\worldline.py.bak`,
+		"--headless",
+		"--no-browser",
+		"--app-root",
+		`C:\Program Files\GA Config`,
+		"--port",
+		"8791",
 	)
 	want := []string{
 		`$Old = 'C:\Program Files\GA Admin\ga-admin.exe'`,
@@ -389,7 +396,8 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`Start-Sleep -Seconds 3`,
 		`for ($attempt = 1; $attempt -le 10; $attempt++)`,
 		`for ($probe = 1; $probe -le 30; $probe++)`,
-		`-ArgumentList '--headless','--no-browser'`,
+		`$LaunchArgs = '--headless --no-browser --app-root "C:\Program Files\GA Config" --port 8791'`,
+		`-ArgumentList $LaunchArgs`,
 		`Get-NetTCPConnection -State Listen -OwningProcess $process.Id`,
 		`if ($process.HasExited) { break }`,
 		`probe=$probe pid=$($process.Id) listener=$($listener.LocalPort) verified`,
@@ -397,7 +405,7 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 		`if (Test-Path -LiteralPath $WorldlineBackup)`,
 		`if (Test-Path -LiteralPath $WorkerBackup)`,
 		`Move-Item -LiteralPath $Backup -Destination $Old`,
-		`Start-Process -FilePath $Old -ArgumentList '--headless','--no-browser' -WorkingDirectory $OldDir`,
+		`Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir`,
 	}
 	for _, sub := range want {
 		if !strings.Contains(script, sub) {
@@ -406,6 +414,57 @@ func TestWindowsRestartScriptWaitsForARealListenerAndRollsBack(t *testing.T) {
 	}
 	if strings.Contains(script, "schtasks.exe") || strings.Contains(script, "Remove-RestartTask") {
 		t.Fatalf("restart script must not depend on Task Scheduler:\n%s", script)
+	}
+}
+
+func TestWindowsUpdateRollbackPreservesLaunchArguments(t *testing.T) {
+	script := windowsUpdateScript(
+		"old.exe", "new.exe", "old.exe.bak",
+		"cmd/chat_worker.py", "tmp/chat_worker.py", "cmd/chat_worker.py.bak",
+		"cmd/frontends/worldline.py", "tmp/cmd/frontends/worldline.py", "cmd/frontends/worldline.py.bak",
+		"restart-update.ps1",
+		"--headless", "--no-browser", "--app-root", `C:\GA Config`, "--port", "8787",
+	)
+	want := `$LaunchArgs = '--headless --no-browser --app-root "C:\GA Config" --port 8787'`
+	if !strings.Contains(script, want) || !strings.Contains(script, `-ArgumentList $LaunchArgs`) {
+		t.Fatalf("update rollback did not preserve launch arguments:\n%s", script)
+	}
+}
+
+func TestWindowsLaunchCommandLineSurvivesPowerShellStartProcess(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell argument contract")
+	}
+	root := filepath.Join(t.TempDir(), "probe files")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "captured arguments.txt")
+	childScript := filepath.Join(root, "capture arguments.ps1")
+	child := fmt.Sprintf("[IO.File]::WriteAllLines(%s, [string[]]$args)\n", powerShellSingleQuoted(marker))
+	if err := os.WriteFile(childScript, []byte(child), 0600); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--headless", "--no-browser", "--app-root", `C:\Program Files\GA Config\`, "--port", "8791"}
+	childArgs := append([]string{"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", childScript}, want...)
+	outerScript := filepath.Join(root, "start probe.ps1")
+	outer := fmt.Sprintf("$LaunchArgs = %s\n$process = Start-Process -FilePath 'powershell.exe' -ArgumentList $LaunchArgs -WindowStyle Hidden -Wait -PassThru\nexit $process.ExitCode\n",
+		powerShellSingleQuoted(windowsLaunchCommandLine(childArgs)))
+	if err := os.WriteFile(outerScript, []byte(outer), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", outerScript)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("PowerShell Start-Process probe failed: %v output=%s\nscript:\n%s", err, output, outer)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n")), "\n")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("restarted arguments = %#v, want %#v", got, want)
 	}
 }
 
@@ -1570,6 +1629,35 @@ func TestCurrentUpdateStatusNormalizesRestartingAfterRelaunch(t *testing.T) {
 	}
 	if persisted.Stage != "done" || persisted.AppliedVersion != "v9.9.9" {
 		t.Fatalf("verified status was not persisted: %+v", persisted)
+	}
+}
+
+func TestRestartHandoffPIDRecognizesPreviousUpdatingProcess(t *testing.T) {
+	oldStatus := statusPathOverride
+	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
+	defer func() { statusPathOverride = oldStatus }()
+
+	wantPID := os.Getpid() + 1000
+	st := UpdateStatus{PID: wantPID, Running: true, Stage: "restarting", Progress: 95}
+	data, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPathOverride, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	pid, ok := RestartHandoffPID()
+	if !ok || pid != wantPID {
+		t.Fatalf("RestartHandoffPID() = (%d, %v), want (%d, true)", pid, ok, wantPID)
+	}
+	st.Stage = "downloading"
+	data, _ = json.Marshal(st)
+	if err := os.WriteFile(statusPathOverride, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := RestartHandoffPID(); ok {
+		t.Fatal("RestartHandoffPID accepted a non-restart stage")
 	}
 }
 
