@@ -17,6 +17,27 @@ func hideChildWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 }
 
+func findSharedHubPID(port int) (int, bool) {
+	script := "$owners=Get-NetTCPConnection -State Listen -LocalPort " + strconv.Itoa(port) + " -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($procId in $owners) { $p=Get-CimInstance Win32_Process -Filter (\"ProcessId = \" + $procId) -ErrorAction SilentlyContinue; if ($null -ne $p) { [Console]::Out.WriteLine((\"{0}`t{1}\" -f $procId,$p.CommandLine)) } }"
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	hideChildWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) != 2 || !isSharedHubCommandLine(parts[1]) {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err == nil && pid > 0 {
+			return pid, true
+		}
+	}
+	return 0, false
+}
+
 type processRow struct {
 	pid            int
 	ppid           int

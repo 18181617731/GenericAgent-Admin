@@ -97,15 +97,17 @@ export function ChannelServiceTable({ services = [], emptyMessage, onStart, onSt
   return <div className="channel-service-list">{services.map(svc => {
     const state = actionState?.name === svc.name ? actionState : actionState?.[svc.name]
     const isPending = state?.status === 'pending'
+    const isExternalShared = !!(svc.shared && svc.running && !svc.managed)
     const startAction = isReflectService(svc) && onReflectStart ? onReflectStart : onStart
     const retryAction = state?.action === 'stop' ? onStop : startAction
+    const statusText = isExternalShared ? (t.service?.sharedRunning || t.running) : (svc.running ? t.running : t.stopped)
     return <article className={`channel-service-row ${svc.running ? 'is-running' : 'is-stopped'}`} key={svc.name} aria-busy={isPending || undefined}>
       <div className="channel-service-line">
         <span className="channel-service-id"><b>{svc.name}</b><small>{svc.kind}</small></span>
-        <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{svc.running ? t.running : t.stopped}</span>
+        <span className={svc.running ? 'status-pill running' : 'status-pill stopped'}>{statusText}</span>
         <span className="channel-service-controls">
           <button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button>
-          <button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
+          <button disabled={isPending || !svc.running || isExternalShared} title={isExternalShared ? t.service?.sharedStopDisabled : undefined} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
           <button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>
           {svc.name === 'frontends/hub.py' && <button type="button" onClick={onOpenHub} title="打开 Hub 面板"><ExternalLink size={14}/>Hub</button>}
           <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label>
@@ -115,6 +117,7 @@ export function ChannelServiceTable({ services = [], emptyMessage, onStart, onSt
       <dl className="channel-service-facts">
         {channelServiceFacts(svc, t?.service || {}).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={String(value)}>{String(value)}</dd></div>)}
       </dl>
+      {isExternalShared && <p className="service-desc">{t.service?.sharedHubNotice}</p>}
       {state?.message && <div className={`service-action-status ${state.status || ''}`} role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
         <span>{state.message}</span>
         {state.status === 'error' && <button type="button" onClick={() => retryAction?.(svc.name)}>{t.retry || 'Retry'}</button>}

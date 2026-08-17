@@ -52,6 +52,18 @@ func TestStopServicesLabelCountsWhatItWouldStop(t *testing.T) {
 	}
 }
 
+func TestTrayMultiOpenLabelsFollowLocale(t *testing.T) {
+	if got := trayZH.OpenNewChat; got != "多开" {
+		t.Fatalf("Chinese multi-open label = %q", got)
+	}
+	if got := trayEN.OpenNewChat; got != "Open Another Chat" {
+		t.Fatalf("English multi-open label = %q", got)
+	}
+	if trayZH.OpenNewChatTip == "" || trayEN.OpenNewChatTip == "" {
+		t.Fatal("multi-open tooltip must be translated in both locales")
+	}
+}
+
 func TestTrayAppRunningServicesDefaultsToZero(t *testing.T) {
 	if got := (App{}).runningServices(); got != 0 {
 		t.Fatalf("running services without a provider = %d", got)

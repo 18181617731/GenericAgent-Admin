@@ -150,6 +150,12 @@ export function GeneralPage({
       <SettingRow label={text.appearance.theme} hint={text.appearance.themeHelp}>
         <ThemePicker value={theme} onChange={setTheme} lang={lang}/>
       </SettingRow>
+      <SettingFooter>
+        <SettingNote tone="muted">
+          {text.appearance.fontAttribution}{' '}
+          <a href="/fonts/misans/MiSans-License.pdf" target="_blank" rel="noreferrer">{text.appearance.fontLicense}</a>
+        </SettingNote>
+      </SettingFooter>
     </SettingsSection>
 
     <SettingsSection title={text.paths.title} description={text.paths.desc} icon={<FolderCog size={17}/>}>

@@ -21,6 +21,7 @@ type trayText struct {
 	AppName string
 
 	OpenChat, OpenChatTip         string
+	OpenNewChat, OpenNewChatTip   string
 	OpenSettings, OpenSettingsTip string
 	Exit, ExitTip                 string
 
@@ -43,6 +44,7 @@ var trayZH = trayText{
 	AppName: "GenericAgent Admin",
 
 	OpenChat: "打开 Chat", OpenChatTip: "打开对话界面",
+	OpenNewChat: "多开", OpenNewChatTip: "新建一个独立的 Chat 窗口",
 	OpenSettings: "打开设置", OpenSettingsTip: "打开管理台的设置页：远程访问与访问密码都在这里",
 	Exit: "退出 Admin", ExitTip: "退出 GenericAgent Admin",
 
@@ -69,6 +71,7 @@ var trayEN = trayText{
 	AppName: "GenericAgent Admin",
 
 	OpenChat: "Open Chat", OpenChatTip: "Open the chat interface",
+	OpenNewChat: "Open Another Chat", OpenNewChatTip: "Open a new independent chat window",
 	OpenSettings: "Open Settings", OpenSettingsTip: "Open the admin settings page, where remote access and the access password live",
 	Exit: "Quit Admin", ExitTip: "Quit GenericAgent Admin",
 
@@ -101,6 +104,7 @@ func stopServicesLabel(text trayText, running int) string {
 // it reads the server's current state from.
 type App struct {
 	OpenChat     func()
+	OpenNewChat  func()
 	OpenSettings func()
 	StopServices func()
 	Exit         func()

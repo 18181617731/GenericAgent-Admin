@@ -45,6 +45,7 @@ func Run(app App) {
 		systray.SetOnTapped(func() { run(app.OpenChat) })
 
 		chatItem := systray.AddMenuItem(text.OpenChat, text.OpenChatTip)
+		newChatItem := systray.AddMenuItem(text.OpenNewChat, text.OpenNewChatTip)
 		settingsItem := systray.AddMenuItem(text.OpenSettings, text.OpenSettingsTip)
 		systray.AddSeparator()
 		// The default listen port is random, so the tray is the only place a
@@ -100,6 +101,8 @@ func Run(app App) {
 					render()
 				case <-chatItem.ClickedCh:
 					run(app.OpenChat)
+				case <-newChatItem.ClickedCh:
+					run(app.OpenNewChat)
 				case <-settingsItem.ClickedCh:
 					run(app.OpenSettings)
 				case <-localItem.ClickedCh:

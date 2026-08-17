@@ -4,12 +4,14 @@ package desktop
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/url"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +50,9 @@ type desktopWindowSpec struct {
 	MinWidth  int
 	MinHeight int
 	DataPath  string
+	// Transient removes this uniquely named window's manager slot when it
+	// closes. Stable named surfaces keep their slots for reuse.
+	Transient bool
 	// Reroute sends an already-open window to URL instead of only focusing it.
 	// Plain "open" entries leave the window where the user left it; entries
 	// that name a destination, such as the settings page, set this.
@@ -65,7 +70,8 @@ type desktopWindow interface {
 // UI opens the admin and chat UIs. A nil windows field means this launch
 // uses the system browser instead of native windows.
 type UI struct {
-	windows *desktopWindows
+	windows          *desktopWindows
+	newChatWindowSeq atomic.Uint64
 }
 
 // NewUI prepares the launch's window strategy. browserOnly skips native
@@ -87,6 +93,23 @@ func (u *UI) OpenChat(baseURL string) {
 		URL:    loopbackURL(baseURL),
 		Width:  windowWidth,
 		Height: windowHeight,
+	})
+}
+
+// OpenNewChat always opens another independent chat window. OpenChat remains
+// the stable primary window that tray clicks and startup reuse.
+func (u *UI) OpenNewChat(baseURL string) {
+	if u == nil {
+		return
+	}
+	sequence := u.newChatWindowSeq.Add(1)
+	u.open(desktopWindowSpec{
+		Name:      fmt.Sprintf("%s-%d", chatWindowName, sequence),
+		Title:     "GenericAgent Chat",
+		URL:       loopbackURL(baseURL),
+		Width:     windowWidth,
+		Height:    windowHeight,
+		Transient: true,
 	})
 }
 
@@ -182,7 +205,7 @@ func (d *desktopWindows) Open(spec desktopWindowSpec) {
 			d.setWindow(spec.Name, win)
 			report.Do(func() { started <- nil })
 		})
-		d.setWindow(spec.Name, nil)
+		d.finishWindow(spec.Name, slot, spec.Transient)
 		report.Do(func() { started <- err })
 	}()
 
@@ -228,6 +251,18 @@ func (d *desktopWindows) slot(name string) *desktopWindowSlot {
 		d.slots[name] = slot
 	}
 	return slot
+}
+
+func (d *desktopWindows) finishWindow(name string, slot *desktopWindowSlot, transient bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if current, ok := d.slots[name]; !ok || current != slot {
+		return
+	}
+	slot.win = nil
+	if transient {
+		delete(d.slots, name)
+	}
 }
 
 func (d *desktopWindows) window(name string) desktopWindow {

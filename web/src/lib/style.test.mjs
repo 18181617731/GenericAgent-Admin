@@ -14,6 +14,23 @@ const ruleBodies = (selector) => {
   return matches.map(match => match[1])
 }
 
+test('all color themes share one product font stack', () => {
+  const fontDeclarations = [...css.matchAll(/--font\s*:\s*([^;]+);/g)]
+  assert.equal(fontDeclarations.length, 1, 'the product font must have a single source of truth')
+  assert.match(fontDeclarations[0][1], /^\s*"MiSans VF"/i)
+  assert.match(fontDeclarations[0][1], /"Microsoft YaHei UI"/i)
+
+  const bodyRule = ruleBodies('body').join('\n')
+  assert.match(bodyRule, /font-family\s*:\s*var\(--font\)/i)
+
+  for (const selector of ['html[data-theme="warm"]', 'html[data-theme="light"]', 'html[data-theme="dark"]']) {
+    assert.doesNotMatch(ruleBodies(selector).join('\n'), /--font\s*:/i, `${selector} must only change palette tokens`)
+  }
+
+  assert.match(mainSource, /fontFamily\s*:\s*['"]var\(--font\)['"]/)
+  assert.doesNotMatch(mainSource, /fontFamily\s*:\s*['"]Inter\b/i)
+})
+
 test('log-view keeps a readable foreground over its forced dark background', () => {
   const sharedPanelRules = ruleBodies('.log-panel pre, .preview pre, .artifact-view, .json-editor, .file-editor')
   assert.ok(
