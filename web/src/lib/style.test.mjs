@@ -127,17 +127,17 @@ test('mobile chat navigation and tools stay fixed inside the iPhone viewport', (
     css,
     /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*grid-template-columns\s*:\s*max-content\s+minmax\(0,\s*1fr\)/i,
   )
-  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*grid-template-rows\s*:\s*48px\s+44px/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*grid-template-rows\s*:\s*52px/i)
   assert.match(css, /\.oa-chat\s+\.oa-admin-back-trigger\s*\{[^}]*display\s*:\s*none/i)
   assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-collapsed-actions\s+\.oa-admin-back-trigger\s*\{[^}]*display\s*:\s*inline-flex/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*position\s*:\s*fixed/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*inset\s*:\s*0\s+0\s+auto/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar\s*\{[^}]*width\s*:\s*100%/i)
-  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar-actions\s*\{[^}]*grid-row\s*:\s*2/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar-actions\s*\{[^}]*grid-row\s*:\s*1/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-workspace\s*\{[^}]*grid-row\s*:\s*2/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-workspace\s*>\s*\.oa-thread\s*\{[^}]*grid-row\s*:\s*auto/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-composer-wrap\s*\{[^}]*grid-row\s*:\s*3/i)
-  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar-actions\s*>\s*\.oa-context-btn\s*\{[^}]*display\s*:\s*inline-flex\s*!important/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-topbar-actions\s*>\s*\.oa-context-btn\s*\{[^}]*display\s*:\s*none\s*!important/i)
   assert.match(css, /\.oa-mobile-tools-layer\s*\{[^}]*position\s*:\s*fixed[^}]*z-index\s*:\s*1000/i)
   assert.match(css, /\.oa-mobile-picker-backdrop\s*\{[^}]*box-sizing\s*:\s*border-box[^}]*padding-bottom\s*:\s*max\(4px,\s*env\(safe-area-inset-bottom\)\)/i)
   assert.match(
@@ -147,6 +147,14 @@ test('mobile chat navigation and tools stay fixed inside the iPhone viewport', (
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-topbar\s*\{[^}]*overflow-x\s*:\s*visible\s*!important[^}]*overflow-y\s*:\s*visible\s*!important/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.notification-popover\s*\{[^}]*left\s*:\s*0[^}]*right\s*:\s*0[^}]*width\s*:\s*auto/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.notification-popover\s*\{[^}]*z-index\s*:\s*1200/i)
+})
+
+test('chat responsive convergence keeps mobile-only tools out of desktop flow', () => {
+  assert.match(css, /\.oa-chat\s+\.oa-mobile-tools-trigger,[\s\S]*?\.oa-mobile-tools-layer\s*\{[^}]*display\s*:\s*none\s*!important/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-mobile-tools-layer\s*\{\s*display\s*:\s*block\s*!important/i)
+  assert.match(css, /--oa-chat-measure\s*:\s*clamp\(960px,\s*72vw,\s*1120px\)/i)
+  assert.match(css, /\.oa-chat\s+\.oa-message\.user\s+\.oa-bubble\s*\{[^}]*max-width\s*:\s*min\(820px,\s*82%\)/i)
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.oa-chat\s+\.oa-main\s*\{[^}]*--oa-topbar-h\s*:\s*52px/i)
 })
 
 test('desktop chat keeps the composer under the transcript and gives sidebars breathing room', () => {

@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.84 - 2026-08-17
+
+### Responsive chat workspace
+- Expand the desktop transcript and composer measure so wide screens devote more space to the active conversation.
+- Keep Loop collapsed when chat first opens while preserving its launcher, live status, and round counter.
+- Remove the desktop mobile-tools trigger that rendered duplicate controls below the viewport, and consolidate phone tools into one overflow menu.
+- Use a single-row mobile header with denser messages, cards, sidebars, and composer chrome while retaining touch targets and iOS-safe input sizing.
+
 ## v1.0.83 - 2026-08-17
 
 ### Reliable self-update compatibility

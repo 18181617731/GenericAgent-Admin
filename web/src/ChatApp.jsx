@@ -2998,7 +2998,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       requestAnimationFrame(() => mobileToolsTriggerRef.current?.focus())
     }
     const closeAboveBreakpoint = () => {
-      if (window.innerWidth > 420) setMobileToolsOpen(false)
+      if (window.innerWidth > 680) setMobileToolsOpen(false)
     }
     document.addEventListener('keydown', closeOnEscape)
     window.addEventListener('resize', closeAboveBreakpoint)
@@ -3007,7 +3007,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       window.removeEventListener('resize', closeAboveBreakpoint)
     }
   }, [mobileToolsOpen])
-  const [loopRailOpen, setLoopRailOpen] = useState(() => !isNarrowChatViewport())
+  const [loopRailOpen, setLoopRailOpen] = useState(false)
   const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [loopState, setLoopState] = useState(null)
@@ -5739,7 +5739,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </section>
       </aside>}
       {!loopRailOpen && <div className="oa-rail-launchers" aria-label={ct('已收起的右侧栏', 'Collapsed right rails')}>
-        <button type="button" className="oa-btw-collapsed oa-loop-collapsed" onClick={()=>setLoopRailOpen(true)} aria-expanded="false" aria-controls="oa-loop-rail" title={ct('展开 Loop 栏', 'Expand Loop rail')}><Orbit size={15} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/><span>LOOP</span>{loopState?.enabled && <b>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</b>}</button>
+        <button type="button" className="oa-btw-collapsed oa-loop-collapsed" onClick={()=>setLoopRailOpen(true)} aria-expanded="false" aria-controls="oa-loop-rail" aria-label={ct('展开 Loop 栏', 'Expand Loop rail')} title={ct('展开 Loop 栏', 'Expand Loop rail')}><Orbit size={15} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/><span>LOOP</span>{loopState?.enabled && <b>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</b>}</button>
       </div>}
       </div>
 

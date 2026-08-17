@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage, I18N } from './App.jsx'
 import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, WorldlinePanel } from './ChatApp.jsx'
@@ -2296,6 +2296,31 @@ describe('mobile chat model selector', () => {
 })
 
 describe('mobile chat session navigation', () => {
+  test('shows one semantic copy of each tool in the mobile overflow menu', async () => {
+    installBrowserPolyfills()
+    Element.prototype.scrollIntoView = vi.fn()
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[] })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    const trigger = await screen.findByRole('button', { name:'打开聊天工具' })
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name:'聊天工具' })
+    expect(within(dialog).getAllByRole('button', { name:/上下文/ })).toHaveLength(1)
+    expect(within(dialog).getAllByRole('button', { name:/世界线/ })).toHaveLength(1)
+    expect(within(dialog).getAllByRole('button', { name:/外观/ })).toHaveLength(1)
+    expect(within(dialog).getAllByRole('group', { name:'界面缩放' })).toHaveLength(1)
+
+    fireEvent.keyDown(document, { key:'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name:'聊天工具' })).toBeNull())
+    expect(document.activeElement).toBe(trigger)
+  })
+
   test('returns focus to the mobile sidebar trigger after Escape closes the drawer', async () => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
@@ -2454,6 +2479,9 @@ describe('chat loop controls', () => {
 
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Loop chat'))
+    expect(screen.queryByRole('complementary', { name:'Loop 控制' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name:'展开 Loop 栏' }))
+    expect(screen.getByRole('complementary', { name:'Loop 控制' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name:'配置 Loop' }))
     const startButton = screen.getByRole('button', { name:'启动 Loop' })
     const objective = screen.getByRole('textbox', { name:'目标' })
@@ -2480,6 +2508,11 @@ describe('chat loop controls', () => {
     expect(startedBody?.max_rounds).toBe(3)
     expect(document.querySelector('.oa-composer textarea')?.value).toBe('')
     expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name:'收起' }))
+    expect(screen.queryByRole('complementary', { name:'Loop 控制' })).toBeNull()
+    expect(screen.getByRole('button', { name:'展开 Loop 栏' }).textContent).toContain('0/3')
+    fireEvent.click(screen.getByRole('button', { name:'展开 Loop 栏' }))
 
     fireEvent.click(screen.getByRole('button', { name:'停止 Loop' }))
     await waitFor(() => expect(globalThis.fetch.mock.calls.some(([url, options]) => String(url).split('?')[0] === '/api/chat/loop/loop-session/stop' && options?.method === 'POST')).toBe(true))
