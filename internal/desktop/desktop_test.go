@@ -71,6 +71,40 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+func TestOpenNewChatCreatesIndependentWindows(t *testing.T) {
+	created := make(chan *fakeDesktopWindow, 2)
+	specs := make(chan desktopWindowSpec, 2)
+	manager := newDesktopWindows("", nil)
+	manager.run = func(spec desktopWindowSpec, ready func(desktopWindow)) error {
+		specs <- spec
+		return fakeRunner(created)(spec, ready)
+	}
+	ui := &UI{windows: manager}
+
+	ui.OpenNewChat("http://0.0.0.0:8787")
+	ui.OpenNewChat("http://0.0.0.0:8787")
+
+	firstSpec, secondSpec := <-specs, <-specs
+	firstWindow, secondWindow := <-created, <-created
+	defer firstWindow.Close()
+	defer secondWindow.Close()
+
+	if firstSpec.Name == secondSpec.Name {
+		t.Fatalf("new chat windows reused name %q", firstSpec.Name)
+	}
+	for _, spec := range []desktopWindowSpec{firstSpec, secondSpec} {
+		if spec.URL != "http://127.0.0.1:8787" {
+			t.Errorf("new chat URL = %q", spec.URL)
+		}
+		if !spec.Transient {
+			t.Errorf("new chat window %q did not mark its slot transient", spec.Name)
+		}
+	}
+	if firstWindow == secondWindow {
+		t.Fatal("multi-open reused the same window")
+	}
+}
+
 func TestDesktopWindowsReusesWindowPerName(t *testing.T) {
 	created := make(chan *fakeDesktopWindow, 8)
 	manager := newDesktopWindows("", nil)
