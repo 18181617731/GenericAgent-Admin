@@ -1611,11 +1611,11 @@ def _worldline_title(store, history, fallback):
     return str(fallback or 'checkpoint').replace('\n', ' ').strip()[:160] or 'checkpoint'
 
 
-def _commit_worldline(agent, prompt):
+def _commit_worldline(agent, prompt, history_override=None):
     store = getattr(agent, '_admin_worldline_store', None)
     if store is None:
         return None
-    history = _snapshot_backend_history(agent)
+    history = history_override if isinstance(history_override, list) else _snapshot_backend_history(agent)
     parent = store.head if store.head in store.nodes else store.root_id
     parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
     if len(history) <= parent_len:
@@ -1633,6 +1633,243 @@ def _commit_worldline(agent, prompt):
     )
     _update_worldline_dirty_after_commit(agent, store, node_id, touched)
     return node_id
+
+
+def _completed_worldline_turns(history):
+    """Return completed Admin message pairs in display order."""
+    turns = []
+    pending_user = None
+    for index, message in enumerate(history or []):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get('role') or '').lower()
+        message_id = str(message.get('id') or '').strip()
+        if role == 'user' and message_id:
+            pending_user = (index, message)
+        elif (role == 'assistant' and message_id and pending_user is not None and
+              message.get('error') is not True):
+            turns.append((pending_user[0], index, pending_user[1], message))
+            pending_user = None
+    return turns
+
+
+def _completed_backend_turn_ranges(history):
+    """Return completed backend-history turn ranges."""
+    try:
+        from frontends.worldline import RewindStore
+    except ImportError:
+        return []
+    starts = [index for index, message in enumerate(history or [])
+              if RewindStore._msg_user_text(message).strip()]
+    ranges = []
+    for position, user_start in enumerate(starts):
+        start = 0 if position == 0 else user_start
+        end = starts[position + 1] if position + 1 < len(starts) else len(history)
+        if any(isinstance(message, dict) and
+               str(message.get('role') or '').lower() == 'assistant' and
+               message.get('error') is not True
+               for message in history[user_start:end]):
+            ranges.append((start, end))
+    return ranges
+
+
+def _completed_backend_turn_ends(history):
+    return [end for _, end in _completed_backend_turn_ranges(history)]
+
+
+def _completed_turn_backend_history(turns):
+    history = []
+    for _, _, user_message, assistant_message in turns:
+        for message in (user_message, assistant_message):
+            converted = _admin_history_to_backend([message])
+            if converted:
+                history.extend(converted)
+                continue
+            role = str(message.get('role') or '').lower()
+            fallback = _chat_content_text(message.get('outputs') or '(completed response)').strip()
+            history.append({'role': role, 'content': [{'type': 'text', 'text': fallback}]})
+    return history
+
+
+def _worldline_turn_title(store, segment):
+    for message in segment:
+        text = store._msg_user_text(message).strip()
+        if text:
+            return _strip_worldline_project_mode(text).replace('\n', ' ').strip()[:160]
+    return 'Imported chat history'
+
+
+def _split_legacy_worldline_node(store, node_id):
+    node = store.nodes.get(node_id)
+    if not isinstance(node, dict) or node.get('kind') == 'origin':
+        return []
+    delta = store._node_conv(node_id)
+    ranges = _completed_backend_turn_ranges(delta)
+    if len(ranges) <= 1:
+        return []
+    segments = [delta[start:end] for start, end in ranges]
+    parent_id = node.get('parent')
+    parent = store.nodes.get(parent_id) or {}
+    base_len = max(0, int(node.get('hist_len') or len(delta)) - len(delta))
+    previous_id, consumed, inserted = parent_id, 0, []
+    original_created = float(node.get('created') or time.time())
+    for position, segment in enumerate(segments[:-1]):
+        new_id = store._new_id()
+        consumed += len(segment)
+        store.nodes[new_id] = {
+            'parent': previous_id, 'children': [],
+            'title': _worldline_turn_title(store, segment),
+            'created': original_created - (len(segments) - position - 1) * 0.001,
+            'kind': 'edit', 'hist_len': base_len + consumed,
+            'files': dict(parent.get('files') or {}),
+            'conv': store._put_blob(json.dumps(segment, ensure_ascii=False, default=str).encode('utf-8')),
+            'hist_info': parent.get('hist_info'), 'key_info': parent.get('key_info'),
+        }
+        if previous_id in store.nodes:
+            children = store.nodes[previous_id].get('children') or []
+            store.nodes[previous_id]['children'] = [new_id if child == node_id else child for child in children]
+            if new_id not in store.nodes[previous_id]['children']:
+                store.nodes[previous_id]['children'].append(new_id)
+        previous_id = new_id
+        inserted.append(new_id)
+    last = segments[-1]
+    node['parent'] = previous_id
+    node['title'] = _worldline_turn_title(store, last)
+    node['conv'] = store._put_blob(json.dumps(last, ensure_ascii=False, default=str).encode('utf-8'))
+    if previous_id in store.nodes:
+        store.nodes[previous_id]['children'] = [node_id]
+    return inserted
+
+
+def _bind_worldline_path(store, ga_root, sid, node_ids, turns, history):
+    path = _worldline_sidecar_path(ga_root, sid)
+    with _worldline_sidecar_lock(path):
+        sidecar, _ = _load_worldline_sidecar(ga_root, sid)
+        for node_id, (_, display_end, user_message, assistant_message) in zip(node_ids, turns):
+            previous = sidecar['bindings'].get(node_id) or {}
+            ordinal = previous.get('ordinal')
+            if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 1:
+                ordinal = sidecar['next_ordinal']
+                sidecar['next_ordinal'] += 1
+            created_at = previous.get('created_at')
+            if not isinstance(created_at, int) or isinstance(created_at, bool) or created_at < 1:
+                created_at = int(store.nodes[node_id].get('created') or time.time())
+            sidecar['bindings'][node_id] = {
+                'user_message_id': user_message['id'],
+                'assistant_message_id': assistant_message['id'],
+                'display_path': _json_clone(history[:display_end + 1], []),
+                'ordinal': ordinal, 'created_at': created_at,
+            }
+        _save_worldline_sidecar(ga_root, sid, sidecar)
+
+
+def _rebuild_linear_legacy_worldline_path(store, path, turns):
+    nodes = [node_id for node_id in path if store.nodes[node_id].get('kind') != 'origin']
+    if len(turns) <= len(nodes) or not nodes:
+        return []
+    for position, node_id in enumerate(path):
+        expected = [path[position + 1]] if position + 1 < len(path) else []
+        if list(store.nodes[node_id].get('children') or []) != expected:
+            return []
+    current = store.rebuild_history(store.head)
+    first_user = next((index for index, message in enumerate(current)
+                       if store._msg_user_text(message).strip()), len(current))
+    rebuilt = current[:first_user] + _completed_turn_backend_history(turns)
+    ranges = _completed_backend_turn_ranges(rebuilt)
+    if len(ranges) != len(turns):
+        return []
+    inserted = [store._new_id() for _ in range(len(turns) - len(nodes))]
+    node_ids = nodes[:-1] + inserted + nodes[-1:]
+    parent_id, consumed = path[0], int(store.nodes[path[0]].get('hist_len') or 0)
+    for position, (node_id, (start, end)) in enumerate(zip(node_ids, ranges)):
+        segment = rebuilt[start:end]
+        node = store.nodes.get(node_id)
+        if node is None:
+            parent = store.nodes[parent_id]
+            node = {'created': time.time(), 'kind': 'edit', 'files': dict(parent.get('files') or {}),
+                    'hist_info': parent.get('hist_info'), 'key_info': parent.get('key_info')}
+            store.nodes[node_id] = node
+        consumed += len(segment)
+        node.update({
+            'parent': parent_id,
+            'children': [node_ids[position + 1]] if position + 1 < len(node_ids) else [],
+            'title': _worldline_turn_title(store, segment), 'hist_len': consumed,
+            'conv': store._put_blob(json.dumps(segment, ensure_ascii=False, default=str).encode('utf-8')),
+        })
+        store.nodes[parent_id]['children'] = [node_id]
+        parent_id = node_id
+    return inserted
+
+
+def _repair_legacy_worldline_history(store, ga_root, sid, turns, history):
+    sidecar, _ = _load_worldline_sidecar(ga_root, sid)
+    path_before = store.path_to(store.head)
+    if any(node_id in sidecar.get('aliases', {}) for node_id in path_before):
+        return []
+    turn_count = sum(len(_completed_backend_turn_ranges(store._node_conv(node_id)))
+                     for node_id in path_before
+                     if store.nodes[node_id].get('kind') != 'origin')
+    if turn_count != len(turns):
+        inserted = _rebuild_linear_legacy_worldline_path(store, path_before, turns)
+        if not inserted:
+            return []
+    else:
+        inserted = []
+        for node_id in list(path_before):
+            inserted.extend(_split_legacy_worldline_node(store, node_id))
+    if not inserted:
+        return []
+    store.save()
+    node_ids = [node_id for node_id in store.path_to(store.head)
+                if store.nodes[node_id].get('kind') != 'origin']
+    if len(node_ids) == len(turns):
+        _bind_worldline_path(store, ga_root, sid, node_ids, turns, history)
+    return inserted
+
+
+def _import_worldline_history(agent, store, ga_root, sid, history, raw_history=None,
+                               history_info=None, working=None):
+    """Import every completed persisted turn as its own worldline node.
+
+    Older sessions were bootstrapped by committing the complete history once,
+    which hid all but the last conversation turn in the worldline panel. Keep
+    the raw backend history when its turn boundaries are trustworthy; otherwise
+    use the Admin message pairs as a compatible fallback.
+    """
+    turns = _completed_worldline_turns(history)
+    if not turns:
+        return []
+    if store.nodes:
+        return _repair_legacy_worldline_history(store, ga_root, sid, turns, history)
+    _restore_admin_history(agent, history, raw_history)
+    _restore_ga_state(agent, history_info, working)
+    backend_history = _snapshot_backend_history(agent)
+    ends = _completed_backend_turn_ends(backend_history)
+    if len(ends) != len(turns):
+        backend_history = _completed_turn_backend_history(turns)
+        _restore_admin_history(agent, history, backend_history)
+        ends = [(position + 1) * 2 for position in range(len(turns))]
+    state = _snapshot_ga_state(agent)
+    node_ids = []
+    for position, (_, display_end, user_message, _) in enumerate(turns):
+        end = ends[position]
+        prefix = backend_history[:end]
+        prompt = _chat_content_text(user_message.get('content')).strip()
+        node_id = _commit_worldline(agent, prompt or 'Imported chat history', prefix)
+        if node_id is None:
+            continue
+        _bind_worldline_head(store, ga_root, sid, {
+            'node_id': node_id,
+            'turn_status': 'completed',
+            'has_final_answer': True,
+            'user_message_id': user_message['id'],
+            'assistant_message_id': turns[position][3]['id'],
+            'display_path': history[:display_end + 1],
+        })
+        node_ids.append(node_id)
+    _restore_admin_history(agent, history, backend_history)
+    _restore_ga_state(agent, state.get('history_info'), state.get('working'))
+    return node_ids
 
 
 _WORLDLINE_SID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
@@ -2003,32 +2240,10 @@ def handle_worldline_request(agent, req):
     if store is None and req.get('activate') is True:
         store = _ensure_worldline_store(agent, root_for_req, workspace)
         history = req.get('history') if isinstance(req.get('history'), list) else []
-        latest_user, completed_pair = None, None
-        for message in history:
-            if not isinstance(message, dict):
-                continue
-            role = str(message.get('role') or '').lower()
-            message_id = str(message.get('id') or '').strip()
-            if role == 'user' and message_id:
-                latest_user = message
-            elif (role == 'assistant' and message_id and latest_user is not None and
-                  message.get('error') is not True):
-                completed_pair = (latest_user, message)
-        if not store.nodes and completed_pair is not None:
-            _restore_admin_history(agent, history, req.get('raw_history'))
-            _restore_ga_state(agent, req.get('history_info'), req.get('working'))
-            user_message, assistant_message = completed_pair
-            prompt = _chat_content_text(user_message.get('content')).strip()
-            node_id = _commit_worldline(agent, prompt or 'Imported chat history')
-            if node_id is not None:
-                _bind_worldline_head(store, root_for_req, sid, {
-                    'node_id': node_id,
-                    'turn_status': 'completed',
-                    'has_final_answer': True,
-                    'user_message_id': user_message['id'],
-                    'assistant_message_id': assistant_message['id'],
-                    'display_path': history,
-                })
+        _import_worldline_history(
+            agent, store, root_for_req, sid, history, req.get('raw_history'),
+            req.get('history_info'), req.get('working'),
+        )
     elif store is not None:
         cwd = os.path.realpath(str(workspace or root_for_req))
         if os.path.realpath(store.cwd) != cwd:

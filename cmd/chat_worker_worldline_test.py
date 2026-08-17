@@ -138,6 +138,160 @@ class WorldlineSidecarTests(unittest.TestCase):
         content = [{'type': 'tool_result', 'content': {'result': 'Useful result'}}]
         self.assertEqual(worker._worldline_content_text(content), 'Useful result')
 
+    def test_imports_each_completed_turn_as_a_distinct_mapped_node(self):
+        from frontends.worldline import RewindStore
+
+        store = RewindStore(str(self.root / 'worldline'), str(self.root))
+        backend = SimpleNamespace(history=[])
+        agent = SimpleNamespace(
+            llmclient=SimpleNamespace(backend=backend),
+            history=[],
+            handler=SimpleNamespace(working={}),
+            _admin_worldline_store=store,
+        )
+        messages = []
+        raw_history = []
+        for number in range(1, 4):
+            question = f'question {number}'
+            answer = f'answer {number}'
+            messages.extend([
+                {'id': f'u-{number}', 'role': 'user', 'content': question},
+                {'id': f'a-{number}', 'role': 'assistant', 'content': answer},
+            ])
+            raw_history.extend([
+                {'role': 'user', 'content': [{'type': 'text', 'text': question}]},
+                {'role': 'assistant', 'content': [{'type': 'text', 'text': answer}]},
+            ])
+        messages.append({'id': 'u-pending', 'role': 'user', 'content': 'pending question'})
+        raw_history.append({'role': 'user', 'content': [{'type': 'text', 'text': 'pending question'}]})
+
+        node_ids = worker._import_worldline_history(
+            agent, store, self.root, 'sid-multi', messages, raw_history, [], {},
+        )
+
+        self.assertEqual(len(node_ids), 3)
+        self.assertEqual(store.path_to(store.head), ['origin', *node_ids])
+        self.assertEqual([store.nodes[node_id]['title'] for node_id in node_ids], [
+            'question 1', 'question 2', 'question 3',
+        ])
+        self.assertEqual(len(store.rebuild_history(node_ids[0])), 2)
+        self.assertEqual(len(store.rebuild_history(node_ids[1])), 4)
+        self.assertEqual(len(store.rebuild_history(node_ids[2])), 6)
+        self.assertEqual(len(agent.llmclient.backend.history), 7)
+
+        sidecar, status = worker._load_worldline_sidecar(self.root, 'sid-multi')
+        self.assertEqual(status, 'ok')
+        self.assertEqual([sidecar['bindings'][node_id]['user_message_id'] for node_id in node_ids], [
+            'u-1', 'u-2', 'u-3',
+        ])
+        self.assertEqual([len(sidecar['bindings'][node_id]['display_path']) for node_id in node_ids], [
+            2, 4, 6,
+        ])
+
+    def test_repairs_a_persisted_multi_turn_aggregate_without_losing_history(self):
+        from frontends.worldline import RewindStore
+
+        store = RewindStore(str(self.root / 'legacy-worldline'), str(self.root))
+        raw_history = [{'role': 'system', 'content': 'persisted system context'}]
+        messages = []
+        for number in range(1, 5):
+            question = f'legacy question {number}'
+            answer = f'legacy answer {number}'
+            raw_history.extend([
+                {'role': 'user', 'content': [{'type': 'text', 'text': question}]},
+                {'role': 'assistant', 'content': [{'type': 'text', 'text': answer}]},
+            ])
+            messages.extend([
+                {'id': f'legacy-u-{number}', 'role': 'user', 'content': question},
+                {'id': f'legacy-a-{number}', 'role': 'assistant', 'content': answer},
+            ])
+        legacy_id = store.commit('legacy question 3', history=raw_history[:7])
+        worker._bind_worldline_head(store, self.root, 'sid-legacy', {
+            'node_id': legacy_id, 'turn_status': 'completed', 'has_final_answer': True,
+            'user_message_id': 'legacy-u-3', 'assistant_message_id': 'legacy-a-3',
+            'display_path': messages[:6],
+        })
+        later_id = store.commit('legacy question 4', history=raw_history)
+        worker._bind_worldline_head(store, self.root, 'sid-legacy', {
+            'node_id': later_id, 'turn_status': 'completed', 'has_final_answer': True,
+            'user_message_id': 'legacy-u-4', 'assistant_message_id': 'legacy-a-4',
+            'display_path': messages,
+        })
+        agent = SimpleNamespace(
+            llmclient=SimpleNamespace(backend=SimpleNamespace(history=[])),
+            history=[], handler=SimpleNamespace(working={}),
+            _admin_worldline_store=store,
+        )
+
+        inserted = worker._import_worldline_history(
+            agent, store, self.root, 'sid-legacy', messages, raw_history, [], {},
+        )
+
+        path = store.path_to(store.head)
+        self.assertEqual(len(inserted), 2)
+        self.assertEqual(path[-2:], [legacy_id, later_id])
+        self.assertEqual(len(path), 5)
+        self.assertEqual(store.rebuild_history(store.head), raw_history)
+        self.assertEqual([store.nodes[node_id]['title'] for node_id in path[1:]], [
+            'legacy question 1', 'legacy question 2', 'legacy question 3', 'legacy question 4',
+        ])
+        sidecar, status = worker._load_worldline_sidecar(self.root, 'sid-legacy')
+        self.assertEqual(status, 'ok')
+        self.assertEqual([sidecar['bindings'][node_id]['user_message_id'] for node_id in path[1:]], [
+            'legacy-u-1', 'legacy-u-2', 'legacy-u-3', 'legacy-u-4',
+        ])
+        self.assertEqual(worker._import_worldline_history(
+            agent, store, self.root, 'sid-legacy', messages, raw_history, [], {},
+        ), [])
+        self.assertEqual(store.path_to(store.head), path)
+
+    def test_repairs_single_legacy_node_when_raw_turns_do_not_match_display(self):
+        from frontends.worldline import RewindStore
+
+        store = RewindStore(str(self.root / 'legacy-mismatch'), str(self.root))
+        messages = []
+        for number in range(1, 4):
+            assistant = {'id': f'mismatch-a-{number}', 'role': 'assistant', 'content': f'answer {number}'}
+            if number == 2:
+                assistant.update(content='', outputs=['answer 2 from outputs'])
+            messages.extend([
+                {'id': f'mismatch-u-{number}', 'role': 'user', 'content': f'question {number}'},
+                assistant,
+            ])
+        legacy_raw = [
+            {'role': 'system', 'content': 'keep this context'},
+            {'role': 'user', 'content': 'question 1'},
+            {'role': 'assistant', 'content': 'answer 1'},
+            {'role': 'user', 'content': 'question 3'},
+            {'role': 'assistant', 'content': 'answer 3'},
+        ]
+        legacy_id = store.commit('question 3', history=legacy_raw)
+        worker._bind_worldline_head(store, self.root, 'sid-mismatch', {
+            'node_id': legacy_id, 'turn_status': 'completed', 'has_final_answer': True,
+            'user_message_id': 'mismatch-u-3', 'assistant_message_id': 'mismatch-a-3',
+            'display_path': messages,
+        })
+        agent = SimpleNamespace(_admin_worldline_store=store)
+
+        inserted = worker._import_worldline_history(
+            agent, store, self.root, 'sid-mismatch', messages, legacy_raw, [], {},
+        )
+
+        path = store.path_to(store.head)
+        rebuilt = store.rebuild_history(store.head)
+        self.assertEqual(len(inserted), 2)
+        self.assertEqual(path[-1], legacy_id)
+        self.assertEqual([store.nodes[node_id]['title'] for node_id in path[1:]], [
+            'question 1', 'question 2', 'question 3',
+        ])
+        self.assertEqual(rebuilt[0], legacy_raw[0])
+        self.assertEqual(store._turn_sig(rebuilt), ['question 1', 'question 2', 'question 3'])
+        sidecar, status = worker._load_worldline_sidecar(self.root, 'sid-mismatch')
+        self.assertEqual(status, 'ok')
+        self.assertEqual([sidecar['bindings'][node_id]['user_message_id'] for node_id in path[1:]], [
+            'mismatch-u-1', 'mismatch-u-2', 'mismatch-u-3',
+        ])
+
     def test_projection_preserves_sibling_order_repeated_title_identity_and_path(self):
         nodes = {
             key: SimpleNamespace(
@@ -313,10 +467,7 @@ class WorldlineSidecarTests(unittest.TestCase):
         with mock.patch.object(worker, '_resolve_request_root', return_value=self.root), \
              mock.patch.object(worker, '_apply_workspace', return_value=None), \
              mock.patch.object(worker, '_ensure_worldline_store', return_value=empty_store) as ensure, \
-             mock.patch.object(worker, '_restore_admin_history') as restore_history, \
-             mock.patch.object(worker, '_restore_ga_state') as restore_state, \
-             mock.patch.object(worker, '_commit_worldline', return_value='baseline') as commit, \
-             mock.patch.object(worker, '_bind_worldline_head') as bind, \
+             mock.patch.object(worker, '_import_worldline_history') as import_history, \
              mock.patch.object(worker, '_worldline_nodes', return_value={'nodes': []}), \
              mock.patch.object(worker, '_snapshot_backend_history', return_value=[]), \
              mock.patch.object(worker, '_snapshot_ga_state', return_value={}), \
@@ -325,8 +476,7 @@ class WorldlineSidecarTests(unittest.TestCase):
                 'action': 'state', 'sid': 'sid-1',
             })
             ensure.assert_not_called()
-            commit.assert_not_called()
-            bind.assert_not_called()
+            import_history.assert_not_called()
             self.assertEqual(emitted[-1]['tree']['sidecar_status'], 'inactive')
 
             worker.handle_worldline_request(agent, {
@@ -337,19 +487,11 @@ class WorldlineSidecarTests(unittest.TestCase):
                 'working': {'key_info': 'restored'},
             })
             ensure.assert_called_once_with(agent, self.root, None)
-            restore_history.assert_called_once_with(
-                agent, history, [{'role': 'assistant', 'content': 'backend'}]
+            import_history.assert_called_once_with(
+                agent, empty_store, self.root, 'sid-1', history,
+                [{'role': 'assistant', 'content': 'backend'}],
+                [{'step': 1}], {'key_info': 'restored'},
             )
-            restore_state.assert_called_once_with(agent, [{'step': 1}], {'key_info': 'restored'})
-            commit.assert_called_once_with(agent, 'old question')
-            bind.assert_called_once_with(empty_store, self.root, 'sid-1', {
-                'node_id': 'baseline',
-                'turn_status': 'completed',
-                'has_final_answer': True,
-                'user_message_id': 'u-old',
-                'assistant_message_id': 'a-old',
-                'display_path': history,
-            })
             self.assertEqual(emitted[-1]['tree'], {'nodes': []})
 
     def test_mapped_restore_uses_core_conv_mode_and_returns_display_mapping(self):

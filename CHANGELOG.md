@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.86 - 2026-08-17
+
+### Multi-turn worldline history
+- Import every completed conversation turn as a distinct, ordered worldline node instead of collapsing an existing multi-turn session into one checkpoint.
+- Repair persisted aggregate nodes created by earlier releases while preserving node identity, descendants, backend history, and message mappings.
+- Keep incomplete turns out of the worldline and add regression coverage for fresh imports, legacy repair, idempotency, and continuous branches.
+
 ## v1.0.85 - 2026-08-17
 
 ### Windows background process windows
