@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,9 +18,7 @@ const (
 	// protocol. One corrective re-ask costs far less than dropping a loop that
 	// was otherwise healthy.
 	chatLoopControllerAttempts = 2
-	// A controller that keeps asking for the identical next step is spinning,
-	// not progressing, and would otherwise burn every remaining round.
-	chatLoopMaxPromptRepeats = 2
+	chatLoopAdvancePrompt      = "\u76ee\u6807\u5c1a\u672a\u5b8c\u6210\uff0c\u8bf7\u57fa\u4e8e\u5f53\u524d\u8fdb\u5c55\u81ea\u4e3b\u63a8\u8fdb\u3002"
 
 	chatLoopStatusWaiting    = "waiting"
 	chatLoopStatusRunning    = "running"
@@ -35,6 +31,7 @@ const (
 
 var (
 	chatLoopNextPromptTagRE = regexp.MustCompile(`(?is)</?next_prompt\s*>`)
+	chatLoopContinueTagRE   = regexp.MustCompile(`(?is)</?loop_continue\s*>`)
 	chatLoopCompleteTagRE   = regexp.MustCompile(`(?is)</?loop_complete\s*>`)
 	errChatLoopStale        = errors.New("stale chat loop decision")
 )
@@ -111,43 +108,26 @@ func chatLoopHasTerminalAssistant(cs chatSession) bool {
 }
 
 func chatLoopControllerPrompt(objective string, round, maxRounds int) string {
-	return fmt.Sprintf(`You are the controller for an autonomous task loop. Do not perform the task yourself.
+	return fmt.Sprintf(`You are the supervisor for an autonomous task loop. Do not perform the task yourself and do not plan or prescribe the next action.
 
 Loop objective (quoted): %q
 Completed automatic rounds: %d of %d.
 
-Review the conversation and choose exactly one outcome:
-1. If the objective is fully complete and no useful action remains, output exactly one loop_complete XML element containing a brief reason.
-2. If useful work remains, output exactly one next_prompt XML element containing the self-contained instruction for the main agent's next turn.
+Review the conversation and make exactly one binary decision:
+1. If the objective is fully complete, output exactly <loop_complete>brief completion reason</loop_complete>.
+2. If the objective is not fully complete, output exactly <loop_continue>continue</loop_continue>.
 
-The only valid response shapes are:
-<loop_complete>brief completion reason</loop_complete>
-<next_prompt>specific next action</next_prompt>
-
-Do not output both elements. Do not use placeholders such as ellipses, "continue", "none", or "TBD" as the next prompt. Do not add prose outside the chosen XML element.`, objective, round, maxRounds)
+Do not describe what to do next. Do not provide a plan, instruction, summary, explanation, markdown fence, or any text outside the single chosen XML element.`, objective, round, maxRounds)
 }
 
 func chatLoopControllerRetryPrompt(objective string, round, maxRounds int) string {
 	return chatLoopControllerPrompt(objective, round, maxRounds) + `
 
-Your previous reply was rejected because it did not contain exactly one usable loop_complete or next_prompt element. Answer again with that single element and nothing else.`
-}
-
-// chatLoopPromptFingerprint identifies a next step without storing its text, so
-// repeat detection never duplicates controller output into persisted state.
-func chatLoopPromptFingerprint(prompt string) string {
-	normalized := strings.ToLower(strings.Join(strings.Fields(prompt), " "))
-	if normalized == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(normalized))
-	return hex.EncodeToString(sum[:])
+Your previous reply was rejected. Answer with exactly one loop_complete or loop_continue element and nothing else.`
 }
 
 type chatLoopDecision struct {
 	Complete bool
-	NoAction bool
-	Prompt   string
 }
 
 func extractLastChatLoopElementAt(content string, tagRE *regexp.Regexp) (string, int, bool) {
@@ -175,38 +155,16 @@ func parseChatLoopNextPrompt(content string) string {
 	return prompt
 }
 
-func isChatLoopPlaceholderPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(prompt)), ""))
-	if normalized == "" {
-		return true
-	}
-	switch normalized {
-	case "continue", "none", "null", "n/a", "na", "tbd", "placeholder", "继续", "待定":
-		return true
-	}
-	for _, r := range normalized {
-		switch r {
-		case '.', '…', '·', '-', '_', '—':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func parseChatLoopDecision(content string) (chatLoopDecision, error) {
-	prompt, promptEnd, hasPrompt := extractLastChatLoopElementAt(content, chatLoopNextPromptTagRE)
+	_, continueEnd, hasContinue := extractLastChatLoopElementAt(content, chatLoopContinueTagRE)
 	_, completeEnd, hasComplete := extractLastChatLoopElementAt(content, chatLoopCompleteTagRE)
-	if hasComplete && (!hasPrompt || completeEnd > promptEnd) {
+	if hasComplete && (!hasContinue || completeEnd > continueEnd) {
 		return chatLoopDecision{Complete: true}, nil
 	}
-	if !hasPrompt {
-		return chatLoopDecision{}, errors.New("controller returned no decision element")
+	if hasContinue {
+		return chatLoopDecision{}, nil
 	}
-	if isChatLoopPlaceholderPrompt(prompt) {
-		return chatLoopDecision{Complete: true, NoAction: true}, nil
-	}
-	return chatLoopDecision{Prompt: prompt}, nil
+	return chatLoopDecision{}, errors.New("controller returned no usable loop_complete or loop_continue element")
 }
 
 func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid string) {
@@ -388,14 +346,10 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 		return
 	}
 	if decision.Complete {
-		reason := "controller_complete"
-		if decision.NoAction {
-			reason = "controller_no_action"
-		}
-		s.finishChatLoop(sid, epoch, chatLoopStatusCompleted, reason)
+		s.finishChatLoop(sid, epoch, chatLoopStatusCompleted, "controller_complete")
 		return
 	}
-	s.continueChatLoop(sid, epoch, decision.Prompt)
+	s.continueChatLoop(sid, epoch, chatLoopAdvancePrompt)
 }
 
 // recordChatLoopRetry reports whether the loop is still live and owned by this
@@ -476,30 +430,10 @@ func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
 			terminalLoop = &finished
 			return errChatLoopStale
 		}
-		fingerprint := chatLoopPromptFingerprint(prompt)
-		if fingerprint != "" && fingerprint == latest.Loop.LastPromptFingerprint {
-			latest.Loop.RepeatStreak++
-		} else {
-			latest.Loop.RepeatStreak = 0
-		}
-		latest.Loop.LastPromptFingerprint = fingerprint
-		if latest.Loop.RepeatStreak >= chatLoopMaxPromptRepeats {
-			latest.Loop.Enabled = false
-			latest.Loop.Status = chatLoopStatusStopped
-			latest.Loop.StopReason = "controller_stalled"
-			appendChatLoopRecord(&latest.Loop, "stalled", "Controller kept asking for the same next step.", "")
-			latest.Loop.Epoch++
-			if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
-				return err
-			}
-			finished := latest.Loop
-			terminalLoop = &finished
-			return errChatLoopStale
-		}
 		latest.Loop.Round++
 		latest.Loop.Status = chatLoopStatusRunning
 		latest.Loop.StopReason = ""
-		appendChatLoopRecord(&latest.Loop, "continue", "Controller queued the next step.", prompt)
+		appendChatLoopRecord(&latest.Loop, "continue", "Supervisor requested another round.", "")
 		latest.Messages = append(latest.Messages, userMsg, pendingMsg)
 		latest.UpdatedAt = time.Now().Unix()
 		updateChatTitle(&latest)
