@@ -2,7 +2,7 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
-## v1.0.82 - 2026-08-17
+## v1.0.83 - 2026-08-17
 
 ### Reliable self-update compatibility
 - Restore the `--version-json` candidate metadata contract required by installed v1.0.78 updaters.
@@ -10,6 +10,7 @@ This file records manually curated release changes for GenericAgent Admin Go.
 - Bound each download attempt, switch failed sources promptly, and report byte-based progress instead of remaining at 25% until completion.
 - Validate the release manifest and candidate executable before replacing the running application.
 - Keep the release secret-export gate strict while allowing the tracked MiSans license metadata required by the web build.
+- Create Windows release ZIPs with portable forward-slash entries and verify their upgrade-critical paths before upload.
 
 ## v1.0.80 - 2026-08-17
 

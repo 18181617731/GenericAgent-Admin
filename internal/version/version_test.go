@@ -629,6 +629,9 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`Get-Content -Raw dist/release-manifest.json | ConvertFrom-Json`,
 		`--version-json`,
 		`grep -Ev '^web/public/fonts/misans/(NOTICE|SHA256SUMS)\.txt$'`,
+		`shutil.make_archive`,
+		`ZIP contains non-portable backslash paths`,
+		`root + "release-manifest.json"`,
 		`target_commitish: ${{ github.sha }}`,
 		`needs: [prepare, build]`,
 	}
@@ -646,6 +649,7 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`goos: darwin`,
 		`goos: linux`,
 		`-eq 6`,
+		`Compress-Archive`,
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow still contains unsupported pattern %q", forbidden)

@@ -201,10 +201,30 @@ jobs:
           GenericAgent services still require your local GenericAgent Python environment.
           EOF
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            powershell -NoProfile -Command "Compress-Archive -Path '$name' -DestinationPath 'package/$name.zip' -Force"
+            python -c "import shutil; shutil.make_archive('package/$name', 'zip', root_dir='.', base_dir='$name')"
           else
             zip -r "package/$name.zip" "$name"
           fi
+          ZIP_PATH="package/$name.zip" PACKAGE_ROOT="$name" python - <<'PY'
+          import os
+          import zipfile
+
+          root = os.environ["PACKAGE_ROOT"] + "/"
+          required = {
+              root + "release-manifest.json",
+              root + "ga-admin.exe",
+              root + "cmd/chat_worker.py",
+              root + "cmd/frontends/worldline.py",
+          }
+          with zipfile.ZipFile(os.environ["ZIP_PATH"]) as archive:
+              names = set(archive.namelist())
+          invalid = sorted(name for name in names if "\\" in name)
+          missing = sorted(required - names)
+          if invalid:
+              raise SystemExit(f"ZIP contains non-portable backslash paths: {invalid[:5]}")
+          if missing:
+              raise SystemExit(f"ZIP is missing required entries: {missing}")
+          PY
           cd package
           python -c "import hashlib, pathlib; [p.with_suffix(p.suffix + '.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\\n', encoding='utf-8') for p in pathlib.Path('.').glob('*.zip')]"
 
