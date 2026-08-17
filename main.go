@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -290,7 +289,7 @@ func tryPortableAutoInit(cwd string, store *config.Store) error {
 	}
 
 	// Run bootstrap.py with bundled Python
-	cmd := exec.Command(pythonExe, bootstrapPy)
+	cmd := newPortableBootstrapCommand(pythonExe, bootstrapPy)
 	cmd.Dir = cwd
 	output, err := cmd.CombinedOutput()
 	if err != nil {

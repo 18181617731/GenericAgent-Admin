@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.85 - 2026-08-17
+
+### Windows background process windows
+- Hide PowerShell service discovery, portable bootstrap, and manual scheduled-task processes so startup and page navigation no longer flash CMD windows.
+- Keep intentional directory picker, Explorer, browser, and installer UI behavior unchanged.
+- Add Windows regression coverage for `HideWindow` and `CREATE_NO_WINDOW` process attributes.
+
 ## v1.0.84 - 2026-08-17
 
 ### Responsive chat workspace

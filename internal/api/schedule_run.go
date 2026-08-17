@@ -77,7 +77,7 @@ func (s *Server) scheduleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	py := resolvePythonForRoot(cfg.GARoot, cfg.EffectivePython)
-	cmd := exec.Command(py, "agentmain.py", "--task", filepath.ToSlash(filepath.Join("ga-admin-schedule-runs", runID)), "--nobg", "--llm_no", strconv.Itoa(llmNo))
+	cmd := newManualScheduleRunCommand(py, runID, llmNo)
 	cmd.Dir = cfg.GARoot
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -98,6 +98,12 @@ func (s *Server) scheduleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	go waitManualScheduleRun(cmd, runDir, status)
 	writeJSON(w, status)
+}
+
+func newManualScheduleRunCommand(py, runID string, llmNo int) *exec.Cmd {
+	cmd := exec.Command(py, "agentmain.py", "--task", filepath.ToSlash(filepath.Join("ga-admin-schedule-runs", runID)), "--nobg", "--llm_no", strconv.Itoa(llmNo))
+	hideChildWindow(cmd)
+	return cmd
 }
 
 func (s *Server) scheduleRunStatus(w http.ResponseWriter, r *http.Request) {

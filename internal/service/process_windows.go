@@ -141,7 +141,7 @@ func externalServiceMatchScore(row processRow, svc ServiceInfo) int {
 
 func listPythonProcesses() ([]processRow, error) {
 	ps := `$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -match '^(python|pythonw)\.exe$' -or $_.CommandLine -match '(?i)python|agentmain\.py|chat_worker') } | Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,CreationDate | ConvertTo-Csv -NoTypeInformation`
-	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
+	cmd := newListPythonProcessesCommand(ps)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -174,6 +174,12 @@ func listPythonProcesses() ([]processRow, error) {
 		})
 	}
 	return rows, nil
+}
+
+func newListPythonProcessesCommand(script string) *exec.Cmd {
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	hideChildWindow(cmd)
+	return cmd
 }
 
 func commandLineMatchesService(commandLine, gaRoot string, serviceCommand []string) bool {
