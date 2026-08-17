@@ -60,6 +60,7 @@ type Manager struct {
 	subscribers     map[string]map[chan LogEvent]struct{}
 	externalPIDs    map[string]int
 	externalPIDsAt  time.Time
+	sharedHubPID    func(int) (int, bool)
 }
 
 const (
@@ -109,6 +110,7 @@ func NewManagerWithPython(gaRoot string, effectivePython string, bufferLines int
 		buffers:         map[string][]string{},
 		subscribers:     map[string]map[chan LogEvent]struct{}{},
 		externalPIDs:    map[string]int{},
+		sharedHubPID:    findSharedHubPID,
 	}
 }
 
