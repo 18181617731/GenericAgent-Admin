@@ -266,3 +266,97 @@ func TestManagerPythonPrefersEffectivePythonOverVenv(t *testing.T) {
 		t.Fatalf("python()=%q, want effective python %q", got, effective)
 	}
 }
+
+func newSharedHubTestManager(t *testing.T, pid int) *Manager {
+	t.Helper()
+	root := t.TempDir()
+	hubPath := filepath.Join(root, "frontends", "hub.py")
+	if err := os.MkdirAll(filepath.Dir(hubPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hubPath, []byte("raise SystemExit('must not start')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(root, 100)
+	m.EffectivePython = filepath.Join(root, "missing-python.exe")
+	m.sharedHubPID = func(port int) (int, bool) {
+		if port != 19736 {
+			t.Fatalf("shared Hub probe port=%d want=19736", port)
+		}
+		return pid, true
+	}
+	return m
+}
+
+func TestDiscoverReportsExternalHubAsSharedUnmanaged(t *testing.T) {
+	m := newSharedHubTestManager(t, 4242)
+	svc, ok := m.Find("frontends/hub.py")
+	if !ok {
+		t.Fatal("shared Hub was not discovered")
+	}
+	if !svc.Running || !svc.Shared || svc.Managed {
+		t.Fatalf("unexpected shared Hub state: %+v", svc)
+	}
+	if svc.PID == nil || *svc.PID != 4242 {
+		t.Fatalf("shared Hub PID=%v want=4242", svc.PID)
+	}
+}
+
+func TestStartReusesExternalSharedHubWithoutLaunching(t *testing.T) {
+	m := newSharedHubTestManager(t, 4242)
+	svc, err := m.Start("frontends/hub.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !svc.Running || !svc.Shared || svc.Managed || svc.PID == nil || *svc.PID != 4242 {
+		t.Fatalf("unexpected reused Hub state: %+v", svc)
+	}
+	m.mu.Lock()
+	_, launched := m.procs["frontends/hub.py"]
+	m.mu.Unlock()
+	if launched {
+		t.Fatal("external shared Hub must not be launched or adopted as a managed process")
+	}
+}
+
+func TestStopRejectsExternalSharedHub(t *testing.T) {
+	m := newSharedHubTestManager(t, 4242)
+	err := m.Stop("frontends/hub.py")
+	if err == nil || !strings.Contains(err.Error(), "cannot be stopped here") {
+		t.Fatalf("Stop() error=%v, want shared ownership rejection", err)
+	}
+}
+
+func TestSharedHubCommandLineMatcher(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{name: "windows python", cmd: `D:\\GA\\.venv\\Scripts\\python.exe D:\\GA\\frontends\\hub.py`, want: true},
+		{name: "quoted python", cmd: `"/opt/ga/.venv/bin/python" "/opt/ga/frontends/hub.py"`, want: true},
+		{name: "wrong executable", cmd: `node /opt/ga/frontends/hub.py`, want: false},
+		{name: "wrong script", cmd: `python /opt/ga/frontends/chatapp.py`, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSharedHubCommandLine(tc.cmd); got != tc.want {
+				t.Fatalf("isSharedHubCommandLine(%q)=%v want=%v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSharedHubPort(t *testing.T) {
+	t.Setenv("GA_HUB_PORT", "")
+	if got := sharedHubPort(); got != 19736 {
+		t.Fatalf("default sharedHubPort()=%d want=19736", got)
+	}
+	t.Setenv("GA_HUB_PORT", "23456")
+	if got := sharedHubPort(); got != 23456 {
+		t.Fatalf("configured sharedHubPort()=%d want=23456", got)
+	}
+	t.Setenv("GA_HUB_PORT", "invalid")
+	if got := sharedHubPort(); got != 19736 {
+		t.Fatalf("invalid sharedHubPort()=%d want=19736", got)
+	}
+}

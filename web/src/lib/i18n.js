@@ -21,6 +21,7 @@ export const I18N = {
     },
     service: {
       model: '模型', defaultModel: '默认（启动时选择）', returnCode: '返回码', startedAt: '启动时间', workdir: '工作目录', command: '命令', log: '日志',
+      sharedRunning: '\u5171\u4eab\u8fd0\u884c\u4e2d', sharedStopDisabled: '\u5916\u90e8\u5171\u4eab Hub \u4e0d\u5c5e\u4e8e\u5f53\u524d GA Admin\uff0c\u4e0d\u80fd\u5728\u6b64\u505c\u6b62', sharedHubNotice: '\u8be5 Hub \u7531\u53e6\u4e00\u4e2a GA \u5b9e\u4f8b\u63d0\u4f9b\uff1b\u5f53\u524d\u5b9e\u4f8b\u4ec5\u590d\u7528\uff0c\u4e0d\u4f1a\u91cd\u590d\u542f\u52a8\u6216\u505c\u6b62\u5b83\u3002',
       invalidModel: '请选择有效的模型编号', chooseReflectModel: '选择反思模型', aboutToStart: name => `即将启动反思服务：${name}`, noModelsDefault: '未发现模型，使用默认 0',
       confirmAction: (action, name) => `${action === 'start' ? '启动' : '停止'}服务 ${name}？`, pending: (action, name) => `${action === 'start' ? '正在启动' : '正在停止'} ${name}`, success: (action, name) => `${name} 已${action === 'start' ? '启动' : '停止'}`, failed: (action, name, error) => `${name} ${action === 'start' ? '启动' : '停止'}失败：${error}`,
       autostartConfirm: (name, enabled) => `${enabled ? '启用' : '停用'}服务 ${name} 的自启动？`, modelUpdated: '反思模型已更新', modelConfirm: name => `修改服务 ${name} 的默认模型？会写入服务配置。`,
@@ -88,6 +89,7 @@ export const I18N = {
     },
     service: {
       model: 'Model', defaultModel: 'Default (choose at startup)', returnCode: 'Return code', startedAt: 'Started', workdir: 'Working directory', command: 'Command', log: 'Log',
+      sharedRunning: 'Shared', sharedStopDisabled: 'This external shared Hub is not owned by the current GA Admin and cannot be stopped here', sharedHubNotice: 'This Hub is provided by another GA instance. The current instance reuses it and will not start or stop it.',
       invalidModel: 'Choose a valid model number', chooseReflectModel: 'Choose reflection model', aboutToStart: name => `Reflection service to start: ${name}`, noModelsDefault: 'No models found; use default 0',
       confirmAction: (action, name) => `${action === 'start' ? 'Start' : 'Stop'} service ${name}?`, pending: (action, name) => `${action === 'start' ? 'Starting' : 'Stopping'} ${name}`, success: (action, name) => `${name} ${action === 'start' ? 'started' : 'stopped'}`, failed: (action, name, error) => `Failed to ${action} ${name}: ${error}`,
       autostartConfirm: (name, enabled) => `${enabled ? 'Enable' : 'Disable'} autostart for ${name}?`, modelUpdated: 'Reflection model updated', modelConfirm: name => `Change the default model for ${name}? This writes the service configuration.`,

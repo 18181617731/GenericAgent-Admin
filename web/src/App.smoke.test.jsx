@@ -259,6 +259,28 @@ describe('channel frontend gates', () => {
     expect(screen.getByRole('status').textContent).toMatch(/Start: Busy/i)
   })
 
+  test('keeps an external shared Hub visible but not stoppable', () => {
+    const onStop = vi.fn()
+    render(
+      <ChannelServiceTable
+        services={[{ ...reflectService, name: 'frontends/hub.py', kind: 'frontend', running: true, shared: true, managed: false, pid: 29812 }]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={onStop}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(t.service.sharedRunning)).toBeTruthy()
+    expect(screen.getByText(t.service.sharedHubNotice)).toBeTruthy()
+    const stopButton = screen.getByRole('button', { name: /Stop/i })
+    expect(stopButton.disabled).toBe(true)
+    expect(stopButton.title).toBe(t.service.sharedStopDisabled)
+    fireEvent.click(stopButton)
+    expect(onStop).not.toHaveBeenCalled()
+  })
+
   test('shows a contextual service failure and retries the same action', () => {
     const onStart = vi.fn()
     render(

@@ -13,6 +13,32 @@ import (
 
 func hideChildWindow(cmd *exec.Cmd) {}
 
+func findSharedHubPID(port int) (int, bool) {
+	out, err := exec.Command("lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t").Output()
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(line)
+		if err != nil || pid <= 0 {
+			continue
+		}
+		commandLine := ""
+		if raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline"); err == nil {
+			commandLine = strings.ReplaceAll(string(raw), "\x00", " ")
+		}
+		if commandLine == "" {
+			if raw, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output(); err == nil {
+				commandLine = string(raw)
+			}
+		}
+		if isSharedHubCommandLine(commandLine) {
+			return pid, true
+		}
+	}
+	return 0, false
+}
+
 type processRow struct {
 	pid            int
 	ppid           int

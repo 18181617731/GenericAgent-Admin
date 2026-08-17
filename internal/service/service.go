@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,8 @@ type ServiceInfo struct {
 	StartedAt  string   `json:"started_at,omitempty"`
 	Autostart  bool     `json:"autostart,omitempty"`
 	ModelNo    *int     `json:"model_no,omitempty"`
+	Shared     bool     `json:"shared,omitempty"`
+	Managed    bool     `json:"managed,omitempty"`
 }
 
 type runningProc struct {
@@ -48,6 +51,7 @@ type Manager struct {
 	procs           map[string]*runningProc
 	buffers         map[string][]string
 	subscribers     map[string]map[chan LogEvent]struct{}
+	sharedHubPID    func(int) (int, bool)
 }
 
 // HasRunningProcesses reports whether this manager currently owns at least one
@@ -91,6 +95,7 @@ func NewManagerWithPython(gaRoot string, effectivePython string, bufferLines int
 		procs:           map[string]*runningProc{},
 		buffers:         map[string][]string{},
 		subscribers:     map[string]map[chan LogEvent]struct{}{},
+		sharedHubPID:    findSharedHubPID,
 	}
 }
 
@@ -201,26 +206,61 @@ func (m *Manager) Discover() []ServiceInfo {
 	return out
 }
 
+func isSharedHubService(s ServiceInfo) bool {
+	return filepath.ToSlash(s.Name) == "frontends/hub.py"
+}
+
+func isSharedHubCommandLine(commandLine string) bool {
+	commandLine = strings.ToLower(normalizePathText(commandLine))
+	return strings.Contains(commandLine, "python") && strings.Contains(commandLine, "frontends/hub.py")
+}
+
+func sharedHubPort() int {
+	const defaultHubPort = 19736
+	text := strings.TrimSpace(os.Getenv("GA_HUB_PORT"))
+	if text == "" {
+		return defaultHubPort
+	}
+	port, err := strconv.Atoi(text)
+	if err != nil || port < 1 || port > 65535 {
+		return defaultHubPort
+	}
+	return port
+}
+
 func (m *Manager) withState(s ServiceInfo) ServiceInfo {
+	s.Shared = isSharedHubService(s)
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if p, ok := m.procs[s.Name]; ok {
 		if p.cmd.Process != nil && p.ret == nil {
 			pid := p.cmd.Process.Pid
 			if processAlive(pid) {
 				s.PID = &pid
 				s.Running = true
+				s.Managed = true
 				if !p.startedAt.IsZero() {
 					s.StartedAt = p.startedAt.Format(time.RFC3339)
 				}
-			} else {
-				code := -1
-				p.ret = &code
-				m.appendLocked(s.Name, fmt.Sprintf("[process exited: pid %d is no longer alive]", pid))
+				m.mu.Unlock()
+				return s
 			}
+			code := -1
+			p.ret = &code
+			m.appendLocked(s.Name, fmt.Sprintf("[process exited: pid %d is no longer alive]", pid))
 		}
 		if p.ret != nil {
-			s.ReturnCode = p.ret
+			code := *p.ret
+			s.ReturnCode = &code
+		}
+	}
+	m.mu.Unlock()
+
+	// Hub binds a machine-wide singleton port. A listener started from another
+	// GA root is shared, not owned: expose its PID without adopting kill rights.
+	if s.Shared && m.sharedHubPID != nil {
+		if pid, ok := m.sharedHubPID(sharedHubPort()); ok {
+			s.PID = &pid
+			s.Running = true
 		}
 	}
 	return s
@@ -263,6 +303,11 @@ func (m *Manager) StartWithParams(name string, params map[string]string) (Servic
 	s, ok := m.Find(name)
 	if !ok {
 		return s, errors.New("service not found")
+	}
+	// Reuse a healthy machine-wide Hub discovered on its listening port. It may
+	// belong to another GA root, so do not run same-root conflict takeover.
+	if s.Shared && s.Running {
+		return s, nil
 	}
 	m.mu.Lock()
 	if p, ok := m.procs[name]; ok && p.cmd.Process != nil && p.ret == nil {
@@ -447,8 +492,12 @@ func (m *Manager) Subscribe(name string, lines int) ([]string, <-chan LogEvent, 
 }
 
 func (m *Manager) Stop(name string) error {
-	if _, ok := m.Find(name); !ok {
+	s, ok := m.Find(name)
+	if !ok {
 		return errors.New("service not found")
+	}
+	if s.Shared && s.Running && !s.Managed {
+		return errors.New("shared Hub is running outside this GA Admin instance and cannot be stopped here")
 	}
 	m.mu.Lock()
 	p := m.procs[name]
