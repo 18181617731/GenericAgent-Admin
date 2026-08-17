@@ -1,13 +1,36 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/version"
 )
+
+func TestWriteVersionJSONProvidesLegacyUpdaterMetadata(t *testing.T) {
+	oldVersion, oldCommit, oldDate := version.Version, version.Commit, version.Date
+	defer func() { version.Version, version.Commit, version.Date = oldVersion, oldCommit, oldDate }()
+	version.Version = "v1.0.81"
+	version.Commit = "abc1234"
+	version.Date = "2026-08-17T00:00:00Z"
+	var out bytes.Buffer
+
+	if err := writeVersionJSON(&out); err != nil {
+		t.Fatalf("writeVersionJSON: %v", err)
+	}
+	var got version.BuildInfo
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode version JSON: %v", err)
+	}
+	if got.Version != "v1.0.81" || got.Commit != "abc1234" || got.GOOS != runtime.GOOS || got.GOARCH != runtime.GOARCH {
+		t.Fatalf("version JSON = %+v", got)
+	}
+}
 
 func TestAppRootExplicitRootTakesPrecedence(t *testing.T) {
 	explicit := t.TempDir()

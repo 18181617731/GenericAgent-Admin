@@ -59,14 +59,18 @@ const (
 	updateResponseHeaderTimeout   = 15 * time.Second
 	downloadResponseHeaderTimeout = 90 * time.Second
 	downloadMaxAttempts           = 3
+	downloadProgressStart         = 25
+	downloadProgressEnd           = 54
+	candidateInspectTimeout       = 30 * time.Second
 )
 
 var (
-	updateHTTPClient     = &http.Client{Transport: updateHTTPTransport(updateResponseHeaderTimeout, true)}
-	downloadHTTPClient   = &http.Client{Transport: updateHTTPTransport(downloadResponseHeaderTimeout, true)}
-	downloadRetryDelay   = 500 * time.Millisecond
-	releaseDirectTimeout = 35 * time.Second
-	updateMirrorPrefixes = []string{
+	updateHTTPClient       = &http.Client{Transport: updateHTTPTransport(updateResponseHeaderTimeout, true)}
+	downloadHTTPClient     = &http.Client{Transport: updateHTTPTransport(downloadResponseHeaderTimeout, true)}
+	downloadRetryDelay     = 500 * time.Millisecond
+	downloadAttemptTimeout = 90 * time.Second
+	releaseDirectTimeout   = 35 * time.Second
+	updateMirrorPrefixes   = []string{
 		"https://gh-proxy.com/",
 		"https://ghfast.top/",
 	}
@@ -169,6 +173,14 @@ type ApplyResult struct {
 	Message    string `json:"message"`
 	Script     string `json:"script,omitempty"`
 	Restarting bool   `json:"restarting,omitempty"`
+}
+
+type ReleaseManifest struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	GOOS    string `json:"goos"`
+	GOARCH  string `json:"goarch"`
+	Asset   string `json:"asset"`
 }
 
 type UpdateStatus struct {
@@ -603,10 +615,23 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, err
 	}
 	zipPath := filepath.Join(work, check.Asset.Name)
-	emit("downloading", "正在下载升级包", 25, &check)
+	emit("downloading", "正在下载升级包", downloadProgressStart, &check)
 	downloadSource := "GitHub 直连"
 	if hasAssetDigest {
-		downloadSource, err = downloadReleaseAsset(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes)
+		lastSource := ""
+		lastProgress := downloadProgressStart - 1
+		downloadSource, err = downloadReleaseAssetWithProgress(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes,
+			func(source string, downloaded, total int64) {
+				pct := downloadProgressPercent(downloaded, total, check.Asset.Size)
+				if pct < lastProgress {
+					pct = lastProgress
+				}
+				if source == lastSource && pct <= lastProgress {
+					return
+				}
+				lastSource, lastProgress = source, pct
+				emit("downloading", "正在通过"+source+"下载升级包", pct, &check)
+			})
 	} else {
 		err = download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes)
 	}
@@ -652,6 +677,23 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if err := requireRegularFile(newWorldline, "cmd/frontends/worldline.py"); err != nil {
 		return ApplyResult{}, err
 	}
+	manifest, err := readReleaseManifest(filepath.Join(filepath.Dir(newExe), "release-manifest.json"))
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if err := validateReleaseManifest(manifest, check); err != nil {
+		return ApplyResult{}, err
+	}
+	candidateCtx, cancelCandidate := context.WithTimeout(ctx, candidateInspectTimeout)
+	candidate, err := inspectCandidateExecutable(candidateCtx, newExe)
+	cancelCandidate()
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if err := validateCandidateBuild(candidate, manifest, check); err != nil {
+		return ApplyResult{}, err
+	}
+	emit("validated", fmt.Sprintf("候选程序校验通过：版本 %s，提交 %s", candidate.Version, candidate.Commit), 88, &check)
 	worker := filepath.Join(filepath.Dir(exe), "cmd", "chat_worker.py")
 	worldline := filepath.Join(filepath.Dir(exe), "cmd", "frontends", "worldline.py")
 	backup := exe + ".bak"
@@ -1137,6 +1179,10 @@ func download(ctx context.Context, url, dest string, maxBytes int64) error {
 }
 
 func downloadWithAttempts(ctx context.Context, url, dest string, maxBytes int64, maxAttempts int) error {
+	return downloadWithAttemptsProgress(ctx, url, dest, maxBytes, maxAttempts, nil)
+}
+
+func downloadWithAttemptsProgress(ctx context.Context, url, dest string, maxBytes int64, maxAttempts int, progress func(int64, int64)) error {
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
@@ -1144,7 +1190,18 @@ func downloadWithAttempts(ctx context.Context, url, dest string, maxBytes int64,
 	attempts := 0
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
-		retryable, err := downloadOnce(ctx, url, dest, maxBytes)
+		attemptCtx := ctx
+		cancelAttempt := func() {}
+		if downloadAttemptTimeout > 0 {
+			attemptCtx, cancelAttempt = context.WithTimeout(ctx, downloadAttemptTimeout)
+		}
+		retryable, err := downloadOnceWithProgress(attemptCtx, url, dest, maxBytes, progress)
+		attemptTimedOut := err != nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+		cancelAttempt()
+		if attemptTimedOut {
+			retryable = true
+			err = fmt.Errorf("下载尝试超时（%s）", downloadAttemptTimeout)
+		}
 		if err == nil {
 			return nil
 		}
@@ -1165,10 +1222,17 @@ type releaseDownloadCandidate struct {
 }
 
 func downloadReleaseAsset(ctx context.Context, rawURL, dest string, maxBytes int64) (string, error) {
+	return downloadReleaseAssetWithProgress(ctx, rawURL, dest, maxBytes, nil)
+}
+
+func downloadReleaseAssetWithProgress(ctx context.Context, rawURL, dest string, maxBytes int64, progress func(string, int64, int64)) (string, error) {
 	candidates := releaseDownloadCandidates(rawURL)
 	errorsBySource := make([]string, 0, len(candidates))
 	for i, candidate := range candidates {
 		attempts := downloadMaxAttempts
+		if len(candidates) > 1 {
+			attempts = 1
+		}
 		attemptCtx := ctx
 		cancelAttempt := func() {}
 		if i == 0 && len(candidates) > 1 {
@@ -1177,7 +1241,12 @@ func downloadReleaseAsset(ctx context.Context, rawURL, dest string, maxBytes int
 				attemptCtx, cancelAttempt = context.WithTimeout(ctx, releaseDirectTimeout)
 			}
 		}
-		err := downloadWithAttempts(attemptCtx, candidate.URL, dest, maxBytes, attempts)
+		candidateProgress := func(downloaded, total int64) {
+			if progress != nil {
+				progress(candidate.Label, downloaded, total)
+			}
+		}
+		err := downloadWithAttemptsProgress(attemptCtx, candidate.URL, dest, maxBytes, attempts, candidateProgress)
 		cancelAttempt()
 		if err == nil {
 			return candidate.Label, nil
@@ -1238,6 +1307,10 @@ func validUpdateMirrorPrefix(prefix string) (*url.URL, bool) {
 }
 
 func downloadOnce(ctx context.Context, url, dest string, maxBytes int64) (retryable bool, err error) {
+	return downloadOnceWithProgress(ctx, url, dest, maxBytes, nil)
+}
+
+func downloadOnceWithProgress(ctx context.Context, url, dest string, maxBytes int64, progress func(int64, int64)) (retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false, fmt.Errorf("create download request: %w", err)
@@ -1258,14 +1331,48 @@ func downloadOnce(ctx context.Context, url, dest string, maxBytes int64) (retrya
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
 		return false, fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
 	}
-	r := resp.Body
+	var r io.Reader = resp.Body
 	if maxBytes > 0 {
 		r = http.MaxBytesReader(nil, resp.Body, maxBytes)
+	}
+	if progress != nil {
+		progress(0, resp.ContentLength)
+		r = &downloadProgressReader{reader: r, total: resp.ContentLength, progress: progress}
 	}
 	if err := writeStreamAtomic(dest, r, 0600); err != nil {
 		return retryableDownloadError(ctx, err), fmt.Errorf("write download file: %w", err)
 	}
 	return false, nil
+}
+
+type downloadProgressReader struct {
+	reader     io.Reader
+	total      int64
+	downloaded int64
+	progress   func(int64, int64)
+}
+
+func (r *downloadProgressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.downloaded += int64(n)
+		r.progress(r.downloaded, r.total)
+	}
+	return n, err
+}
+
+func downloadProgressPercent(downloaded, total, fallbackTotal int64) int {
+	if total <= 0 {
+		total = fallbackTotal
+	}
+	if total <= 0 || downloaded <= 0 {
+		return downloadProgressStart
+	}
+	if downloaded >= total {
+		return downloadProgressEnd
+	}
+	span := downloadProgressEnd - downloadProgressStart
+	return downloadProgressStart + int(downloaded*int64(span)/total)
 }
 
 func retryableDownloadStatus(status int) bool {
@@ -1460,6 +1567,73 @@ func updatePayload(dir, assetName, binName string) (string, string, error) {
 		return "", "", err
 	}
 	return newExe, newWorker, nil
+}
+
+var inspectCandidateCommand = func(ctx context.Context, path string) *exec.Cmd {
+	return exec.CommandContext(ctx, path, "--version-json")
+}
+
+func inspectCandidateExecutable(ctx context.Context, path string) (BuildInfo, error) {
+	cmd := inspectCandidateCommand(ctx, path)
+	hideChildWindow(cmd)
+	b, err := cmd.Output()
+	if err != nil {
+		return BuildInfo{}, fmt.Errorf("候选程序元数据读取失败（%s）：%w", path, err)
+	}
+	var info BuildInfo
+	if err := json.Unmarshal(bytes.TrimSpace(b), &info); err != nil {
+		return BuildInfo{}, fmt.Errorf("候选程序元数据无效：%w", err)
+	}
+	return info, nil
+}
+
+func readReleaseManifest(path string) (ReleaseManifest, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ReleaseManifest{}, fmt.Errorf("升级包缺少 release-manifest.json：%w", err)
+	}
+	var manifest ReleaseManifest
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("release-manifest.json 无效：%w", err)
+	}
+	if manifest.Version == "" || manifest.Commit == "" || manifest.GOOS == "" || manifest.GOARCH == "" || manifest.Asset == "" {
+		return ReleaseManifest{}, errors.New("release-manifest.json 缺少 version、commit、goos、goarch 或 asset")
+	}
+	return manifest, nil
+}
+
+func validateReleaseManifest(manifest ReleaseManifest, check CheckResult) error {
+	if check.Latest == nil || check.Asset == nil {
+		return errors.New("升级包校验缺少目标 Release 或资产")
+	}
+	target := formalVersion(check.Latest.TagName)
+	if formalVersion(manifest.Version) != target {
+		return fmt.Errorf("升级包版本校验失败：清单 %s，目标 %s", manifest.Version, target)
+	}
+	if manifest.GOOS != runtime.GOOS || manifest.GOARCH != runtime.GOARCH {
+		return fmt.Errorf("升级包平台校验失败：清单 %s/%s，当前 %s/%s", manifest.GOOS, manifest.GOARCH, runtime.GOOS, runtime.GOARCH)
+	}
+	if manifest.Asset != check.Asset.Name {
+		return fmt.Errorf("升级包 asset 校验失败：清单 %q，目标 %q", manifest.Asset, check.Asset.Name)
+	}
+	return nil
+}
+
+func validateCandidateBuild(candidate BuildInfo, manifest ReleaseManifest, check CheckResult) error {
+	if check.Latest == nil {
+		return errors.New("候选程序校验缺少目标 Release")
+	}
+	target := formalVersion(check.Latest.TagName)
+	if formalVersion(candidate.Version) != target || formalVersion(candidate.Version) != formalVersion(manifest.Version) {
+		return fmt.Errorf("候选程序版本校验失败：候选 %s，目标 %s", candidate.Version, target)
+	}
+	if candidate.GOOS != runtime.GOOS || candidate.GOARCH != runtime.GOARCH {
+		return fmt.Errorf("候选程序平台校验失败：候选 %s/%s，当前 %s/%s", candidate.GOOS, candidate.GOARCH, runtime.GOOS, runtime.GOARCH)
+	}
+	if strings.TrimSpace(candidate.Commit) == "" || strings.TrimSpace(candidate.Commit) != strings.TrimSpace(manifest.Commit) {
+		return fmt.Errorf("候选程序提交校验失败：候选 %s，清单 %s", candidate.Commit, manifest.Commit)
+	}
+	return nil
 }
 
 func requireRegularFile(path, label string) error {

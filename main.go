@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -40,9 +42,15 @@ var webFS embed.FS
 //go:generate go run github.com/akavel/rsrc@v0.10.2 -ico internal/appicon/assets/tray_windows.ico -arch arm64 -o rsrc_windows_arm64.syso
 
 func main() {
+	launch := parseLaunchOptions()
+	if launch.VersionJSON {
+		if err := writeVersionJSON(os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	// Has to happen before anything can put a window on screen.
 	desktop.EnableHiDPI()
-	launch := parseLaunchOptions()
 	cwd, err := appRoot(launch.AppRoot)
 	if err != nil {
 		log.Fatal(err)
@@ -132,12 +140,17 @@ func main() {
 }
 
 type launchOptions struct {
-	Headless  bool
-	NoBrowser bool
-	NoWindow  bool
-	AppRoot   string
-	Port      int
-	PortSet   bool
+	Headless    bool
+	NoBrowser   bool
+	NoWindow    bool
+	AppRoot     string
+	Port        int
+	PortSet     bool
+	VersionJSON bool
+}
+
+func writeVersionJSON(w io.Writer) error {
+	return json.NewEncoder(w).Encode(version.Current())
 }
 
 func parseLaunchOptions() launchOptions {
@@ -147,6 +160,7 @@ func parseLaunchOptions() launchOptions {
 	noWindowFlag := flag.Bool("no-window", false, "open the web UI in the system browser instead of a native desktop window")
 	appRootFlag := flag.String("app-root", "", "override the directory containing config.local.json")
 	portFlag := flag.Int("port", 0, "override HTTP listen port for this launch (1-65535)")
+	versionJSONFlag := flag.Bool("version-json", false, "print build metadata as JSON and exit")
 	flag.Parse()
 
 	portSet := false
@@ -165,12 +179,13 @@ func parseLaunchOptions() launchOptions {
 		log.Printf("no Linux graphical session detected; enabling headless/server-only mode")
 	}
 	return launchOptions{
-		Headless:  headless,
-		NoBrowser: *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
-		NoWindow:  *noWindowFlag || envBool("GA_ADMIN_NO_WINDOW"),
-		AppRoot:   strings.TrimSpace(*appRootFlag),
-		Port:      *portFlag,
-		PortSet:   portSet,
+		Headless:    headless,
+		NoBrowser:   *noBrowserFlag || envBool("GA_ADMIN_NO_BROWSER"),
+		NoWindow:    *noWindowFlag || envBool("GA_ADMIN_NO_WINDOW"),
+		AppRoot:     strings.TrimSpace(*appRootFlag),
+		Port:        *portFlag,
+		PortSet:     portSet,
+		VersionJSON: *versionJSONFlag,
 	}
 }
 

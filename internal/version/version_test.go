@@ -543,6 +543,8 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 	want := []string{
 		`git tag --merged HEAD --sort^=-version:refname --list v[0-9]*`,
 		`git rev-parse --short HEAD`,
+		`"%GO_EXE%" env GOOS`,
+		`"%GO_EXE%" env GOARCH`,
 		`Get-Date`,
 		`where npm.cmd`,
 		`%ProgramFiles%\nodejs\npm.cmd`,
@@ -559,6 +561,8 @@ func TestBuildBatReleaseMetadataContract(t *testing.T) {
 		`"%GO_EXE%" build -ldflags="%GA_LDFLAGS%" -o dist\ga-admin.exe .`,
 		`"%GO_EXE%" run .\cmd\package-chat-runtime --worker cmd\chat_worker.py --worldline cmd\frontends\worldline.py --output dist\cmd\chat_worker.py`,
 		`copy /Y cmd\frontends\worldline.py dist\cmd\frontends\worldline.py`,
+		`dist\release-manifest.json`,
+		`ga-admin-%GA_VERSION%-%GA_GOOS%-%GA_GOARCH%.zip`,
 	}
 	for _, w := range want {
 		if !strings.Contains(script, w) {
@@ -621,6 +625,9 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		`GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 go run ./cmd/package-chat-runtime`,
 		`from frontends.worldline import RewindStore, restore_plan, tree_from_store`,
 		`test -f dist/legacy-upgrade/cmd/frontends/worldline.py`,
+		`cat > dist/release-manifest.json <<EOF`,
+		`Get-Content -Raw dist/release-manifest.json | ConvertFrom-Json`,
+		`--version-json`,
 		`target_commitish: ${{ github.sha }}`,
 		`needs: [prepare, build]`,
 	}
@@ -642,6 +649,76 @@ func TestReleaseWorkflowSupportsNewManualVersionTags(t *testing.T) {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow still contains unsupported pattern %q", forbidden)
 		}
+	}
+}
+
+func TestReadAndValidateReleaseManifest(t *testing.T) {
+	assetName := fmt.Sprintf("ga-admin-v1.0.81-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	path := filepath.Join(t.TempDir(), "release-manifest.json")
+	data := fmt.Sprintf(`{"version":"v1.0.81","commit":"abc1234","goos":"%s","goarch":"%s","asset":"%s"}`,
+		runtime.GOOS, runtime.GOARCH, assetName)
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := readReleaseManifest(path)
+	if err != nil {
+		t.Fatalf("readReleaseManifest: %v", err)
+	}
+	check := CheckResult{
+		Latest: &Release{TagName: "v1.0.81"},
+		Asset:  &Asset{Name: assetName},
+	}
+	if err := validateReleaseManifest(manifest, check); err != nil {
+		t.Fatalf("validateReleaseManifest: %v", err)
+	}
+
+	manifest.Asset = "ga-admin-v1.0.80-windows-amd64.zip"
+	if err := validateReleaseManifest(manifest, check); err == nil || !strings.Contains(err.Error(), "asset") {
+		t.Fatalf("mismatched asset accepted: %v", err)
+	}
+}
+
+func TestValidateCandidateBuildRejectsMismatchedMetadata(t *testing.T) {
+	assetName := fmt.Sprintf("ga-admin-v1.0.81-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	manifest := ReleaseManifest{
+		Version: "v1.0.81",
+		Commit:  "abc1234",
+		GOOS:    runtime.GOOS,
+		GOARCH:  runtime.GOARCH,
+		Asset:   assetName,
+	}
+	check := CheckResult{
+		Latest: &Release{TagName: "v1.0.81"},
+		Asset:  &Asset{Name: assetName},
+	}
+	valid := BuildInfo{
+		Version: "v1.0.81",
+		Commit:  "abc1234",
+		GOOS:    runtime.GOOS,
+		GOARCH:  runtime.GOARCH,
+	}
+	if err := validateCandidateBuild(valid, manifest, check); err != nil {
+		t.Fatalf("valid candidate rejected: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		candidate BuildInfo
+		wantError string
+	}{
+		{name: "version", candidate: BuildInfo{Version: "v1.0.80", Commit: valid.Commit, GOOS: valid.GOOS, GOARCH: valid.GOARCH}, wantError: "版本"},
+		{name: "goos", candidate: BuildInfo{Version: valid.Version, Commit: valid.Commit, GOOS: "mismatched", GOARCH: valid.GOARCH}, wantError: "平台"},
+		{name: "goarch", candidate: BuildInfo{Version: valid.Version, Commit: valid.Commit, GOOS: valid.GOOS, GOARCH: "mismatched"}, wantError: "平台"},
+		{name: "commit", candidate: BuildInfo{Version: valid.Version, Commit: "def5678", GOOS: valid.GOOS, GOARCH: valid.GOARCH}, wantError: "提交"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateCandidateBuild(tc.candidate, manifest, check)
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("mismatched %s accepted: %v", tc.name, err)
+			}
+		})
 	}
 }
 
@@ -1056,6 +1133,91 @@ func TestDownloadRetriesTransientResponses(t *testing.T) {
 	data, err := os.ReadFile(dest)
 	if err != nil || string(data) != "release asset" {
 		t.Fatalf("downloaded data=%q err=%v", data, err)
+	}
+}
+
+func TestDownloadAttemptTimesOutStalledBodyAndRemovesPartialFile(t *testing.T) {
+	oldClient := downloadHTTPClient
+	oldDelay := downloadRetryDelay
+	oldTimeout := downloadAttemptTimeout
+	defer func() {
+		downloadHTTPClient = oldClient
+		downloadRetryDelay = oldDelay
+		downloadAttemptTimeout = oldTimeout
+	}()
+
+	downloadRetryDelay = 0
+	downloadAttemptTimeout = 30 * time.Millisecond
+	requestDone := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+		close(requestDone)
+	}))
+	defer srv.Close()
+	downloadHTTPClient = srv.Client()
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+
+	err := downloadWithAttempts(context.Background(), srv.URL, dest, maxUpdatePackageBytes, 1)
+	if err == nil || !strings.Contains(err.Error(), "下载尝试超时") {
+		t.Fatalf("stalled download error = %v, want bounded timeout", err)
+	}
+	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("stalled download should not create dest, stat err=%v", statErr)
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("stalled request was not canceled")
+	}
+}
+
+func TestDownloadReleaseAssetReportsByteProgress(t *testing.T) {
+	oldClient := downloadHTTPClient
+	oldTimeout := downloadAttemptTimeout
+	defer func() {
+		downloadHTTPClient = oldClient
+		downloadAttemptTimeout = oldTimeout
+	}()
+
+	payload := strings.Repeat("x", 4096)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer srv.Close()
+	downloadHTTPClient = srv.Client()
+	downloadAttemptTimeout = time.Second
+	dest := filepath.Join(t.TempDir(), "asset.zip")
+	var source string
+	var downloaded, total int64
+
+	_, err := downloadReleaseAssetWithProgress(context.Background(), srv.URL, dest, maxUpdatePackageBytes,
+		func(gotSource string, gotDownloaded, gotTotal int64) {
+			source, downloaded, total = gotSource, gotDownloaded, gotTotal
+		})
+	if err != nil {
+		t.Fatalf("downloadReleaseAssetWithProgress: %v", err)
+	}
+	if source != "GitHub 直连" || downloaded != int64(len(payload)) || total != int64(len(payload)) {
+		t.Fatalf("progress source=%q downloaded=%d total=%d", source, downloaded, total)
+	}
+}
+
+func TestDownloadProgressPercentFallsBackToReleaseAssetSize(t *testing.T) {
+	if got := downloadProgressPercent(50, -1, 100); got != 39 {
+		t.Fatalf("fallback progress = %d, want 39", got)
+	}
+	if got := downloadProgressPercent(50, -1, 0); got != downloadProgressStart {
+		t.Fatalf("unknown-size progress = %d, want %d", got, downloadProgressStart)
+	}
+	if got := downloadProgressPercent(100, -1, 100); got != downloadProgressEnd {
+		t.Fatalf("completed fallback progress = %d, want %d", got, downloadProgressEnd)
 	}
 }
 

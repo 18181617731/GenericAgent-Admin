@@ -13,6 +13,12 @@ if not defined GA_VERSION set "GA_VERSION=dev"
 for /f "usebackq delims=" %%i in (`git rev-parse --short HEAD 2^>nul`) do set "GA_COMMIT=%%i"
 if not defined GA_COMMIT set "GA_COMMIT=unknown"
 
+for /f "usebackq delims=" %%i in (`"%GO_EXE%" env GOOS 2^>nul`) do set "GA_GOOS=%%i"
+for /f "usebackq delims=" %%i in (`"%GO_EXE%" env GOARCH 2^>nul`) do set "GA_GOARCH=%%i"
+if not defined GA_GOOS set "GA_GOOS=windows"
+if not defined GA_GOARCH set "GA_GOARCH=amd64"
+set "GA_ASSET=ga-admin-%GA_VERSION%-%GA_GOOS%-%GA_GOARCH%.zip"
+
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')"`) do set "GA_DATE=%%i"
 if not defined GA_DATE set "GA_DATE=unknown"
 
@@ -39,8 +45,14 @@ if not exist dist\cmd mkdir dist\cmd
 "%GO_EXE%" run .\cmd\package-chat-runtime --worker cmd\chat_worker.py --worldline cmd\frontends\worldline.py --output dist\cmd\chat_worker.py || exit /b 1
 if not exist dist\cmd\frontends mkdir dist\cmd\frontends
 copy /Y cmd\frontends\worldline.py dist\cmd\frontends\worldline.py >nul || exit /b 1
+>dist\release-manifest.json echo {"version":"%GA_VERSION%","commit":"%GA_COMMIT%","goos":"%GA_GOOS%","goarch":"%GA_GOARCH%","asset":"%GA_ASSET%"}
+if errorlevel 1 (
+  echo ERROR: Failed to write dist\release-manifest.json.
+  exit /b 1
+)
 
 echo Built dist\ga-admin.exe
+echo Manifest dist\release-manifest.json for %GA_ASSET%
 echo Version %GA_VERSION% Commit %GA_COMMIT% Date %GA_DATE%
 exit /b 0
 

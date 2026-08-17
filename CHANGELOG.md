@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.81 - 2026-08-17
+
+### Reliable self-update compatibility
+- Restore the `--version-json` candidate metadata contract required by installed v1.0.78 updaters.
+- Include and validate `release-manifest.json` in local and CI release packages so older installations can upgrade safely.
+- Bound each download attempt, switch failed sources promptly, and report byte-based progress instead of remaining at 25% until completion.
+- Validate the release manifest and candidate executable before replacing the running application.
+
 ## v1.0.80 - 2026-08-17
 
 ### Security and release hygiene
