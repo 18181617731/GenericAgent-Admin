@@ -13,6 +13,7 @@ export default function ChatSessionRow({
   draftSessionIds = new Set(),
   loopView = null,
   menuOpen = false,
+  privacyTitle = '',
   ct = defaultCopy,
   formatTime = value => value || '',
   onSelect = () => {},
@@ -21,7 +22,7 @@ export default function ChatSessionRow({
   onCancelRename = () => {},
   onOpenMenu = () => {},
 }) {
-  const title = sessionTitle(session)
+  const title = privacyTitle || sessionTitle(session)
   const hasDraft = draftSessionIds.has(session?.id)
   const saveRename = event => {
     event.preventDefault()

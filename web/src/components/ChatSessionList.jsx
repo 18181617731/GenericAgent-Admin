@@ -33,6 +33,8 @@ export default function ChatSessionList({
   editingSessionID = '',
   draftTitle = '',
   menuOpen = '',
+  privacyMode = false,
+  privacyTitleByID = new Map(),
   ct = defaultCopy,
   formatTime,
   onSelectSession,
@@ -54,6 +56,7 @@ export default function ChatSessionList({
     draftSessionIds={draftSessionIds}
     loopView={loopSidebarView(session.loop)}
     menuOpen={session.id === menuOpen}
+    privacyTitle={privacyMode ? privacyTitleByID.get(session.id) : ''}
     ct={ct}
     formatTime={formatTime}
     onSelect={onSelectSession}
@@ -70,13 +73,17 @@ export default function ChatSessionList({
       const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
       const newLabel = ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)
       const pinLabel = group.pinned ? ct(`取消置顶 ${group.name}`, `Unpin ${group.name}`) : ct(`置顶 ${group.name}`, `Pin ${group.name}`)
+      const displayName = privacyMode ? ct(`隐私项目 ${String(index + 1).padStart(2, '0')}`, `Private project ${String(index + 1).padStart(2, '0')}`) : group.name
+      const privateToggleLabel = ct(`${expanded ? '收起' : '展开'} ${displayName}`, `${expanded ? 'Collapse' : 'Expand'} ${displayName}`)
+      const privateNewLabel = ct(`在 ${displayName} 中新建对话`, `Start a chat in ${displayName}`)
+      const privatePinLabel = group.pinned ? ct(`取消置顶 ${displayName}`, `Unpin ${displayName}`) : ct(`置顶 ${displayName}`, `Pin ${displayName}`)
       return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'} ${group.pinned ? 'is-pinned' : ''}`} key={group.name}>
         <div className="oa-project-head">
-          <button className="oa-project-toggle" type="button" onClick={() => onToggleProject?.(group.name)} aria-expanded={expanded} aria-controls={bodyId} aria-label={toggleLabel} title={toggleLabel}>
-            <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={group.name}>{group.name}</b><small>{group.sessions.length}</small>
+          <button className="oa-project-toggle" type="button" onClick={() => onToggleProject?.(group.name)} aria-expanded={expanded} aria-controls={bodyId} aria-label={privacyMode ? privateToggleLabel : toggleLabel} title={privacyMode ? privateToggleLabel : toggleLabel}>
+            <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={displayName}>{displayName}</b><small>{group.sessions.length}</small>
           </button>
-          <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={() => onToggleProjectPinned?.(group.name, !group.pinned)} aria-pressed={group.pinned} title={pinLabel} aria-label={pinLabel}><Pin size={14} aria-hidden="true"/></button>
-          <button className="oa-project-add" type="button" onClick={() => onNewProjectSession?.(group.name)} disabled={batchDeleting} title={newLabel} aria-label={newLabel}><span aria-hidden="true">+</span></button>
+          <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={() => onToggleProjectPinned?.(group.name, !group.pinned)} aria-pressed={group.pinned} title={privacyMode ? privatePinLabel : pinLabel} aria-label={privacyMode ? privatePinLabel : pinLabel}><Pin size={14} aria-hidden="true"/></button>
+          <button className="oa-project-add" type="button" onClick={() => onNewProjectSession?.(group.name)} disabled={batchDeleting} title={privacyMode ? privateNewLabel : newLabel} aria-label={privacyMode ? privateNewLabel : newLabel}><span aria-hidden="true">+</span></button>
         </div>
         <div className="oa-project-body" id={bodyId} hidden={!expanded}>
           {group.sessions.map(row)}

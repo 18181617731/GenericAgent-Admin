@@ -44,6 +44,40 @@ const baseProps = (overrides = {}) => ({
 })
 
 describe('ChatSidebar', () => {
+  test('should persist privacy semantics and remove session and project names from the DOM', () => {
+    const secretSession = { ...sessions[0], title:'SECRET_SESSION_TITLE' }
+    const onPrivacyModeChange = vi.fn()
+    const props = baseProps({
+      privacyMode:true,
+      onPrivacyModeChange,
+      sessions:[secretSession],
+      recentGroups:[{ key:'today', sessions:[secretSession] }],
+      projectGroups:[{ name:'SECRET_PROJECT_NAME', sessions:[secretSession] }],
+      sidebarTab:'projects',
+      projectDraftOpen:true,
+      projectDraftName:'SECRET_PROJECT_DRAFT',
+      menuOpen:'session-1',
+      menuPos:{ top:10, left:10 },
+      menuSession:secretSession,
+    })
+    render(<ChatSidebar {...props} formatTime={formatTime}/>)
+
+    const privacySwitch = screen.getByRole('switch', { name:/隐私模式/ })
+    expect(privacySwitch.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(privacySwitch)
+    expect(onPrivacyModeChange).toHaveBeenCalledWith(false)
+    expect(document.body.innerHTML).not.toContain('SECRET_SESSION_TITLE')
+    expect(document.body.innerHTML).not.toContain('SECRET_PROJECT_NAME')
+    expect(document.body.innerHTML).not.toContain('SECRET_PROJECT_DRAFT')
+    expect(screen.getByText('隐私会话 01')).toBeTruthy()
+    expect(screen.getByText('4 条')).toBeTruthy()
+    expect(screen.getByText('运行中')).toBeTruthy()
+    expect(screen.getByText('Loop 2/5')).toBeTruthy()
+    expect(screen.getByRole('button', { name:'隐私模式下不可搜索聊天' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name:'新建' }).disabled).toBe(true)
+    expect(screen.getByRole('menuitem', { name:'重命名' }).disabled).toBe(true)
+  })
+
   test('should expose instance, new-chat, and search actions through user semantics', () => {
     const props = baseProps()
     render(<ChatSidebar {...props} />)

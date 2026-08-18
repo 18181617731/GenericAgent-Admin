@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { NotificationsPage } from './NotificationsPage.jsx'
 import { loadNotifications, publishNotification, saveNotificationSettings } from '../lib/notifications.js'
+import { saveChatPrivacyMode } from '../lib/chatPrivacy.js'
 
 afterEach(() => {
   cleanup()
@@ -10,6 +11,19 @@ afterEach(() => {
 })
 
 describe('notifications page', () => {
+  test('redacts existing chat notifications while privacy mode is enabled', () => {
+    saveNotificationSettings({ channels:{ sound:false } })
+    publishNotification({ category:'chat', level:'error', title:'SECRET_CHAT_TITLE', message:'SECRET_PROMPT D:/secret.txt', dedupeKey:'private-chat-test' })
+    saveChatPrivacyMode(true)
+    render(<NotificationsPage lang="zh" onOpen={vi.fn()}/>)
+
+    expect(screen.getByText('对话任务失败')).toBeTruthy()
+    expect(screen.getByText('隐私模式已隐藏会话标题和内容。')).toBeTruthy()
+    expect(document.body.innerHTML).not.toContain('SECRET_CHAT_TITLE')
+    expect(document.body.innerHTML).not.toContain('SECRET_PROMPT')
+    expect(document.body.innerHTML).not.toContain('D:/secret.txt')
+  })
+
   test('sends a test notification and renders it in the inbox', async () => {
     const onOpen = vi.fn()
     saveNotificationSettings({ channels: { sound: false } })

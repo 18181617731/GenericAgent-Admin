@@ -15429,7 +15429,7 @@ html[data-color-scheme="dark"] .progress-bar {
 .autonomous-approval footer { display:flex; gap:8px; padding:11px 15px 14px; }
 .autonomous-approval-reply { display:grid; gap:5px; padding:11px 15px 0; }
 .autonomous-approval-reply label { display:grid; gap:6px; color:var(--text); font-size:12px; font-weight:650; }
-.autonomous-approval-reply textarea { min-height:70px; resize:vertical; font-weight:400; line-height:1.5; }
+.autonomous-approval-reply textarea { min-height:70px; resize:vertical; font-weight:450; line-height:1.5; }
 .autonomous-approval-reply small { color:var(--muted); font-size:11px; line-height:1.5; }
 .autonomous-decision-meta { display:grid; gap:4px; padding:9px 15px 13px; color:var(--muted); font-size:12px; }
 .autonomous-execution { display:grid; gap:7px; margin:0 15px 13px; padding:10px 11px; border:1px solid var(--border); border-left:3px solid var(--border-strong); border-radius:6px; background:var(--surface-muted); }
@@ -18982,7 +18982,7 @@ html[data-color-scheme="dark"] .oa-chat .oa-session-badges .oa-session-draft-bad
     height: 100dvh !important;
     max-height: 100dvh !important;
     display: grid !important;
-    grid-template-rows: auto auto auto auto auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
     align-content: stretch;
     gap: 9px;
     padding: max(12px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom)) !important;
@@ -19419,4 +19419,90 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   }
   .oa-loop-summary { padding: 9px; }
   .oa-loop-record { padding: 7px 8px; }
+}
+
+/* ==========================================================================
+   Global chat privacy mode (v1.0.88)
+   ========================================================================== */
+
+.oa-chat .oa-sidebar-privacy {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--text);
+  text-align: left;
+}
+.oa-chat .oa-sidebar-privacy:hover { background: var(--oa-hover); }
+.oa-chat .oa-sidebar-privacy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.oa-chat .oa-sidebar-privacy.is-on { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface-muted)); }
+.oa-sidebar-privacy-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: var(--surface-strong); color: var(--muted); }
+.oa-sidebar-privacy.is-on .oa-sidebar-privacy-icon { color: var(--accent); }
+.oa-sidebar-privacy-copy { min-width: 0; display: grid; gap: 1px; }
+.oa-sidebar-privacy-copy b { font-size: 12px; line-height: 1.25; }
+.oa-sidebar-privacy-copy small { color: var(--muted); font-size: 10px; line-height: 1.25; }
+.oa-sidebar-privacy-track { width: 32px; height: 18px; padding: 2px; border-radius: 999px; background: var(--border-strong, var(--border)); transition: background .18s ease; }
+.oa-sidebar-privacy-track i { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--surface-strong); box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .18s ease; }
+.oa-sidebar-privacy.is-on .oa-sidebar-privacy-track { background: var(--accent); }
+.oa-sidebar-privacy.is-on .oa-sidebar-privacy-track i { transform: translateX(14px); }
+
+.oa-privacy-curtain {
+  width: var(--oa-chat-measure);
+  max-width: calc(100% - 32px);
+  min-height: 128px;
+  margin: clamp(28px, 8vh, 88px) auto 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto 32px;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 24px;
+  border-block: 1px solid var(--border);
+  color: var(--text);
+}
+.oa-privacy-shield { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--accent) 11%, var(--surface-muted)); color: var(--accent); }
+.oa-privacy-copy { min-width: 0; display: grid; gap: 5px; }
+.oa-privacy-copy > span { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.oa-privacy-copy h2 { margin: 0; font-size: 18px; line-height: 1.25; }
+.oa-privacy-metrics { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 0; }
+.oa-privacy-metrics > div { min-width: 74px; display: grid; gap: 2px; padding: 7px 10px; border-left: 1px solid var(--border); }
+.oa-privacy-metrics dt { color: var(--muted); font-size: 10px; }
+.oa-privacy-metrics dd { margin: 0; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.oa-privacy-state-icon { color: var(--muted); }
+.oa-privacy-curtain.is-running .oa-privacy-state-icon { color: var(--accent); animation: oa-privacy-pulse 1.4s ease-in-out infinite; }
+.oa-privacy-curtain.is-failed .oa-privacy-state-icon { color: var(--red); }
+@keyframes oa-privacy-pulse { 50% { opacity: .42; } }
+
+.oa-queue-private .oa-queue-guide-hint { border-bottom: 0; }
+.oa-loop-private .oa-loop-summary { margin-bottom: 2px; }
+.oa-loop-private-config { display: grid; gap: 9px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .oa-privacy-curtain.is-running .oa-privacy-state-icon { animation: none; }
+  .oa-sidebar-privacy-track,
+  .oa-sidebar-privacy-track i { transition: none; }
+}
+
+@media (max-width: 680px) {
+  .oa-chat .oa-sidebar-privacy { min-height: 40px; padding: 5px 7px; }
+  .oa-privacy-curtain {
+    width: calc(100% - 20px);
+    max-width: none;
+    min-height: 0;
+    margin: 18px auto 0;
+    grid-template-columns: 40px minmax(0, 1fr) 24px;
+    gap: 10px;
+    padding: 16px 8px;
+  }
+  .oa-privacy-shield { width: 40px; height: 40px; }
+  .oa-privacy-copy h2 { font-size: 15px; }
+  .oa-privacy-metrics { grid-column: 1 / -1; width: 100%; justify-content: flex-start; gap: 0; }
+  .oa-privacy-metrics > div { flex: 1 1 50%; min-width: 0; padding: 6px 8px; }
+  .oa-privacy-metrics dd { overflow: hidden; font-size: 11px; text-overflow: ellipsis; }
+  .oa-privacy-state-icon { grid-column: 3; grid-row: 1; }
 }

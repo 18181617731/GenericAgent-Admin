@@ -1,4 +1,5 @@
 import { playChatCompletionTone } from './chatCompletionTone.js'
+import { chatNotificationForDisplay } from './chatPrivacy.js'
 
 export const NOTIFICATION_SETTINGS_KEY = 'ga-admin-notification-settings'
 export const NOTIFICATION_ITEMS_KEY = 'ga-admin-notifications'
@@ -174,6 +175,10 @@ const notificationOptions = item => ({
   silent: false,
 })
 
+const notificationLanguage = () => {
+  try { return localStorage.getItem('ga-admin-lang') === 'en' ? 'en' : 'zh' } catch { return 'zh' }
+}
+
 const showWindowNotification = item => {
   try {
     const notification = new Notification(item.title, notificationOptions(item))
@@ -194,18 +199,19 @@ export const registerNotificationServiceWorker = () => {
 const deliverBrowserNotification = (item, settings) => {
   if (!settings.channels.browser || browserNotificationPermission() !== 'granted') return
   if (settings.channels.backgroundOnly && typeof document !== 'undefined' && document.visibilityState !== 'hidden') return
+  const displayItem = chatNotificationForDisplay(item, undefined, notificationLanguage())
   const ready = typeof navigator === 'undefined' ? null : navigator.serviceWorker?.ready
   if (!ready?.then) {
-    showWindowNotification(item)
+    showWindowNotification(displayItem)
     return
   }
   ready.then(registration => {
     if (typeof registration.showNotification !== 'function') {
-      showWindowNotification(item)
+      showWindowNotification(displayItem)
       return null
     }
-    return registration.showNotification(item.title, notificationOptions(item)).catch(() => showWindowNotification(item))
-  }).catch(() => showWindowNotification(item))
+    return registration.showNotification(displayItem.title, notificationOptions(displayItem)).catch(() => showWindowNotification(displayItem))
+  }).catch(() => showWindowNotification(displayItem))
 }
 
 export const publishNotification = (input = {}, options = {}) => {

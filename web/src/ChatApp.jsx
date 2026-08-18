@@ -49,6 +49,9 @@ import { publishNotification } from './lib/notifications.js'
 import { NotificationCenter } from './components/NotificationUI.jsx'
 import SessionSearchDialog from './components/SessionSearchDialog.jsx'
 import ChatSidebar from './components/ChatSidebar.jsx'
+import ChatPrivacyCurtain from './components/ChatPrivacyCurtain.jsx'
+import { privateSessionTitle } from './lib/chatPrivacy.js'
+import { useChatPrivacyMode } from './hooks/useChatPrivacyMode.js'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -2962,6 +2965,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }).catch(() => {})
   }, [])
   const [chatInstanceID, setChatInstanceID] = useState(initialChatInstanceID)
+  const [privacyMode, setPrivacyMode] = useChatPrivacyMode()
   const [chatInstances, setChatInstances] = useState([])
   const [chatInstancesLoading, setChatInstancesLoading] = useState(true)
   const [sessions, setSessions] = useState([])
@@ -3132,6 +3136,31 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [worldlineSwitchingId, setWorldlineSwitchingId] = useState('')
   const worldlineSeqRef = useRef(0)
   const messagesRef = useRef([])
+  useEffect(() => {
+    if (!privacyMode) return
+    setSessionSearchOpen(false)
+    setSessionSearchQuery('')
+    setSessionSearchResults([])
+    setSessionSearchError('')
+    setContextOpen(false)
+    setWorldlineOpen(false)
+    setWorldlineRestorePicker(null)
+    setMobileToolsOpen(false)
+    setEditing('')
+    setDraftTitle('')
+    setSessionManagerOpen(false)
+    setSelectedSessionIds([])
+    setProjectDraftOpen(false)
+    setProjectDraftName('')
+    setQueueEditingId('')
+    setQueueDraft('')
+    setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
+    setLoopRailOpen(false)
+    setLoopConfigOpen(false)
+    setExtraPromptOpen(false)
+    setPromptPresetManagerOpen(false)
+    setCmdManagerOpen(false)
+  }, [privacyMode])
   // Keep a synchronous mirror of `messages` so async flows (e.g. re-attaching to a running
   // stream after a page refresh) can read the committed list without waiting for a state updater.
   useEffect(() => { messagesRef.current = messages }, [messages])
@@ -3702,6 +3731,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (!objective) { setLoopObjectiveError(true); setErr(ct('请填写 Loop 目标，或先在当前输入框写入任务。', 'Enter a Loop objective or add a task to the current message first.')); setLoopConfigOpen(true); return }
     const maxRounds = Math.min(100, Math.max(1, Number(loopMaxRounds) || 10))
     const controllerLlmNo = llms.some(model => model.index === loopControllerLlmNo) ? loopControllerLlmNo : llmNo
+    if (privacyMode) {
+      setLoopConfigOpen(false)
+      setLoopObjective('')
+      if (usesCurrentPrompt) {
+        setSessionPrompt('')
+        setAttachments([])
+      }
+    }
     setLoopUpdating(true)
     setLoopObjectiveError(false)
     setErr('')
@@ -3903,6 +3940,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const toggleWorldline = () => {
+    if (privacyMode) return
     const next = !worldlineOpen
     setWorldlineOpen(next)
     if (next) loadWorldline(activeSidRef.current || sid, { force:true }).catch(() => {})
@@ -3936,6 +3974,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const openSessionSearch = () => {
+    if (privacyMode) return
     setSidebarSearch('')
     setSessionSearchError('')
     setSessionSearchOpen(true)
@@ -3950,7 +3989,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     window.addEventListener('keydown', onShortcut)
     return () => window.removeEventListener('keydown', onShortcut)
-  }, [])
+  }, [privacyMode])
 
   const closeSessionSearch = () => {
     setSessionSearchOpen(false)
@@ -4363,7 +4402,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [menuOpen])
 
   const startRename = (s) => {
-    if (!s?.id || sessionActionRef.current) return
+    if (privacyMode || !s?.id || sessionActionRef.current) return
     setEditing(s.id); setDraftTitle(shortTitle(s)); setMenuOpen(''); setMenuPos(null)
   }
   const saveRename = async (id) => {
@@ -4560,6 +4599,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setExtraPromptSelection(value)
   }
   const openExtraPromptEditor = () => {
+    if (privacyMode) return
     const targetSid = activeSidRef.current
     const targetOpenToken = openSeqRef.current
     const initialSelectionSeq = extraPromptSelectionSeqRef.current
@@ -5051,7 +5091,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const v = e.target.value
     setSessionPrompt(v)
     if (v.trim()) setLoopObjectiveError(false)
-    if (v.startsWith('/')) {
+    if (!privacyMode && v.startsWith('/')) {
       setCmdDrawer({ open:true, filter:v.slice(1), selectedIdx:0 })
       setCmdEditIdx(-1)
     } else if (cmdDrawer.open) {
@@ -5488,6 +5528,29 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       ? ct(`已完成第 ${Number(loopState?.round) || 0} 轮，准备下一步`, `${Number(loopState?.round) || 0} round(s) complete; preparing the next step`)
       : ct(`第 ${Number(loopState?.round) || 0} 轮，共 ${Number(loopState?.max_rounds) || loopMaxRounds} 轮`, `Round ${Number(loopState?.round) || 0} of ${Number(loopState?.max_rounds) || loopMaxRounds}`)
   const isCurrentRunning = busy && streamingSid === sid
+  const privacySessionIndex = Math.max(0, sessions.findIndex(session => session.id === sid))
+  const privacySessionLabel = sid ? privateSessionTitle(privacySessionIndex, chatLanguage()) : ct('隐私会话', 'Private chat')
+  const privacyAssistant = [...messages].reverse().find(message => message?.role === 'assistant')
+  const privacyUsage = Array.isArray(privacyAssistant?.usages) && privacyAssistant.usages.length
+    ? sumUsages(privacyAssistant.usages)
+    : privacyAssistant?.usage
+  const privacyElapsed = getElapsedMs(privacyAssistant, streamClock)
+  const privacyStopped = Boolean(privacyAssistant?.error && /(?:已中止|已停止|stopped|aborted)/i.test(String(privacyAssistant?.content || '').trim()))
+  const privacyStatus = isCurrentRunning || loopState?.enabled
+    ? 'running'
+    : queuedMessages.length > 0
+      ? 'queued'
+      : privacyAssistant?.error
+        ? (privacyStopped ? 'stopped' : 'failed')
+        : messages.length > 0
+          ? 'completed'
+          : 'waiting'
+  const privacyMetrics = [
+    ...(sid ? [{ label:ct('消息', 'Messages'), value:ct(`${messages.length} 条`, `${messages.length}`) }] : []),
+    ...(privacyElapsed > 0 ? [{ label:ct('耗时', 'Time'), value:formatElapsedMs(privacyElapsed) }] : []),
+    ...(usageHasTokens(privacyUsage) ? [{ label:'Token', value:`${ct('输入', 'In')} ${formatTokens(privacyUsage.input_tokens)} · ${ct('输出', 'Out')} ${formatTokens(privacyUsage.output_tokens)}` }] : []),
+    ...(loopState?.enabled ? [{ label:'Loop', value:`${Number(loopState.round) || 0}/${Number(loopState.max_rounds) || loopMaxRounds}` }] : []),
+  ]
   const activePromptPreset = selectedPromptPresetView({ presets: promptPresets, selectedID: extraSysPromptPresetID, snapshot: extraSysPrompts })
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
   const btwMessages = useMemo(() => messages.filter(message => message.kind === 'btw'), [messages])
@@ -5511,6 +5574,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       chatInstances={chatInstances}
       chatInstancesLoading={chatInstancesLoading}
       onSwitchChatInstance={switchChatInstance}
+      privacyMode={privacyMode}
+      onPrivacyModeChange={setPrivacyMode}
       onCollapse={() => {
         sidebarFocusPendingRef.current = true
         setCollapsed(true)
@@ -5574,13 +5639,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <button ref={sidebarToggleRef} className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title={ct('展开侧栏', 'Expand sidebar')} aria-label={ct('展开侧栏', 'Expand sidebar')} aria-controls="oa-chat-sidebar" aria-expanded={!collapsed}><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b title={current ? shortTitle(current) : '新对话'}>{current ? shortTitle(current) : '新对话'}</b><span>ChatGPT-style workspace for GenericAgent</span>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <div className="oa-topbar-actions" aria-label={ct('聊天工具', 'Chat tools')}>
-          <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={contextHelpText} aria-label={ct('查看模型上下文', 'View model context')}>
-            <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span><span className="oa-context-count">{rawHistory?.length || 0}</span><ChatFeatureHelp text={contextHelpText}/>
+          <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid || privacyMode} title={privacyMode ? ct('隐私模式下不可查看上下文', 'Context unavailable in privacy mode') : contextHelpText} aria-label={privacyMode ? ct('隐私模式下不可查看模型上下文', 'Model context unavailable in privacy mode') : ct('查看模型上下文', 'View model context')}>
+            <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span>{!privacyMode && <span className="oa-context-count">{rawHistory?.length || 0}</span>}{!privacyMode && <ChatFeatureHelp text={contextHelpText}/>}
           </button>
-          <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title={worldlineHelpText} aria-label={ct('查看和切换对话世界线', 'View and switch conversation branches')}>
-            <GitBranch size={16}/><span className="oa-context-label">世界线</span>{(worldlineForView?.nodes?.length || 0) > 0 && <span className="oa-context-count">{worldlineForView.nodes.length}</span>}<ChatFeatureHelp text={worldlineHelpText}/>
+          <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid || privacyMode} title={privacyMode ? ct('隐私模式下不可查看世界线', 'Timeline unavailable in privacy mode') : worldlineHelpText} aria-label={privacyMode ? ct('隐私模式下不可查看对话世界线', 'Conversation timeline unavailable in privacy mode') : ct('查看和切换对话世界线', 'View and switch conversation branches')}>
+            <GitBranch size={16}/><span className="oa-context-label">世界线</span>{!privacyMode && (worldlineForView?.nodes?.length || 0) > 0 && <span className="oa-context-count">{worldlineForView.nodes.length}</span>}{!privacyMode && <ChatFeatureHelp text={worldlineHelpText}/>}
           </button>
           <button
             ref={mobileToolsTriggerRef}
@@ -5598,7 +5663,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       </header>
 
       {(err || notice) && <div className={`oa-chat-feedback ${err ? 'is-error' : 'is-notice'}`} role={err ? 'alert' : 'status'}>
-        <span>{err || notice}</span>
+        <span>{privacyMode ? (err ? ct('任务执行失败', 'Task failed') : ct('操作已完成', 'Action completed')) : (err || notice)}</span>
         {archiveUndo && !err && <button type="button" onClick={undoArchive} disabled={sessionActionID === archiveUndo.id}>{ct('撤销归档', 'Undo archive')}</button>}
       </div>}
 
@@ -5608,18 +5673,18 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <button
             className={`oa-mobile-tools-item ${contextOpen ? 'is-active' : ''}`}
             type="button"
-            disabled={!sid}
+            disabled={!sid || privacyMode}
             onClick={()=>{ setMobileToolsOpen(false); setContextOpen(v=>!v) }}
           >
-            <PanelRightOpen size={17}/><span className="oa-mobile-tools-item-copy">{ct('上下文', 'Context')}</span><b className="oa-mobile-tools-item-badge">{rawHistory?.length || 0}</b>
+            <PanelRightOpen size={17}/><span className="oa-mobile-tools-item-copy">{ct('上下文', 'Context')}</span>{!privacyMode && <b className="oa-mobile-tools-item-badge">{rawHistory?.length || 0}</b>}
           </button>
           <button
             className={`oa-mobile-tools-item ${worldlineOpen ? 'is-active' : ''}`}
             type="button"
-            disabled={!sid}
+            disabled={!sid || privacyMode}
             onClick={()=>{ setMobileToolsOpen(false); toggleWorldline() }}
           >
-            <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{(worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
+            <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{!privacyMode && (worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
           </button>
           <ThemePicker
             className="oa-mobile-tools-theme"
@@ -5632,7 +5697,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>
       </div>, document.body)}
 
-      {contextOpen && <aside className="oa-context-drawer" aria-label={ct('模型上下文', 'Model context')}>
+      {!privacyMode && contextOpen && <aside className="oa-context-drawer" aria-label={ct('模型上下文', 'Model context')}>
         <div className="oa-context-head">
           <div><b>{ct('模型上下文', 'Model context')}</b><span>{ct('agent.llmclient.backend.history 完成后的快照', 'Snapshot after agent.llmclient.backend.history completes')}</span></div>
           <div className="oa-context-actions"><button type="button" onClick={copyContext}>{ct('复制 JSON', 'Copy JSON')}</button><button type="button" onClick={()=>setContextOpen(false)} aria-label={ct('关闭上下文', 'Close context')}><X size={15}/></button></div>
@@ -5640,7 +5705,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
         <details className="oa-context-raw"><summary>{ct('原始 JSON', 'Raw JSON')}</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
-      {worldlineOpen && (
+      {!privacyMode && worldlineOpen && (
         <WorldlinePanel
           state={worldlineForView}
           loading={worldlineLoading}
@@ -5653,12 +5718,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       )}
       <div className={`oa-workspace ${loopRailOpen ? 'has-loop' : 'has-launchers'}`}>
       <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) breakFollow() }} onTouchMove={breakFollow}>
-        {messages.length === 0 && <div className="oa-empty">
+        {!privacyMode && messages.length === 0 && <div className="oa-empty">
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />
-        <SubagentStatusPanel states={subagents}/>
+        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
+        {!privacyMode && <SubagentStatusPanel states={subagents}/>}
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
       </section>
@@ -5672,7 +5737,24 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           </div>
           <button type="button" className="oa-btw-toggle" onClick={()=>setLoopRailOpen(false)} aria-expanded="true" aria-controls="oa-loop-rail" title={ct('收起 Loop 栏', 'Collapse Loop rail')}><ChevronRight size={15}/><span>{ct('收起', 'Collapse')}</span></button>
         </header>
-        <section className={`oa-loop-panel ${loopState?.enabled ? 'is-active' : ''}`}>
+        {privacyMode && <section className={`oa-loop-panel oa-loop-private ${loopState?.enabled ? 'is-active' : ''}`}>
+          <div className="oa-loop-summary" aria-live="polite"><span className="oa-loop-orbit"><Orbit size={17} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/></span><div><b>{loopState?.enabled ? ct('Loop 执行中', 'Loop running') : ct('Loop 已停止', 'Loop stopped')}</b><span>{loopState?.enabled ? ct(`第 ${Number(loopState.round) || 0} / ${Number(loopState.max_rounds) || loopMaxRounds} 轮`, `Round ${Number(loopState.round) || 0} / ${Number(loopState.max_rounds) || loopMaxRounds}`) : ct('执行内容已隐藏', 'Execution content hidden')}</span></div></div>
+          <button className={`oa-loop-toggle ${loopState?.enabled ? 'is-active' : ''}`} type="button" onClick={() => {
+            if (loopState?.enabled) stopLoop()
+            else {
+              if (!loopConfigOpen) setLoopObjective('')
+              setLoopConfigOpen(open => !open)
+            }
+          }} disabled={loopUpdating} aria-expanded={!loopState?.enabled ? loopConfigOpen : undefined}>
+            {loopState?.enabled ? <Square size={13}/> : <Orbit size={14}/>}<span>{loopState?.enabled ? (loopUpdating ? ct('停止中…', 'Stopping…') : ct('停止 Loop', 'Stop Loop')) : (loopConfigOpen ? ct('收起设置', 'Hide settings') : ct('配置 Loop', 'Configure Loop'))}</span>
+          </button>
+          {loopConfigOpen && !loopState?.enabled && <div ref={loopConfigRef} className="oa-loop-config oa-loop-private-config" role="group" aria-label={ct('隐私 Loop 设置', 'Private Loop settings')}>
+            <label><span>{ct('目标', 'Objective')}</span><textarea value={loopObjective} onChange={event=>{ setLoopObjectiveError(false); setLoopObjective(event.target.value) }} aria-invalid={loopObjectiveError} rows={3}/></label>
+            <label className="oa-loop-rounds"><span>{ct('最多轮次', 'Maximum rounds')}</span><input type="number" min="1" max="100" value={loopMaxRounds} onChange={event=>setLoopMaxRounds(event.target.value)}/></label>
+            <div className="oa-loop-config-actions"><button type="button" onClick={startLoop} disabled={loopUpdating || !loopObjective.trim()}>{loopUpdating ? ct('启动中…', 'Starting…') : ct('启动 Loop', 'Start Loop')}</button></div>
+          </div>}
+        </section>}
+        {!privacyMode && <section className={`oa-loop-panel ${loopState?.enabled ? 'is-active' : ''}`}>
           <div className="oa-loop-summary" aria-live="polite">
             <span className="oa-loop-orbit"><Orbit size={17} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/></span>
             <div>
@@ -5736,7 +5818,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             <label className="oa-loop-rounds"><span>{ct('最多轮次', 'Maximum rounds')}</span><input type="number" min="1" max="100" value={loopMaxRounds} onChange={event=>setLoopMaxRounds(event.target.value)}/></label>
             <div className="oa-loop-config-actions"><small id="oa-loop-objective-hint" className={loopObjectiveError || (!loopObjectiveText && !currentPromptText) ? 'is-warning' : ''}>{loopObjectiveHintText}</small><button type="button" onClick={startLoop} disabled={loopUpdating} aria-describedby="oa-loop-objective-hint">{loopUpdating ? ct('启动中…', 'Starting…') : ct('启动 Loop', 'Start Loop')}</button></div>
           </div>}
-        </section>
+        </section>}
       </aside>}
       {!loopRailOpen && <div className="oa-rail-launchers" aria-label={ct('已收起的右侧栏', 'Collapsed right rails')}>
         <button type="button" className="oa-btw-collapsed oa-loop-collapsed" onClick={()=>setLoopRailOpen(true)} aria-expanded="false" aria-controls="oa-loop-rail" aria-label={ct('展开 Loop 栏', 'Expand Loop rail')} title={ct('展开 Loop 栏', 'Expand Loop rail')}><Orbit size={15} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/><span>LOOP</span>{loopState?.enabled && <b>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</b>}</button>
@@ -5744,8 +5826,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       </div>
 
       <footer className="oa-composer-wrap" ref={composerWrapRef}>
-        <PlanTodoCard plan={planState}/>
-        {queuedMessages.length > 0 && <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('待发送队列', 'Send queue')}>
+        {!privacyMode && <PlanTodoCard plan={planState}/>}
+        {queuedMessages.length > 0 && (privacyMode ? <div className={`oa-queue-dock oa-queue-private ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('隐私待发送队列', 'Private send queue')}>
+          <div className="oa-queue-guide-hint"><Sparkles className="oa-queue-guide-icon" size={14} aria-hidden="true"/><span className="oa-queue-guide-copy"><b>{ct('待发送', 'Queued')}</b><small>{ct('消息内容已隐藏', 'Message content hidden')}</small></span><span className="oa-queue-count">{ct(`${queuedMessages.length} 条`, `${queuedMessages.length}`)}</span></div>
+        </div> : <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('待发送队列', 'Send queue')}>
           <div className="oa-queue-guide-hint">
             <Sparkles className="oa-queue-guide-icon" size={14} aria-hidden="true"/>
             <span className="oa-queue-guide-copy"><b>待发送</b><small>{isCurrentRunning ? '回复进行中，可接管任意一条立即发送' : '回复结束后将按顺序发送'}</small></span>
@@ -5774,8 +5858,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
               </div>
             </div>
           })}
-        </div>}
-        {cmdDrawer.open && <div className="oa-cmd-drawer" ref={cmdDrawerRef}>
+        </div>)}
+        {!privacyMode && cmdDrawer.open && <div className="oa-cmd-drawer" ref={cmdDrawerRef}>
           {filteredCmds.length === 0 && <div className="oa-cmd-item" style={{color:'var(--text-secondary)',justifyContent:'center',cursor:'default',padding:'12px 14px'}}>{ct('无匹配命令', 'No matching commands')}</div>}
           {filteredCmds.map((c,i)=>{
             return (
@@ -5786,7 +5870,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             )
           })}
         </div>}
-        {cmdManagerOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setCmdManagerOpen(false)}>
+        {!privacyMode && cmdManagerOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setCmdManagerOpen(false)}>
           <div className="oa-cmd-manager" role="dialog" aria-modal="true" aria-label={ct('自定义斜杠命令', 'Custom slash commands')} onMouseDown={e=>e.stopPropagation()}>
             <div className="oa-cmd-manager-head">
               <div><h3>{ct('自定义斜杠命令', 'Custom slash commands')}</h3><p>{ct('官方命令只读锁定；用户命令可新增、编辑、删除。', 'Official commands are read-only; custom commands can be added, edited, and deleted.')}</p></div>
@@ -5822,7 +5906,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             </div>
           </div>
         </div>}
-        {extraPromptOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setExtraPromptOpen(false)}>
+        {!privacyMode && extraPromptOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setExtraPromptOpen(false)}>
           <div className={`oa-cmd-manager oa-prompt-preset-dialog ${promptPresetManagerOpen ? 'is-managing' : 'is-picking'}`} role="dialog" aria-modal="true" aria-label={ct('系统提示预设', 'System-prompt presets')} onMouseDown={e=>e.stopPropagation()}>
             <div className="oa-cmd-manager-head">
               <div>
@@ -5898,7 +5982,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
               </div>
             })}
           </div>}
-          {modelDiagnosis && <div className={`oa-model-alert ${modelDiagnosis.fixable ? 'is-fixable' : ''}`} role="status" aria-live="polite">
+          {!privacyMode && modelDiagnosis && <div className={`oa-model-alert ${modelDiagnosis.fixable ? 'is-fixable' : ''}`} role="status" aria-live="polite">
             <div className="oa-model-alert-copy">
               <b><CircleHelp size={14}/>{modelDiagnosisTitle(modelDiagnosis, ct)}</b>
               <span>{modelDiagnosisAdvice(modelDiagnosis, ct)}</span>
@@ -5921,8 +6005,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={isMobile ? '发送消息或添加文件…' : '\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={ct('添加附件', 'Add attachment')}><Paperclip size={17}/><span>{ct('附件', 'Attachments')}</span></button>
-            <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title={ct('管理自定义斜杠命令', 'Manage custom slash commands')}><Sparkles size={16}/><span>{ct('命令', 'Commands')}</span></button>
-            <button className={`oa-attach-btn ${extraPromptOpen || extraSysPromptPresetID ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} title={extraSysPromptPresetID ? ct(`当前预设：${activePromptPreset.name}`, `Current preset: ${activePromptPreset.name}`) : ct('选择本会话的系统提示预设', 'Choose a system-prompt preset for this session')}><Bot size={16}/><span>{ct('系统提示', 'System prompt')}{extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
+            <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} disabled={privacyMode} title={privacyMode ? ct('隐私模式下不可管理命令', 'Commands unavailable in privacy mode') : ct('管理自定义斜杠命令', 'Manage custom slash commands')}><Sparkles size={16}/><span>{ct('命令', 'Commands')}</span></button>
+            <button className={`oa-attach-btn ${!privacyMode && (extraPromptOpen || extraSysPromptPresetID) ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} disabled={privacyMode} title={privacyMode ? ct('隐私模式下不可查看系统提示', 'System prompts unavailable in privacy mode') : (extraSysPromptPresetID ? ct(`当前预设：${activePromptPreset.name}`, `Current preset: ${activePromptPreset.name}`) : ct('选择本会话的系统提示预设', 'Choose a system-prompt preset for this session'))}><Bot size={16}/><span>{ct('系统提示', 'System prompt')}{!privacyMode && extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length || isCurrentRunning || modelSwitching}
               disabledReason={!providerGroups.length ? '尚未配置可用模型' : modelSwitching ? '正在切换模型' : isCurrentRunning ? '回复生成期间不可切换模型' : ''}
@@ -5939,7 +6023,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     </main>
 
     <SessionSearchDialog
-      open={sessionSearchOpen}
+      open={sessionSearchOpen && !privacyMode}
       lang={chatLanguage()}
       query={sessionSearchQuery}
       scope={sessionSearchScope}
@@ -5958,7 +6042,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       onSelectSession={selectSessionSearchResult}
       onClose={closeSessionSearch}
     />
-    {worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
+    {!privacyMode && worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
          <header className="oa-session-manager-dialog-head">
@@ -5989,7 +6073,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
                <button className="oa-session-manager-dialog-select" type="button" role="checkbox" aria-checked={selected} onClick={()=>toggleSessionSelection(s.id)} disabled={batchDeleting}>
                  <span className={`oa-session-check ${selected ? 'is-checked' : ''}`}>{selected && <Check size={12}/>}</span>
                  <span className="oa-session-dialog-copy">
-                   <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{shortTitle(s)}</b>{archived && <em className="oa-session-archived-badge">{ct('已归档', 'Archived')}</em>}{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>{ct('当前', 'Current')}</em>}<em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em></span>
+                   <span className="oa-session-dialog-title">{s.running && <i className="oa-session-running-dot" aria-hidden="true"/>}<b>{privacyMode ? privateSessionTitle(managedSessions.indexOf(s), chatLanguage()) : shortTitle(s)}</b>{archived && <em className="oa-session-archived-badge">{ct('已归档', 'Archived')}</em>}{s.hub_enabled && <em className="oa-session-hub-badge">Hub</em>}{draftSessionIds.has(s.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}{s.id === sid && <em>{ct('当前', 'Current')}</em>}{!privacyMode && <em className={`is-title-source is-${s.title_source || 'legacy'}`}>{sourceLabel}</em>}</span>
                    <small><Clock3 size={12}/>{fmtTime(s.updated_at) || ct('刚刚', 'Just now')} · {ct(`${s.count || 0} 条`, `${s.count || 0} messages`)}{s.running && <span>{ct('运行中', 'Running')}</span>}</small>
                  </span>
                </button>

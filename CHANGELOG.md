@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.88 - 2026-08-18
+
+### Global chat privacy mode
+- Add a persistent, device-local privacy switch after the current-instance selector for desktop and mobile chat sidebars.
+- Replace chat content, project and session names, paths, tools, diagnostics, queues, and Loop details with anonymous labels and generic execution metrics while privacy mode is enabled.
+- Redact existing and new chat notifications in the in-app inbox, toasts, notification page, and browser notifications without changing stored notification or conversation data.
+- Restore the original chat display only after privacy mode is explicitly disabled, with regression coverage for persistence, DOM redaction, accessibility, and responsive layouts.
+
 ## v1.0.87 - 2026-08-17
 
 ### Update restart continuity

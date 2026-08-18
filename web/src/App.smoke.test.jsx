@@ -2296,6 +2296,50 @@ describe('mobile chat model selector', () => {
 })
 
 describe('mobile chat session navigation', () => {
+  test('privacy mode hides loaded transcript data and restores it only after explicit disable', async () => {
+    installBrowserPolyfills()
+    Element.prototype.scrollIntoView = vi.fn()
+    window.localStorage.setItem('ga-admin-chat-privacy-mode', 'true')
+    const sessions = [{ id:'private-session', title:'SECRET_SESSION_TITLE', count:2, updated_at:'2026-08-18T10:00:00Z' }]
+    const messages = [
+      { id:'u-private', role:'user', content:'SECRET_USER_MESSAGE D:/private/input.txt', created_at:1770000000 },
+      { id:'a-private', role:'assistant', content:'SECRET_ASSISTANT_REPLY [FILE:D:/private/output.txt]', created_at:1770000010, elapsed_ms:12000, usage:{ input_tokens:1200, output_tokens:320 } },
+    ]
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands:[{ cmd:'/secret', desc:'SECRET_COMMAND_DESCRIPTION', content:'SECRET_COMMAND_CONTENT' }] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path === '/api/chat/session/private-session') return jsonResponse({ ...sessions[0], messages, raw_history:[{ content:'SECRET_CONTEXT' }], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/private-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:true, status:'running', round:2, max_rounds:5 }, backend:{ diagnosis:{ code:'python_error', detail:'SECRET_DIAGNOSIS D:/private/python.exe' } } })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    const curtain = await screen.findByRole('region', { name:'隐私模式状态' }, { timeout:10000 })
+    await waitFor(() => expect(curtain.textContent).toContain('2 条'))
+    expect(document.body.innerHTML).not.toContain('SECRET_SESSION_TITLE')
+    expect(document.body.innerHTML).not.toContain('SECRET_USER_MESSAGE')
+    expect(document.body.innerHTML).not.toContain('SECRET_ASSISTANT_REPLY')
+    expect(document.body.innerHTML).not.toContain('SECRET_CONTEXT')
+    expect(document.body.innerHTML).not.toContain('SECRET_DIAGNOSIS')
+    expect(document.body.innerHTML).not.toContain('SECRET_COMMAND_DESCRIPTION')
+    expect(document.body.innerHTML).not.toContain('D:/private')
+    expect(document.querySelector('.oa-title b')?.textContent).toBe('隐私会话 01')
+    fireEvent.keyDown(window, { key:'k', ctrlKey:true })
+    expect(screen.queryByRole('dialog', { name:'搜索会话' })).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('向 GenericAgent 发送消息，可选择/粘贴/拖拽任意文件…'), { target:{ value:'/' } })
+    expect(document.body.innerHTML).not.toContain('SECRET_COMMAND_DESCRIPTION')
+    const privateComposerTools = [...document.querySelectorAll('.oa-composer-bar .oa-attach-btn')]
+    expect(privateComposerTools.find(button => button.textContent === '命令')?.disabled).toBe(true)
+    expect(privateComposerTools.find(button => button.textContent === '系统提示')?.disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('switch', { name:/隐私模式/ }))
+    await waitFor(() => expect(screen.getByText('SECRET_USER_MESSAGE D:/private/input.txt')).toBeTruthy())
+    expect(document.querySelector('.oa-title b')?.textContent).toBe('SECRET_SESSION_TITLE')
+    expect(document.body.innerHTML).toContain('SECRET_DIAGNOSIS')
+  }, 30000)
+
   test('shows one semantic copy of each tool in the mobile overflow menu', async () => {
     installBrowserPolyfills()
     Element.prototype.scrollIntoView = vi.fn()
@@ -2453,6 +2497,47 @@ describe('chat worldline controls', () => {
 })
 
 describe('chat loop controls', () => {
+  test('privacy mode hides a Loop objective in the same interaction that starts it', async () => {
+    installBrowserPolyfills()
+    Element.prototype.scrollIntoView = vi.fn()
+    window.localStorage.setItem('ga-admin-chat-privacy-mode', 'true')
+    const sessions = [{ id:'private-loop', title:'SECRET_LOOP_CHAT', count:0, updated_at:'2026-08-18T10:00:00Z' }]
+    let resolveStart
+    let startedBody = null
+    const startResponse = new Promise(resolve => { resolveStart = resolve })
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/instances') return jsonResponse({ items:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path === '/api/chat/session/private-loop') return jsonResponse({ ...sessions[0], messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/private-loop') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false, status:'waiting', round:0, max_rounds:0 } })
+      if (path === '/api/chat/loop/private-loop/start') {
+        startedBody = JSON.parse(options.body)
+        return startResponse
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    await screen.findByRole('region', { name:'隐私模式状态' }, { timeout:10000 })
+    fireEvent.click(screen.getByRole('button', { name:'展开 Loop 栏' }))
+    fireEvent.click(screen.getByRole('button', { name:'配置 Loop' }))
+    const objective = screen.getByRole('textbox', { name:'目标' })
+    fireEvent.change(objective, { target:{ value:'SECRET_LOOP_OBJECTIVE' } })
+    expect(document.body.innerHTML).toContain('SECRET_LOOP_OBJECTIVE')
+
+    fireEvent.click(screen.getByRole('button', { name:'启动 Loop' }))
+    await waitFor(() => expect(startedBody?.objective).toBe('SECRET_LOOP_OBJECTIVE'))
+    expect(document.body.innerHTML).not.toContain('SECRET_LOOP_OBJECTIVE')
+    expect(screen.queryByRole('textbox', { name:'目标' })).toBeNull()
+
+    resolveStart(jsonResponse({ ok:true, loop:{ enabled:true, status:'waiting', round:0, max_rounds:10, controller_prompt:'SECRET_LOOP_OBJECTIVE' } }))
+    await waitFor(() => expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy())
+    expect(document.body.innerHTML).not.toContain('SECRET_LOOP_OBJECTIVE')
+  }, 30000)
+
   test('explains an empty objective, uses the current message, and completes start-stop flow', async () => {
     installBrowserPolyfills()
     Element.prototype.scrollIntoView = vi.fn()

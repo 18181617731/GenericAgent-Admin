@@ -457,26 +457,6 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 			terminalLoop = &finished
 			return errChatLoopStale
 		}
-		fingerprint := chatLoopPromptFingerprint(req.prompt)
-		if fingerprint != "" && fingerprint == latest.Loop.LastPromptFingerprint {
-			latest.Loop.RepeatStreak++
-		} else {
-			latest.Loop.RepeatStreak = 0
-		}
-		latest.Loop.LastPromptFingerprint = fingerprint
-		if latest.Loop.RepeatStreak >= chatLoopMaxPromptRepeats {
-			latest.Loop.Enabled = false
-			latest.Loop.Status = chatLoopStatusStopped
-			latest.Loop.StopReason = "controller_stalled"
-			appendChatLoopRecord(&latest.Loop, "stalled", "Controller kept asking for the same next step.", "")
-			latest.Loop.Epoch++
-			if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
-				return err
-			}
-			finished := latest.Loop
-			terminalLoop = &finished
-			return errChatLoopStale
-		}
 		latest.Loop.Round++
 		latest.Loop.Status = chatLoopStatusRunning
 		latest.Loop.StopReason = ""
@@ -484,7 +464,7 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 		if phase == "" {
 			phase = "continue"
 		}
-		appendChatLoopRecord(&latest.Loop, phase, req.summary, req.prompt)
+		appendChatLoopRecord(&latest.Loop, phase, req.summary, "")
 		latest.Messages = append(latest.Messages, userMsg, pendingMsg)
 		latest.UpdatedAt = time.Now().Unix()
 		updateChatTitle(&latest)

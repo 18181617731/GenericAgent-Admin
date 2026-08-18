@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Bell, BellRing, Check, CheckCheck, Clock3, ExternalLink, Monitor, Save, Settings2, Trash2, Volume2 } from 'lucide-react'
 import { playChatCompletionTone } from '../lib/chatCompletionTone.js'
+import { chatNotificationForDisplay } from '../lib/chatPrivacy.js'
+import { useChatPrivacyMode } from '../hooks/useChatPrivacyMode.js'
 import {
   NOTIFICATION_CATEGORIES,
   browserNotificationCapability,
@@ -45,6 +47,7 @@ const browserFeedback = (result, capability, copy) => {
 
 export function NotificationsPage({ lang = 'zh', onOpen }) {
   const c = COPY[lang] || COPY.zh
+  const [privacyMode] = useChatPrivacyMode()
   const [settings, setSettings] = useState(() => loadNotificationSettings())
   const [items, setItems] = useState(() => loadNotifications())
   const [filter, setFilter] = useState('all')
@@ -110,7 +113,10 @@ export function NotificationsPage({ lang = 'zh', onOpen }) {
     <div className="notifications-layout">
       <section className="notification-inbox panel"><div className="notification-section-head"><div><h2>{c.inbox}</h2><p>{c.detail}</p></div><div className="notification-inbox-actions"><button type="button" onClick={readAll} disabled={!items.some(item => !item.read)} title={c.markAll}><CheckCheck size={15}/>{c.markAll}</button><button type="button" onClick={clearRead} disabled={!items.some(item => item.read)} title={c.clearRead}><Trash2 size={15}/>{c.clearRead}</button></div></div>
         <div className="notification-filters"><div className="notification-filter-scroll"><button type="button" className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>{c.all}<span>{items.length}</span></button>{NOTIFICATION_CATEGORIES.map(category => <button type="button" key={category.id} className={filter === category.id ? 'active' : ''} onClick={() => setFilter(category.id)}>{notificationCategoryLabel(category.id, lang)}<span>{items.filter(item => item.category === category.id).length}</span></button>)}</div><label className="notification-unread-toggle"><input type="checkbox" checked={unreadOnly} onChange={event => setUnreadOnly(event.target.checked)}/>{c.unread}</label></div>
-        <div className="notification-page-list">{visibleItems.length ? visibleItems.map(item => <button type="button" key={item.id} className={levelClass(item)} onClick={() => openItem(item)}><span className="notification-level-dot"/><span className="notification-page-copy"><strong>{item.title}</strong><span>{item.message}</span><small>{notificationCategoryLabel(item.category, lang)} · {formatNotificationTime(item.createdAt, lang)}</small></span><span className="notification-page-status">{notificationLevelLabel(item.level, lang)}<ExternalLink size={14}/></span></button>) : <div className="notification-page-empty"><Bell size={26}/><b>{c.empty}</b><span>{c.detail}</span></div>}</div>
+        <div className="notification-page-list">{visibleItems.length ? visibleItems.map(item => {
+          const displayItem = chatNotificationForDisplay(item, privacyMode, lang)
+          return <button type="button" key={item.id} className={levelClass(item)} onClick={() => openItem(item)}><span className="notification-level-dot"/><span className="notification-page-copy"><strong>{displayItem.title}</strong><span>{displayItem.message}</span><small>{notificationCategoryLabel(item.category, lang)} · {formatNotificationTime(item.createdAt, lang)}</small></span><span className="notification-page-status">{notificationLevelLabel(item.level, lang)}<ExternalLink size={14}/></span></button>
+        }) : <div className="notification-page-empty"><Bell size={26}/><b>{c.empty}</b><span>{c.detail}</span></div>}</div>
       </section>
       <aside className="notification-settings panel"><div className="notification-section-head"><div><h2><Settings2 size={17}/>{c.settings}</h2><p>{c.saveTip}</p></div><span className={`notification-settings-state ${settings.enabled ? 'is-on' : 'is-off'}`}>{settings.enabled ? c.notificationOn : c.notificationOff}</span></div>
         <label className="notification-switch-row"><span><b>{c.inApp}</b><small>{c.channelHelp}</small></span><input type="checkbox" checked={settings.enabled && settings.channels.inApp} onChange={event => patchSettings({ enabled: event.target.checked, channels: { ...settings.channels, inApp: event.target.checked } })}/></label>
