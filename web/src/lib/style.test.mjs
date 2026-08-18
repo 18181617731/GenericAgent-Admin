@@ -23,6 +23,12 @@ test('all color themes share one product font stack', () => {
 
   const bodyRule = ruleBodies('body').join('\n')
   assert.match(bodyRule, /font-family\s*:\s*var\(--font\)/i)
+  assert.match(bodyRule, /font-weight\s*:\s*450/i)
+  const renderedCss = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  assert.doesNotMatch(renderedCss, /font-weight\s*:\s*400(?:\D|$)/i, 'compact MiSans text must not fall back to its softer 400 instance')
+  assert.doesNotMatch(renderedCss, /-webkit-font-smoothing\s*:/i, 'Windows ClearType must remain enabled')
+  assert.doesNotMatch(renderedCss, /text-rendering\s*:\s*optimizeLegibility/i)
+  assert.match(ruleBodies('.oa-session-menu button').join('\n'), /font-size\s*:\s*13px[\s\S]*font-weight\s*:\s*500/i)
 
   for (const selector of ['html[data-theme="warm"]', 'html[data-theme="light"]', 'html[data-theme="dark"]']) {
     assert.doesNotMatch(ruleBodies(selector).join('\n'), /--font\s*:/i, `${selector} must only change palette tokens`)

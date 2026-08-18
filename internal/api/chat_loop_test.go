@@ -60,33 +60,45 @@ func TestParseChatLoopNextPromptDoesNotIncludeEchoedTemplateTail(t *testing.T) {
 	}
 }
 
-func TestParseChatLoopDecisionUsesLastNonEmptyDecisionElement(t *testing.T) {
+func TestChatLoopAdvancePromptDelegatesWithoutPlanning(t *testing.T) {
+	if got, want := chatLoopAdvancePrompt, "\u76ee\u6807\u5c1a\u672a\u5b8c\u6210\uff0c\u8bf7\u57fa\u4e8e\u5f53\u524d\u8fdb\u5c55\u81ea\u4e3b\u63a8\u8fdb\u3002"; got != want {
+		t.Fatalf("advance prompt = %q, want %q", got, want)
+	}
+}
+
+func TestParseChatLoopDecisionAcceptsOnlyBinaryVerdicts(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
 		want    chatLoopDecision
+		wantErr bool
 	}{
 		{
-			name:    "prompt after echoed completion template",
-			content: "Valid shapes: <loop_complete>brief reason</loop_complete>\n<next_prompt>inspect the desktop</next_prompt>",
-			want:    chatLoopDecision{Prompt: "inspect the desktop"},
+			name:    "continue",
+			content: "<loop_continue>continue</loop_continue>",
+			want:    chatLoopDecision{},
 		},
 		{
-			name:    "completion after earlier prompt",
-			content: "Earlier: <next_prompt>inspect the desktop</next_prompt>\n<loop_complete>all files listed</loop_complete>",
+			name:    "complete",
+			content: "<loop_complete>all work is verified</loop_complete>",
 			want:    chatLoopDecision{Complete: true},
 		},
 		{
-			name:    "empty trailing completion is ignored",
-			content: "<next_prompt>inspect the desktop</next_prompt><loop_complete> </loop_complete>",
-			want:    chatLoopDecision{Prompt: "inspect the desktop"},
+			name:    "last verdict wins",
+			content: "<loop_complete>template</loop_complete>\n<loop_continue>continue</loop_continue>",
+			want:    chatLoopDecision{},
+		},
+		{
+			name:    "planned next action is rejected",
+			content: "<next_prompt>inspect the desktop</next_prompt>",
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseChatLoopDecision(tt.content)
-			if err != nil {
-				t.Fatalf("parseChatLoopDecision() error = %v", err)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseChatLoopDecision() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.want {
 				t.Fatalf("parseChatLoopDecision() = %#v, want %#v", got, tt.want)
@@ -373,29 +385,10 @@ func TestAppendChatLoopRecordBoundsHistoryAndUnicode(t *testing.T) {
 	}
 }
 
-func TestChatLoopPromptFingerprintIgnoresCaseAndSpacing(t *testing.T) {
-	base := chatLoopPromptFingerprint("Run the failing tests again")
-	if base == "" {
-		t.Fatal("fingerprint of a real prompt is empty")
-	}
-	if got := chatLoopPromptFingerprint("  run   the failing\ttests\nagain "); got != base {
-		t.Fatalf("fingerprint is sensitive to case or spacing: %q vs %q", got, base)
-	}
-	if got := chatLoopPromptFingerprint("run the passing tests again"); got == base {
-		t.Fatal("different prompts share a fingerprint")
-	}
-	if got := chatLoopPromptFingerprint("   "); got != "" {
-		t.Fatalf("blank prompt fingerprint = %q, want empty", got)
-	}
-	if strings.Contains(base, "run") {
-		t.Fatalf("fingerprint leaks prompt text: %q", base)
-	}
-}
-
 func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-controller-retry"
-	const unusableReply = "Sure, I think the agent should probably keep going for a while."
+	const unusableReply = "<next_prompt>verify the shipped release</next_prompt>"
 	cs := chatSession{ID: sid, Loop: chatLoopState{
 		Enabled:          true,
 		Status:           chatLoopStatusEvaluating,
@@ -415,7 +408,7 @@ func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
 		if len(prompts) == 1 {
 			return chatMessage{Content: unusableReply}, nil
 		}
-		return chatMessage{Content: "<loop_complete>everything shipped</loop_complete>"}, nil
+		return chatMessage{Content: "<loop_continue>continue</loop_continue>"}, nil
 	}
 
 	s.evaluateChatLoop(sid, 3, cs)
@@ -433,8 +426,11 @@ func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusCompleted || persisted.Loop.StopReason != "controller_complete" {
+	if !persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusRunning || persisted.Loop.StopReason != "" || persisted.Loop.Round != 2 {
 		t.Fatalf("loop after successful retry = %#v", persisted.Loop)
+	}
+	if len(persisted.Messages) < 2 || persisted.Messages[len(persisted.Messages)-2].Content != chatLoopAdvancePrompt {
+		t.Fatalf("queued messages after successful retry = %#v", persisted.Messages)
 	}
 	retries := 0
 	for _, record := range persisted.Loop.Records {
@@ -494,42 +490,36 @@ func TestEvaluateChatLoopFailsAfterRetryBudget(t *testing.T) {
 	}
 }
 
-func TestContinueChatLoopStopsARepeatingController(t *testing.T) {
+func TestContinueChatLoopAllowsRepeatedContinueSignal(t *testing.T) {
 	s := newChatLoopTestServer(t)
-	sid := "loop-controller-stalled"
-	const repeated = "Run the failing tests again"
+	sid := "loop-repeated-continue"
 	saveChatLoopTestSession(t, s, chatSession{ID: sid, Loop: chatLoopState{
-		Enabled:               true,
-		Status:                chatLoopStatusEvaluating,
-		Epoch:                 5,
-		Round:                 2,
-		MaxRounds:             50,
-		ControllerPrompt:      "make the suite green",
-		LastPromptFingerprint: chatLoopPromptFingerprint(repeated),
-		RepeatStreak:          chatLoopMaxPromptRepeats - 1,
+		Enabled:          true,
+		Status:           chatLoopStatusEvaluating,
+		Epoch:            5,
+		Round:            2,
+		MaxRounds:        50,
+		ControllerPrompt: "make the suite green",
 	}})
 
-	s.continueChatLoop(sid, 5, "  run the FAILING tests   again ")
+	s.continueChatLoop(sid, 5, chatLoopAdvancePrompt)
 
 	persisted, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusStopped || persisted.Loop.StopReason != "controller_stalled" {
-		t.Fatalf("stalled loop = %#v", persisted.Loop)
+	if !persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusRunning || persisted.Loop.StopReason != "" {
+		t.Fatalf("continued loop = %#v", persisted.Loop)
 	}
-	if persisted.Loop.Round != 2 {
-		t.Fatalf("stalled loop consumed a round: %#v", persisted.Loop)
+	if persisted.Loop.Round != 3 {
+		t.Fatalf("continued loop round = %d, want 3", persisted.Loop.Round)
 	}
-	if persisted.Loop.Epoch != 6 {
-		t.Fatalf("stalled loop epoch = %d, want 6", persisted.Loop.Epoch)
-	}
-	if len(persisted.Messages) != 0 {
-		t.Fatalf("stalled loop queued messages: %#v", persisted.Messages)
+	if len(persisted.Messages) < 2 || persisted.Messages[len(persisted.Messages)-2].Content != chatLoopAdvancePrompt {
+		t.Fatalf("continued loop messages = %#v", persisted.Messages)
 	}
 	last := persisted.Loop.Records[len(persisted.Loop.Records)-1]
-	if last.Phase != "stalled" || last.Prompt != "" {
-		t.Fatalf("stalled record = %#v", last)
+	if last.Phase != "continue" || last.Prompt != "" {
+		t.Fatalf("continue record = %#v", last)
 	}
 }
 
