@@ -1002,6 +1002,10 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if len(stored.Messages) == 0 || stored.Messages[len(stored.Messages)-1].ModelID != "vendor/model-real" {
 		t.Fatalf("stored assistant model_id=%q want vendor/model-real: %#v", stored.Messages[len(stored.Messages)-1].ModelID, stored.Messages)
 	}
+	storedFinal := stored.Messages[len(stored.Messages)-1]
+	if storedFinal.CtxChars != 3800 || storedFinal.CtxMsgs != 3 {
+		t.Fatalf("stored assistant context stats=(%d,%d) want (3800,3): %#v", storedFinal.CtxChars, storedFinal.CtxMsgs, storedFinal)
+	}
 	if stored.Messages[len(stored.Messages)-1].LLMNo == nil || *stored.Messages[len(stored.Messages)-1].LLMNo != 2 {
 		t.Fatalf("stored assistant llm_no=%v want 2: %#v", stored.Messages[len(stored.Messages)-1].LLMNo, stored.Messages)
 	}
@@ -1021,6 +1025,10 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if len(reloaded.Messages) == 0 || reloaded.Messages[len(reloaded.Messages)-1].ModelID != "vendor/model-real" {
 		t.Fatalf("reloaded assistant model_id=%q want vendor/model-real: %#v", reloaded.Messages[len(reloaded.Messages)-1].ModelID, reloaded.Messages)
+	}
+	reloadedFinal := reloaded.Messages[len(reloaded.Messages)-1]
+	if reloadedFinal.CtxChars != 3800 || reloadedFinal.CtxMsgs != 3 {
+		t.Fatalf("reloaded assistant context stats=(%d,%d) want (3800,3): %#v", reloadedFinal.CtxChars, reloadedFinal.CtxMsgs, reloadedFinal)
 	}
 	if reloaded.Messages[len(reloaded.Messages)-1].LLMNo == nil || *reloaded.Messages[len(reloaded.Messages)-1].LLMNo != 2 {
 		t.Fatalf("reloaded assistant llm_no=%v want 2: %#v", reloaded.Messages[len(reloaded.Messages)-1].LLMNo, reloaded.Messages)

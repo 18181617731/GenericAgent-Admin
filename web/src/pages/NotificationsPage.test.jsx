@@ -18,7 +18,7 @@ describe('notifications page', () => {
     render(<NotificationsPage lang="zh" onOpen={vi.fn()}/>)
 
     expect(screen.getByText('对话任务失败')).toBeTruthy()
-    expect(screen.getByText('隐私模式已隐藏会话标题和内容。')).toBeTruthy()
+    expect(screen.getByText('当前视图已收起详情。')).toBeTruthy()
     expect(document.body.innerHTML).not.toContain('SECRET_CHAT_TITLE')
     expect(document.body.innerHTML).not.toContain('SECRET_PROMPT')
     expect(document.body.innerHTML).not.toContain('D:/secret.txt')

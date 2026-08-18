@@ -73,7 +73,7 @@ export default function ChatSessionList({
       const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
       const newLabel = ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)
       const pinLabel = group.pinned ? ct(`取消置顶 ${group.name}`, `Unpin ${group.name}`) : ct(`置顶 ${group.name}`, `Pin ${group.name}`)
-      const displayName = privacyMode ? ct(`隐私项目 ${String(index + 1).padStart(2, '0')}`, `Private project ${String(index + 1).padStart(2, '0')}`) : group.name
+      const displayName = privacyMode ? ct(`项目 ${String(index + 1).padStart(2, '0')}`, `Project ${String(index + 1).padStart(2, '0')}`) : group.name
       const privateToggleLabel = ct(`${expanded ? '收起' : '展开'} ${displayName}`, `${expanded ? 'Collapse' : 'Expand'} ${displayName}`)
       const privateNewLabel = ct(`在 ${displayName} 中新建对话`, `Start a chat in ${displayName}`)
       const privatePinLabel = group.pinned ? ct(`取消置顶 ${displayName}`, `Unpin ${displayName}`) : ct(`置顶 ${displayName}`, `Pin ${displayName}`)

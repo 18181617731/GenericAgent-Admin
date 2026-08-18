@@ -67,9 +67,9 @@ export default function ChatSidebar({
   const collapseLabel = ct('折叠侧栏', 'Collapse sidebar')
   const searchLabel = ct('搜索聊天', 'Search chats')
   const newChatLabel = ct('新对话', 'New chat')
-  const privacyLabel = ct('隐私模式', 'Privacy mode')
-  const privacyState = privacyMode ? ct('已开启', 'On') : ct('已关闭', 'Off')
-  const privacyTitleByID = new Map(sessions.map((session, index) => [session.id, ct(`隐私会话 ${String(index + 1).padStart(2, '0')}`, `Private chat ${String(index + 1).padStart(2, '0')}`)]))
+  const privacyLabel = ct('精简显示', 'Compact view')
+  const privacyState = privacyMode ? ct('开', 'On') : ct('关', 'Off')
+  const privacyTitleByID = new Map(sessions.map((session, index) => [session.id, ct(`会话 ${String(index + 1).padStart(2, '0')}`, `Session ${String(index + 1).padStart(2, '0')}`)]))
   const menuActionBusy = Boolean(menuSession && sessionActionID === menuSession.id)
   const archiveBlockedByRunning = Boolean(menuSession?.running)
   const archiveLabel = archiveBlockedByRunning ? ct('运行中，暂不可归档', 'Running; archiving unavailable') : ct('归档', 'Archive')
@@ -159,14 +159,14 @@ export default function ChatSidebar({
         </select>
       </label>
 
-      <button className={`oa-sidebar-privacy ${privacyMode ? 'is-on' : 'is-off'}`} type="button" role="switch" aria-checked={privacyMode} onClick={() => onPrivacyModeChange?.(!privacyMode)} title={`${privacyLabel}：${privacyState}`}>
+      <button className={`oa-sidebar-privacy ${privacyMode ? 'is-on' : 'is-off'}`} type="button" role="switch" aria-checked={privacyMode} onClick={() => onPrivacyModeChange?.(!privacyMode)} title={privacyLabel}>
         <span className="oa-sidebar-privacy-icon" aria-hidden="true">{privacyMode ? <ShieldCheck size={16}/> : <EyeOff size={16}/>}</span>
         <span className="oa-sidebar-privacy-copy"><b>{privacyLabel}</b><small>{privacyState}</small></span>
         <span className="oa-sidebar-privacy-track" aria-hidden="true"><i/></span>
       </button>
 
       <button className="oa-new-chat oa-sidebar-wide-action" type="button" onClick={onNewSession} disabled={batchDeleting} title={newChatLabel} aria-label={newChatLabel}><MessageSquarePlus size={16} aria-hidden="true"/><span>{newChatLabel}</span></button>
-      <button className="oa-sidebar-search-action" type="button" onClick={onOpenSearch} ref={searchTriggerRef} disabled={privacyMode} title={privacyMode ? ct('关闭隐私模式后搜索', 'Turn off privacy mode to search') : searchLabel} aria-label={privacyMode ? ct('隐私模式下不可搜索聊天', 'Chat search unavailable in privacy mode') : searchLabel} aria-haspopup="dialog"><Search size={16} aria-hidden="true"/><span>{searchLabel}</span><kbd>Ctrl/Cmd+K</kbd></button>
+      <button className="oa-sidebar-search-action" type="button" onClick={onOpenSearch} ref={searchTriggerRef} disabled={privacyMode} title={privacyMode ? ct('当前视图不可搜索', 'Search unavailable in the current view') : searchLabel} aria-label={privacyMode ? ct('当前视图不可搜索聊天', 'Chat search unavailable in the current view') : searchLabel} aria-haspopup="dialog"><Search size={16} aria-hidden="true"/><span>{searchLabel}</span><kbd>Ctrl/Cmd+K</kbd></button>
 
       <div className="oa-sidebar-tabs" role="tablist" aria-label={ct('聊天内容', 'Chat content')}>
         <button type="button" role="tab" aria-selected={sidebarTab === 'history'} className={sidebarTab === 'history' ? 'is-active' : ''} onClick={() => onSidebarTabChange?.('history')}>{sessionTabLabel}</button>
@@ -176,7 +176,7 @@ export default function ChatSidebar({
       <div className="oa-session-manager-head">
         <span className="oa-session-manager-title">{sidebarTab === 'projects' ? projectTabLabel : historyLabel} <small>{sessions.length}</small></span>
         <span className="oa-session-manager-actions">
-          {sidebarTab === 'projects' && <button className="oa-session-manage-open" type="button" onClick={onOpenProjectDraft} disabled={privacyMode || projectCreating || projectDraftOpen} title={privacyMode ? ct('关闭隐私模式后新建项目', 'Turn off privacy mode to create a project') : undefined}><FolderPlus size={13} aria-hidden="true"/>{ct('新建', 'New')}</button>}
+          {sidebarTab === 'projects' && <button className="oa-session-manage-open" type="button" onClick={onOpenProjectDraft} disabled={privacyMode || projectCreating || projectDraftOpen} title={privacyMode ? ct('当前视图不可新建项目', 'Projects cannot be created in the current view') : undefined}><FolderPlus size={13} aria-hidden="true"/>{ct('新建', 'New')}</button>}
           <button className="oa-session-manage-open" type="button" onClick={onOpenSessionManager} disabled={!sessions.length || batchDeleting}>{ct('管理', 'Manage')}</button>
         </span>
       </div>
@@ -224,7 +224,7 @@ export default function ChatSidebar({
       />
 
       {!sessionManagerOpen && menuOpen && menuPos && menuSession && <div ref={menuRef} className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} role="menu" aria-label={ct('会话操作', 'Session actions')} aria-busy={menuActionBusy || undefined} onClick={event => event.stopPropagation()} onKeyDown={onMenuKeyDown}>
-        <button type="button" role="menuitem" disabled={menuActionBusy || privacyMode} title={privacyMode ? ct('关闭隐私模式后重命名', 'Turn off privacy mode to rename') : undefined} onClick={() => onStartRename?.(menuSession)}><Edit3 size={14} aria-hidden="true"/>{ct('重命名', 'Rename')}</button>
+        <button type="button" role="menuitem" disabled={menuActionBusy || privacyMode} title={privacyMode ? ct('当前视图不可重命名', 'Rename unavailable in the current view') : undefined} onClick={() => onStartRename?.(menuSession)}><Edit3 size={14} aria-hidden="true"/>{ct('重命名', 'Rename')}</button>
         <button type="button" role="menuitem" disabled={menuActionBusy} onClick={() => onSetPinned?.(menuSession)}><Pin size={14} aria-hidden="true"/>{menuSession.pinned ? ct('取消置顶', 'Unpin') : ct('置顶', 'Pin')}</button>
         <button type="button" role="menuitem" disabled={menuActionBusy} onClick={() => onForkSession?.(menuSession)}><GitFork size={14} aria-hidden="true"/>{ct('分支到新会话', 'Fork to new session')}</button>
         <button type="button" role="menuitem" disabled={menuActionBusy || archiveBlockedByRunning} title={archiveLabel} aria-label={archiveLabel} onClick={() => onArchiveSession?.(menuSession.id)}><Archive size={14} aria-hidden="true"/>{ct('归档', 'Archive')}</button>

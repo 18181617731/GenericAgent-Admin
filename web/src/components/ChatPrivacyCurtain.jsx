@@ -1,5 +1,5 @@
 import React from 'react'
-import { CheckCircle2, CircleAlert, Clock3, LockKeyhole, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Clock3, ShieldCheck } from 'lucide-react'
 
 const statusIcon = status => {
   if (status === 'failed') return CircleAlert
@@ -15,10 +15,9 @@ export default function ChatPrivacyCurtain({ lang = 'zh', status = 'waiting', me
     waiting:'等待新对话', running:'任务执行中', queued:'消息已排队', completed:'任务已完成', stopped:'任务已停止', failed:'任务执行失败',
   }
   const StatusIcon = statusIcon(status)
-  return <section className={`oa-privacy-curtain is-${status}`} aria-live="polite" aria-label={english ? 'Privacy mode status' : '隐私模式状态'}>
+  return <section className={`oa-privacy-curtain is-${status}`} aria-live="polite" aria-label={english ? 'Task status' : '任务状态'}>
     <div className="oa-privacy-shield" aria-hidden="true"><ShieldCheck size={24}/></div>
     <div className="oa-privacy-copy">
-      <span><LockKeyhole size={13} aria-hidden="true"/>{english ? 'PRIVACY MODE' : '隐私模式'}</span>
       <h2>{labels[status] || labels.waiting}</h2>
     </div>
     {metrics.length > 0 && <dl className="oa-privacy-metrics">

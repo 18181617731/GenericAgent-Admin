@@ -5,7 +5,7 @@ import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
-import { cacheReadTokens } from './lib/chatUsage.js'
+import { cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -2315,6 +2315,47 @@ const sumUsages = (usages) => {
     output_tokens: acc.output_tokens + (u?.output_tokens || 0),
   }), { input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, output_tokens: 0 })
 }
+
+// 会话级摘要仅使用消息完成后写入的真实统计字段。
+export const buildChatStats = (messages = []) => {
+  const turns = (Array.isArray(messages) ? messages : []).filter(m =>
+    m?.role === 'assistant' && m?.kind !== 'btw' && (m?.usage || m?.usages || m?.elapsed_ms > 0))
+  const usages = turns.flatMap(m =>
+    Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : []))
+  const total = sumUsages(usages)
+  const elapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.elapsed_ms) || 0), 0)
+  const cacheRead = total?.cache_read_tokens || 0
+  const cacheBase = (total?.input_tokens || 0) + (total?.cache_creation_tokens || 0) + cacheRead
+  const firstTokenValues = turns.map(m => Number(m.first_token_ms) || 0).filter(value => value > 0)
+  const firstTokenMs = firstTokenValues.length
+    ? firstTokenValues.reduce((sum, value) => sum + value, 0) / firstTokenValues.length
+    : 0
+  return {
+    rounds: turns.length,
+    steps: usages.length,
+    elapsedMs,
+    firstTokenMs,
+    inputTokens: total?.input_tokens || 0,
+    outputTokens: total?.output_tokens || 0,
+    outputRate: measuredOutputRate(usages),
+    cachePercent: cacheBase > 0 ? Math.round(cacheRead / cacheBase * 100) : 0,
+  }
+}
+
+export const ChatStats = memo(function ChatStats({ messages = [] }) {
+  const stats = buildChatStats(messages)
+  return <div className="oa-chat-stats" aria-label="对话统计">
+    <span>{stats.rounds} 轮 · {stats.steps} 步</span>
+    <i aria-hidden="true">|</i>
+    <span>LLM {(stats.elapsedMs / 1000).toFixed(1)}s</span>
+    <i aria-hidden="true">|</i>
+    <span>首 token 平均 {stats.firstTokenMs > 0 ? `${(stats.firstTokenMs / 1000).toFixed(1)}s` : '—'} · {stats.outputRate > 0 ? `${stats.outputRate.toFixed(1)} tok/s` : '— tok/s'}</span>
+    <i aria-hidden="true">|</i>
+    <span>缓存命中 {stats.cachePercent}%</span>
+    <i aria-hidden="true">|</i>
+    <span>输入 {formatTokens(stats.inputTokens)} · 输出 {formatTokens(stats.outputTokens)}</span>
+  </div>
+})
 
 export function GeneratedImageGallery({ content = '' }) {
   const paths = useMemo(() => extractGeneratedImagePaths(content), [content])
@@ -5547,7 +5588,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       : ct(`第 ${Number(loopState?.round) || 0} 轮，共 ${Number(loopState?.max_rounds) || loopMaxRounds} 轮`, `Round ${Number(loopState?.round) || 0} of ${Number(loopState?.max_rounds) || loopMaxRounds}`)
   const isCurrentRunning = busy && streamingSid === sid
   const privacySessionIndex = Math.max(0, sessions.findIndex(session => session.id === sid))
-  const privacySessionLabel = sid ? privateSessionTitle(privacySessionIndex, chatLanguage()) : ct('隐私会话', 'Private chat')
+  const privacySessionLabel = sid ? privateSessionTitle(privacySessionIndex, chatLanguage()) : ct('会话', 'Session')
   const privacyAssistant = [...messages].reverse().find(message => message?.role === 'assistant')
   const privacyUsage = Array.isArray(privacyAssistant?.usages) && privacyAssistant.usages.length
     ? sumUsages(privacyAssistant.usages)
@@ -5659,10 +5700,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>}
         <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <div className="oa-topbar-actions" aria-label={ct('聊天工具', 'Chat tools')}>
-          <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid || privacyMode} title={privacyMode ? ct('隐私模式下不可查看上下文', 'Context unavailable in privacy mode') : contextHelpText} aria-label={privacyMode ? ct('隐私模式下不可查看模型上下文', 'Model context unavailable in privacy mode') : ct('查看模型上下文', 'View model context')}>
+          <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid || privacyMode} title={privacyMode ? ct('当前视图不可查看上下文', 'Context unavailable in the current view') : contextHelpText} aria-label={privacyMode ? ct('当前视图不可查看模型上下文', 'Model context unavailable in the current view') : ct('查看模型上下文', 'View model context')}>
             <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span>{!privacyMode && <span className="oa-context-count">{rawHistory?.length || 0}</span>}{!privacyMode && <ChatFeatureHelp text={contextHelpText}/>}
           </button>
-          <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid || privacyMode} title={privacyMode ? ct('隐私模式下不可查看世界线', 'Timeline unavailable in privacy mode') : worldlineHelpText} aria-label={privacyMode ? ct('隐私模式下不可查看对话世界线', 'Conversation timeline unavailable in privacy mode') : ct('查看和切换对话世界线', 'View and switch conversation branches')}>
+          <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid || privacyMode} title={privacyMode ? ct('当前视图不可查看世界线', 'Timeline unavailable in the current view') : worldlineHelpText} aria-label={privacyMode ? ct('当前视图不可查看对话世界线', 'Conversation timeline unavailable in the current view') : ct('查看和切换对话世界线', 'View and switch conversation branches')}>
             <GitBranch size={16}/><span className="oa-context-label">世界线</span>{!privacyMode && (worldlineForView?.nodes?.length || 0) > 0 && <span className="oa-context-count">{worldlineForView.nodes.length}</span>}{!privacyMode && <ChatFeatureHelp text={worldlineHelpText}/>}
           </button>
           <button
@@ -5766,7 +5807,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           }} disabled={loopUpdating} aria-expanded={!loopState?.enabled ? loopConfigOpen : undefined}>
             {loopState?.enabled ? <Square size={13}/> : <Orbit size={14}/>}<span>{loopState?.enabled ? (loopUpdating ? ct('停止中…', 'Stopping…') : ct('停止 Loop', 'Stop Loop')) : (loopConfigOpen ? ct('收起设置', 'Hide settings') : ct('配置 Loop', 'Configure Loop'))}</span>
           </button>
-          {loopConfigOpen && !loopState?.enabled && <div ref={loopConfigRef} className="oa-loop-config oa-loop-private-config" role="group" aria-label={ct('隐私 Loop 设置', 'Private Loop settings')}>
+          {loopConfigOpen && !loopState?.enabled && <div ref={loopConfigRef} className="oa-loop-config oa-loop-private-config" role="group" aria-label={ct('Loop 设置', 'Loop settings')}>
             <label><span>{ct('目标', 'Objective')}</span><textarea value={loopObjective} onChange={event=>{ setLoopObjectiveError(false); setLoopObjective(event.target.value) }} aria-invalid={loopObjectiveError} rows={3}/></label>
             <label className="oa-loop-rounds"><span>{ct('最多轮次', 'Maximum rounds')}</span><input type="number" min="1" max="100" value={loopMaxRounds} onChange={event=>setLoopMaxRounds(event.target.value)}/></label>
             <div className="oa-loop-config-actions"><button type="button" onClick={startLoop} disabled={loopUpdating || !loopObjective.trim()}>{loopUpdating ? ct('启动中…', 'Starting…') : ct('启动 Loop', 'Start Loop')}</button></div>
@@ -5845,7 +5886,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
       <footer className="oa-composer-wrap" ref={composerWrapRef}>
         {!privacyMode && <PlanTodoCard plan={planState}/>}
-        {queuedMessages.length > 0 && (privacyMode ? <div className={`oa-queue-dock oa-queue-private ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('隐私待发送队列', 'Private send queue')}>
+        {queuedMessages.length > 0 && (privacyMode ? <div className={`oa-queue-dock oa-queue-private ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('待发送队列', 'Send queue')}>
           <div className="oa-queue-guide-hint"><Sparkles className="oa-queue-guide-icon" size={14} aria-hidden="true"/><span className="oa-queue-guide-copy"><b>{ct('待发送', 'Queued')}</b><small>{ct('消息内容已隐藏', 'Message content hidden')}</small></span><span className="oa-queue-count">{ct(`${queuedMessages.length} 条`, `${queuedMessages.length}`)}</span></div>
         </div> : <div className={`oa-queue-dock ${isCurrentRunning ? 'is-running' : 'is-idle'}`} aria-label={ct('待发送队列', 'Send queue')}>
           <div className="oa-queue-guide-hint">
@@ -6023,8 +6064,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={isMobile ? '发送消息或添加文件…' : '\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={ct('添加附件', 'Add attachment')}><Paperclip size={17}/><span>{ct('附件', 'Attachments')}</span></button>
-            <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} disabled={privacyMode} title={privacyMode ? ct('隐私模式下不可管理命令', 'Commands unavailable in privacy mode') : ct('管理自定义斜杠命令', 'Manage custom slash commands')}><Sparkles size={16}/><span>{ct('命令', 'Commands')}</span></button>
-            <button className={`oa-attach-btn ${!privacyMode && (extraPromptOpen || extraSysPromptPresetID) ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} disabled={privacyMode} title={privacyMode ? ct('隐私模式下不可查看系统提示', 'System prompts unavailable in privacy mode') : (extraSysPromptPresetID ? ct(`当前预设：${activePromptPreset.name}`, `Current preset: ${activePromptPreset.name}`) : ct('选择本会话的系统提示预设', 'Choose a system-prompt preset for this session'))}><Bot size={16}/><span>{ct('系统提示', 'System prompt')}{!privacyMode && extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
+            <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} disabled={privacyMode} title={privacyMode ? ct('当前视图不可管理命令', 'Commands unavailable in the current view') : ct('管理自定义斜杠命令', 'Manage custom slash commands')}><Sparkles size={16}/><span>{ct('命令', 'Commands')}</span></button>
+            <button className={`oa-attach-btn ${!privacyMode && (extraPromptOpen || extraSysPromptPresetID) ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} disabled={privacyMode} title={privacyMode ? ct('当前视图不可查看系统提示', 'System prompts unavailable in the current view') : (extraSysPromptPresetID ? ct(`当前预设：${activePromptPreset.name}`, `Current preset: ${activePromptPreset.name}`) : ct('选择本会话的系统提示预设', 'Choose a system-prompt preset for this session'))}><Bot size={16}/><span>{ct('系统提示', 'System prompt')}{!privacyMode && extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
             <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
               value={selectedModelNo} disabled={!providerGroups.length || isCurrentRunning || modelSwitching}
               disabledReason={!providerGroups.length ? '尚未配置可用模型' : modelSwitching ? '正在切换模型' : isCurrentRunning ? '回复生成期间不可切换模型' : ''}

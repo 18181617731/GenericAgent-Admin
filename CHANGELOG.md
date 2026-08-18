@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.89 - 2026-08-18
+
+### Discreet compact chat display
+- Present the local chat protection switch as the neutral “Compact view” option instead of exposing privacy-specific wording in the sidebar.
+- Use ordinary numbered session and project labels, and keep the protected transcript focused on generic task status and usage metrics.
+- Remove privacy-specific wording from visible copy, tooltips, notifications, and accessibility labels while preserving the same persistent redaction behavior.
+
 ## v1.0.88 - 2026-08-18
 
 ### Global chat privacy mode

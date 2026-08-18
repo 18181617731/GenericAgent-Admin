@@ -2316,7 +2316,7 @@ describe('mobile chat session navigation', () => {
     })
 
     render(<ChatApp />)
-    const curtain = await screen.findByRole('region', { name:'隐私模式状态' }, { timeout:10000 })
+    const curtain = await screen.findByRole('region', { name:'任务状态' }, { timeout:10000 })
     await waitFor(() => expect(curtain.textContent).toContain('2 条'))
     expect(document.body.innerHTML).not.toContain('SECRET_SESSION_TITLE')
     expect(document.body.innerHTML).not.toContain('SECRET_USER_MESSAGE')
@@ -2325,7 +2325,7 @@ describe('mobile chat session navigation', () => {
     expect(document.body.innerHTML).not.toContain('SECRET_DIAGNOSIS')
     expect(document.body.innerHTML).not.toContain('SECRET_COMMAND_DESCRIPTION')
     expect(document.body.innerHTML).not.toContain('D:/private')
-    expect(document.querySelector('.oa-title b')?.textContent).toBe('隐私会话 01')
+    expect(document.querySelector('.oa-title b')?.textContent).toBe('会话 01')
     fireEvent.keyDown(window, { key:'k', ctrlKey:true })
     expect(screen.queryByRole('dialog', { name:'搜索会话' })).toBeNull()
     fireEvent.change(screen.getByPlaceholderText('向 GenericAgent 发送消息，可选择/粘贴/拖拽任意文件…'), { target:{ value:'/' } })
@@ -2334,7 +2334,7 @@ describe('mobile chat session navigation', () => {
     expect(privateComposerTools.find(button => button.textContent === '命令')?.disabled).toBe(true)
     expect(privateComposerTools.find(button => button.textContent === '系统提示')?.disabled).toBe(true)
 
-    fireEvent.click(screen.getByRole('switch', { name:/隐私模式/ }))
+    fireEvent.click(screen.getByRole('switch', { name:/精简显示/ }))
     await waitFor(() => expect(screen.getByText('SECRET_USER_MESSAGE D:/private/input.txt')).toBeTruthy())
     expect(document.querySelector('.oa-title b')?.textContent).toBe('SECRET_SESSION_TITLE')
     expect(document.body.innerHTML).toContain('SECRET_DIAGNOSIS')
@@ -2521,7 +2521,7 @@ describe('chat loop controls', () => {
     })
 
     render(<ChatApp />)
-    await screen.findByRole('region', { name:'隐私模式状态' }, { timeout:10000 })
+    await screen.findByRole('region', { name:'任务状态' }, { timeout:10000 })
     fireEvent.click(screen.getByRole('button', { name:'展开 Loop 栏' }))
     fireEvent.click(screen.getByRole('button', { name:'配置 Loop' }))
     const objective = screen.getByRole('textbox', { name:'目标' })

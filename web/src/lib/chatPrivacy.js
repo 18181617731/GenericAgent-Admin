@@ -38,12 +38,12 @@ export const subscribeChatPrivacyMode = (listener, { windowRef = typeof window !
 
 export const privateSessionTitle = (index = 0, lang = 'zh') => {
   const number = String(Math.max(0, Number(index) || 0) + 1).padStart(2, '0')
-  return lang === 'en' ? `Private chat ${number}` : `隐私会话 ${number}`
+  return lang === 'en' ? `Session ${number}` : `会话 ${number}`
 }
 
 export const privateProjectTitle = (index = 0, lang = 'zh') => {
   const number = String(Math.max(0, Number(index) || 0) + 1).padStart(2, '0')
-  return lang === 'en' ? `Private project ${number}` : `隐私项目 ${number}`
+  return lang === 'en' ? `Project ${number}` : `项目 ${number}`
 }
 
 export const chatNotificationForDisplay = (item, privacyMode = loadChatPrivacyMode(), lang = 'zh') => {
@@ -55,6 +55,6 @@ export const chatNotificationForDisplay = (item, privacyMode = loadChatPrivacyMo
   return {
     ...item,
     title,
-    message: lang === 'en' ? 'Privacy mode has hidden the chat title and content.' : '隐私模式已隐藏会话标题和内容。',
+    message: lang === 'en' ? 'Details are collapsed in the current view.' : '当前视图已收起详情。',
   }
 }

@@ -55,16 +55,16 @@ test('privacy mode persists and synchronizes custom and storage events', () => {
 })
 
 test('private labels are stable and contain no source content', () => {
-  assert.equal(privateSessionTitle(2, 'zh'), '隐私会话 03')
-  assert.equal(privateSessionTitle(2, 'en'), 'Private chat 03')
-  assert.equal(privateProjectTitle(0, 'zh'), '隐私项目 01')
+  assert.equal(privateSessionTitle(2, 'zh'), '会话 03')
+  assert.equal(privateSessionTitle(2, 'en'), 'Session 03')
+  assert.equal(privateProjectTitle(0, 'zh'), '项目 01')
 })
 
 test('chat notification redaction preserves state but removes sensitive preview', () => {
   const raw = { id:'n1', category:'chat', level:'error', title:'SECRET_TITLE', message:'SECRET_PROMPT D:/secret.txt' }
   const hidden = chatNotificationForDisplay(raw, true, 'zh')
   assert.equal(hidden.title, '对话任务失败')
-  assert.equal(hidden.message, '隐私模式已隐藏会话标题和内容。')
+  assert.equal(hidden.message, '当前视图已收起详情。')
   assert.equal(hidden.id, raw.id)
   assert.equal(chatNotificationForDisplay(raw, false, 'zh'), raw)
 
