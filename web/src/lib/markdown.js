@@ -124,11 +124,26 @@ const splitLinkTarget = (raw = '') => {
   return { url, title: titled ? titled[2].trim() : '' }
 }
 
+const findInlineMathClose = (src, start) => {
+  for (let close = src.indexOf('$', start); close !== -1; close = src.indexOf('$', close + 1)) {
+    const inner = src.slice(start, close)
+    if (inner.includes('\n') || inner.includes('`')) return -1
+    if (src[close - 1] === '\\') continue
+    // Inline math cannot contain an unescaped dollar. If this candidate cannot
+    // close because it follows whitespace (for example the second price in
+    // "$5 and $10"), do not jump across it to a later formula delimiter.
+    if (src[close - 1] === '$' || src[close + 1] === '$' || /\s/.test(src[close - 1] || '')) return -1
+    return close
+  }
+  return -1
+}
+
 /**
  * Parses inline markup into a recursive node tree.
  *
- * Node shapes: text{value} | code{value} | br | strong/em/del{children}
- *              | link{href,title,children} | image{src,alt,title}
+ * Node shapes: text{value} | code{value} | math{value,display} | br
+ *              | strong/em/del{children} | link{href,title,children}
+ *              | image{src,alt,title}
  */
 export const parseInline = (text = '', options = {}) => {
   const depth = options.depth || 0
@@ -149,6 +164,35 @@ export const parseInline = (text = '', options = {}) => {
 
   while (i < src.length) {
     const ch = src[i]
+
+    if (ch === '\\' && (src[i + 1] === '(' || src[i + 1] === '[')) {
+      const display = src[i + 1] === '['
+      const closeToken = display ? '\\]' : '\\)'
+      const close = src.indexOf(closeToken, i + 2)
+      const value = close === -1 ? '' : src.slice(i + 2, close)
+      if (close !== -1 && value.trim() && !value.includes('\n')) {
+        flush()
+        out.push({ type: 'math', value, display })
+        i = close + closeToken.length
+        continue
+      }
+      // A delimiter that has not closed yet is common while a response is
+      // streaming. Preserve it exactly instead of treating its backslash as a
+      // Markdown escape.
+      buffer += ch + src[i + 1]
+      i += 2
+      continue
+    }
+
+    if (ch === '$' && src[i - 1] !== '$' && src[i + 1] !== '$' && !/\s/.test(src[i + 1] || '')) {
+      const close = findInlineMathClose(src, i + 1)
+      if (close !== -1) {
+        flush()
+        out.push({ type: 'math', value: src.slice(i + 1, close), display: false })
+        i = close + 1
+        continue
+      }
+    }
 
     if (ch === '\\' && ASCII_PUNCTUATION_RE.test(src[i + 1] || '')) {
       buffer += src[i + 1]
@@ -345,8 +389,9 @@ export const parseTableRows = (lines = []) => {
 /**
  * Parses block-level markdown into a flat list of nodes.
  *
- * Node shapes: paragraph{text} | heading{depth,text} | hr | table{head,aligns,rows}
- *              | blockquote{blocks} | list{ordered,start,tight,items:[{checked,blocks}]}
+ * Node shapes: paragraph{text} | heading{depth,text} | hr | math{value,display}
+ *              | table{head,aligns,rows} | blockquote{blocks}
+ *              | list{ordered,start,tight,items:[{checked,blocks}]}
  *
  * Inline content is kept as a raw string; the renderer runs it through
  * parseInline so it can also expand app-specific tokens such as [FILE:...].
@@ -367,6 +412,36 @@ export const parseBlocks = (text = '', depth = 0) => {
     const line = lines[i]
 
     if (BLANK_LINE_RE.test(line)) { flushParagraph(); continue }
+
+    const trimmed = line.trim()
+    const displayDelimiter = trimmed.startsWith('$$')
+      ? { open: '$$', close: '$$' }
+      : (trimmed.startsWith('\\[') ? { open: '\\[', close: '\\]' } : null)
+    if (displayDelimiter) {
+      const { open, close } = displayDelimiter
+      const mathLines = []
+      let cursor = i
+      let rest = trimmed.slice(open.length)
+      let closed = false
+      while (cursor < lines.length) {
+        const closeAt = rest.lastIndexOf(close)
+        if (closeAt !== -1 && !rest.slice(closeAt + close.length).trim()) {
+          mathLines.push(rest.slice(0, closeAt))
+          closed = true
+          break
+        }
+        mathLines.push(rest)
+        cursor += 1
+        rest = lines[cursor] || ''
+      }
+      const value = mathLines.join('\n').trim()
+      if (closed && value) {
+        flushParagraph()
+        blocks.push({ type: 'math', value, display: true })
+        i = cursor
+        continue
+      }
+    }
 
     const heading = line.match(HEADING_RE)
     if (heading) {

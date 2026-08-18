@@ -155,8 +155,46 @@ _CURRENT_USAGE = {
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
 # "[Output]" line marks the end of one turn, so we snapshot and reset there.
 _TURN_USAGES = []
+# Monotonic timestamp of the first observable streamed chunk in the active
+# outbound LLM call. It is consumed atomically when GA prints [Output].
+_GENERATION_STARTED_AT = None
 # Latest context-size stats parsed from llmcore's [Debug] lines.
 _CTX_STATS = {'ctx_chars': 0, 'ctx_msgs': 0}
+
+
+def _clear_generation_timer_locked():
+    """Clear the active generation timer while _USAGE_LOCK is held."""
+    global _GENERATION_STARTED_AT
+    _GENERATION_STARTED_AT = None
+
+
+def _reset_generation_timer():
+    """Start a fresh outbound-call timing scope without claiming a start yet."""
+    with _USAGE_LOCK:
+        _clear_generation_timer_locked()
+
+
+def _mark_generation_started(item):
+    """Record the first observable, non-error streamed chunk for this call."""
+    if not isinstance(item, str):
+        return
+    chunk = item.strip()
+    if not chunk or chunk.startswith('!!!Error:'):
+        return
+    global _GENERATION_STARTED_AT
+    with _USAGE_LOCK:
+        if _GENERATION_STARTED_AT is None:
+            _GENERATION_STARTED_AT = time.perf_counter()
+
+
+def _consume_generation_ms_locked():
+    """Return measured generation time and clear it while the usage lock is held."""
+    global _GENERATION_STARTED_AT
+    started_at = _GENERATION_STARTED_AT
+    _GENERATION_STARTED_AT = None
+    if started_at is None:
+        return 0
+    return max(1, int(round((time.perf_counter() - started_at) * 1000)))
 
 
 class _UsageCapturingStderr:
@@ -204,6 +242,9 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['output_tokens'] = int(m.group(1))
                 # Snapshot this completed turn and reset the buffer for the next.
                 turn_snapshot = dict(_CURRENT_USAGE)
+                generation_ms = _consume_generation_ms_locked()
+                if generation_ms > 0:
+                    turn_snapshot['generation_ms'] = generation_ms
                 _TURN_USAGES.append(turn_snapshot)
                 turn_index = len(_TURN_USAGES) - 1
                 _CURRENT_USAGE['input_tokens'] = 0
@@ -261,6 +302,7 @@ def _reset_usage():
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
         _TURN_USAGES.clear()
+        _clear_generation_timer_locked()
 
 
 def _snapshot_usage():
@@ -398,6 +440,7 @@ def _sync_usage_llm_no(agent):
 
 def _finalize_incomplete_turn_usage():
     with _USAGE_LOCK:
+        _clear_generation_timer_locked()
         if not (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
                 or _CURRENT_USAGE['cache_creation_tokens']
                 or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
@@ -424,13 +467,20 @@ def _track_outbound_attempt(result):
         return result
 
     def tracked():
+        _reset_generation_timer()
         while True:
             try:
                 item = next(iterator)
             except StopIteration as stop:
+                _reset_generation_timer()
                 return stop.value
+            except BaseException:
+                _reset_generation_timer()
+                raise
             if isinstance(item, str) and item.lstrip().startswith('!!!Error:'):
                 _finalize_incomplete_turn_usage()
+            else:
+                _mark_generation_started(item)
             yield item
 
     return tracked()
@@ -441,6 +491,8 @@ def _install_outbound_model_hooks(agent):
     try:
         backend = agent.llmclient.backend
         sessions = list(getattr(backend, '_sessions', ()) or ())
+        if not sessions and callable(getattr(backend, 'raw_ask', None)):
+            sessions = [backend]
     except Exception:
         sessions = []
     originals = []
@@ -2536,6 +2588,7 @@ def handle_title_request(agent, req):
 
 def handle_request(agent, worker, req):
     req = _normalize_request(req)
+    request_started = time.time()
     _reset_usage()  # Clear usage accumulator for this turn
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
@@ -2581,6 +2634,7 @@ def handle_request(agent, worker, req):
         return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
     chunks = []
+    first_token_ms = 0
     _up_context = None
     if ultraplan_objective:
         _up_context = {
@@ -2673,6 +2727,8 @@ def handle_request(agent, worker, req):
             if 'next' in item:
                 delta = str(item.get('next') or '')
                 if delta:
+                    if first_token_ms <= 0:
+                        first_token_ms = max(1, int((time.time() - request_started) * 1000))
                     chunks.append(delta)
                     emit({'type': 'delta', 'delta': delta})
                 emit_plan_update(''.join(chunks))

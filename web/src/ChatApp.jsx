@@ -1,5 +1,6 @@
 import React, { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import katex from 'katex'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
@@ -255,11 +256,27 @@ const slashCommandNextDrawer = (c, nextText = '') => {
 // <autolink> shapes. Hrefs arrive pre-sanitised by safeUrl().
 const INLINE_EMPHASIS_TAGS = { strong: 'strong', em: 'em', del: 'del' }
 
+function MathFormula({ value = '', display = false, block = false }) {
+  const html = useMemo(() => katex.renderToString(value, {
+    displayMode: display,
+    output: 'htmlAndMathml',
+    throwOnError: false,
+    strict: 'warn',
+    trust: false,
+  }), [display, value])
+  const Tag = block ? 'div' : 'span'
+  return <Tag
+    className={`oa-math ${display ? 'oa-math-display' : 'oa-math-inline'}`}
+    dangerouslySetInnerHTML={{ __html: html }}
+  />
+}
+
 function InlineNodes({ nodes = [] }) {
   return <>
     {nodes.map((node, i) => {
       if (node.type === 'text') return <span key={i}>{node.value}</span>
       if (node.type === 'code') return <code key={i}>{node.value}</code>
+      if (node.type === 'math') return <MathFormula key={i} value={node.value} display={node.display} />
       if (node.type === 'br') return <br key={i} />
       if (node.type === 'image') {
         return <img key={i} className="oa-md-image" src={node.src} alt={node.alt}
@@ -1768,6 +1785,7 @@ function MarkdownNodes({ blocks = [] }) {
         return <Tag key={i}><InlineRichText text={block.text} /></Tag>
       }
       if (block.type === 'hr') return <hr key={i} />
+      if (block.type === 'math') return <MathFormula key={i} value={block.value} display block />
       if (block.type === 'table') return <MarkdownTable key={i} table={block} />
       if (block.type === 'list') return <MarkdownList key={i} list={block} />
       if (block.type === 'blockquote') {
@@ -6019,6 +6037,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
+        <ChatStats messages={messages}/>
       </footer>
     </main>
 
