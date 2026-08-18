@@ -828,10 +828,17 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 			}
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "model", "model_id": "vendor/model-real"})
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
-				"type":         "done",
-				"message":      done,
-				"ctx_chars":    3800,
-				"ctx_msgs":     3,
+				"type":      "done",
+				"message":   done,
+				"ctx_chars": 3800,
+				"ctx_msgs":  3,
+				"usage": map[string]interface{}{
+					"input_tokens": 310, "output_tokens": 18, "generation_ms": 900,
+				},
+				"usages": []map[string]interface{}{
+					{"input_tokens": 120, "output_tokens": 5, "generation_ms": 300},
+					{"input_tokens": 190, "output_tokens": 13, "generation_ms": 600},
+				},
 				"raw_history":  rawHistory,
 				"history_info": []interface{}{map[string]interface{}{"turn": "final"}},
 				"working":      map[string]interface{}{"phase": "complete"},
@@ -919,6 +926,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"ctx_chars":3800`) || !strings.Contains(rr.Body.String(), `"ctx_msgs":3`) {
 		t.Fatalf("stream terminal message missing context stats: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"generation_ms":900`) || !strings.Contains(rr.Body.String(), `"generation_ms":300`) || !strings.Contains(rr.Body.String(), `"generation_ms":600`) {
+		t.Fatalf("stream terminal event missing generation timing: %s", rr.Body.String())
+	}
 	stored, err := loadChatSession(s.CfgStore.Snapshot(), "session-hist")
 	if err != nil {
 		t.Fatal(err)
@@ -929,6 +939,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	storedFinal := stored.Messages[len(stored.Messages)-1]
 	if storedFinal.CtxChars != 3800 || storedFinal.CtxMsgs != 3 {
 		t.Fatalf("stored assistant context stats=(%d,%d) want (3800,3): %#v", storedFinal.CtxChars, storedFinal.CtxMsgs, storedFinal)
+	}
+	if storedFinal.Usage["generation_ms"] != 900 || len(storedFinal.Usages) != 2 || storedFinal.Usages[0]["generation_ms"] != 300 || storedFinal.Usages[1]["generation_ms"] != 600 {
+		t.Fatalf("stored assistant generation timing mismatch: usage=%#v usages=%#v", storedFinal.Usage, storedFinal.Usages)
 	}
 
 	reloadReq := httptest.NewRequest(http.MethodGet, "/api/chat/session/session-hist", nil)
@@ -947,6 +960,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	reloadedFinal := reloaded.Messages[len(reloaded.Messages)-1]
 	if reloadedFinal.CtxChars != 3800 || reloadedFinal.CtxMsgs != 3 {
 		t.Fatalf("reloaded assistant context stats=(%d,%d) want (3800,3): %#v", reloadedFinal.CtxChars, reloadedFinal.CtxMsgs, reloadedFinal)
+	}
+	if reloadedFinal.Usage["generation_ms"] != 900 || len(reloadedFinal.Usages) != 2 || reloadedFinal.Usages[0]["generation_ms"] != 300 || reloadedFinal.Usages[1]["generation_ms"] != 600 {
+		t.Fatalf("reloaded assistant generation timing mismatch: usage=%#v usages=%#v", reloadedFinal.Usage, reloadedFinal.Usages)
 	}
 	if len(stored.RawHistory) != 3 {
 		t.Fatalf("stored raw_history len=%d want 3: %#v", len(stored.RawHistory), stored.RawHistory)

@@ -6,6 +6,7 @@ import { parseBlocks, parseInline, parseTableRows, safeUrl } from './markdown.js
 const shape = (nodes) => nodes.map((n) => {
   if (n.type === 'text') return n.value
   if (n.type === 'code') return `code(${n.value})`
+  if (n.type === 'math') return `math(${n.display ? 'display|' : ''}${n.value})`
   if (n.type === 'br') return 'br'
   if (n.type === 'image') return `img(${n.alt}|${n.src})`
   if (n.type === 'link') return `a(${shape(n.children)}|${n.href})`
@@ -226,6 +227,36 @@ test('tabs indent list content correctly', () => {
 test('crlf input is normalised', () => {
   const blocks = parseBlocks('# t\r\n\r\nbody\r\n')
   assert.deepEqual(blocks.map((b) => b.type), ['heading', 'paragraph'])
+})
+
+test('inline math recognises dollar and escaped delimiters', () => {
+  assert.equal(text('rate $x^2 + y^2$ and \\(z_1\\)'), 'rate math(x^2 + y^2) and math(z_1)')
+})
+
+test('math parsing leaves prices, code, double dollars and streaming delimiters intact', () => {
+  assert.equal(text('amounts $5 and $10 stay plain'), 'amounts $5 and $10 stay plain')
+  assert.equal(text('price $5 then energy $E=mc^2$'), 'price $5 then energy math(E=mc^2)')
+  assert.equal(text('prices $5 and $10, then $x+1$'), 'prices $5 and $10, then math(x+1)')
+  assert.equal(text('formula $2x+1$ stays math'), 'formula math(2x+1) stays math')
+  assert.equal(text('`$x$`'), 'code($x$)')
+  assert.equal(text('$$x$$'), '$$x$$')
+  assert.equal(text('\\(x + 1'), '\\(x + 1')
+})
+
+test('display math blocks support bracket and double-dollar delimiters', () => {
+  const formula = '\\text{tok/s}=\\frac{\\sum \\text{\\u5df2\\u6d4b\\u91cf\\u6b65\\u9aa4\\u7684 output\\_tokens}}{\\sum \\text{generation\\_ms}/1000}'
+  const bracketed = parseBlocks(`before\n\n\\[ ${formula} \\]\n\nafter`)
+  assert.deepEqual(bracketed.map((b) => b.type), ['paragraph', 'math', 'paragraph'])
+  assert.equal(bracketed[1].value, formula)
+  assert.equal(bracketed[1].display, true)
+
+  const [dollars] = parseBlocks('$$\nx^2 + y^2\n$$')
+  assert.deepEqual(dollars, { type: 'math', value: 'x^2 + y^2', display: true })
+})
+
+test('an unclosed display delimiter remains paragraph source while streaming', () => {
+  const [block] = parseBlocks('\\[\nx + 1')
+  assert.deepEqual(block, { type: 'paragraph', text: '\\[\nx + 1' })
 })
 
 test('deeply nested emphasis degrades to text instead of recursing forever', () => {

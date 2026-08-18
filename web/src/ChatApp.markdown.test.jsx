@@ -102,6 +102,24 @@ describe('assistant markdown rendering', () => {
     expect(card.querySelector('pre code').textContent).toContain('fmt.Println')
   })
 
+  test('renders bracketed display math through KaTeX', () => {
+    const formula = '\\text{tok/s}=\\frac{\\sum \\text{\\u5df2\\u6d4b\\u91cf\\u6b65\\u9aa4\\u7684 output\\_tokens}}{\\sum \\text{generation\\_ms}/1000}'
+    const container = renderAssistant(`\\[ ${formula} \\]`)
+    const math = container.querySelector('.oa-math-display .katex-display')
+    expect(math).toBeTruthy()
+    expect(math.querySelector('annotation[encoding="application/x-tex"]').textContent).toBe(formula)
+    expect(container.querySelector('.oa-md').textContent).not.toContain('\\[')
+  })
+
+  test('renders inline dollar math without parsing prices or code spans', () => {
+    const container = renderAssistant('Energy $E=mc^2$, price $5 and $10, code `$x$`.')
+    const math = container.querySelectorAll('.oa-math-inline .katex')
+    expect(math.length).toBe(1)
+    expect(math[0].querySelector('annotation[encoding="application/x-tex"]').textContent).toBe('E=mc^2')
+    expect(container.querySelector('code').textContent).toBe('$x$')
+    expect(container.querySelector('.oa-md').textContent).toContain('$5 and $10')
+  })
+
   test('keeps a heading, rule and paragraph rhythm', () => {
     const container = renderAssistant('# Title\n\nbody text\n\n---\n\n## Next')
     const md = container.querySelector('.oa-md')

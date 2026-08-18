@@ -43,6 +43,7 @@ type chatMessage struct {
 	CtxChars       int                      `json:"ctx_chars,omitempty"`
 	CtxMsgs        int                      `json:"ctx_msgs,omitempty"`
 	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
+	FirstTokenMS   int64                    `json:"first_token_ms,omitempty"`
 	RunStartedAtMS int64                    `json:"run_started_at_ms,omitempty"`
 	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
 	GoalState      map[string]interface{}   `json:"goal_state,omitempty"`

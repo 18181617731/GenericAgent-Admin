@@ -1630,6 +1630,10 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255
 .oa-md-quote > :first-child{margin-top:0}.oa-md-quote > :last-child{margin-bottom:0}
 .oa-md-quote .oa-md-quote{margin:8px 0}
 .oa-md-image{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface-muted)}
+.oa-math-inline{display:inline-block;max-width:100%;vertical-align:-.12em}
+.oa-math-display{display:block;max-width:100%;margin:12px 0;overflow-x:auto;overflow-y:hidden;text-align:center;padding:2px 0}
+.oa-math-display .katex-display{margin:0;min-width:max-content}
+.oa-math .katex-error{color:var(--danger,#b42318);font-family:"SFMono-Regular",Consolas,monospace;font-size:.9em}
 .oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--code-bg);border:1px solid var(--border);box-shadow:none}
 .oa-code-head{height:38px;background:var(--surface-muted);color: var(--text);display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;text-transform:none;border-bottom:1px solid var(--border)}
 .oa-code-head span{color: var(--text);font-weight:500}
@@ -15521,4 +15525,73 @@ html[data-color-scheme="dark"] .logs-page {
     position: absolute;
     inset: 0 -2px;
   }
+}
+
+/* ==========================================================================
+   Chat typography clarity (2026-08-18)
+
+   MiSans reads dense at the former 450/15px combination. Keep hierarchy in
+   headings and actions, but give conversation text a lighter intermediate
+   cut, a larger optical size, and more leading so Chinese strokes do not
+   merge together.
+   ========================================================================== */
+.oa-chat { font-weight: 410; }
+
+.oa-content {
+  font-size: 16px;
+  font-weight: 410;
+  line-height: 1.68;
+  letter-spacing: .005em;
+}
+.oa-message.user .oa-content { line-height: 1.62; }
+.oa-content strong,
+.oa-content b { font-weight: 600; }
+
+.oa-meta { font-size: 12.5px; }
+.oa-meta b { font-weight: 600; }
+.oa-meta-brand { font-size: 12px; font-weight: 550; }
+.oa-meta .oa-model-id { font-size: 11.5px; font-weight: 500; }
+.oa-meta .oa-message-time { font-size: 11px; }
+.oa-usage { font-size: 12px; }
+.oa-usage b { font-weight: 550; }
+
+.oa-session span { font-size: 14.5px; font-weight: 550; }
+.oa-section-label { font-size: 11.5px; font-weight: 600; }
+.oa-title b { font-size: 16px; font-weight: 600; }
+
+.oa-composer textarea,
+.oa-composer textarea:not(.file-editor) {
+  font-size: 15.5px !important;
+  font-weight: 410 !important;
+  line-height: 1.55 !important;
+  letter-spacing: .005em;
+}
+
+@media (max-width: 920px) {
+  .oa-content { font-size: 16px; line-height: 1.65; }
+  .oa-composer textarea,
+  .oa-composer textarea:not(.file-editor) { font-size: 16px !important; }
+}
+
+/* Conversation observability summary below the composer. */
+.oa-chat-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-width: 0;
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 410;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.oa-chat-stats::-webkit-scrollbar { display: none; }
+.oa-chat-stats span { flex: 0 0 auto; }
+.oa-chat-stats i { color: var(--line-strong, var(--border)); font-style: normal; }
+@media (max-width: 600px) {
+  .oa-chat-stats { justify-content: flex-start; gap: 7px; font-size: 10px; }
 }

@@ -1,9 +1,10 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import katex from 'katex'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction } from './lib/chatStream.js'
-import { cacheReadTokens } from './lib/chatUsage.js'
+import { cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -274,11 +275,27 @@ const slashCommandNextDrawer = (c, nextText = '') => {
 // <autolink> shapes. Hrefs arrive pre-sanitised by safeUrl().
 const INLINE_EMPHASIS_TAGS = { strong: 'strong', em: 'em', del: 'del' }
 
+function MathFormula({ value = '', display = false, block = false }) {
+  const html = useMemo(() => katex.renderToString(value, {
+    displayMode: display,
+    output: 'htmlAndMathml',
+    throwOnError: false,
+    strict: 'warn',
+    trust: false,
+  }), [display, value])
+  const Tag = block ? 'div' : 'span'
+  return <Tag
+    className={`oa-math ${display ? 'oa-math-display' : 'oa-math-inline'}`}
+    dangerouslySetInnerHTML={{ __html: html }}
+  />
+}
+
 function InlineNodes({ nodes = [] }) {
   return <>
     {nodes.map((node, i) => {
       if (node.type === 'text') return <span key={i}>{node.value}</span>
       if (node.type === 'code') return <code key={i}>{node.value}</code>
+      if (node.type === 'math') return <MathFormula key={i} value={node.value} display={node.display} />
       if (node.type === 'br') return <br key={i} />
       if (node.type === 'image') {
         return <img key={i} className="oa-md-image" src={node.src} alt={node.alt}
@@ -1728,6 +1745,7 @@ function MarkdownNodes({ blocks = [] }) {
         return <Tag key={i}><InlineRichText text={block.text} /></Tag>
       }
       if (block.type === 'hr') return <hr key={i} />
+      if (block.type === 'math') return <MathFormula key={i} value={block.value} display block />
       if (block.type === 'table') return <MarkdownTable key={i} table={block} />
       if (block.type === 'list') return <MarkdownList key={i} list={block} />
       if (block.type === 'blockquote') {
@@ -2255,6 +2273,44 @@ const sumUsages = (usages) => {
     output_tokens: acc.output_tokens + (u?.output_tokens || 0),
   }), { input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, output_tokens: 0 })
 }
+
+// 会话级可观测性摘要：只使用消息完成后写入的真实字段，不猜测未提供的首 token/速率。
+export const buildChatStats = (messages = []) => {
+  const turns = (Array.isArray(messages) ? messages : []).filter(m => m?.role === 'assistant' && m?.kind !== 'btw' && (m?.usage || m?.usages || m?.elapsed_ms > 0))
+  const usages = turns.flatMap(m => Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : []))
+  const total = sumUsages(usages)
+  const elapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.elapsed_ms) || 0), 0)
+  const cacheRead = total?.cache_read_tokens || 0
+  const cacheBase = (total?.input_tokens || 0) + (total?.cache_creation_tokens || 0) + cacheRead
+  const firstTokenValues = turns.map(m => Number(m.first_token_ms) || 0).filter(value => value > 0)
+  const firstTokenMs = firstTokenValues.length ? firstTokenValues.reduce((sum, value) => sum + value, 0) / firstTokenValues.length : 0
+  return {
+    rounds: turns.length,
+    steps: usages.length,
+    elapsedMs,
+    firstTokenMs,
+    inputTokens: total?.input_tokens || 0,
+    outputTokens: total?.output_tokens || 0,
+    outputRate: measuredOutputRate(usages),
+    cachePercent: cacheBase > 0 ? Math.round(cacheRead / cacheBase * 100) : 0,
+  }
+}
+
+export const ChatStats = memo(function ChatStats({ messages = [] }) {
+  const stats = buildChatStats(messages)
+  const seconds = (stats.elapsedMs / 1000).toFixed(1)
+  return <div className="oa-chat-stats" aria-label="对话统计">
+    <span>{stats.rounds} 轮 · {stats.steps} 步</span>
+    <i aria-hidden="true">|</i>
+    <span>LLM {seconds}s</span>
+    <i aria-hidden="true">|</i>
+    <span>首 token 平均 {stats.firstTokenMs > 0 ? `${(stats.firstTokenMs / 1000).toFixed(1)}s` : '—'} · {stats.outputRate > 0 ? `${stats.outputRate.toFixed(1)} tok/s` : '— tok/s'}</span>
+    <i aria-hidden="true">|</i>
+    <span>缓存命中 {stats.cachePercent}%</span>
+    <i aria-hidden="true">|</i>
+    <span>输入 {formatTokens(stats.inputTokens)} · 输出 {formatTokens(stats.outputTokens)}</span>
+  </div>
+})
 
 export const CommandResultCard = memo(function CommandResultCard({ result = {} }) {
   const command = `/${String(result.command || '').replace(/^\//, '')}`
@@ -5622,6 +5678,7 @@ export default function ChatApp() {
             </div>
           </div>
         </div>
+        <ChatStats messages={messages}/>
       </footer>
     </main>
 

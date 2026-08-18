@@ -249,12 +249,12 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":  "turn_usage",
 		"index": float64(0),
-		"usage": map[string]interface{}{"input_tokens": float64(3000), "output_tokens": float64(80), "cached_tokens": float64(10)},
+		"usage": map[string]interface{}{"input_tokens": float64(3000), "output_tokens": float64(80), "cached_tokens": float64(10), "generation_ms": float64(1600)},
 	})
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":  "turn_usage",
 		"index": float64(1),
-		"usage": map[string]interface{}{"input_tokens": float64(1290), "output_tokens": float64(38), "cached_tokens": float64(7)},
+		"usage": map[string]interface{}{"input_tokens": float64(1290), "output_tokens": float64(38), "cached_tokens": float64(7), "generation_ms": float64(900)},
 	})
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":      "ctx_stats",
@@ -287,10 +287,10 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	if !got.Error || got.ElapsedMS <= 0 || got.RunStartedAtMS != startedAtMS {
 		t.Fatalf("missing interruption metadata: %#v", got)
 	}
-	if got.Usage["input_tokens"] != 4290 || got.Usage["output_tokens"] != 118 || got.Usage["cached_tokens"] != 17 {
+	if got.Usage["input_tokens"] != 4290 || got.Usage["output_tokens"] != 118 || got.Usage["cached_tokens"] != 17 || got.Usage["generation_ms"] != 2500 {
 		t.Fatalf("usage not persisted after cancel: %#v", got.Usage)
 	}
-	if len(got.Usages) != 2 || got.Usages[0]["input_tokens"] != 3000 || got.Usages[1]["output_tokens"] != 38 {
+	if len(got.Usages) != 2 || got.Usages[0]["input_tokens"] != 3000 || got.Usages[0]["generation_ms"] != 1600 || got.Usages[1]["output_tokens"] != 38 || got.Usages[1]["generation_ms"] != 900 {
 		t.Fatalf("per-turn usages not persisted after cancel: %#v", got.Usages)
 	}
 	if got.CtxChars != 3800 || got.CtxMsgs != 3 {
