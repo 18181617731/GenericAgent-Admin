@@ -2296,6 +2296,39 @@ describe('mobile chat model selector', () => {
 })
 
 describe('mobile chat session navigation', () => {
+  test('compact view reveals only the final assistant result during hover', async () => {
+    installBrowserPolyfills()
+    Element.prototype.scrollIntoView = vi.fn()
+    window.localStorage.setItem('ga-admin-chat-privacy-mode', 'true')
+    const sessions = [{ id:'result-session', title:'SECRET_RESULT_TITLE', count:2, updated_at:'2026-08-18T10:00:00Z' }]
+    const assistant = [
+      'LLM Running (Turn 1)', '<summary>SECRET_EXECUTION_SUMMARY</summary>', 'SECRET_EXECUTION_LOG',
+      '```', '[Info] Final response to user.', '```', 'FINAL_RESULT_ONLY',
+    ].join('\n')
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url)
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path === '/api/chat/session/result-session') return jsonResponse({ ...sessions[0], messages:[{ id:'u-result', role:'user', content:'SECRET_QUESTION' }, { id:'a-result', role:'assistant', content:assistant }], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/result-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    const curtain = await screen.findByRole('region', { name:'任务状态' }, { timeout:10000 })
+    await waitFor(() => expect(curtain.textContent).toContain('任务已完成'))
+    expect(document.body.innerHTML).not.toContain('FINAL_RESULT_ONLY')
+    expect(document.body.innerHTML).not.toContain('SECRET_EXECUTION_LOG')
+
+    fireEvent.pointerEnter(curtain, { pointerType:'mouse' })
+    await waitFor(() => expect(screen.getByText('FINAL_RESULT_ONLY')).toBeTruthy())
+    expect(document.body.innerHTML).not.toContain('SECRET_EXECUTION_LOG')
+    expect(document.body.innerHTML).not.toContain('SECRET_QUESTION')
+    fireEvent.pointerLeave(curtain, { pointerType:'mouse' })
+    expect(document.body.innerHTML).not.toContain('FINAL_RESULT_ONLY')
+  }, 30000)
+
   test('privacy mode hides loaded transcript data and restores it only after explicit disable', async () => {
     installBrowserPolyfills()
     Element.prototype.scrollIntoView = vi.fn()

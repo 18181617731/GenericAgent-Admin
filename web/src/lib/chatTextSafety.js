@@ -177,6 +177,13 @@ export const parseAssistantContent = (raw = '') => {
   return { runs: [], ...final }
 }
 
+export const assistantFinalResult = (raw = '') => {
+  const parsed = parseAssistantContent(raw)
+  const final = [parsed.summary, parsed.body].filter(Boolean).join('\n\n').trim()
+  if (final) return final
+  return String(parsed.runs.at(-1)?.body || '').trim()
+}
+
 const isBlankLine = (line = '') => /^[\t\f\v ]*$/.test(line)
 
 export const textRenderStats = (text = '') => {

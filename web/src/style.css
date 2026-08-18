@@ -19477,9 +19477,16 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .oa-privacy-metrics > div { min-width: 74px; display: grid; gap: 2px; padding: 7px 10px; border-left: 1px solid var(--border); }
 .oa-privacy-metrics dt { color: var(--muted); font-size: 10px; }
 .oa-privacy-metrics dd { margin: 0; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.oa-privacy-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
+.oa-privacy-reveal { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.oa-privacy-reveal:hover { background: var(--oa-hover); color: var(--text); }
+.oa-privacy-reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .oa-privacy-state-icon { color: var(--muted); }
 .oa-privacy-curtain.is-running .oa-privacy-state-icon { color: var(--accent); animation: oa-privacy-pulse 1.4s ease-in-out infinite; }
 .oa-privacy-curtain.is-failed .oa-privacy-state-icon { color: var(--red); }
+.oa-privacy-result { grid-column: 1 / -1; min-width: 0; max-height: min(42vh, 360px); overflow: auto; padding: 18px 4px 2px; border-top: 1px solid var(--border); overscroll-behavior: contain; }
+.oa-privacy-result .oa-md { font-size: 13px; line-height: 1.58; }
+.oa-privacy-result .oa-code-card { max-width: 100%; }
 @keyframes oa-privacy-pulse { 50% { opacity: .42; } }
 
 .oa-queue-private .oa-queue-guide-hint { border-bottom: 0; }
@@ -19508,5 +19515,8 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   .oa-privacy-metrics { grid-column: 1 / -1; width: 100%; justify-content: flex-start; gap: 0; }
   .oa-privacy-metrics > div { flex: 1 1 50%; min-width: 0; padding: 6px 8px; }
   .oa-privacy-metrics dd { overflow: hidden; font-size: 11px; text-overflow: ellipsis; }
-  .oa-privacy-state-icon { grid-column: 3; grid-row: 1; }
+  .oa-privacy-actions { grid-column: 3; grid-row: 1; }
+  .oa-privacy-reveal { width: 40px; height: 40px; }
+  .oa-privacy-result { max-height: min(48vh, 340px); padding: 14px 2px 0; }
+  .oa-privacy-result .oa-md { font-size: 12px; }
 }

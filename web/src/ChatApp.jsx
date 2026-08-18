@@ -20,7 +20,7 @@ import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
-import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantFinalResult, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -5610,6 +5610,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     ...(usageHasTokens(privacyUsage) ? [{ label:'Token', value:`${ct('输入', 'In')} ${formatTokens(privacyUsage.input_tokens)} · ${ct('输出', 'Out')} ${formatTokens(privacyUsage.output_tokens)}` }] : []),
     ...(loopState?.enabled ? [{ label:'Loop', value:`${Number(loopState.round) || 0}/${Number(loopState.max_rounds) || loopMaxRounds}` }] : []),
   ]
+  const privacyResult = privacyStatus === 'completed' ? assistantFinalResult(privacyAssistant?.content) : ''
   const activePromptPreset = selectedPromptPresetView({ presets: promptPresets, selectedID: extraSysPromptPresetID, snapshot: extraSysPrompts })
   const contextJson = useMemo(() => JSON.stringify({ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }, null, 2), [rawHistory, historyInfo, workingState])
   const btwMessages = useMemo(() => messages.filter(message => message.kind === 'btw'), [messages])
@@ -5781,7 +5782,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
+        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
         {!privacyMode && <SubagentStatusPanel states={subagents}/>}
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>

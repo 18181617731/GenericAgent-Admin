@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.90 - 2026-08-18
+
+### Temporary latest-result reveal
+- Let compact chat view reveal only the latest completed assistant result while the status area is hovered or keyboard-focused.
+- Add an explicit, time-limited reveal control for touch devices, with immediate hide and automatic cleanup of the sensitive DOM content.
+- Keep execution logs, user prompts, titles, streaming output, and failure details concealed while preserving responsive desktop and mobile layouts.
+
 ## v1.0.89 - 2026-08-18
 
 ### Discreet compact chat display
