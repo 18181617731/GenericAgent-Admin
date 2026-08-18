@@ -277,6 +277,24 @@ def _snapshot_turn_usages():
         return usages
 
 
+def _reset_tool_elapsed():
+    """Reset GA's hook-based tool timer; remain compatible with older GA roots."""
+    try:
+        from plugins.langfuse_tracing import reset_tool_elapsed
+        reset_tool_elapsed()
+    except Exception:
+        pass
+
+
+def _consume_tool_elapsed_ms():
+    """Consume GA's tool duration without making chat depend on Langfuse."""
+    try:
+        from plugins.langfuse_tracing import consume_tool_elapsed_ms
+        return consume_tool_elapsed_ms()
+    except Exception:
+        return 0
+
+
 def emit(ev):
     line = json.dumps(ev, ensure_ascii=False)
     with _PROTOCOL_STDOUT_LOCK:
@@ -2210,6 +2228,7 @@ def handle_request(agent, worker, req):
     req = _normalize_request(req)
     request_started = time.time()
     _reset_usage()  # Clear usage accumulator for this turn
+    _reset_tool_elapsed()
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     raw_history = req.get('raw_history') or []
@@ -2373,7 +2392,7 @@ def handle_request(agent, worker, req):
                 _commit_worldline(agent, prompt)
                 plan = emit_plan_update(text)
                 _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'llm_elapsed_ms': int(item.get('llm_elapsed_ms') or 0), 'tool_elapsed_ms': int(item.get('tool_elapsed_ms') or 0), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'llm_elapsed_ms': int(item.get('llm_elapsed_ms') or 0), 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
                 return
     except Exception as e:
         stop_ultraplan_observer()
@@ -2385,7 +2404,7 @@ def handle_request(agent, worker, req):
             msg['goal_state'] = dict(_goal_card_ctx['state'])
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
-        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
         restore_model_hooks()
 
