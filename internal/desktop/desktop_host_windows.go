@@ -255,15 +255,16 @@ func (w *hostWindow) discard() {
 	w.hwnd = 0
 }
 
-// applySettings takes away the browser affordances that make no sense in an
-// app window: the page is the whole product, not a document being browsed.
+// applySettings keeps native editing affordances while removing browser-only
+// developer tooling. The default context menu is required for copy, paste,
+// text selection, and other standard desktop actions.
 func (w *hostWindow) applySettings() error {
 	settings, err := w.browser.GetSettings()
 	if err != nil {
 		return fmt.Errorf("read webview settings: %w", err)
 	}
-	if err := settings.PutAreDefaultContextMenusEnabled(false); err != nil {
-		return fmt.Errorf("disable webview context menus: %w", err)
+	if err := settings.PutAreDefaultContextMenusEnabled(true); err != nil {
+		return fmt.Errorf("enable webview context menus: %w", err)
 	}
 	if err := settings.PutAreDevToolsEnabled(false); err != nil {
 		return fmt.Errorf("disable webview devtools: %w", err)

@@ -12,10 +12,6 @@ static void ga_desktop_forget(int32_t id);
 @end
 
 @implementation GAWebView
-- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
-	[super willOpenMenu:menu withEvent:event];
-	[menu removeAllItems];
-}
 @end
 
 @interface GADesktopHost : NSObject <NSWindowDelegate, WKScriptMessageHandler, WKUIDelegate>
@@ -142,12 +138,6 @@ static void ga_desktop_create_on_main(
 			forMainFrameOnly:YES];
 		[controller addUserScript:bindScript];
 	}
-	WKUserScript *noContextMenu = [[WKUserScript alloc]
-		initWithSource:@"document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
-		injectionTime:WKUserScriptInjectionTimeAtDocumentStart
-		forMainFrameOnly:YES];
-	[controller addUserScript:noContextMenu];
-
 	GADesktopHost *host = [[GADesktopHost alloc] init];
 	host.windowID = id;
 	[controller addScriptMessageHandler:host name:kGADesktopHandlerName];
