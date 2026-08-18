@@ -634,6 +634,16 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			break
 		}
+		if ev["type"] == "model_first_token" {
+			if firstTokenMS == 0 {
+				firstTokenMS = elapsedMillis()
+			}
+			if err != nil {
+				readErr = err
+				break
+			}
+			continue
+		}
 		if firstTokenMS == 0 && ev["type"] == "delta" {
 			if delta, ok := ev["delta"].(string); ok && delta != "" {
 				firstTokenMS = elapsedMillis()

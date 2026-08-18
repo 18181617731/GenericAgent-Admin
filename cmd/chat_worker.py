@@ -470,6 +470,7 @@ def _track_outbound_attempt(result):
 
     def tracked():
         _reset_generation_timer()
+        first_token_emitted = False
         while True:
             try:
                 item = next(iterator)
@@ -483,6 +484,9 @@ def _track_outbound_attempt(result):
                 _finalize_incomplete_turn_usage()
             else:
                 _mark_generation_started(item)
+                if not first_token_emitted and isinstance(item, str) and item.strip():
+                    emit({'type': 'model_first_token'})
+                    first_token_emitted = True
             yield item
 
     return tracked()

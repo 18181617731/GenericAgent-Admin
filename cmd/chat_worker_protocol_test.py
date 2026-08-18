@@ -286,6 +286,10 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         usage_events = [event for event in self.events if event.get("type") == "turn_usage"]
         self.assertEqual(usage_events[-2]["index"], 1)
         self.assertEqual(usage_events[-1]["index"], 1)
+        self.assertEqual(
+            [event for event in self.events if event.get("type") == "model_first_token"],
+            [{"type": "model_first_token"}],
+        )
 
     def test_outbound_model_events_follow_each_mixin_fallback_attempt(self):
         class LeafSession:
