@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -40,6 +42,18 @@ var webFS embed.FS
 //go:generate go run github.com/akavel/rsrc@v0.10.2 -ico internal/appicon/assets/tray_windows.ico -arch arm64 -o rsrc_windows_arm64.syso
 
 func main() {
+	internalLaunch, err := parseInternalLaunchArgs(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
+	if internalLaunch.HelperManifest != "" {
+		if err := version.RunUpdateHelper(internalLaunch.HelperManifest); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	os.Args = append([]string{os.Args[0]}, internalLaunch.PublicArgs...)
+
 	// Has to happen before anything can put a window on screen.
 	desktop.EnableHiDPI()
 	launch := parseLaunchOptions()
@@ -78,7 +92,9 @@ func main() {
 	if launch.PortSet {
 		portOverride = launch.Port
 	}
-	listener, err := adminhttp.OpenListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
+	listener, err := openListenerAndConfirm(func() (net.Listener, error) {
+		return adminhttp.OpenListener(cfgStore.Snapshot(), portOverride, auth.PasswordConfigured())
+	}, internalLaunch.ConfirmOperation, version.ConfirmUpdateReady)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,6 +130,7 @@ func main() {
 	}
 	tray.Run(tray.App{
 		OpenChat:     func() { ui.OpenChat(url) },
+		OpenNewChat:  func() { ui.OpenNewChat(url) },
 		OpenSettings: func() { ui.OpenSettings(url) },
 		StopServices: func() { srv.StopManagedServices() },
 		Exit: func() {
@@ -129,6 +146,90 @@ func main() {
 		PasswordConfigured: auth.PasswordConfigured,
 		RunningServices:    srv.RunningManagedServices,
 	})
+}
+
+type internalLaunchOptions struct {
+	HelperManifest   string
+	ConfirmOperation string
+	PublicArgs       []string
+}
+
+func parseInternalLaunchArgs(args []string) (internalLaunchOptions, error) {
+	result := internalLaunchOptions{PublicArgs: make([]string, 0, len(args))}
+	helperSeen := false
+	confirmSeen := false
+
+	readValue := func(name string, index *int) (string, error) {
+		arg := args[*index]
+		if strings.HasPrefix(arg, name+"=") {
+			value := strings.TrimSpace(strings.TrimPrefix(arg, name+"="))
+			if value == "" {
+				return "", fmt.Errorf("%s requires a non-empty value", name)
+			}
+			return value, nil
+		}
+		if *index+1 >= len(args) {
+			return "", fmt.Errorf("%s requires a value", name)
+		}
+		*index++
+		value := strings.TrimSpace(args[*index])
+		if value == "" {
+			return "", fmt.Errorf("%s requires a non-empty value", name)
+		}
+		return value, nil
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--update-helper" || strings.HasPrefix(arg, "--update-helper="):
+			if helperSeen || confirmSeen {
+				return internalLaunchOptions{}, errors.New("update helper and confirmation modes must each appear exactly once and cannot be combined")
+			}
+			value, err := readValue("--update-helper", &i)
+			if err != nil {
+				return internalLaunchOptions{}, err
+			}
+			helperSeen = true
+			result.HelperManifest = value
+		case arg == "--update-confirm" || strings.HasPrefix(arg, "--update-confirm="):
+			if confirmSeen || helperSeen {
+				return internalLaunchOptions{}, errors.New("update helper and confirmation modes must each appear exactly once and cannot be combined")
+			}
+			value, err := readValue("--update-confirm", &i)
+			if err != nil {
+				return internalLaunchOptions{}, err
+			}
+			confirmSeen = true
+			result.ConfirmOperation = value
+		default:
+			result.PublicArgs = append(result.PublicArgs, arg)
+		}
+	}
+	return result, nil
+}
+
+func openListenerAndConfirm(
+	open func() (net.Listener, error),
+	operationID string,
+	confirm func(string) error,
+) (net.Listener, error) {
+	listener, err := open()
+	if err != nil {
+		return nil, err
+	}
+	if operationID == "" {
+		return listener, nil
+	}
+	if confirm == nil {
+		_ = listener.Close()
+		return nil, errors.New("update confirmation handler is unavailable")
+	}
+	if err := confirm(operationID); err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("confirm replacement startup: %w", err)
+	}
+	return listener, nil
 }
 
 type launchOptions struct {

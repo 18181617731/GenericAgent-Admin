@@ -36,6 +36,9 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   if ((!Array.isArray(merged.usages) || merged.usages.length === 0) && Array.isArray(streamed.usages) && streamed.usages.length) {
     merged.usages = streamed.usages
   }
+  if (!(Number(merged.elapsed_ms) > 0) && Number(streamed.elapsed_ms) > 0) merged.elapsed_ms = streamed.elapsed_ms
+  if (!(Number(merged.first_token_ms) > 0) && Number(streamed.first_token_ms) > 0) merged.first_token_ms = streamed.first_token_ms
+  if (!(Number(merged.run_started_at_ms) > 0) && Number(streamed.run_started_at_ms) > 0) merged.run_started_at_ms = streamed.run_started_at_ms
   if (!(Number(merged.ctx_chars) > 0) && Number(streamed.ctx_chars) > 0) merged.ctx_chars = streamed.ctx_chars
   if (!(Number(merged.ctx_msgs) > 0) && Number(streamed.ctx_msgs) > 0) merged.ctx_msgs = streamed.ctx_msgs
   return merged

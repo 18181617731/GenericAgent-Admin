@@ -4,7 +4,7 @@ import katex from 'katex'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction } from './lib/chatStream.js'
-import { cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
+import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -2220,15 +2220,14 @@ const extractSavedFilePaths = (content = '') => Array.from(
 const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.cache_creation_tokens || 0) > 0 || cacheReadTokens(u) > 0 || (u.output_tokens || 0) > 0)
 const formatElapsedMs = (ms = 0) => {
   const safe = Math.max(0, Number(ms) || 0)
-  if (safe < 1000) return `${Math.max(0.1, safe / 1000).toFixed(1)}s`
+  if (safe < 1000) return `${(safe / 1000).toFixed(1)}s`
   const totalSeconds = Math.floor(safe / 1000)
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   if (minutes <= 0) return `${seconds}s`
   const hours = Math.floor(minutes / 60)
-  const mm = minutes % 60
-  if (hours > 0) return `${hours}h ${mm}m ${seconds}s`
-  return `${minutes}m ${seconds}s`
+  if (hours > 0) return `${hours}h${minutes % 60}m${seconds}s`
+  return `${minutes}m${seconds}s`
 }
 const getElapsedMs = (m, now = Date.now()) => {
   if (!m || m.role !== 'assistant') return 0
@@ -2280,29 +2279,30 @@ export const buildChatStats = (messages = []) => {
   const usages = turns.flatMap(m => Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : []))
   const total = sumUsages(usages)
   const elapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.elapsed_ms) || 0), 0)
-  const cacheRead = total?.cache_read_tokens || 0
-  const cacheBase = (total?.input_tokens || 0) + (total?.cache_creation_tokens || 0) + cacheRead
+  const llmElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.llm_elapsed_ms) || 0), 0)
+  const toolElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.tool_elapsed_ms) || 0), 0)
   const firstTokenValues = turns.map(m => Number(m.first_token_ms) || 0).filter(value => value > 0)
   const firstTokenMs = firstTokenValues.length ? firstTokenValues.reduce((sum, value) => sum + value, 0) / firstTokenValues.length : 0
   return {
     rounds: turns.length,
     steps: usages.length,
     elapsedMs,
+    llmElapsedMs,
+    toolElapsedMs,
     firstTokenMs,
     inputTokens: total?.input_tokens || 0,
     outputTokens: total?.output_tokens || 0,
     outputRate: measuredOutputRate(usages),
-    cachePercent: cacheBase > 0 ? Math.round(cacheRead / cacheBase * 100) : 0,
+    cachePercent: cacheHitPercent(usages),
   }
 }
 
 export const ChatStats = memo(function ChatStats({ messages = [] }) {
   const stats = buildChatStats(messages)
-  const seconds = (stats.elapsedMs / 1000).toFixed(1)
   return <div className="oa-chat-stats" aria-label="对话统计">
     <span>{stats.rounds} 轮 · {stats.steps} 步</span>
     <i aria-hidden="true">|</i>
-    <span>LLM {seconds}s</span>
+    <span>LLM {formatElapsedMs(stats.llmElapsedMs || stats.elapsedMs)} · 工具调用 {formatElapsedMs(stats.toolElapsedMs)}</span>
     <i aria-hidden="true">|</i>
     <span>首 token 平均 {stats.firstTokenMs > 0 ? `${(stats.firstTokenMs / 1000).toFixed(1)}s` : '—'} · {stats.outputRate > 0 ? `${stats.outputRate.toFixed(1)} tok/s` : '— tok/s'}</span>
     <i aria-hidden="true">|</i>

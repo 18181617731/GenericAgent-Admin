@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -141,30 +142,74 @@ type CheckResult struct {
 }
 
 type ApplyResult struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
-	Script  string `json:"script,omitempty"`
+	OK        bool   `json:"ok"`
+	Message   string `json:"message"`
+	Script    string `json:"script,omitempty"`
+	handedOff bool
 }
 
 type UpdateStatus struct {
-	ID        string       `json:"id,omitempty"`
-	PID       int          `json:"pid,omitempty"`
-	Running   bool         `json:"running"`
-	Stage     string       `json:"stage"`
-	Progress  int          `json:"progress"`
-	Message   string       `json:"message"`
-	Error     string       `json:"error,omitempty"`
-	Script    string       `json:"script,omitempty"`
-	Check     *CheckResult `json:"check,omitempty"`
-	StartedAt time.Time    `json:"started_at,omitempty"`
-	UpdatedAt time.Time    `json:"updated_at,omitempty"`
-	EndedAt   time.Time    `json:"ended_at,omitempty"`
+	ID               string       `json:"id,omitempty"`
+	PID              int          `json:"pid,omitempty"`
+	OldPID           int          `json:"old_pid,omitempty"`
+	HelperPID        int          `json:"helper_pid,omitempty"`
+	NewPID           int          `json:"new_pid,omitempty"`
+	Running          bool         `json:"running"`
+	Stage            string       `json:"stage"`
+	Progress         int          `json:"progress"`
+	Message          string       `json:"message"`
+	Error            string       `json:"error,omitempty"`
+	Script           string       `json:"script,omitempty"`
+	SourceVersion    string       `json:"source_version,omitempty"`
+	TargetVersion    string       `json:"target_version,omitempty"`
+	InstalledVersion string       `json:"installed_version,omitempty"`
+	ConfirmedVersion string       `json:"confirmed_version,omitempty"`
+	RollbackResult   string       `json:"rollback_result,omitempty"`
+	Check            *CheckResult `json:"check,omitempty"`
+	StartedAt        time.Time    `json:"started_at,omitempty"`
+	StagedAt         time.Time    `json:"staged_at,omitempty"`
+	HelperStartedAt  time.Time    `json:"helper_started_at,omitempty"`
+	WaitingAt        time.Time    `json:"waiting_at,omitempty"`
+	ApplyingAt       time.Time    `json:"applying_at,omitempty"`
+	RestartedAt      time.Time    `json:"restarted_at,omitempty"`
+	ConfirmedAt      time.Time    `json:"confirmed_at,omitempty"`
+	UpdatedAt        time.Time    `json:"updated_at,omitempty"`
+	EndedAt          time.Time    `json:"ended_at,omitempty"`
+}
+
+type applyRuntimeDeps struct {
+	executable   func() (string, error)
+	launchHelper func(helperPath, manifestPath string) error
+	scheduleExit func()
+}
+
+func defaultApplyRuntime() applyRuntimeDeps {
+	return applyRuntimeDeps{
+		executable: os.Executable,
+		launchHelper: func(helperPath, manifestPath string) error {
+			cmd := exec.Command(helperPath, "--update-helper", manifestPath)
+			cmd.Dir = filepath.Dir(helperPath)
+			detachUpdateProcess(cmd)
+			hideChildWindow(cmd)
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			return cmd.Process.Release()
+		},
+		scheduleExit: func() {
+			go func() {
+				time.Sleep(500 * time.Millisecond)
+				exitProcess(0)
+			}()
+		},
+	}
 }
 
 var (
-	updateMu           sync.Mutex
-	statusPathOverride string
-	exitProcess        = os.Exit
+	updateMu            sync.Mutex
+	statusPathOverride  string
+	exitProcess         = os.Exit
+	currentApplyRuntime = defaultApplyRuntime()
 )
 
 func statusPath() string {
@@ -181,7 +226,26 @@ func statusPath() string {
 func CurrentUpdateStatus() UpdateStatus {
 	updateMu.Lock()
 	defer updateMu.Unlock()
-	return readStatusLocked()
+
+	var current UpdateStatus
+	if err := withStatusFileLock(func() error {
+		current = readStatusLocked()
+		normalized := normalizeStatusAfterRestart(current)
+		if reflect.DeepEqual(normalized, current) {
+			return nil
+		}
+		normalized.UpdatedAt = time.Now()
+		if err := writeStatusLocked(normalized); err != nil {
+			return err
+		}
+		current = normalized
+		return nil
+	}); err != nil {
+		// The in-memory normalization is still safer for the API response when
+		// the status file cannot be rewritten; the next read will retry it.
+		return normalizeStatusAfterRestart(current)
+	}
+	return current
 }
 
 func readStatusLocked() UpdateStatus {
@@ -202,43 +266,188 @@ func readStatusLocked() UpdateStatus {
 			EndedAt:   now,
 		}
 	}
-	return normalizeStatusAfterRestart(st)
+	return st
 }
 
 func normalizeStatusAfterRestart(st UpdateStatus) UpdateStatus {
-	if !st.Running {
+	current := Current()
+	return normalizeStatusForVersion(st, current.Version, current)
+}
+
+func normalizeStatusForVersion(st UpdateStatus, actualVersion string, current BuildInfo) UpdateStatus {
+	if !concreteVersion(actualVersion) || !statusVersionMatches(st, actualVersion) {
+		// Without a concrete matching version, an active operation may still be
+		// downloading or waiting for helper confirmation and must remain visible.
 		return st
 	}
-	switch st.Stage {
-	case "restarting", "applying":
-		if st.PID != 0 && st.PID == os.Getpid() {
-			return st
+
+	// Once the helper has handed the update over to the replacement process,
+	// the matching version is expected: the transaction still owns the status
+	// and must be allowed to confirm or roll back. Reading the status must not
+	// turn that live hand-off into a successful manual install.
+	if updateTransactionStage(st.Stage) {
+		return st
+	}
+
+	if st.Check != nil {
+		check := *st.Check
+		check.Current = current
+		if check.Latest != nil {
+			check.Update = newer(actualVersion, check.Latest.TagName)
 		}
-		now := time.Now()
-		st.Running = false
-		st.Stage = "done"
-		st.Progress = 100
-		if st.Message == "" {
-			st.Message = "升级已应用，服务已重启"
-		}
-		st.UpdatedAt = now
-		st.EndedAt = now
+		st.Check = &check
+	}
+
+	// The running flag is only a persisted snapshot. If the currently running
+	// binary already has the operation's target version, the old process could
+	// not have completed this operation, so clear the stale active state.
+	// A failed operation remains visible as failed even if the user later
+	// updated the binary manually; only its stale version snapshot is fixed.
+	if st.Stage == "failed" {
+		return st
+	}
+	st.Running = false
+	st.Stage = "done"
+	st.Progress = 100
+	st.Message = "already up to date"
+	st.InstalledVersion = actualVersion
+	st.ConfirmedVersion = actualVersion
+	if st.ConfirmedAt.IsZero() {
+		st.ConfirmedAt = time.Now()
+	}
+	if st.EndedAt.IsZero() {
+		st.EndedAt = st.ConfirmedAt
 	}
 	return st
 }
 
+func updateTransactionStage(stage string) bool {
+	switch stage {
+	case "prepared", "starting_helper", "waiting_for_exit", "applying", "starting_replacement", "replacement_ready", "restarting":
+		return true
+	default:
+		return false
+	}
+}
+
+func statusVersionMatches(st UpdateStatus, actualVersion string) bool {
+	for _, candidate := range []string{st.TargetVersion, st.ConfirmedVersion} {
+		if sameVersion(candidate, actualVersion) {
+			return true
+		}
+	}
+	return st.Check != nil && st.Check.Latest != nil && sameVersion(st.Check.Latest.TagName, actualVersion)
+}
+
+func concreteVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	return version != "" && version != "dev" && version != "unknown"
+}
+
+func sameVersion(left, right string) bool {
+	left = strings.TrimPrefix(strings.TrimSpace(left), "v")
+	right = strings.TrimPrefix(strings.TrimSpace(right), "v")
+	return concreteVersion(left) && concreteVersion(right) && left == right
+}
+
+var ErrUpdateSuperseded = errors.New("update operation was superseded")
+
 func writeStatus(st UpdateStatus) error {
 	updateMu.Lock()
 	defer updateMu.Unlock()
+	return withStatusFileLock(func() error {
+		return writeStatusLocked(st)
+	})
+}
+
+func writeStatusLocked(st UpdateStatus) error {
 	st.UpdatedAt = time.Now()
 	if st.ID == "" {
-		st.ID = fmt.Sprintf("update-%d", st.UpdatedAt.Unix())
+		st.ID = fmt.Sprintf("update-%d", st.UpdatedAt.UnixNano())
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(statusPath(), b, 0600)
+}
+
+func reserveUpdate(candidate UpdateStatus) (UpdateStatus, bool, error) {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	var current UpdateStatus
+	created := false
+	err := withStatusFileLock(func() error {
+		current = readStatusLocked()
+		if current.Running {
+			return nil
+		}
+		if candidate.ID == "" {
+			candidate.ID = fmt.Sprintf("update-%d-%d", time.Now().UnixNano(), os.Getpid())
+		}
+		candidate.Running = true
+		if err := writeStatusLocked(candidate); err != nil {
+			return err
+		}
+		current = candidate
+		created = true
+		return nil
+	})
+	return current, created, err
+}
+
+func transitionUpdate(operationID string, change func(*UpdateStatus) error) error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	return withStatusFileLock(func() error {
+		st := readStatusLocked()
+		if operationID == "" || st.ID != operationID {
+			return ErrUpdateSuperseded
+		}
+		if err := change(&st); err != nil {
+			return err
+		}
+		return writeStatusLocked(st)
+	})
+}
+
+func validateInstallTargets(root, exe, worker string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve install root: %w", err)
+	}
+	exeName := "ga-admin"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+	validate := func(label, actualPath, expectedPath string) error {
+		actual, err := filepath.Abs(actualPath)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", label, err)
+		}
+		if !sameFilePath(actual, expectedPath) {
+			return fmt.Errorf("unsafe %s target %q; expected %q", label, actual, expectedPath)
+		}
+		return nil
+	}
+	if err := validate("admin executable", exe, filepath.Join(rootAbs, exeName)); err != nil {
+		return err
+	}
+	if worker != "" {
+		if err := validate("chat worker", worker, filepath.Join(rootAbs, "cmd", "chat_worker.py")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sameFilePath(left, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
@@ -275,57 +484,110 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 }
 
 func StartApplyLatest() (UpdateStatus, error) {
-	updateMu.Lock()
-	cur := readStatusLocked()
-	updateMu.Unlock()
-	if cur.Running {
-		return cur, nil
-	}
 	now := time.Now()
-	st := UpdateStatus{ID: fmt.Sprintf("update-%d", now.Unix()), PID: os.Getpid(), Running: true, Stage: "queued", Progress: 1, Message: "升级任务已启动", StartedAt: now, UpdatedAt: now}
-	if err := writeStatus(st); err != nil {
+	st := UpdateStatus{
+		ID:            fmt.Sprintf("update-%d-%d", now.UnixNano(), os.Getpid()),
+		PID:           os.Getpid(),
+		OldPID:        os.Getpid(),
+		Running:       true,
+		Stage:         "queued",
+		Progress:      1,
+		Message:       "升级任务已启动",
+		SourceVersion: effectiveVersion(),
+		StartedAt:     now,
+		UpdatedAt:     now,
+	}
+	reserved, created, err := reserveUpdate(st)
+	if err != nil {
 		st.Running = false
-		st.Stage = "error"
+		st.Stage = "failed"
 		st.Progress = 100
 		st.Error = err.Error()
 		st.Message = "写入升级状态失败: " + err.Error()
 		st.EndedAt = time.Now()
 		return st, fmt.Errorf("write update status: %w", err)
 	}
-	go func() {
+	if !created {
+		return reserved, nil
+	}
+	st = reserved
+	go func(operationID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		res, err := applyLatest(ctx, func(stage, msg string, progress int, check *CheckResult) {
+		var progressMu sync.Mutex
+		var progressErr error
+		setProgressError := func(err error) {
+			progressMu.Lock()
+			defer progressMu.Unlock()
+			if progressErr == nil {
+				progressErr = err
+				cancel()
+			}
+		}
+		getProgressError := func() error {
+			progressMu.Lock()
+			defer progressMu.Unlock()
+			return progressErr
+		}
+		res, applyErr := applyLatest(ctx, operationID, func(stage, msg string, progress int, check *CheckResult) {
 			if progress < 0 {
 				progress = 0
 			}
 			if progress > 100 {
 				progress = 100
 			}
-			st.Stage, st.Message, st.Progress = stage, msg, progress
-			if check != nil {
-				st.Check = check
+			err := transitionUpdate(operationID, func(current *UpdateStatus) error {
+				current.Stage, current.Message, current.Progress = stage, msg, progress
+				if check != nil {
+					current.Check = check
+					current.TargetVersion = strings.TrimSpace(check.Latest.TagName)
+				}
+				return nil
+			})
+			if err != nil {
+				setProgressError(err)
 			}
-			_ = writeStatus(st)
 		})
-		if err != nil {
-			st.Running = false
-			st.Stage = "error"
-			st.Progress = 100
-			st.Error = err.Error()
-			st.Message = err.Error()
-			st.EndedAt = time.Now()
-			_ = writeStatus(st)
+		if err := getProgressError(); err != nil {
+			if errors.Is(err, ErrUpdateSuperseded) {
+				return
+			}
+			applyErr = fmt.Errorf("persist update progress: %w", err)
+		}
+		if applyErr != nil {
+			_ = transitionUpdate(operationID, func(current *UpdateStatus) error {
+				current.Running = false
+				current.Stage = "failed"
+				current.Progress = 100
+				current.Error = applyErr.Error()
+				current.Message = applyErr.Error()
+				current.EndedAt = time.Now()
+				return nil
+			})
 			return
 		}
-		st.Running = false
-		st.Stage = "done"
-		st.Progress = 100
-		st.Message = res.Message
-		st.Script = res.Script
-		st.EndedAt = time.Now()
-		_ = writeStatus(st)
-	}()
+		if res.handedOff {
+			return
+		}
+		_ = transitionUpdate(operationID, func(current *UpdateStatus) error {
+			current.Script = res.Script
+			if res.Message == "already up to date" {
+				current.Running = false
+				current.Stage = "done"
+				current.Progress = 100
+				current.Message = res.Message
+				current.InstalledVersion = effectiveVersion()
+				current.ConfirmedVersion = effectiveVersion()
+				current.ConfirmedAt = time.Now()
+				current.EndedAt = current.ConfirmedAt
+				return nil
+			}
+			current.Stage = "restarting"
+			current.Progress = 95
+			current.Message = res.Message
+			return nil
+		})
+	}(st.ID)
 	return st, nil
 }
 
@@ -424,10 +686,27 @@ func Check(ctx context.Context) (CheckResult, error) {
 }
 
 func ApplyLatest(ctx context.Context) (ApplyResult, error) {
-	return applyLatest(ctx, nil)
+	reserved, created, err := reserveUpdate(UpdateStatus{
+		PID:              os.Getpid(),
+		OldPID:           os.Getpid(),
+		Running:          true,
+		Stage:            "checking",
+		Progress:         1,
+		Message:          "正在检查更新",
+		SourceVersion:    effectiveVersion(),
+		InstalledVersion: effectiveVersion(),
+		StartedAt:        time.Now(),
+	})
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if !created {
+		return ApplyResult{}, fmt.Errorf("update %s is already running", reserved.ID)
+	}
+	return applyLatest(ctx, reserved.ID, nil)
 }
 
-func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, check *CheckResult)) (ApplyResult, error) {
+func applyLatest(ctx context.Context, operationID string, progress func(stage, msg string, pct int, check *CheckResult)) (ApplyResult, error) {
 	emit := func(stage, msg string, pct int, check *CheckResult) {
 		if progress != nil {
 			progress(stage, msg, pct, check)
@@ -449,7 +728,7 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if !supported {
 		return ApplyResult{}, errors.New(reason)
 	}
-	exe, err := os.Executable()
+	exe, err := currentApplyRuntime.executable()
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -486,34 +765,46 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 		return ApplyResult{}, err
 	}
 	worker := filepath.Join(filepath.Dir(exe), "cmd", "chat_worker.py")
-	backup := exe + ".bak"
-	workerBackup := worker + ".bak"
-
-	var content string
-	var script string
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		script = filepath.Join(work, "apply-update.cmd")
-		content = windowsUpdateScript(exe, newExe, backup, worker, newWorker, workerBackup, os.Getpid(), os.Args[1:]...)
-		cmd = exec.Command("cmd", "/C", "start", "", script)
-	} else {
-		script = filepath.Join(work, "apply-update.sh")
-		content = unixUpdateScript()
-		restartLog := filepath.Join(work, "restart.log")
-		cmd = unixUpdateCommand(script, exe, newExe, backup, worker, newWorker, workerBackup, os.Getpid(), restartLog, os.Args[1:]...)
-		detachUpdateProcess(cmd)
+	workingDir, err := os.Getwd()
+	if err != nil || strings.TrimSpace(workingDir) == "" {
+		workingDir = filepath.Dir(exe)
 	}
-	if err := writeFileAtomic(script, []byte(content), 0600); err != nil {
+	manifest, err := buildUpdateManifest(updateManifestInput{
+		OperationID:   operationID,
+		SourceVersion: effectiveVersion(),
+		TargetVersion: check.Latest.TagName,
+		OldPID:        os.Getpid(),
+		OriginalExe:   exe,
+		StagedExe:     newExe,
+		Worker:        worker,
+		StagedWorker:  newWorker,
+		StatusPath:    statusPath(),
+		OriginalArgs:  os.Args[1:],
+		WorkingDir:    workingDir,
+	})
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("build update manifest: %w", err)
+	}
+	helperPath, manifestPath, err := prepareUpdateHelper(work, exe, manifest)
+	if err != nil {
 		return ApplyResult{}, err
 	}
-	emit("restarting", "升级包已就绪，正在重启服务", 95, &check)
-	cmd.Dir = work
-	hideChildWindow(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := transitionUpdate(operationID, func(st *UpdateStatus) error {
+		st.Stage = "starting_helper"
+		st.Progress = 87
+		st.Message = "verified update is ready; starting upgrade helper"
+		st.TargetVersion = manifest.TargetVersion
+		st.StagedAt = time.Now()
+		return nil
+	}); err != nil {
 		return ApplyResult{}, err
 	}
-	go func() { time.Sleep(500 * time.Millisecond); exitProcess(0) }()
-	return ApplyResult{OK: true, Message: "update downloaded; restarting", Script: script}, nil
+	emit("starting_helper", "升级包已就绪，正在启动升级助手", 87, &check)
+	if err := currentApplyRuntime.launchHelper(helperPath, manifestPath); err != nil {
+		return ApplyResult{}, fmt.Errorf("launch update helper: %w", err)
+	}
+	currentApplyRuntime.scheduleExit()
+	return ApplyResult{OK: true, Message: "update downloaded; restarting", handedOff: true}, nil
 }
 
 func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string, oldPID int, launchArgs ...string) string {
