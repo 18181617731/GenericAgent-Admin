@@ -551,6 +551,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var taskOutputsAccumulator = make(map[string][]string)
 	var terminalLine []byte
 	var readErr error
+	var firstTokenMS int64
 	for {
 		line, err := readChatWorkerLine(reader)
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -663,6 +664,10 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				msg["error_info"] = final.ErrorInfo
 			}
 			msg["elapsed_ms"] = final.ElapsedMS
+			if firstTokenMS > 0 {
+				final.FirstTokenMS = firstTokenMS
+				msg["first_token_ms"] = firstTokenMS
+			}
 			ev["message"] = msg
 			final.Usage, final.Usages = chatUsageFromEvent(ev)
 			final.CtxChars, final.CtxMsgs = chatCtxStatsFromEvent(ev)
@@ -692,6 +697,14 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			if final.GoalState != nil {
 				msg["goal_state"] = final.GoalState
 			}
+			if v, ok := ev["llm_elapsed_ms"].(float64); ok && v > 0 {
+				final.LLMElapsedMS = int64(v)
+				msg["llm_elapsed_ms"] = final.LLMElapsedMS
+			}
+			if v, ok := ev["tool_elapsed_ms"].(float64); ok && v > 0 {
+				final.ToolElapsedMS = int64(v)
+				msg["tool_elapsed_ms"] = final.ToolElapsedMS
+			}
 			if v, ok := ev["reasoning_effort"].(string); ok {
 				finalReasoningEffort = v
 				final.ReasoningEffort = normalizeChatSettings(chatSettings{ReasoningEffort: v}).ReasoningEffort
@@ -706,6 +719,11 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				terminalLine = append([]byte(nil), line...)
 			}
 			break
+		}
+		if firstTokenMS == 0 && ev["type"] == "delta" {
+			if delta, ok := ev["delta"].(string); ok && delta != "" {
+				firstTokenMS = elapsedMillis()
+			}
 		}
 		s.publishChatLine(sid, line)
 		if err != nil {

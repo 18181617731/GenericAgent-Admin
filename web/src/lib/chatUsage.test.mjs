@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { cacheReadTokens, measuredOutputRate } from './chatUsage.js'
+import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './chatUsage.js'
 
 test('cacheReadTokens falls back to legacy cached_tokens when canonical value is zero', () => {
   assert.equal(cacheReadTokens({
@@ -21,6 +21,25 @@ test('cacheReadTokens handles legacy-only and empty usage objects', () => {
   assert.equal(cacheReadTokens({ cached_tokens: 125 }), 125)
   assert.equal(cacheReadTokens({}), 0)
   assert.equal(cacheReadTokens(null), 0)
+})
+
+test('cacheHitPercent uses only cacheable tokens for modern buckets', () => {
+  assert.equal(cacheHitPercent([
+    { input_tokens: 100, cache_creation_tokens: 40, cache_read_tokens: 160 },
+  ]), 53)
+})
+
+test('cacheHitPercent does not double count legacy cached tokens', () => {
+  assert.equal(cacheHitPercent([
+    { input_tokens: 100, cached_tokens: 80 },
+  ]), 80)
+})
+
+test('cacheHitPercent supports mixed legacy and modern usage', () => {
+  assert.equal(cacheHitPercent([
+    { input_tokens: 100, cached_tokens: 80 },
+    { input_tokens: 50, cache_creation_tokens: 50, cache_read_tokens: 100 },
+  ]), 60)
 })
 
 test('measuredOutputRate divides only measured outputs by measured generation time', () => {

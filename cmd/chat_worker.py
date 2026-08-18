@@ -2751,7 +2751,7 @@ def handle_request(agent, worker, req):
                 _commit_worldline(agent, prompt)
                 plan = emit_plan_update(text)
                 _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'llm_elapsed_ms': int(item.get('llm_elapsed_ms') or 0), 'tool_elapsed_ms': int(item.get('tool_elapsed_ms') or 0), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent), 'error': True}
