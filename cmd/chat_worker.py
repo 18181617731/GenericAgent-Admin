@@ -277,22 +277,70 @@ def _snapshot_turn_usages():
         return usages
 
 
-def _reset_tool_elapsed():
-    """Reset GA's hook-based tool timer; remain compatible with older GA roots."""
+# Tool execution timing belongs to the Admin worker.  GA already exposes
+# tool_before/tool_after hooks; keep the accumulator here so chat reporting does
+# not depend on Langfuse being configured (or even installed).
+_TOOL_TIMER_LOCK = threading.Lock()
+_TOOL_TIMER_ACTIVE = {}
+_TOOL_TIMER_TOTAL_SECONDS = 0.0
+_TOOL_TIMER_HOOK_INSTALLED = False
+
+
+def _install_tool_timer_hook():
+    """Subscribe once to GA's existing tool lifecycle without modifying GA."""
+    global _TOOL_TIMER_HOOK_INSTALLED
+    if _TOOL_TIMER_HOOK_INSTALLED:
+        return True
     try:
-        from plugins.langfuse_tracing import reset_tool_elapsed
-        reset_tool_elapsed()
-    except Exception:
-        pass
+        from plugins import hooks as plugin_hooks
+    except (ImportError, AttributeError):
+        # Some isolated tests and older GA roots do not expose the hook module.
+        # Keep chat functional and retry after the request root is installed.
+        return False
+
+    def _before(ctx):
+        thread_id = threading.get_ident()
+        with _TOOL_TIMER_LOCK:
+            _TOOL_TIMER_ACTIVE.setdefault(thread_id, []).append(time.perf_counter())
+        return ctx
+
+    def _after(ctx):
+        global _TOOL_TIMER_TOTAL_SECONDS
+        thread_id = threading.get_ident()
+        now = time.perf_counter()
+        with _TOOL_TIMER_LOCK:
+            stack = _TOOL_TIMER_ACTIVE.get(thread_id)
+            if stack:
+                _TOOL_TIMER_TOTAL_SECONDS += max(0.0, now - stack.pop())
+                if not stack:
+                    _TOOL_TIMER_ACTIVE.pop(thread_id, None)
+        return ctx
+
+    plugin_hooks.register('tool_before')(_before)
+    plugin_hooks.register('tool_after')(_after)
+    _TOOL_TIMER_HOOK_INSTALLED = True
+
+
+def _reset_tool_elapsed():
+    """Reset Admin's request-local tool timer and ensure hooks are installed."""
+    global _TOOL_TIMER_TOTAL_SECONDS
+    _install_tool_timer_hook()
+    with _TOOL_TIMER_LOCK:
+        _TOOL_TIMER_ACTIVE.clear()
+        _TOOL_TIMER_TOTAL_SECONDS = 0.0
 
 
 def _consume_tool_elapsed_ms():
-    """Consume GA's tool duration without making chat depend on Langfuse."""
-    try:
-        from plugins.langfuse_tracing import consume_tool_elapsed_ms
-        return consume_tool_elapsed_ms()
-    except Exception:
-        return 0
+    """Atomically consume tool time, closing starts left open by tool errors."""
+    global _TOOL_TIMER_TOTAL_SECONDS
+    now = time.perf_counter()
+    with _TOOL_TIMER_LOCK:
+        total = _TOOL_TIMER_TOTAL_SECONDS
+        for stack in _TOOL_TIMER_ACTIVE.values():
+            total += sum(max(0.0, now - started_at) for started_at in stack)
+        _TOOL_TIMER_ACTIVE.clear()
+        _TOOL_TIMER_TOTAL_SECONDS = 0.0
+    return max(1, int(round(total * 1000))) if total > 0 else 0
 
 
 def emit(ev):
