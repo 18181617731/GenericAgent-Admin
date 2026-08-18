@@ -5886,6 +5886,12 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 .oa-usage.oa-usage-inline svg { width:8px; height:8px; opacity:.55; }
 .oa-usage.oa-usage-inline b { color:inherit; font-size:9.7px; font-weight:540; }
 .oa-usage.oa-usage-total {
+  min-width:0;
+  max-width:100%;
+  flex-wrap:nowrap;
+  overflow-x:auto;
+  scrollbar-width:none;
+  white-space:nowrap;
   gap:11px;
   margin-top:9px;
   padding-top:7px;
@@ -5893,6 +5899,8 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   opacity:1;
   transition:opacity .16s ease;
 }
+.oa-usage.oa-usage-total::-webkit-scrollbar { display:none; }
+.oa-usage.oa-usage-total > * { flex:0 0 auto; }
 .oa-usage.oa-usage-total:hover { opacity:1; }
 .oa-usage.oa-usage-total span {
   gap:3px;
