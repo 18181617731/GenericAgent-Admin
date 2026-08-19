@@ -21,6 +21,7 @@ import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseStructuredContent } from './lib/structuredContent'
+import { foldAgentProtocolBlocks, stripAgentProtocolBlocks } from './lib/agentProtocol'
 import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -521,7 +522,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
           <pre><code>{p.text}</code></pre>
         </div>
       : p.type === 'tool'
-        ? <ToolCallBlock key={idx} call={p.call} onAskReply={onAskReply} />
+        ? null  // Skip tool parts - rendered via parsed.tools in AssistantContent
         : <TextMarkdown key={idx} text={p.text} onAskReply={onAskReply}/>) }
     {parts.length >= MARKDOWN_BLOCK_LIMIT && <div className="oa-md-truncated">{ct(`内容块过多，仅渲染前 ${MARKDOWN_BLOCK_LIMIT} 块，可复制消息查看完整内容。`, `Too many content blocks. Only the first ${MARKDOWN_BLOCK_LIMIT} are rendered; copy the message to view everything.`)}</div>}
   </div>
@@ -857,7 +858,26 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
   }
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
-  return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
+  
+  // Extract agent protocol folds (tool calls/results/thinking/function_calls)
+  const folds = foldAgentProtocolBlocks(cleanText)
+  const strippedText = stripAgentProtocolBlocks(cleanText)
+  
+  if (folds.length === 0) {
+    return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
+  }
+  
+  return (
+    <>
+      {folds.map((fold, idx) => (
+        <details key={idx} className={`ga-fold ${fold.cls}`} open={fold.open}>
+          <summary>{fold.label}</summary>
+          <pre className="ga-fold-pre">{fold.body}</pre>
+        </details>
+      ))}
+      {strippedText && <MarkdownBlock text={strippedText} onAskReply={onAskReply} />}
+    </>
+  )
 }
 
 const taskFileName = (fp = '') => String(fp || '').split(/[\\/]/).filter(Boolean).pop() || ''
@@ -1664,34 +1684,60 @@ function ToolCallBlock({ call, onAskReply }) {
   const toolName = String(call.name || 'unknown').trim()
   const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
   const isFileTool = /file_(write|patch)$/i.test(toolName)
-  const [open, setOpen] = useState(isAskUser)
+  const [open, setOpen] = useState(false)
   const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
   const askPayload = isAskUser ? getAskUserPayload(call) : null
-  const askSummary = askPayload?.question || ct('等待用户确认', 'Waiting for confirmation')
   
-  // Extract file path for file tools to show in header
+  // Extract file path for file tools to show inline
   const fileArgs = isFileTool ? parseFileToolArgs(toolName, call.args) : null
   const fileName = fileArgs?.path?.split(/[\\/]/).filter(Boolean).pop()
   
-  return <div className={`oa-tool-call ${isAskUser ? 'oa-tool-ask-user' : ''} ${isFileTool ? 'oa-tool-file' : ''} ${open ? 'open' : 'collapsed'}`}>
-    <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-      <span className="oa-tool-icon">{isAskUser ? <CircleHelp size={14} /> : isFileTool ? '📁' : '🛠️'}</span>
-      {!isAskUser && <span>Tool</span>}
-      <b>{toolName}</b>
-      {fileName && <em className="oa-tool-file-name">{fileName}</em>}
-      {resultStatus && <em>{resultStatus}</em>}
-      {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? ct(`${askPayload.candidates.length} 个选项`, `${askPayload.candidates.length} options`) : ct('等待回复', 'Waiting for reply')}</em>}
-      <ChevronDown size={15} className="oa-tool-chevron" />
+  // Determine running state: has args but no result yet
+  const isRunning = call.args && !call.result
+  
+  // ask_user keeps its special treatment (needs user interaction)
+  if (isAskUser) {
+    return <div className={`oa-tool-call oa-tool-ask-user ${open ? 'open' : 'collapsed'}`}>
+      <button className="oa-tool-head" type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}>
+        <span className="oa-tool-icon"><CircleHelp size={14} /></span>
+        <b>{toolName}</b>
+        {!resultStatus && <em>{askPayload?.candidates?.length ? ct(`${askPayload.candidates.length} 个选项`, `${askPayload.candidates.length} options`) : ct('等待回复', 'Waiting for reply')}</em>}
+        {resultStatus && <em>{resultStatus}</em>}
+        <ChevronDown size={15} className="oa-tool-chevron" />
+      </button>
+      {open && <AskUserPanel call={call} onReply={onAskReply} />}
+    </div>
+  }
+  
+  // Regular tools: ultra-light inline flow
+  return <span className="oa-tool-flow">
+    <button 
+      className="oa-tool-tag" 
+      type="button" 
+      onClick={() => setOpen(v => !v)} 
+      aria-expanded={open}
+      title={open ? ct('收起详情', 'Collapse') : ct('展开详情', 'Expand')}
+    >
+      <span className="oa-tool-fn">{toolName}</span>
+      {fileName && <span className="oa-tool-param">{fileName}</span>}
+      {isRunning && <span className="oa-tool-spinner">⋯</span>}
+      {!isRunning && resultStatus && <span className="oa-tool-ok">✓</span>}
     </button>
-    {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} /> : <>
+    {open && <div className="oa-tool-fold">
       {isFileTool ? (
         <FileToolArgsPanel toolName={toolName} args={call.args} />
       ) : (
-        call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>
+        call.args && <div className="oa-tool-section">
+          <div className="oa-tool-label">args</div>
+          <pre className="oa-tool-code">{call.args}</pre>
+        </div>
       )}
-      {call.result && <div className="oa-tool-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
-    </>)}
-  </div>
+      {call.result && <div className="oa-tool-section">
+        <div className="oa-tool-label oa-tool-label-result">result</div>
+        <pre className="oa-tool-code oa-tool-code-result">{call.result}</pre>
+      </div>}
+    </div>}
+  </span>
 }
 
 function MarkdownTable({ table }) {
@@ -2207,6 +2253,9 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
     {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
       {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
       {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
+      {parsed.tools && parsed.tools.length > 0 && <div className="oa-tools-section">
+        {parsed.tools.map((call, idx) => <ToolCallBlock key={idx} call={call} onAskReply={onAskReply} />)}
+      </div>}
       {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state)}
     </div>}
     <FileSummaryCard content={content} />
