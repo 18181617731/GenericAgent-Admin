@@ -5,7 +5,7 @@ import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
-import { cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
+import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -2262,14 +2262,20 @@ const extractSavedFilePaths = (content = '') => Array.from(
 const usageHasTokens = (u) => !!u && ((u.input_tokens || 0) > 0 || (u.cache_creation_tokens || 0) > 0 || cacheReadTokens(u) > 0 || (u.output_tokens || 0) > 0)
 const formatElapsedMs = (ms = 0) => {
   const safe = Math.max(0, Number(ms) || 0)
-  if (safe < 1000) return `${(safe / 1000).toFixed(1)}s`
+  if (safe < 1000) return `${Math.max(0.1, safe / 1000).toFixed(1)}s`
   const totalSeconds = Math.floor(safe / 1000)
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   if (minutes <= 0) return `${seconds}s`
   const hours = Math.floor(minutes / 60)
-  if (hours > 0) return `${hours}h${minutes % 60}m${seconds}s`
-  return `${minutes}m${seconds}s`
+  const mm = minutes % 60
+  if (hours > 0) return `${hours}h ${mm}m ${seconds}s`
+  return `${minutes}m ${seconds}s`
+}
+const formatCompactElapsedMs = (ms = 0) => {
+  const safe = Math.max(0, Number(ms) || 0)
+  if (safe < 1000) return `${(safe / 1000).toFixed(1)}s`
+  return formatElapsedMs(safe).replaceAll(' ', '')
 }
 const getElapsedMs = (m, now = Date.now()) => {
   if (!m || m.role !== 'assistant') return 0
@@ -2348,7 +2354,7 @@ export const ChatStats = memo(function ChatStats({ messages = [] }) {
   return <div className="oa-chat-stats" aria-label="对话统计">
     <span>{stats.rounds} 轮 · {stats.steps} 步</span>
     <i aria-hidden="true">|</i>
-    <span>LLM {(stats.elapsedMs / 1000).toFixed(1)}s</span>
+    <span>LLM {formatCompactElapsedMs(stats.llmElapsedMs || stats.elapsedMs)} · 工具调用 {formatCompactElapsedMs(stats.toolElapsedMs)}</span>
     <i aria-hidden="true">|</i>
     <span>首 token 平均 {stats.firstTokenMs > 0 ? `${(stats.firstTokenMs / 1000).toFixed(1)}s` : '—'} · {stats.outputRate > 0 ? `${stats.outputRate.toFixed(1)} tok/s` : '— tok/s'}</span>
     <i aria-hidden="true">|</i>
@@ -6080,7 +6086,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        <ChatStats messages={messages}/>
+        {!privacyMode && <ChatStats messages={messages}/>}
       </footer>
     </main>
 

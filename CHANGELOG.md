@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.91 - 2026-08-18
+
+### Compact chat footer
+- Remove the detailed rounds, latency, cache, and token statistics footer from compact chat view.
+- Keep the existing task status, generic metrics, and temporary latest-result reveal available while compact view is enabled.
+- Preserve the full conversation statistics footer when compact view is disabled.
+
 ## v1.0.90 - 2026-08-18
 
 ### Temporary latest-result reveal

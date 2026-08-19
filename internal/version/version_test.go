@@ -15,9 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -965,130 +963,6 @@ func TestUpdatePayloadRejectsUnexpectedTopLevelLayout(t *testing.T) {
 	}
 }
 
-func TestReserveUpdateSerializesAcrossProcesses(t *testing.T) {
-	statusFile := filepath.Join(t.TempDir(), "ga-admin-update-status.json")
-	const workers = 12
-	commands := make([]*exec.Cmd, 0, workers)
-	for i := 0; i < workers; i++ {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestReserveUpdateSubprocess$")
-		cmd.Env = append(os.Environ(),
-			"GA_TEST_RESERVE_STATUS="+statusFile,
-			fmt.Sprintf("GA_TEST_RESERVE_ID=operation-%d", i),
-		)
-		commands = append(commands, cmd)
-	}
-
-	var wg sync.WaitGroup
-	results := make(chan string, workers)
-	for _, cmd := range commands {
-		wg.Add(1)
-		go func(cmd *exec.Cmd) {
-			defer wg.Done()
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				results <- fmt.Sprintf("error:%v:%s", err, out)
-				return
-			}
-			results <- strings.TrimSpace(string(out))
-		}(cmd)
-	}
-	wg.Wait()
-	close(results)
-
-	reserved := 0
-	for result := range results {
-		switch result {
-		case "reserved":
-			reserved++
-		case "active":
-		default:
-			t.Fatalf("unexpected helper result %q", result)
-		}
-	}
-	if reserved != 1 {
-		t.Fatalf("reserved operations = %d, want exactly 1", reserved)
-	}
-}
-
-func TestReserveUpdateSubprocess(t *testing.T) {
-	statusFile := os.Getenv("GA_TEST_RESERVE_STATUS")
-	if statusFile == "" {
-		t.Skip("subprocess helper")
-	}
-	statusPathOverride = statusFile
-	now := time.Now()
-	candidate := UpdateStatus{
-		ID: os.Getenv("GA_TEST_RESERVE_ID"), PID: os.Getpid(), Running: true,
-		Stage: "queued", Progress: 1, StartedAt: now,
-	}
-	_, created, err := reserveUpdate(candidate)
-	if err != nil {
-		fmt.Printf("reserve-error:%v", err)
-		os.Exit(0)
-	}
-	if created {
-		fmt.Print("reserved")
-		os.Exit(0)
-	}
-	fmt.Print("active")
-	os.Exit(0)
-}
-
-func TestTransitionUpdateRejectsSupersededOperation(t *testing.T) {
-	oldStatus := statusPathOverride
-	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
-
-	current := UpdateStatus{ID: "new-operation", Running: true, Stage: "queued", Message: "current"}
-	if err := writeStatus(current); err != nil {
-		t.Fatal(err)
-	}
-	err := transitionUpdate("old-operation", func(st *UpdateStatus) error {
-		st.Stage = "error"
-		st.Message = "stale writer"
-		return nil
-	})
-	if !errors.Is(err, ErrUpdateSuperseded) {
-		t.Fatalf("transition error = %v, want ErrUpdateSuperseded", err)
-	}
-	persisted := CurrentUpdateStatus()
-	if persisted.ID != current.ID || persisted.Stage != current.Stage || persisted.Message != current.Message {
-		t.Fatalf("stale writer changed persisted status: %+v", persisted)
-	}
-}
-
-func TestValidateInstallTargetsRejectsEscapesAndUnexpectedFiles(t *testing.T) {
-	root := t.TempDir()
-	exeName := "ga-admin"
-	if runtime.GOOS == "windows" {
-		exeName += ".exe"
-	}
-	validExe := filepath.Join(root, exeName)
-	validWorker := filepath.Join(root, "cmd", "chat_worker.py")
-	if err := validateInstallTargets(root, validExe, validWorker); err != nil {
-		t.Fatalf("valid targets rejected: %v", err)
-	}
-
-	tests := []struct {
-		name   string
-		exe    string
-		worker string
-	}{
-		{name: "exe outside root", exe: filepath.Join(root, "..", exeName), worker: validWorker},
-		{name: "sibling prefix", exe: filepath.Join(root+"-other", exeName), worker: validWorker},
-		{name: "unexpected exe name", exe: filepath.Join(root, "renamed-"+exeName), worker: validWorker},
-		{name: "worker outside root", exe: validExe, worker: filepath.Join(root, "..", "chat_worker.py")},
-		{name: "unexpected worker", exe: validExe, worker: filepath.Join(root, "chat_worker.py")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := validateInstallTargets(root, tt.exe, tt.worker); err == nil {
-				t.Fatalf("unsafe targets accepted: exe=%q worker=%q", tt.exe, tt.worker)
-			}
-		})
-	}
-}
-
 func TestStartApplyLatestReportsInitialStatusWriteError(t *testing.T) {
 	oldStatus := statusPathOverride
 	statusPathOverride = t.TempDir()
@@ -1098,7 +972,7 @@ func TestStartApplyLatestReportsInitialStatusWriteError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected status write error, got status %+v", st)
 	}
-	if st.Running || st.Stage != "failed" || st.Progress != 100 || st.Error == "" {
+	if st.Running || st.Stage != "error" || st.Progress != 100 || st.Error == "" {
 		t.Fatalf("unexpected failed status: %+v", st)
 	}
 	if !strings.Contains(err.Error(), "write update status") {
@@ -1174,7 +1048,7 @@ func TestStartApplyLatestChecksumFailureWritesReadableStatus(t *testing.T) {
 		t.Fatalf("initial status = %+v", st)
 	}
 	final := waitUpdateDone(t)
-	if final.Running || final.Stage != "failed" {
+	if final.Running || final.Stage != "error" {
 		t.Fatalf("final status = %+v", final)
 	}
 	if !strings.Contains(final.Error, "sha256 mismatch") || final.Script != "" {
@@ -1184,148 +1058,8 @@ func TestStartApplyLatestChecksumFailureWritesReadableStatus(t *testing.T) {
 		t.Fatalf("incomplete final status: %+v", final)
 	}
 	fromAPI := CurrentUpdateStatus()
-	if fromAPI.Stage != "failed" || !strings.Contains(fromAPI.Message, "sha256 mismatch") {
+	if fromAPI.Stage != "error" || !strings.Contains(fromAPI.Message, "sha256 mismatch") {
 		t.Fatalf("readable persisted status = %+v", fromAPI)
-	}
-}
-
-func TestStartApplyLatestLaunchesCopiedHelperWithoutOverwritingHelperStatus(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("self-update is currently supported on Windows only")
-	}
-
-	oldURL := repoLatestURL
-	oldStatus := statusPathOverride
-	oldRuntime := currentApplyRuntime
-	defer func() {
-		repoLatestURL = oldURL
-		statusPathOverride = oldStatus
-		currentApplyRuntime = oldRuntime
-	}()
-
-	installRoot := t.TempDir()
-	statusPathOverride = filepath.Join(installRoot, "ga-admin-update-status.json")
-	runningExe := filepath.Join(installRoot, "ga-admin.exe")
-	if err := os.WriteFile(runningExe, []byte("copied-helper-binary"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	assetName := fmt.Sprintf("ga-admin-v999.0.0-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
-	zipPath := filepath.Join(t.TempDir(), assetName)
-	makeUpdateZip(t, zipPath)
-	zipData, err := os.ReadFile(zipPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(zipData)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/latest":
-			_ = json.NewEncoder(w).Encode(Release{TagName: "v999.0.0", Assets: []Asset{
-				{Name: assetName, BrowserDownloadURL: serverURL(r, "/asset.zip")},
-				{Name: assetName + ".sha256", BrowserDownloadURL: serverURL(r, "/asset.zip.sha256")},
-			}})
-		case "/asset.zip":
-			http.ServeFile(w, r, zipPath)
-		case "/asset.zip.sha256":
-			_, _ = fmt.Fprintf(w, "%x  %s\n", sum, assetName)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	repoLatestURL = server.URL + "/latest"
-
-	type launchRecord struct {
-		helperPath   string
-		manifestPath string
-		manifest     UpdateManifest
-	}
-	launched := make(chan launchRecord, 1)
-	exitScheduled := make(chan struct{})
-	allowApplyReturn := make(chan struct{})
-	currentApplyRuntime = applyRuntimeDeps{
-		executable: func() (string, error) { return runningExe, nil },
-		launchHelper: func(helperPath, manifestPath string) error {
-			manifest, err := readUpdateManifest(manifestPath)
-			if err != nil {
-				return err
-			}
-			launched <- launchRecord{helperPath: helperPath, manifestPath: manifestPath, manifest: manifest}
-			return transitionUpdate(manifest.OperationID, func(st *UpdateStatus) error {
-				st.Stage = "waiting_for_exit"
-				st.Progress = 88
-				st.Message = "helper owns update status"
-				return nil
-			})
-		},
-		scheduleExit: func() {
-			close(exitScheduled)
-			<-allowApplyReturn
-		},
-	}
-
-	initial, err := StartApplyLatest()
-	if err != nil {
-		t.Fatalf("StartApplyLatest: %v", err)
-	}
-	var record launchRecord
-	select {
-	case record = <-launched:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("copied helper was not launched; status=%+v", CurrentUpdateStatus())
-	}
-	select {
-	case <-exitScheduled:
-	case <-time.After(time.Second):
-		t.Fatal("parent exit was not scheduled after launching helper")
-	}
-
-	if record.manifest.OperationID != initial.ID || record.manifest.StatusPath != statusPathOverride {
-		t.Fatalf("manifest identity/status = %+v, initial=%+v", record.manifest, initial)
-	}
-	if record.manifest.OriginalExe != runningExe || record.manifest.OldPID != os.Getpid() {
-		t.Fatalf("manifest process identity = %+v", record.manifest)
-	}
-	helperDir := filepath.Dir(record.helperPath)
-	if helperDir != filepath.Dir(record.manifestPath) {
-		t.Fatalf("helper/manifest are not durable siblings: helper=%q manifest=%q", record.helperPath, record.manifestPath)
-	}
-	originalWorkingDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.manifest.WorkingDir != originalWorkingDir {
-		t.Fatalf("restart working directory = %q, want %q", record.manifest.WorkingDir, originalWorkingDir)
-	}
-	helperData, err := os.ReadFile(record.helperPath)
-	if err != nil {
-		t.Fatalf("read copied helper: %v", err)
-	}
-	if string(helperData) != "copied-helper-binary" {
-		t.Fatalf("copied helper bytes = %q", helperData)
-	}
-	if _, err := os.Stat(record.manifest.StagedExe); err != nil {
-		t.Fatalf("staged executable missing: %v", err)
-	}
-	if _, err := os.Stat(record.manifest.StagedWorker); err != nil {
-		t.Fatalf("staged worker missing: %v", err)
-	}
-	for _, arg := range record.manifest.OriginalArgs {
-		if strings.HasPrefix(arg, "--update-helper") || strings.HasPrefix(arg, "--update-confirm") {
-			t.Fatalf("internal update argument leaked into restart args: %#v", record.manifest.OriginalArgs)
-		}
-	}
-
-	close(allowApplyReturn)
-	time.Sleep(150 * time.Millisecond)
-	final := CurrentUpdateStatus()
-	if final.Stage != "waiting_for_exit" || final.Progress != 88 || !final.Running {
-		t.Fatalf("parent overwrote helper-owned status: %+v", final)
-	}
-	if final.Script != "" {
-		t.Fatalf("legacy update script leaked into helper transaction: %+v", final)
 	}
 }
 
@@ -1855,7 +1589,7 @@ func TestCurrentUpdateLimitsPinPackageAndChecksumCeilings(t *testing.T) {
 	}
 }
 
-func TestCurrentUpdateStatusDoesNotInferSuccessAfterRelaunch(t *testing.T) {
+func TestCurrentUpdateStatusNormalizesRestartingAfterRelaunch(t *testing.T) {
 	oldStatus := statusPathOverride
 	oldVersion := Version
 	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
@@ -1873,8 +1607,8 @@ func TestCurrentUpdateStatusDoesNotInferSuccessAfterRelaunch(t *testing.T) {
 	}
 
 	got := CurrentUpdateStatus()
-	if !got.Running || got.Stage != "restarting" || got.Progress != 95 {
-		t.Fatalf("status must await helper confirmation, got %+v", got)
+	if got.Running || got.Stage != "done" || got.Progress != 100 {
+		t.Fatalf("normalized status = %+v", got)
 	}
 	if got.Error != "" || !strings.Contains(got.Message, "v9.9.9") {
 		t.Fatalf("normalized success status = %+v", got)
@@ -2048,54 +1782,6 @@ func TestNormalizeStatusAfterRestartLeavesCurrentProcessRestarting(t *testing.T)
 	}
 }
 
-func TestNormalizeStatusForVersionClearsStaleActiveStatusAfterManualInstall(t *testing.T) {
-	st := UpdateStatus{
-		ID:            "manual-install-test",
-		Running:       true,
-		Stage:         "downloading",
-		Progress:      42,
-		Message:       "downloading",
-		SourceVersion: "v0.2.4",
-		TargetVersion: "v0.2.5",
-		Check: &CheckResult{
-			Current: BuildInfo{Version: "v0.2.4"},
-			Latest:  &Release{TagName: "v0.2.5"},
-			Update:  true,
-		},
-	}
-	current := BuildInfo{Version: "v0.2.5"}
-
-	got := normalizeStatusForVersion(st, current.Version, current)
-	if got.Running || got.Stage != "done" || got.Progress != 100 {
-		t.Fatalf("stale active status should be completed, got %+v", got)
-	}
-	if got.InstalledVersion != current.Version || got.ConfirmedVersion != current.Version {
-		t.Fatalf("installed versions = %q/%q, want %q", got.InstalledVersion, got.ConfirmedVersion, current.Version)
-	}
-	if got.Check == nil || got.Check.Current.Version != current.Version || got.Check.Update {
-		t.Fatalf("check snapshot was not refreshed, got %+v", got.Check)
-	}
-	if got.ConfirmedAt.IsZero() || got.EndedAt.IsZero() {
-		t.Fatalf("completed status should have confirmation/end timestamps: %+v", got)
-	}
-}
-
-func TestNormalizeStatusForVersionLeavesUnreachedActiveStatus(t *testing.T) {
-	st := UpdateStatus{
-		ID:            "unreached-test",
-		Running:       true,
-		Stage:         "downloading",
-		Progress:      42,
-		Message:       "downloading",
-		TargetVersion: "v0.2.5",
-	}
-
-	got := normalizeStatusForVersion(st, "v0.2.4", BuildInfo{Version: "v0.2.4"})
-	if !got.Running || got.Stage != st.Stage || got.Progress != st.Progress || got.Message != st.Message {
-		t.Fatalf("unreached update should remain active, got %+v", got)
-	}
-}
-
 // TestCheckRealNetwork verifies the timeout fix with real GitHub API.
 // Skip in CI to avoid flakiness; run manually with: go test -v -run TestCheckRealNetwork
 func TestCheckRealNetwork(t *testing.T) {
@@ -2136,268 +1822,5 @@ func TestCheckRealNetwork(t *testing.T) {
 	}
 	if !strings.HasPrefix(result.Latest.TagName, "v") && !strings.HasPrefix(result.Latest.TagName, "0.") {
 		t.Fatalf("Latest version has unexpected format: %s", result.Latest.TagName)
-	}
-}
-
-func TestUpdateTransactionWaitTimeoutLeavesInstallationUntouched(t *testing.T) {
-	root := t.TempDir()
-	oldExe := filepath.Join(root, "ga-admin.exe")
-	oldWorker := filepath.Join(root, "cmd", "chat_worker.py")
-	stagedExe := filepath.Join(root, "stage", "ga-admin.exe")
-	stagedWorker := filepath.Join(root, "stage", "cmd", "chat_worker.py")
-	for path, content := range map[string]string{
-		oldExe: "old-exe", oldWorker: "old-worker", stagedExe: "new-exe", stagedWorker: "new-worker",
-	} {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldStatus := statusPathOverride
-	statusPathOverride = filepath.Join(root, "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
-	if err := writeStatus(UpdateStatus{ID: "timeout-op", Running: true, Stage: "prepared"}); err != nil {
-		t.Fatal(err)
-	}
-
-	manifest := UpdateManifest{
-		OperationID: "timeout-op", OldPID: os.Getpid(), SourceVersion: "v1.0.0", TargetVersion: "v2.0.0",
-		OriginalExe: oldExe, StagedExe: stagedExe, BackupExe: oldExe + ".timeout-op.bak",
-		Worker: oldWorker, StagedWorker: stagedWorker, WorkerBackup: oldWorker + ".timeout-op.bak",
-		StatusPath: statusPathOverride, WorkingDir: root, ExitTimeout: 25 * time.Millisecond,
-	}
-	if err := runReplacementTransaction(manifest, defaultTransactionDeps()); err == nil || !strings.Contains(err.Error(), "old process") {
-		t.Fatalf("transaction error = %v, want old process timeout", err)
-	}
-	for path, want := range map[string]string{oldExe: "old-exe", oldWorker: "old-worker"} {
-		got, err := os.ReadFile(path)
-		if err != nil || string(got) != want {
-			t.Fatalf("%s = %q, %v; want %q", path, got, err, want)
-		}
-	}
-}
-
-func TestUpdateTransactionPartialWorkerFailureRestoresWholeSet(t *testing.T) {
-	root := t.TempDir()
-	oldExe := filepath.Join(root, "ga-admin.exe")
-	oldWorker := filepath.Join(root, "cmd", "chat_worker.py")
-	stagedExe := filepath.Join(root, "stage", "ga-admin.exe")
-	stagedWorker := filepath.Join(root, "stage", "cmd", "chat_worker.py")
-	for path, content := range map[string]string{
-		oldExe: "old-exe", oldWorker: "old-worker", stagedExe: "new-exe", stagedWorker: "new-worker",
-	} {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldStatus := statusPathOverride
-	statusPathOverride = filepath.Join(root, "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
-	if err := writeStatus(UpdateStatus{ID: "rollback-op", Running: true, Stage: "prepared"}); err != nil {
-		t.Fatal(err)
-	}
-
-	manifest := UpdateManifest{
-		OperationID: "rollback-op", SourceVersion: "v1.0.0", TargetVersion: "v2.0.0",
-		OriginalExe: oldExe, StagedExe: stagedExe, BackupExe: oldExe + ".rollback-op.bak",
-		Worker: oldWorker, StagedWorker: stagedWorker, WorkerBackup: oldWorker + ".rollback-op.bak",
-		StatusPath: statusPathOverride, WorkingDir: root,
-	}
-	deps := defaultTransactionDeps()
-	install := deps.installFile
-	deps.installFile = func(src, dest string, perm os.FileMode) error {
-		if sameFilePath(dest, oldWorker) {
-			return errors.New("injected worker install failure")
-		}
-		return install(src, dest, perm)
-	}
-	if err := runReplacementTransaction(manifest, deps); err == nil || !strings.Contains(err.Error(), "injected worker") {
-		t.Fatalf("transaction error = %v, want injected worker failure", err)
-	}
-	for path, want := range map[string]string{oldExe: "old-exe", oldWorker: "old-worker"} {
-		got, err := os.ReadFile(path)
-		if err != nil || string(got) != want {
-			t.Fatalf("%s = %q, %v; want restored %q", path, got, err, want)
-		}
-	}
-	st := CurrentUpdateStatus()
-	if st.Stage != "failed" || st.RollbackResult != "restored" || st.Running {
-		t.Fatalf("rollback status = %+v", st)
-	}
-}
-
-func TestUpdateTransactionPublishesStartingStageBeforeLaunch(t *testing.T) {
-	root := t.TempDir()
-	oldExe := filepath.Join(root, "ga-admin.exe")
-	stagedExe := filepath.Join(root, "stage", "ga-admin.exe")
-	for path, content := range map[string]string{oldExe: "old-exe", stagedExe: "new-exe"} {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldStatus := statusPathOverride
-	statusPathOverride = filepath.Join(root, "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
-	operationID := "synchronous-confirm-op"
-	if err := writeStatus(UpdateStatus{ID: operationID, Running: true, Stage: "prepared", TargetVersion: effectiveVersion()}); err != nil {
-		t.Fatal(err)
-	}
-
-	manifest := UpdateManifest{
-		OperationID: operationID, SourceVersion: "v1.0.0", TargetVersion: effectiveVersion(),
-		OriginalExe: oldExe, StagedExe: stagedExe, BackupExe: oldExe + ".bak",
-		StatusPath: statusPathOverride, WorkingDir: root, ConfirmTimeout: time.Second,
-	}
-	child := exec.Command(os.Args[0], "-test.run=^$")
-	child.Process, _ = os.FindProcess(os.Getpid())
-	deps := defaultTransactionDeps()
-	deps.waitPIDExit = func(int, time.Duration) error { return nil }
-	deps.stopChild = func(*exec.Cmd, <-chan error) {}
-	deps.launch = func(_ UpdateManifest, confirmation bool) (*exec.Cmd, <-chan error, error) {
-		if !confirmation {
-			t.Fatal("unexpected rollback launch")
-		}
-		if err := ConfirmUpdateReady(operationID); err != nil {
-			return nil, nil, fmt.Errorf("synchronous confirmation failed: %w", err)
-		}
-		return child, make(chan error), nil
-	}
-	deps.sleep = func(time.Duration) {}
-	if err := runReplacementTransaction(manifest, deps); err != nil {
-		t.Fatalf("runReplacementTransaction: %v", err)
-	}
-	st := CurrentUpdateStatus()
-	if st.Stage != "done" || st.ConfirmedVersion != effectiveVersion() {
-		t.Fatalf("transaction status = %+v", st)
-	}
-}
-
-func TestBuildUpdateManifestPreservesRestartContract(t *testing.T) {
-	root := t.TempDir()
-	exeName := "ga-admin"
-	if runtime.GOOS == "windows" {
-		exeName += ".exe"
-	}
-	exe := filepath.Join(root, exeName)
-	worker := filepath.Join(root, "cmd", "chat_worker.py")
-	work := filepath.Join(t.TempDir(), "prepared")
-	status := filepath.Join(root, "ga-admin-update-status.json")
-	args := []string{
-		"--headless",
-		"--update-confirm", "stale-operation",
-		"--port=19090",
-		"--update-helper=stale-manifest.json",
-		"--app-root", filepath.Join(root, "state"),
-	}
-
-	manifest, err := buildUpdateManifest(updateManifestInput{
-		OperationID:   "update-contract-1",
-		SourceVersion: "v1.0.0",
-		TargetVersion: "v1.1.0",
-		OldPID:        1234,
-		OriginalExe:   exe,
-		StagedExe:     filepath.Join(work, exeName),
-		Worker:        worker,
-		StagedWorker:  filepath.Join(work, "chat_worker.py"),
-		StatusPath:    status,
-		WorkingDir:    filepath.Join(root, "launch-cwd"),
-		OriginalArgs:  args,
-	})
-	if err != nil {
-		t.Fatalf("buildUpdateManifest: %v", err)
-	}
-	if manifest.StatusPath != status || manifest.WorkingDir != filepath.Join(root, "launch-cwd") {
-		t.Fatalf("manifest paths = status %q cwd %q", manifest.StatusPath, manifest.WorkingDir)
-	}
-	if filepath.Dir(manifest.BackupExe) != filepath.Dir(exe) {
-		t.Fatalf("executable backup %q is not on the install target directory", manifest.BackupExe)
-	}
-	if filepath.Dir(manifest.WorkerBackup) != filepath.Dir(worker) {
-		t.Fatalf("worker backup %q is not on the worker target directory", manifest.WorkerBackup)
-	}
-	wantArgs := []string{"--headless", "--port=19090", "--app-root", filepath.Join(root, "state")}
-	if !slices.Equal(manifest.OriginalArgs, wantArgs) {
-		t.Fatalf("restart args = %#v, want %#v", manifest.OriginalArgs, wantArgs)
-	}
-	if manifest.ExitTimeout <= 0 || manifest.ConfirmTimeout <= 0 || manifest.StabilityTime <= 0 {
-		t.Fatalf("manifest timeouts are not populated: %+v", manifest)
-	}
-	if err := validateUpdateManifest(manifest); err != nil {
-		t.Fatalf("manifest does not satisfy transaction contract: %v", err)
-	}
-}
-
-func TestWriteUpdateManifestAndCopiedHelperAreDurable(t *testing.T) {
-	work := t.TempDir()
-	source := filepath.Join(work, "running.exe")
-	if err := os.WriteFile(source, []byte("helper-binary"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	manifest := UpdateManifest{
-		OperationID: "copy-helper-1", SourceVersion: "v1.0.0", TargetVersion: "v1.1.0",
-		OldPID: 123, OriginalExe: filepath.Join(work, "ga-admin.exe"), StagedExe: filepath.Join(work, "new.exe"),
-		BackupExe: filepath.Join(work, "ga-admin.exe.bak"), StatusPath: filepath.Join(work, "status.json"),
-		WorkingDir: work, ExitTimeout: time.Second, ConfirmTimeout: time.Second, StabilityTime: time.Second,
-	}
-
-	helperPath, manifestPath, err := prepareUpdateHelper(work, source, manifest)
-	if err != nil {
-		t.Fatalf("prepareUpdateHelper: %v", err)
-	}
-	gotHelper, err := os.ReadFile(helperPath)
-	if err != nil {
-		t.Fatalf("read copied helper: %v", err)
-	}
-	if string(gotHelper) != "helper-binary" || filepath.Dir(helperPath) != work {
-		t.Fatalf("copied helper = %q at %q", gotHelper, helperPath)
-	}
-	gotManifest, err := readUpdateManifest(manifestPath)
-	if err != nil {
-		t.Fatalf("read prepared manifest: %v", err)
-	}
-	if gotManifest.OperationID != manifest.OperationID || gotManifest.StatusPath != manifest.StatusPath {
-		t.Fatalf("prepared manifest = %+v", gotManifest)
-	}
-}
-
-func TestConfirmUpdateReadyRequiresMatchingOperation(t *testing.T) {
-	oldStatus := statusPathOverride
-	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
-	if err := writeStatus(UpdateStatus{ID: "expected-op", Running: true, Stage: "starting_replacement", TargetVersion: effectiveVersion()}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ConfirmUpdateReady("other-op"); !errors.Is(err, ErrUpdateSuperseded) {
-		t.Fatalf("ConfirmUpdateReady error = %v, want ErrUpdateSuperseded", err)
-	}
-	st := CurrentUpdateStatus()
-	if st.Stage == "done" || st.ID != "expected-op" {
-		t.Fatalf("mismatched confirmation changed status: %+v", st)
-	}
-}
-
-func TestConfirmUpdateReadyRejectsVersionMismatch(t *testing.T) {
-	oldStatus := statusPathOverride
-	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
-	defer func() { statusPathOverride = oldStatus }()
-	if err := writeStatus(UpdateStatus{ID: "version-op", Running: true, Stage: "starting_replacement", TargetVersion: "v999.0.0"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ConfirmUpdateReady("version-op"); err == nil || !strings.Contains(err.Error(), "version mismatch") {
-		t.Fatalf("ConfirmUpdateReady error = %v, want version mismatch", err)
-	}
-	st := CurrentUpdateStatus()
-	if st.Stage != "failed" || st.Running || st.Stage == "done" {
-		t.Fatalf("version mismatch status = %+v", st)
 	}
 }

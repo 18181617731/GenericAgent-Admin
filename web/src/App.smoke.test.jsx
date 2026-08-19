@@ -2351,6 +2351,9 @@ describe('mobile chat session navigation', () => {
     render(<ChatApp />)
     const curtain = await screen.findByRole('region', { name:'任务状态' }, { timeout:10000 })
     await waitFor(() => expect(curtain.textContent).toContain('2 条'))
+    expect(document.querySelector('.oa-chat-stats')).toBeNull()
+    expect(document.body.textContent).not.toContain('首 token 平均')
+    expect(document.body.textContent).not.toContain('缓存命中')
     expect(document.body.innerHTML).not.toContain('SECRET_SESSION_TITLE')
     expect(document.body.innerHTML).not.toContain('SECRET_USER_MESSAGE')
     expect(document.body.innerHTML).not.toContain('SECRET_ASSISTANT_REPLY')
@@ -2369,6 +2372,8 @@ describe('mobile chat session navigation', () => {
 
     fireEvent.click(screen.getByRole('switch', { name:/精简显示/ }))
     await waitFor(() => expect(screen.getByText('SECRET_USER_MESSAGE D:/private/input.txt')).toBeTruthy())
+    expect(document.querySelector('.oa-chat-stats')?.textContent).toContain('LLM 12s · 工具调用 0.0s')
+    expect(document.querySelector('.oa-chat-stats')?.textContent).toContain('输入 1.2K · 输出 320')
     expect(document.querySelector('.oa-title b')?.textContent).toBe('SECRET_SESSION_TITLE')
     expect(document.body.innerHTML).toContain('SECRET_DIAGNOSIS')
   }, 30000)
