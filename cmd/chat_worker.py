@@ -2427,6 +2427,36 @@ def handle_request(agent, worker, req):
                 stop_ultraplan_observer()
                 text = str(item.get('done') or ''.join(chunks))
                 msg = {'id': new_id(), 'role': 'assistant', 'content': text, 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent)}
+                # Extract structured content from backend.history
+                try:
+                    import json as json_mod
+                    import sys as sys_mod
+                    import traceback as tb_mod
+                    history = getattr(agent.llmclient.backend, 'history', [])
+                    print(f"backend.history length: {len(history) if isinstance(history, list) else 'not list'}", file=sys_mod.stderr, flush=True)
+                    if isinstance(history, list) and len(history) > 0:
+                        last = history[-1]
+                        print(f"last message: {json_mod.dumps(last, ensure_ascii=False, indent=2)[:500]}", file=sys_mod.stderr, flush=True)
+                        if isinstance(last, dict) and last.get('role') == 'assistant':
+                            content_blocks = last.get('content')
+                            if isinstance(content_blocks, list):
+                                msg['structured_content'] = content_blocks
+                                print(f"✓ Extracted structured_content: {len(content_blocks)} blocks", file=sys_mod.stderr, flush=True)
+                            else:
+                                print(f"✗ content_blocks is not list: {type(content_blocks)}", file=sys_mod.stderr, flush=True)
+                        else:
+                            print(f"✗ last message role: {last.get('role') if isinstance(last, dict) else 'not dict'}", file=sys_mod.stderr, flush=True)
+                    else:
+                        print(f"✗ history invalid: len={len(history) if isinstance(history, list) else 'not list'}", file=sys_mod.stderr, flush=True)
+                except Exception as e:
+                    import sys as sys_mod
+                    print(f"✗ Failed to extract structured_content: {e}", file=sys_mod.stderr, flush=True)
+                    try:
+                        import traceback as tb_mod
+                        tb_mod.print_exc(file=sys_mod.stderr)
+                    except:
+                        pass
+                    pass  # Fail silently, frontend will fall back to text parsing
                 if first_token_ms > 0:
                     msg['first_token_ms'] = first_token_ms
                 outputs = [value for value in (item.get('outputs') or [])

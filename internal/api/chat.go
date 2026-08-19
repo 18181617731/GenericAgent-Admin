@@ -28,28 +28,29 @@ import (
 )
 
 type chatMessage struct {
-	ID             string                   `json:"id"`
-	Role           string                   `json:"role"`
-	Content        string                   `json:"content"`
-	Outputs        []string                 `json:"outputs,omitempty"`
-	ModelID        string                   `json:"model_id,omitempty"`
-	Files          []map[string]interface{} `json:"files,omitempty"`
-	CreatedAt      int64                    `json:"created_at"`
-	Error          bool                     `json:"error,omitempty"`
-	Kind           string                   `json:"kind,omitempty"`
-	SideQuestion   string                   `json:"side_question,omitempty"`
-	Usage          map[string]int           `json:"usage,omitempty"`
-	Usages         []map[string]int         `json:"usages,omitempty"`
-	CtxChars       int                      `json:"ctx_chars,omitempty"`
-	CtxMsgs        int                      `json:"ctx_msgs,omitempty"`
-	ElapsedMS      int64                    `json:"elapsed_ms,omitempty"`
-	LLMElapsedMS   int64                    `json:"llm_elapsed_ms,omitempty"`
-	ToolElapsedMS  int64                    `json:"tool_elapsed_ms,omitempty"`
-	FirstTokenMS   int64                    `json:"first_token_ms,omitempty"`
-	RunStartedAtMS int64                    `json:"run_started_at_ms,omitempty"`
-	UltraPlanState map[string]interface{}   `json:"ultraplan_state,omitempty"`
-	GoalState      map[string]interface{}   `json:"goal_state,omitempty"`
-	TaskOutputs    map[string][]string      `json:"task_outputs,omitempty"`
+	ID                string                   `json:"id"`
+	Role              string                   `json:"role"`
+	Content           string                   `json:"content"`
+	Outputs           []string                 `json:"outputs,omitempty"`
+	ModelID           string                   `json:"model_id,omitempty"`
+	Files             []map[string]interface{} `json:"files,omitempty"`
+	CreatedAt         int64                    `json:"created_at"`
+	Error             bool                     `json:"error,omitempty"`
+	Kind              string                   `json:"kind,omitempty"`
+	SideQuestion      string                   `json:"side_question,omitempty"`
+	Usage             map[string]int           `json:"usage,omitempty"`
+	Usages            []map[string]int         `json:"usages,omitempty"`
+	CtxChars          int                      `json:"ctx_chars,omitempty"`
+	CtxMsgs           int                      `json:"ctx_msgs,omitempty"`
+	ElapsedMS         int64                    `json:"elapsed_ms,omitempty"`
+	LLMElapsedMS      int64                    `json:"llm_elapsed_ms,omitempty"`
+	ToolElapsedMS     int64                    `json:"tool_elapsed_ms,omitempty"`
+	FirstTokenMS      int64                    `json:"first_token_ms,omitempty"`
+	RunStartedAtMS    int64                    `json:"run_started_at_ms,omitempty"`
+	UltraPlanState    map[string]interface{}   `json:"ultraplan_state,omitempty"`
+	GoalState         map[string]interface{}   `json:"goal_state,omitempty"`
+	TaskOutputs       map[string][]string      `json:"task_outputs,omitempty"`
+	StructuredContent []map[string]interface{} `json:"structured_content,omitempty"`
 }
 
 const (

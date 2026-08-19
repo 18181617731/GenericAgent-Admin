@@ -20,6 +20,7 @@ import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { parseStructuredContent } from './lib/structuredContent'
 import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -2138,14 +2139,26 @@ function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskRep
   )
 }
 
-const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages, ultraplan_state }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, turnUsages, ultraplan_state }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
   useEffect(() => { setStackOpen(pending) }, [pending])
   const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
-  const parsed = useMemo(() => parseAssistantContent(content), [content])
+  
+  // Try structured parsing first, fall back to text parsing
+  const parsed = useMemo(() => {
+    console.log('[AssistantContent] structuredContent:', structuredContent)
+    if (structuredContent) {
+      const result = parseStructuredContent(structuredContent)
+      console.log('[AssistantContent] parseStructuredContent result:', result)
+      if (result) return result
+    }
+    // Fall back to text parsing
+    console.log('[AssistantContent] Falling back to parseAssistantContent')
+    return parseAssistantContent(content)
+  }, [content, structuredContent])
   const hasTurnSplit = parsed.runs.length > 0
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
   if (!content && pending && !hasLiveUltraPlan) return <div className="oa-content oa-thinking">{ct('正在思考…', 'Thinking…')}</div>
@@ -2546,7 +2559,7 @@ export const ChatMessage = memo(function ChatMessage({
                 ? <CommandResultCard result={m.commandResult} />
                 : m.btw_status === 'error'
                   ? <div className="oa-btw-error" role="alert"><span>{m.content || '侧问失败，请重试'}</span><button type="button" onClick={() => onRetryBTW?.(m)}>重试</button></div>
-                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
+                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -3579,7 +3592,16 @@ export default function ChatApp() {
         for (const line of lines) {
           if (!line.trim()) continue
           if (!isActiveSession(sessionId)) return { commandPatch, eventCount, terminal }
-          consumeEvent(JSON.parse(line))
+          const ev = JSON.parse(line)
+          // Log delta events with full content
+          if (ev.type === 'delta') {
+            console.log('[SSE] delta:', JSON.parse(JSON.stringify(ev)))
+          }
+          // Log any event containing structured_content
+          if ('structured_content' in ev) {
+            console.log('[SSE] *** FOUND structured_content ***:', ev.structured_content)
+          }
+          consumeEvent(ev)
         }
       }
       buf += dec.decode()
