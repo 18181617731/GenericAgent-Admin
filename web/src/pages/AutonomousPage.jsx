@@ -5,6 +5,7 @@ import { AlertCircle, ArrowLeft, Check, CheckCircle2, ChevronDown, Download, Ref
 import { AutonomousServiceCard } from '../components/AutonomousServiceCard.jsx'
 import { api } from '../lib/api.js'
 import { confirmDanger } from '../lib/danger.js'
+import { AutonomousTaskWorkspace } from '../components/AutonomousTaskWorkspace.jsx'
 import { autonomousCopy, localizeAutonomousApprovalValue } from '../lib/autonomousCopy.js'
 import { autonomousExecutionState, autonomousReviewView, autonomousSummary, filterAutonomousReports, latestAutonomousReport, readableAutonomousDate, splitAutonomousApprovals, summarizeAutonomousProblem, summarizeAutonomousReport } from '../lib/autonomous.js'
 
@@ -372,6 +373,7 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
   }
   const tabs = [['services', copy.services], ['approvals', `${copy.approvals}${summary.pending ? ` (${summary.pending})` : ''}`], ['records', copy.records]]
   return <section className="autonomous-page">
+    <AutonomousTaskWorkspace lang={lang} />
     <div className="autonomous-overview">
       <div><span>{copy.serviceStat}</span><b>{summary.running}<small> / {summary.total}</small></b></div>
       <div><span>{copy.pendingStat}</span><b>{summary.pending}</b></div>

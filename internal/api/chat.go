@@ -48,6 +48,9 @@ type chatMessage struct {
 	CtxChars        int                      `json:"ctx_chars,omitempty"`
 	CtxMsgs         int                      `json:"ctx_msgs,omitempty"`
 	ElapsedMS       int64                    `json:"elapsed_ms,omitempty"`
+	LLMElapsedMS    int64                    `json:"llm_elapsed_ms,omitempty"`
+	ToolElapsedMS   int64                    `json:"tool_elapsed_ms,omitempty"`
+	FirstTokenMS    int64                    `json:"first_token_ms,omitempty"`
 	RunStartedAtMS  int64                    `json:"run_started_at_ms,omitempty"`
 	UltraPlanState  map[string]interface{}   `json:"ultraplan_state,omitempty"`
 	GoalState       map[string]interface{}   `json:"goal_state,omitempty"`
@@ -551,6 +554,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var taskOutputsAccumulator = make(map[string][]string)
 	var terminalLine []byte
 	var readErr error
+	var firstTokenMS int64
 	for {
 		line, err := readChatWorkerLine(reader)
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -577,6 +581,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				value := int(modelNo)
 				finalLLMNo = &value
 			}
+		}
+		if ev["type"] == "model_first_token" && firstTokenMS <= 0 {
+			firstTokenMS = elapsedMillis()
 		}
 		if ev["type"] == "ultraplan_event" {
 			if state := chatUltraPlanStateFromEvent(ev); state != nil {
@@ -656,6 +663,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			if final.ElapsedMS <= 0 {
 				final.ElapsedMS = elapsedMillis()
 			}
+			if firstTokenMS <= 0 {
+				firstTokenMS = final.ElapsedMS
+			}
 			if ev["type"] == "error" || final.Error {
 				normalizeChatErrorMessage(&final, "")
 				msg["content"] = final.Content
@@ -663,6 +673,18 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				msg["error_info"] = final.ErrorInfo
 			}
 			msg["elapsed_ms"] = final.ElapsedMS
+			if firstTokenMS > 0 {
+				final.FirstTokenMS = firstTokenMS
+				msg["first_token_ms"] = firstTokenMS
+			}
+			if value, ok := ev["llm_elapsed_ms"].(float64); ok && value > 0 {
+				final.LLMElapsedMS = int64(value)
+				msg["llm_elapsed_ms"] = final.LLMElapsedMS
+			}
+			if value, ok := ev["tool_elapsed_ms"].(float64); ok && value > 0 {
+				final.ToolElapsedMS = int64(value)
+				msg["tool_elapsed_ms"] = final.ToolElapsedMS
+			}
 			ev["message"] = msg
 			final.Usage, final.Usages = chatUsageFromEvent(ev)
 			final.CtxChars, final.CtxMsgs = chatCtxStatsFromEvent(ev)
