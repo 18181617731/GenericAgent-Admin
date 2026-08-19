@@ -31,6 +31,13 @@ test('renders the instance selector once at the top of the session sidebar', () 
   assert.match(chatSource, /const openSessionManager = async \(\) => \{[\s\S]*?if \(isNarrowChatViewport\(\)\) setCollapsed\(true\)/)
 })
 
+test('keeps project folding and session rows aligned in both sidebar views', () => {
+  assert.match(sidebarSource, /sidebarTab === 'projects' \? projectGroups\.length : sessions\.length/)
+  assert.match(chatStyles, /\.oa-chat \.oa-project-body\[hidden\]\s*\{\s*display:\s*none;/)
+  assert.match(chatStyles, /\.oa-chat \.oa-project-body\s*\{[^}]*padding-left:\s*0;/s)
+  assert.match(chatStyles, /\.oa-chat \.oa-session\s*\{[^}]*justify-content:\s*stretch;[^}]*justify-items:\s*stretch;/s)
+})
+
 test('addChatInstanceToURL scopes only chat API routes and preserves query/hash', () => {
   assert.equal(addChatInstanceToURL('/api/chat/sessions', ' ga-2 '), '/api/chat/sessions?instance_id=ga-2')
   assert.equal(addChatInstanceToURL('/api/chat/stream/s1?from=7#tail', 'ga 2'), '/api/chat/stream/s1?from=7&instance_id=ga+2#tail')

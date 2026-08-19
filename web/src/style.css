@@ -18800,7 +18800,8 @@ html { --ga-ui-scale: 1; }
   line-height: 1;
 }
 .oa-chat .oa-project-add:hover { background: var(--oa-hover); color: var(--oa-text); }
-.oa-chat .oa-project-body { display: grid; gap: 3px; padding-left: 3px; }
+.oa-chat .oa-project-body { display: grid; gap: 3px; padding-left: 0; }
+.oa-chat .oa-project-body[hidden] { display: none; }
 .oa-chat .oa-session-row {
   position: relative;
   min-width: 0;
@@ -18827,6 +18828,8 @@ html { --ga-ui-scale: 1; }
   min-height: 64px;
   display: grid;
   align-content: center;
+  justify-content: stretch;
+  justify-items: stretch;
   gap: 4px;
   padding: 9px 44px 8px 13px !important;
   border: 0 !important;

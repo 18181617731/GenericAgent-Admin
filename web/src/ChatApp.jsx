@@ -6086,7 +6086,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title="停止生成" aria-label="停止生成"><Square size={14}/></button>}
           </div>
         </div>
-        {!privacyMode && <ChatStats messages={messages}/>}
       </footer>
     </main>
 
