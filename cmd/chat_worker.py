@@ -327,6 +327,72 @@ def _snapshot_turn_usages():
         return usages
 
 
+# Tool execution timing belongs to the Admin worker.  GA already exposes
+# tool_before/tool_after hooks; keep the accumulator here so chat reporting does
+# not depend on Langfuse being configured (or even installed).
+_TOOL_TIMER_LOCK = threading.Lock()
+_TOOL_TIMER_ACTIVE = {}
+_TOOL_TIMER_TOTAL_SECONDS = 0.0
+_TOOL_TIMER_HOOK_INSTALLED = False
+
+
+def _install_tool_timer_hook():
+    """Subscribe once to GA's existing tool lifecycle without modifying GA."""
+    global _TOOL_TIMER_HOOK_INSTALLED
+    if _TOOL_TIMER_HOOK_INSTALLED:
+        return True
+    try:
+        from plugins import hooks as plugin_hooks
+    except (ImportError, AttributeError):
+        # Some isolated tests and older GA roots do not expose the hook module.
+        # Keep chat functional and retry after the request root is installed.
+        return False
+
+    def _before(ctx):
+        thread_id = threading.get_ident()
+        with _TOOL_TIMER_LOCK:
+            _TOOL_TIMER_ACTIVE.setdefault(thread_id, []).append(time.perf_counter())
+        return ctx
+
+    def _after(ctx):
+        global _TOOL_TIMER_TOTAL_SECONDS
+        thread_id = threading.get_ident()
+        now = time.perf_counter()
+        with _TOOL_TIMER_LOCK:
+            stack = _TOOL_TIMER_ACTIVE.get(thread_id)
+            if stack:
+                _TOOL_TIMER_TOTAL_SECONDS += max(0.0, now - stack.pop())
+                if not stack:
+                    _TOOL_TIMER_ACTIVE.pop(thread_id, None)
+        return ctx
+
+    plugin_hooks.register('tool_before')(_before)
+    plugin_hooks.register('tool_after')(_after)
+    _TOOL_TIMER_HOOK_INSTALLED = True
+
+
+def _reset_tool_elapsed():
+    """Reset Admin's request-local tool timer and ensure hooks are installed."""
+    global _TOOL_TIMER_TOTAL_SECONDS
+    _install_tool_timer_hook()
+    with _TOOL_TIMER_LOCK:
+        _TOOL_TIMER_ACTIVE.clear()
+        _TOOL_TIMER_TOTAL_SECONDS = 0.0
+
+
+def _consume_tool_elapsed_ms():
+    """Atomically consume tool time, closing starts left open by tool errors."""
+    global _TOOL_TIMER_TOTAL_SECONDS
+    now = time.perf_counter()
+    with _TOOL_TIMER_LOCK:
+        total = _TOOL_TIMER_TOTAL_SECONDS
+        for stack in _TOOL_TIMER_ACTIVE.values():
+            total += sum(max(0.0, now - started_at) for started_at in stack)
+        _TOOL_TIMER_ACTIVE.clear()
+        _TOOL_TIMER_TOTAL_SECONDS = 0.0
+    return max(1, int(round(total * 1000))) if total > 0 else 0
+
+
 def emit(ev):
     line = json.dumps(ev, ensure_ascii=False)
     with _PROTOCOL_STDOUT_LOCK:
@@ -468,6 +534,7 @@ def _track_outbound_attempt(result):
 
     def tracked():
         _reset_generation_timer()
+        first_token_emitted = False
         while True:
             try:
                 item = next(iterator)
@@ -481,6 +548,9 @@ def _track_outbound_attempt(result):
                 _finalize_incomplete_turn_usage()
             else:
                 _mark_generation_started(item)
+                if not first_token_emitted and isinstance(item, str) and item.strip():
+                    emit({'type': 'model_first_token'})
+                    first_token_emitted = True
             yield item
 
     return tracked()
@@ -2590,6 +2660,7 @@ def handle_request(agent, worker, req):
     req = _normalize_request(req)
     request_started = time.time()
     _reset_usage()  # Clear usage accumulator for this turn
+    _reset_tool_elapsed()
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     raw_history = req.get('raw_history') or []
@@ -2751,13 +2822,13 @@ def handle_request(agent, worker, req):
                 _commit_worldline(agent, prompt)
                 plan = emit_plan_update(text)
                 _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'llm_elapsed_ms': int(item.get('llm_elapsed_ms') or 0), 'tool_elapsed_ms': int(item.get('tool_elapsed_ms') or 0), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'llm_elapsed_ms': int(item.get('llm_elapsed_ms') or 0), 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
-        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
         restore_model_hooks()
 

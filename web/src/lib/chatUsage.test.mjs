@@ -23,9 +23,9 @@ test('cacheReadTokens handles legacy-only and empty usage objects', () => {
   assert.equal(cacheReadTokens(null), 0)
 })
 
-test('cacheHitPercent uses only cacheable tokens for modern buckets', () => {
+test('cacheHitPercent uses normalized input tokens for modern buckets', () => {
   assert.equal(cacheHitPercent([
-    { input_tokens: 100, cache_creation_tokens: 40, cache_read_tokens: 160 },
+    { input_tokens: 300, cache_creation_tokens: 40, cache_read_tokens: 160 },
   ]), 53)
 })
 
@@ -38,8 +38,8 @@ test('cacheHitPercent does not double count legacy cached tokens', () => {
 test('cacheHitPercent supports mixed legacy and modern usage', () => {
   assert.equal(cacheHitPercent([
     { input_tokens: 100, cached_tokens: 80 },
-    { input_tokens: 50, cache_creation_tokens: 50, cache_read_tokens: 100 },
-  ]), 60)
+    { input_tokens: 150, cache_creation_tokens: 50, cache_read_tokens: 100 },
+  ]), 72)
 })
 
 test('measuredOutputRate divides only measured outputs by measured generation time', () => {

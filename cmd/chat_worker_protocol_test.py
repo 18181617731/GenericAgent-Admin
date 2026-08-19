@@ -2,6 +2,7 @@ import importlib.util
 import os
 import queue
 import sys
+import threading
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -52,6 +53,102 @@ class FakeAgent:
         output.put({"next": "res"})
         output.put({"done": "resumed", "outputs": ["segment one", "segment two"]})
         return output
+
+
+class ToolTimerTests(unittest.TestCase):
+    def setUp(self):
+        self.old_installed = chat_worker._TOOL_TIMER_HOOK_INSTALLED
+        with chat_worker._TOOL_TIMER_LOCK:
+            self.old_active = chat_worker._TOOL_TIMER_ACTIVE.copy()
+            self.old_total = chat_worker._TOOL_TIMER_TOTAL_SECONDS
+            chat_worker._TOOL_TIMER_ACTIVE.clear()
+            chat_worker._TOOL_TIMER_TOTAL_SECONDS = 0.0
+        chat_worker._TOOL_TIMER_HOOK_INSTALLED = False
+
+    def tearDown(self):
+        with chat_worker._TOOL_TIMER_LOCK:
+            chat_worker._TOOL_TIMER_ACTIVE.clear()
+            chat_worker._TOOL_TIMER_ACTIVE.update(self.old_active)
+            chat_worker._TOOL_TIMER_TOTAL_SECONDS = self.old_total
+        chat_worker._TOOL_TIMER_HOOK_INSTALLED = self.old_installed
+
+    @staticmethod
+    def fake_plugins():
+        registry = {}
+        hooks = ModuleType("plugins.hooks")
+
+        def register(event):
+            def decorator(callback):
+                registry.setdefault(event, []).append(callback)
+                return callback
+            return decorator
+
+        def trigger(event, ctx=None):
+            value = ctx or {}
+            for callback in registry.get(event, []):
+                value = callback(value)
+            return value
+
+        hooks.register = register
+        hooks.trigger = trigger
+        package = ModuleType("plugins")
+        package.hooks = hooks
+        return package, hooks, registry
+
+    def install_fake_hooks(self):
+        package, hooks, registry = self.fake_plugins()
+        with mock.patch.dict(sys.modules, {
+            "plugins": package,
+            "plugins.hooks": hooks,
+        }):
+            chat_worker._reset_tool_elapsed()
+        return hooks, registry
+
+    def test_tool_hooks_accumulate_and_consume_elapsed_ms(self):
+        hooks, registry = self.install_fake_hooks()
+        self.assertEqual(len(registry["tool_before"]), 1)
+        self.assertEqual(len(registry["tool_after"]), 1)
+
+        with mock.patch.object(
+            chat_worker.time, "perf_counter",
+            side_effect=[10.0, 10.125, 10.125, 10.125],
+        ):
+            hooks.trigger("tool_before", {"tool_name": "file_read"})
+            hooks.trigger("tool_after", {"tool_name": "file_read"})
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 125)
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
+
+    def test_consume_closes_unfinished_tool_from_worker_thread(self):
+        hooks, _ = self.install_fake_hooks()
+        started = threading.Event()
+
+        def begin_tool():
+            hooks.trigger("tool_before", {"tool_name": "code_run"})
+            started.set()
+
+        with mock.patch.object(
+            chat_worker.time, "perf_counter",
+            side_effect=[20.0, 20.4, 20.4],
+        ):
+            worker = threading.Thread(target=begin_tool)
+            worker.start()
+            self.assertTrue(started.wait(timeout=1))
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 400)
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
+
+    def test_reset_installs_hooks_only_once_and_clears_elapsed_time(self):
+        package, hooks, registry = self.fake_plugins()
+        modules = {"plugins": package, "plugins.hooks": hooks}
+        with mock.patch.dict(sys.modules, modules):
+            chat_worker._reset_tool_elapsed()
+            hooks.trigger("tool_before", {})
+            chat_worker._reset_tool_elapsed()
+
+        self.assertEqual(len(registry["tool_before"]), 1)
+        self.assertEqual(len(registry["tool_after"]), 1)
+        self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
 
 
 class ChatWorkerProtocolTest(unittest.TestCase):
@@ -191,6 +288,10 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         usage_events = [event for event in self.events if event.get("type") == "turn_usage"]
         self.assertEqual(usage_events[-2]["index"], 1)
         self.assertEqual(usage_events[-1]["index"], 1)
+        self.assertEqual(
+            [event for event in self.events if event.get("type") == "model_first_token"],
+            [{"type": "model_first_token"}],
+        )
 
     def test_outbound_model_events_follow_each_mixin_fallback_attempt(self):
         class LeafSession:

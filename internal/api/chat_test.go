@@ -986,6 +986,12 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") || strings.Contains(rr.Body.String(), "raw_history") || strings.Contains(rr.Body.String(), "tool_result") {
 		t.Fatalf("stream unexpectedly leaked prior/raw history: %s", rr.Body.String())
 	}
+	if strings.Contains(rr.Body.String(), "model_first_token") {
+		t.Fatalf("stream leaked internal first-token marker: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"first_token_ms":`) || strings.Contains(rr.Body.String(), `"first_token_ms":0`) {
+		t.Fatalf("stream terminal message missing non-zero first-token timing: %s", rr.Body.String())
+	}
 	if strings.Count(rr.Body.String(), `"model_id":"vendor/model-real"`) < 2 {
 		t.Fatalf("stream missing model event or terminal message model_id: %s", rr.Body.String())
 	}
@@ -1003,6 +1009,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 		t.Fatalf("stored assistant model_id=%q want vendor/model-real: %#v", stored.Messages[len(stored.Messages)-1].ModelID, stored.Messages)
 	}
 	storedFinal := stored.Messages[len(stored.Messages)-1]
+	if storedFinal.FirstTokenMS <= 0 {
+		t.Fatalf("stored assistant first_token_ms=%d want positive: %#v", storedFinal.FirstTokenMS, storedFinal)
+	}
 	if storedFinal.CtxChars != 3800 || storedFinal.CtxMsgs != 3 {
 		t.Fatalf("stored assistant context stats=(%d,%d) want (3800,3): %#v", storedFinal.CtxChars, storedFinal.CtxMsgs, storedFinal)
 	}
@@ -1027,6 +1036,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 		t.Fatalf("reloaded assistant model_id=%q want vendor/model-real: %#v", reloaded.Messages[len(reloaded.Messages)-1].ModelID, reloaded.Messages)
 	}
 	reloadedFinal := reloaded.Messages[len(reloaded.Messages)-1]
+	if reloadedFinal.FirstTokenMS <= 0 {
+		t.Fatalf("reloaded assistant first_token_ms=%d want positive: %#v", reloadedFinal.FirstTokenMS, reloadedFinal)
+	}
 	if reloadedFinal.CtxChars != 3800 || reloadedFinal.CtxMsgs != 3 {
 		t.Fatalf("reloaded assistant context stats=(%d,%d) want (3800,3): %#v", reloadedFinal.CtxChars, reloadedFinal.CtxMsgs, reloadedFinal)
 	}

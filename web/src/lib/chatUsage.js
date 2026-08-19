@@ -10,22 +10,17 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate uses protocol-specific denominators. Modern providers report
-// uncached input, cache creation, and cache read as disjoint buckets. Legacy
-// cached_tokens is already a subset of input_tokens, so adding it again would
-// inflate the denominator.
+// Cache hit rate uses the normalized input total. The worker's input_tokens
+// already includes uncached input, cache creation, and cache read buckets for
+// modern providers. Legacy cached_tokens is a subset of input_tokens as well.
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
-    const read = cacheReadTokens(usage)
-    const input = tokenCount(usage?.input_tokens)
-    const creation = tokenCount(usage?.cache_creation_tokens)
-    const hasModernBuckets = creation > 0 || tokenCount(usage?.cache_read_tokens) > 0
-    acc.read += read
-    acc.base += hasModernBuckets ? input + creation + read : input
+    acc.read += cacheReadTokens(usage)
+    acc.input += tokenCount(usage?.input_tokens)
     return acc
-  }, { read: 0, base: 0 })
-  return totals.base > 0 ? Math.round(totals.read / totals.base * 100) : 0
+  }, { read: 0, input: 0 })
+  return totals.input > 0 ? Math.round(totals.read / totals.input * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output
