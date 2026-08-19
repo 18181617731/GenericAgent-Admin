@@ -56,10 +56,10 @@ func (s *Server) listAutonomousTasks(w http.ResponseWriter, r *http.Request, roo
 		return
 	}
 	q := r.URL.Query()
-	status, source, search := strings.TrimSpace(q.Get("status")), strings.TrimSpace(q.Get("source")), strings.ToLower(strings.TrimSpace(q.Get("q")))
+	status, source, project, risk, priority, search := strings.TrimSpace(q.Get("status")), strings.TrimSpace(q.Get("source")), strings.TrimSpace(q.Get("project")), strings.TrimSpace(q.Get("risk")), strings.TrimSpace(q.Get("priority")), strings.ToLower(strings.TrimSpace(q.Get("q")))
 	filtered := make([]ga.AutonomousTask, 0, len(board.Tasks))
 	for _, task := range board.Tasks {
-		if status != "" && task.Status != status || source != "" && task.SourceType != source {
+		if status != "" && task.Status != status || source != "" && task.SourceType != source || project != "" && task.Project != project || risk != "" && task.Risk != risk || priority != "" && task.Priority != priority {
 			continue
 		}
 		if search != "" && !strings.Contains(strings.ToLower(task.Title+" "+task.Objective+" "+task.Project), search) {
@@ -341,6 +341,10 @@ func (s *Server) autonomousRuns(w http.ResponseWriter, r *http.Request) {
 		s.listAutonomousRunEvents(w, root, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "events" && r.Method == http.MethodPost {
+		s.appendAutonomousRunEvent(w, r, root, parts[0])
+		return
+	}
 	if len(parts) != 1 {
 		bad(w, http.StatusNotFound, "autonomous run route not found")
 		return
@@ -362,6 +366,39 @@ func (s *Server) autonomousRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]interface{}{"run": run, "events": events})
+}
+
+func (s *Server) appendAutonomousRunEvent(w http.ResponseWriter, r *http.Request, root, runID string) {
+	var input ga.AutonomousRunEventInput
+	if err := decode(r, &input); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.ReportPath != "" {
+		if _, _, err := ga.SafeResolve(root, input.ReportPath); err != nil {
+			bad(w, http.StatusBadRequest, "report_path must stay within the configured GA root")
+			return
+		}
+	}
+	board, err := ga.LoadAutonomousTaskBoard(root)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := ga.ApplyAutonomousRunEvent(&board, runID, input); err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "cannot become") {
+			code = http.StatusConflict
+		}
+		bad(w, code, err.Error())
+		return
+	}
+	if err := ga.SaveAutonomousTaskBoard(root, board); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	run, _ := findRun(board, runID)
+	writeJSON(w, map[string]interface{}{"ok": true, "run": run})
 }
 
 func (s *Server) listAutonomousRunEvents(w http.ResponseWriter, root, id string) {

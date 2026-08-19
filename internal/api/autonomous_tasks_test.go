@@ -39,6 +39,10 @@ func TestAutonomousTaskLifecycleAndSubresources(t *testing.T) {
 	assertAutonomousGET(t, h, "/api/autonomous/tasks/"+id+"/runs", "\"task_id\":\""+id+"\"")
 	assertAutonomousGET(t, h, "/api/autonomous/runs/"+runID, "\"run\"")
 	assertAutonomousGET(t, h, "/api/autonomous/runs/"+runID+"/events", "\"run_id\":\""+runID+"\"")
+	event := requestAutonomousTask(t, h, http.MethodPost, "/api/autonomous/runs/"+runID+"/events", `{"type":"run_started","message":"执行器已启动"}`)
+	if event["ok"] != true || event["run"].(map[string]interface{})["status"] != "running" {
+		t.Fatalf("event response=%+v", event)
+	}
 }
 
 func TestAutonomousTaskRejectsIllegalTransition(t *testing.T) {

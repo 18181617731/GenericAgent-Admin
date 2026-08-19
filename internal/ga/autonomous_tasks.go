@@ -65,21 +65,24 @@ type AutonomousTask struct {
 }
 
 type AutonomousRun struct {
-	ID          string    `json:"id"`
-	TaskID      string    `json:"task_id"`
-	Status      string    `json:"status"`
-	Stage       string    `json:"stage,omitempty"`
-	Progress    int       `json:"progress,omitempty"`
-	Service     string    `json:"service,omitempty"`
-	PID         int       `json:"pid,omitempty"`
-	RetryCount  int       `json:"retry_count,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	ReportPath  string    `json:"report_path,omitempty"`
-	StartedAt   time.Time `json:"started_at,omitempty"`
-	FinishedAt  time.Time `json:"finished_at,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	PauseReason string    `json:"pause_reason,omitempty"`
-	ControlPath string    `json:"control_path,omitempty"`
+	ID          string                `json:"id"`
+	TaskID      string                `json:"task_id"`
+	Status      string                `json:"status"`
+	Stage       string                `json:"stage,omitempty"`
+	Progress    int                   `json:"progress,omitempty"`
+	Service     string                `json:"service,omitempty"`
+	PID         int                   `json:"pid,omitempty"`
+	RetryCount  int                   `json:"retry_count,omitempty"`
+	Error       string                `json:"error,omitempty"`
+	ReportPath  string                `json:"report_path,omitempty"`
+	StartedAt   time.Time             `json:"started_at,omitempty"`
+	FinishedAt  time.Time             `json:"finished_at,omitempty"`
+	UpdatedAt   time.Time             `json:"updated_at"`
+	PauseReason string                `json:"pause_reason,omitempty"`
+	ControlPath string                `json:"control_path,omitempty"`
+	Steps       []AutonomousStep      `json:"steps,omitempty"`
+	Checkpoint  *AutonomousCheckpoint `json:"checkpoint,omitempty"`
+	LastEventAt time.Time             `json:"last_event_at,omitempty"`
 }
 
 type AutonomousEvent struct {
@@ -90,6 +93,48 @@ type AutonomousEvent struct {
 	Message   string                 `json:"message,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 	Data      map[string]interface{} `json:"data,omitempty"`
+}
+
+type AutonomousStep struct {
+	Name          string    `json:"name"`
+	Order         int       `json:"order"`
+	Status        string    `json:"status"`
+	Progress      int       `json:"progress,omitempty"`
+	StartedAt     time.Time `json:"started_at,omitempty"`
+	FinishedAt    time.Time `json:"finished_at,omitempty"`
+	OutputSummary string    `json:"output_summary,omitempty"`
+	Evidence      []string  `json:"evidence,omitempty"`
+	ReportPath    string    `json:"report_path,omitempty"`
+	BlockReason   string    `json:"block_reason,omitempty"`
+}
+
+type AutonomousCheckpoint struct {
+	StepOrder int                    `json:"step_order"`
+	StepName  string                 `json:"step_name"`
+	State     map[string]interface{} `json:"state,omitempty"`
+	SavedAt   time.Time              `json:"saved_at"`
+	Resumable bool                   `json:"resumable"`
+}
+
+const (
+	EventRunStarted       = "run_started"
+	EventStepStarted      = "step_started"
+	EventStepProgress     = "step_progress"
+	EventApprovalRequired = "approval_required"
+	EventStepBlocked      = "step_blocked"
+	EventStepFailed       = "step_failed"
+	EventCheckpointSaved  = "checkpoint_saved"
+	EventRunPaused        = "run_paused"
+	EventRunResumed       = "run_resumed"
+	EventRunCompleted     = "run_completed"
+	EventRunCancelled     = "run_cancelled"
+)
+
+var autonomousRunEventTypes = map[string]bool{
+	EventRunStarted: true, EventStepStarted: true, EventStepProgress: true,
+	EventApprovalRequired: true, EventStepBlocked: true, EventStepFailed: true,
+	EventCheckpointSaved: true, EventRunPaused: true, EventRunResumed: true,
+	EventRunCompleted: true, EventRunCancelled: true,
 }
 
 type autonomousTaskLedger struct {
