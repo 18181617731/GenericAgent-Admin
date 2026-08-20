@@ -9,9 +9,47 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"genericagent-admin-go/internal/config"
 )
+
+func TestRunCleanupWithTimeoutCompletes(t *testing.T) {
+	called := make(chan struct{})
+	if ok := runCleanupWithTimeout(func() { close(called) }, time.Second); !ok {
+		t.Fatal("runCleanupWithTimeout() timed out for completed cleanup")
+	}
+	select {
+	case <-called:
+	default:
+		t.Fatal("cleanup was not called")
+	}
+}
+
+func TestRunCleanupWithTimeoutStopsWaiting(t *testing.T) {
+	blocked := make(chan struct{})
+	started := make(chan struct{})
+	start := time.Now()
+	ok := runCleanupWithTimeout(func() {
+		close(started)
+		<-blocked
+	}, 100*time.Millisecond)
+	if ok {
+		close(blocked)
+		t.Fatal("runCleanupWithTimeout() completed while cleanup was blocked")
+	}
+	select {
+	case <-started:
+	default:
+		close(blocked)
+		t.Fatal("cleanup did not start")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		close(blocked)
+		t.Fatalf("runCleanupWithTimeout() returned after %v, want within 1s", elapsed)
+	}
+	close(blocked)
+}
 
 func TestAppRootExplicitRootTakesPrecedence(t *testing.T) {
 	explicit := t.TempDir()

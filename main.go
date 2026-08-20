@@ -134,12 +134,18 @@ func main() {
 		OpenSettings: func() { ui.OpenSettings(url) },
 		StopServices: func() { srv.StopManagedServices() },
 		Exit: func() {
-			ui.CloseAll()
-			srv.ShutdownCleanup()
-			adminhttp.RemoveRuntimeInfo(cwd)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			_ = server.Shutdown(ctx)
+			if !runCleanupWithTimeout(func() {
+				// Make the Admin unreachable and remove its discovery record before
+				// child cleanup, which may have to wait for a stuck installer.
+				adminhttp.RemoveRuntimeInfo(cwd)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_ = server.Shutdown(ctx)
+				ui.CloseAll()
+				srv.ShutdownCleanup()
+			}, 15*time.Second) {
+				log.Printf("shutdown cleanup exceeded 15 seconds; exiting without waiting for the remaining cleanup")
+			}
 		},
 		ListenAddr:         listener.Addr().String(),
 		Config:             cfgStore.Snapshot,
@@ -292,6 +298,25 @@ func hasGraphicalSession() bool {
 		}
 	}
 	return false
+}
+
+func runCleanupWithTimeout(cleanup func(), timeout time.Duration) bool {
+	if cleanup == nil {
+		return true
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cleanup()
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func waitForShutdownSignal(server *http.Server, cleanup func()) {

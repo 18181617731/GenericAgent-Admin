@@ -196,7 +196,7 @@ func (s *Server) cancelInstanceInstall(id string) <-chan struct{} {
 	return task.done
 }
 
-func (s *Server) stopInstanceInstalls() {
+func (s *Server) cancelInstanceInstalls() {
 	if s == nil {
 		return
 	}
@@ -206,7 +206,18 @@ func (s *Server) stopInstanceInstalls() {
 		task.cancel()
 	}
 	s.instanceInstallMu.Unlock()
+}
+
+func (s *Server) waitForInstanceInstalls() {
+	if s == nil {
+		return
+	}
 	s.instanceInstallWG.Wait()
+}
+
+func (s *Server) stopInstanceInstalls() {
+	s.cancelInstanceInstalls()
+	s.waitForInstanceInstalls()
 }
 
 func (s *Server) reusableInstanceTemplatePath() string {

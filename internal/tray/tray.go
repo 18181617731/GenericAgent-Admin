@@ -5,7 +5,6 @@ package tray
 import (
 	"log"
 	"runtime"
-	"sync"
 	"time"
 
 	"fyne.io/systray"
@@ -22,14 +21,6 @@ const trayRefreshInterval = 3 * time.Second
 // Run puts the menu on screen and blocks until the user quits from it.
 func Run(app App) {
 	text := trayLanguage()
-	var exitOnce sync.Once
-	quit := func() {
-		exitOnce.Do(func() {
-			if app.Exit != nil {
-				app.Exit()
-			}
-		})
-	}
 
 	systray.Run(func() {
 		if runtime.GOOS == "windows" {
@@ -112,13 +103,18 @@ func Run(app App) {
 				case <-stopItem.ClickedCh:
 					run(app.StopServices)
 				case <-exitItem.ClickedCh:
-					quit()
+					// Quit the native event loop before cleanup. fyne/systray runs
+					// its onExit callback synchronously on that loop, so doing
+					// process cleanup there can leave the tray icon stuck forever.
 					systray.Quit()
 					return
 				}
 			}
 		}()
-	}, quit)
+	}, nil)
+	if app.Exit != nil {
+		app.Exit()
+	}
 }
 
 // run keeps a click from blocking the menu on work that may open a window or

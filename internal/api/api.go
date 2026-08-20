@@ -1103,11 +1103,15 @@ func (s *Server) ShutdownCleanup() {
 	if s == nil {
 		return
 	}
-	s.stopInstanceInstalls()
+	// Prevent install work from starting or progressing before persistent child
+	// cleanup. Waiting happens last so a stuck installer cannot prevent chat
+	// workers and managed services from receiving their stop requests.
+	s.cancelInstanceInstalls()
 	s.StopChatHubBridge()
 	s.StopManagedServices()
 	if s.ReactApp != nil {
 		_ = s.ReactApp.stop()
 	}
 	s.CloseChatWorkers()
+	s.waitForInstanceInstalls()
 }
