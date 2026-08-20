@@ -10,17 +10,20 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate uses the normalized input total. The worker's input_tokens
-// already includes uncached input, cache creation, and cache read buckets for
-// modern providers. Legacy cached_tokens is a subset of input_tokens as well.
+// Cache hit rate: cache_read / total_input where total_input includes
+// uncached input + cache creation + cache read. Modern Claude API reports
+// these as disjoint buckets. Legacy cached_tokens is a subset of input_tokens.
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
-    acc.read += cacheReadTokens(usage)
-    acc.input += tokenCount(usage?.input_tokens)
+    const read = cacheReadTokens(usage)
+    const creation = tokenCount(usage?.cache_creation_tokens)
+    const uncached = tokenCount(usage?.input_tokens)
+    acc.read += read
+    acc.totalInput += uncached + creation + read
     return acc
-  }, { read: 0, input: 0 })
-  return totals.input > 0 ? Math.round(totals.read / totals.input * 100) : 0
+  }, { read: 0, totalInput: 0 })
+  return totals.totalInput > 0 ? Math.round(totals.read / totals.totalInput * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output

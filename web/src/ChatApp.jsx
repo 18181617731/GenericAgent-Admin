@@ -560,7 +560,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
           <pre><code>{p.text}</code></pre>
         </div>
       : p.type === 'tool'
-        ? <ToolCallBlock key={idx} call={p.call} onAskReply={onAskReply} />
+        ? null  // Skip tool parts - rendered via parsed.tools in AssistantContent
         : <TextMarkdown key={idx} text={p.text} onAskReply={onAskReply}/>) }
     {parts.length >= MARKDOWN_BLOCK_LIMIT && <div className="oa-md-truncated">{ct(`内容块过多，仅渲染前 ${MARKDOWN_BLOCK_LIMIT} 块，可复制消息查看完整内容。`, `Too many content blocks. Only the first ${MARKDOWN_BLOCK_LIMIT} are rendered; copy the message to view everything.`)}</div>}
   </div>
@@ -883,7 +883,216 @@ const hasUltraPlanDashboardState = (state) => !!(state && (
   || state.complete
 ))
 
-const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
+const preserveWindowsPathsInJson = value => value.replace(
+  /([A-Za-z]:)((?:\\+[^"\\]*)+)/g,
+  (_match, drive, tail) => drive + tail.replace(/\\+/g, run => (run.length % 2 ? `${run}\\` : run)),
+)
+
+const escapeJsonStringControlCharacters = value => {
+  let result = ''
+  let inString = false
+  let escaped = false
+  for (const char of value) {
+    if (!inString) {
+      result += char
+      if (char === '"') inString = true
+      continue
+    }
+    if (escaped) {
+      result += char
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      result += char
+      escaped = true
+      continue
+    }
+    if (char === '"') {
+      result += char
+      inString = false
+      continue
+    }
+    const escapedControl = {
+      '\b': '\\b',
+      '\f': '\\f',
+      '\n': '\\n',
+      '\r': '\\r',
+      '\t': '\\t',
+    }[char]
+    result += escapedControl || (char.charCodeAt(0) < 0x20
+      ? `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+      : char)
+  }
+  return result
+}
+
+const parseToolArgumentJsonText = value => {
+  const prepared = preserveWindowsPathsInJson(String(value || '').trim())
+  try {
+    return JSON.parse(prepared)
+  } catch {
+    try { return JSON.parse(escapeJsonStringControlCharacters(prepared)) } catch { return undefined }
+  }
+}
+
+export const parseToolReceiptArgs = (body = '') => {
+  if (body && typeof body === 'object' && !Array.isArray(body)) return body
+  const parsed = parseToolArgumentJsonText(body)
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+}
+
+const parseNestedToolArgumentJson = value => {
+  const trimmed = value.trim()
+  if (!((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')))) return value
+  const parsed = parseToolArgumentJsonText(trimmed)
+  return parsed === undefined ? value : parsed
+}
+
+const normalizeToolArgumentValue = value => (
+  typeof value === 'string' ? parseNestedToolArgumentJson(value) : value
+)
+
+const ToolArgumentValue = ({ value, name = '', depth = 0 }) => {
+  const normalized = normalizeToolArgumentValue(value)
+  if (Array.isArray(normalized)) {
+    return (
+      <ol className="ga-tool-arg-list">
+        {normalized.map((item, index) => (
+          <li key={index}><ToolArgumentValue value={item} depth={depth + 1} /></li>
+        ))}
+      </ol>
+    )
+  }
+  if (normalized && typeof normalized === 'object') {
+    return (
+      <dl className="ga-tool-arg-object">
+        {Object.entries(normalized).map(([key, item]) => (
+          <div className="ga-tool-arg-object-row" key={key}>
+            <dt>{key}</dt>
+            <dd><ToolArgumentValue value={item} name={key} depth={depth + 1} /></dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+  if (typeof normalized === 'string') {
+    const codeLike = normalized.includes('\n') || /^(script|code|content|patch|old_content|new_content)$/i.test(name)
+    return codeLike
+      ? <pre className="ga-tool-arg-code">{normalized}</pre>
+      : <span className="ga-tool-arg-text">{normalized || ct('空字符串', 'Empty string')}</span>
+  }
+  if (normalized === null) return <span className="ga-tool-arg-literal is-null">null</span>
+  return <span className={`ga-tool-arg-literal is-${typeof normalized}`}>{String(normalized)}</span>
+}
+
+const ToolArguments = ({ body = '' }) => {
+  const args = parseToolReceiptArgs(body)
+  const entries = Object.entries(args)
+  if (!entries.length) return <pre className="ga-fold-pre">{body}</pre>
+
+  return (
+    <dl className="ga-tool-args">
+      {entries.map(([key, value]) => (
+        <div className="ga-tool-arg" key={key}>
+          <dt>{key}</dt>
+          <dd><ToolArgumentValue value={value} name={key} /></dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+const TOOL_RESULT_MARKER_RE = /^\[(Action|Status|Stdout|Stderr)\](?:[ \t]*(.*))?$/i
+
+export const parseToolResultDetails = (body = '') => {
+  const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n')
+  const sections = []
+  let current = null
+
+  for (const line of lines) {
+    const marker = line.match(TOOL_RESULT_MARKER_RE)
+    if (marker) {
+      current = { kind: marker[1].toLowerCase(), content: marker[2] || '' }
+      sections.push(current)
+      continue
+    }
+    if (!current) {
+      if (line.trim()) return null
+      continue
+    }
+    current.content += `${current.content ? '\n' : ''}${line}`
+  }
+
+  if (!sections.length || !sections.some(section => section.kind === 'action' || section.kind === 'status')) return null
+  sections.forEach(section => { section.content = section.content.replace(/\n+$/, '') })
+  return sections
+}
+
+const toolResultState = sections => {
+  const status = sections.find(section => section.kind === 'status')?.content || ''
+  const exitCode = status.match(/Exit Code:\s*(-?\d+)/i)?.[1]
+  if (exitCode != null) return Number(exitCode) === 0 ? 'success' : 'error'
+  if (/[\u2705\u2714]/u.test(status)) return 'success'
+  if (/[\u274c\u2716]|\b(?:error|failed|failure)\b/i.test(status)) return 'error'
+  return 'neutral'
+}
+
+const ToolResultDetails = ({ body = '', live = false }) => {
+  const sections = parseToolResultDetails(body)
+  if (!sections) return <pre className="ga-fold-pre">{body}</pre>
+  const state = live ? 'live' : toolResultState(sections)
+
+  return (
+    <div className={`ga-tool-result is-${state}`}>
+      {sections.map((section, index) => (
+        <div className={`ga-tool-result-row is-${section.kind}`} key={`${section.kind}-${index}`}>
+          <div className="ga-tool-result-key">{section.kind}</div>
+          {section.kind === 'status'
+            ? <div className="ga-tool-result-status">{section.content || (live ? ct('\u6267\u884c\u4e2d', 'Running') : '\u2014')}</div>
+            : <pre className="ga-tool-result-value">{section.content || ct('\u65e0\u8f93\u51fa', 'No output')}</pre>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const receiptBaseName = (value = '') => String(value || '').split(/[\\/]/).filter(Boolean).pop() || ''
+
+const toolReceiptSummary = fold => {
+  const rawTool = String(fold?.label || '').trim()
+  const tool = rawTool.split('.').filter(Boolean).pop() || rawTool
+  const args = parseToolReceiptArgs(fold?.body)
+  const complete = Object.prototype.hasOwnProperty.call(fold || {}, 'result') && !fold?.resultLive
+  const state = fold?.resultLive ? 'live' : complete ? 'complete' : 'pending'
+  const status = state === 'live' ? ct('执行中', 'Running') : ''
+  const typeByTool = {
+    file_read: [ct('读取', 'Read'), args.path && `${receiptBaseName(args.path)}${args.start ? ` · L${args.start}-${Number(args.start) + Math.max(Number(args.count) || 1, 1) - 1}` : ''}`],
+    file_patch: [ct('编辑', 'Edit'), receiptBaseName(args.path)],
+    file_write: [ct('写入', 'Write'), receiptBaseName(args.path)],
+    code_run: [ct('执行', 'Run'), args.type || args.cwd || ''],
+    web_scan: [ct('浏览', 'Browse'), ct('页面内容', 'Page content')],
+    web_execute_js: [ct('浏览', 'Browse'), 'JavaScript'],
+    ask_user: [ct('询问', 'Ask'), args.question || ct('等待回复', 'Awaiting reply')],
+  }
+  const [kind, target] = typeByTool[tool] || [ct('工具', 'Tool'), receiptBaseName(args.path || args.file || args.cwd || '')]
+  return { kind, tool, status, state, target }
+}
+
+const ToolReceiptSummary = ({ fold, target }) => {
+  const receipt = toolReceiptSummary(fold)
+  const resolvedTarget = target || receipt.target
+  return (
+    <span className={`ga-receipt is-${receipt.state}`} data-state={receipt.state} aria-label={[receipt.kind, receipt.tool, receipt.status, resolvedTarget].filter(Boolean).join(' · ')}>
+      <span className="ga-receipt-kind">{receipt.kind}</span>
+      <span className="ga-receipt-tool">{receipt.tool}</span>
+      {receipt.status && <span className={`ga-receipt-status is-${receipt.state}`}>{receipt.status}</span>}
+      {resolvedTarget && <span className="ga-receipt-target" title={resolvedTarget}>{resolvedTarget}</span>}
+    </span>
+  )
+}
+
+const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickReply, quickReplyDisabled = false, openAskUser = false) => {
   const parsedState = parseUltraPlanText(text)
   const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
   const cleanText = stripUltraPlanProgressText(text)
@@ -896,7 +1105,53 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state) => {
   }
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
-  return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
+  
+  // Extract agent protocol folds (tool calls/results/thinking/function_calls)
+  const folds = foldAgentProtocolBlocks(cleanText)
+  const strippedText = stripAgentProtocolBlocks(cleanText)
+  
+  if (folds.length === 0) {
+    return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
+  }
+  
+  return (
+    <>
+      <div className="ga-execution-log">
+        {folds.map((fold, idx) => {
+          const hasResult = Object.prototype.hasOwnProperty.call(fold, 'result')
+          const receipt = toolReceiptSummary(fold)
+          const isFileMutation = receipt.tool === 'file_patch' || receipt.tool === 'file_write'
+          return (
+            <details
+              key={idx}
+              className={`ga-fold ${fold.cls}`}
+              open={fold.open || (openAskUser && receipt.tool === 'ask_user')}
+              data-fold-type={fold.type}
+            >
+              <summary>{fold.type.startsWith('tool-call') ? <ToolReceiptSummary fold={fold} /> : fold.label}</summary>
+              {fold.type.startsWith('tool-call') ? (
+                receipt.tool === 'ask_user'
+                  ? <AskUserPanel call={{ args: fold.body, result: hasResult ? fold.result : '' }} onReply={onAskReply} onQuickReply={onQuickReply} disabled={quickReplyDisabled} />
+                  : <div className="ga-tool-pair">
+                    <section className="ga-tool-pair-section ga-tool-pair-call">
+                      <div className="ga-tool-pair-label">{isFileMutation ? ct('文件改动', 'File changes') : ct('调用参数', 'Arguments')}</div>
+                      {isFileMutation
+                        ? <FileToolArgsPanel toolName={receipt.tool} args={fold.body} />
+                        : <ToolArguments body={fold.body} />}
+                    </section>
+                    {hasResult && <section className="ga-tool-pair-section ga-tool-pair-result">
+                      <div className="ga-tool-pair-label">{fold.resultLive ? ct('工具结果…', 'Tool result…') : ct('工具结果', 'Tool result')}</div>
+                      <ToolResultDetails body={fold.result} live={fold.resultLive} />
+                    </section>}
+                  </div>
+              ) : <pre className="ga-fold-pre">{fold.body}</pre>}
+            </details>
+          )
+        })}
+      </div>
+      {strippedText && <MarkdownBlock text={strippedText} onAskReply={onAskReply} />}
+    </>
+  )
 }
 
 const taskFileName = (fp = '') => String(fp || '').split(/[\\/]/).filter(Boolean).pop() || ''
@@ -1374,19 +1629,30 @@ const parseToolArgsBlock = (block = '') => {
   return m ? (m[1] || '').trim() : null
 }
 
-function AskUserPanel({ call, onReply }) {
+function AskUserPanel({ call, onReply, onQuickReply, disabled = false }) {
   const ask = getAskUserPayload(call)
+  const [submitting, setSubmitting] = useState(false)
   const hasStructured = Boolean(ask.question || ask.candidates.length)
+  const sendsDirectly = typeof onQuickReply === 'function'
+  const chooseCandidate = (event, value) => {
+    event.stopPropagation()
+    if (disabled || submitting) return
+    if (!sendsDirectly) {
+      onReply?.(value)
+      return
+    }
+    setSubmitting(true)
+    Promise.resolve(onQuickReply(value)).catch(() => setSubmitting(false))
+  }
+  const optionDisabled = sendsDirectly && (disabled || submitting)
+  const resultText = String(call.result || '').trim()
+  const showResult = resultText && !/^Waiting for your answer\s*(?:\.{3}|…)?$/i.test(resultText)
   return <div className="oa-ask-panel">
-    <div className="oa-ask-banner">
-      <span className="oa-ask-avatar"><CircleHelp size={15} /></span>
-      <div><b>{ct('需要用户确认', 'User confirmation required')}</b><p>{ct('智能体正在等待你的选择或补充信息', 'The agent is waiting for your choice or additional information')}</p></div>
-    </div>
     {hasStructured ? <div className="oa-ask-body">
-      {ask.question && <div className="oa-ask-question"><span>{ct('问题', 'Question')}</span><p>{ask.question}</p></div>}
-      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{ct('快捷回复', 'Quick replies')}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(e)=>{e.stopPropagation(); onReply?.(x)}} title={ct('点击填入输入框', 'Insert into the input')}><CornerDownLeft size={13} />{x}</button>)}</div></div>}
+      {ask.question && <p className="oa-ask-question">{ask.question}</p>}
+      {ask.candidates.length > 0 && <div className="oa-ask-options" role="group" aria-label={ct('快捷回复', 'Quick replies')}>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} disabled={optionDisabled} onClick={(event)=>chooseCandidate(event, x)} title={sendsDirectly ? ct('点击发送回复', 'Send this reply') : ct('点击填入输入框', 'Insert into the input')}>{sendsDirectly ? <Send size={13} /> : <CornerDownLeft size={13} />}<span>{x}</span></button>)}</div>}
     </div> : call.args && <div className="oa-tool-args"><span>{ct('问题', 'Question')}</span><pre>{call.args}</pre></div>}
-    {call.result && <div className="oa-tool-result oa-ask-result"><span>{ct('回复', 'Reply')}</span><pre>{call.result}</pre></div>}
+    {showResult && <div className="oa-tool-result oa-ask-result"><span>{ct('回复', 'Reply')}</span><pre>{call.result}</pre></div>}
   </div>
 }
 
@@ -1482,6 +1748,8 @@ function parseFileToolArgs(toolName, argsText) {
 }
 
 // Unified diff rows: line numbers + -/+ gutter, collapsed context
+const PATCH_AUTO_COLLAPSE_CHANGES = 12
+
 function DiffRows({ rows }) {
   return <div className="oa-diff" role="table" aria-label="文件改动逐行对照">
     {rows.map((row, i) => {
@@ -1505,7 +1773,6 @@ function DiffRows({ rows }) {
 // Render file tool arguments in a structured way
 function FileToolArgsPanel({ toolName, args, result }) {
   const fileArgs = parseFileToolArgs(toolName, args)
-  const [showContent, setShowContent] = useState(false)
 
   const { type, path, content, old_content, new_content, mode } = fileArgs || {}
   const diff = useMemo(() => {
@@ -1514,6 +1781,12 @@ function FileToolArgsPanel({ toolName, args, result }) {
       ? computeLineDiff(old_content, new_content, { context: 3 })
       : computeWriteRows(content)
   }, [fileArgs, type, old_content, new_content, content])
+  const patchStartsExpanded = !diff || (!diff.truncated && diff.added + diff.removed <= PATCH_AUTO_COLLAPSE_CHANGES)
+  const [patchExpanded, setPatchExpanded] = useState(patchStartsExpanded)
+
+  useEffect(() => {
+    setPatchExpanded(patchStartsExpanded)
+  }, [patchStartsExpanded])
 
   if (!fileArgs) {
     return <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{args}</pre></div>
@@ -1521,42 +1794,41 @@ function FileToolArgsPanel({ toolName, args, result }) {
 
   const { rows, added, removed, truncated } = diff
   const changedTotal = added + removed
+  const fileName = String(path || '').split(/[\\/]/).filter(Boolean).pop() || path
+  const isWrite = type === 'file_write'
 
-  return <div className="oa-tool-args oa-file-tool-args">
-    <div className="oa-file-tool-header">
-      <span className="oa-file-tool-badge">
-        {type === 'file_write' ? '📝 写入文件' : '✏️ 修改文件'}
+  return <div className={`oa-tool-args oa-file-tool-args is-patch${isWrite ? ' is-write' : ''}`}>
+    <div className="oa-patch-filebar" title={path}>
+      <FileCode2 size={14} strokeWidth={1.8} aria-hidden="true" />
+      <span className="oa-patch-file-id">
+        <strong>{fileName}</strong>
+        <span>{path}</span>
+        {isWrite && mode && mode !== 'overwrite' && <span className="oa-patch-mode">{mode}</span>}
       </span>
-      {mode && mode !== 'overwrite' && <span className="oa-file-tool-mode">{mode}</span>}
-      {changedTotal > 0 && (
-        <span className="oa-diff-stats">
-          {added > 0 && <span className="oa-diff-stats-add">{`+${added}`}</span>}
-          {removed > 0 && <span className="oa-diff-stats-del">{`-${removed}`}</span>}
-        </span>
-      )}
+      <span className="oa-patch-stats" aria-label={ct(`新增 ${added} 行，删除 ${removed} 行`, `${added} lines added, ${removed} removed`)}>
+        <span className="oa-diff-stats-add">{`+${added}`}</span>
+        <span className="oa-diff-stats-del">{`−${removed}`}</span>
+      </span>
+      {changedTotal > 0 && rows.length > 0 && <button
+        className="oa-patch-toggle"
+        type="button"
+        aria-expanded={patchExpanded}
+        aria-label={patchExpanded ? ct('收起文件改动', 'Collapse file changes') : ct('展开文件改动', 'Expand file changes')}
+        title={patchExpanded ? ct('收起改动', 'Collapse changes') : ct('展开改动', 'Expand changes')}
+        onClick={() => setPatchExpanded(value => !value)}
+      >
+        <span>{patchExpanded ? ct('收起', 'Collapse') : ct('展开', 'Expand')}</span>
+        <ChevronDown size={13} aria-hidden="true" />
+      </button>}
+      <CopyButton text={path} compact />
     </div>
 
     <FileAttachment path={path} resolvedPath={extractToolResultFilePath(result)} />
 
-    {changedTotal === 0 && <div className="oa-file-tool-empty">无行级改动</div>}
-
-    {changedTotal > 0 && rows.length > 0 && (
-      <div className="oa-file-tool-content">
-        <button
-          type="button"
-          className="oa-file-tool-toggle"
-          onClick={() => setShowContent(v => !v)}
-          aria-expanded={showContent}
-        >
-          {showContent ? '收起改动' : `查看改动 (+${added} / -${removed})`}
-          <ChevronDown size={14} style={{ transform: showContent ? 'rotate(180deg)' : 'none' }} />
-        </button>
-        {showContent && (
-          <div className="oa-file-tool-preview">
-            {truncated && <div className="oa-diff-note">改动过大，已按块粗粒度对比</div>}
-            <DiffRows rows={rows} />
-          </div>
-        )}
+    {changedTotal > 0 && rows.length > 0 && patchExpanded && (
+      <div className="oa-file-tool-preview">
+        {truncated && <div className="oa-diff-note">{ct('改动过大，已按块粗粒度对比', 'Large change; showing a coarse block diff')}</div>}
+        <DiffRows rows={rows} />
       </div>
     )}
   </div>
@@ -1703,8 +1975,7 @@ function ToolCallBlock({ call, onAskReply }) {
   const toolName = String(call.name || 'unknown').trim()
   const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
   const isFileTool = /file_(write|patch)$/i.test(toolName)
-  const [open, setOpen] = useState(isAskUser)
-  const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
+  const [open, setOpen] = useState(false)
   const askPayload = isAskUser ? getAskUserPayload(call) : null
   const askSummary = askPayload?.question || '等待用户确认'
 
@@ -1726,11 +1997,17 @@ function ToolCallBlock({ call, onAskReply }) {
       {isFileTool ? (
         <FileToolArgsPanel toolName={toolName} args={call.args} result={call.result} />
       ) : (
-        call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>
+        call.args && <div className="oa-tool-section">
+          <div className="oa-tool-label">args</div>
+          <pre className="oa-tool-code">{call.args}</pre>
+        </div>
       )}
-      {call.result && <div className="oa-tool-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
-    </>)}
-  </div>
+      {call.result && <div className="oa-tool-section">
+        <div className="oa-tool-label oa-tool-label-result">result</div>
+        <pre className="oa-tool-code oa-tool-code-result">{call.result}</pre>
+      </div>}
+    </div>
+  </details>
 }
 
 function MarkdownTable({ table }) {
@@ -2178,14 +2455,26 @@ function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskRep
   )
 }
 
-const AssistantContent = memo(function AssistantContent({ content, pending, onAskReply, turnUsages, ultraplan_state }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, turnUsages, ultraplan_state }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
   useEffect(() => { setStackOpen(pending) }, [pending])
   const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
-  const parsed = useMemo(() => parseAssistantContent(content), [content])
+  
+  // Try structured parsing first, fall back to text parsing
+  const parsed = useMemo(() => {
+    console.log('[AssistantContent] structuredContent:', structuredContent)
+    if (structuredContent) {
+      const result = parseStructuredContent(structuredContent)
+      console.log('[AssistantContent] parseStructuredContent result:', result)
+      if (result) return result
+    }
+    // Fall back to text parsing
+    console.log('[AssistantContent] Falling back to parseAssistantContent')
+    return parseAssistantContent(content)
+  }, [content, structuredContent])
   const hasTurnSplit = parsed.runs.length > 0
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
   if (!content && pending && !hasLiveUltraPlan) return <div className="oa-content oa-thinking">{ct('正在思考…', 'Thinking…')}</div>
@@ -2222,21 +2511,24 @@ const AssistantContent = memo(function AssistantContent({ content, pending, onAs
               <UsageRow u={tu} className="oa-usage-inline" />
               <ChevronDown size={15} className="oa-turn-chevron"/>
             </button>
-            {open && (r.body ? renderAssistantBody(r.body, onAskReply) : <p className="oa-turn-empty">{ct('该轮暂无详细输出', 'No detailed output for this turn')}</p>)}
+            {open && (r.body ? renderAssistantBody(r.body, onAskReply, undefined, onQuickReply, quickReplyDisabled) : <p className="oa-turn-empty">{ct('该轮暂无详细输出', 'No detailed output for this turn')}</p>)}
           </section>
         </div>
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
         <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">{ct('步骤', 'Step')} {lastRun.turn}</span>{hasFileMutation(lastRun.body) && <StepFileMutationMarker />}<b>{lastRun.title || ct('正在执行', 'Running')}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? ct('实时输出中', 'Live output') : ct('最新一轮', 'Latest turn')}</em></div>
         {lastRun.body || ultraPlanStateForLastRun
-          ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun)
+          ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun, onQuickReply, quickReplyDisabled, isLatestMessage)
           : <p className="oa-turn-empty">{ct('正在等待该轮输出…', 'Waiting for this turn’s output…')}</p>}
       </section>}
     </div>}
     {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
       {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
       {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
-      {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state)}
+      {parsed.tools && parsed.tools.length > 0 && <div className="oa-tools-section">
+        {parsed.tools.map((call, idx) => <ToolCallBlock key={idx} call={call} onAskReply={onAskReply} />)}
+      </div>}
+      {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state, onQuickReply, quickReplyDisabled, isLatestMessage)}
     </div>}
     <FileSummaryCard content={content} />
   </div>
@@ -3665,7 +3957,16 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         for (const line of lines) {
           if (!line.trim()) continue
           if (!isActiveSession(sessionId)) return { commandPatch, eventCount, terminal }
-          consumeEvent(JSON.parse(line))
+          const ev = JSON.parse(line)
+          // Log delta events with full content
+          if (ev.type === 'delta') {
+            console.log('[SSE] delta:', JSON.parse(JSON.stringify(ev)))
+          }
+          // Log any event containing structured_content
+          if ('structured_content' in ev) {
+            console.log('[SSE] *** FOUND structured_content ***:', ev.structured_content)
+          }
+          consumeEvent(ev)
         }
       }
       buf += dec.decode()

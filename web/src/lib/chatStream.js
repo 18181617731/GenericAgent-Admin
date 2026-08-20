@@ -41,6 +41,10 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   if (!(Number(merged.run_started_at_ms) > 0) && Number(streamed.run_started_at_ms) > 0) merged.run_started_at_ms = streamed.run_started_at_ms
   if (!(Number(merged.ctx_chars) > 0) && Number(streamed.ctx_chars) > 0) merged.ctx_chars = streamed.ctx_chars
   if (!(Number(merged.ctx_msgs) > 0) && Number(streamed.ctx_msgs) > 0) merged.ctx_msgs = streamed.ctx_msgs
+  // Preserve structured_content from finalMessage (done event)
+  if (Array.isArray(finalMessage.structured_content) && finalMessage.structured_content.length > 0) {
+    merged.structured_content = finalMessage.structured_content
+  }
   return merged
 }
 
