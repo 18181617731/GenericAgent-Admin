@@ -29,6 +29,10 @@ func (s *Server) autonomousTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/autonomous/tasks/"), "/")
+	if id == "parse" {
+		s.parseAutonomousTaskInput(w, r)
+		return
+	}
 	parts := strings.Split(id, "/")
 	if len(parts) == 2 && parts[1] == "runs" && r.Method == http.MethodGet {
 		s.listAutonomousTaskRuns(w, root, parts[0])

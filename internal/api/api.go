@@ -333,6 +333,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/autonomous/approvals/review", Level: "reversible", Action: "review_autonomous_approval", Reason: "sends pending autonomous proposals to the configured review model; does not approve or execute them"},
 	{Path: "/api/autonomous/tasks", Level: "reversible", Action: "manage_autonomous_tasks", Reason: "creates and updates the versioned autonomous task, run, and event ledgers"},
 	{Path: "/api/autonomous/tasks/", Level: "reversible", Action: "control_autonomous_task", Reason: "changes autonomous task execution state and records an auditable event"},
+	{Path: "/api/autonomous/tasks/parse", Level: "reversible", Action: "parse_autonomous_task_input", Reason: "sends a one-line task description to the configured model to draft task fields; falls back to the raw input and writes nothing"},
 	{Path: "/api/autonomous/runs/", Level: "reversible", Action: "inspect_autonomous_run", Reason: "reads a task run and its event history"},
 	{Path: "/api/tmwebdriver/repair", Level: "reversible", Action: "start_tmwebdriver_master", Reason: "starts a persistent TMWebDriver master process on localhost:18766"},
 	{Path: "/api/tmwebdriver/install-deps", Level: "dangerous", Action: "install_tmwebdriver_deps", Reason: "runs pip install with Tsinghua PyPI mirror for TMWebDriver dependencies"},

@@ -16,6 +16,8 @@ const approvalDetails = (item, copy, lang) => [
   [copy.evidence, localizeAutonomousApprovalValue(item.evidence, lang, 'evidence')],
 ].filter(([, value]) => value)
 
+const zhDetailLabel = (lang, zh, en) => lang === 'en' ? en : zh
+
 const executionPresentation = (item, copy) => {
   const state = autonomousExecutionState(item)
   const labels = {
@@ -93,31 +95,36 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
       <em>{pending ? copy.pending : item.state === 'approved' ? (lang === 'en' ? 'Approved' : '已批准') : item.state === 'rejected' ? (lang === 'en' ? 'Rejected' : '已拒绝') : (lang === 'en' ? 'Archived' : '已归档')}</em>
     </header>
     {review.hasReviewData && <section className={`autonomous-approval-review is-${review.kind}`} aria-label={copy.reviewMethod}>
-      <div className="autonomous-approval-review-head"><strong>{copy.reviewMethod}</strong><span>{review.method}</span><em>{review.badge}</em></div>
-      <p>{review.summary}</p>
-      {review.basis.length > 0 && <p className="autonomous-approval-review-basis"><b>{copy.reviewBasis}：</b>{review.basis.join('；')}</p>}
-      {(review.model || review.decision || review.confidence) && <div className="autonomous-approval-review-meta">
-        {review.model && <span><b>{copy.reviewModel}</b>{review.model}</span>}
-        {review.decision && <span><b>{copy.reviewDecision}</b>{review.decision}</span>}
-        {review.confidence && <span><b>{copy.reviewConfidence}</b>{review.confidence}</span>}
-      </div>}
+      <div className="autonomous-approval-review-head"><strong>{copy.reviewMethod}</strong><em>{review.badge}</em></div>
+      <details className="autonomous-approval-review-details"><summary>{zhDetailLabel(lang, 'AI 审核详情', 'AI review details')}</summary>
+        <p><span>{review.method}</span></p>
+        <p>{review.summary}</p>
+        {review.basis.length > 0 && <p className="autonomous-approval-review-basis"><b>{copy.reviewBasis}：</b>{review.basis.join('；')}</p>}
+        {(review.model || review.decision || review.confidence) && <div className="autonomous-approval-review-meta">
+          {review.model && <span><b>{copy.reviewModel}</b>{review.model}</span>}
+          {review.decision && <span><b>{copy.reviewDecision}</b>{review.decision}</span>}
+          {review.confidence && <span><b>{copy.reviewConfidence}</b>{review.confidence}</span>}
+        </div>}
+      </details>
     </section>}
     <section className="autonomous-approval-problem">
       <strong>{copy.problem}</strong>
       <p>{summarizeAutonomousProblem(item, lang)}</p>
     </section>
     <ApprovalReviewContext item={item} lang={lang} copy={copy}/>
-    <dl>{approvalDetails(item, copy, lang).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-    {!pending && (item.decided_at || item.note) && <div className="autonomous-decision-meta">
-      {item.decided_at && <span>{copy.decidedAt}：{readableAutonomousDate(item.decided_at, lang)}</span>}
-      {item.note && <span>{copy.note}：{localizeAutonomousApprovalValue(item.note, lang, 'note')}</span>}
-    </div>}
-    {showExecution && <div className={`autonomous-execution is-${execution.state || 'unknown'}`}>
-      <div className="autonomous-execution-head"><span>{copy.execution}</span><b>{execution.label}</b></div>
-      {item.execution_summary && <p><strong>{copy.executionSummary}：</strong>{localizeAutonomousApprovalValue(item.execution_summary, lang, 'executionSummary')}</p>}
-      {item.execution_error && <p className="autonomous-execution-error">{localizeAutonomousApprovalValue(item.execution_error, lang, 'executionError')}</p>}
-      {item.execution_report && <button type="button" className="autonomous-execution-link" aria-label={`${copy.openExecutionReport}：${item.execution_report.name || item.execution_report.path}`} onClick={() => onOpenReport?.(item.execution_report)}>{copy.openExecutionReport}：{item.execution_report.name || item.execution_report.path}</button>}
-    </div>}
+    <details className="autonomous-approval-extra"><summary>{zhDetailLabel(lang, '详情', 'Details')}</summary><dl>{approvalDetails(item, copy, lang).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></details>
+    {!pending && (item.decided_at || item.note || showExecution) && <details className="autonomous-handled-extra"><summary>{item.decided_at ? readableAutonomousDate(item.decided_at, lang) : zhDetailLabel(lang, '处理详情', 'Handled details')}{showExecution ? ` · ${execution.label}` : ''}</summary>
+      {(item.decided_at || item.note) && <div className="autonomous-decision-meta">
+        {item.decided_at && <span>{copy.decidedAt}：{readableAutonomousDate(item.decided_at, lang)}</span>}
+        {item.note && <span>{copy.note}：{localizeAutonomousApprovalValue(item.note, lang, 'note')}</span>}
+      </div>}
+      {showExecution && <div className={`autonomous-execution is-${execution.state || 'unknown'}`}>
+        <div className="autonomous-execution-head"><span>{copy.execution}</span><b>{execution.label}</b></div>
+        {item.execution_summary && <p><strong>{copy.executionSummary}：</strong>{localizeAutonomousApprovalValue(item.execution_summary, lang, 'executionSummary')}</p>}
+        {item.execution_error && <p className="autonomous-execution-error">{localizeAutonomousApprovalValue(item.execution_error, lang, 'executionError')}</p>}
+        {item.execution_report && <button type="button" className="autonomous-execution-link" aria-label={`${copy.openExecutionReport}：${item.execution_report.name || item.execution_report.path}`} onClick={() => onOpenReport?.(item.execution_report)}>{copy.openExecutionReport}：{item.execution_report.name || item.execution_report.path}</button>}
+      </div>}
+    </details>}
     {item.review_reports?.length > 0 && <div className="autonomous-review-reports"><span>{copy.reviewReports}</span><div>{item.review_reports.map(report => <button type="button" key={report.path} onClick={() => onOpenReport?.(report)}>{copy.openReviewReport}：{report.name || report.path}</button>)}</div></div>}
     {pending && <div className="autonomous-approval-reply"><label><span>{copy.reply}</span><textarea aria-label={copy.reply} maxLength={1000} rows={3} value={reply} onChange={event => onReply(event.target.value)}/></label><small>{copy.replyHelp}</small></div>}
     {pending && <footer>
@@ -145,9 +152,12 @@ function BulkProgressPanel({ progress, copy, lang, onRetryFailed, onClear }) {
     {progress.currentTitle && <p className="autonomous-bulk-progress-current"><span>{progress.running ? copy.bulkProgressCurrent : copy.bulkProgressLast}</span><b>{localizeAutonomousApprovalValue(progress.currentTitle, lang, 'title')}</b></p>}
     {progress.results.length > 0 && <div className="autonomous-bulk-progress-details">
       <div className="autonomous-bulk-progress-details-head"><b>{copy.bulkProgressDetails}</b><span>{progress.results.length}</span></div>
-      <ul>{progress.results.map(result => <li className={`is-${result.status}`} key={`${result.id}-${result.attempt}`}>
-        {result.status === 'success' ? <CheckCircle2 size={15}/> : <AlertCircle size={15}/>}<div><b>{localizeAutonomousApprovalValue(result.title, lang, 'title')}</b><span>{result.status === 'success' ? (result.queued ? copy.bulkProgressQueued : copy.bulkProgressRecorded) : `${copy.bulkProgressError}：${result.error}`}</span></div>
+      <ul>{progress.results.filter(result => result.status !== 'success').map(result => <li className={`is-${result.status}`} key={`${result.id}-${result.attempt}`}>
+        <AlertCircle size={15}/><div><b>{localizeAutonomousApprovalValue(result.title, lang, 'title')}</b><span>{`${copy.bulkProgressError}：${result.error}`}</span></div>
       </li>)}</ul>
+      {progress.successCount > 0 && <details className="autonomous-bulk-progress-successes"><summary>{lang === 'en' ? `Show successes (${progress.successCount})` : `查看成功 ${progress.successCount} 项`}</summary><ul>{progress.results.filter(result => result.status === 'success').map(result => <li className="is-success" key={`${result.id}-${result.attempt}`}>
+        <CheckCircle2 size={15}/><div><b>{localizeAutonomousApprovalValue(result.title, lang, 'title')}</b><span>{result.queued ? copy.bulkProgressQueued : copy.bulkProgressRecorded}</span></div>
+      </li>)}</ul></details>}
     </div>}
     {!progress.running && failedItems.length > 0 && <button type="button" className="secondary autonomous-bulk-progress-retry" onClick={() => onRetryFailed?.(failedItems)}><RefreshCw size={15}/>{copy.retryFailed(failedItems.length)}</button>}
   </section>
@@ -177,7 +187,7 @@ function HandledApprovalGroups({ groups, copy, cardProps }) {
           setExpandedKeys(current => isOpen ? [...new Set([...current, group.key])] : current.filter(key => key !== group.key))
         }}>
           <summary>
-            <span className="autonomous-approval-group-heading"><ChevronDown size={16}/><span><b>{detail.label}</b><small>{detail.description}</small></span></span>
+            <span className="autonomous-approval-group-heading"><ChevronDown size={16}/><span><b title={detail.description}>{detail.label}</b></span></span>
             <strong>{group.items.length}</strong>
           </summary>
           <ApprovalCardList items={group.items} {...cardProps}/>
@@ -214,7 +224,7 @@ function ApprovalPane({ overview, lang, busyIDs, reviewBusy, bulkProgress, onRev
     onOpenReport,
   }
   return <div className="autonomous-approvals-pane">
-    <div className="autonomous-callout"><b>{lang === 'en' ? 'Approval boundary' : '审批边界'}</b><span>{copy.approvalIntro}</span></div>
+    <details className="autonomous-callout"><summary><b>{lang === 'en' ? 'Approval boundary' : '审批边界'}</b></summary><span>{copy.approvalIntro}</span></details>
     <div className="autonomous-filter-tabs" role="tablist" aria-label={copy.approvals}>
       <button type="button" role="tab" aria-selected={mode === 'pending'} className={mode === 'pending' ? 'active' : ''} onClick={() => setMode('pending')}>{copy.pending}<span>{groups.pending.length}</span></button>
       <button type="button" role="tab" aria-selected={mode === 'handled'} className={mode === 'handled' ? 'active' : ''} onClick={() => setMode('handled')}>{copy.handled}<span>{groups.handled.length}</span></button>
@@ -266,7 +276,7 @@ function ReportPane({ reports, lang, initialReport }) {
     return () => { active = false }
   }, [latestReport])
   return <div className="autonomous-records-pane">
-    {latestReport && <section className="autonomous-latest-result" aria-label={copy.latestResult}><header><div><span>{copy.latestResult}</span><b>{latestReport.name}</b></div><em>{copy.reportReady}</em></header><p>{latest.status === 'loading' ? `${copy.loading}…` : latest.status === 'error' ? `${copy.loadFailed}：${latest.summary}` : latest.summary || copy.noResult}</p><button type="button" onClick={() => openReport(latestReport)}>{copy.openReport}</button></section>}
+    {latestReport && <details className="autonomous-latest-result" aria-label={copy.latestResult}><summary><div><span>{copy.latestResult}</span><b>{latestReport.name}</b></div><em>{copy.reportReady}</em></summary><p>{latest.status === 'loading' ? `${copy.loading}…` : latest.status === 'error' ? `${copy.loadFailed}：${latest.summary}` : latest.summary || copy.noResult}</p><button type="button" onClick={() => openReport(latestReport)}>{copy.openReport}</button></details>}
     <div className={`autonomous-report-reader ${selected ? 'has-selection' : ''}`}>
     <aside className="autonomous-report-index">
       <label className="autonomous-report-search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder={copy.reportSearch} aria-label={copy.reportSearch}/></label>
@@ -289,7 +299,6 @@ function ReportPane({ reports, lang, initialReport }) {
 
 export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionStates = {}, reports = [], onStart, onStop, onLogs, onAutostart, onModel, onRefresh, setMessage }) {
   const copy = autonomousCopy(lang)
-  const [tab, setTab] = useState('services')
   const [approvals, setApprovals] = useState({ items: [], pending: 0, source_exists: false })
   const [loading, setLoading] = useState(true)
   const [busyIDs, setBusyIDs] = useState(new Set())
@@ -371,17 +380,11 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
     if (!entries.length || !bulkProgress) return
     decideMany(entries, bulkProgress.decision, '', { forceProgress: true, confirmText: copy.retryFailedConfirm(entries.length) })
   }
-  const tabs = [['services', copy.services], ['approvals', `${copy.approvals}${summary.pending ? ` (${summary.pending})` : ''}`], ['records', copy.records]]
+  const [tab, setTab] = useState('overview')
+  const tabs = [['overview', lang === 'en' ? 'Tasks overview' : '任务总览'], ['approvals', `${copy.approvals}${summary.pending ? ` (${summary.pending})` : ''}`], ['records', copy.records]]
   return <section className="autonomous-page">
-    <AutonomousTaskWorkspace lang={lang} />
-    <div className="autonomous-overview">
-      <div><span>{copy.serviceStat}</span><b>{summary.running}<small> / {summary.total}</small></b></div>
-      <div><span>{copy.pendingStat}</span><b>{summary.pending}</b></div>
-      <div><span>{copy.reportStat}</span><b>{summary.reports}</b></div>
-      <div><span>{copy.latestStat}</span><b className="is-date">{summary.latestReport ? readableAutonomousDate(summary.latestReport.mod_time, lang) : copy.noRecent}</b></div>
-    </div>
     <div className="autonomous-toolbar"><div className="autonomous-tabs" role="tablist">{tabs.map(([id, label]) => <button type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} key={id} onClick={() => setTab(id)}>{label}</button>)}</div><button type="button" className="autonomous-refresh" disabled={loading || bulkProgress?.running} onClick={refresh}><RefreshCw className={loading || bulkProgress?.running ? 'spin' : ''} size={16}/>{copy.refresh}</button></div>
-    {tab === 'services' && <div className="autonomous-services-pane"><div className="autonomous-callout"><b>{lang === 'en' ? 'How services work' : '服务说明'}</b><span>{copy.serviceIntro}</span></div><div className="autonomous-service-grid">{services.length ? services.map(service => <AutonomousServiceCard key={service.name} service={service} lang={lang} llms={llms} actionState={actionStates[service.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onModel={onModel}/>) : <div className="autonomous-empty">{lang === 'en' ? 'No autonomous service was found' : '未发现自主进化服务'}</div>}</div></div>}
+    {tab === 'overview' && <div className="autonomous-overview-pane"><div className="autonomous-service-strip">{services.length ? services.map(service => <AutonomousServiceCard key={service.name} service={service} lang={lang} llms={llms} actionState={actionStates[service.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onModel={onModel} compact/>) : <div className="autonomous-empty">{lang === 'en' ? 'No autonomous service was found' : '未发现自主进化服务'}</div>}</div><AutonomousTaskWorkspace lang={lang} /></div>}
     {tab === 'approvals' && <ApprovalPane
       overview={approvals}
       lang={lang}
