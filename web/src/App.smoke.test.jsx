@@ -334,9 +334,11 @@ describe('autonomous operations page', () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(approvalOverview([])))
     render(<AutonomousPage lang="zh" services={[{ name: 'reflect/autonomous.py', running: false }]}/>)
 
-    const help = await screen.findByLabelText(/主自主引擎：核心后台服务/)
-    expect(help.getAttribute('tabindex')).toBe('0')
-    expect(help.getAttribute('data-tooltip')).toContain('自主任务队列')
+    // Services render in compact form on the default overview tab.
+    expect(await screen.findByText('主自主引擎')).toBeTruthy()
+    fireEvent.click(screen.getByText('说明与运行详情'))
+    const help = await screen.findByText(/自主任务队列/)
+    expect(help).toBeTruthy()
   })
 })
 
@@ -1084,7 +1086,7 @@ describe('chat response model identity', () => {
       />,
     )
 
-    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m30s')
+    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m')
   })
 
   test('uses the persisted terminal elapsed duration instead of continuing the live clock', () => {

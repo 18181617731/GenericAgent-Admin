@@ -21,6 +21,8 @@ import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantFinalResult, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { parseStructuredContent } from './lib/structuredContent'
+import { foldAgentProtocolBlocks, stripAgentProtocolBlocks } from './lib/agentProtocol'
 import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -549,7 +551,7 @@ const normalizeToolParts = (parts = []) => {
   return out
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply, onQuickReply, quickReplyDisabled = false }) {
   const stats = useMemo(() => textRenderStats(text), [text])
   const parts = useMemo(() => stats.tooLarge ? [] : normalizeToolParts(splitMarkdownParts(text)).slice(0, MARKDOWN_BLOCK_LIMIT), [text, stats.tooLarge])
   if (stats.tooLarge) return <div className="oa-md"><LongTextPreview text={text} stats={stats} /></div>
@@ -560,7 +562,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
           <pre><code>{p.text}</code></pre>
         </div>
       : p.type === 'tool'
-        ? null  // Skip tool parts - rendered via parsed.tools in AssistantContent
+        ? <ToolCallBlock key={idx} call={p.call} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} />
         : <TextMarkdown key={idx} text={p.text} onAskReply={onAskReply}/>) }
     {parts.length >= MARKDOWN_BLOCK_LIMIT && <div className="oa-md-truncated">{ct(`内容块过多，仅渲染前 ${MARKDOWN_BLOCK_LIMIT} 块，可复制消息查看完整内容。`, `Too many content blocks. Only the first ${MARKDOWN_BLOCK_LIMIT} are rendered; copy the message to view everything.`)}</div>}
   </div>
@@ -883,6 +885,7 @@ const hasUltraPlanDashboardState = (state) => !!(state && (
   || state.complete
 ))
 
+
 const preserveWindowsPathsInJson = value => value.replace(
   /([A-Za-z]:)((?:\\+[^"\\]*)+)/g,
   (_match, drive, tail) => drive + tail.replace(/\\+/g, run => (run.length % 2 ? `${run}\\` : run)),
@@ -1099,7 +1102,7 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickRepl
   if (hasUltraPlanDashboardState(upState)) {
     return cleanText ? (
       <div className="oa-ultraplan-prose">
-        <MarkdownBlock text={cleanText} onAskReply={onAskReply} />
+        <MarkdownBlock text={cleanText} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} />
       </div>
     ) : null
   }
@@ -1111,7 +1114,7 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickRepl
   const strippedText = stripAgentProtocolBlocks(cleanText)
   
   if (folds.length === 0) {
-    return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
+    return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} /> : null
   }
   
   return (
@@ -1149,7 +1152,7 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickRepl
           )
         })}
       </div>
-      {strippedText && <MarkdownBlock text={strippedText} onAskReply={onAskReply} />}
+      {strippedText && <MarkdownBlock text={strippedText} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} />}
     </>
   )
 }
@@ -1648,9 +1651,13 @@ function AskUserPanel({ call, onReply, onQuickReply, disabled = false }) {
   const resultText = String(call.result || '').trim()
   const showResult = resultText && !/^Waiting for your answer\s*(?:\.{3}|…)?$/i.test(resultText)
   return <div className="oa-ask-panel">
+    <div className="oa-ask-banner">
+      <span className="oa-ask-avatar"><CircleHelp size={15} /></span>
+      <div><b>{ct('需要用户确认', 'User confirmation required')}</b><p>{ct('智能体正在等待你的选择或补充信息', 'The agent is waiting for your choice or additional information')}</p></div>
+    </div>
     {hasStructured ? <div className="oa-ask-body">
-      {ask.question && <p className="oa-ask-question">{ask.question}</p>}
-      {ask.candidates.length > 0 && <div className="oa-ask-options" role="group" aria-label={ct('快捷回复', 'Quick replies')}>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} disabled={optionDisabled} onClick={(event)=>chooseCandidate(event, x)} title={sendsDirectly ? ct('点击发送回复', 'Send this reply') : ct('点击填入输入框', 'Insert into the input')}>{sendsDirectly ? <Send size={13} /> : <CornerDownLeft size={13} />}<span>{x}</span></button>)}</div>}
+      {ask.question && <div className="oa-ask-question"><span>{ct('问题', 'Question')}</span><p>{ask.question}</p></div>}
+      {ask.candidates.length > 0 && <div className="oa-ask-options"><span>{ct('快捷回复', 'Quick replies')}</span><div>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} disabled={optionDisabled} onClick={(event)=>chooseCandidate(event, x)} title={sendsDirectly ? ct('点击发送回复', 'Send this reply') : ct('点击填入输入框', 'Insert into the input')}><CornerDownLeft size={13} />{x}</button>)}</div></div>}
     </div> : call.args && <div className="oa-tool-args"><span>{ct('问题', 'Question')}</span><pre>{call.args}</pre></div>}
     {showResult && <div className="oa-tool-result oa-ask-result"><span>{ct('回复', 'Reply')}</span><pre>{call.result}</pre></div>}
   </div>
@@ -1748,8 +1755,6 @@ function parseFileToolArgs(toolName, argsText) {
 }
 
 // Unified diff rows: line numbers + -/+ gutter, collapsed context
-const PATCH_AUTO_COLLAPSE_CHANGES = 12
-
 function DiffRows({ rows }) {
   return <div className="oa-diff" role="table" aria-label="文件改动逐行对照">
     {rows.map((row, i) => {
@@ -1773,6 +1778,7 @@ function DiffRows({ rows }) {
 // Render file tool arguments in a structured way
 function FileToolArgsPanel({ toolName, args, result }) {
   const fileArgs = parseFileToolArgs(toolName, args)
+  const [showContent, setShowContent] = useState(false)
 
   const { type, path, content, old_content, new_content, mode } = fileArgs || {}
   const diff = useMemo(() => {
@@ -1781,12 +1787,6 @@ function FileToolArgsPanel({ toolName, args, result }) {
       ? computeLineDiff(old_content, new_content, { context: 3 })
       : computeWriteRows(content)
   }, [fileArgs, type, old_content, new_content, content])
-  const patchStartsExpanded = !diff || (!diff.truncated && diff.added + diff.removed <= PATCH_AUTO_COLLAPSE_CHANGES)
-  const [patchExpanded, setPatchExpanded] = useState(patchStartsExpanded)
-
-  useEffect(() => {
-    setPatchExpanded(patchStartsExpanded)
-  }, [patchStartsExpanded])
 
   if (!fileArgs) {
     return <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{args}</pre></div>
@@ -1794,41 +1794,42 @@ function FileToolArgsPanel({ toolName, args, result }) {
 
   const { rows, added, removed, truncated } = diff
   const changedTotal = added + removed
-  const fileName = String(path || '').split(/[\\/]/).filter(Boolean).pop() || path
-  const isWrite = type === 'file_write'
 
-  return <div className={`oa-tool-args oa-file-tool-args is-patch${isWrite ? ' is-write' : ''}`}>
-    <div className="oa-patch-filebar" title={path}>
-      <FileCode2 size={14} strokeWidth={1.8} aria-hidden="true" />
-      <span className="oa-patch-file-id">
-        <strong>{fileName}</strong>
-        <span>{path}</span>
-        {isWrite && mode && mode !== 'overwrite' && <span className="oa-patch-mode">{mode}</span>}
+  return <div className="oa-tool-args oa-file-tool-args">
+    <div className="oa-file-tool-header">
+      <span className="oa-file-tool-badge">
+        {type === 'file_write' ? '📝 写入文件' : '✏️ 修改文件'}
       </span>
-      <span className="oa-patch-stats" aria-label={ct(`新增 ${added} 行，删除 ${removed} 行`, `${added} lines added, ${removed} removed`)}>
-        <span className="oa-diff-stats-add">{`+${added}`}</span>
-        <span className="oa-diff-stats-del">{`−${removed}`}</span>
-      </span>
-      {changedTotal > 0 && rows.length > 0 && <button
-        className="oa-patch-toggle"
-        type="button"
-        aria-expanded={patchExpanded}
-        aria-label={patchExpanded ? ct('收起文件改动', 'Collapse file changes') : ct('展开文件改动', 'Expand file changes')}
-        title={patchExpanded ? ct('收起改动', 'Collapse changes') : ct('展开改动', 'Expand changes')}
-        onClick={() => setPatchExpanded(value => !value)}
-      >
-        <span>{patchExpanded ? ct('收起', 'Collapse') : ct('展开', 'Expand')}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>}
-      <CopyButton text={path} compact />
+      {mode && mode !== 'overwrite' && <span className="oa-file-tool-mode">{mode}</span>}
+      {changedTotal > 0 && (
+        <span className="oa-diff-stats">
+          {added > 0 && <span className="oa-diff-stats-add">{`+${added}`}</span>}
+          {removed > 0 && <span className="oa-diff-stats-del">{`-${removed}`}</span>}
+        </span>
+      )}
     </div>
 
     <FileAttachment path={path} resolvedPath={extractToolResultFilePath(result)} />
 
-    {changedTotal > 0 && rows.length > 0 && patchExpanded && (
-      <div className="oa-file-tool-preview">
-        {truncated && <div className="oa-diff-note">{ct('改动过大，已按块粗粒度对比', 'Large change; showing a coarse block diff')}</div>}
-        <DiffRows rows={rows} />
+    {changedTotal === 0 && <div className="oa-file-tool-empty">无行级改动</div>}
+
+    {changedTotal > 0 && rows.length > 0 && (
+      <div className="oa-file-tool-content">
+        <button
+          type="button"
+          className="oa-file-tool-toggle"
+          onClick={() => setShowContent(v => !v)}
+          aria-expanded={showContent}
+        >
+          {showContent ? '收起改动' : `查看改动 (+${added} / -${removed})`}
+          <ChevronDown size={14} style={{ transform: showContent ? 'rotate(180deg)' : 'none' }} />
+        </button>
+        {showContent && (
+          <div className="oa-file-tool-preview">
+            {truncated && <div className="oa-diff-note">改动过大，已按块粗粒度对比</div>}
+            <DiffRows rows={rows} />
+          </div>
+        )}
       </div>
     )}
   </div>
@@ -1971,11 +1972,12 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
   )
 })
 
-function ToolCallBlock({ call, onAskReply }) {
+function ToolCallBlock({ call, onAskReply, onQuickReply, quickReplyDisabled = false }) {
   const toolName = String(call.name || 'unknown').trim()
   const isAskUser = /(?:^|[._-])ask_user$/i.test(toolName)
   const isFileTool = /file_(write|patch)$/i.test(toolName)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(isAskUser)
+  const resultStatus = String(call.result || '').match(/\[Status\]\s*([^\n]+)/i)?.[1]?.trim()
   const askPayload = isAskUser ? getAskUserPayload(call) : null
   const askSummary = askPayload?.question || '等待用户确认'
 
@@ -1993,21 +1995,15 @@ function ToolCallBlock({ call, onAskReply }) {
       {isAskUser && !resultStatus && <em>{askPayload?.candidates?.length ? ct(`${askPayload.candidates.length} 个选项`, `${askPayload.candidates.length} options`) : ct('等待回复', 'Waiting for reply')}</em>}
       <ChevronDown size={15} className="oa-tool-chevron" />
     </button>
-    {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} /> : <>
+    {open && (isAskUser ? <AskUserPanel call={call} onReply={onAskReply} onQuickReply={onQuickReply} disabled={quickReplyDisabled} /> : <>
       {isFileTool ? (
         <FileToolArgsPanel toolName={toolName} args={call.args} result={call.result} />
       ) : (
-        call.args && <div className="oa-tool-section">
-          <div className="oa-tool-label">args</div>
-          <pre className="oa-tool-code">{call.args}</pre>
-        </div>
+        call.args && <div className="oa-tool-args"><span>{'📥 args'}</span><pre>{call.args}</pre></div>
       )}
-      {call.result && <div className="oa-tool-section">
-        <div className="oa-tool-label oa-tool-label-result">result</div>
-        <pre className="oa-tool-code oa-tool-code-result">{call.result}</pre>
-      </div>}
-    </div>
-  </details>
+      {call.result && <div className="oa-tool-result"><span>{'📤 result'}</span><pre>{call.result}</pre></div>}
+    </>)}
+  </div>
 }
 
 function MarkdownTable({ table }) {
@@ -2462,17 +2458,11 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
   useEffect(() => { setStackOpen(pending) }, [pending])
   const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
-  
-  // Try structured parsing first, fall back to text parsing
   const parsed = useMemo(() => {
-    console.log('[AssistantContent] structuredContent:', structuredContent)
     if (structuredContent) {
       const result = parseStructuredContent(structuredContent)
-      console.log('[AssistantContent] parseStructuredContent result:', result)
       if (result) return result
     }
-    // Fall back to text parsing
-    console.log('[AssistantContent] Falling back to parseAssistantContent')
     return parseAssistantContent(content)
   }, [content, structuredContent])
   const hasTurnSplit = parsed.runs.length > 0
@@ -2525,9 +2515,6 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
     {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
       {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
       {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
-      {parsed.tools && parsed.tools.length > 0 && <div className="oa-tools-section">
-        {parsed.tools.map((call, idx) => <ToolCallBlock key={idx} call={call} onAskReply={onAskReply} />)}
-      </div>}
       {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state, onQuickReply, quickReplyDisabled, isLatestMessage)}
     </div>}
     <FileSummaryCard content={content} />
@@ -3048,7 +3035,7 @@ const ChatErrorCard = memo(function ChatErrorCard({ message, onRetry }) {
   </section>
 })
 
-export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '' }) {
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onQuickReply, quickReplyDisabled = false, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
@@ -3115,7 +3102,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} pending={pending} onAskReply={onAskReply} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
       </div>
@@ -3124,7 +3111,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '' }) {
+const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '' }) {
   return <>
     {messages.flatMap((m, i) => {
       const day = timelineKey(m.created_at)
@@ -3957,16 +3944,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         for (const line of lines) {
           if (!line.trim()) continue
           if (!isActiveSession(sessionId)) return { commandPatch, eventCount, terminal }
-          const ev = JSON.parse(line)
-          // Log delta events with full content
-          if (ev.type === 'delta') {
-            console.log('[SSE] delta:', JSON.parse(JSON.stringify(ev)))
-          }
-          // Log any event containing structured_content
-          if ('structured_content' in ev) {
-            console.log('[SSE] *** FOUND structured_content ***:', ev.structured_content)
-          }
-          consumeEvent(ev)
+          consumeEvent(JSON.parse(line))
         }
       }
       buf += dec.decode()
@@ -6090,7 +6068,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
+        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onQuickReply={send} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
         {!privacyMode && <SubagentStatusPanel states={subagents}/>}
         {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
         <div ref={endRef}/>
