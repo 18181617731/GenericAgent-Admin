@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildChatRunPayload, buildEditResendItem } from './worldlineEdit.js'
 
-test('edit-resend keeps the current SID, identifies the source message, and clears attachments', () => {
+test('edit-resend keeps the current SID and leaves uploads empty for server-side attachment reuse', () => {
   const item = buildEditResendItem({ sessionId:'same-sid', messageId:'user-7', text:'edited prompt' })
   assert.deepEqual(item, {
     text:'edited prompt',

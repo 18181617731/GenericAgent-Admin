@@ -825,11 +825,24 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 	if s.maybeHandleProjectCommand(w, r, sid, &cs, req.Prompt) {
 		return
 	}
+	var inheritedFiles []map[string]interface{}
+	var inheritedRefs []string
 	if sourceID := strings.TrimSpace(req.SourceUserMessageID); sourceID != "" {
 		if len(req.Files) > 0 {
 			s.endChatRunOwned(sid, token)
 			bad(w, http.StatusBadRequest, "worldline edit/resend does not accept new attachments")
 			return
+		}
+		// Capture the source attachments before prepareChatWorldlineResend trims
+		// the conversation. They are already persisted files, so an edit/resend
+		// only needs to reuse their metadata and prompt references; it must not
+		// upload the file contents again.
+		for i := range cs.Messages {
+			if cs.Messages[i].ID == sourceID && cs.Messages[i].Role == "user" {
+				inheritedFiles = cloneChatFileMetadata(cs.Messages[i].Files)
+				inheritedRefs = chatMessageAttachmentRefs(cs.Messages[i])
+				break
+			}
 		}
 		if err := s.prepareChatWorldlineResend(sid, token, &cs, sourceID); err != nil {
 			s.endChatRunOwned(sid, token)
@@ -842,6 +855,10 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		s.endChatRunOwned(sid, token)
 		bad(w, 400, err.Error())
 		return
+	}
+	if strings.TrimSpace(req.SourceUserMessageID) != "" {
+		saved = append(inheritedFiles, saved...)
+		refs = append(inheritedRefs, refs...)
 	}
 	display := req.Prompt
 	if len(refs) > 0 {

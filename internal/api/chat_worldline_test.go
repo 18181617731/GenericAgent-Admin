@@ -478,6 +478,34 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 			t.Fatalf("switch %s status=%d body=%s", node, rec.Code, rec.Body.String())
 		}
 	}
+	attachSource := func(sourceID, path string) {
+		t.Helper()
+		current, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for i := range current.Messages {
+			if current.Messages[i].ID != sourceID || current.Messages[i].Role != "user" {
+				continue
+			}
+			current.Messages[i].Files = []map[string]interface{}{{
+				"path": path,
+				"name": "report.txt",
+				"mime": "text/plain",
+			}}
+			current.Messages[i].Content += "\n\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n[FILE:" + path + "]"
+			found = true
+			break
+		}
+		if !found {
+			t.Fatalf("source message %s not found in %+v", sourceID, current.Messages)
+		}
+		if err := saveChatSession(s.CfgStore.Snapshot(), current); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	resend := func(server *Server, sourceID, prompt string) {
 		t.Helper()
 		body, err := json.Marshal(map[string]interface{}{
@@ -496,30 +524,36 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 			t.Fatalf("resend %s missing done SSE: %s", sourceID, rec.Body.String())
 		}
 	}
-	assertExact := func(wantUserID, wantPrompt string) {
+	assertExact := func(wantUserID, wantPrompt, wantPath string) {
 		t.Helper()
 		got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got.Messages) != 2 || got.Messages[0].ID != wantUserID || got.Messages[0].Content != wantPrompt || got.Messages[1].Content != "answer "+wantPrompt {
-			t.Fatalf("exact branch messages = %+v, want user=%s prompt=%s", got.Messages, wantUserID, wantPrompt)
+		display := wantPrompt + "\n\n[附件已保存]\n[FILE:" + wantPath + "]"
+		if len(got.Messages) != 2 || got.Messages[0].ID != wantUserID || got.Messages[0].Content != display || got.Messages[1].Content != "answer "+display {
+			t.Fatalf("exact branch messages = %+v, want user=%s display=%s", got.Messages, wantUserID, display)
 		}
-		if len(got.RawHistory) != 1 || got.RawHistory[0]["content"] != "raw "+wantPrompt || got.Working["prompt"] != wantPrompt {
-			t.Fatalf("exact branch restore state = raw=%+v working=%+v", got.RawHistory, got.Working)
+		if len(got.Messages[0].Files) != 1 || got.Messages[0].Files[0]["path"] != wantPath || got.Messages[0].Files[0]["name"] != "report.txt" || got.Messages[0].Files[0]["mime"] != "text/plain" {
+			t.Fatalf("exact branch attachment = %+v, want path=%s", got.Messages[0].Files, wantPath)
+		}
+		if len(got.RawHistory) != 1 || got.RawHistory[0]["content"] != "raw "+display || got.Working["prompt"] != display {
+			t.Fatalf("exact branch restore state = raw=%+v working=%+v, want display=%s", got.RawHistory, got.Working, display)
 		}
 	}
 
 	switchBranch(s, "right")
+	attachSource("u-right", "uploads/right-report.txt")
 	resend(s, "u-right", "edited right")
-	assertExact("edited-u-right", "edited right")
+	assertExact("edited-u-right", "edited right", "uploads/right-report.txt")
 	if len(stateActivations) != 1 || !stateActivations[0] {
 		t.Fatalf("resend state activation after first edit = %#v, want [true]", stateActivations)
 	}
 
 	switchBranch(s, "left")
+	attachSource("u-left", "uploads/left-report.txt")
 	resend(s, "u-left", "edited left")
-	assertExact("edited-u-left", "edited left")
+	assertExact("edited-u-left", "edited left", "uploads/left-report.txt")
 	if len(stateActivations) != 2 || !stateActivations[1] {
 		t.Fatalf("resend state activation after second edit = %#v, want [true true]", stateActivations)
 	}
@@ -530,8 +564,12 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Messages) != 2 || got.Messages[0].ID != "edited-u-left" || got.Messages[1].Content != "answer edited left" {
+	reloadedDisplay := "edited left\n\n[附件已保存]\n[FILE:uploads/left-report.txt]"
+	if len(got.Messages) != 2 || got.Messages[0].ID != "edited-u-left" || got.Messages[0].Content != reloadedDisplay || got.Messages[1].Content != "answer "+reloadedDisplay {
 		t.Fatalf("reloaded exact branch = %+v", got.Messages)
+	}
+	if len(got.Messages[0].Files) != 1 || got.Messages[0].Files[0]["path"] != "uploads/left-report.txt" {
+		t.Fatalf("reloaded attachment = %+v", got.Messages[0].Files)
 	}
 }
 

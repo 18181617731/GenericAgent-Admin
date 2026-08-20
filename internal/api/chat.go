@@ -2650,6 +2650,51 @@ func chatUploadPromptRef(path, name, mime string) string {
 	return "[FILE:" + path + "]"
 }
 
+func cloneChatFileMetadata(files []map[string]interface{}) []map[string]interface{} {
+	if len(files) == 0 {
+		return nil
+	}
+	cloned := make([]map[string]interface{}, 0, len(files))
+	for _, file := range files {
+		if file == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		copyFile := make(map[string]interface{}, len(file))
+		for key, value := range file {
+			copyFile[key] = value
+		}
+		cloned = append(cloned, copyFile)
+	}
+	return cloned
+}
+
+func chatMessageAttachmentRefs(msg chatMessage) []string {
+	refs := make([]string, 0, len(msg.Files))
+	for _, file := range msg.Files {
+		path, _ := file["path"].(string)
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		name, _ := file["name"].(string)
+		mime, _ := file["mime"].(string)
+		refs = append(refs, chatUploadPromptRef(path, name, mime))
+	}
+	if len(refs) > 0 {
+		return refs
+	}
+	// Older sessions may have the saved path only in the prompt text.
+	// Preserve those references when Files metadata was not persisted.
+	for _, line := range strings.Split(msg.Content, "\n") {
+		line = strings.TrimSpace(line)
+		if (strings.HasPrefix(line, "[FILE:") || strings.HasPrefix(line, "[image:")) && strings.HasSuffix(line, "]") {
+			refs = append(refs, line)
+		}
+	}
+	return refs
+}
+
 func sanitizeChatUploadName(name string) string {
 	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
 	if name == "" || name == "." || name == string(filepath.Separator) {

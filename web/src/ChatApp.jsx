@@ -2877,7 +2877,7 @@ export const ChatMessage = memo(function ChatMessage({
                       disabled={editSubmitting} aria-label={ct('编辑已发送消息', 'Edit sent message')} />
                     {editError && <div className="oa-message-editor-error" role="alert">{editError}</div>}
                     <div className="oa-message-editor-actions">
-                      <span className="oa-message-editor-hint">{ct('重发会从此消息继续，且不携带原附件', 'Resending continues from this message without its original attachments')}</span>
+                      <span className="oa-message-editor-hint">{ct('重发会从此消息继续，并保留原附件', 'Resending continues from this message and keeps its original attachments')}</span>
                       <button type="button" className="oa-message-editor-cancel" onClick={cancelMessageEdit} disabled={editSubmitting}>{ct('取消', 'Cancel')}</button>
                       <button type="button" className="oa-message-editor-submit" onClick={submitMessageEdit}
                         disabled={editSubmitting || !editDraft.trim()}>{editSubmitting ? ct('发送中…', 'Sending…') : ct('发送', 'Send')}</button>
