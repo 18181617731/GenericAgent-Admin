@@ -5,6 +5,7 @@ import {
   VERSION_RELOAD_DELAY_MS,
   VERSION_RELOAD_RETRY_MS,
   beginVersionRestartGrace,
+  shouldAdoptStatusCheck,
   shouldReloadAfterVersionUpdate,
   shouldReportVersionPollError,
   versionMatchesExpectedRelease,
@@ -28,7 +29,7 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
   const refreshStatus = async () => {
     const d = await api('/api/version/status')
     setStatus(d)
-    if (d?.check) setCheck(d.check)
+    if (shouldAdoptStatusCheck(d)) setCheck(d.check)
     if (d?.running) observedRunning.current = true
     return d
   }
