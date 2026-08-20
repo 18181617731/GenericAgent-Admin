@@ -177,7 +177,29 @@ function parseInFlightToolResult(lines, i) {
 export function foldAgentProtocolBlocks(text) {
   const lines = String(text || '').split('\n')
   const folds = []
+  const pendingToolFolds = []
   let i = 0
+
+  const appendToolResult = (result, live = false) => {
+    const target = pendingToolFolds.shift()
+    if (target) {
+      target.result = result.body
+      target.resultLive = live
+      if (live) {
+        target.open = true
+        target.cls += ' fold-tool-live'
+      }
+      return
+    }
+
+    folds.push({
+      type: live ? 'tool-result-live' : 'tool-result',
+      label: live ? '\u5de5\u5177\u7ed3\u679c\u2026' : '\u5de5\u5177\u7ed3\u679c',
+      body: result.body,
+      open: live,
+      cls: live ? 'fold-result fold-result-live' : 'fold-result',
+    })
+  }
 
   while (i < lines.length) {
     const line = lines[i]
@@ -185,27 +207,24 @@ export function foldAgentProtocolBlocks(text) {
     // Tool call
     const tool = parseToolCallBlock(lines, i)
     if (tool) {
-      folds.push({
+      const fold = {
         type: 'tool-call',
-        label: `🛠️ ${tool.name}`,
+        label: tool.name,
         body: tool.body,
         open: false,
         cls: 'fold-tool',
-      })
+      }
+      folds.push(fold)
+      pendingToolFolds.push(fold)
       i = tool.nextLine
       continue
     }
 
-    // Tool result
+    // Tool results follow calls in protocol order. Keep each result in the
+    // same fold as its call; only genuinely orphaned results get their own fold.
     const result = parseToolResultBlock(lines, i)
     if (result) {
-      folds.push({
-        type: 'tool-result',
-        label: '工具结果',
-        body: result.body,
-        open: false,
-        cls: 'fold-result',
-      })
+      appendToolResult(result)
       i = result.nextLine
       continue
     }
@@ -264,13 +283,15 @@ export function foldAgentProtocolBlocks(text) {
     // In-flight tool call (streaming, unclosed)
     const inFlightTool = parseInFlightToolCall(lines, i)
     if (inFlightTool) {
-      folds.push({
+      const fold = {
         type: 'tool-call-live',
-        label: `🛠️ ${inFlightTool.name}…`,
+        label: `${inFlightTool.name}…`,
         body: inFlightTool.body,
         open: true,
         cls: 'fold-tool fold-tool-live',
-      })
+      }
+      folds.push(fold)
+      pendingToolFolds.push(fold)
       i = inFlightTool.nextLine
       continue
     }
@@ -278,13 +299,7 @@ export function foldAgentProtocolBlocks(text) {
     // In-flight tool result
     const inFlightResult = parseInFlightToolResult(lines, i)
     if (inFlightResult) {
-      folds.push({
-        type: 'tool-result-live',
-        label: '工具结果…',
-        body: inFlightResult.body,
-        open: true,
-        cls: 'fold-result fold-result-live',
-      })
+      appendToolResult(inFlightResult, true)
       i = inFlightResult.nextLine
       continue
     }

@@ -888,7 +888,7 @@ describe('chat response identity and time', () => {
       />,
     )
 
-    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m 30s')
+    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m30s')
   })
 
   test('uses the persisted terminal elapsed duration instead of continuing the live clock', () => {
