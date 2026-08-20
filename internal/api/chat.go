@@ -645,11 +645,6 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			continue
 		}
-		if firstTokenMS == 0 && ev["type"] == "delta" {
-			if delta, ok := ev["delta"].(string); ok && delta != "" {
-				firstTokenMS = elapsedMillis()
-			}
-		}
 		s.publishChatLine(sid, line)
 		if err != nil {
 			readErr = err

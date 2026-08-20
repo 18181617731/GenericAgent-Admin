@@ -124,17 +124,21 @@ def _reset_generation_timer():
         _clear_generation_timer_locked()
 
 
-def _mark_generation_started(item):
-    """Record the first observable, non-error streamed chunk for this call."""
+def _mark_generation_started(item, request_started_at=None):
+    """Record generation start and request-to-first-token time for this call."""
     if not isinstance(item, str):
-        return
+        return False
     chunk = item.strip()
-    if not chunk or chunk.startswith('!!!Error:'):
-        return
+    if not chunk or chunk.startswith(('!!!Error:', '[Error:')):
+        return False
+    now = time.perf_counter()
     global _GENERATION_STARTED_AT
     with _USAGE_LOCK:
         if _GENERATION_STARTED_AT is None:
-            _GENERATION_STARTED_AT = time.perf_counter()
+            _GENERATION_STARTED_AT = now
+        if request_started_at is not None and 'ttft_ms' not in _CURRENT_USAGE:
+            _CURRENT_USAGE['ttft_ms'] = max(1, int(round((now - request_started_at) * 1000)))
+    return True
 
 
 def _consume_generation_ms_locked():
@@ -202,6 +206,7 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['cache_read_tokens'] = 0
                 _CURRENT_USAGE['output_tokens'] = 0
                 _CURRENT_USAGE['cached_tokens'] = 0
+                _CURRENT_USAGE.pop('ttft_ms', None)
                 # Replace the live Cache snapshot at the same index with this
                 # completed turn once output usage becomes available.
                 try:
@@ -251,6 +256,7 @@ def _reset_usage():
         _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
+        _CURRENT_USAGE.pop('ttft_ms', None)
         _TURN_USAGES.clear()
         _clear_generation_timer_locked()
 
@@ -445,7 +451,8 @@ def _finalize_incomplete_turn_usage():
         _clear_generation_timer_locked()
         if not (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
                 or _CURRENT_USAGE['cache_creation_tokens']
-                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
+                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']
+                or _CURRENT_USAGE.get('ttft_ms')):
             return
         turn_snapshot = dict(_CURRENT_USAGE)
         _TURN_USAGES.append(turn_snapshot)
@@ -455,18 +462,21 @@ def _finalize_incomplete_turn_usage():
         _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
+        _CURRENT_USAGE.pop('ttft_ms', None)
     try:
         emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
     except Exception:
         pass
 
 
-def _track_outbound_attempt(result):
+def _track_outbound_attempt(result, request_started_at=None):
     """Preserve an outbound stream while closing usage for transport errors."""
     try:
         iterator = iter(result)
     except TypeError:
         return result
+    if request_started_at is None:
+        request_started_at = time.perf_counter()
 
     def tracked():
         _reset_generation_timer()
@@ -482,9 +492,8 @@ def _track_outbound_attempt(result):
                 raise
             if isinstance(item, str) and item.lstrip().startswith('!!!Error:'):
                 _finalize_incomplete_turn_usage()
-            else:
-                _mark_generation_started(item)
-                if not first_token_emitted and isinstance(item, str) and item.strip():
+            elif _mark_generation_started(item, request_started_at):
+                if not first_token_emitted:
                     emit({'type': 'model_first_token'})
                     first_token_emitted = True
             yield item
@@ -519,7 +528,9 @@ def _install_outbound_model_hooks(agent):
                         emit({'type': 'model', 'model_id': model_id})
             except Exception:
                 pass
-            return _track_outbound_attempt(_original(*args, **kwargs))
+            request_started_at = time.perf_counter()
+            result = _original(*args, **kwargs)
+            return _track_outbound_attempt(result, request_started_at)
 
         try:
             session.raw_ask = wrapped

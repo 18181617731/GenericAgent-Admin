@@ -2587,8 +2587,13 @@ export const buildChatStats = (messages = []) => {
   const elapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.elapsed_ms) || 0), 0)
   const llmElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.llm_elapsed_ms) || 0), 0)
   const toolElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.tool_elapsed_ms) || 0), 0)
-  const firstTokenValues = turns.map(m => Number(m.first_token_ms) || 0).filter(value => value > 0)
-  const firstTokenMs = firstTokenValues.length ? firstTokenValues.reduce((sum, value) => sum + value, 0) / firstTokenValues.length : 0
+  const ttftValues = usages.map(usage => Number(usage?.ttft_ms) || 0).filter(value => value > 0).sort((a, b) => a - b)
+  const legacyFirstTokenValues = turns.map(m => Number(m.first_token_ms) || 0).filter(value => value > 0).sort((a, b) => a - b)
+  const firstTokenValues = ttftValues.length ? ttftValues : legacyFirstTokenValues
+  const middle = Math.floor(firstTokenValues.length / 2)
+  const firstTokenMs = firstTokenValues.length
+    ? (firstTokenValues.length % 2 ? firstTokenValues[middle] : (firstTokenValues[middle - 1] + firstTokenValues[middle]) / 2)
+    : 0
   return {
     rounds: turns.length,
     steps: usages.length,
@@ -2596,6 +2601,8 @@ export const buildChatStats = (messages = []) => {
     llmElapsedMs,
     toolElapsedMs,
     firstTokenMs,
+    firstTokenSamples: firstTokenValues.length,
+    firstTokenIsModelTTFT: ttftValues.length > 0,
     inputTokens: total?.input_tokens || 0,
     outputTokens: total?.output_tokens || 0,
     outputRate: measuredOutputRate(usages),
@@ -2610,7 +2617,7 @@ export const ChatStats = memo(function ChatStats({ messages = [] }) {
     <i aria-hidden="true">|</i>
     <span>LLM {formatElapsedMs(stats.llmElapsedMs || stats.elapsedMs)} · 工具调用 {formatElapsedMs(stats.toolElapsedMs)}</span>
     <i aria-hidden="true">|</i>
-    <span>首 token 平均 {stats.firstTokenMs > 0 ? `${(stats.firstTokenMs / 1000).toFixed(1)}s` : '—'} · {stats.outputRate > 0 ? `${stats.outputRate.toFixed(1)} tok/s` : '— tok/s'}</span>
+    <span>{stats.firstTokenIsModelTTFT ? '模型 TTFT 中位' : '首 token 中位'} {stats.firstTokenMs > 0 ? `${(stats.firstTokenMs / 1000).toFixed(1)}s · ${stats.firstTokenSamples}次` : '—'} · {stats.outputRate > 0 ? `${stats.outputRate.toFixed(1)} tok/s` : '— tok/s'}</span>
     <i aria-hidden="true">|</i>
     <span>缓存命中 {stats.cachePercent}%</span>
     <i aria-hidden="true">|</i>

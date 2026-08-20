@@ -2,7 +2,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import { ChatStats } from './ChatApp.jsx'
+import { ChatStats, buildChatStats } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
 
@@ -22,6 +22,33 @@ describe('chat stats', () => {
     const text = container.querySelector('.oa-chat-stats')?.textContent || ''
     expect(text).toContain('LLM 9m25s · 工具调用 3h6m52s')
   })
+  test('uses the median of per-call model TTFT samples', () => {
+    const messages = [{
+      role: 'assistant',
+      first_token_ms: 25,
+      usages: [{ ttft_ms: 100 }, { ttft_ms: 1000 }, { ttft_ms: 400 }],
+    }]
+
+    const stats = buildChatStats(messages)
+    expect(stats.firstTokenMs).toBe(400)
+    expect(stats.firstTokenSamples).toBe(3)
+    expect(stats.firstTokenIsModelTTFT).toBe(true)
+
+    const { container } = render(<ChatStats messages={messages} />)
+    expect(container.querySelector('.oa-chat-stats')?.textContent).toContain('\u6a21\u578b TTFT \u4e2d\u4f4d 0.4s \u00b7 3\u6b21')
+  })
+
+  test('falls back to legacy message timing when TTFT samples are absent', () => {
+    const stats = buildChatStats([
+      { role: 'assistant', first_token_ms: 900, elapsed_ms: 1 },
+      { role: 'assistant', first_token_ms: 100, elapsed_ms: 1 },
+    ])
+
+    expect(stats.firstTokenMs).toBe(500)
+    expect(stats.firstTokenSamples).toBe(2)
+    expect(stats.firstTokenIsModelTTFT).toBe(false)
+  })
+
   test('renders zero-value stats for a new conversation', () => {
     const { container } = render(<ChatStats messages={[]} />)
     const stats = container.querySelector('.oa-chat-stats')
