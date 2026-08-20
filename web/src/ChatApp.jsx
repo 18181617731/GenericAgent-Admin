@@ -398,6 +398,53 @@ const FILE_KIND_RULES = [
 
 const getFileVisual = (value) => FILE_KIND_RULES.find((rule) => rule.re.test(String(value || '').split(/[?#]/)[0])) || { kind:'file', Icon:FileText }
 
+export const PendingAttachments = memo(function PendingAttachments({ attachments = [], onRemove }) {
+  const [preview, setPreview] = useState(null)
+
+  useEffect(() => {
+    if (!preview || typeof document === 'undefined') return undefined
+    const previousOverflow = document.body.style.overflow
+    const onKeyDown = (event) => { if (event.key === 'Escape') setPreview(null) }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [preview])
+
+  if (!attachments.length) return null
+
+  return <>
+    <div className="oa-attach-preview">
+      {attachments.map((attachment) => {
+        const name = uploadFileName(attachment)
+        const image = isImageFile(attachment)
+        const source = image ? uploadFileSource(attachment) : ''
+        const visual = getFileVisual(name)
+        const Icon = visual.Icon
+        const extension = (name.match(/\.([^.]+)$/)?.[1] || 'FILE').slice(0, 6).toUpperCase()
+        return <div className={`oa-attach-thumb ${image ? 'is-image' : `is-file oa-file-kind-${visual.kind}`}`} key={attachment.id} title={name}>
+          {image
+            ? <button className="oa-attach-open" type="button" onClick={()=>setPreview({ name, source })} title={ct('预览图片', 'Preview image')} aria-label={ct(`预览图片 ${name}`, `Preview image ${name}`)}><img src={source} alt=""/></button>
+            : <div className="oa-attach-file-icon"><Icon size={25}/><small>{extension}</small></div>}
+          <span>{image ? <FileImage size={12}/> : <Icon size={12}/>} {name}</span>
+          <button className="oa-attach-remove" type="button" onClick={()=>onRemove?.(attachment.id)} title={ct('移除附件', 'Remove attachment')} aria-label={ct(`移除附件 ${name}`, `Remove attachment ${name}`)}><X size={12}/></button>
+        </div>
+      })}
+    </div>
+    {preview && typeof document !== 'undefined' && createPortal(
+      <div className="oa-attachment-lightbox" onMouseDown={(event)=>{ if (event.target === event.currentTarget) setPreview(null) }}>
+        <section className="oa-attachment-lightbox-dialog" role="dialog" aria-modal="true" aria-label={ct(`图片预览 ${preview.name}`, `Image preview ${preview.name}`)}>
+          <img src={preview.source} alt={preview.name}/>
+          <footer><span title={preview.name}>{preview.name}</span><button type="button" onClick={()=>setPreview(null)} aria-label={ct('关闭图片预览', 'Close image preview')}><X size={18}/></button></footer>
+        </section>
+      </div>,
+      document.body,
+    )}
+  </>
+})
+
 function FileAttachment({ path }) {
   const clean = String(path || '').trim()
   const name = clean.split(/[\\/]/).filter(Boolean).pop() || clean || ct('文件', 'File')
@@ -5940,20 +5987,7 @@ export default function ChatApp() {
         </div>}
         <div className={`oa-composer ${dragging ? 'is-dragging' : ''}`} onDragOver={e=>{e.preventDefault(); setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={onDropFiles}>
           <input ref={fileRef} type="file" multiple hidden onChange={e=>{ addAttachmentFiles(e.target.files); e.target.value='' }} />
-          {attachments.length > 0 && <div className="oa-attach-preview">
-            {attachments.map((attachment) => {
-              const name = uploadFileName(attachment)
-              const image = isImageFile(attachment)
-              const visual = getFileVisual(name)
-              const Icon = visual.Icon
-              const extension = (name.match(/\.([^.]+)$/)?.[1] || 'FILE').slice(0, 6).toUpperCase()
-              return <div className={`oa-attach-thumb ${image ? 'is-image' : `is-file oa-file-kind-${visual.kind}`}`} key={attachment.id} title={name}>
-                {image ? <img src={uploadFileSource(attachment)} alt={name}/> : <div className="oa-attach-file-icon"><Icon size={25}/><small>{extension}</small></div>}
-                <span>{image ? <FileImage size={12}/> : <Icon size={12}/>} {name}</span>
-                <button type="button" onClick={()=>removeAttachment(attachment.id)} title={ct('移除附件', 'Remove attachment')} aria-label={ct(`移除附件 ${name}`, `Remove attachment ${name}`)}><X size={12}/></button>
-              </div>
-            })}
-          </div>}
+          {attachments.length > 0 && <PendingAttachments attachments={attachments} onRemove={removeAttachment}/>}
           {modelDiagnosis && <div className={`oa-model-alert ${modelDiagnosis.fixable ? 'is-fixable' : ''}`} role="status" aria-live="polite">
             <div className="oa-model-alert-copy">
               <b><CircleHelp size={14}/>{modelDiagnosisTitle(modelDiagnosis, ct)}</b>
