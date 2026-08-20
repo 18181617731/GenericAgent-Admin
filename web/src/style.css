@@ -12982,6 +12982,8 @@ html[data-color-scheme="dark"] .oa-project-toggle:hover { background:rgba(16,163
 
 @media (max-width:900px) {
   .oa-topbar > .oa-topbar-tools { display:none; }
+  .oa-title .oa-project-badge,
+  .oa-title .oa-workspace-badge { display:none; }
   .oa-topbar > .oa-mobile-tools-trigger {
     display:inline-flex;
     flex:0 0 34px;
