@@ -7,9 +7,9 @@ afterEach(() => cleanup())
 
 // Renders model output through the real assistant pipeline
 // (ChatMessage -> AssistantContent -> MarkdownBlock -> TextMarkdown).
-const renderAssistant = (content) => render(
+const renderAssistant = (content, messagePatch = {}) => render(
   <ChatMessage
-    message={{ id: 'a-md', role: 'assistant', content, files: [], created_at: 0 }}
+    message={{ id: 'a-md', role: 'assistant', content, files: [], created_at: 0, ...messagePatch }}
     pending={false}
     onAskReply={vi.fn()}
   />,
@@ -222,6 +222,48 @@ describe('assistant markdown rendering', () => {
     expect(math[0].querySelector('annotation[encoding="application/x-tex"]').textContent).toBe('E=mc^2')
     expect(container.querySelector('code').textContent).toBe('$x$')
     expect(container.querySelector('.oa-md').textContent).toContain('$5 and $10')
+  })
+
+  test('still uses structured blocks when the text has no multi-turn protocol', () => {
+    const container = renderAssistant('fallback text', {
+      structured_content: [
+        { type: 'tool_use', id: 'toolu_1', name: 'file_read', input: { path: 'README.md' } },
+        { type: 'text', text: 'structured answer' },
+      ],
+    })
+
+    expect(container.querySelector('.oa-turn-stack')).toBeNull()
+    expect(container.textContent).toContain('structured answer')
+    expect(container.textContent).not.toContain('fallback text')
+  })
+
+  test('keeps the multi-turn UI when the terminal message adds structured content', () => {
+    const content = [
+      'LLM Running (Turn 1)',
+      '<summary>inspect stream</summary>',
+      'first body',
+      '',
+      'LLM Running (Turn 2)',
+      '<summary>finish work</summary>',
+      'second body',
+      '',
+      '```',
+      '[Info] Final response to user.',
+      '```',
+      'final answer',
+    ].join('\n')
+    const structuredContent = [
+      { type: 'thinking', thinking: 'terminal-only reasoning' },
+      { type: 'text', text: 'final answer' },
+    ]
+
+    const container = renderAssistant(content, { structured_content: structuredContent })
+
+    expect(container.querySelector('.oa-turn-stack')).toBeTruthy()
+    expect(container.querySelector('.oa-turn-stack-head b').textContent).toBe('2')
+    expect(container.querySelector('.oa-turn-current-head').textContent).toContain('finish work')
+    expect(container.querySelector('.oa-final-answer').textContent).toContain('final answer')
+    expect(container.textContent).not.toContain('terminal-only reasoning')
   })
 
   test('keeps a heading, rule and paragraph rhythm', () => {

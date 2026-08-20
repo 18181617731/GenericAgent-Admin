@@ -2437,17 +2437,18 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
   const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
   
-  // Try structured parsing first, fall back to text parsing
+  // The streamed payload contains GA's complete multi-turn text protocol, while
+  // structuredContent is only the backend's last assistant message. Prefer the
+  // complete protocol whenever it has turn markers so the terminal event cannot
+  // replace the live turn stack with a differently shaped final-only view.
   const parsed = useMemo(() => {
-    console.log('[AssistantContent] structuredContent:', structuredContent)
+    const textResult = parseAssistantContent(content)
+    if (textResult.runs.length > 0) return textResult
     if (structuredContent) {
       const result = parseStructuredContent(structuredContent)
-      console.log('[AssistantContent] parseStructuredContent result:', result)
       if (result) return result
     }
-    // Fall back to text parsing
-    console.log('[AssistantContent] Falling back to parseAssistantContent')
-    return parseAssistantContent(content)
+    return textResult
   }, [content, structuredContent])
   const hasTurnSplit = parsed.runs.length > 0
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
