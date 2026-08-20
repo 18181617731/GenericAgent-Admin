@@ -1054,7 +1054,7 @@ const ToolReceiptSummary = ({ fold, target }) => {
   )
 }
 
-const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickReply, quickReplyDisabled = false, openAskUser = false) => {
+const renderAssistantBody = (text = '', onAskReply, ultraplan_state, openAskUser = false) => {
   const parsedState = parseUltraPlanText(text)
   const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
   const cleanText = stripUltraPlanProgressText(text)
@@ -1093,7 +1093,7 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickRepl
               <summary>{fold.type.startsWith('tool-call') ? <ToolReceiptSummary fold={fold} /> : fold.label}</summary>
               {fold.type.startsWith('tool-call') ? (
                 receipt.tool === 'ask_user'
-                  ? <AskUserPanel call={{ args: fold.body, result: hasResult ? fold.result : '' }} onReply={onAskReply} onQuickReply={onQuickReply} disabled={quickReplyDisabled} />
+                  ? <AskUserPanel call={{ args: fold.body, result: hasResult ? fold.result : '' }} onReply={onAskReply} />
                   : <div className="ga-tool-pair">
                     <section className="ga-tool-pair-section ga-tool-pair-call">
                       <div className="ga-tool-pair-label">{isFileMutation ? ct('文件改动', 'File changes') : ct('调用参数', 'Arguments')}</div>
@@ -1591,28 +1591,19 @@ const parseToolArgsBlock = (block = '') => {
   return m ? (m[1] || '').trim() : null
 }
 
-function AskUserPanel({ call, onReply, onQuickReply, disabled = false }) {
+function AskUserPanel({ call, onReply }) {
   const ask = getAskUserPayload(call)
-  const [submitting, setSubmitting] = useState(false)
   const hasStructured = Boolean(ask.question || ask.candidates.length)
-  const sendsDirectly = typeof onQuickReply === 'function'
   const chooseCandidate = (event, value) => {
     event.stopPropagation()
-    if (disabled || submitting) return
-    if (!sendsDirectly) {
-      onReply?.(value)
-      return
-    }
-    setSubmitting(true)
-    Promise.resolve(onQuickReply(value)).catch(() => setSubmitting(false))
+    onReply?.(value)
   }
-  const optionDisabled = sendsDirectly && (disabled || submitting)
   const resultText = String(call.result || '').trim()
   const showResult = resultText && !/^Waiting for your answer\s*(?:\.{3}|…)?$/i.test(resultText)
   return <div className="oa-ask-panel">
     {hasStructured ? <div className="oa-ask-body">
       {ask.question && <p className="oa-ask-question">{ask.question}</p>}
-      {ask.candidates.length > 0 && <div className="oa-ask-options" role="group" aria-label={ct('快捷回复', 'Quick replies')}>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} disabled={optionDisabled} onClick={(event)=>chooseCandidate(event, x)} title={sendsDirectly ? ct('点击发送回复', 'Send this reply') : ct('点击填入输入框', 'Insert into the input')}>{sendsDirectly ? <Send size={13} /> : <CornerDownLeft size={13} />}<span>{x}</span></button>)}</div>}
+      {ask.candidates.length > 0 && <div className="oa-ask-options" role="group" aria-label={ct('快捷回复', 'Quick replies')}>{ask.candidates.map((x,i)=><button type="button" key={`${x}-${i}`} onClick={(event)=>chooseCandidate(event, x)} title={ct('点击填入输入框', 'Insert into the input')}><CornerDownLeft size={13} /><span>{x}</span></button>)}</div>}
     </div> : call.args && <div className="oa-tool-args"><span>{ct('问题', 'Question')}</span><pre>{call.args}</pre></div>}
     {showResult && <div className="oa-tool-result oa-ask-result"><span>{ct('回复', 'Reply')}</span><pre>{call.result}</pre></div>}
   </div>
@@ -2429,7 +2420,7 @@ function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskRep
   )
 }
 
-const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, turnUsages, ultraplan_state }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, isLatestMessage = false, turnUsages, ultraplan_state }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
@@ -2484,14 +2475,14 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
               <UsageRow u={tu} className="oa-usage-inline" />
               <ChevronDown size={15} className="oa-turn-chevron"/>
             </button>
-            {open && (r.body ? renderAssistantBody(r.body, onAskReply, undefined, onQuickReply, quickReplyDisabled) : <p className="oa-turn-empty">{ct('该轮暂无详细输出', 'No detailed output for this turn')}</p>)}
+            {open && (r.body ? renderAssistantBody(r.body, onAskReply) : <p className="oa-turn-empty">{ct('该轮暂无详细输出', 'No detailed output for this turn')}</p>)}
           </section>
         </div>
       })}
       {lastRun && <section className="oa-turn-current" key={`last-${lastRun.turn}`}>
         <div className="oa-turn-current-head"><span className="oa-turn-index oa-turn-index-current">{ct('步骤', 'Step')} {lastRun.turn}</span><b>{lastRun.title || ct('正在执行', 'Running')}</b><UsageRow u={turnUsages && turnUsages[boxedRuns.length]} className="oa-usage-inline" /><em>{pending ? ct('实时输出中', 'Live output') : ct('最新一轮', 'Latest turn')}</em></div>
         {lastRun.body || ultraPlanStateForLastRun
-          ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun, onQuickReply, quickReplyDisabled, isLatestMessage)
+          ? renderAssistantBody(lastRun.body || '', onAskReply, ultraPlanStateForLastRun, isLatestMessage)
           : <p className="oa-turn-empty">{ct('正在等待该轮输出…', 'Waiting for this turn’s output…')}</p>}
       </section>}
     </div>}
@@ -2501,7 +2492,7 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
       {parsed.tools && parsed.tools.length > 0 && <div className="oa-tools-section">
         {parsed.tools.map((call, idx) => <ToolCallBlock key={idx} call={call} onAskReply={onAskReply} />)}
       </div>}
-      {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state, onQuickReply, quickReplyDisabled, isLatestMessage)}
+      {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state, isLatestMessage)}
     </div>}
     <FileSummaryCard content={content} />
   </div>
@@ -2748,7 +2739,7 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
 })
 
 export const ChatMessage = memo(function ChatMessage({
-  message: m, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, onEditResend, onRetryBTW,
+  message: m, pending, onAskReply, isLatestMessage = false, onEditResend, onRetryBTW,
   editDisabled = false, clockNow = 0,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
@@ -2860,7 +2851,7 @@ export const ChatMessage = memo(function ChatMessage({
                 ? <CommandResultCard result={m.commandResult} />
                 : m.btw_status === 'error'
                   ? <div className="oa-btw-error" role="alert"><span>{m.content || '侧问失败，请重试'}</span><button type="button" onClick={() => onRetryBTW?.(m)}>重试</button></div>
-                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={isLatestMessage} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
+                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} isLatestMessage={isLatestMessage} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -3009,7 +3000,7 @@ export function WorldlinePanel({ state, loading, switchingId, disabled, onClose,
 }
 
 const MessageList = memo(function MessageList({
-  messages, isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetryBTW, clockNow,
+  messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow,
   worldline = null, onSwitchVersion = null,
 }) {
   const threadMessages = messages.filter(message => message.kind !== 'btw')
@@ -3033,9 +3024,7 @@ const MessageList = memo(function MessageList({
             message={m}
             pending={!m.kind && isCurrentRunning && m.id === lastMessageId}
             onAskReply={onAskReply}
-            onQuickReply={m.role === 'assistant' && m.id === lastMessageId && !isCurrentRunning ? onQuickReply : undefined}
             isLatestMessage={m.role === 'assistant' && m.id === lastMessageId}
-            quickReplyDisabled={isCurrentRunning}
             onEditResend={onEditResend}
             onRetryBTW={onRetryBTW}
             editDisabled={isCurrentRunning}
@@ -5690,7 +5679,6 @@ export default function ChatApp() {
             messages={messages}
             isCurrentRunning={isCurrentRunning}
             onAskReply={fillAskReply}
-            onQuickReply={send}
             onEditResend={editAndResend}
             onRetryBTW={(message)=>sendBTW(`/btw ${message.side_question}`, activeSidRef.current, message.id)}
             clockNow={streamClock}

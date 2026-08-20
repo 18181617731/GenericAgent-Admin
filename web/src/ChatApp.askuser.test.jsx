@@ -48,28 +48,31 @@ describe('ask_user quick replies', () => {
     expect(historical.container.querySelector('.ga-fold.fold-tool')?.open).toBe(false)
   })
 
-  test('sends a candidate through the dedicated quick-reply callback', () => {
+  test('loads a candidate into the composer instead of sending it', () => {
     const onAskReply = vi.fn()
     const onQuickReply = vi.fn()
     const { container } = renderAskUser({ onAskReply, onQuickReply })
 
     const options = expandAskUser(container)
     expect(options).toHaveLength(2)
-    expect(options[0].title).toContain('发送')
+    expect(options[0].title).toContain('输入框')
+    expect(options[0].disabled).toBe(false)
     fireEvent.click(options[0])
 
-    expect(onQuickReply).toHaveBeenCalledOnce()
-    expect(onQuickReply).toHaveBeenCalledWith('Fast')
-    expect(onAskReply).not.toHaveBeenCalled()
+    expect(onAskReply).toHaveBeenCalledOnce()
+    expect(onAskReply).toHaveBeenCalledWith('Fast')
+    expect(onQuickReply).not.toHaveBeenCalled()
   })
 
-  test('disables candidates while a quick reply is being sent', () => {
+  test('keeps candidates insertable while a message is running', () => {
+    const onAskReply = vi.fn()
     const onQuickReply = vi.fn()
-    const { container } = renderAskUser({ onQuickReply, quickReplyDisabled: true })
+    const { container } = renderAskUser({ onAskReply, onQuickReply, quickReplyDisabled: true })
 
     const options = expandAskUser(container)
-    expect(options[0].disabled).toBe(true)
+    expect(options[0].disabled).toBe(false)
     fireEvent.click(options[0])
+    expect(onAskReply).toHaveBeenCalledWith('Fast')
     expect(onQuickReply).not.toHaveBeenCalled()
   })
 
