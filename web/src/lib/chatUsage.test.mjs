@@ -32,14 +32,14 @@ test('cacheHitPercent uses disjoint modern input buckets', () => {
 test('cacheHitPercent includes the legacy cache fallback in total input', () => {
   assert.equal(cacheHitPercent([
     { input_tokens: 100, cached_tokens: 80 },
-  ]), 44)
+  ]), 80)
 })
 
 test('cacheHitPercent supports mixed legacy and modern usage', () => {
   assert.equal(cacheHitPercent([
     { input_tokens: 100, cached_tokens: 80 },
     { input_tokens: 150, cache_creation_tokens: 50, cache_read_tokens: 100 },
-  ]), 38)
+  ]), 45)
 })
 
 test('measuredOutputRate divides only measured outputs by measured generation time', () => {

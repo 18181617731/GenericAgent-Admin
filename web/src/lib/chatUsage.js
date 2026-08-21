@@ -18,9 +18,12 @@ export const cacheHitPercent = (usages) => {
   const totals = usages.reduce((acc, usage) => {
     const read = cacheReadTokens(usage)
     const creation = tokenCount(usage?.cache_creation_tokens)
-    const uncached = tokenCount(usage?.input_tokens)
+    const input = tokenCount(usage?.input_tokens)
     acc.read += read
-    acc.totalInput += uncached + creation + read
+    // Modern API: input/creation/read are disjoint, add all three.
+    // Legacy API: cached is subset of input, only add input once.
+    const isModern = creation > 0 || tokenCount(usage?.cache_read_tokens) > 0
+    acc.totalInput += isModern ? (input + creation + read) : input
     return acc
   }, { read: 0, totalInput: 0 })
   return totals.totalInput > 0 ? Math.round(totals.read / totals.totalInput * 100) : 0
