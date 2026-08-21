@@ -322,13 +322,14 @@ export default function App() {
               onLogs={viewServiceLogs}
               onAutostart={services.toggleAutostart}
               onServiceModel={services.setServiceModel}
+              onReflectStart={services.startReflectService}
               goals={goals.goals}
               onRefreshGoals={goals.loadGoals}
               onOpenGoal={openGoal}
               autonomousReports={inventory.autonomous_reports || []}
               busy={busy}
             />}
-            {tab==='goals' && <GoalsPage t={t} goals={goals.goals} objective={goals.objective} setObjective={goals.setObjective} budget={goals.budget} setBudget={goals.setBudget} maxTurns={goals.maxTurns} setMaxTurns={goals.setMaxTurns} llmNo={goals.llmNo} setLLMNo={goals.setLLMNo} hive={goals.hive} setHive={goals.setHive} outputBytes={goals.outputBytes} setOutputBytes={goals.setOutputBytes} autoRefresh={goals.autoRefresh} setAutoRefresh={goals.setAutoRefresh} selected={goals.selected} output={goals.output} outputMeta={goals.outputMeta} busy={busy} onStart={goals.start} onStop={goals.stop} onDelete={goals.remove} onRefresh={goals.loadGoals} onOutput={goals.loadOutput} onClearOutput={goals.clearOutput} setMsg={setMsg}/>}
+            {tab==='goals' && <GoalsPage t={t} goals={goals.goals} objective={goals.objective} setObjective={goals.setObjective} budget={goals.budget} setBudget={goals.setBudget} maxTurns={goals.maxTurns} setMaxTurns={goals.setMaxTurns} llmNo={goals.llmNo} setLLMNo={goals.setLLMNo} llms={services.llms} hive={goals.hive} setHive={goals.setHive} outputBytes={goals.outputBytes} setOutputBytes={goals.setOutputBytes} autoRefresh={goals.autoRefresh} setAutoRefresh={goals.setAutoRefresh} selected={goals.selected} output={goals.output} outputMeta={goals.outputMeta} busy={busy} onStart={goals.start} onStop={goals.stop} onDelete={goals.remove} onRefresh={goals.loadGoals} onOutput={goals.loadOutput} onClearOutput={goals.clearOutput} setMsg={setMsg}/>}
             {tab==='files' && <FilesPage t={t} filePath={files.path} setFilePath={files.setPath} fileList={files.list} fileContent={files.content} loadedFileContent={files.loadedContent} loadedFilePath={files.loadedPath} setFileContent={files.setContent} fileSearch={files.search} setFileSearch={files.setSearch} searchHits={files.searchHits} tailLines={files.tailLines} setTailLines={files.setTailLines} loadFiles={files.loadFiles} readFile={files.readFile} tailFile={files.tailFile} saveFile={files.saveFile} discardChanges={files.discardChanges} deleteFile={files.deleteFile} downloadFile={files.downloadFile} runSearch={files.runSearch} fileStatus={files.status} dismissFileStatus={files.dismissStatus} busy={busy}/>}
             {tab==='usage' && <UsagePage lang={lang}/>}
             {tab==='logs' && <LogsPage t={t} services={services.services} stream={logStream} onStart={startService} onStop={stopService}/>}

@@ -36,12 +36,13 @@ function ServiceMeta({ svc, llms = [], onModel, t }) {
 export function Stat({ label, value, icon }) { return <div className="stat"><div>{icon}</div><span>{label}</span><b>{value}</b></div> }
 export function Panel({ title, children, className = '' }) { return <div className={`panel ${className}`}><div className="panel-title">{title}</div>{children}</div> }
 export function EntryList({ items = [], empty }) { return <div className="entry-list">{items.length ? items.map((e, i) => <div className="entry" key={`${e.path || e.name}-${i}`}><b>{e.name || e.path}</b><span>{e.path}{e.kind ? ` - ${e.kind}` : ''}{e.size ? ` - ${e.size} B` : ''}</span></div>) : <p className="muted">{empty}</p>}</div> }
-export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel, llms = [], t, actionState = null }) {
+export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel, onReflectStart, llms = [], t, actionState = null }) {
   const isReflect = svc?.kind === 'reflect' || String(svc?.name || '').startsWith('reflect/')
+  const startAction = isReflect && onReflectStart ? onReflectStart : onStart
   const descKey = String(svc?.name || '').includes('scheduler') ? 'scheduler' : (String(svc?.name || '').includes('autonomous') ? 'autonomous' : null)
   const desc = isReflect && descKey ? t?.serviceDesc?.[descKey] : null
   const isPending = actionState?.status === 'pending'
-  const retryAction = actionState?.action === 'stop' ? onStop : onStart
+  const retryAction = actionState?.action === 'stop' ? onStop : startAction
   return <article className={`service-card ${svc.running ? 'is-running' : 'is-stopped'}`} aria-busy={isPending || undefined}>
     <div className="service-card-head">
       <div className="service-title"><b>{svc.name}</b><span>{svc.kind}</span></div>
@@ -50,7 +51,7 @@ export function ServiceRow({ svc, onStart, onStop, onLogs, onAutostart, onModel,
     {desc && <p className="service-desc">{desc}</p>}
     <ServiceMeta svc={svc} llms={llms} onModel={onModel} t={t}/>
     <div className="svc-actions service-actions-row">
-      <button disabled={isPending || svc.running} onClick={() => onStart(svc.name)}><Play size={14}/>{t.start}</button>
+      <button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button>
       <button disabled={isPending || !svc.running} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
       <button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>
       <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label>

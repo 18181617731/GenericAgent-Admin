@@ -54,7 +54,7 @@ export function TaskFormEditor({ value, onChange, t }) {
 
 export function TasksPage({
   t, lang, section, onSection, schedule, scheduleState, taskSvcs, reflectSvcs, llms,
-  actionStates, onStart, onStop, onLogs, onAutostart, onServiceModel,
+  actionStates, onStart, onStop, onLogs, onAutostart, onServiceModel, onReflectStart,
   goals, onRefreshGoals, onOpenGoal, autonomousReports, busy,
 }) {
   const tasks = normalizeScheduleTasksPayload(schedule).tasks
@@ -84,7 +84,7 @@ export function TasksPage({
         <p className="muted">{t.desc.tasks}</p>
         <div className="service-list clean-list">
           {taskSvcs.length
-            ? taskSvcs.map(svc => <ServiceRow key={svc.name} svc={svc} t={t} actionState={actionStates[svc.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart}/>)
+            ? taskSvcs.map(svc => <ServiceRow key={svc.name} svc={svc} t={t} llms={llms} actionState={actionStates[svc.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onModel={onServiceModel} onReflectStart={onReflectStart}/>)
             : <p className="muted">{t.hints.noTasks}</p>}
         </div>
       </Panel>
@@ -138,7 +138,7 @@ export function TasksPage({
       </Panel>
       <Panel title={t.lists.reflectServices}>
         {reflectSvcs.length
-          ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={actionStates[s.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onModel={onServiceModel}/>)
+          ? reflectSvcs.map(s=><ServiceRow key={s.name} svc={s} t={t} llms={llms} actionState={actionStates[s.name]} onStart={onStart} onStop={onStop} onLogs={onLogs} onAutostart={onAutostart} onModel={onServiceModel} onReflectStart={onReflectStart}/>)
           : <p className="muted">{t.hints.noReflect}</p>}
       </Panel>
       <Panel title={`${t.nav.autonomous} · ${t.lists.recentReports}`}>
