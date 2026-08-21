@@ -2,6 +2,27 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v0.2.15 - 2026-08-21
+
+### Bug Fixes
+- **Chat:** Fixed cache hit rate calculation for legacy API models (OpenAI, etc.)
+  - Legacy APIs report `cached_tokens` as a subset of `input_tokens`, but the old algorithm added both to the denominator, causing double-counting
+  - Modern APIs (Claude) report `input_tokens`, `cache_creation_tokens`, and `cache_read_tokens` as disjoint buckets
+  - The algorithm now detects API type per-turn and correctly handles mixed legacy/modern usage in the same session
+  - Example: Legacy `input=100, cached=80` now correctly calculates as `80/100 = 80%` instead of incorrectly `80/180 = 44%`
+
+- **Chat:** Exposed live tool timing in real-time during execution
+  - Tool timing now updates progressively as tools run, not only after completion
+  - Improves transparency for long-running operations
+
+- **Chat:** Preserved assistant prose and tool call ordering in message display
+  - Fixed rendering issue where tool calls could appear out of sequence relative to explanatory text
+
+### Validation
+- All 309 lib tests pass
+- Web build successful
+- No breaking changes
+
 ## v0.1.0-alpha2 - 2026-06-14
 
 ### Scope
