@@ -21,7 +21,7 @@ import { confirmDanger } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseStructuredContent } from './lib/structuredContent'
-import { foldAgentProtocolBlocks, stripAgentProtocolBlocks } from './lib/agentProtocol'
+import { segmentAgentProtocolBlocks } from './lib/agentProtocol'
 import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
@@ -1115,50 +1115,49 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, openAskUser
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
   
-  // Extract agent protocol folds (tool calls/results/thinking/function_calls)
-  const folds = foldAgentProtocolBlocks(cleanText)
-  const strippedText = stripAgentProtocolBlocks(cleanText)
-  
-  if (folds.length === 0) {
-    return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} /> : null
+  // Render agent protocol blocks in their original prose/tool interleaving.
+  const segments = segmentAgentProtocolBlocks(cleanText)
+  if (segments.length === 0) return null
+
+  const renderFold = (fold, key) => {
+    const hasResult = Object.prototype.hasOwnProperty.call(fold, 'result')
+    const receipt = toolReceiptSummary(fold)
+    const isFileMutation = receipt.tool === 'file_patch' || receipt.tool === 'file_write'
+    return (
+      <details
+        key={key}
+        className={`ga-fold ${fold.cls}`}
+        open={fold.open || (openAskUser && receipt.tool === 'ask_user')}
+        data-fold-type={fold.type}
+      >
+        <summary>{fold.type.startsWith('tool-call') ? <ToolReceiptSummary fold={fold} /> : fold.label}</summary>
+        {fold.type.startsWith('tool-call') ? (
+          receipt.tool === 'ask_user'
+            ? <AskUserPanel call={{ args: fold.body, result: hasResult ? fold.result : '' }} onReply={onAskReply} />
+            : <div className="ga-tool-pair">
+              <section className="ga-tool-pair-section ga-tool-pair-call">
+                <div className="ga-tool-pair-label">{isFileMutation ? ct('文件改动', 'File changes') : ct('调用参数', 'Arguments')}</div>
+                {isFileMutation
+                  ? <FileToolArgsPanel toolName={receipt.tool} args={fold.body} />
+                  : <ToolArguments body={fold.body} />}
+              </section>
+              {hasResult && <section className="ga-tool-pair-section ga-tool-pair-result">
+                <div className="ga-tool-pair-label">{fold.resultLive ? ct('工具结果…', 'Tool result…') : ct('工具结果', 'Tool result')}</div>
+                <ToolResultDetails body={fold.result} live={fold.resultLive} />
+              </section>}
+            </div>
+        ) : <pre className="ga-fold-pre">{fold.body}</pre>}
+      </details>
+    )
   }
-  
+
   return (
     <>
-      <div className="ga-execution-log">
-        {folds.map((fold, idx) => {
-          const hasResult = Object.prototype.hasOwnProperty.call(fold, 'result')
-          const receipt = toolReceiptSummary(fold)
-          const isFileMutation = receipt.tool === 'file_patch' || receipt.tool === 'file_write'
-          return (
-            <details
-              key={idx}
-              className={`ga-fold ${fold.cls}`}
-              open={fold.open || (openAskUser && receipt.tool === 'ask_user')}
-              data-fold-type={fold.type}
-            >
-              <summary>{fold.type.startsWith('tool-call') ? <ToolReceiptSummary fold={fold} /> : fold.label}</summary>
-              {fold.type.startsWith('tool-call') ? (
-                receipt.tool === 'ask_user'
-                  ? <AskUserPanel call={{ args: fold.body, result: hasResult ? fold.result : '' }} onReply={onAskReply} />
-                  : <div className="ga-tool-pair">
-                    <section className="ga-tool-pair-section ga-tool-pair-call">
-                      <div className="ga-tool-pair-label">{isFileMutation ? ct('文件改动', 'File changes') : ct('调用参数', 'Arguments')}</div>
-                      {isFileMutation
-                        ? <FileToolArgsPanel toolName={receipt.tool} args={fold.body} />
-                        : <ToolArguments body={fold.body} />}
-                    </section>
-                    {hasResult && <section className="ga-tool-pair-section ga-tool-pair-result">
-                      <div className="ga-tool-pair-label">{fold.resultLive ? ct('工具结果…', 'Tool result…') : ct('工具结果', 'Tool result')}</div>
-                      <ToolResultDetails body={fold.result} live={fold.resultLive} />
-                    </section>}
-                  </div>
-              ) : <pre className="ga-fold-pre">{fold.body}</pre>}
-            </details>
-          )
-        })}
-      </div>
-      {strippedText && <MarkdownBlock text={strippedText} onAskReply={onAskReply} />}
+      {segments.map((segment, segmentIdx) => segment.kind === 'prose'
+        ? <MarkdownBlock key={`prose-${segmentIdx}`} text={segment.text} onAskReply={onAskReply} />
+        : <div className="ga-execution-log" key={`folds-${segmentIdx}`}>
+          {segment.folds.map((fold, foldIdx) => renderFold(fold, `${segmentIdx}-${foldIdx}`))}
+        </div>)}
     </>
   )
 }
