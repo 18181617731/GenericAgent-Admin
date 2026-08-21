@@ -22,6 +22,30 @@ describe('chat stats', () => {
     const text = container.querySelector('.oa-chat-stats')?.textContent || ''
     expect(text).toContain('LLM 9m25s · 工具调用 3h6m52s')
   })
+  test('uses the live run clock for an unfinished assistant turn', () => {
+    const messages = [{ role: 'assistant', run_started_at_ms: 2_000 }]
+    const stats = buildChatStats(messages, 5_000)
+
+    expect(stats.llmElapsedMs).toBe(3_000)
+    expect(stats.toolElapsedMs).toBe(0)
+
+    const { container } = render(<ChatStats messages={messages} now={5_000} />)
+    expect(container.querySelector('.oa-chat-stats')?.textContent).toContain('LLM 3s · 工具调用 0.0s')
+  })
+
+  test('projects an active tool timer from the latest server snapshot', () => {
+    const stats = buildChatStats([{
+      role: 'assistant', run_started_at_ms: 1_000,
+      tool_live_elapsed_ms: 250, tool_live_active_count: 1, tool_live_updated_at_ms: 1_000,
+    }], 1_750)
+
+    expect(stats.toolElapsedMs).toBe(1_000)
+    const { container } = render(<ChatStats messages={[{
+      role: 'assistant', run_started_at_ms: 1_000,
+      tool_live_elapsed_ms: 250, tool_live_active_count: 1, tool_live_updated_at_ms: 1_000,
+    }]} now={1_750} />)
+    expect(container.querySelector('.oa-chat-stats')?.textContent).toContain('工具调用 1s')
+  })
   test('uses the median of per-call model TTFT samples', () => {
     const messages = [{
       role: 'assistant',

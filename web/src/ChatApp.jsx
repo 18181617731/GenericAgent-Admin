@@ -2618,13 +2618,26 @@ const sumUsages = (usages) => {
 }
 
 // 会话级可观测性摘要：只使用消息完成后写入的真实字段，不猜测未提供的首 token/速率。
-export const buildChatStats = (messages = []) => {
-  const turns = (Array.isArray(messages) ? messages : []).filter(m => m?.role === 'assistant' && m?.kind !== 'btw' && (m?.usage || m?.usages || m?.elapsed_ms > 0))
+export const buildChatStats = (messages = [], now = Date.now()) => {
+  const turns = (Array.isArray(messages) ? messages : []).filter(m => m?.role === 'assistant' && m?.kind !== 'btw' && (m?.usage || m?.usages || m?.elapsed_ms > 0 || m?.run_started_at_ms > 0))
   const usages = turns.flatMap(m => Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : []))
   const total = sumUsages(usages)
-  const elapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.elapsed_ms) || 0), 0)
+  const elapsedMs = turns.reduce((sum, m) => sum + getElapsedMs(m, now), 0)
   const llmElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.llm_elapsed_ms) || 0), 0)
-  const toolElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.tool_elapsed_ms) || 0), 0)
+  const liveLlmElapsedMs = turns.reduce((sum, m) => {
+    const isRunning = Number(m.run_started_at_ms) > 0 && !(Number(m.elapsed_ms) > 0)
+    return sum + (isRunning ? getElapsedMs(m, now) : 0)
+  }, 0)
+  const toolElapsedMs = turns.reduce((sum, m) => {
+    const terminalMs = Math.max(0, Number(m.tool_elapsed_ms) || 0)
+    const liveMs = Math.max(0, Number(m.tool_live_elapsed_ms) || 0)
+    const activeCount = Math.max(0, Number(m.tool_live_active_count) || 0)
+    const updatedAtMs = Number(m.tool_live_updated_at_ms) || Number(m.tool_live_timing_at_ms) || 0
+    const projectedMs = updatedAtMs > 0 && activeCount > 0
+      ? liveMs + Math.max(0, now - updatedAtMs) * activeCount
+      : liveMs
+    return sum + Math.max(terminalMs, projectedMs)
+  }, 0)
   const ttftValues = usages.map(usage => Number(usage?.ttft_ms) || 0).filter(value => value > 0).sort((a, b) => a - b)
   const legacyFirstTokenValues = turns.map(m => Number(m.first_token_ms) || 0).filter(value => value > 0).sort((a, b) => a - b)
   const firstTokenValues = ttftValues.length ? ttftValues : legacyFirstTokenValues
@@ -2636,7 +2649,7 @@ export const buildChatStats = (messages = []) => {
     rounds: turns.length,
     steps: usages.length,
     elapsedMs,
-    llmElapsedMs,
+    llmElapsedMs: llmElapsedMs + liveLlmElapsedMs,
     toolElapsedMs,
     firstTokenMs,
     firstTokenSamples: firstTokenValues.length,
@@ -2648,8 +2661,8 @@ export const buildChatStats = (messages = []) => {
   }
 }
 
-export const ChatStats = memo(function ChatStats({ messages = [] }) {
-  const stats = buildChatStats(messages)
+export const ChatStats = memo(function ChatStats({ messages = [], now = Date.now() }) {
+  const stats = buildChatStats(messages, now)
   return <div className="oa-chat-stats" aria-label="对话统计">
     <span>{stats.rounds} 轮 · {stats.steps} 步</span>
     <i aria-hidden="true">|</i>
@@ -3837,6 +3850,18 @@ export default function ChatApp() {
         return { ...m, usages }
       }) : xs)
     }
+    if (ev.type === 'tool_timing' && typeof ev.tool_elapsed_ms === 'number') {
+      const receivedAtMs = Date.now()
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
+        m.id === pendingId ? {
+          ...m,
+          tool_live_elapsed_ms: Math.max(0, Number(ev.tool_elapsed_ms) || 0),
+          tool_live_active_count: Math.max(0, Number(ev.tool_active_count) || 0),
+          tool_live_updated_at_ms: receivedAtMs,
+          tool_live_timing_at_ms: Math.max(0, Number(ev.tool_timing_at_ms) || 0),
+        } : m
+      ) : xs)
+    }
     if (ev.type === 'ctx_stats' && typeof ev.ctx_chars === 'number') {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
         m.id === pendingId ? { ...m, ctx_chars: ev.ctx_chars, ctx_msgs: ev.ctx_msgs } : m
@@ -3847,7 +3872,12 @@ export default function ChatApp() {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
         if (m.id !== pendingId) return m
         const elapsedMs = getElapsedMs(m)
-        const finalMsg = mergeFinalStreamMessage(m, ev.message)
+        const terminalFields = ['usage', 'usages', 'elapsed_ms', 'llm_elapsed_ms', 'tool_elapsed_ms', 'first_token_ms', 'run_started_at_ms', 'ctx_chars', 'ctx_msgs']
+        const finalPayload = { ...ev.message }
+        terminalFields.forEach(key => {
+          if (Object.prototype.hasOwnProperty.call(ev, key)) finalPayload[key] = ev[key]
+        })
+        const finalMsg = mergeFinalStreamMessage(m, finalPayload)
         if (elapsedMs > 0 && !(finalMsg.elapsed_ms > 0)) finalMsg.elapsed_ms = elapsedMs
         finalMsg.ultraplan_state = mergeUltraPlanStates(m.ultraplan_state, finalMsg.ultraplan_state) || finalMsg.ultraplan_state || m.ultraplan_state
         if (!finalMsg.goal_state && m.goal_state) finalMsg.goal_state = m.goal_state
@@ -6026,7 +6056,7 @@ export default function ChatApp() {
             </div>
           </div>
         </div>
-        <ChatStats messages={messages}/>
+        <ChatStats messages={messages} now={streamClock}/>
       </footer>
     </main>
 

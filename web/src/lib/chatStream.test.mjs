@@ -78,6 +78,22 @@ test('final stream message keeps realtime usage and context absent from the pers
   assert.equal(merged.ctx_msgs, 3)
 })
 
+test('final stream message keeps authoritative timing and falls back to streamed timing', () => {
+  const merged = mergeFinalStreamMessage(
+    { llm_elapsed_ms: 900, tool_elapsed_ms: 1_200, tool_live_elapsed_ms: 1_500, tool_live_active_count: 1 },
+    { id:'final', content:'done', llm_elapsed_ms: 2_000, tool_elapsed_ms: 2_400 },
+  )
+  assert.equal(merged.llm_elapsed_ms, 2_000)
+  assert.equal(merged.tool_elapsed_ms, 2_400)
+  assert.equal(merged.tool_live_elapsed_ms, undefined)
+
+  const fallback = mergeFinalStreamMessage(
+    { llm_elapsed_ms: 900, tool_elapsed_ms: 1_200 },
+    { id:'final', content:'done' },
+  )
+  assert.equal(fallback.llm_elapsed_ms, 900)
+  assert.equal(fallback.tool_elapsed_ms, 1_200)
+})
 test('stream follow only stops after an empty completed replay of a finished run', () => {
   assert.equal(shouldFinishStreamFollow({ running:false, replay:true, completed:true, eventCount:0 }), true)
   assert.equal(shouldFinishStreamFollow({ running:false, replay:true, completed:true, eventCount:1 }), false)

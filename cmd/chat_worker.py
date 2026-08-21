@@ -289,7 +289,50 @@ def _snapshot_turn_usages():
 _TOOL_TIMER_LOCK = threading.Lock()
 _TOOL_TIMER_ACTIVE = {}
 _TOOL_TIMER_TOTAL_SECONDS = 0.0
+_TOOL_TIMER_EMITTER = None
 _TOOL_TIMER_HOOK_INSTALLED = False
+
+
+def _set_tool_timer_emitter(emitter):
+    """Bind the current request's protocol emitter to tool timing hooks."""
+    global _TOOL_TIMER_EMITTER
+    with _TOOL_TIMER_LOCK:
+        _TOOL_TIMER_EMITTER = emitter
+
+
+def _clear_tool_timer_emitter(emitter=None):
+    global _TOOL_TIMER_EMITTER
+    with _TOOL_TIMER_LOCK:
+        if emitter is None or _TOOL_TIMER_EMITTER is emitter:
+            _TOOL_TIMER_EMITTER = None
+
+
+def _tool_timer_snapshot():
+    """Read tool timing without consuming it, including currently active calls."""
+    now = time.perf_counter()
+    with _TOOL_TIMER_LOCK:
+        total = _TOOL_TIMER_TOTAL_SECONDS
+        active_count = 0
+        for stack in _TOOL_TIMER_ACTIVE.values():
+            active_count += len(stack)
+            total += sum(max(0.0, now - started_at) for started_at in stack)
+        emitter = _TOOL_TIMER_EMITTER
+    return emitter, {
+        'tool_elapsed_ms': max(0, int(round(total * 1000))),
+        'tool_active_count': active_count,
+        'tool_timing_at_ms': int(time.time() * 1000),
+    }
+
+
+def _emit_tool_timing():
+    emitter, snapshot = _tool_timer_snapshot()
+    if emitter is not None:
+        try:
+            emitter({'type': 'tool_timing', **snapshot})
+        except Exception:
+            # Timing telemetry must never break the actual tool/request path.
+            pass
+    return snapshot
 
 
 def _install_tool_timer_hook():
@@ -308,6 +351,7 @@ def _install_tool_timer_hook():
         thread_id = threading.get_ident()
         with _TOOL_TIMER_LOCK:
             _TOOL_TIMER_ACTIVE.setdefault(thread_id, []).append(time.perf_counter())
+        _emit_tool_timing()
         return ctx
 
     def _after(ctx):
@@ -320,6 +364,7 @@ def _install_tool_timer_hook():
                 _TOOL_TIMER_TOTAL_SECONDS += max(0.0, now - stack.pop())
                 if not stack:
                     _TOOL_TIMER_ACTIVE.pop(thread_id, None)
+        _emit_tool_timing()
         return ctx
 
     plugin_hooks.register('tool_before')(_before)
@@ -2357,6 +2402,7 @@ def handle_request(agent, worker, req):
     _up_stop = threading.Event() if _up_context else None
     _up_thread = None
     _last_plan = ['']
+    _set_tool_timer_emitter(emit)
     try:
         _goal_card_baseline = _goal_state_files(root_for_req)
     except Exception:
@@ -2499,6 +2545,7 @@ def handle_request(agent, worker, req):
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
+        _clear_tool_timer_emitter(emit)
         restore_model_hooks()
 
 
