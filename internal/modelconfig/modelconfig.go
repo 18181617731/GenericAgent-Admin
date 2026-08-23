@@ -76,6 +76,7 @@ type ModelConfig struct {
 
 type Profile struct {
 	VarName            string                 `json:"var_name"`
+	DisplayName        string                 `json:"display_name,omitempty"`
 	SourceVarName      string                 `json:"source_var_name,omitempty"`
 	ProviderSortOrder  *int                   `json:"provider_sort_order,omitempty"`
 	Type               string                 `json:"type"`
@@ -244,6 +245,7 @@ func normalizeProfiles(profiles []Profile) []Profile {
 }
 
 func normalizeProfile(p Profile) Profile {
+	p.DisplayName = strings.TrimSpace(p.DisplayName)
 	configs := profileModelConfigs(p)
 	p.ModelConfigs = configs
 	p.Models = make([]string, 0, len(configs))
@@ -808,6 +810,7 @@ if isinstance(groups, dict):
         if children:
             base['source_var_name']=children[0].get('source_var_name', '')
         if meta:
+            base['display_name']=str(meta.get('display_name', '') or '').strip()
             base['type']=str(meta.get('type', base.get('type', 'native_oai')) or 'native_oai')
             base['name']=str(meta.get('name', base.get('name', '')) or '')
             base['apibase']=str(meta.get('apibase', base.get('apibase', '')) or '')
@@ -1015,11 +1018,12 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 			defaultOrder++
 		}
 		groupMeta := map[string]interface{}{
-			"children": childVars,
-			"type":     p.Type,
-			"name":     p.Name,
-			"apibase":  p.APIBase,
-			"apikey":   p.APIKey,
+			"children":     childVars,
+			"display_name": p.DisplayName,
+			"type":         p.Type,
+			"name":         p.Name,
+			"apibase":      p.APIBase,
+			"apikey":       p.APIKey,
 		}
 		if p.ProviderSortOrder != nil {
 			groupMeta["provider_sort_order"] = *p.ProviderSortOrder

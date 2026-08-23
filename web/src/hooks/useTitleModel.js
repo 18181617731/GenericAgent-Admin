@@ -33,17 +33,21 @@ export function useTitleModel({ t, lang, setMsg, active, fallbackProfiles = [] }
     if (choices.length) {
       return choices.map(option => ({
         providerVarName: String(option?.provider_var_name || ''),
+        providerName: String(option?.provider_display_name || '').trim(),
         model: String(option?.model || ''),
       }))
     }
-    return orderedModelRows(fallbackProfiles)
+    return orderedModelRows(fallbackProfiles).map(row => ({
+      ...row,
+      providerName: String(fallbackProfiles[row.profileIndex]?.display_name || '').trim(),
+    }))
   }, [choices, fallbackProfiles])
 
   const options = useMemo(() => [
     { value: '', label: t.titleModelFollowConversation },
     ...rows.map((row, llmNo) => ({
       value: titleModelKey({ provider_var_name: row.providerVarName, model: row.model }),
-      label: `${row.model} · ${providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
+      label: `${row.model} · ${row.providerName || providerDisplayName(row.providerVarName) || row.providerVarName} · #${llmNo}`,
     })),
   ], [rows, t.titleModelFollowConversation])
 

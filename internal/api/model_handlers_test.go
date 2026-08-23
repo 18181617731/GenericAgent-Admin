@@ -58,11 +58,12 @@ func TestModelsTitleModelPersistsStableReferenceAndReconcilesOrder(t *testing.T)
 	firstOrder, secondOrder := 0, 1
 	profiles := []modelconfig.Profile{
 		{
-			VarName: "native_oai_config1",
-			Type:    "native_oai",
-			Name:    "main",
-			APIBase: "https://api.example/v1",
-			Model:   "chat-model",
+			VarName:     "native_oai_config1",
+			DisplayName: "\u6807\u9898\u4f9b\u5e94\u5546",
+			Type:        "native_oai",
+			Name:        "main",
+			APIBase:     "https://api.example/v1",
+			Model:       "chat-model",
 			ModelConfigs: []modelconfig.ModelConfig{
 				{Model: "chat-model", SortOrder: &firstOrder},
 				{Model: "title-model", SortOrder: &secondOrder},
@@ -72,6 +73,22 @@ func TestModelsTitleModelPersistsStableReferenceAndReconcilesOrder(t *testing.T)
 	}
 	if _, err := modelconfig.Export(root, profiles, true); err != nil {
 		t.Fatal(err)
+	}
+
+	getRR := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/models/title-model", nil)
+	s.Routes().ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET status=%d body=%s", getRR.Code, getRR.Body.String())
+	}
+	var getResponse struct {
+		Options []chatTitleModelOption `json:"options"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &getResponse); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if len(getResponse.Options) != 2 || getResponse.Options[0].ProviderDisplayName != profiles[0].DisplayName {
+		t.Fatalf("GET options=%#v, want provider display name %q", getResponse.Options, profiles[0].DisplayName)
 	}
 
 	body := []byte(`{"model":{"provider_var_name":"native_oai_config1","model":"title-model","llm_no":99}}`)

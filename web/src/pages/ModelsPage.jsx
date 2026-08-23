@@ -46,7 +46,6 @@ import {
 import {
   nextProviderVarName,
   providerDisplayName,
-  providerVarNameFromDisplayName,
   providerVarNameOnProtocolChange,
 } from '../lib/modelsProvider'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
@@ -74,6 +73,7 @@ const protocolMeta = (value, t) => {
 }
 const protocolLabel = (value, t) => protocolMeta(value, t)?.shortLabel || value || 'Native OAI'
 const supportsModelDiscovery = value => !!protocolMeta(value)?.discover
+const providerName = profile => String(profile?.display_name || '').trim() || providerDisplayName(profile?.var_name)
 
 const modelIdOf = value => String(value?.id || value?.name || value || '').trim()
 const uniqueModels = values => {
@@ -220,7 +220,7 @@ function SortableMemberRow({ member, memberIndex, groupIndex, groupLength, candi
       <span className="model-failover-priority-index">{memberIndex + 1}</span>
       <span className="model-failover-priority-copy">
         <strong>{member.model || text.missingModelId}</strong>
-        <small>{providerDisplayName(member.provider_var_name) || member.provider_var_name || text.unnamed}</small>
+        <small>{candidate?.providerName || providerDisplayName(member.provider_var_name) || member.provider_var_name || text.unnamed}</small>
       </span>
       {!candidate && <Tag color="error">{text.failoverMissingMember}</Tag>}
       <Space size={0}>
@@ -270,7 +270,7 @@ function FailoverGroupBody({ group, groupIndex, candidates, candidateMap, sensor
                 onClick={() => toggleMember(groupIndex, candidate)}
               >
                 <span className="model-failover-check">{selected ? <CheckCircle2 size={15} /> : null}</span>
-                <span><strong>{candidate.model || text.missingModelId}</strong><small>{providerDisplayName(candidate.providerVarName) || text.unnamed} · {candidate.protocol}</small></span>
+                <span><strong>{candidate.model || text.missingModelId}</strong><small>{candidate.providerName || text.unnamed} · {candidate.protocol}</small></span>
               </button>
             )
           }) : <div className="model-hint-block">{text.failoverNoCandidates}</div>}
@@ -380,7 +380,7 @@ function CallRow({ row, index, total, expanded, onToggle, moveRow, onOpenProvide
         {!failover && (
           <button type="button" className="model-call-provider" onClick={onOpenProvider} title={text.openProvider}>
             <Plug size={12} aria-hidden="true" />
-            <span>{providerDisplayName(row.providerVarName) || text.unnamed}</span>
+            <span>{row.providerName || text.unnamed}</span>
           </button>
         )}
         <div className="model-call-actions">
@@ -415,10 +415,8 @@ function ProviderForm({ draft, profiles, editingIndex, onChange, t }) {
       <label className="model-field model-field--provider">
         <span className="model-field-label">{text.name}</span>
         <Input
-          value={providerDisplayName(draft.var_name)}
-          onChange={event => onChange({
-            var_name: providerVarNameFromDisplayName(event.target.value, meta.prefix, draft.var_name),
-          })}
+          value={draft.display_name ?? providerDisplayName(draft.var_name)}
+          onChange={event => onChange({ display_name: event.target.value })}
           placeholder={text.nameExample}
         />
         <small>{text.nameHelp}</small>
@@ -468,7 +466,7 @@ function ProviderDrawer({
 
   return (
     <Drawer
-      title={creating ? text.addProvider : (providerDisplayName(profile?.var_name) || text.providerEditor)}
+      title={creating ? text.addProvider : (providerName(profile) || text.providerEditor)}
       placement="right"
       width={520}
       open={open}
@@ -641,7 +639,7 @@ function AddModelModal({ open, profiles, initialIndex, onClose, onAdd, discoverM
             )}
             options={profiles.map((item, index) => ({
               value: index,
-              label: `${providerDisplayName(item.var_name) || text.provider(index + 1)} · ${protocolLabel(item.type, t)}`,
+              label: `${providerName(item) || text.provider(index + 1)} · ${protocolLabel(item.type, t)}`,
             }))}
           />
           {profile && <small>{profile.apibase || text.baseMissing}</small>}
@@ -742,12 +740,18 @@ export function Models({
     row.type === 'failover' ? row : {
       ...row,
       displayName: profileModelConfigs(profiles[row.profileIndex] || {})[row.configIndex]?.name || '',
+      providerName: providerName(profiles[row.profileIndex]),
     }
   )), [profiles, failoverGroups])
 
   const candidates = useMemo(() => orderedModelRows(profiles).map(row => {
     const protocol = String(profiles[row.profileIndex]?.type || DEFAULT_PROTOCOL)
-    return { ...row, protocol, family: protocol.startsWith('native_') ? 'native' : 'legacy' }
+    return {
+      ...row,
+      providerName: providerName(profiles[row.profileIndex]),
+      protocol,
+      family: protocol.startsWith('native_') ? 'native' : 'legacy',
+    }
   }), [profiles])
   const candidateMap = useMemo(
     () => new Map(candidates.map(candidate => [
@@ -888,6 +892,7 @@ export function Models({
     setProviderDraft({
       ...emptyProfile(profiles.length, DEFAULT_PROTOCOL),
       var_name: nextProviderVarName(protocolMeta(DEFAULT_PROTOCOL)?.prefix, profiles),
+      display_name: '',
       type: DEFAULT_PROTOCOL,
       apibase: '',
       apikey: '',
@@ -898,7 +903,7 @@ export function Models({
     setProviderDrawer({ mode: 'create' })
   }
   const createProvider = () => {
-    if (!providerDisplayName(providerDraft?.var_name || '') || !String(providerDraft?.apibase || '').trim()) {
+    if (!String(providerDraft?.display_name || '').trim() || !String(providerDraft?.apibase || '').trim()) {
       window.alert(text.providerFormIncomplete)
       return
     }
@@ -909,7 +914,7 @@ export function Models({
   }
   const removeProvider = index => {
     const profile = profiles[index]
-    const name = providerDisplayName(profile?.var_name) || text.provider(index + 1)
+    const name = providerName(profile) || text.provider(index + 1)
     if (!window.confirm(text.deleteConfirm(name, profileModels(profile).length))) return
     setFailoverGroups(groups => groups.map(group => ({
       ...group,
@@ -1097,7 +1102,7 @@ export function Models({
                 onClick={() => openProvider(index)}
               >
                 <span className="model-connection-title">
-                  <strong>{providerDisplayName(profile.var_name) || text.provider(index + 1)}</strong>
+                  <strong>{providerName(profile) || text.provider(index + 1)}</strong>
                   <i className={`is-${state}`} title={state === 'error' ? text.stateError : state === 'warning' ? text.stateWarning : text.stateReady} />
                 </span>
                 <span className="model-connection-base">{profile.apibase || text.baseMissing}</span>

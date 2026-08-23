@@ -445,6 +445,47 @@ func TestExportImportPreservesPerModelDisplayNames(t *testing.T) {
 	}
 }
 
+func TestExportImportPreservesProviderDisplayName(t *testing.T) {
+	root := t.TempDir()
+	wantDisplayName := "\u4e2d\u6587\u4f9b\u5e94\u5546"
+	profiles := []Profile{{
+		VarName:     "native_oai_config_cn",
+		DisplayName: wantDisplayName,
+		Type:        "native_oai",
+		APIBase:     "https://api.example.com/v1",
+		APIKey:      "sk-test-only",
+		ModelConfigs: []ModelConfig{{
+			Model: "example-chat",
+		}},
+	}}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 {
+		t.Fatalf("profiles len = %d, want 1", len(draft.Profiles))
+	}
+	got := draft.Profiles[0]
+	if got.DisplayName != wantDisplayName {
+		t.Fatalf("DisplayName = %q, want %q", got.DisplayName, wantDisplayName)
+	}
+	if got.VarName != "native_oai_config_cn" {
+		t.Fatalf("VarName = %q, want stable ASCII identifier", got.VarName)
+	}
+
+	mykey, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read mykey.py: %v", err)
+	}
+	if !strings.Contains(string(mykey), `"display_name":"`+wantDisplayName+`"`) {
+		t.Fatalf("provider display name missing from metadata:\n%s", mykey)
+	}
+}
+
 func TestExportImportPreservesPerModelAdvancedConfig(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`{"profiles":[{"var_name":"native_oai_config_acme","type":"native_oai","name":"Acme","apibase":"https://api.acme.example/v1","apikey":"sk-real-secret","model_configs":[{"model":"acme-chat","reasoning_effort":"low","service_tier":"default","read_timeout":120},{"model":"acme-reasoning","reasoning_effort":"high","service_tier":"priority","read_timeout":600}]}]}`)
