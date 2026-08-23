@@ -1199,6 +1199,83 @@ func TestUpdateTransactionWaitTimeoutLeavesInstallationUntouched(t *testing.T) {
 	}
 }
 
+func TestBuildUpdateManifestUsesOperationScopedBackups(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "ga-admin.exe")
+	worker := filepath.Join(root, "cmd", "chat_worker.py")
+	legacyExeBackup := exe + ".bak"
+	legacyWorkerBackup := worker + ".bak"
+	for _, path := range []string{legacyExeBackup, legacyWorkerBackup} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("legacy-backup"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	manifest, err := buildUpdateManifest(updateManifestInput{
+		OperationID: "update-123-456", SourceVersion: "v1.0.0", TargetVersion: "v2.0.0",
+		OriginalExe: exe, StagedExe: filepath.Join(root, "stage", "ga-admin.exe"),
+		Worker: worker, StagedWorker: filepath.Join(root, "stage", "chat_worker.py"),
+		StatusPath: filepath.Join(root, "ga-admin-update-status.json"), WorkingDir: root,
+	})
+	if err != nil {
+		t.Fatalf("buildUpdateManifest: %v", err)
+	}
+	if manifest.BackupExe == legacyExeBackup || manifest.WorkerBackup == legacyWorkerBackup {
+		t.Fatalf("manifest reuses legacy fixed backup paths: %+v", manifest)
+	}
+	if !strings.Contains(filepath.Base(manifest.BackupExe), manifest.OperationID) ||
+		!strings.Contains(filepath.Base(manifest.WorkerBackup), manifest.OperationID) {
+		t.Fatalf("backup paths are not operation-scoped: exe=%q worker=%q", manifest.BackupExe, manifest.WorkerBackup)
+	}
+}
+
+func TestUpdateTransactionRestartsOriginalAfterPreLaunchFailure(t *testing.T) {
+	root := t.TempDir()
+	oldExe := filepath.Join(root, "ga-admin.exe")
+	stagedExe := filepath.Join(root, "stage", "ga-admin.exe")
+	for path, content := range map[string]string{oldExe: "old-exe", stagedExe: "new-exe"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldStatus := statusPathOverride
+	statusPathOverride = filepath.Join(root, "ga-admin-update-status.json")
+	defer func() { statusPathOverride = oldStatus }()
+	operationID := "pre-launch-failure-op"
+	if err := writeStatus(UpdateStatus{ID: operationID, Running: true, Stage: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := UpdateManifest{
+		OperationID: operationID, SourceVersion: "v1.0.0", TargetVersion: "v2.0.0",
+		OriginalExe: oldExe, StagedExe: stagedExe, BackupExe: oldExe + ".pre-launch-failure-op.bak",
+		StatusPath: statusPathOverride, WorkingDir: root,
+	}
+	launches := []bool{}
+	deps := defaultTransactionDeps()
+	deps.waitPIDExit = func(int, time.Duration) error { return nil }
+	deps.installFile = func(string, string, os.FileMode) error { return errors.New("injected install failure") }
+	deps.launch = func(_ UpdateManifest, confirmation bool) (*exec.Cmd, <-chan error, error) {
+		launches = append(launches, confirmation)
+		return nil, nil, nil
+	}
+	if err := runReplacementTransaction(manifest, deps); err == nil || !strings.Contains(err.Error(), "injected install failure") {
+		t.Fatalf("transaction error = %v, want injected install failure", err)
+	}
+	if !slices.Equal(launches, []bool{false}) {
+		t.Fatalf("launch confirmations = %v, want one original-service restart", launches)
+	}
+	got, err := os.ReadFile(oldExe)
+	if err != nil || string(got) != "old-exe" {
+		t.Fatalf("original executable = %q, %v; want restored old executable", got, err)
+	}
+}
+
 func TestUpdateTransactionPartialWorkerFailureRestoresWholeSet(t *testing.T) {
 	root := t.TempDir()
 	oldExe := filepath.Join(root, "ga-admin.exe")
@@ -1235,6 +1312,12 @@ func TestUpdateTransactionPartialWorkerFailureRestoresWholeSet(t *testing.T) {
 			return errors.New("injected worker install failure")
 		}
 		return install(src, dest, perm)
+	}
+	deps.launch = func(_ UpdateManifest, confirmation bool) (*exec.Cmd, <-chan error, error) {
+		if confirmation {
+			t.Fatal("unexpected replacement launch")
+		}
+		return nil, nil, nil
 	}
 	if err := runReplacementTransaction(manifest, deps); err == nil || !strings.Contains(err.Error(), "injected worker") {
 		t.Fatalf("transaction error = %v, want injected worker failure", err)

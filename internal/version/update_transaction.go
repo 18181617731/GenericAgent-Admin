@@ -73,14 +73,16 @@ type updateManifestInput struct {
 }
 
 func buildUpdateManifest(input updateManifestInput) (UpdateManifest, error) {
+	operationID := strings.TrimSpace(input.OperationID)
+	backupSuffix := "." + operationID + ".bak"
 	manifest := UpdateManifest{
-		OperationID:    strings.TrimSpace(input.OperationID),
+		OperationID:    operationID,
 		SourceVersion:  strings.TrimSpace(input.SourceVersion),
 		TargetVersion:  strings.TrimSpace(input.TargetVersion),
 		OldPID:         input.OldPID,
 		OriginalExe:    filepath.Clean(input.OriginalExe),
 		StagedExe:      filepath.Clean(input.StagedExe),
-		BackupExe:      filepath.Clean(input.OriginalExe) + ".bak",
+		BackupExe:      filepath.Clean(input.OriginalExe) + backupSuffix,
 		Worker:         cleanOptionalPath(input.Worker),
 		StagedWorker:   cleanOptionalPath(input.StagedWorker),
 		StatusPath:     filepath.Clean(input.StatusPath),
@@ -92,7 +94,7 @@ func buildUpdateManifest(input updateManifestInput) (UpdateManifest, error) {
 		CreatedAt:      time.Now(),
 	}
 	if manifest.Worker != "" {
-		manifest.WorkerBackup = manifest.Worker + ".bak"
+		manifest.WorkerBackup = manifest.Worker + backupSuffix
 	}
 	if err := validateUpdateManifest(manifest); err != nil {
 		return UpdateManifest{}, err
@@ -243,13 +245,12 @@ func runReplacementTransaction(manifest UpdateManifest, deps transactionDeps) er
 		st.Message = "installing the verified update"
 		return nil
 	}); err != nil {
-		return err
+		return failAfterRollbackAndRestart(manifest, deps, nil, err)
 	}
 
 	changed, err := replaceManifestFiles(manifest, deps.installFile)
 	if err != nil {
-		rollbackErr := restoreManifestFiles(manifest, changed)
-		return failAfterRollback(manifest.OperationID, err, rollbackErr)
+		return failAfterRollbackAndRestart(manifest, deps, changed, err)
 	}
 	if err := transitionUpdate(manifest.OperationID, func(st *UpdateStatus) error {
 		st.Stage = "starting_replacement"
@@ -258,16 +259,11 @@ func runReplacementTransaction(manifest UpdateManifest, deps transactionDeps) er
 		st.NewPID = 0
 		return nil
 	}); err != nil {
-		rollbackErr := restoreManifestFiles(manifest, changed)
-		return failAfterRollback(manifest.OperationID, err, rollbackErr)
+		return failAfterRollbackAndRestart(manifest, deps, changed, err)
 	}
 	cmd, exited, err := deps.launch(manifest, true)
 	if err != nil {
-		rollbackErr := restoreManifestFiles(manifest, changed)
-		if rollbackErr == nil {
-			_, _, _ = deps.launch(manifest, false)
-		}
-		return failAfterRollback(manifest.OperationID, fmt.Errorf("launch replacement: %w", err), rollbackErr)
+		return failAfterRollbackAndRestart(manifest, deps, changed, fmt.Errorf("launch replacement: %w", err))
 	}
 	if err := transitionUpdate(manifest.OperationID, func(st *UpdateStatus) error {
 		switch st.Stage {
@@ -283,16 +279,11 @@ func runReplacementTransaction(manifest UpdateManifest, deps transactionDeps) er
 		return nil
 	}); err != nil {
 		deps.stopChild(cmd, exited)
-		rollbackErr := restoreManifestFiles(manifest, changed)
-		return failAfterRollback(manifest.OperationID, err, rollbackErr)
+		return failAfterRollbackAndRestart(manifest, deps, changed, err)
 	}
 	if err := waitForReplacementConfirmation(manifest, exited, deps.sleep); err != nil {
 		deps.stopChild(cmd, exited)
-		rollbackErr := restoreManifestFiles(manifest, changed)
-		if rollbackErr == nil {
-			_, _, _ = deps.launch(manifest, false)
-		}
-		return failAfterRollback(manifest.OperationID, err, rollbackErr)
+		return failAfterRollbackAndRestart(manifest, deps, changed, err)
 	}
 	if err := transitionUpdate(manifest.OperationID, func(st *UpdateStatus) error {
 		if st.Stage != "replacement_ready" || st.ConfirmedVersion != manifest.TargetVersion || st.NewPID != cmd.Process.Pid {
@@ -308,8 +299,7 @@ func runReplacementTransaction(manifest UpdateManifest, deps transactionDeps) er
 		return nil
 	}); err != nil {
 		deps.stopChild(cmd, exited)
-		rollbackErr := restoreManifestFiles(manifest, changed)
-		return failAfterRollback(manifest.OperationID, err, rollbackErr)
+		return failAfterRollbackAndRestart(manifest, deps, changed, err)
 	}
 	_ = os.Remove(manifest.BackupExe)
 	if manifest.WorkerBackup != "" {
@@ -380,6 +370,18 @@ func restoreBackup(backup, target string) error {
 		return err
 	}
 	return os.Rename(backup, target)
+}
+
+func failAfterRollbackAndRestart(manifest UpdateManifest, deps transactionDeps, changed []string, cause error) error {
+	rollbackErr := restoreManifestFiles(manifest, changed)
+	if rollbackErr != nil {
+		return failAfterRollback(manifest.OperationID, cause, rollbackErr)
+	}
+	if _, _, restartErr := deps.launch(manifest, false); restartErr != nil {
+		cause = errors.Join(cause, fmt.Errorf("restart original service: %w", restartErr))
+		return failUpdateTransaction(manifest.OperationID, cause, "restart_failed: "+restartErr.Error())
+	}
+	return failAfterRollback(manifest.OperationID, cause, nil)
 }
 
 func failAfterRollback(operationID string, cause, rollbackErr error) error {
