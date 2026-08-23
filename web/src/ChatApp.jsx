@@ -1949,7 +1949,13 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
                 title={group.path}
                 role="button"
                 tabIndex={0}
-                onKeyDown={e => { if (e.key === 'Enter') toggleExpand(group.path) }}
+                aria-expanded={expanded}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    toggleExpand(group.path)
+                  }
+                }}
               >
                 <ChevronDown size={11} className={'oa-file-chevron' + (expanded ? ' open' : '')} />
                 <span className="oa-file-name">{filename}</span>

@@ -154,6 +154,13 @@ describe('assistant markdown rendering', () => {
     expect(container.querySelectorAll('.oa-file-summary-item')).toHaveLength(2)
     expect(toggle.querySelector('.stat-added').textContent).toBe('+3')
     expect(toggle.querySelector('.stat-removed').textContent).toBe('\u22120')
+
+    const firstFile = container.querySelector('.oa-file-summary-item')
+    expect(firstFile.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.keyDown(firstFile, { key: ' ' })
+    expect(firstFile.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.keyDown(firstFile, { key: 'Enter' })
+    expect(firstFile.getAttribute('aria-expanded')).toBe('false')
   })
 
   test('starts a many-file summary collapsed and expands only on demand', () => {
