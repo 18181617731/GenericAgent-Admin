@@ -2,6 +2,25 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v0.2.16 - 2026-08-24
+
+### New Features
+- **Models:** Added optional Chinese-friendly provider display names without changing configuration variable identities.
+- **Models:** Added stable model instance identities, allowing the same model ID to be configured more than once under one provider and referenced independently in failover groups.
+- **Chat:** Moved guided-message queues from browser-local storage to durable per-session server state.
+
+### Improvements
+- **Chat:** Large file-change summaries now collapse automatically and use a compact, stable layout that keeps assistant output visible.
+- **Update:** Staged updates now require an explicit restart authorization step before replacing the running application.
+
+### Reliability
+- **Update:** Hardened replacement failure recovery so interrupted updates restore and restart the original service safely.
+- **Compatibility:** Legacy failover references without an instance ID remain supported when they resolve to exactly one model instance; ambiguous references now fail explicitly instead of selecting the wrong instance.
+
+### Validation
+- Go tests and build pass across the full repository.
+- Web lint, tests, and production build pass.
+
 ## v0.2.15 - 2026-08-21
 
 ### Bug Fixes
