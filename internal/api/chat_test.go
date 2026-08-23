@@ -2323,3 +2323,70 @@ func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
 		t.Fatalf("unsaved session llm_no=%d want 4", cs.Settings.LLMNo)
 	}
 }
+
+func TestChatQueuePersistsWithSessionAndSurvivesRunSave(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	initial := chatSession{
+		ID:        "queue-session",
+		Title:     "Queue",
+		UpdatedAt: 123,
+		Messages:  []chatMessage{},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), initial); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"messages":[{"id":"q-1","text":"continue this work","files":[{"id":"file-1","name":"notes.txt","type":"text/plain","size":5,"dataURL":"data:text/plain;base64,aGVsbG8="}],"llmNo":3,"reasoningEffort":"high","queuedAt":456}]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/chat/queue/queue-session", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.chatReplaceQueue(rec, req, initial.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save queue status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.UpdatedAt != baseline.UpdatedAt {
+		t.Fatalf("queue update changed session ordering timestamp: got %d want %d", stored.UpdatedAt, baseline.UpdatedAt)
+	}
+	if len(stored.QueuedMessages) != 1 || stored.QueuedMessages[0].ID != "q-1" || stored.QueuedMessages[0].LLMNo != 3 {
+		t.Fatalf("stored queue=%#v", stored.QueuedMessages)
+	}
+	if files := stored.QueuedMessages[0].Files; len(files) != 1 || files[0].ID != "file-1" || files[0].Size != 5 || files[0].DataURL == "" {
+		t.Fatalf("stored queue files=%#v", files)
+	}
+
+	staleRunResult := initial
+	staleRunResult.Messages = []chatMessage{{ID: "a-1", Role: "assistant", Content: "done"}}
+	preserveLatestChatUserMetadata(&staleRunResult, stored)
+	if len(staleRunResult.QueuedMessages) != 1 || staleRunResult.QueuedMessages[0].ID != "q-1" {
+		t.Fatalf("run save dropped concurrent queue update: %#v", staleRunResult.QueuedMessages)
+	}
+
+	getRec := httptest.NewRecorder()
+	s.chatGetSession(getRec, httptest.NewRequest(http.MethodGet, "/api/chat/session/queue-session", nil), initial.ID)
+	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), `"queued_messages"`) || !strings.Contains(getRec.Body.String(), `"q-1"`) {
+		t.Fatalf("session response does not restore queue: status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+}
+
+func TestChatQueueRejectsInvalidEntries(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPut, "/api/chat/queue/queue-session", strings.NewReader(`{"messages":[{"id":"","text":"missing id"}]}`))
+	rec := httptest.NewRecorder()
+	s.chatReplaceQueue(rec, req, "queue-session")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

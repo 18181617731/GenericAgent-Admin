@@ -201,6 +201,7 @@ type chatSession struct {
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 	Loop                   chatLoopState            `json:"loop"`
+	QueuedMessages         []chatQueuedMessage      `json:"queued_messages,omitempty"`
 }
 
 const (
@@ -225,7 +226,22 @@ const (
 	chatTitleSourceManual    = "manual"
 )
 
-type chatUpload struct{ Name, Type, DataURL string }
+type chatUpload struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	DataURL string `json:"dataURL"`
+}
+
+type chatQueuedMessage struct {
+	ID              string       `json:"id"`
+	Text            string       `json:"text"`
+	Files           []chatUpload `json:"files,omitempty"`
+	LLMNo           int          `json:"llmNo"`
+	ReasoningEffort string       `json:"reasoningEffort,omitempty"`
+	QueuedAt        int64        `json:"queuedAt"`
+}
 
 type chatTitleExchange struct {
 	User               string `json:"user"`
@@ -2058,6 +2074,7 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) {
 	candidate.Pinned = latest.Pinned
 	candidate.Loop = latest.Loop
+	candidate.QueuedMessages = latest.QueuedMessages
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title

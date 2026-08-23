@@ -85,6 +85,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatSetPinned(w, r, parts[1])
 			return
 		}
+	case "queue":
+		if len(parts) == 2 && r.Method == http.MethodPut {
+			s.chatReplaceQueue(w, r, parts[1])
+			return
+		}
 	case "fork":
 		if len(parts) == 2 && r.Method == http.MethodPost {
 			s.chatForkSession(w, r, parts[1])
@@ -508,6 +513,51 @@ func (s *Server) chatSetPinned(w http.ResponseWriter, r *http.Request, sid strin
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "pinned": cs.Pinned})
+}
+
+func (s *Server) chatReplaceQueue(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Messages []chatQueuedMessage `json:"messages"`
+	}
+	if err := decodeLimited(r, &req, maxChatPostBodyBytes); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	if len(req.Messages) > 100 {
+		bad(w, http.StatusBadRequest, "too many queued messages")
+		return
+	}
+	for i := range req.Messages {
+		item := &req.Messages[i]
+		item.ID = strings.TrimSpace(item.ID)
+		item.Text = strings.TrimSpace(item.Text)
+		if item.ID == "" || (item.Text == "" && len(item.Files) == 0) {
+			bad(w, http.StatusBadRequest, "queued message requires id and content")
+			return
+		}
+		if len(item.Files) > maxChatUploadFiles {
+			bad(w, http.StatusBadRequest, "too many queued message files")
+			return
+		}
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cs.QueuedMessages = req.Messages
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
 }
 
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {

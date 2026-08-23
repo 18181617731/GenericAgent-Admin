@@ -3583,6 +3583,7 @@ export default function ChatApp() {
   }, [])
   const runSeqRef = useRef(0)
   const activeRunRef = useRef(false)
+  const queueWriteRef = useRef(Promise.resolve())
   const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
@@ -4255,6 +4256,11 @@ export default function ChatApp() {
     setWorldlineRestorePicker(null)
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
+    syncQueue([], { persist:false })
+    setQueueEditingId('')
+    setQueueDraft('')
+    guidingQueueRef.current = ''
+    setGuidingQueueId('')
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
@@ -4271,6 +4277,11 @@ export default function ChatApp() {
     scrollModeRef.current = 'auto'
     setSid(d.id)
     setMessages(d.messages || [])
+    syncQueue(Array.isArray(d.queued_messages) ? d.queued_messages : [], { persist:false })
+    setQueueEditingId('')
+    setQueueDraft('')
+    guidingQueueRef.current = ''
+    setGuidingQueueId('')
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
@@ -4367,7 +4378,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
-    setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopMaxRounds(10); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
+    setSid(d.id); setMessages([]); syncQueue([], { persist:false }); setQueueEditingId(''); setQueueDraft(''); guidingQueueRef.current = ''; setGuidingQueueId(''); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopMaxRounds(10); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
     if (selectedProject) await loadSessions(d.id)
   }
@@ -4811,10 +4822,22 @@ export default function ChatApp() {
   }
 
   const removeAttachment = (id) => setAttachments(xs => xs.filter(x => x.id !== id))
-  const syncQueue = (next) => { queuedRef.current = next; setQueuedMessages(next) }
+  const syncQueue = (next, { persist = true, sessionId = activeSidRef.current } = {}) => {
+    queuedRef.current = next
+    setQueuedMessages(next)
+    if (!persist || !sessionId) return
+    const snapshot = next.map(item => ({ ...item, files:(item.files || []).map(file => ({ ...file })) }))
+    const queueURL = addChatInstanceToURL(`/api/chat/queue/${sessionId}`, chatInstanceRef.current)
+    queueWriteRef.current = queueWriteRef.current
+      .catch(() => {})
+      .then(() => api(queueURL, { method:'PUT', body:JSON.stringify({ messages:snapshot }) }))
+      .catch(e => {
+        if (e.name !== 'AbortError' && activeSidRef.current === sessionId) setErr(e.message || String(e))
+      })
+  }
   const popQueued = () => {
     const [first, ...rest] = queuedRef.current
-    syncQueue(rest)
+    if (first) syncQueue(rest)
     return first
   }
   const enqueueMessage = (item) => {
@@ -4937,11 +4960,6 @@ export default function ChatApp() {
 
   const runSend = async (item = {}) => {
     const guidedQueueId = guidingQueueRef.current
-    if (guidedQueueId) {
-      syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId))
-      guidingQueueRef.current = ''
-      setGuidingQueueId('')
-    }
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
@@ -4968,6 +4986,11 @@ export default function ChatApp() {
         setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
         return
+      }
+      if (guidedQueueId) {
+        syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId), { sessionId:id })
+        guidingQueueRef.current = ''
+        setGuidingQueueId('')
       }
       const clientUserID = `u-${Date.now()}`
       setStreamingSid(id)
@@ -5320,7 +5343,11 @@ export default function ChatApp() {
     setWorldlineOpen(false)
     setWorldlineState(null)
     setWorldlineLoading(false)
-    setQueuedMessages([])
+    syncQueue([], { persist:false })
+    setQueueEditingId('')
+    setQueueDraft('')
+    guidingQueueRef.current = ''
+    setGuidingQueueId('')
     setAttachments([])
     setErr('')
     setNotice(ct('已切换 GA 实例', 'GA instance switched'))
