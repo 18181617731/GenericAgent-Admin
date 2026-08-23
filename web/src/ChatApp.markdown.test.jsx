@@ -136,6 +136,49 @@ describe('assistant markdown rendering', () => {
     expect(panel.querySelectorAll('.oa-diff-add').length).toBe(13)
   })
 
+  test('keeps a small file summary open and shows aggregate line counts', () => {
+    const toolCall = (path, content) => [
+      '\u{1F6E0}\uFE0F Tool: `file_write`',
+      '```text',
+      JSON.stringify({ path, content, mode: 'overwrite' }),
+      '```',
+    ].join('\n')
+    const container = renderAssistant([
+      toolCall('src/one.js', 'one'),
+      toolCall('src/two.js', 'first\nsecond'),
+    ].join('\n\n'))
+
+    const toggle = container.querySelector('.oa-file-summary-header')
+    expect(toggle).toBeTruthy()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('.oa-file-summary-item')).toHaveLength(2)
+    expect(toggle.querySelector('.stat-added').textContent).toBe('+3')
+    expect(toggle.querySelector('.stat-removed').textContent).toBe('\u22120')
+  })
+
+  test('starts a many-file summary collapsed and expands only on demand', () => {
+    const toolCall = (index) => [
+      '\u{1F6E0}\uFE0F Tool: `file_write`',
+      '```text',
+      JSON.stringify({ path: `src/file-${index}.js`, content: `line ${index}`, mode: 'overwrite' }),
+      '```',
+    ].join('\n')
+    const container = renderAssistant(
+      Array.from({ length: 4 }, (_, index) => toolCall(index + 1)).join('\n\n'),
+    )
+
+    const toggle = container.querySelector('.oa-file-summary-header')
+    expect(toggle).toBeTruthy()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.oa-file-summary-list')).toBeNull()
+    expect(toggle.querySelector('.stat-added').textContent).toBe('+4')
+    expect(toggle.querySelector('.stat-removed').textContent).toBe('\u22120')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('.oa-file-summary-item')).toHaveLength(4)
+  })
+
   test('renders a blockquote as a quote element', () => {
     const container = renderAssistant('> quoted **note**\n> second line');
     const quote = container.querySelector('blockquote.oa-md-quote')

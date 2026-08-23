@@ -1748,6 +1748,8 @@ function parseFileToolArgs(toolName, argsText) {
 
 // Unified diff rows: line numbers + -/+ gutter, collapsed context
 const PATCH_AUTO_COLLAPSE_CHANGES = 12
+const FILE_SUMMARY_AUTO_COLLAPSE_FILES = 4
+const FILE_SUMMARY_AUTO_COLLAPSE_CHANGES = 100
 
 function DiffRows({ rows }) {
   return <div className="oa-diff" role="table" aria-label="文件改动逐行对照">
@@ -1887,8 +1889,18 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
     }))
   }, [content])
 
+  const totals = useMemo(() => fileOps.reduce((acc, group) => ({
+    added: acc.added + group.added,
+    removed: acc.removed + group.removed,
+  }), { added: 0, removed: 0 }), [fileOps])
+  const startsCollapsed = fileOps.length >= FILE_SUMMARY_AUTO_COLLAPSE_FILES
+    || totals.added + totals.removed > FILE_SUMMARY_AUTO_COLLAPSE_CHANGES
   const [expandedPaths, setExpandedPaths] = useState(new Set())
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(startsCollapsed)
+
+  useEffect(() => {
+    setCollapsed(startsCollapsed)
+  }, [startsCollapsed])
 
   const toggleExpand = useCallback((fp) => {
     setExpandedPaths(prev => {
@@ -1903,17 +1915,20 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
 
   return (
     <div className="oa-file-summary">
-      <div
+      <button
         className={'oa-file-summary-header clickable' + (collapsed ? ' collapsed' : '')}
+        type="button"
         onClick={() => setCollapsed(v => !v)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => { if (e.key === 'Enter') setCollapsed(v => !v) }}
+        aria-expanded={!collapsed}
       >
         <FileText size={13} />
-        <span>文件改动 · {fileOps.length}</span>
+        <span>{ct('文件改动', 'File changes')} · {fileOps.length}</span>
+        <span className="oa-file-summary-totals" aria-label={ct(`共新增 ${totals.added} 行，删除 ${totals.removed} 行`, `${totals.added} lines added, ${totals.removed} removed`)}>
+          <span className="stat-added">+{totals.added}</span>
+          <span className="stat-removed">−{totals.removed}</span>
+        </span>
         <ChevronDown size={12} className={'oa-file-summary-toggle' + (collapsed ? '' : ' open')} />
-      </div>
+      </button>
       {!collapsed && (
       <div className="oa-file-summary-list">
         {fileOps.map((group, i) => {
