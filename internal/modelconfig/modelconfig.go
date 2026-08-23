@@ -54,6 +54,7 @@ func parseOptionalBoolString(v string) bool {
 }
 
 type ModelConfig struct {
+	InstanceID         string                 `json:"instance_id,omitempty"`
 	Model              string                 `json:"model"`
 	Name               string                 `json:"name,omitempty"`
 	SortOrder          *int                   `json:"sort_order,omitempty"`
@@ -102,6 +103,7 @@ type Profile struct {
 type FailoverMember struct {
 	ProviderVarName string `json:"provider_var_name"`
 	Model           string `json:"model"`
+	InstanceID      string `json:"instance_id,omitempty"`
 }
 
 type FailoverGroup struct {
@@ -384,15 +386,17 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 			return fmt.Errorf("var_name must contain api/config/cookie: %s", p.VarName)
 		}
 		configs := profileModelConfigs(p)
-		modelSeen := map[string]bool{}
+		instanceSeen := map[string]bool{}
 		for i, config := range configs {
 			if config.Model == "" {
 				return fmt.Errorf("model is required at index %d", i)
 			}
-			if modelSeen[config.Model] {
-				return fmt.Errorf("duplicate model: %s", config.Model)
+			if config.InstanceID != "" {
+				if instanceSeen[config.InstanceID] {
+					return fmt.Errorf("duplicate model instance_id: %s", config.InstanceID)
+				}
+				instanceSeen[config.InstanceID] = true
 			}
-			modelSeen[config.Model] = true
 			if config.MaxRetries != nil && *config.MaxRetries < 0 {
 				return fmt.Errorf("max_retries must be zero or greater for model %s", config.Model)
 			}
@@ -521,20 +525,28 @@ func resolveFailoverGroups(profiles []Profile, groups []FailoverGroup) ([]resolv
 		sessionName string
 		family      string
 	}
-	targets := map[string]map[string]memberTarget{}
+	type providerTargets struct {
+		byInstance map[string]memberTarget
+		byModel    map[string][]memberTarget
+	}
+	targets := map[string]providerTargets{}
 	generatedNames := map[string]bool{}
 	for _, profile := range profiles {
 		family := "legacy"
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(profile.Type)), "native_") {
 			family = "native"
 		}
-		byModel := map[string]memberTarget{}
+		provider := providerTargets{byInstance: map[string]memberTarget{}, byModel: map[string][]memberTarget{}}
 		for index, config := range profileModelConfigs(profile) {
 			sessionName := expandedVarName(profile.VarName, index)
 			generatedNames[sessionName] = true
-			byModel[config.Model] = memberTarget{sessionName: sessionName, family: family}
+			target := memberTarget{sessionName: sessionName, family: family}
+			if config.InstanceID != "" {
+				provider.byInstance[config.InstanceID] = target
+			}
+			provider.byModel[config.Model] = append(provider.byModel[config.Model], target)
 		}
-		targets[profile.VarName] = byModel
+		targets[profile.VarName] = provider
 	}
 
 	seenGroups := map[string]bool{}
@@ -565,13 +577,25 @@ func resolveFailoverGroups(profiles []Profile, groups []FailoverGroup) ([]resolv
 		for memberIndex, member := range group.Members {
 			providerVarName := strings.TrimSpace(member.ProviderVarName)
 			model := strings.TrimSpace(member.Model)
-			byModel, ok := targets[providerVarName]
+			provider, ok := targets[providerVarName]
 			if !ok {
 				return nil, fmt.Errorf("unknown provider_var_name %q in failover group %s", providerVarName, group.VarName)
 			}
-			target, ok := byModel[model]
-			if !ok {
-				return nil, fmt.Errorf("unknown model %q for provider %s in failover group %s", model, providerVarName, group.VarName)
+			var target memberTarget
+			if instanceID := strings.TrimSpace(member.InstanceID); instanceID != "" {
+				target, ok = provider.byInstance[instanceID]
+				if !ok {
+					return nil, fmt.Errorf("unknown model instance_id %q for provider %s in failover group %s", instanceID, providerVarName, group.VarName)
+				}
+			} else {
+				matches := provider.byModel[model]
+				if len(matches) == 0 {
+					return nil, fmt.Errorf("unknown model %q for provider %s in failover group %s", model, providerVarName, group.VarName)
+				}
+				if len(matches) > 1 {
+					return nil, fmt.Errorf("model %q is ambiguous for provider %s in failover group %s; instance_id is required", model, providerVarName, group.VarName)
+				}
+				target = matches[0]
 			}
 			if seenMembers[target.sessionName] {
 				return nil, fmt.Errorf("duplicate member at index %d in failover group %s", memberIndex, group.VarName)
@@ -659,6 +683,9 @@ profiles_by_var={}
 profile_order=[]
 declaration_order_by_var={}
 identity_by_var={}
+model_instances=getattr(mod, '_ga_admin_model_instances', {})
+if not isinstance(model_instances, dict):
+    model_instances={}
 mixin_groups_raw=[]
 for mixin_var, mixin_value in vars(mod).items():
     if mixin_var.startswith('_') or 'mixin' not in mixin_var.lower() or not isinstance(mixin_value, dict):
@@ -732,6 +759,9 @@ for var, value in vars(mod).items():
     identity_by_var[var]=(typ, apibase.strip().rstrip('/'), apikey_text)
     for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('service_tier','service_tier'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
+    instance_id=model_instances.get(var)
+    if isinstance(instance_id, str) and instance_id:
+        p['instance_id']=instance_id
     p['extra']=d
     p['sort_order']=len(profile_order)
     profiles_by_var[var]=p
@@ -751,7 +781,7 @@ def model_configs_of(profile):
     if not model:
         return []
     config={'model':model}
-    for key in ('name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','service_tier','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
+    for key in ('instance_id','name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','service_tier','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
         if key in profile:
             config[key]=profile[key]
     extra=profile.get('extra')
@@ -782,7 +812,6 @@ if isinstance(groups, dict):
         else:
             continue
         configs=[]
-        seen_models=set()
         display_names=meta.get('display_names', {}) if meta else {}
         if not isinstance(display_names, dict):
             display_names={}
@@ -790,7 +819,7 @@ if isinstance(groups, dict):
             child_var=str(child.get('var_name', '') or '')
             for config in model_configs_of(child):
                 model=str(config.get('model', '')).strip()
-                if model and model not in seen_models:
+                if model:
                     # Read name from config itself (new convention)
                     name_from_config=config.get('name')
                     if isinstance(name_from_config, str) and name_from_config.strip():
@@ -800,7 +829,6 @@ if isinstance(groups, dict):
                         display_name=display_names.get(child_var)
                         if isinstance(display_name, str) and display_name.strip():
                             config['name']=display_name.strip()
-                    seen_models.add(model)
                     configs.append(config)
         models=[config['model'] for config in configs]
         base['var_name']=provider
@@ -856,12 +884,10 @@ for profile in profiles:
         continue
     base=merged_profiles[provider_index[identity]]
     configs=[]
-    seen_models=set()
     for source in (base, profile):
         for config in model_configs_of(source):
             model=str(config.get('model', '')).strip()
-            if model and model not in seen_models:
-                seen_models.add(model)
+            if model:
                 configs.append(config)
     models=[config['model'] for config in configs]
     base['model']=models[0] if models else ''
@@ -898,6 +924,9 @@ for source_var, source_profile in profiles_by_var.items():
     if not isinstance(final_var, str) or not final_var or not model:
         continue
     target={'provider_var_name':final_var, 'model':model}
+    instance_id=source_profile.get('instance_id')
+    if isinstance(instance_id, str) and instance_id:
+        target['instance_id']=instance_id
     session_targets[source_var]=target
     source_name=source_profile.get('name')
     if isinstance(source_name, str) and source_name:
@@ -1088,6 +1117,12 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 
 	var b strings.Builder
 	b.WriteString("# Auto-generated by GenericAgent-Admin-Go.\n# Review before copying to mykey.py. Keep this file private.\n# GenericAgent discovers official config dicts by variable name: native_claude/native_oai/claude/oai or api/config/cookie.\n\n")
+	modelInstances := map[string]interface{}{}
+	for _, entry := range entries {
+		if instanceID := strings.TrimSpace(entry.config.InstanceID); instanceID != "" {
+			modelInstances[expandedVarName(entry.profile.VarName, entry.localIndex)] = instanceID
+		}
+	}
 	for _, entry := range entries {
 		p := entry.profile
 		config := entry.config
@@ -1140,6 +1175,11 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 		}
 		b.WriteString(fmt.Sprintf("%s = %s\n\n", expandedVarName(p.VarName, entry.localIndex), dict))
 	}
+	modelInstancesDict, err := pyDict(modelInstances)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(fmt.Sprintf("# Admin-only model instance metadata; GenericAgent ignores underscore-prefixed variables.\n_ga_admin_model_instances = %s\n", modelInstancesDict))
 	providerGroupsDict, err := pyDict(providerGroups)
 	if err != nil {
 		return "", err

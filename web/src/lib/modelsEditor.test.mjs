@@ -82,16 +82,15 @@ test('withModelConfigs synchronizes compatibility model indexes without sharing 
   ])
 })
 
-test('addModelConfigs quick-adds unique discovered models and keeps existing rows', () => {
-  const profile = withModelConfigs({}, [{ model: 'alpha', max_retries: 7 }])
-  const next = addModelConfigs(profile, ['alpha', { id: 'beta' }, { name: 'gamma' }, ''])
+test('addModelConfigs allows duplicate instances while deduplicating one quick-add batch', () => {
+  const profile = withModelConfigs({}, [{ instance_id: 'existing-alpha', model: 'alpha', max_retries: 7 }])
+  const next = addModelConfigs(profile, ['alpha', 'alpha', { id: 'beta' }, { name: 'gamma' }, ''])
 
-  assert.deepEqual(next.model_configs, [
-    { model: 'alpha', max_retries: 7 },
-    createModelConfig('beta'),
-    createModelConfig('gamma'),
-  ])
-  assert.deepEqual(next.models, ['alpha', 'beta', 'gamma'])
+  assert.deepEqual(next.model_configs.map(config => config.model), ['alpha', 'alpha', 'beta', 'gamma'])
+  assert.equal(next.model_configs[0].instance_id, 'existing-alpha')
+  assert.equal(next.model_configs[0].max_retries, 7)
+  assert.equal(new Set(next.model_configs.map(config => config.instance_id)).size, 4)
+  assert.deepEqual(next.models, ['alpha', 'alpha', 'beta', 'gamma'])
 })
 
 const optionValues = options => options.map(option => option.value)

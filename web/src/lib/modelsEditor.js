@@ -62,7 +62,13 @@ const copyPresentSettings = source => {
   return settings
 }
 
+export const createModelInstanceId = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  return `model-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
 export const createModelConfig = (model, settings = {}) => ({
+  instance_id: settings.instance_id || createModelInstanceId(),
   model: modelIdOf(model),
   stream: true,
   max_retries: 3,
@@ -102,10 +108,7 @@ export const withModelConfigs = (profile = {}, configs = []) => {
 
 export const addModelConfigs = (profile = {}, values = []) => {
   const configs = profileModelConfigs(profile)
-  const seen = new Set(configs.map(config => modelIdOf(config)))
   for (const model of uniqueModelIds(values)) {
-    if (seen.has(model)) continue
-    seen.add(model)
     configs.push(createModelConfig(model))
   }
   return withModelConfigs(profile, configs)
@@ -203,7 +206,8 @@ export const orderedModelRows = (profiles = []) => {
   const rows = profiles.flatMap((profile, profileIndex) => (
     profileModelConfigs(profile).map((config, configIndex) => {
       const row = {
-        id: `${profileIndex}:${configIndex}`,
+        id: config.instance_id || `${profileIndex}:${configIndex}`,
+        instanceId: config.instance_id || '',
         profileIndex,
         configIndex,
         model: text(config.model),
@@ -227,7 +231,8 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
     profileModelConfigs(profile).map((config, configIndex) => {
       const row = {
         type: 'model',
-        id: `${profileIndex}:${configIndex}`,
+        id: config.instance_id || `${profileIndex}:${configIndex}`,
+        instanceId: config.instance_id || '',
         profileIndex,
         configIndex,
         model: text(config.model),
@@ -303,6 +308,7 @@ export const normalizeFailoverGroups = (groups = []) => (Array.isArray(groups) ?
     members: (Array.isArray(group?.members) ? group.members : []).map(member => ({
       provider_var_name: text(member?.provider_var_name),
       model: text(member?.model),
+      ...(text(member?.instance_id) ? { instance_id: text(member.instance_id) } : {}),
     })),
     max_retries: Number(group?.max_retries ?? 10),
     base_delay: Number(group?.base_delay ?? 0.5),
@@ -347,7 +353,7 @@ export const applyModelAndFailoverOrder = (profiles = [], failoverGroups = [], o
   const nextProfiles = profiles.map((profile, profileIndex) => withModelConfigs(
     profile,
     profileModelConfigs(profile).map((config, configIndex) => {
-      const sortOrder = orderById.get(`${profileIndex}:${configIndex}`)
+      const sortOrder = orderById.get(config.instance_id || `${profileIndex}:${configIndex}`)
       return sortOrder === undefined ? { ...config } : { ...config, sort_order: sortOrder }
     }),
   ))

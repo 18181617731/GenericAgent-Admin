@@ -1069,6 +1069,59 @@ func TestRenderExplicitFailoverGroupKeepsRoutingNamesUnique(t *testing.T) {
 	}
 }
 
+func TestDuplicateModelInstancesRoundTripWithFailoverMembers(t *testing.T) {
+	profiles := []Profile{{
+		VarName: "native_oai_config_shared", Type: "native_oai", Name: "shared",
+		APIBase: "https://shared.example/v1", APIKey: "sk-shared", Model: "gpt-same",
+		ModelConfigs: []ModelConfig{
+			{InstanceID: "instance-primary", Model: "gpt-same", Name: "same-primary"},
+			{InstanceID: "instance-backup", Model: "gpt-same", Name: "same-backup"},
+		},
+	}}
+	groups := []FailoverGroup{{
+		VarName: "mixin_config_same",
+		Members: []FailoverMember{
+			{InstanceID: "instance-primary", ProviderVarName: "native_oai_config_shared", Model: "gpt-same"},
+			{InstanceID: "instance-backup", ProviderVarName: "native_oai_config_shared", Model: "gpt-same"},
+		},
+	}}
+	rendered, err := RenderWithFailoverGroups(profiles, groups)
+	if err != nil {
+		t.Fatalf("RenderWithFailoverGroups() error = %v", err)
+	}
+	for _, want := range []string{
+		`_ga_admin_model_instances = {"native_oai_config_shared": "instance-primary", "native_oai_config_shared_2": "instance-backup"}`,
+		`"llm_nos": ["same-primary", "same-backup"]`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(rendered), 0600); err != nil {
+		t.Fatalf("write rendered mykey.py: %v", err)
+	}
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || len(draft.Profiles[0].ModelConfigs) != 2 {
+		t.Fatalf("round-trip profiles = %#v", draft.Profiles)
+	}
+	configs := draft.Profiles[0].ModelConfigs
+	if configs[0].Model != "gpt-same" || configs[1].Model != "gpt-same" || configs[0].InstanceID != "instance-primary" || configs[1].InstanceID != "instance-backup" {
+		t.Fatalf("round-trip configs = %#v", configs)
+	}
+	if len(draft.FailoverGroups) != 1 || len(draft.FailoverGroups[0].Members) != 2 {
+		t.Fatalf("round-trip failover groups = %#v", draft.FailoverGroups)
+	}
+	members := draft.FailoverGroups[0].Members
+	if members[0].InstanceID != "instance-primary" || members[1].InstanceID != "instance-backup" {
+		t.Fatalf("round-trip members = %#v", members)
+	}
+}
+
 func TestResolveFailoverGroupsRequiresFixedVariablePrefix(t *testing.T) {
 	profiles := []Profile{
 		{VarName: "native_oai_config_a", Type: "native_oai", Model: "a", ModelConfigs: []ModelConfig{{Model: "a"}}},

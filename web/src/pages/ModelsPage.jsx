@@ -89,7 +89,7 @@ const isMaskedSecret = value => {
   const secret = String(value || '').trim()
   return /^\*{4,}$/.test(secret) || /\*{2,}/.test(secret)
 }
-const memberKeyOf = member => `${String(member?.provider_var_name || member?.providerVarName || '')}\u0000${String(member?.model || '')}`
+const memberKeyOf = member => String(member?.instance_id || member?.instanceId || `${String(member?.provider_var_name || member?.providerVarName || '')}\u0000${String(member?.model || '')}`)
 const providerState = result => (result?.errors?.length ? 'error' : result?.warnings?.length ? 'warning' : 'ready')
 
 function optionalNumber(value) {
@@ -257,7 +257,7 @@ function FailoverGroupBody({ group, groupIndex, candidates, candidateMap, sensor
         <p className="model-subsection-help">{text.failoverCandidatesHelp}</p>
         <div className="model-failover-candidates">
           {candidates.length ? candidates.map(candidate => {
-            const key = memberKeyOf({ provider_var_name: candidate.providerVarName, model: candidate.model })
+            const key = memberKeyOf({ instance_id: candidate.instanceId, provider_var_name: candidate.providerVarName, model: candidate.model })
             const selected = selectedKeys.has(key)
             const locked = selectedFamilies.size > 0 && !selectedFamilies.has(candidate.family)
             return (
@@ -755,7 +755,7 @@ export function Models({
   }), [profiles])
   const candidateMap = useMemo(
     () => new Map(candidates.map(candidate => [
-      memberKeyOf({ provider_var_name: candidate.providerVarName, model: candidate.model }),
+      memberKeyOf({ instance_id: candidate.instanceId, provider_var_name: candidate.providerVarName, model: candidate.model }),
       candidate,
     ])),
     [candidates],
@@ -864,7 +864,12 @@ export function Models({
     setFailoverGroups(current => current.filter((_, index) => index !== groupIndex))
   }
   const toggleMember = (groupIndex, candidate) => {
-    const key = memberKeyOf({ provider_var_name: candidate.providerVarName, model: candidate.model })
+    const candidateMember = {
+      provider_var_name: candidate.providerVarName,
+      model: candidate.model,
+      ...(candidate.instanceId ? { instance_id: candidate.instanceId } : {}),
+    }
+    const key = memberKeyOf(candidateMember)
     setFailoverGroups(current => current.map((group, index) => {
       if (index !== groupIndex) return group
       const members = Array.isArray(group.members) ? group.members : []
@@ -872,7 +877,7 @@ export function Models({
         ...group,
         members: members.some(member => memberKeyOf(member) === key)
           ? members.filter(member => memberKeyOf(member) !== key)
-          : [...members, { provider_var_name: candidate.providerVarName, model: candidate.model }],
+          : [...members, candidateMember],
       }
     }))
   }
