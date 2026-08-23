@@ -57,12 +57,15 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
       try {
         const d = await refreshStatus()
         if (needsReload.current && shouldReloadAfterVersionUpdate(d, observedRunning.current)) {
-          if (versionMatchesExpectedRelease(info?.version, check?.latest?.tag_name || '')) {
+          const current = await api('/api/version/info')
+          const expected = d?.check?.latest?.tag_name || check?.latest?.tag_name || ''
+          if (versionMatchesExpectedRelease(current?.version, expected)) {
+            needsReload.current = false
             setTimeout(() => window.location.reload(), VERSION_RELOAD_DELAY_MS)
             return
           }
         }
-        if (!stopped && d?.running) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
+        if (!stopped && (d?.running || needsReload.current)) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
       } catch (err) {
         if (shouldReportVersionPollError(restartGraceUntil.current)) console.error('Version status poll error:', err)
         if (!stopped) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
@@ -70,7 +73,7 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
     }
     tick()
     return () => { stopped = true }
-  }, [info, check])
+  }, [check, status?.running])
 
   useEffect(() => {
     if (!status?.running) return undefined
@@ -93,11 +96,28 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
     if (!confirmDanger('version-update', t.overview.versionUpdateConfirm)) return
     setVersionBusy(true)
     try {
-      restartGraceUntil.current = beginVersionRestartGrace()
-      needsReload.current = true
       const d = await api('/api/version/update', { dangerous:true, method:'POST', body:'{}' })
       setStatus(d)
       setMsg(t.overview.updateQueued)
+    } catch (e) {
+      setMsg(e.message)
+    } finally { setVersionBusy(false) }
+  }
+
+  const restartVersion = async () => {
+    if (!status?.id || status?.stage !== 'ready') return
+    if (!confirmDanger('version-restart', t.overview.versionRestartConfirm)) return
+    setVersionBusy(true)
+    try {
+      restartGraceUntil.current = beginVersionRestartGrace()
+      needsReload.current = true
+      const d = await api('/api/version/restart', {
+        dangerous: true,
+        method: 'POST',
+        body: JSON.stringify({ operation_id: status.id }),
+      })
+      setStatus(d)
+      setMsg(t.overview.versionRestarting)
     } catch (e) {
       restartGraceUntil.current = 0
       needsReload.current = false
@@ -134,6 +154,6 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
 
   return {
     info, check, status, busy, gitBusy, gitStatus, autostart,
-    loadSnapshot, refreshStatus, checkVersion, updateVersion, checkSource, toggleAutostart,
+    loadSnapshot, refreshStatus, checkVersion, updateVersion, restartVersion, checkSource, toggleAutostart,
   }
 }

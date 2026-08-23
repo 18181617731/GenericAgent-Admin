@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -45,6 +46,26 @@ func (s *Server) versionUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, err := version.StartApplyLatest()
+	if err != nil {
+		bad(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, st)
+}
+
+func (s *Server) versionRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		OperationID string `json:"operation_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		bad(w, 400, "invalid json")
+		return
+	}
+	st, err := version.AuthorizeRestart(req.OperationID)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return

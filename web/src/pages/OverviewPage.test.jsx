@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { I18N, SETTINGS_TEXT } from '../lib/i18n'
 import { OverviewPage } from './OverviewPage'
 
@@ -19,11 +19,12 @@ const versionStub = (gitStatus) => ({
   autostart: { supported: true, enabled: false },
   checkVersion: vi.fn(),
   updateVersion: vi.fn(),
+  restartVersion: vi.fn(),
   checkSource: vi.fn(),
   toggleAutostart: vi.fn(),
 })
 
-const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [] } = {}) => render(<OverviewPage
+const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [], versionState } = {}) => render(<OverviewPage
   t={I18N[lang]}
   text={SETTINGS_TEXT[lang]}
   services={services}
@@ -31,7 +32,7 @@ const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [] }
   observability={observability}
   observabilityError=""
   onRefreshObservability={vi.fn()}
-  version={versionStub(gitStatus)}
+  version={versionState || versionStub(gitStatus)}
   root="E:/Work/GenericAgent"
 />)
 
@@ -78,6 +79,16 @@ describe('OverviewPage', () => {
     expect(screen.getByText('分支')).toBeTruthy()
     expect(screen.getByText(/main · abc1234/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /检查是否最新/i })).toBeTruthy()
+  })
+
+  it('offers restart only for a prepared update and delegates explicit authorization', () => {
+    const prepared = versionStub({ ok: true, available: true })
+    prepared.status = { id: 'operation-1', running: true, stage: 'ready', progress: 90, message: 'ready' }
+    renderOverview({ versionState: prepared })
+
+    const restart = screen.getByRole('button', { name: /重启并完成升级/i })
+    fireEvent.click(restart)
+    expect(prepared.restartVersion).toHaveBeenCalledTimes(1)
   })
 
   it('renders the English dashboard labels the shell test locks in', () => {

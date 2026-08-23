@@ -146,6 +146,13 @@ type ApplyResult struct {
 	Message   string `json:"message"`
 	Script    string `json:"script,omitempty"`
 	handedOff bool
+	ready     bool
+}
+
+type readyUpdate struct {
+	OperationID  string `json:"operation_id"`
+	HelperPath   string `json:"helper_path"`
+	ManifestPath string `json:"manifest_path"`
 }
 
 type UpdateStatus struct {
@@ -221,6 +228,72 @@ func statusPath() string {
 		return filepath.Join(filepath.Dir(exe), "ga-admin-update-status.json")
 	}
 	return filepath.Join(os.TempDir(), "ga-admin-update-status.json")
+}
+
+func readyUpdatePath() string {
+	return statusPath() + ".ready"
+}
+
+func writeReadyUpdate(ready readyUpdate) error {
+	if _, err := validateReadyUpdate(ready); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(ready, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(readyUpdatePath(), data, 0600)
+}
+
+func readReadyUpdate() (readyUpdate, UpdateManifest, error) {
+	var ready readyUpdate
+	data, err := os.ReadFile(readyUpdatePath())
+	if err != nil {
+		return ready, UpdateManifest{}, fmt.Errorf("read prepared update: %w", err)
+	}
+	if err := json.Unmarshal(data, &ready); err != nil {
+		return ready, UpdateManifest{}, fmt.Errorf("decode prepared update: %w", err)
+	}
+	manifest, err := validateReadyUpdate(ready)
+	if err != nil {
+		return ready, UpdateManifest{}, err
+	}
+	return ready, manifest, nil
+}
+
+func validateReadyUpdate(ready readyUpdate) (UpdateManifest, error) {
+	if strings.TrimSpace(ready.OperationID) == "" {
+		return UpdateManifest{}, errors.New("prepared update has no operation ID")
+	}
+	if !filepath.IsAbs(ready.HelperPath) || !filepath.IsAbs(ready.ManifestPath) {
+		return UpdateManifest{}, errors.New("prepared update paths must be absolute")
+	}
+	work := filepath.Dir(filepath.Clean(ready.ManifestPath))
+	if filepath.Base(filepath.Clean(ready.ManifestPath)) != "update-manifest.json" {
+		return UpdateManifest{}, errors.New("prepared update has an unexpected manifest name")
+	}
+	manifest, err := readUpdateManifest(ready.ManifestPath)
+	if err != nil {
+		return UpdateManifest{}, err
+	}
+	if manifest.OperationID != ready.OperationID {
+		return UpdateManifest{}, errors.New("prepared update operation does not match its manifest")
+	}
+	if !sameFilePath(manifest.StatusPath, statusPath()) {
+		return UpdateManifest{}, errors.New("prepared update status target does not match this server")
+	}
+	expectedHelper := filepath.Join(work, "ga-admin-update-helper"+filepath.Ext(manifest.OriginalExe))
+	if !sameFilePath(ready.HelperPath, expectedHelper) {
+		return UpdateManifest{}, errors.New("prepared update helper path is invalid")
+	}
+	info, err := os.Stat(ready.HelperPath)
+	if err != nil {
+		return UpdateManifest{}, fmt.Errorf("inspect prepared update helper: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return UpdateManifest{}, errors.New("prepared update helper is not a regular file")
+	}
+	return manifest, nil
 }
 
 func CurrentUpdateStatus() UpdateStatus {
@@ -323,7 +396,7 @@ func normalizeStatusForVersion(st UpdateStatus, actualVersion string, current Bu
 
 func updateTransactionStage(stage string) bool {
 	switch stage {
-	case "prepared", "starting_helper", "waiting_for_exit", "applying", "starting_replacement", "replacement_ready", "restarting":
+	case "ready", "prepared", "starting_helper", "waiting_for_exit", "applying", "starting_replacement", "replacement_ready", "restarting":
 		return true
 	default:
 		return false
@@ -582,6 +655,15 @@ func StartApplyLatest() (UpdateStatus, error) {
 				current.EndedAt = current.ConfirmedAt
 				return nil
 			}
+			if res.ready {
+				current.Stage = "ready"
+				current.Progress = 90
+				current.Message = res.Message
+				if current.StagedAt.IsZero() {
+					current.StagedAt = time.Now()
+				}
+				return nil
+			}
 			current.Stage = "restarting"
 			current.Progress = 95
 			current.Message = res.Message
@@ -589,6 +671,67 @@ func StartApplyLatest() (UpdateStatus, error) {
 		})
 	}(st.ID)
 	return st, nil
+}
+
+// AuthorizeRestart performs the explicit second phase of an update. The
+// prepared helper is claimed atomically so concurrent requests cannot launch
+// more than one replacement process.
+func AuthorizeRestart(operationID string) (UpdateStatus, error) {
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		return UpdateStatus{}, errors.New("restart authorization requires an operation ID")
+	}
+	var st UpdateStatus
+	var ready readyUpdate
+
+	updateMu.Lock()
+	err := withStatusFileLock(func() error {
+		st = readStatusLocked()
+		if !st.Running || st.Stage != "ready" || strings.TrimSpace(st.ID) == "" {
+			return errors.New("no verified update is waiting for restart authorization")
+		}
+		if st.ID != operationID {
+			return ErrUpdateSuperseded
+		}
+		var manifest UpdateManifest
+		var err error
+		ready, manifest, err = readReadyUpdate()
+		if err != nil {
+			return err
+		}
+		if ready.OperationID != st.ID || manifest.OperationID != st.ID {
+			return errors.New("prepared update does not match the active operation")
+		}
+		st.Stage = "starting_helper"
+		st.Progress = 92
+		st.Message = "restart authorized; starting upgrade helper"
+		st.Error = ""
+		return writeStatusLocked(st)
+	})
+	updateMu.Unlock()
+	if err != nil {
+		return st, err
+	}
+
+	if err := currentApplyRuntime.launchHelper(ready.HelperPath, ready.ManifestPath); err != nil {
+		launchErr := fmt.Errorf("launch update helper: %w", err)
+		rollbackErr := transitionUpdate(ready.OperationID, func(current *UpdateStatus) error {
+			if current.Stage != "starting_helper" {
+				return ErrUpdateSuperseded
+			}
+			current.Stage = "ready"
+			current.Progress = 90
+			current.Message = "升级助手启动失败；升级包仍可重试"
+			current.Error = launchErr.Error()
+			return nil
+		})
+		if rollbackErr != nil {
+			return CurrentUpdateStatus(), errors.Join(launchErr, rollbackErr)
+		}
+		return CurrentUpdateStatus(), launchErr
+	}
+	currentApplyRuntime.scheduleExit()
+	return CurrentUpdateStatus(), nil
 }
 
 func Current() BuildInfo {
@@ -789,22 +932,19 @@ func applyLatest(ctx context.Context, operationID string, progress func(stage, m
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	if err := transitionUpdate(operationID, func(st *UpdateStatus) error {
-		st.Stage = "starting_helper"
-		st.Progress = 87
-		st.Message = "verified update is ready; starting upgrade helper"
-		st.TargetVersion = manifest.TargetVersion
-		st.StagedAt = time.Now()
-		return nil
+	if err := writeReadyUpdate(readyUpdate{
+		OperationID:  operationID,
+		HelperPath:   helperPath,
+		ManifestPath: manifestPath,
 	}); err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{}, fmt.Errorf("persist prepared update: %w", err)
 	}
-	emit("starting_helper", "升级包已就绪，正在启动升级助手", 87, &check)
-	if err := currentApplyRuntime.launchHelper(helperPath, manifestPath); err != nil {
-		return ApplyResult{}, fmt.Errorf("launch update helper: %w", err)
-	}
-	currentApplyRuntime.scheduleExit()
-	return ApplyResult{OK: true, Message: "update downloaded; restarting", handedOff: true}, nil
+	emit("ready", "升级包已校验并准备完成，等待用户授权重启", 90, &check)
+	return ApplyResult{
+		OK:      true,
+		Message: "update downloaded and verified; waiting for restart authorization",
+		ready:   true,
+	}, nil
 }
 
 func windowsUpdateScript(oldExe, newExe, backup, worker, newWorker, workerBackup string, oldPID int, launchArgs ...string) string {

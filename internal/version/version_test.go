@@ -633,7 +633,7 @@ func TestStartApplyLatestChecksumFailureWritesReadableStatus(t *testing.T) {
 	}
 }
 
-func TestStartApplyLatestLaunchesCopiedHelperWithoutOverwritingHelperStatus(t *testing.T) {
+func TestStartApplyLatestWaitsForRestartAuthorizationBeforeLaunchingHelper(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("self-update is currently supported on Windows only")
 	}
@@ -687,8 +687,7 @@ func TestStartApplyLatestLaunchesCopiedHelperWithoutOverwritingHelperStatus(t *t
 		manifest     UpdateManifest
 	}
 	launched := make(chan launchRecord, 1)
-	exitScheduled := make(chan struct{})
-	allowApplyReturn := make(chan struct{})
+	exitScheduled := make(chan struct{}, 1)
 	currentApplyRuntime = applyRuntimeDeps{
 		executable: func() (string, error) { return runningExe, nil },
 		launchHelper: func(helperPath, manifestPath string) error {
@@ -704,26 +703,63 @@ func TestStartApplyLatestLaunchesCopiedHelperWithoutOverwritingHelperStatus(t *t
 				return nil
 			})
 		},
-		scheduleExit: func() {
-			close(exitScheduled)
-			<-allowApplyReturn
-		},
+		scheduleExit: func() { exitScheduled <- struct{}{} },
 	}
 
 	initial, err := StartApplyLatest()
 	if err != nil {
 		t.Fatalf("StartApplyLatest: %v", err)
 	}
+	var ready UpdateStatus
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		ready = CurrentUpdateStatus()
+		if ready.Stage == "ready" || ready.Stage == "failed" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if ready.Stage != "ready" || ready.Progress != 90 || !ready.Running {
+		t.Fatalf("download did not stop at ready: %+v", ready)
+	}
+	select {
+	case record := <-launched:
+		t.Fatalf("helper launched before restart authorization: %+v", record)
+	default:
+	}
+	select {
+	case <-exitScheduled:
+		t.Fatal("parent exit scheduled before restart authorization")
+	default:
+	}
+	if err := transitionUpdate(initial.ID, func(st *UpdateStatus) error {
+		st.Error = "previous helper launch failed"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed retry error: %v", err)
+	}
+
+	authorized, err := AuthorizeRestart(initial.ID)
+	if err != nil {
+		t.Fatalf("AuthorizeRestart: %v", err)
+	}
+	if authorized.ID != initial.ID {
+		t.Fatalf("authorized operation = %+v, initial=%+v", authorized, initial)
+	}
+	if authorized.Error != "" {
+		t.Fatalf("successful retry retained stale error: %+v", authorized)
+	}
+
 	var record launchRecord
 	select {
 	case record = <-launched:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("copied helper was not launched; status=%+v", CurrentUpdateStatus())
+	case <-time.After(time.Second):
+		t.Fatalf("copied helper was not launched after authorization; status=%+v", CurrentUpdateStatus())
 	}
 	select {
 	case <-exitScheduled:
 	case <-time.After(time.Second):
-		t.Fatal("parent exit was not scheduled after launching helper")
+		t.Fatal("parent exit was not scheduled after authorization")
 	}
 
 	if record.manifest.OperationID != initial.ID || record.manifest.StatusPath != statusPathOverride {
@@ -762,7 +798,6 @@ func TestStartApplyLatestLaunchesCopiedHelperWithoutOverwritingHelperStatus(t *t
 		}
 	}
 
-	close(allowApplyReturn)
 	time.Sleep(150 * time.Millisecond)
 	final := CurrentUpdateStatus()
 	if final.Stage != "waiting_for_exit" || final.Progress != 88 || !final.Running {
@@ -1097,6 +1132,22 @@ func TestNormalizeStatusForVersionClearsStaleActiveStatusAfterManualInstall(t *t
 	}
 	if got.ConfirmedAt.IsZero() || got.EndedAt.IsZero() {
 		t.Fatalf("completed status should have confirmation/end timestamps: %+v", got)
+	}
+}
+
+func TestNormalizeStatusForVersionLeavesReadyTransactionPendingAuthorization(t *testing.T) {
+	st := UpdateStatus{
+		ID:            "ready-test",
+		Running:       true,
+		Stage:         "ready",
+		Progress:      90,
+		Message:       "ready",
+		TargetVersion: "v0.2.5",
+	}
+
+	got := normalizeStatusForVersion(st, "v0.2.5", BuildInfo{Version: "v0.2.5"})
+	if !got.Running || got.Stage != st.Stage || got.Progress != st.Progress || got.Message != st.Message {
+		t.Fatalf("ready update must remain pending restart authorization, got %+v", got)
 	}
 }
 

@@ -150,8 +150,11 @@ export function OverviewPage({
           <div className="overview-panel-actions">
             <button type="button" onClick={version.checkVersion} disabled={busy || status?.running}>{busy ? t.busy : copy.checkUpdate}</button>
             <button className="primary" type="button" onClick={version.updateVersion} disabled={busy || status?.running || !check?.update}>
-              {status?.running ? `${copy.updateRunning}…` : copy.oneClickUpdate}
+              <Download size={14} aria-hidden="true"/>{status?.running ? `${copy.updateRunning}…` : copy.oneClickUpdate}
             </button>
+            {status?.stage === 'ready' && <button className="primary" type="button" onClick={version.restartVersion} disabled={busy}>
+              <Power size={14} aria-hidden="true"/>{copy.restartToApply}
+            </button>}
           </div>
         </div>
       </Panel>
