@@ -156,7 +156,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/status", s.versionStatus)
 	mux.HandleFunc("/api/risk/catalog", s.riskCatalog)
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
-	mux.HandleFunc("/api/version/restart", s.requireDangerousConfirm(s.versionRestart))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
 	mux.HandleFunc("/api/ga/runtime/repair", s.requireDangerousConfirm(s.gaRuntimeRepair))
@@ -201,6 +200,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
+	mux.HandleFunc("/api/local-cmd/open", s.requireDangerousConfirm(s.localCmdOpen))
 	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
 	mux.HandleFunc("/api/setup/python/validate", s.requireDangerousConfirm(s.setupPythonValidate))
@@ -307,6 +307,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/write", Level: "dangerous", Action: "write_file", Reason: "writes into GA workspace; handler creates backup before overwrite"},
 	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
+	{Path: "/api/local-cmd/open", Level: "dangerous", Action: "open_local_cmd", Reason: "starts an interactive Windows cmd.exe process in any selected local directory"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
@@ -1228,5 +1229,4 @@ func (s *Server) ShutdownCleanup() {
 		_ = s.ReactApp.stop()
 	}
 	s.CloseChatWorkers()
-	s.waitForInstanceInstalls()
 }

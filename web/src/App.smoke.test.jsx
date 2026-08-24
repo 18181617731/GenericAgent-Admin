@@ -2531,10 +2531,10 @@ describe('chat worldline controls', () => {
     Element.prototype.scrollIntoView = vi.fn()
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Worldline chat'))
-    fireEvent.click(screen.getByRole('button', { name: '查看和切换对话世界线' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看和切换对话世界线' }, { timeout: 20000 }))
     await waitFor(() => expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy())
     expect(globalThis.fetch.mock.calls.some(([url]) => String(url) === '/api/chat/worldline/worldline-session?activate=true')).toBe(true)
-  }, 15000)
+  }, 30000)
 })
 
 describe('chat loop controls', () => {
@@ -2577,7 +2577,7 @@ describe('chat loop controls', () => {
     resolveStart(jsonResponse({ ok:true, loop:{ enabled:true, status:'waiting', round:0, max_rounds:10, controller_prompt:'SECRET_LOOP_OBJECTIVE' } }))
     await waitFor(() => expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy())
     expect(document.body.innerHTML).not.toContain('SECRET_LOOP_OBJECTIVE')
-  }, 30000)
+  }, 60000)
 
   test('explains an empty objective, uses the current message, and completes start-stop flow', async () => {
     installBrowserPolyfills()

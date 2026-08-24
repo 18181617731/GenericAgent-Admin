@@ -2,6 +2,15 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.94 - 2026-08-24
+
+### Local CMD workspace
+- Add a lazy-loaded Local CMD menu and page where users can enter or browse to any local directory before opening a real independent Windows command prompt.
+- Require an explicit dangerous-action confirmation for CMD process launch, with clear platform and security guidance in the UI.
+- Validate trimmed absolute directories against the local filesystem, preserving support for spaces, Unicode, UNC paths, and drive paths without restricting access to the configured GA root.
+- Launch `cmd.exe` with Windows `CreateProcessW`, a visible normal new console, interactive standard handles, a trusted absolute system path, and safe command-line quoting.
+- Add backend and frontend regression coverage for confirmation, path validation, directory browsing, launch parameters, visible-window flags, handle cleanup, loading states, cancellation, and errors.
+
 ## v1.0.91 - 2026-08-18
 
 ### Compact chat footer
