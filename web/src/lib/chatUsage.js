@@ -10,23 +10,20 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate: cache_read / total_input where total_input includes
-// uncached input + cache creation + cache read. Modern Claude API reports
-// these as disjoint buckets. Legacy cached_tokens is a subset of input_tokens.
+// Cache hit rate: cache_read / (output + cache_read). Measures what portion
+// of generated content came from cache rather than being freshly produced.
+// For legacy APIs, use output as denominator since cached_tokens relates to input.
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
     const read = cacheReadTokens(usage)
-    const creation = tokenCount(usage?.cache_creation_tokens)
-    const input = tokenCount(usage?.input_tokens)
+    const output = tokenCount(usage?.output_tokens)
     acc.read += read
-    // Modern API: input/creation/read are disjoint, add all three.
-    // Legacy API: cached is subset of input, only add input once.
-    const isModern = creation > 0 || tokenCount(usage?.cache_read_tokens) > 0
-    acc.totalInput += isModern ? (input + creation + read) : input
+    acc.output += output
     return acc
-  }, { read: 0, totalInput: 0 })
-  return totals.totalInput > 0 ? Math.round(totals.read / totals.totalInput * 100) : 0
+  }, { read: 0, output: 0 })
+  const denominator = totals.output + totals.read
+  return denominator > 0 ? Math.round(totals.read / denominator * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output
