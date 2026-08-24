@@ -1127,6 +1127,7 @@ func safeValidationDangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/schedule/run", `{}`},
 		{http.MethodPost, "/api/goals/start", `{}`},
 		{http.MethodPost, "/api/goals/stop", `{}`},
+		{http.MethodPost, "/api/version/restart", `{}`},
 		{http.MethodPost, "/api/goals/delete", `{}`},
 		{http.MethodPost, "/api/autonomous/approvals", `{}`},
 		{http.MethodPut, "/api/config", `not-json`},
