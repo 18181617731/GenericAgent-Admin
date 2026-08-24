@@ -564,8 +564,7 @@ function AddModelModal({ open, profiles, initialIndex, onClose, onAdd, discoverM
   const [added, setAdded] = useState([])
 
   const profile = profiles[providerIndex]
-  const existing = new Set(profileModelConfigs(profile || {}).map(config => config.model))
-  const candidates = uniqueModels(discovered).filter(model => !existing.has(model))
+  const candidates = uniqueModels(discovered)
 
   const selectProvider = index => {
     setProviderIndex(index)
@@ -576,7 +575,7 @@ function AddModelModal({ open, profiles, initialIndex, onClose, onAdd, discoverM
   }
 
   const add = values => {
-    const models = uniqueModels(values).filter(model => !existing.has(model))
+    const models = uniqueModels(values)
     if (!models.length) return
     onAdd(providerIndex, models)
     setAdded(current => [...current, ...models])

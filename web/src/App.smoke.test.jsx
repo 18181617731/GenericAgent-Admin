@@ -423,7 +423,7 @@ describe('Models call list', () => {
     expect(await screen.findByText(/正在获取模型/)).toBeTruthy()
 
     resolveDiscovery({ models: [] })
-    expect(await screen.findByText(/没有发现新的模型/)).toBeTruthy()
+    expect(await screen.findByText(/没有发现模型/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
     expect(discoverModels).toHaveBeenCalledTimes(2)
   })
@@ -442,7 +442,7 @@ describe('Models call list', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /重\s*试/ }))
     await waitFor(() => expect(discoverModels).toHaveBeenCalledTimes(2))
-    expect(await screen.findByText(/没有发现新的模型/)).toBeTruthy()
+    expect(await screen.findByText(/没有发现模型/)).toBeTruthy()
   })
 
   test('appends a discovered candidate to the end of the call list', async () => {
@@ -452,11 +452,26 @@ describe('Models call list', () => {
 
     openAddModel()
     fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
-    fireEvent.click(await screen.findByRole('button', { name: '添加模型 new-model' }))
+    fireEvent.click(await screen.findByRole('button', { name: '再添加一个 new-model 模型实例' }))
 
     await waitFor(() => {
       const titles = [...document.querySelectorAll('.model-call-title strong')]
       expect(titles.map(title => title.textContent)).toEqual(['demo-model', 'new-model'])
+    })
+  })
+
+  test('allows adding a discovered model ID that already exists in the provider', async () => {
+    installBrowserPolyfills()
+    const discoverModels = vi.fn(async () => ({ models: ['demo-model'] }))
+    render(<ModelsHarness discoverModels={discoverModels} />)
+
+    openAddModel()
+    fireEvent.click(screen.getByRole('button', { name: '从服务商获取' }))
+    fireEvent.click(await screen.findByRole('button', { name: '再添加一个 demo-model 模型实例' }))
+
+    await waitFor(() => {
+      const titles = [...document.querySelectorAll('.model-call-title strong')]
+      expect(titles.map(title => title.textContent)).toEqual(['demo-model', 'demo-model'])
     })
   })
 
