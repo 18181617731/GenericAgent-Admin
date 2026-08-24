@@ -39,13 +39,13 @@ test('cacheHitPercent uses legacy cached_tokens with output denominator', () => 
 })
 
 test('cacheHitPercent supports mixed legacy and modern usage', () => {
-  // When modern API data exists, use modern formula only
-  // Modern: cache_read=100, output=50 → 100 / (50 + 100) = 67%
-  // Legacy data is ignored when modern exists
+  // Modern: cache_read=100, output=50 → rate=100/(50+100)=0.667, weight=150
+  // Legacy: cached=80, output=20 → rate=80/20=4.0, weight=20
+  // Weighted: (0.667×150 + 4.0×20) / (150+20) = (100 + 80) / 170 = 180/170 ≈ 106%
   assert.equal(cacheHitPercent([
     { cached_tokens: 80, output_tokens: 20 },
     { cache_read_tokens: 100, output_tokens: 50 },
-  ]), 67)
+  ]), 106)
 })
 
 test('measuredOutputRate divides only measured outputs by measured generation time', () => {

@@ -8,8 +8,8 @@ This file records manually curated release changes for GenericAgent Admin Go.
 - **Chat:** Fixed cache hit rate calculation to use correct formulas for different API types
   - **Claude API (Modern)**: `cache_read / (output + cache_read)` — portion of generated content from cache
   - **Non-Claude API (Legacy)**: `cached / output` — cache-to-output ratio
+  - **Mixed sessions**: weighted average by denominator size (previously only used Modern formula)
   - Automatically detects API type and applies appropriate formula
-  - Mixed sessions prioritize Modern formula when both types present
 
 ## v0.2.16 - 2026-08-24
 

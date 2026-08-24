@@ -34,14 +34,26 @@ export const cacheHitPercent = (usages) => {
     return acc
   }, { modernRead: 0, modernOutput: 0, legacyCached: 0, legacyOutput: 0 })
   
-  // Prioritize modern calculation if present
+  // Calculate rates separately then combine via weighted average
+  let totalWeight = 0
+  let weightedSum = 0
+  
   if (totals.modernRead > 0 || totals.modernOutput > 0) {
-    const denominator = totals.modernOutput + totals.modernRead
-    return denominator > 0 ? Math.round(totals.modernRead / denominator * 100) : 0
+    const modernDenominator = totals.modernOutput + totals.modernRead
+    if (modernDenominator > 0) {
+      const modernRate = totals.modernRead / modernDenominator
+      weightedSum += modernRate * modernDenominator
+      totalWeight += modernDenominator
+    }
   }
   
-  // Fall back to legacy calculation
-  return totals.legacyOutput > 0 ? Math.round(totals.legacyCached / totals.legacyOutput * 100) : 0
+  if (totals.legacyCached > 0 && totals.legacyOutput > 0) {
+    const legacyRate = totals.legacyCached / totals.legacyOutput
+    weightedSum += legacyRate * totals.legacyOutput
+    totalWeight += totals.legacyOutput
+  }
+  
+  return totalWeight > 0 ? Math.round(weightedSum / totalWeight * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output
