@@ -90,6 +90,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatReplaceQueue(w, r, parts[1])
 			return
 		}
+	case "guide":
+		if len(parts) == 3 && r.Method == http.MethodPost {
+			s.chatGuidePost(w, r, parts[1], parts[2])
+			return
+		}
 	case "fork":
 		if len(parts) == 2 && r.Method == http.MethodPost {
 			s.chatForkSession(w, r, parts[1])
@@ -558,6 +563,58 @@ func (s *Server) chatReplaceQueue(w http.ResponseWriter, r *http.Request, sid st
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
+}
+
+func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queueID string) {
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	queueID = strings.TrimSpace(queueID)
+	if queueID == "" {
+		bad(w, http.StatusBadRequest, "queue id required")
+		return
+	}
+
+	// Check if already running
+	s.ChatMu.Lock()
+	alreadyRunning := s.ChatRuns[sid] != nil && !s.ChatRuns[sid].Done
+	s.ChatMu.Unlock()
+
+	if alreadyRunning {
+		// If already running, the queue will be processed after current run completes
+		writeJSON(w, map[string]interface{}{"ok": true, "status": "queued", "message": "will execute after current run"})
+		return
+	}
+
+	// Verify the queue item exists
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		s.SessionMu.Unlock()
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	found := false
+	for _, item := range cs.QueuedMessages {
+		if item.ID == queueID {
+			found = true
+			break
+		}
+	}
+	s.SessionMu.Unlock()
+
+	if !found {
+		bad(w, http.StatusNotFound, "queue item not found")
+		return
+	}
+
+	// Trigger queue execution
+	go s.processNextQueuedMessage(sid)
+
+	writeJSON(w, map[string]interface{}{"ok": true, "status": "started"})
 }
 
 func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid string) {

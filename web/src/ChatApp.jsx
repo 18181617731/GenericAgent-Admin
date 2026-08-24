@@ -5072,15 +5072,11 @@ export default function ChatApp() {
         }
       }
       if (id && isActiveSession(id)) loadWorldline(id).catch(() => {})
-      const next = popQueued()
-      if (next) {
-        setNotice(ct(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`, `Continuing queued messages (${Math.max(queuedRef.current.length, 0)} remaining)`))
-        setTimeout(() => runSend(next), 0)
-      } else {
-        activeRunRef.current = false
-        setBusy(false)
-        setStreamingSid('')
-      }
+      // Queue execution is now handled by backend automatically
+      // No need to manually loop through queued messages
+      activeRunRef.current = false
+      setBusy(false)
+      setStreamingSid('')
     }
   }
 
@@ -5240,20 +5236,27 @@ export default function ChatApp() {
     }
     const id = sid
     const wasRunning = busy && streamingSid === sid
-    ++runSeqRef.current
+    // Only increment runSeqRef when there's actually a running task to abort
+    // Otherwise it will cause the next runSend's token check to fail
+    if (wasRunning) {
+      ++runSeqRef.current
+    }
     try {
       if (wasRunning) {
         streamAbortRef.current?.abort?.()
         if (id) await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
         setMessages(xs => xs.map((m, idx) => (idx === xs.length - 1 && m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true } : m))
       }
+      // Call backend guide API to trigger queue execution
+      if (id && next.id) {
+        await chatApi(`/api/chat/guide/${id}/${next.id}`, { method:'POST', body:'{}' })
+        setNotice(ct('已引导：中止当前回复并触发队列执行', 'Guided: stopped the current response and triggered queue execution'))
+      }
     } catch (e) {
       setErr(e.message || String(e))
     } finally {
       setBusy(false)
       setStreamingSid('')
-      setNotice(ct('已引导：中止当前回复并发送队列消息', 'Guided: stopped the current response and sent the queued message'))
-      setTimeout(() => runSend(next), 0)
     }
   }
 
