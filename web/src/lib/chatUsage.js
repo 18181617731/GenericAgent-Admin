@@ -10,20 +10,38 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate: cache_read / (output + cache_read). Measures what portion
-// of generated content came from cache rather than being freshly produced.
-// For legacy APIs, use output as denominator since cached_tokens relates to input.
+// Cache hit rate differs by API:
+// - Modern (Claude): cache_read / (output + cache_read) — portion of generation from cache
+// - Legacy: cached / output — cache as a ratio to output (different semantic)
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
-    const read = cacheReadTokens(usage)
+    const canonicalRead = tokenCount(usage?.cache_read_tokens)
+    const legacyCached = tokenCount(usage?.cached_tokens)
     const output = tokenCount(usage?.output_tokens)
-    acc.read += read
-    acc.output += output
+    
+    const isModern = canonicalRead > 0 || tokenCount(usage?.cache_creation_tokens) > 0
+    
+    if (isModern) {
+      // Modern API: cache_read / (output + cache_read)
+      acc.modernRead += canonicalRead
+      acc.modernOutput += output
+    } else if (legacyCached > 0) {
+      // Legacy API: cached / output
+      acc.legacyCached += legacyCached
+      acc.legacyOutput += output
+    }
     return acc
-  }, { read: 0, output: 0 })
-  const denominator = totals.output + totals.read
-  return denominator > 0 ? Math.round(totals.read / denominator * 100) : 0
+  }, { modernRead: 0, modernOutput: 0, legacyCached: 0, legacyOutput: 0 })
+  
+  // Prioritize modern calculation if present
+  if (totals.modernRead > 0 || totals.modernOutput > 0) {
+    const denominator = totals.modernOutput + totals.modernRead
+    return denominator > 0 ? Math.round(totals.modernRead / denominator * 100) : 0
+  }
+  
+  // Fall back to legacy calculation
+  return totals.legacyOutput > 0 ? Math.round(totals.legacyCached / totals.legacyOutput * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output

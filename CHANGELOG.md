@@ -5,10 +5,11 @@ This file records manually curated release changes for GenericAgent Admin Go.
 ## Unreleased
 
 ### Bug Fixes
-- **Chat:** Fixed cache hit rate calculation formula
-  - Now correctly calculates as `cache_read / (output + cache_read)` instead of `cache_read / input`
-  - Measures what portion of generated content came from cache versus fresh generation
-  - Applies to both modern Claude API (cache_read_tokens) and legacy APIs (cached_tokens)
+- **Chat:** Fixed cache hit rate calculation to use correct formulas for different API types
+  - **Claude API (Modern)**: `cache_read / (output + cache_read)` — portion of generated content from cache
+  - **Non-Claude API (Legacy)**: `cached / output` — cache-to-output ratio
+  - Automatically detects API type and applies appropriate formula
+  - Mixed sessions prioritize Modern formula when both types present
 
 ## v0.2.16 - 2026-08-24
 
