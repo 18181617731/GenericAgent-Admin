@@ -2608,18 +2608,24 @@ const formatTokens = (count = 0) => {
   return num.toLocaleString(chatLocale())
 }
 
-const UsageRow = ({ u, label, className, elapsedMs = 0, live = false, ctxChars = 0, ctxMsgs = 0 }) => {
+const UsageRow = ({ u, usages = [], label, className, elapsedMs = 0, live = false, ctxChars = 0, ctxMsgs = 0 }) => {
   const hasTokens = usageHasTokens(u)
   const hasElapsed = elapsedMs > 0
   const hasCtx = ctxChars > 0 || ctxMsgs > 0
+  const outputRate = measuredOutputRate(usages)
+  const cachePercent = cacheHitPercent(usages)
+  const hasOutputRate = outputRate > 0
+  const hasCachePercent = cachePercent > 0
   if (!hasTokens && !hasElapsed && !hasCtx) return null
   return <div className={`oa-usage ${className || ''}`}>
     {label && <span className="oa-usage-label">{label}</span>}
     {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? ct('实时耗时', 'Live elapsed time') : ct('耗时', 'Elapsed time')}><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1.5A4.5 4.5 0 1 1 8 11a4.5 4.5 0 0 1 0-7.5z"/><path d="M7.5 4.5h1v3.65l2.2 1.3-.5.9L7.5 9V4.5z"/></svg>{ct('耗时', 'Time')} <b>{formatElapsedMs(elapsedMs)}</b></span>}
-    {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct('输入 tokens', 'Input tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{formatTokens(u.input_tokens)}</b></span>}
-    {u?.cache_creation_tokens > 0 && <span className="oa-usage-cache-write" title={ct('缓存写入 tokens', 'Cache creation tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 1v9m0 0 3-3m-3 3L5 7M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存写入', 'Cache write')} <b>{formatTokens(u.cache_creation_tokens)}</b></span>}
-    {cacheReadTokens(u) > 0 && <span className="oa-usage-cache-read" title={ct('缓存读取 tokens', 'Cache read tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 15V6m0 0 3 3M8 6 5 9M3 3h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存读取', 'Cache read')} <b>{formatTokens(cacheReadTokens(u))}</b></span>}
-    {u?.output_tokens > 0 && <span className="oa-usage-out" title={ct('输出 tokens', 'Output tokens')}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>{ct('输出', 'Output')} <b>{formatTokens(u.output_tokens)}</b></span>}
+    {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct(`输入: ${u.input_tokens.toLocaleString()} tokens`, `Input: ${u.input_tokens.toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{formatTokens(u.input_tokens)}</b></span>}
+    {u?.cache_creation_tokens > 0 && <span className="oa-usage-cache-write" title={ct(`缓存写入: ${u.cache_creation_tokens.toLocaleString()} tokens`, `Cache creation: ${u.cache_creation_tokens.toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 1v9m0 0 3-3m-3 3L5 7M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存写入', 'Cache write')} <b>{formatTokens(u.cache_creation_tokens)}</b></span>}
+    {cacheReadTokens(u) > 0 && <span className="oa-usage-cache-read" title={ct(`缓存读取: ${cacheReadTokens(u).toLocaleString()} tokens`, `Cache read: ${cacheReadTokens(u).toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 15V6m0 0 3 3M8 6 5 9M3 3h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存读取', 'Cache read')} <b>{formatTokens(cacheReadTokens(u))}</b></span>}
+    {u?.output_tokens > 0 && <span className="oa-usage-out" title={ct(`输出: ${u.output_tokens.toLocaleString()} tokens`, `Output: ${u.output_tokens.toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 4.5 12.5 9l-1.1 1.1L8 6.7l-3.4 3.4L3.5 9 8 4.5Z"/></svg>{ct('输出', 'Output')} <b>{formatTokens(u.output_tokens)}</b></span>}
+    {hasOutputRate && <span className="oa-usage-rate" title={ct(`输出速率: ${outputRate.toFixed(1)} tokens/sec`, `Output rate: ${outputRate.toFixed(1)} tokens/sec`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M2 8h12M10 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg><b>{outputRate.toFixed(0)}</b> {ct('tok/s', 'tok/s')}</span>}
+    {hasCachePercent && <span className="oa-usage-cache-hit" title={ct(`缓存命中率: ${cachePercent.toFixed(2)}%`, `Cache hit rate: ${cachePercent.toFixed(2)}%`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M13 4L6 11 3 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存', 'Cache')} <b>{cachePercent % 1 === 0 ? cachePercent.toFixed(0) : cachePercent.toFixed(1)}%</b></span>}
     {hasCtx && <span className="oa-usage-ctx" title={ct(
       `AI 当前记住了 ${ctxMsgs} 条对话消息${ctxChars > 0 ? `，约 ${formatTokens(ctxChars)} 字` : ''}。上下文越长记忆越多，超出上限时旧消息会被自动裁剪。`,
       `AI currently holds ${ctxMsgs} messages in context${ctxChars > 0 ? ` (~${formatTokens(ctxChars)} chars)` : ''}. Older messages are trimmed when the limit is reached.`
@@ -2984,7 +2990,7 @@ export const ChatMessage = memo(function ChatMessage({
         }
         {m.role === 'assistant'
           ? (<div className="oa-msg-footer">
-              {showUsageRow && <UsageRow u={usageTotal} elapsedMs={elapsedMs} live={pending} label={ct('总计', 'Total')} className="oa-usage-total" ctxChars={m.ctx_chars || 0} ctxMsgs={m.ctx_msgs || 0} />}
+              {showUsageRow && <UsageRow u={usageTotal} usages={turnUsages} elapsedMs={elapsedMs} live={pending} label={ct('总计', 'Total')} className="oa-usage-total" ctxChars={m.ctx_chars || 0} ctxMsgs={m.ctx_msgs || 0} />}
               {metaNode}
             </div>)
           : null}
