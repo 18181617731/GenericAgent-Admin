@@ -97,6 +97,10 @@ test('main chat wires reactive draft badges into persistence, sending, and delet
   const promptChange = functionBlock(main, '  const handlePromptChange =', '  const handlePromptKeyDown =')
   assert.match(promptChange, /setSessionPrompt\(v\)/)
 
+  const promptKeyDown = functionBlock(main, '  const handlePromptKeyDown =', '  const guideQueued =')
+  assert.match(promptKeyDown, /e\.isComposing \|\| e\.keyCode === 229/)
+  assert.match(promptKeyDown, /if \(e\.isComposing \|\| e\.keyCode === 229\) return/)
+
   const send = functionBlock(main, '  const send = async', '  const applySlashCommand =')
   assert.match(send, /setSessionPrompt\(''\)/)
   const runSend = functionBlock(main, '  const runSend = async (item = {}) => {', '  const expandCustomSlashCommand =')

@@ -5170,6 +5170,8 @@ export default function ChatApp() {
   }
 
   const handlePromptKeyDown = (e) => {
+    // macOS 中文输入法确认英文候选词时也会派发 Enter；此时不能提交消息。
+    if (e.isComposing || e.keyCode === 229) return
     const currentValue = e.currentTarget.value
     if (cmdDrawer.open && cmdEditIdx === -1) {
       if (e.key === 'ArrowDown') {
