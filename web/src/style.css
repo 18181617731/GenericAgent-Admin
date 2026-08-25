@@ -20559,3 +20559,27 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .local-cmd-notes p{display:flex;align-items:flex-start;gap:8px;margin:0;color:var(--muted);font-size:12px;line-height:1.55}
 .local-cmd-notes svg{flex:none;margin-top:2px;color:var(--ga-accent)}
 @media (max-width:680px){.local-cmd-path-row{align-items:stretch;flex-direction:column}.local-cmd-path-row button,.local-cmd-actions button{width:100%}.local-cmd-actions{justify-content:stretch}.local-cmd-actions button{justify-content:center}}
+
+.local-cmd-directory-browser{display:grid;gap:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-muted)}
+.local-cmd-directory-head,.local-cmd-directory-current,.local-cmd-directory-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.local-cmd-directory-current{color:var(--muted);font-size:12px}
+.local-cmd-directory-current button,.local-cmd-directory-list button{display:inline-flex;align-items:center;gap:6px}
+.local-cmd-directory-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;max-height:180px;overflow:auto}
+.local-cmd-directory-list button{justify-content:flex-start;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.local-cmd-directory-list button svg{flex:none}
+.local-cmd-create{justify-content:center}
+.local-cmd-session-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.local-cmd-session-status code{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.local-cmd-terminal-wrap{display:grid;gap:8px}
+.local-cmd-terminal-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.local-cmd-terminal-output{min-height:320px;max-height:55vh;margin:0;padding:14px;overflow:auto;border:1px solid #303836;border-radius:10px;background:#151a18;color:#ddf7e7;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.local-cmd-command-row{display:flex;gap:8px;align-items:center}
+.local-cmd-command-row input{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
+.local-cmd-shortcuts{display:flex;align-items:center;flex-wrap:wrap;gap:6px;color:var(--muted);font-size:12px}
+.local-cmd-shortcuts button{min-width:42px;padding:5px 8px}
+.local-cmd-session-controls{display:flex;align-items:flex-end;flex-wrap:wrap;gap:8px}
+.local-cmd-session-controls label{display:grid;gap:4px;color:var(--muted);font-size:12px}
+.local-cmd-session-controls input{width:76px}
+.local-cmd-session-controls button{min-height:36px}
+.local-cmd-notes .is-warning{color:var(--danger,#a33)}
+@media (max-width:680px){.local-cmd-directory-head,.local-cmd-directory-current,.local-cmd-command-row{align-items:stretch;flex-direction:column}.local-cmd-directory-head button,.local-cmd-command-row button,.local-cmd-session-controls button{width:100%;justify-content:center}.local-cmd-directory-list{grid-template-columns:1fr}.local-cmd-terminal-output{min-height:240px}.local-cmd-session-controls label{flex:1}.local-cmd-session-controls input{width:100%}}

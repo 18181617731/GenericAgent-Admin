@@ -2,6 +2,15 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.95 - 2026-08-25
+
+### Browser remote CMD
+- Run a real Windows ConPTY CMD session on the Admin host from the browser, with server-side working directories and no local desktop window.
+- Add a server directory browser, NDJSON output replay/reconnect, localStorage session recovery, mobile command shortcuts, and terminal ANSI/UTF-8 handling.
+- Require Basic Auth for remote Local CMD routes even when anonymous remote access is enabled, and protect session creation, input, resize, and deletion with dangerous-action confirmation.
+- Bound sessions, input, output replay buffers, idle lifetime, detached grace periods, and cleanup to prevent orphaned processes and unbounded resource use.
+- Add backend, Windows ConPTY integration, authentication, protocol, cleanup, directory, and frontend regression coverage.
+
 ## v1.0.94 - 2026-08-24
 
 ### Local CMD workspace

@@ -1069,6 +1069,8 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/files/delete", `{}`},
 		{http.MethodPost, "/api/files/open", `{}`},
 		{http.MethodPost, "/api/local-cmd/open", `{}`},
+		{http.MethodPost, "/api/local-cmd/sessions", `{}`},
+		{http.MethodPost, "/api/local-cmd/sessions/", `{}`},
 		{http.MethodPost, "/api/schedule/task", `{}`},
 		{http.MethodPut, "/api/schedule/task", `{"id":"task","task":{}}`},
 		{http.MethodPost, "/api/schedule/create", `{}`},

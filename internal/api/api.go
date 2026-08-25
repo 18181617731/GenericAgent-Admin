@@ -67,6 +67,8 @@ type Server struct {
 	instanceInstallWG       sync.WaitGroup
 	instanceInstallTasks    map[string]*instanceInstallTask
 	instanceInstallsClosing bool
+	localCmdMu              sync.Mutex
+	localCmdSessions        *localCmdRegistry
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
@@ -147,6 +149,15 @@ func (s *Server) passwordConfigured() bool {
 	return s.PasswordConfigured()
 }
 
+func (s *Server) localCmdRegistry() *localCmdRegistry {
+	s.localCmdMu.Lock()
+	defer s.localCmdMu.Unlock()
+	if s.localCmdSessions == nil {
+		s.localCmdSessions = newLocalCmdRegistry()
+	}
+	return s.localCmdSessions
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.health)
@@ -201,6 +212,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
 	mux.HandleFunc("/api/local-cmd/open", s.requireDangerousConfirm(s.localCmdOpen))
+	mux.HandleFunc("/api/local-cmd/directories", s.localCmdDirectories)
+	mux.HandleFunc("/api/local-cmd/sessions", s.requireDangerousConfirm(s.localCmdCreateSession))
+	mux.HandleFunc("/api/local-cmd/sessions/", s.requireDangerousConfirm(s.localCmdSessionRoute))
 	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
 	mux.HandleFunc("/api/setup/python/validate", s.requireDangerousConfirm(s.setupPythonValidate))
@@ -307,7 +321,9 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/write", Level: "dangerous", Action: "write_file", Reason: "writes into GA workspace; handler creates backup before overwrite"},
 	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
-	{Path: "/api/local-cmd/open", Level: "dangerous", Action: "open_local_cmd", Reason: "starts an interactive Windows cmd.exe process in any selected local directory"},
+	{Path: "/api/local-cmd/open", Level: "dangerous", Action: "open_local_cmd_legacy", Reason: "legacy endpoint starts a visible local Windows cmd.exe window; remote UI does not call it"},
+	{Path: "/api/local-cmd/sessions", Level: "dangerous", Action: "create_remote_cmd_session", Reason: "starts a Windows ConPTY cmd.exe session reachable through the authenticated Admin browser"},
+	{Path: "/api/local-cmd/sessions/", Level: "dangerous", Action: "control_remote_cmd_session", Reason: "writes input, resizes, or terminates a remote Windows ConPTY session"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
@@ -1229,4 +1245,5 @@ func (s *Server) ShutdownCleanup() {
 		_ = s.ReactApp.stop()
 	}
 	s.CloseChatWorkers()
+	s.localCmdRegistry().close()
 }

@@ -16,18 +16,28 @@ export const cacheReadTokens = (usage) => {
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
-    const read = cacheReadTokens(usage)
-    const creation = tokenCount(usage?.cache_creation_tokens)
-    const uncached = tokenCount(usage?.input_tokens)
-    acc.read += read
-    acc.totalInput += uncached + creation + read
+    const canonicalRead = tokenCount(usage?.cache_read_tokens)
+    const legacyCached = tokenCount(usage?.cached_tokens)
+    const output = tokenCount(usage?.output_tokens)
+
+    const isModern = canonicalRead > 0 || tokenCount(usage?.cache_creation_tokens) > 0
+
+    if (isModern) {
+      // Modern API: cache_read / (output + cache_read)
+      acc.modernRead += canonicalRead
+      acc.modernOutput += output
+    } else if (legacyCached > 0) {
+      // Legacy API: cached / output
+      acc.legacyCached += legacyCached
+      acc.legacyOutput += output
+    }
     return acc
   }, { modernRead: 0, modernOutput: 0, legacyCached: 0, legacyOutput: 0 })
-  
+
   // Calculate rates separately then combine via weighted average
   let totalWeight = 0
   let weightedSum = 0
-  
+
   if (totals.modernRead > 0 || totals.modernOutput > 0) {
     const modernDenominator = totals.modernOutput + totals.modernRead
     if (modernDenominator > 0) {
@@ -36,13 +46,13 @@ export const cacheHitPercent = (usages) => {
       totalWeight += modernDenominator
     }
   }
-  
+
   if (totals.legacyCached > 0 && totals.legacyOutput > 0) {
     const legacyRate = totals.legacyCached / totals.legacyOutput
     weightedSum += legacyRate * totals.legacyOutput
     totalWeight += totals.legacyOutput
   }
-  
+
   return totalWeight > 0 ? Math.round(weightedSum / totalWeight * 100) : 0
 }
 
