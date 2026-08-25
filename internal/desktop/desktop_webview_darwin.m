@@ -39,8 +39,9 @@ static void ga_desktop_forget(int32_t id);
 	forNavigationAction:(WKNavigationAction *)navigationAction
 	windowFeatures:(WKWindowFeatures *)windowFeatures {
 	NSURLRequest *request = navigationAction.request;
-	if (request.URL != nil) {
-		[webView loadRequest:request];
+	NSURL *url = request.URL;
+	if (url != nil) {
+		[[NSWorkspace sharedWorkspace] openURL:url];
 	}
 	return nil;
 }
