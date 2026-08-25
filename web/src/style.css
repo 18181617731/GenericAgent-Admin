@@ -18536,6 +18536,11 @@ html { --ga-ui-scale: 1; }
 .set-password-user { color: var(--muted); font-size: 12px; }
 .set-password-user code { font-size: 11px; }
 .set-password-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.set-list { display: grid; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--settings-line, var(--border)); }
+.set-list-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set-list-row code { min-width: 0; overflow-wrap: anywhere; }
+.set-list-row button { flex: 0 0 auto; }
+.set-muted { color: var(--muted); font-size: 11.5px; }
 .set-page .update-progress { padding: 12px 18px; }
 .set-page .mini-log { margin: 0 18px 12px; }
 

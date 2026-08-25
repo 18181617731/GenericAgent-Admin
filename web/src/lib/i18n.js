@@ -206,6 +206,9 @@ export const SETTINGS_TEXT = {
       confirmSet: '更新 GA Admin 访问密码？远程连接将改用新密码认证。',
       confirmRemove: '移除访问密码？移除后将无法开启“需要密码”的远程访问。',
     },
+    keychain: {
+      title: '本机密钥库', eyebrow: '安全凭据', desc: '管理与 GA 共用的 ~/ga_keychain.enc。仅显示密钥名称，密钥值不会回显。', protected: '密钥值永不回显', inventory: '已保存的密钥', inventoryDesc: '这里只读取名称，不会从密钥库取回密钥值。', editor: '新增或更新', editorDesc: '名称相同时，确认后将替换原密钥值。', loading: '正在读取密钥名称…', retry: '重试', refresh: '刷新密钥名称', keysLabel: '个密钥', emptyHelp: '在右侧添加第一个凭据。', valueHelp: '提交后此值不会再次显示。', saving: '正在保存…', pathLabel: '存储位置', name: '名称', value: '密钥值', add: '保存密钥', remove: '删除', empty: '暂无密钥', confirmAdd: name => `写入密钥“${name}”？`, confirmRemove: name => `删除密钥“${name}”？`, saved: '密钥已保存。', removed: '密钥已删除。', invalid: '请填写名称和密钥值。', loadFailed: '读取密钥名称失败。',
+    },
     startup: {
       title: '启动',
       desc: '控制 GA Admin 自身是否随系统登录启动。',
@@ -296,6 +299,9 @@ export const SETTINGS_TEXT = {
       passwordTooShort: 'The password needs at least 8 characters.',
       confirmSet: 'Update the GA Admin access password? Remote connections will authenticate with the new credential.',
       confirmRemove: 'Remove the access password? Password-protected remote access cannot be enabled without one.',
+    },
+    keychain: {
+      title: 'Local keychain', eyebrow: 'Secure credentials', desc: 'Manage ~/ga_keychain.enc shared with GA. Only key names are shown; secret values are never displayed.', protected: 'Secret values stay hidden', inventory: 'Saved keys', inventoryDesc: 'Only names are read; secret values are never retrieved from the keychain.', editor: 'Add or update', editorDesc: 'A matching name replaces the old secret after confirmation.', loading: 'Loading key names…', retry: 'Retry', refresh: 'Refresh key names', keysLabel: 'keys', emptyHelp: 'Add the first credential on the right.', valueHelp: 'This value will not be shown again after submission.', saving: 'Saving…', pathLabel: 'Storage', name: 'Name', value: 'Secret value', add: 'Save key', remove: 'Remove', empty: 'No keys saved', confirmAdd: name => `Write key “${name}”?`, confirmRemove: name => `Remove key “${name}”?`, saved: 'Key saved.', removed: 'Key removed.', invalid: 'Enter both a name and a secret value.', loadFailed: 'Could not load key names.',
     },
     startup: {
       title: 'Startup',
