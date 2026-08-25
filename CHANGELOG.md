@@ -2,6 +2,18 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.96 - 2026-08-25
+
+### Remote CMD / Codex TUI
+- Replace text-only remote terminal rendering with an xterm.js terminal that preserves raw ANSI/VT bytes, cursor movement, full-screen TUI state, and interactive Codex/Vim sessions.
+- Forward terminal input one key event at a time with UTF-8 encoding, retain mobile shortcuts, and automatically fit and deduplicate ConPTY resize updates.
+- Preserve replay/reconnect behavior and session ownership when clearing or disposing the browser terminal.
+- Initialize Windows ConPTY `cmd.exe` sessions with `TERM=xterm-256color`, `COLORTERM=truecolor`, and `chcp 65001` so Codex can start its full-screen terminal UI.
+- Add frontend, controller, terminal, Windows process, and ConPTY regression coverage, including exact Windows path placeholder rendering.
+
+### Keychain management
+- Add the upstream local keychain management API and settings page for storing and removing local credentials through the Admin interface.
+
 ## v1.0.95 - 2026-08-25
 
 ### Browser remote CMD

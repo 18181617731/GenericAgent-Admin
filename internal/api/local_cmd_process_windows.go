@@ -16,6 +16,7 @@ import (
 
 const (
 	localCmdProcessExecutable   = "cmd.exe"
+	localCmdProcessInitCommand  = "set TERM=xterm-256color && set COLORTERM=truecolor && chcp 65001>nul"
 	localCmdProcessExitCode     = 1
 	localCmdProcessCreateFlags  = windows.EXTENDED_STARTUPINFO_PRESENT
 	localCmdProcessStartupFlags = windows.STARTF_USESTDHANDLES
@@ -118,6 +119,10 @@ func createLocalCmdPipes() (windows.Handle, windows.Handle, windows.Handle, wind
 	return input[0], input[1], output[0], output[1], nil
 }
 
+func localCmdProcessCommandLine(executable string) string {
+	return windows.ComposeCommandLine([]string{executable, "/D", "/Q", "/K", localCmdProcessInitCommand})
+}
+
 func startConPTYProcess(executable, dir string, console windows.Handle) (windows.Handle, error) {
 	attributes, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
@@ -136,7 +141,7 @@ func startConPTYProcess(executable, dir string, console windows.Handle) (windows
 	if err != nil {
 		return 0, fmt.Errorf("encode working directory: %w", err)
 	}
-	commandLine, err := windows.UTF16FromString(windows.ComposeCommandLine([]string{executable, "/D", "/Q", "/K", "chcp", "65001>nul"}))
+	commandLine, err := windows.UTF16FromString(localCmdProcessCommandLine(executable))
 	if err != nil {
 		return 0, fmt.Errorf("encode cmd.exe command line: %w", err)
 	}

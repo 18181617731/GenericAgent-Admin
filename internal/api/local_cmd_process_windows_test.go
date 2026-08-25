@@ -33,6 +33,20 @@ func TestRemoteCmdUsesConPTYWithoutVisibleConsole(t *testing.T) {
 	}
 }
 
+func TestRemoteCmdConPTYInitializesFullColorTerminal(t *testing.T) {
+	commandLine := localCmdProcessCommandLine(`C:\Windows\System32\cmd.exe`)
+	wantInit := `/K "` + localCmdProcessInitCommand + `"`
+	if !strings.Contains(commandLine, wantInit) {
+		t.Fatalf("cmd.exe initialization = %q, want %q", commandLine, wantInit)
+	}
+	if strings.Contains(strings.ToLower(commandLine), "term=dumb") {
+		t.Fatalf("cmd.exe initialization must not fall back to TERM=dumb: %q", commandLine)
+	}
+	if !strings.Contains(commandLine, "chcp 65001>nul") {
+		t.Fatalf("cmd.exe initialization must preserve UTF-8 code page setup: %q", commandLine)
+	}
+}
+
 func TestRemoteCmdConPTYIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("ConPTY integration test disabled in short mode")
