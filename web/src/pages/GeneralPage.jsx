@@ -199,6 +199,7 @@ export function GeneralPage({
 
     <RemoteAccessSection text={text} t={t} cfg={cfg} patch={patch} dirty={dirty} onSave={onSave} busy={busy}/>
 
+
     <SettingsSection title={text.startup.title} description={text.startup.desc} icon={<Power size={17}/>}>
       <SettingToggle
         id="settings-autostart"

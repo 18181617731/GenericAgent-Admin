@@ -5,7 +5,7 @@ import { NAV_ITEMS } from './routing.js'
 // one group; settingsNavItems() is the single source of truth for nav order.
 export const SETTINGS_GROUPS = [
   { id: 'general', items: ['overview', 'settings', 'chat'] },
-  { id: 'agent', items: ['models', 'instances', 'channels'] },
+  { id: 'agent', items: ['models', 'keychain', 'instances', 'channels'] },
   { id: 'automation', items: ['tasks', 'goals'] },
   { id: 'system', items: ['files', 'usage', 'logs'] },
 ]

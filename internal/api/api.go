@@ -116,6 +116,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/check", s.versionCheck)
 	mux.HandleFunc("/api/version/status", s.versionStatus)
 	mux.HandleFunc("/api/risk/catalog", s.riskCatalog)
+	mux.HandleFunc("/api/keychain", s.requireDangerousConfirm(s.keychainHandler))
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
 	mux.HandleFunc("/api/version/restart", s.requireDangerousConfirm(s.versionRestart))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
@@ -278,6 +279,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
+	{Path: "/api/keychain", Level: "dangerous", Action: "edit_keychain", Reason: "writes or deletes encrypted local keychain credentials"},
 	{Path: "/api/chat/python/install-deps", Level: "dangerous", Action: "install_chat_python_deps", Reason: "runs pip install with Tsinghua PyPI mirror for the GA runtime imports the chat interpreter reports missing"},
 }
 

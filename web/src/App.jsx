@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, BrainCircuit, FileCode2, FolderCog, Globe2, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Server, SlidersHorizontal, Sparkles, Target, Terminal } from 'lucide-react'
+import { Activity, BarChart3, BrainCircuit, FileCode2, FolderCog, Globe2, KeyRound, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Server, SlidersHorizontal, Sparkles, Target, Terminal } from 'lucide-react'
 import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import { api } from './lib/api'
@@ -24,6 +24,7 @@ import { useVersionUpdates } from './hooks/useVersionUpdates'
 import { OverviewPage } from './pages/OverviewPage'
 import { GeneralPage } from './pages/GeneralPage'
 import { ChatSettingsPage } from './pages/ChatSettingsPage'
+import { KeychainPage } from './pages/KeychainPage'
 // 页面级代码分割：重量级页面按需加载，首屏只下载设置壳与三个轻量设置页。
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
 const UsagePage = lazy(() => import('./pages/UsagePage').then(m => ({ default: m.UsagePage })))
@@ -43,6 +44,7 @@ const NAV_ICONS = {
   settings: <SlidersHorizontal size={16}/>,
   chat: <Sparkles size={16}/>,
   models: <BrainCircuit size={16}/>,
+  keychain: <KeyRound size={16}/>,
   instances: <Server size={16}/>,
   channels: <Globe2 size={16}/>,
   tasks: <Terminal size={16}/>,
@@ -303,6 +305,7 @@ export default function App() {
               onToggleAutostart={version.toggleAutostart}
             />}
             {tab==='chat' && <ChatSettingsPage t={t} text={text} titleModel={titleModel}/>}
+            {tab==='keychain' && <KeychainPage text={text}/>}
             {tab==='models' && <Models t={t} profiles={models.profiles} setProfiles={models.setProfiles} patchProfile={models.patchProfile} addModelProfiles={models.addProfiles} removeModelProfile={models.removeProfile} importModels={models.importModels} previewModels={models.previewModels} failoverGroups={models.failoverGroups} setFailoverGroups={models.setFailoverGroups} discoverModels={models.discoverModels} modelPreview={models.preview} changes={models.changes} saveState={models.saveState} saveAll={models.saveAll} discardDraft={models.discardDraft} importLoading={models.importLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={models.revealedKeys} revealBusy={models.keyBusy} getProfileKey={models.getProfileKey} onRevealKey={models.revealKey} onClearRevealedKey={models.clearRevealedKey} modelInstance={models.instance} modelInstanceLabel={lang === 'zh' ? '当前实例' : 'Current instance'}/>}
             {tab==='instances' && <InstancesPage lang={lang} onConfigureModels={openModels}/>}
             {tab==='channels' && <ChannelsPage frontendSvcs={services.frontendSvcs} t={t} actionStates={services.actionStates} onStart={startService} onStop={stopService} onLogs={viewServiceLogs} onAutostart={services.toggleAutostart} onReflectStart={services.startReflectService} onOpenHub={()=>window.open('http://127.0.0.1:19737', '_blank', 'noopener,noreferrer')}/>}
