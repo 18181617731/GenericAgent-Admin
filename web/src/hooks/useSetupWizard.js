@@ -135,6 +135,15 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     return result.path
   })
 
+  const readClipboard = () => run('setup-clipboard', async () => {
+    if (!globalThis.navigator?.clipboard?.readText) throw new Error(text.root.clipboardUnsupported)
+    const value = normalizeRootPath(await globalThis.navigator.clipboard.readText())
+    if (!value) return reject(text.runtime.blocked.noRoot)
+    setRootDraft(value)
+    setNotice({ tone: 'success', text: text.root.clipboardRead })
+    return value
+  })
+
   const validateRoot = () => {
     const target = normalizeRootPath(rootDraft)
     if (!target) return reject(text.runtime.blocked.noRoot)
@@ -282,6 +291,7 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     logLines,
     refresh,
     browse,
+    readClipboard,
     validateRoot,
     installGA,
     validatePython,
