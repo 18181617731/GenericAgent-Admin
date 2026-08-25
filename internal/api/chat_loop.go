@@ -295,7 +295,20 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
-	if err != nil || !cs.Loop.Enabled || cs.Loop.Status == chatLoopStatusEvaluating {
+	if err != nil {
+		s.SessionMu.Unlock()
+		return
+	}
+
+	// Check queued messages first
+	if success && len(cs.QueuedMessages) > 0 {
+		s.SessionMu.Unlock()
+		go s.processNextQueuedMessage(sid)
+		return
+	}
+
+	// Then check loop mode
+	if !cs.Loop.Enabled || cs.Loop.Status == chatLoopStatusEvaluating {
 		s.SessionMu.Unlock()
 		return
 	}
@@ -608,4 +621,138 @@ func normalizePersistedChatLoop(state chatLoopState) (chatLoopState, bool) {
 	state.Epoch++
 	state.MaxRounds = normalizeChatLoopMaxRounds(state.MaxRounds)
 	return state, true
+}
+
+// convertChatUploadsToMaps converts []chatUpload to []map[string]interface{} for message files
+func convertChatUploadsToMaps(uploads []chatUpload) []map[string]interface{} {
+	if len(uploads) == 0 {
+		return nil
+	}
+	result := make([]map[string]interface{}, len(uploads))
+	for i, upload := range uploads {
+		result[i] = map[string]interface{}{
+			"id":      upload.ID,
+			"name":    upload.Name,
+			"type":    upload.Type,
+			"size":    upload.Size,
+			"dataURL": upload.DataURL,
+		}
+	}
+	return result
+}
+
+// processNextQueuedMessage executes the next queued message for a session.
+// It is called after a chat run completes successfully and there are queued messages.
+func (s *Server) processNextQueuedMessage(sid string) {
+	sid = safeChatID(sid)
+
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil || len(cs.QueuedMessages) == 0 {
+		s.SessionMu.Unlock()
+		return
+	}
+
+	// Pop the first queued message
+	queuedItem := cs.QueuedMessages[0]
+	cs.QueuedMessages = cs.QueuedMessages[1:]
+	cs.UpdatedAt = time.Now().Unix()
+
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		s.SessionMu.Unlock()
+		return
+	}
+	s.SessionMu.Unlock()
+
+	// Publish queue status event
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":             "queue_item_start",
+		"queue_item_id":    queuedItem.ID,
+		"remaining_count":  len(cs.QueuedMessages),
+	})
+
+	// Build the request payload for the queued message
+	cmdReq := map[string]interface{}{
+		"prompt": queuedItem.Text,
+		"files":  queuedItem.Files,
+	}
+	if queuedItem.LLMNo > 0 {
+		cmdReq["llmNo"] = queuedItem.LLMNo
+	}
+	if queuedItem.ReasoningEffort != "" {
+		cmdReq["reasoningEffort"] = queuedItem.ReasoningEffort
+	}
+
+	// Trigger the chat post internally
+	// We need to acquire a run token and call runChatWorkerOwned
+	token := &chatRun{
+		SID:         sid,
+		Events:      make([][]byte, 0, 64),
+		Subscribers: make(map[chan []byte]bool),
+	}
+
+	s.ChatMu.Lock()
+	if s.ChatRuns[sid] != nil {
+		// Another run is already active, put the item back
+		s.ChatMu.Unlock()
+		s.SessionMu.Lock()
+		cs2, _ := loadChatSession(s.CfgStore.Snapshot(), sid)
+		cs2.QueuedMessages = append([]chatQueuedMessage{queuedItem}, cs2.QueuedMessages...)
+		_ = saveChatSessionLocked(s.CfgStore.Snapshot(), cs2)
+		s.SessionMu.Unlock()
+		return
+	}
+	s.ChatRuns[sid] = token
+	s.ChatMu.Unlock()
+
+	// Reload session with the queued message removed
+	s.SessionMu.Lock()
+	cs, err = loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return
+	}
+
+	// Create pending message
+	pendingID := newChatID()
+	runStartedAtMS := time.Now().UnixMilli()
+	pendingMsg := chatMessage{
+		ID:             pendingID,
+		Role:           "assistant",
+		CreatedAt:      time.Now().Unix(),
+		RunStartedAtMS: runStartedAtMS,
+	}
+
+	// Create user message from queued item
+	userMsg := chatMessage{
+		ID:        newChatID(),
+		Role:      "user",
+		Content:   queuedItem.Text,
+		Files:     convertChatUploadsToMaps(queuedItem.Files),
+		CreatedAt: time.Now().Unix(),
+	}
+
+	cs.Messages = append(cs.Messages, userMsg, pendingMsg)
+	updateChatTitle(&cs)
+
+	// Apply settings from queued item
+	if queuedItem.LLMNo > 0 {
+		cs.Settings.LLMNo = queuedItem.LLMNo
+	}
+	if queuedItem.ReasoningEffort != "" {
+		cs.Settings.ReasoningEffort = queuedItem.ReasoningEffort
+	}
+
+	cmdReq["_ga_pending_assistant_id"] = pendingID
+
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return
+	}
+	s.SessionMu.Unlock()
+
+	// Start the worker
+	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
 }

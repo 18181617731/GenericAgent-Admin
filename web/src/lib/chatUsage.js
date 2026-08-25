@@ -10,9 +10,9 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate: cache_read / total_input where total_input includes
-// uncached input + cache creation + cache read. Modern Claude API reports
-// these as disjoint buckets. Legacy cached_tokens is a subset of input_tokens.
+// Cache hit rate differs by API:
+// - Modern (Claude): cache_read / (output + cache_read) — portion of generation from cache
+// - Legacy: cached / output — cache as a ratio to output (different semantic)
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
@@ -22,8 +22,28 @@ export const cacheHitPercent = (usages) => {
     acc.read += read
     acc.totalInput += uncached + creation + read
     return acc
-  }, { read: 0, totalInput: 0 })
-  return totals.totalInput > 0 ? Math.round(totals.read / totals.totalInput * 100) : 0
+  }, { modernRead: 0, modernOutput: 0, legacyCached: 0, legacyOutput: 0 })
+  
+  // Calculate rates separately then combine via weighted average
+  let totalWeight = 0
+  let weightedSum = 0
+  
+  if (totals.modernRead > 0 || totals.modernOutput > 0) {
+    const modernDenominator = totals.modernOutput + totals.modernRead
+    if (modernDenominator > 0) {
+      const modernRate = totals.modernRead / modernDenominator
+      weightedSum += modernRate * modernDenominator
+      totalWeight += modernDenominator
+    }
+  }
+  
+  if (totals.legacyCached > 0 && totals.legacyOutput > 0) {
+    const legacyRate = totals.legacyCached / totals.legacyOutput
+    weightedSum += legacyRate * totals.legacyOutput
+    totalWeight += totals.legacyOutput
+  }
+  
+  return totalWeight > 0 ? Math.round(weightedSum / totalWeight * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output

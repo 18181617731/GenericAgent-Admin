@@ -123,6 +123,21 @@ test('validateModelProfiles accepts aggregated models array without legacy model
   assert.deepEqual(results[0].errors, [])
 })
 
+test('validateModelProfiles allows duplicate model IDs as independent instances', () => {
+  const results = validateModelProfiles([{
+    var_name: 'native_oai_config_group',
+    apibase: 'https://api.example.test/v1',
+    apikey: 'set',
+    model_configs: [
+      { instance_id: 'fast', model: 'gpt-4o', read_timeout: 30, reasoning_effort: 'low' },
+      { instance_id: 'deep', model: 'gpt-4o', read_timeout: 600, reasoning_effort: 'high' },
+    ],
+  }])
+
+  assert.equal(results[0].ok, true)
+  assert.deepEqual(results[0].errors, [])
+})
+
 test('validateModelProfiles validates independent model configs', () => {
   const valid = validateModelProfiles([{
     var_name: 'native_oai_config_group',
