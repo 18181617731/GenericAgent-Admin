@@ -3179,7 +3179,16 @@ const MessageList = memo(function MessageList({
 })
 
 
-export function ProviderModelCascade({ groups, selectedProvider, value, onChange, disabled }) {
+export function ProviderModelCascade({
+  groups,
+  selectedProvider,
+  value,
+  onChange,
+  reasoningValue = 'off',
+  reasoningOptions = [],
+  onReasoningChange,
+  disabled,
+}) {
   const [open, setOpen] = useState(false)
   const [mobilePicker, setMobilePicker] = useState(isMobileModelPickerViewport)
   const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
@@ -3249,7 +3258,10 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
   const activeGroup = groups.find(group => group.value === selectedProvider)
   const previewGroup = groups.find(group => group.value === previewProvider) || activeGroup || groups[0]
   const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
-  const displayModel = activeModel?.label || ct('未发现模型', 'No models found')
+  const activeReasoning = reasoningOptions.find(option => option.value === reasoningValue)
+  const displayModel = activeModel?.label || ct('\u672a\u53d1\u73b0\u6a21\u578b', 'No models found')
+  const displayReasoning = activeReasoning?.label || ct('\u9ed8\u8ba4', 'Default')
+  const displayValue = `${displayModel} \u00b7 ${displayReasoning}`
   useLayoutEffect(() => {
     if (!open || previewGroup?.value !== selectedProvider) return
     const list = modelListRef.current
@@ -3262,7 +3274,10 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
   }, [open, previewGroup?.value, selectedProvider, value])
 
   const chooseModel = modelValue => {
-    onChange(modelValue)
+    onChange?.(modelValue)
+  }
+  const chooseReasoning = effort => {
+    onReasoningChange?.(effort)
     closeMenu()
   }
   const mobileLayer = open && mobilePicker && typeof document !== 'undefined' ? createPortal(
@@ -3305,6 +3320,21 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
             </button>
           }) : <div className="oa-model-picker-empty">{ct('这个服务商还没有可用模型', 'No models are available for this provider')}</div>}
         </div>
+        <div className="oa-model-picker-reasoning" aria-label={ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}>
+          <div className="oa-model-picker-section-heading">
+            <strong>{ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}</strong>
+            <span>{displayReasoning}</span>
+          </div>
+          <div className="oa-model-picker-reasoning-options">
+            {reasoningOptions.map(option => {
+              const isCurrent = option.value === reasoningValue
+              return <button key={option.value} type="button" className={isCurrent ? 'active' : ''}
+                aria-current={isCurrent ? 'true' : undefined} onClick={() => chooseReasoning(option.value)}>
+                <span>{option.label}</span>{isCurrent && <Check size={14} />}
+              </button>
+            })}
+          </div>
+        </div>
       </section>
     </div>,
     document.body,
@@ -3312,13 +3342,14 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
 
   return (
     <div className="oa-model-select oa-composer-cascade" ref={ref}>
-      <button ref={triggerRef} type="button" disabled={disabled} title={displayModel}
-        aria-label={`${ct('模型', 'Model')}：${displayModel}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={menuId}
+      <button ref={triggerRef} type="button" disabled={disabled} title={displayValue}
+        aria-label={`${ct('\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6', 'Model and reasoning effort')}\uff1a${displayValue}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={menuId}
         onClick={toggleMenu}>
         <span className="oa-cascade-current-model">{displayModel}</span>
+        <span className="oa-cascade-current-effort">{displayReasoning}</span>
         <ChevronDown size={13} />
       </button>
-      {open && !mobilePicker && <div id={menuId} className="oa-cascade-menu" role="dialog" aria-label={ct('服务商和模型', 'Providers and models')}>
+      {open && !mobilePicker && <div id={menuId} className="oa-cascade-menu" role="dialog" aria-label={ct('\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6', 'Provider, model, and reasoning effort')}>
         <div className="oa-cascade-providers" aria-label={ct('服务商', 'Providers')}>
           {groups.map(group => (
             <button key={group.value} type="button"
@@ -3345,6 +3376,17 @@ export function ProviderModelCascade({ groups, selectedProvider, value, onChange
               <span>{model.label}</span>
             </button>
           }) : <div className="oa-cascade-empty">{ct('未发现模型', 'No models found')}</div>}
+        </div>
+        <div className="oa-cascade-reasoning" aria-label={ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}>
+          <div className="oa-cascade-heading">{ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}</div>
+          {reasoningOptions.map(option => {
+            const isCurrent = option.value === reasoningValue
+            return <button key={option.value} type="button" className={isCurrent ? 'active' : ''}
+              aria-current={isCurrent ? 'true' : undefined} onClick={() => chooseReasoning(option.value)}>
+              {isCurrent && <Check size={12} />}
+              <span>{option.label}</span>
+            </button>
+          })}
         </div>
       </div>}
       {mobileLayer}
@@ -6175,14 +6217,18 @@ export default function ChatApp() {
             <div className="oa-composer-primary-actions">
               <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
                 value={selectedModelNo} disabled={!providerGroups.length}
-                onChange={v=>saveModel(Number(v))} />
-              <div className="oa-model-select oa-effort-select">
-                <CustomSelect value={reasoningEffort} onChange={v=>saveReasoningEffort(v)}
-                  ariaLabel={ct('推理', 'Reasoning')}
-                  options={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: ct('默认', 'Default') } : option)} />
-              </div>
-              <button className="oa-send" type="button" disabled={!prompt.trim() && !attachments.length} onClick={() => send()} title={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')} aria-label={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')}><Send size={17}/></button>
-              {isCurrentRunning && <button className="oa-stop" type="button" onClick={()=>cancelRun(sid)} title={ct('停止生成', 'Stop generating')} aria-label={ct('停止生成', 'Stop generating')}><Square size={14}/></button>}
+                onChange={v=>saveModel(Number(v))}
+                reasoningValue={reasoningEffort}
+                onReasoningChange={saveReasoningEffort}
+                reasoningOptions={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: ct('\u9ed8\u8ba4', 'Default') } : option)} />
+              <button
+                className={`oa-send ${isCurrentRunning ? 'is-stop' : ''}`}
+                type="button"
+                disabled={!isCurrentRunning && !prompt.trim() && !attachments.length}
+                onClick={() => isCurrentRunning ? cancelRun(sid) : send()}
+                title={isCurrentRunning ? ct('停止生成', 'Stop generating') : ct('发送', 'Send')}
+                aria-label={isCurrentRunning ? ct('停止生成', 'Stop generating') : ct('发送', 'Send')}
+              >{isCurrentRunning ? <Square size={12} fill="currentColor" strokeWidth={0}/> : <Send size={17}/>}</button>
             </div>
           </div>
         </div>

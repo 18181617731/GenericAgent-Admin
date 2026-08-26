@@ -6450,6 +6450,20 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.oa-cascade-current-effort {
+  flex: 0 0 auto;
+  max-width: 72px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--i-08785f);
+  background: color-mix(in srgb, #10a37f 10%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .oa-composer-cascade > button > svg:last-child {
   position: static;
   flex: 0 0 auto;
@@ -6460,11 +6474,11 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
-  width: 390px;
-  max-width: min(390px, calc(100vw - 24px));
-  height: clamp(190px, 32vh, 292px);
+  width: 520px;
+  max-width: min(520px, calc(100vw - 24px));
+  height: clamp(220px, 34vh, 308px);
   display: grid;
-  grid-template-columns: minmax(126px, 38%) minmax(0, 1fr);
+  grid-template-columns: minmax(110px, 23%) minmax(170px, 1fr) minmax(150px, 32%);
   padding: 6px;
   gap: 5px;
   border: 1px solid rgba(0,0,0,.1);
@@ -6479,7 +6493,8 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   to { opacity: 1; transform: translateY(0); }
 }
 .oa-cascade-providers,
-.oa-cascade-models {
+.oa-cascade-models,
+.oa-cascade-reasoning {
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -6491,8 +6506,31 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   padding: 2px;
 }
 .oa-cascade-providers { border-right: 1px solid rgba(0,0,0,.07); padding-right: 6px; }
+.oa-cascade-reasoning {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 3px;
+  border-left: 1px solid rgba(0,0,0,.07);
+  padding-left: 6px;
+}
+.oa-cascade-reasoning .oa-cascade-heading { grid-column: 1 / -1; }
+.oa-cascade-reasoning button {
+  min-width: 0;
+  min-height: 32px;
+  grid-column: auto !important;
+  justify-self: stretch !important;
+  flex: 0 1 auto !important;
+  justify-content: center;
+  gap: 0;
+  padding: 6px 4px;
+  text-align: center;
+}
+.oa-cascade-reasoning button svg { display: none; }
+/* composer cascade layout revision: combined reasoning grid */
 .oa-cascade-providers button,
-.oa-cascade-models button {
+.oa-cascade-models button,
+.oa-cascade-reasoning button {
   width: 100%;
   min-height: 34px;
   display: flex;
@@ -6509,7 +6547,8 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   text-align: left;
 }
 .oa-cascade-providers button span,
-.oa-cascade-models button span {
+.oa-cascade-models button span,
+.oa-cascade-reasoning button span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6517,17 +6556,21 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 }
 .oa-cascade-providers button svg { flex: 0 0 auto; margin-left: auto; color: var(--muted); opacity: .7; }
 .oa-cascade-providers button:hover,
-.oa-cascade-models button:hover { background: rgba(0,0,0,.055); }
+.oa-cascade-models button:hover,
+.oa-cascade-reasoning button:hover { background: rgba(0,0,0,.055); }
 .oa-composer-cascade > button:focus-visible,
 .oa-cascade-providers button:focus-visible,
-.oa-cascade-models button:focus-visible {
+.oa-cascade-models button:focus-visible,
+.oa-cascade-reasoning button:focus-visible {
   outline: 2px solid rgba(16,163,127,.72);
   outline-offset: -2px;
 }
 .oa-cascade-providers button.active { background: rgba(16,163,127,.1); color: var(--i-08785f); font-weight: 650; }
 .oa-cascade-models button { gap: 6px; }
-.oa-cascade-models button.active { background: rgba(16,163,127,.1); color: var(--i-08785f); font-weight: 650; }
-.oa-cascade-models button svg { flex: 0 0 auto; color: #10a37f; }
+.oa-cascade-models button.active,
+.oa-cascade-reasoning button.active { background: rgba(16,163,127,.1); color: var(--i-08785f); font-weight: 650; }
+.oa-cascade-models button svg,
+.oa-cascade-reasoning button svg { flex: 0 0 auto; color: #10a37f; }
 .oa-cascade-heading {
   padding: 5px 9px 7px;
   color: var(--muted);
@@ -6539,9 +6582,11 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 }
 .oa-cascade-empty { padding: 12px 9px; color: var(--muted); font-size: 12px; }
 html[data-color-scheme="dark"] .oa-cascade-menu { border-color: rgba(255,255,255,.12); }
-html[data-color-scheme="dark"] .oa-cascade-providers { border-right-color: rgba(255,255,255,.1); }
+html[data-color-scheme="dark"] .oa-cascade-providers,
+html[data-color-scheme="dark"] .oa-cascade-reasoning { border-color: rgba(255,255,255,.1); }
 html[data-color-scheme="dark"] .oa-cascade-providers button:hover,
-html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgba(255,255,255,.07); }
+html[data-color-scheme="dark"] .oa-cascade-models button:hover,
+html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: rgba(255,255,255,.07); }
 @media (max-width: 680px) {
   .oa-composer .oa-composer-cascade {
     position: relative;
@@ -6673,7 +6718,7 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
   background: var(--surface-strong);
   font: inherit;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -6730,6 +6775,7 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
   background: transparent;
   font: inherit;
   font-size: 13px;
+  font-weight: 450;
   text-align: left;
   cursor: pointer;
 }
@@ -6741,7 +6787,7 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
 }
 .oa-model-picker-models > button.active {
   color: var(--strong);
-  font-weight: 680;
+  font-weight: 550;
   background: color-mix(in srgb, #10a37f 7%, transparent);
 }
 .oa-model-picker-check {
@@ -6757,6 +6803,49 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
 .oa-model-picker-models > button.active .oa-model-picker-check {
   background: #10a37f;
 }
+.oa-model-picker-reasoning {
+  flex: 0 0 auto;
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-strong);
+}
+.oa-model-picker-reasoning-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  gap: 8px;
+}
+.oa-model-picker-reasoning-options > button {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text);
+  background: var(--surface-soft);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.oa-model-picker-reasoning-options > button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-model-picker-reasoning-options > button svg {
+  flex: 0 0 auto;
+  color: #10a37f;
+}
+.oa-model-picker-reasoning-options > button.active {
+  color: var(--i-08785f);
+  border-color: color-mix(in srgb, #10a37f 52%, var(--border));
+  background: color-mix(in srgb, #10a37f 10%, var(--surface-strong));
+}
 .oa-model-picker-empty {
   min-height: 120px;
   display: grid;
@@ -6768,12 +6857,14 @@ html[data-color-scheme="dark"] .oa-cascade-models button:hover { background: rgb
 }
 .oa-model-picker-header > button:hover,
 .oa-model-picker-providers button:hover,
-.oa-model-picker-models > button:hover {
+.oa-model-picker-models > button:hover,
+.oa-model-picker-reasoning-options > button:hover {
   filter: brightness(.98);
 }
 .oa-model-picker-header > button:focus-visible,
 .oa-model-picker-providers button:focus-visible,
-.oa-model-picker-models > button:focus-visible {
+.oa-model-picker-models > button:focus-visible,
+.oa-model-picker-reasoning-options > button:focus-visible {
   outline: 2px solid rgba(16, 163, 127, .72);
   outline-offset: -2px;
 }
@@ -13214,11 +13305,11 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
   }
 }
 
-/* Keep the model, reasoning, and send controls together without a wide model box. */
+/* Keep the combined model/reasoning control and send button compact. */
 .oa-composer .oa-composer-primary-actions {
   display:flex;
   align-items:center;
-  flex:0 1 370px;
+  flex:0 1 250px;
   min-width:0;
   max-width:100%;
   gap:4px;
@@ -13226,21 +13317,16 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
   flex-wrap:nowrap;
 }
 .oa-composer .oa-composer-primary-actions .oa-composer-cascade {
-  flex:1 1 154px !important;
+  flex:1 1 205px !important;
   width:auto !important;
-  max-width:174px !important;
+  max-width:220px !important;
   margin-left:0;
   padding:0 7px 0 4px !important;
-}
-.oa-composer .oa-composer-primary-actions .oa-effort-select {
-  flex:0 1 104px !important;
-  width:auto !important;
-  min-width:92px !important;
-  max-width:112px !important;
 }
 .oa-composer .oa-composer-primary-actions .oa-send,
 .oa-composer .oa-composer-primary-actions .oa-stop {
   flex:0 0 30px;
+  margin-left:auto;
 }
 
 @media (max-width:680px) {
@@ -13251,15 +13337,10 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
     margin-left:0;
   }
   .oa-composer .oa-composer-primary-actions .oa-composer-cascade {
-    flex:0 1 154px !important;
-    width:154px !important;
+    flex:1 1 auto !important;
+    width:auto !important;
     min-width:0 !important;
-    max-width:160px !important;
-  }
-  .oa-composer .oa-composer-primary-actions .oa-effort-select {
-    flex:0 1 98px !important;
-    min-width:86px !important;
-    max-width:98px !important;
+    max-width:220px !important;
   }
 }
 
@@ -13285,22 +13366,13 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
     gap:4px;
   }
   .oa-composer .oa-composer-primary-actions .oa-composer-cascade {
-    flex:1.25 1 0 !important;
+    flex:1 1 0 !important;
     width:auto !important;
     min-width:0 !important;
     max-width:none !important;
     padding:0 5px 0 4px !important;
   }
-  .oa-composer .oa-composer-primary-actions .oa-effort-select {
-    flex:1 1 0 !important;
-    width:auto !important;
-    min-width:0 !important;
-    max-width:none !important;
-    padding-left:5px !important;
-    padding-right:5px !important;
-  }
-  .oa-composer .oa-composer-cascade > button > svg:last-child,
-  .oa-composer .oa-effort-select .oa-cselect > button > svg:last-child {
+  .oa-composer .oa-composer-cascade > button > svg:last-child {
     display:none !important;
   }
 }
