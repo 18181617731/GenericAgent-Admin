@@ -78,6 +78,77 @@ func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
 	}
 }
 
+func TestChatGuideCancelsActiveRunAndStartsSelectedQueueItem(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "guide-interrupts-active-run"
+	const pendingID = "assistant-active"
+	saveChatLoopTestSession(t, s, chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "user-active", Role: "user", Content: "current request", CreatedAt: 1},
+			{ID: pendingID, Role: "assistant", CreatedAt: 2, RunStartedAtMS: 1234},
+		},
+		QueuedMessages: []chatQueuedMessage{
+			{ID: "queued-first", Text: "leave me queued"},
+			{ID: "queued-guide", Text: "run this guidance now"},
+		},
+	})
+
+	active := s.beginChatRun(sid)
+	if active == nil {
+		t.Fatal("failed to create active run")
+	}
+	s.ChatMu.Lock()
+	active.PendingAssistantID = pendingID
+	active.RunStartedAtMS = 1234
+	s.ChatMu.Unlock()
+	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "partial answer"})
+
+	rr := httptest.NewRecorder()
+	s.chatGuidePost(rr, httptest.NewRequest(http.MethodPost, "/api/chat/guide/"+sid+"/queued-guide", nil), sid, "queued-guide")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guide status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"started"`) {
+		t.Fatalf("guide body=%s, want started", rr.Body.String())
+	}
+	if !active.Canceled {
+		t.Fatal("guide did not cancel the active run")
+	}
+
+	s.ChatMu.Lock()
+	started := s.ChatRuns[sid]
+	s.ChatMu.Unlock()
+	if started == nil || started == active {
+		t.Fatalf("guide run token = %p, want replacement for %p", started, active)
+	}
+	defer s.endChatRunOwned(sid, started)
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.QueuedMessages) != 1 || stored.QueuedMessages[0].ID != "queued-first" {
+		t.Fatalf("queued messages = %#v, want untouched first item", stored.QueuedMessages)
+	}
+	if len(stored.Messages) < 4 {
+		t.Fatalf("messages = %#v, want canceled output and guided turn", stored.Messages)
+	}
+	if got := stored.Messages[len(stored.Messages)-2]; got.Role != "user" || got.Content != "run this guidance now" {
+		t.Fatalf("guided user message = %#v", got)
+	}
+	var canceled chatMessage
+	for _, msg := range stored.Messages {
+		if msg.ID == pendingID {
+			canceled = msg
+			break
+		}
+	}
+	if canceled.Content != "partial answer\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]" || !canceled.Error {
+		t.Fatalf("canceled partial message = %#v", canceled)
+	}
+}
+
 func TestParseChatLoopNextPromptUsesLastCompleteTag(t *testing.T) {
 	content := "analysis <next_prompt>first</next_prompt> tail <next_prompt>  final action  </next_prompt>"
 	if got := parseChatLoopNextPrompt(content); got != "final action" {

@@ -577,18 +577,7 @@ func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queu
 		return
 	}
 
-	// Check if already running
-	s.ChatMu.Lock()
-	alreadyRunning := s.ChatRuns[sid] != nil && !s.ChatRuns[sid].Done
-	s.ChatMu.Unlock()
-
-	if alreadyRunning {
-		// If already running, the queue will be processed after current run completes
-		writeJSON(w, map[string]interface{}{"ok": true, "status": "queued", "message": "will execute after current run"})
-		return
-	}
-
-	// Verify the queue item exists
+	// Verify the queue item exists before interrupting the current run.
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
@@ -611,9 +600,14 @@ func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queu
 		return
 	}
 
-	// Trigger queue execution
-	go s.processNextQueuedMessage(sid)
-
+	if _, err := s.cancelChatRun(sid); err != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", err))
+		return
+	}
+	if !s.processQueuedMessage(sid, queueID) {
+		bad(w, http.StatusConflict, "queued message could not be started")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "status": "started"})
 }
 
@@ -1039,7 +1033,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) 
 	s.streamChatRun(w, r, safeChatID(sid), from)
 }
 
-func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
+func (s *Server) cancelChatRun(sid string) (bool, error) {
 	sid = safeChatID(sid)
 	var cmd *exec.Cmd
 	var worker *chatWorker
@@ -1051,8 +1045,7 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	run := s.ChatRuns[sid]
 	if run == nil || run.Done {
 		s.ChatMu.Unlock()
-		writeJSON(w, map[string]interface{}{"ok": true, "running": false})
-		return
+		return false, nil
 	}
 	run.Canceled = true
 	token = run
@@ -1077,11 +1070,16 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	}
 	s.ChatMu.Unlock()
 	s.endChatRunOwned(sid, token)
-	if persistErr != nil {
-		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", persistErr))
+	return true, persistErr
+}
+
+func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
+	running, err := s.cancelChatRun(sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", err))
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
+	writeJSON(w, map[string]interface{}{"ok": true, "running": running && s.chatRunActive(sid)})
 }
 
 func (s *Server) chatFile(w http.ResponseWriter, r *http.Request, name string) {
