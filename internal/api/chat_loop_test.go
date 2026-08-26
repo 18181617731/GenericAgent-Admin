@@ -37,6 +37,47 @@ func saveChatLoopTestSession(t *testing.T, s *Server, cs chatSession) {
 	}
 }
 
+func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "queue-after-completed-run"
+	saveChatLoopTestSession(t, s, chatSession{
+		ID:       sid,
+		Messages: []chatMessage{{ID: "assistant-old", Role: "assistant", Content: "done"}},
+		QueuedMessages: []chatQueuedMessage{{
+			ID: "queued-1", Text: "send me next",
+		}},
+	})
+
+	completed := s.beginChatRun(sid)
+	if completed == nil {
+		t.Fatal("failed to create completed run fixture")
+	}
+	s.endChatRunOwned(sid, completed)
+	if s.chatRunActive(sid) {
+		t.Fatal("completed run is still active")
+	}
+
+	s.processNextQueuedMessage(sid)
+
+	s.ChatMu.Lock()
+	started := s.ChatRuns[sid]
+	s.ChatMu.Unlock()
+	if started == nil || started == completed {
+		t.Fatalf("queued run token = %p, want a new token after completed %p", started, completed)
+	}
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.QueuedMessages) != 0 {
+		t.Fatalf("queued messages = %#v, want consumed", stored.QueuedMessages)
+	}
+	if len(stored.Messages) < 3 || stored.Messages[len(stored.Messages)-2].Role != "user" || stored.Messages[len(stored.Messages)-2].Content != "send me next" {
+		t.Fatalf("messages = %#v, want queued user message followed by pending assistant", stored.Messages)
+	}
+}
+
 func TestParseChatLoopNextPromptUsesLastCompleteTag(t *testing.T) {
 	content := "analysis <next_prompt>first</next_prompt> tail <next_prompt>  final action  </next_prompt>"
 	if got := parseChatLoopNextPrompt(content); got != "final action" {

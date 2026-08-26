@@ -607,9 +607,9 @@ func (s *Server) processNextQueuedMessage(sid string) {
 
 	// Publish queue status event
 	s.publishChatRun(sid, map[string]interface{}{
-		"type":             "queue_item_start",
-		"queue_item_id":    queuedItem.ID,
-		"remaining_count":  len(cs.QueuedMessages),
+		"type":            "queue_item_start",
+		"queue_item_id":   queuedItem.ID,
+		"remaining_count": len(cs.QueuedMessages),
 	})
 
 	// Build the request payload for the queued message
@@ -624,18 +624,12 @@ func (s *Server) processNextQueuedMessage(sid string) {
 		cmdReq["reasoningEffort"] = queuedItem.ReasoningEffort
 	}
 
-	// Trigger the chat post internally
-	// We need to acquire a run token and call runChatWorkerOwned
-	token := &chatRun{
-		SID:         sid,
-		Events:      make([][]byte, 0, 64),
-		Subscribers: make(map[chan []byte]bool),
-	}
-
-	s.ChatMu.Lock()
-	if s.ChatRuns[sid] != nil {
-		// Another run is already active, put the item back
-		s.ChatMu.Unlock()
+	// Reuse the same ownership gate as regular chat posts. Completed runs stay in
+	// ChatRuns for five minutes so clients can replay their events; their mere
+	// presence must not block the next queued message.
+	token := s.beginChatRun(sid)
+	if token == nil {
+		// Another run is still active, put the item back.
 		s.SessionMu.Lock()
 		cs2, _ := loadChatSession(s.CfgStore.Snapshot(), sid)
 		cs2.QueuedMessages = append([]chatQueuedMessage{queuedItem}, cs2.QueuedMessages...)
@@ -643,8 +637,6 @@ func (s *Server) processNextQueuedMessage(sid string) {
 		s.SessionMu.Unlock()
 		return
 	}
-	s.ChatRuns[sid] = token
-	s.ChatMu.Unlock()
 
 	// Reload session with the queued message removed
 	s.SessionMu.Lock()
