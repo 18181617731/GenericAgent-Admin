@@ -65,6 +65,19 @@ describe('session-scoped guided-message queue wiring', () => {
     expect(guideFinally).not.toContain("setStreamingSid('')")
   })
 
+  test('reloads the active session only after cancel persistence completes', () => {
+    const cancelStart = source.indexOf('const cancelRun = async')
+    const abort = source.indexOf('streamAbortRef.current?.abort?.()', cancelStart)
+    const persisted = source.indexOf('await chatApi(`/api/chat/cancel/${id}`', abort)
+    const activeCheck = source.indexOf('if (isActiveSession(id)) await openSession(id, false)', persisted)
+    const cancelEnd = source.indexOf('\n  }', activeCheck)
+    expect(cancelStart).toBeGreaterThan(-1)
+    expect(abort).toBeGreaterThan(cancelStart)
+    expect(persisted).toBeGreaterThan(abort)
+    expect(activeCheck).toBeGreaterThan(persisted)
+    expect(activeCheck).toBeLessThan(cancelEnd)
+  })
+
   test('removes a guided item only after a send has an active session', () => {
     const runStart = source.indexOf('const runSend = async')
     const activeCheck = source.indexOf('} else if (!isActiveSession(id)) {', runStart)
