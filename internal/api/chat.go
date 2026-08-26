@@ -271,6 +271,7 @@ var (
 
 type chatRun struct {
 	SID                string
+	QueueID            string
 	Events             [][]byte
 	Done               bool
 	Canceled           bool
@@ -1045,11 +1046,19 @@ func chatSessionForClient(cs chatSession) chatSession {
 	return cs
 }
 
-func (s *Server) chatRunActive(sid string) bool {
+func (s *Server) chatRunState(sid string) (bool, string, int64) {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
-	return r != nil && !r.Done
+	if r == nil || r.Done {
+		return false, "", 0
+	}
+	return true, r.PendingAssistantID, r.RunStartedAtMS
+}
+
+func (s *Server) chatRunActive(sid string) bool {
+	running, _, _ := s.chatRunState(sid)
+	return running
 }
 
 func (s *Server) beginChatRun(sid string) *chatRun {

@@ -325,3 +325,43 @@ describe('assistant markdown rendering', () => {
     expect(md.querySelector('p').textContent).toBe('body text')
   })
 })
+
+describe('assistant pre-token feedback', () => {
+  test('progresses from connection feedback to elapsed model generation, then yields to the first token', () => {
+    const startedAt = 10_000
+    const baseMessage = {
+      id: 'a-pending', role: 'assistant', content: '', files: [], created_at: 10,
+      run_started_at_ms: startedAt,
+    }
+    const view = render(
+      <ChatMessage message={baseMessage} pending clockNow={startedAt} onAskReply={vi.fn()} />,
+    )
+
+    let indicator = view.container.querySelector('.oa-thinking')
+    expect(indicator.getAttribute('role')).toBe('status')
+    expect(indicator.textContent).toContain('\u6b63\u5728\u8fde\u63a5\u6a21\u578b')
+    expect(indicator.querySelector('.oa-thinking-time')).toBeNull()
+
+    view.rerender(
+      <ChatMessage message={baseMessage} pending clockNow={startedAt + 4_000} onAskReply={vi.fn()} />,
+    )
+    indicator = view.container.querySelector('.oa-thinking')
+    expect(indicator.textContent).toContain('\u6b63\u5728\u51c6\u5907\u56de\u590d')
+    expect(indicator.querySelector('.oa-thinking-time').textContent).toBe('4s')
+    expect(indicator.querySelector('.oa-thinking-model')).toBeNull()
+
+    view.rerender(
+      <ChatMessage message={{ ...baseMessage, model_id: 'gpt-5.6-sol' }} pending clockNow={startedAt + 8_000} onAskReply={vi.fn()} />,
+    )
+    indicator = view.container.querySelector('.oa-thinking')
+    expect(indicator.textContent).toContain('\u6a21\u578b\u5df2\u63a5\u5165\uff0c\u6b63\u5728\u751f\u6210')
+    expect(indicator.querySelector('.oa-thinking-time').textContent).toBe('8s')
+    expect(indicator.querySelector('.oa-thinking-model').textContent).toBe('gpt-5.6-sol')
+
+    view.rerender(
+      <ChatMessage message={{ ...baseMessage, content: '\u7b2c\u4e00\u4e2a token' }} pending clockNow={startedAt + 8_100} onAskReply={vi.fn()} />,
+    )
+    expect(view.container.querySelector('.oa-thinking')).toBeNull()
+    expect(view.container.textContent).toContain('\u7b2c\u4e00\u4e2a token')
+  })
+})

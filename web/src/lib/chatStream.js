@@ -158,12 +158,15 @@ export const sameStreamRun = (left, right) => {
 
 // Decide what to do after a stream response ends. A terminal response remains readable from
 // the replay endpoint until the next run starts, so it must never be attached as a new round.
-export const decideStreamFollow = ({ running = false, loop = null, currentRun = null, availableRun = null, terminal = false } = {}) => {
+export const decideStreamFollow = ({ running = false, loop = null, currentRun = null, availableRun = null, terminal = false, awaitingRun = false } = {}) => {
   const loopActive = isLoopFollowActive(loop)
   if (running) {
     if (!availableRun?.pendingId && !(Number(availableRun?.startedAtMs) > 0)) return 'wait'
     if (terminal && sameStreamRun(currentRun, availableRun)) return 'wait'
     return 'attach'
   }
+  // Guide admission and run creation are separate backend steps. During that
+  // short gap state is idle, but the caller explicitly knows a run is coming.
+  if (awaitingRun && !currentRun?.pendingId && !(Number(currentRun?.startedAtMs) > 0)) return 'wait'
   return loopActive ? 'wait' : 'finish'
 }

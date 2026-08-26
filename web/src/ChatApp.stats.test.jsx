@@ -2,7 +2,7 @@
 import React from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import { ChatStats, buildChatStats } from './ChatApp.jsx'
+import { ChatStats, buildChatStats, freezeActiveAssistantElapsed } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
 
@@ -24,12 +24,12 @@ describe('chat stats', () => {
   })
   test('uses the live run clock for an unfinished assistant turn', () => {
     const messages = [{ role: 'assistant', run_started_at_ms: 2_000 }]
-    const stats = buildChatStats(messages, 5_000)
+    const stats = buildChatStats(messages, 5_000, true)
 
     expect(stats.llmElapsedMs).toBe(3_000)
     expect(stats.toolElapsedMs).toBe(0)
 
-    const { container } = render(<ChatStats messages={messages} now={5_000} />)
+    const { container } = render(<ChatStats messages={messages} now={5_000} running />)
     expect(container.querySelector('.oa-chat-stats')?.textContent).toContain('LLM 3s · 工具调用 0.0s')
   })
 
@@ -37,15 +37,37 @@ describe('chat stats', () => {
     const stats = buildChatStats([{
       role: 'assistant', run_started_at_ms: 1_000,
       tool_live_elapsed_ms: 250, tool_live_active_count: 1, tool_live_updated_at_ms: 1_000,
-    }], 1_750)
+    }], 1_750, true)
 
     expect(stats.toolElapsedMs).toBe(1_000)
     const { container } = render(<ChatStats messages={[{
       role: 'assistant', run_started_at_ms: 1_000,
       tool_live_elapsed_ms: 250, tool_live_active_count: 1, tool_live_updated_at_ms: 1_000,
-    }]} now={1_750} />)
+    }]} now={1_750} running />)
     expect(container.querySelector('.oa-chat-stats')?.textContent).toContain('工具调用 1s')
   })
+
+  test('freezes the interrupted turn and never resumes it on later clocks', () => {
+    const previous = { role: 'assistant', run_started_at_ms: 100, elapsed_ms: 400 }
+    const active = {
+      role: 'assistant', run_started_at_ms: 2_000,
+      tool_live_elapsed_ms: 500, tool_live_active_count: 1, tool_live_updated_at_ms: 6_000,
+    }
+    const frozen = freezeActiveAssistantElapsed([previous, active], 10_000)
+
+    expect(frozen[0]).toBe(previous)
+    expect(frozen[1]).toMatchObject({
+      elapsed_ms: 8_000,
+      tool_elapsed_ms: 4_500,
+      tool_live_active_count: 0,
+    })
+    const stopped = buildChatStats(frozen, 10_000, false)
+    const muchLater = buildChatStats(frozen, 3_610_000, false)
+    expect(muchLater.elapsedMs).toBe(stopped.elapsedMs)
+    expect(muchLater.llmElapsedMs).toBe(stopped.llmElapsedMs)
+    expect(muchLater.toolElapsedMs).toBe(stopped.toolElapsedMs)
+  })
+
   test('uses the median of per-call model TTFT samples', () => {
     const messages = [{
       role: 'assistant',

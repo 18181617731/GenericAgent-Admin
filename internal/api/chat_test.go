@@ -2324,6 +2324,59 @@ func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
 	}
 }
 
+func TestChatGuideIsIdempotentWhenQueuedItemAlreadyStarted(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	sid := "guide-race-session"
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Title: "Guide race"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = &chatRun{SID: sid, QueueID: "q-takeover", Subscribers: map[chan []byte]bool{}}
+	s.ChatMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/guide/"+sid+"/q-takeover", nil)
+	rr := httptest.NewRecorder()
+	s.chatGuidePost(rr, req, sid, "q-takeover")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guide raced with queue consumption: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != "already_started" {
+		t.Fatalf("status=%v want already_started", payload["status"])
+	}
+}
+
+func TestChatGuideStillRejectsUnknownQueueItem(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	sid := "guide-missing-session"
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Title: "Guide missing"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = &chatRun{SID: sid, QueueID: "q-other", Done: true, Subscribers: map[chan []byte]bool{}}
+	s.ChatMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/guide/"+sid+"/q-missing", nil)
+	rr := httptest.NewRecorder()
+	s.chatGuidePost(rr, req, sid, "q-missing")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown queue item: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestChatQueuePersistsWithSessionAndSurvivesRunSave(t *testing.T) {
 	root := t.TempDir()
 	s := newGoalTestServer(t, root)
@@ -2378,6 +2431,58 @@ func TestChatQueuePersistsWithSessionAndSurvivesRunSave(t *testing.T) {
 	s.chatGetSession(getRec, httptest.NewRequest(http.MethodGet, "/api/chat/session/queue-session", nil), initial.ID)
 	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), `"queued_messages"`) || !strings.Contains(getRec.Body.String(), `"q-1"`) {
 		t.Fatalf("session response does not restore queue: status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+}
+
+func TestProcessNextQueuedMessageReplacesCompletedReplayToken(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	sid := "queue-after-completed-run"
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), chatSession{
+		ID:             sid,
+		QueuedMessages: []chatQueuedMessage{{ID: "q-next", Text: "take over now"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	completed := &chatRun{SID: sid, Done: true, Events: [][]byte{[]byte(`{"type":"done"}`)}}
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = completed
+	s.ChatMu.Unlock()
+
+	s.processNextQueuedMessage(sid)
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.QueuedMessages) != 0 {
+		t.Fatalf("completed replay token blocked queue: %#v", stored.QueuedMessages)
+	}
+	if len(stored.Messages) < 2 || stored.Messages[len(stored.Messages)-2].Role != "user" || stored.Messages[len(stored.Messages)-2].Content != "take over now" {
+		t.Fatalf("queued user message was not persisted: %#v", stored.Messages)
+	}
+	s.ChatMu.Lock()
+	current := s.ChatRuns[sid]
+	s.ChatMu.Unlock()
+	if current == nil || current == completed {
+		t.Fatalf("completed replay token was not replaced: current=%p completed=%p", current, completed)
+	}
+	if current.PendingAssistantID == "" || current.RunStartedAtMS <= 0 {
+		t.Fatalf("queued run did not expose stream identity: pending=%q started=%d", current.PendingAssistantID, current.RunStartedAtMS)
+	}
+	foundPending := false
+	for _, message := range stored.Messages {
+		if message.ID == current.PendingAssistantID && message.Role == "assistant" && message.RunStartedAtMS == current.RunStartedAtMS {
+			foundPending = true
+			break
+		}
+	}
+	if !foundPending {
+		t.Fatalf("stream identity does not match persisted assistant: pending=%q started=%d messages=%#v", current.PendingAssistantID, current.RunStartedAtMS, stored.Messages)
 	}
 }
 

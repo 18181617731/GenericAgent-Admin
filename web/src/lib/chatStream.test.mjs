@@ -276,6 +276,21 @@ test('terminal replay is never mistaken for the next loop round', () => {
   }), 'attach')
 })
 
+test('explicit run admission waits across the idle creation gap', () => {
+  assert.equal(decideStreamFollow({
+    running:false,
+    currentRun:{ pendingId:'', startedAtMs:0 },
+    availableRun:{ pendingId:'', startedAtMs:0 },
+    awaitingRun:true,
+  }), 'wait')
+  assert.equal(decideStreamFollow({
+    running:false,
+    currentRun:{ pendingId:'assistant-1', startedAtMs:10 },
+    awaitingRun:true,
+  }), 'finish')
+  assert.equal(decideStreamFollow({ running:false, awaitingRun:false }), 'finish')
+})
+
 test('loop waits across the no-run evaluation gap and finishes only after loop terminal state', () => {
   assert.equal(decideStreamFollow({
     running:false,

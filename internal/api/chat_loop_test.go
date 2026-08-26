@@ -353,6 +353,38 @@ func TestChatLoopStateAppearsInSessionAPIs(t *testing.T) {
 	}
 }
 
+func TestChatStateShipsActiveRunIdentity(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "state-run-identity"
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("beginChatRun returned nil")
+	}
+	const pendingID = "assistant-pending"
+	const startedAtMS int64 = 1787725441243
+	owned, err := s.saveChatRunPending(sid, token, pendingID, startedAtMS, func() error { return nil })
+	if err != nil || !owned {
+		t.Fatalf("saveChatRunPending owned=%v err=%v", owned, err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.chatState(rec, httptest.NewRequest(http.MethodGet, "/api/chat/state/"+sid, nil), sid)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Running            bool   `json:"running"`
+		PendingAssistantID string `json:"pending_assistant_id"`
+		RunStartedAtMS     int64  `json:"run_started_at_ms"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Running || payload.PendingAssistantID != pendingID || payload.RunStartedAtMS != startedAtMS {
+		t.Fatalf("state run identity = %#v", payload)
+	}
+}
+
 func TestRecoverChatLoopsAfterRestartRunsOncePerRuntime(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	firstID := "loop-recover-first"

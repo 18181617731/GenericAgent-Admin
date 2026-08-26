@@ -577,7 +577,31 @@ func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queu
 		return
 	}
 
-	// Verify the queue item exists before interrupting the current run.
+	// A guide can race with automatic queue consumption after cancellation. The
+	// run token retains the source queue ID, so retries for that exact item are
+	// idempotent even when the item has already left the persisted queue.
+	s.ChatMu.Lock()
+	current := s.ChatRuns[sid]
+	matchingRun := current != nil && current.QueueID == queueID
+	anotherQueueRunning := current != nil && !current.Done && current.QueueID != "" && current.QueueID != queueID
+	matchingDone := matchingRun && current.Done
+	s.ChatMu.Unlock()
+
+	if matchingRun {
+		status := "already_started"
+		if matchingDone {
+			status = "already_completed"
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "status": status})
+		return
+	}
+	if anotherQueueRunning {
+		// If another queued item is active, this one remains queued until it completes.
+		writeJSON(w, map[string]interface{}{"ok": true, "status": "queued", "message": "will execute after current run"})
+		return
+	}
+
+	// Verify the queue item exists
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
@@ -700,8 +724,8 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 	if payload := chatDiagnosisPayload(diagnoseChatLLMList(cfg, len(llms), err)); payload != nil {
 		backend["diagnosis"] = payload
 	}
-	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})
+	running, pendingAssistantID, runStartedAtMS := s.chatRunState(sid)
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {

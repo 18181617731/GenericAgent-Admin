@@ -623,6 +623,42 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 		}
 	}
 	queuedItem := cs.QueuedMessages[queueIndex]
+	s.SessionMu.Unlock()
+
+	// Publish the queue identity before removing it from persisted state. Do not
+	// take ChatMu while holding SessionMu: saveChatRunPending uses the opposite
+	// lock order while atomically publishing the pending assistant identity.
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current != token || current.Done || current.Canceled {
+		s.ChatMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	token.QueueID = queuedItem.ID
+	s.ChatMu.Unlock()
+
+	// Reload under SessionMu because queue replacement may have happened while
+	// the lock was released to publish the token identity.
+	s.SessionMu.Lock()
+	cs, err = loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	queueIndex = -1
+	for i := range cs.QueuedMessages {
+		if cs.QueuedMessages[i].ID == queuedItem.ID {
+			queueIndex = i
+			queuedItem = cs.QueuedMessages[i]
+			break
+		}
+	}
+	if queueIndex < 0 {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
 	cs.QueuedMessages = append(cs.QueuedMessages[:queueIndex], cs.QueuedMessages[queueIndex+1:]...)
 	cs.UpdatedAt = time.Now().Unix()
 
@@ -660,12 +696,19 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	}
 	cmdReq["_ga_pending_assistant_id"] = pendingID
 
-	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
-		s.SessionMu.Unlock()
+	// Publish the pending assistant identity together with the persisted session.
+	// Reattaching clients use these fields to bind live deltas to the placeholder;
+	// without them a guided queue run only appears after the final session reload.
+	s.SessionMu.Unlock()
+	owned, saveErr := s.saveChatRunPending(sid, token, pendingID, runStartedAtMS, func() error {
+		s.SessionMu.Lock()
+		defer s.SessionMu.Unlock()
+		return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+	})
+	if !owned || saveErr != nil {
 		s.endChatRunOwned(sid, token)
 		return false
 	}
-	s.SessionMu.Unlock()
 
 	s.ChatMu.Lock()
 	if current := s.ChatRuns[sid]; current == token {

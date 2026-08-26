@@ -2487,7 +2487,7 @@ function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskRep
   )
 }
 
-const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, isLatestMessage = false, turnUsages, ultraplan_state }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, isLatestMessage = false, turnUsages, ultraplan_state, runStartedAtMS = 0, clockNow = 0, modelID = '' }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
@@ -2510,7 +2510,21 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
   }, [content, structuredContent])
   const hasTurnSplit = parsed.runs.length > 0
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
-  if (!content && pending && !hasLiveUltraPlan) return <div className="oa-content oa-thinking">{ct('正在思考…', 'Thinking…')}</div>
+  if (!content && pending && !hasLiveUltraPlan) {
+    const startedAt = Number(runStartedAtMS) || 0
+    const elapsedSeconds = startedAt > 0 ? Math.max(0, Math.floor(((Number(clockNow) || Date.now()) - startedAt) / 1000)) : 0
+    const waitingLabel = modelID
+      ? ct('模型已接入，正在生成', 'Model connected, generating')
+      : elapsedSeconds < 2
+        ? ct('正在连接模型', 'Connecting to model')
+        : ct('正在准备回复', 'Preparing response')
+    return <div className="oa-content oa-thinking" role="status" aria-label={waitingLabel}>
+      <span className="oa-thinking-pulse" aria-hidden="true"><i/><i/><i/></span>
+      <span className="oa-thinking-label">{waitingLabel}</span>
+      {elapsedSeconds >= 3 && <span className="oa-thinking-time" aria-hidden="true">{elapsedSeconds}s</span>}
+      {modelID && <span className="oa-thinking-model" title={modelID}>{modelID}</span>}
+    </div>
+  }
   if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
@@ -2594,11 +2608,36 @@ const formatElapsedMs = (ms = 0) => {
   if (hours > 0) return `${hours}h${minutes % 60}m${seconds}s`
   return `${minutes}m${seconds}s`
 }
-const getElapsedMs = (m, now = Date.now()) => {
+export const getElapsedMs = (m, now = Date.now(), live = true) => {
   if (!m || m.role !== 'assistant') return 0
   if (m.elapsed_ms > 0) return m.elapsed_ms
-  if (m.run_started_at_ms > 0) return Math.max(0, now - m.run_started_at_ms)
+  if (live && m.run_started_at_ms > 0) return Math.max(0, now - m.run_started_at_ms)
   return 0
+}
+
+export const freezeActiveAssistantElapsed = (messages = [], stoppedAtMs = Date.now()) => {
+  const targetIndex = messages.findLastIndex(m => (
+    m?.role === 'assistant'
+    && Number(m.run_started_at_ms) > 0
+    && !(Number(m.elapsed_ms) > 0)
+  ))
+  if (targetIndex < 0) return messages
+  return messages.map((m, index) => {
+    if (index !== targetIndex) return m
+    const toolElapsedMs = Math.max(0, Number(m.tool_elapsed_ms) || 0)
+    const toolLiveMs = Math.max(0, Number(m.tool_live_elapsed_ms) || 0)
+    const toolActiveCount = Math.max(0, Number(m.tool_live_active_count) || 0)
+    const toolUpdatedAtMs = Number(m.tool_live_updated_at_ms) || Number(m.tool_live_timing_at_ms) || 0
+    const projectedToolMs = toolUpdatedAtMs > 0 && toolActiveCount > 0
+      ? toolLiveMs + Math.max(0, Number(stoppedAtMs) - toolUpdatedAtMs) * toolActiveCount
+      : toolLiveMs
+    return {
+      ...m,
+      elapsed_ms: Math.max(1, Number(stoppedAtMs) - Number(m.run_started_at_ms)),
+      tool_elapsed_ms: Math.max(toolElapsedMs, projectedToolMs),
+      tool_live_active_count: 0,
+    }
+  })
 }
 const formatTokens = (count = 0) => {
   const num = Math.max(0, Number(count) || 0)
@@ -2645,20 +2684,18 @@ const sumUsages = (usages) => {
 }
 
 // 会话级可观测性摘要：只使用消息完成后写入的真实字段，不猜测未提供的首 token/速率。
-export const buildChatStats = (messages = [], now = Date.now()) => {
+export const buildChatStats = (messages = [], now = Date.now(), running = false) => {
   const turns = (Array.isArray(messages) ? messages : []).filter(m => m?.role === 'assistant' && m?.kind !== 'btw' && (m?.usage || m?.usages || m?.elapsed_ms > 0 || m?.run_started_at_ms > 0))
+  const activeIndex = running ? turns.findLastIndex(m => Number(m.run_started_at_ms) > 0 && !(Number(m.elapsed_ms) > 0)) : -1
   const usages = turns.flatMap(m => Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : []))
   const total = sumUsages(usages)
-  const elapsedMs = turns.reduce((sum, m) => sum + getElapsedMs(m, now), 0)
+  const elapsedMs = turns.reduce((sum, m, index) => sum + getElapsedMs(m, now, index === activeIndex), 0)
   const llmElapsedMs = turns.reduce((sum, m) => sum + Math.max(0, Number(m.llm_elapsed_ms) || 0), 0)
-  const liveLlmElapsedMs = turns.reduce((sum, m) => {
-    const isRunning = Number(m.run_started_at_ms) > 0 && !(Number(m.elapsed_ms) > 0)
-    return sum + (isRunning ? getElapsedMs(m, now) : 0)
-  }, 0)
-  const toolElapsedMs = turns.reduce((sum, m) => {
+  const liveLlmElapsedMs = activeIndex >= 0 ? getElapsedMs(turns[activeIndex], now, true) : 0
+  const toolElapsedMs = turns.reduce((sum, m, index) => {
     const terminalMs = Math.max(0, Number(m.tool_elapsed_ms) || 0)
     const liveMs = Math.max(0, Number(m.tool_live_elapsed_ms) || 0)
-    const activeCount = Math.max(0, Number(m.tool_live_active_count) || 0)
+    const activeCount = index === activeIndex ? Math.max(0, Number(m.tool_live_active_count) || 0) : 0
     const updatedAtMs = Number(m.tool_live_updated_at_ms) || Number(m.tool_live_timing_at_ms) || 0
     const projectedMs = updatedAtMs > 0 && activeCount > 0
       ? liveMs + Math.max(0, now - updatedAtMs) * activeCount
@@ -2688,8 +2725,8 @@ export const buildChatStats = (messages = [], now = Date.now()) => {
   }
 }
 
-export const ChatStats = memo(function ChatStats({ messages = [], now = Date.now() }) {
-  const stats = buildChatStats(messages, now)
+export const ChatStats = memo(function ChatStats({ messages = [], now = Date.now(), running = false }) {
+  const stats = buildChatStats(messages, now, running)
   return <div className="oa-chat-stats" aria-label="对话统计">
     <span>{stats.rounds} 轮 · {stats.steps} 步</span>
     <i aria-hidden="true">|</i>
@@ -2847,7 +2884,7 @@ export const ChatMessage = memo(function ChatMessage({
   const turnUsages = Array.isArray(m.usages) && m.usages.length ? m.usages : (m.usage ? [m.usage] : [])
   const hasUsage = turnUsages.some(usageHasTokens)
   const usageTotal = hasUsage ? sumUsages(turnUsages) : null
-  const elapsedMs = getElapsedMs(m, clockNow)
+  const elapsedMs = getElapsedMs(m, clockNow, pending)
   const showUsageRow = m.role === 'assistant' && (hasUsage || elapsedMs > 0 || m.ctx_chars > 0 || m.ctx_msgs > 0)
   const isBTW = m.kind === 'btw'
   const btwDisplay = m.role === 'user' ? parseBTWDisplay(userText) : null
@@ -2937,7 +2974,7 @@ export const ChatMessage = memo(function ChatMessage({
                 ? <CommandResultCard result={m.commandResult} />
                 : m.btw_status === 'error'
                   ? <div className="oa-btw-error" role="alert"><span>{m.content || '侧问失败，请重试'}</span><button type="button" onClick={() => onRetryBTW?.(m)}>重试</button></div>
-                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} isLatestMessage={isLatestMessage} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}
+                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} isLatestMessage={isLatestMessage} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} runStartedAtMS={m.run_started_at_ms} clockNow={clockNow} modelID={assistantModelId} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -4026,7 +4063,7 @@ export default function ChatApp() {
     signal?.addEventListener('abort', aborted, { once:true })
   })
 
-  const followChatStream = async (initialRes, pendingId, clientUserID, sessionId, signal) => {
+  const followChatStream = async (initialRes, pendingId, clientUserID, sessionId, signal, awaitingRun = false) => {
     let res = initialRes
     let cursor = 0
     let replay = false
@@ -4081,6 +4118,7 @@ export default function ChatApp() {
         currentRun,
         availableRun,
         terminal,
+        awaitingRun,
       })
       if (action === 'finish') return commandPatch
       if (action === 'wait') {
@@ -4166,6 +4204,11 @@ export default function ChatApp() {
 
   const cancelRun = async (id = sid) => {
     if (!id) return
+    const stoppedAtMs = Date.now()
+    if (isActiveSession(id)) {
+      setMessages(xs => freezeActiveAssistantElapsed(xs, stoppedAtMs))
+      setStreamClock(stoppedAtMs)
+    }
     try {
       streamAbortRef.current?.abort?.()
       await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
@@ -4202,7 +4245,7 @@ export default function ChatApp() {
         if (res.status === 204) return
         if (!res.ok) throw new Error(await res.text())
       }
-      await followChatStream(res, pendingId, '', id, ctrl.signal)
+      await followChatStream(res, pendingId, '', id, ctrl.signal, waitForRun)
       if (isActiveSession(id)) {
         const list = await loadSessions(id)
         const currentSession = list.find(session => session.id === id)
@@ -5249,16 +5292,44 @@ export default function ChatApp() {
         if (id) await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
         setMessages(xs => xs.map((m, idx) => (idx === xs.length - 1 && m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true } : m))
       }
-      // Call backend guide API to trigger queue execution
+      // Call backend guide API to trigger queue execution, then attach to the
+      // newly-created run so its user turn and output appear without a reload.
       if (id && next.id) {
-        await chatApi(`/api/chat/guide/${id}/${next.id}`, { method:'POST', body:'{}' })
+        const guideURL = `/api/chat/guide/${id}/${next.id}`
+        let guideResult = await chatApi(guideURL, { method:'POST', body:'{}' })
+        // The local stream state can lag behind the backend. If guide reports
+        // an active run, cancel that server-owned run and retry exactly once;
+        // otherwise waitForRun would poll forever while the item stays queued.
+        if (guideResult?.status === 'queued') {
+          await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
+          guideResult = await chatApi(guideURL, { method:'POST', body:'{}' })
+        }
+        if (guideResult?.status !== 'started') {
+          throw new Error(ct('引导消息未能开始执行', 'The guided message did not start'))
+        }
+        if (!isActiveSession(id)) return
+        syncQueue(queuedRef.current.filter(x => x.id !== next.id), { sessionId:id })
+        guidingQueueRef.current = ''
+        setGuidingQueueId('')
+        const guidedUser = {
+          id:`guided-${next.id}`,
+          role:'user',
+          content:String(next.text || ''),
+          files:Array.isArray(next.files) ? next.files : [],
+          created_at:Math.floor(Date.now()/1000),
+        }
+        setMessages(xs => isActiveSession(id) && !xs.some(message => message.id === guidedUser.id)
+          ? [...xs, guidedUser]
+          : xs)
         setNotice(ct('已引导：中止当前回复并触发队列执行', 'Guided: stopped the current response and triggered queue execution'))
+        await attachRunningStream(id, { waitForRun:true })
       }
     } catch (e) {
       setErr(e.message || String(e))
     } finally {
-      setBusy(false)
-      setStreamingSid('')
+      // attachRunningStream owns busy/streamingSid. A concurrent re-attach may have
+      // replaced this guide's controller, so clearing those here would hide the live run.
+      activeRunRef.current = false
     }
   }
 
@@ -6115,7 +6186,7 @@ export default function ChatApp() {
             </div>
           </div>
         </div>
-        <ChatStats messages={messages} now={streamClock}/>
+        <ChatStats messages={messages} now={streamClock} running={isCurrentRunning}/>
       </footer>
     </main>
 
