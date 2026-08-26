@@ -6609,6 +6609,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   justify-content: space-between;
 }
 .oa-reasoning-slider-labels button {
+  flex: 0 0 22px !important;
   min-width: 0;
   min-height: 22px;
   border: 0;
