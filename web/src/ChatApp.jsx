@@ -3394,6 +3394,66 @@ export function ProviderModelCascade({
   )
 }
 
+function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, systemPromptActive, systemPromptLabel }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const triggerId = React.useId()
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  const actions = [
+    { icon: Paperclip, label: ct('附件', 'Attachments'), onClick: onAttach, active: false },
+    { icon: Sparkles, label: ct('命令', 'Commands'), onClick: onCommands, active: commandsOpen },
+    { icon: Bot, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
+  ]
+
+  return (
+    <div className="oa-composer-actions" ref={ref}>
+      <button
+        id={triggerId}
+        type="button"
+        className={`oa-composer-actions-trigger ${open ? 'is-open' : ''}`}
+        onClick={() => setOpen(!open)}
+        title={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
+        aria-label={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <Plus size={17} />
+      </button>
+      {open && (
+        <div className="oa-composer-actions-menu" role="menu" aria-labelledby={triggerId}>
+          {actions.map((action, i) => {
+            const Icon = action.icon
+            return (
+              <button
+                key={i}
+                type="button"
+                className={action.active ? 'is-active' : ''}
+                onClick={() => {
+                  action.onClick()
+                  setOpen(false)
+                }}
+                role="menuitem"
+              >
+                <Icon size={16} />
+                <span>{action.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PlanTodoCard({ plan }) {
   const listRef = useRef(null)
   const [expanded, setExpanded] = useState(true)
@@ -6211,9 +6271,14 @@ export default function ChatApp() {
           {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>{ct('将以规划模式执行，并在完成后展示 run 目录与日志摘要', 'Runs in planning mode and shows the run directory and log summary when complete')}</b></div>}
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={ct('向 GenericAgent 发送消息，可选择/粘贴/拖拽任意文件…', 'Message GenericAgent; select, paste, or drag any file…')} rows={1}/>
           <div className="oa-composer-bar">
-            <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={ct('添加附件', 'Add attachment')}><Paperclip size={17}/><span>{ct('附件', 'Attachments')}</span></button>
-            <button className={`oa-attach-btn ${cmdManagerOpen ? 'is-open' : ''}`} type="button" onClick={()=>setCmdManagerOpen(true)} title={ct('管理自定义斜杠命令', 'Manage custom slash commands')}><Sparkles size={16}/><span>{ct('命令', 'Commands')}</span></button>
-            <button className={`oa-attach-btn ${extraPromptOpen || extraSysPromptPresetID ? 'is-open' : ''}`} type="button" onClick={openExtraPromptEditor} title={extraSysPromptPresetID ? ct(`当前预设：${activePromptPreset.name}`, `Current preset: ${activePromptPreset.name}`) : ct('选择本会话的系统提示预设', 'Choose a system-prompt preset for this session')}><Bot size={16}/><span>{ct('系统提示', 'System prompt')}{extraSysPromptPresetID ? ` · ${activePromptPreset.name}` : ''}</span></button>
+            <ComposerActions
+              onAttach={() => fileRef.current?.click()}
+              onCommands={() => setCmdManagerOpen(true)}
+              onSystemPrompt={openExtraPromptEditor}
+              commandsOpen={cmdManagerOpen}
+              systemPromptActive={extraPromptOpen || extraSysPromptPresetID}
+              systemPromptLabel={extraSysPromptPresetID ? activePromptPreset.name : ''}
+            />
             <div className="oa-composer-primary-actions">
               <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
                 value={selectedModelNo} disabled={!providerGroups.length}

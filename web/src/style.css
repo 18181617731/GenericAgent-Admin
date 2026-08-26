@@ -6888,6 +6888,80 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: 
   }
 }
 
+/* ── Composer Actions Cascade ────────────────── */
+.oa-composer-actions {
+  position: relative;
+  display: inline-flex;
+}
+.oa-composer-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.oa-composer-actions > button:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-muted);
+}
+.oa-composer-actions > button[aria-expanded="true"] {
+  background: var(--accent-bg-strong);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.oa-composer-actions-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 4px 12px rgba(0,0,0,.08), 0 0 1px rgba(0,0,0,.08);
+  animation: oa-actions-menu-in .15s ease;
+}
+@keyframes oa-actions-menu-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+.oa-composer-actions-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 450;
+  text-align: left;
+  cursor: pointer;
+  transition: background .1s ease;
+}
+.oa-composer-actions-menu > button:hover {
+  background: var(--surface-subtle-hover);
+}
+.oa-composer-actions-menu > button.is-active {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+
 /* ── Models Page ─────────────────────────────── */
 .models-page {
   --mp-accent: #6366f1;
