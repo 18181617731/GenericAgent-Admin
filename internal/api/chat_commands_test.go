@@ -281,7 +281,7 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 		t.Fatalf("messages=%#v", stored.Messages)
 	}
 	got := stored.Messages[1]
-	if got.ID != pendingID || got.Role != "assistant" || got.Content != "partial answer\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]" {
+	if got.ID != pendingID || got.Role != "assistant" || got.Content != "partial answer\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]" {
 		t.Fatalf("persisted partial=%#v", got)
 	}
 	if !got.Error || got.ElapsedMS <= 0 || got.RunStartedAtMS != startedAtMS {

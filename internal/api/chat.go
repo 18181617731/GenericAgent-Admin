@@ -673,7 +673,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if s.chatRunCanceled(sid) {
 			content := strings.TrimSpace(partial)
 			if content != "" {
-				content += "\n\n[已中止生成]"
+				content += "\n\n[用户手动中止生成]"
 			} else {
 				content = "已停止生成"
 			}
@@ -1268,7 +1268,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	}
 	content := strings.TrimSpace(chatPartialContentFromEvents(events))
 	if content != "" {
-		content += "\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]"
+		content += "\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]"
 	} else {
 		content = "\u5df2\u505c\u6b62\u751f\u6210"
 	}

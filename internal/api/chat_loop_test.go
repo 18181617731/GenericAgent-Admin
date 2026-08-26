@@ -144,7 +144,7 @@ func TestChatGuideCancelsActiveRunAndStartsSelectedQueueItem(t *testing.T) {
 			break
 		}
 	}
-	if canceled.Content != "partial answer\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]" || !canceled.Error {
+	if canceled.Content != "partial answer\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]" || !canceled.Error {
 		t.Fatalf("canceled partial message = %#v", canceled)
 	}
 }
