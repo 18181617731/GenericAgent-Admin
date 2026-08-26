@@ -1103,41 +1103,41 @@ describe('chat model cascade', () => {
 
   test('exposes menu state, resets previews on reopen, and returns focus on Escape', () => {
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
-    const trigger = screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' })
+    const trigger = screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' })
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' }).id).toBe(trigger.getAttribute('aria-controls'))
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' }).id).toBe(trigger.getAttribute('aria-controls'))
 
     fireEvent.mouseEnter(screen.getByRole('button', { name: 'Alpha' }).nextElementSibling)
     expect(screen.getByText('Beta One')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
 
     fireEvent.click(trigger)
-    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })
+    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })
     expect(reopenedMenu.textContent).toContain('Alpha One')
     expect(reopenedMenu.textContent).not.toContain('Beta One')
   })
 
-  test('selects a previewed provider model and closes the menu', () => {
+  test('selects a previewed provider model and keeps the combined menu open', () => {
     const onChange = vi.fn()
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Beta' }))
     fireEvent.scroll(window)
 
-    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
     expect(screen.getByText('Beta One')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
 
     expect(onChange).toHaveBeenCalledWith('b-1')
-    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
   })
 
   test('uses a body portal and click-only provider switching on mobile', () => {
@@ -1156,7 +1156,7 @@ describe('chat model cascade', () => {
 
     try {
       render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
-      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
 
       const dialog = screen.getByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })
       expect(dialog.closest('.oa-model-picker-layer')?.parentElement).toBe(document.body)
@@ -1167,12 +1167,12 @@ describe('chat model cascade', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
 
       expect(onChange).toHaveBeenCalledWith('b-1')
-      expect(screen.queryByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })).toBeNull()
-      expect(document.documentElement.style.overflow).toBe('')
+      expect(screen.getByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })).toBeTruthy()
+      expect(document.documentElement.style.overflow).toBe('hidden')
 
-      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
       fireEvent.click(screen.getByRole('button', { name: '\u5173\u95ed\u6a21\u578b\u9009\u62e9\u5668' }))
       expect(screen.queryByRole('dialog', { name: '\u9009\u62e9\u6a21\u578b' })).toBeNull()
+      expect(document.documentElement.style.overflow).toBe('')
     } finally {
       cleanup()
       Object.defineProperty(window, 'matchMedia', {
@@ -1181,6 +1181,34 @@ describe('chat model cascade', () => {
         value: originalMatchMedia,
       })
     }
+  })
+
+  test('changes reasoning through the vertical range and keeps the menu open', () => {
+    const onReasoningChange = vi.fn()
+    const reasoningOptions = [
+      { value: 'off', label: '\u9ed8\u8ba4' },
+      { value: 'max', label: 'Max' },
+    ]
+    const props = {
+      groups,
+      selectedProvider: 'alpha',
+      value: 'a-1',
+      onChange: vi.fn(),
+      reasoningOptions,
+      onReasoningChange,
+    }
+    const { rerender } = render(<ProviderModelCascade {...props} reasoningValue="off" />)
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
+    const slider = screen.getByRole('slider', { name: '\u63a8\u7406\u5f3a\u5ea6' })
+    expect(slider.getAttribute('aria-valuetext')).toBe('\u9ed8\u8ba4')
+    fireEvent.change(slider, { target: { value: '1' } })
+
+    expect(onReasoningChange).toHaveBeenCalledWith('max')
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
+    rerender(<ProviderModelCascade {...props} reasoningValue="max" />)
+    expect(screen.getByRole('slider', { name: '\u63a8\u7406\u5f3a\u5ea6' }).getAttribute('aria-valuetext')).toBe('Max')
+    expect(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 Max' })).toBeTruthy()
   })
 
   test('scrolls only the model column when the current model is below its viewport', () => {
@@ -1192,7 +1220,7 @@ describe('chat model cascade', () => {
 
     try {
       render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
-      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\uff1aAlpha One' }))
+      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
 
       expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
     } finally {
