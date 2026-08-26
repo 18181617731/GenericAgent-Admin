@@ -155,11 +155,13 @@ jobs:
           version="${tag#v}"
           name="ga-admin-${tag}-${{ matrix.goos }}-${{ matrix.goarch }}"
           mkdir -p package "$name"
-          cp -R dist/* "$name"/
+          if [ "${{ matrix.goos }}" != "darwin" ]; then
+            cp -R dist/* "$name"/
+          fi
           cat > "$name/README.txt" <<EOF
           GenericAgent Admin Go ${tag}
 
-          Run ga-admin.exe on Windows. On macOS, open ga-admin.app; the executable is also included inside the app bundle.
+          Run ga-admin.exe on Windows. On macOS, double-click ga-admin.app in Finder; do not launch the executable inside the app bundle directly.
           Linux servers without DISPLAY/Wayland enter headless mode automatically; use --headless or GA_ADMIN_HEADLESS=1 to force it.
           The executable embeds the React/Vite web UI.
           GenericAgent services still require your local GenericAgent Python environment.
@@ -197,6 +199,8 @@ jobs:
             zip -r "package/$name.zip" "$name"
           fi
           if [ "${{ matrix.goos }}" = "darwin" ]; then
+            test ! -e "$name/ga-admin"
+            test -x "$app/Contents/MacOS/ga-admin"
             zip -r "package/$name.zip" "$name"
           fi
           cd package
