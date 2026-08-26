@@ -29,4 +29,16 @@ func TestNativeDesktopContextMenusRemainEnabled(t *testing.T) {
 			t.Errorf("macOS desktop host still blocks context menus via %q", blocked)
 		}
 	}
+	for _, required := range []string{
+		"ga_desktop_install_edit_menu();",
+		"@selector(undo:), @\"z\"",
+		"@selector(cut:), @\"x\"",
+		"@selector(copy:), @\"c\"",
+		"@selector(paste:), @\"v\"",
+		"@selector(selectAll:), @\"a\"",
+	} {
+		if !strings.Contains(darwinText, required) {
+			t.Errorf("macOS desktop host does not install standard edit command %q", required)
+		}
+	}
 }
