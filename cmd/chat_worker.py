@@ -883,16 +883,20 @@ def _maybe_handle_effort_command(agent, prompt):
 
 def _apply_reasoning_effort_setting(agent, value):
     raw = str(value or '').strip().lower()
-    if raw in ('', 'off', 'clear', 'unset'):
-        effort = None
-    elif raw in EFFORT_LEVELS:
-        effort = raw
-    else:
+    if raw not in EFFORT_LEVELS and raw not in ('', 'clear', 'unset'):
         return
     try:
         backend = getattr(getattr(agent, 'llmclient', None), 'backend', None)
-        if backend is not None:
-            setattr(backend, 'reasoning_effort', effort)
+        if backend is None:
+            return
+        marker = '_ga_admin_configured_reasoning_effort'
+        if not hasattr(backend, marker):
+            setattr(backend, marker, getattr(backend, 'reasoning_effort', None))
+        if raw in ('', 'off', 'clear', 'unset'):
+            effort = getattr(backend, marker)
+        else:
+            effort = raw
+        setattr(backend, 'reasoning_effort', effort)
     except Exception:
         pass
 

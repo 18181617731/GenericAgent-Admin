@@ -504,6 +504,22 @@ func TestAnnotateChatLLMProvidersUsesOfficialOrderAndStableModelFallback(t *test
 	}
 }
 
+func TestAnnotateChatLLMProvidersIncludesConfiguredReasoningEffort(t *testing.T) {
+	profiles := []modelconfig.Profile{{
+		VarName: "native_oai_config_alpha",
+		ModelConfigs: []modelconfig.ModelConfig{{
+			Model: "model-a", ReasoningEffort: "HIGH",
+		}},
+	}}
+	llms := []map[string]interface{}{{"index": 0, "model": "model-a"}}
+
+	annotateChatLLMProviders(llms, profiles)
+
+	if got := llms[0]["reasoning_effort"]; got != "high" {
+		t.Fatalf("reasoning_effort=%v want=%q: %#v", got, "high", llms)
+	}
+}
+
 func TestAnnotateChatLLMProvidersUsesConfiguredModelDisplayName(t *testing.T) {
 	var draft modelconfig.Draft
 	data := []byte(`{"profiles":[{"var_name":"native_oai_config_alpha","model_configs":[{"model":"model-a","name":"Alpha Friendly"},{"model":"model-b"}]}]}`)

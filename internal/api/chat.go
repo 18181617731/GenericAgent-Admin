@@ -1512,11 +1512,12 @@ print(json.dumps(items, ensure_ascii=False))`
 }
 
 type chatProviderModel struct {
-	provider    string
-	model       string
-	displayName string
-	order       int
-	sequence    int
+	provider        string
+	model           string
+	displayName     string
+	reasoningEffort string
+	order           int
+	sequence        int
 }
 
 func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelconfig.Profile) {
@@ -1541,11 +1542,12 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 				order = *config.SortOrder
 			}
 			configured = append(configured, chatProviderModel{
-				provider:    provider,
-				model:       model,
-				displayName: strings.TrimSpace(config.Name),
-				order:       order,
-				sequence:    sequence,
+				provider:        provider,
+				model:           model,
+				displayName:     strings.TrimSpace(config.Name),
+				reasoningEffort: strings.ToLower(strings.TrimSpace(config.ReasoningEffort)),
+				order:           order,
+				sequence:        sequence,
 			})
 			sequence++
 		}
@@ -1607,6 +1609,9 @@ func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []model
 
 func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
 	item["provider"] = configured.provider
+	if configured.reasoningEffort != "" {
+		item["reasoning_effort"] = configured.reasoningEffort
+	}
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
 	}

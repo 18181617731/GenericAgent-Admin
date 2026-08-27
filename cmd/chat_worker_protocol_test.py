@@ -173,6 +173,25 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "reasoning_effort": "high",
         }
 
+    def test_default_reasoning_effort_inherits_configured_backend_value(self):
+        backend = SimpleNamespace(reasoning_effort="medium")
+        agent = SimpleNamespace(llmclient=SimpleNamespace(backend=backend))
+
+        chat_worker._apply_reasoning_effort_setting(agent, "high")
+        self.assertEqual(backend.reasoning_effort, "high")
+
+        chat_worker._apply_reasoning_effort_setting(agent, "off")
+        self.assertEqual(backend.reasoning_effort, "medium")
+
+    def test_default_reasoning_effort_preserves_unset_backend_value(self):
+        backend = SimpleNamespace(reasoning_effort=None)
+        agent = SimpleNamespace(llmclient=SimpleNamespace(backend=backend))
+
+        chat_worker._apply_reasoning_effort_setting(agent, "max")
+        chat_worker._apply_reasoning_effort_setting(agent, "off")
+
+        self.assertIsNone(backend.reasoning_effort)
+
     def test_resume_reaches_official_put_task_literal_and_done_state_sync(self):
         agent = FakeAgent()
 

@@ -5853,6 +5853,10 @@ export default function ChatApp() {
   const allSessionsSelected = managedSessions.length > 0 && visibleSelectedSessionCount === managedSessions.length
   const activeModel = llms.find(x => x.index === llmNo) || llms[0]
   const selectedModelNo = activeModel?.index ?? llmNo
+  const configuredReasoningEffort = normalizeReasoningEffort(activeModel?.reasoning_effort)
+  const defaultReasoningLabel = configuredReasoningEffort === 'off'
+    ? ct('默认', 'Default')
+    : ct(`默认（${configuredReasoningEffort}）`, `Default (${configuredReasoningEffort})`)
   const providerGroups = useMemo(() => groupRuntimeModels(llms), [llms])
   const selectedProvider = activeModel ? runtimeModelGroup(activeModel).value : (providerGroups[0]?.value || '')
   const loopControllerModel = (Number(loopState?.epoch) > 0
@@ -6422,7 +6426,7 @@ export default function ChatApp() {
                 onChange={v=>saveModel(Number(v))}
                 reasoningValue={reasoningEffort}
                 onReasoningChange={saveReasoningEffort}
-                reasoningOptions={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: ct('\u9ed8\u8ba4', 'Default') } : option)} />
+                reasoningOptions={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: defaultReasoningLabel } : option)} />
               <button
                 className={`oa-send ${isCurrentRunning ? 'is-stop' : ''}`}
                 type="button"
