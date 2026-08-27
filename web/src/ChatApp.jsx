@@ -3178,57 +3178,23 @@ const MessageList = memo(function MessageList({
   )
 })
 
-function ReasoningEffortSlider({ options = [], value = 'off', onChange, label }) {
-  const maxIndex = Math.max(0, options.length - 1)
-  const foundIndex = options.findIndex(option => option.value === value)
-  const currentIndex = foundIndex >= 0 ? foundIndex : 0
-  const currentOption = options[currentIndex]
-  const chooseIndex = nextIndex => {
-    const option = options[Number(nextIndex)]
-    if (option && option.value !== value) onChange?.(option.value)
-  }
-
+function ReasoningEffortOptions({ options = [], value = 'off', onChange }) {
   return (
-    <div className={`oa-reasoning-slider-container is-level-${currentIndex}`}>
-      <div className="oa-reasoning-slider-control">
-        <div className="oa-reasoning-slider-visual" aria-hidden="true">
-          <span className="oa-reasoning-slider-fill" />
-          <span className="oa-reasoning-slider-ticks">
-            {options.map((option, index) => {
-              const tickClass = [index <= currentIndex ? 'is-filled' : '', index === currentIndex ? 'is-current' : ''].filter(Boolean).join(' ')
-              return <i key={option.value} className={tickClass} />
-            })}
-          </span>
-          <span className="oa-reasoning-slider-thumb" />
-        </div>
-        <input
-          type="range"
-          className="oa-reasoning-slider"
-          min={0}
-          max={maxIndex}
-          step={1}
-          value={currentIndex}
-          onChange={event => chooseIndex(event.currentTarget.value)}
-          aria-label={label}
-          aria-valuetext={currentOption?.label || ''}
-        />
-      </div>
-      <div className="oa-reasoning-slider-labels">
-        {[...options].reverse().map(option => {
-          const active = option.value === value
-          return (
-            <button
-              key={option.value}
-              type="button"
-              className={active ? 'active' : ''}
-              aria-pressed={active}
-              onClick={() => onChange?.(option.value)}
-            >
-              {option.label}
-            </button>
-          )
-        })}
-      </div>
+    <div className="oa-reasoning-options">
+      {options.map(option => {
+        const active = option.value === value
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={active ? 'active' : ''}
+            aria-pressed={active}
+            onClick={() => onChange?.(option.value)}
+          >
+            {option.label}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -3332,7 +3298,7 @@ export function ProviderModelCascade({
   }
   const chooseReasoning = effort => {
     onReasoningChange?.(effort)
-    // Keep menu open when adjusting reasoning effort via slider
+    // Keep menu open when adjusting reasoning effort
     // closeMenu()
   }
   const mobileLayer = open && mobilePicker && typeof document !== 'undefined' ? createPortal(
@@ -3380,11 +3346,10 @@ export function ProviderModelCascade({
             <strong>{ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}</strong>
             <span>{displayReasoning}</span>
           </div>
-          <ReasoningEffortSlider
+          <ReasoningEffortOptions
             options={reasoningOptions}
             value={reasoningValue}
             onChange={onReasoningChange}
-            label={ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}
           />
         </div>
       </section>
@@ -3431,11 +3396,10 @@ export function ProviderModelCascade({
         </div>
         <div className="oa-cascade-reasoning" aria-label={ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}>
           <div className="oa-cascade-heading">{ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}</div>
-          <ReasoningEffortSlider
+          <ReasoningEffortOptions
             options={reasoningOptions}
             value={reasoningValue}
             onChange={onReasoningChange}
-            label={ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}
           />
         </div>
       </div>}
