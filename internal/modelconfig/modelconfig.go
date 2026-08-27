@@ -958,6 +958,7 @@ for mixin_var, mixin_data in mixin_groups_raw:
     failover_groups.append(group)
 print(json.dumps({'updated_at':'','profiles':profiles,'failover_groups':failover_groups}, ensure_ascii=False))`
 	cmd := exec.Command(py, "-c", script, mykey, boolArg(reveal))
+	cmd.Env = pythonUTF8Env(os.Environ())
 	hideChildWindow(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -973,6 +974,21 @@ print(json.dumps({'updated_at':'','profiles':profiles,'failover_groups':failover
 		d.UpdatedAt = time.Now().Format(time.RFC3339)
 	}
 	return d, nil
+}
+
+func pythonUTF8Env(env []string) []string {
+	result := make([]string, 0, len(env)+2)
+	for _, kv := range env {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if strings.EqualFold(key, "PYTHONUTF8") || strings.EqualFold(key, "PYTHONIOENCODING") {
+			continue
+		}
+		result = append(result, kv)
+	}
+	return append(result, "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 }
 
 // pythonExe resolves the interpreter used to parse mykey.py.
