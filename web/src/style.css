@@ -6476,9 +6476,11 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   bottom: calc(100% + 8px);
   width: 520px;
   max-width: min(520px, calc(100vw - 24px));
-  height: clamp(220px, 34vh, 308px);
+  min-height: 220px;
+  max-height: min(80vh, 500px);
+  height: auto;
   display: grid;
-  grid-template-columns: minmax(110px, 23%) minmax(170px, 1fr) minmax(150px, 32%);
+  grid-template-columns: minmax(110px, 20%) minmax(160px, 1fr) minmax(110px, 26%);
   padding: 6px;
   gap: 5px;
   border: 1px solid rgba(0,0,0,.1);
@@ -6493,8 +6495,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   to { opacity: 1; transform: translateY(0); }
 }
 .oa-cascade-providers,
-.oa-cascade-models,
-.oa-cascade-reasoning {
+.oa-cascade-models {
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -6509,29 +6510,38 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 .oa-cascade-reasoning {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-self: start;
+  height: max-content;
   border-left: 1px solid rgba(0,0,0,.07);
-  padding: 3px 6px;
+  padding: 2px 6px;
+  overflow: visible;
 }
 .oa-reasoning-options {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 1px;
 }
 .oa-reasoning-options button {
+  flex: 0 0 18px !important;
   min-width: 0;
-  min-height: 18px;
+  min-height: 0;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
   border: 0;
-  border-radius: 5px;
-  padding: 0 5px;
+  border-radius: 4px;
+  padding: 0 6px;
   color: var(--muted);
   background: transparent;
   font: inherit;
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 18px;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   transition: color .14s ease, background .14s ease;
+  white-space: nowrap;
 }
 .oa-reasoning-options button:hover {
   color: var(--text);
@@ -6585,13 +6595,14 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 .oa-cascade-models button.active { background: rgba(16,163,127,.1); color: var(--i-08785f); font-weight: 650; }
 .oa-cascade-models button svg { flex: 0 0 auto; color: #10a37f; }
 .oa-cascade-heading {
-  padding: 5px 9px 7px;
+  padding: 2px 9px 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
+  line-height: 1.5;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-align: left;
 }
 .oa-cascade-empty { padding: 12px 9px; color: var(--muted); font-size: 12px; }
 html[data-color-scheme="dark"] .oa-cascade-menu { border-color: rgba(255,255,255,.12); }
