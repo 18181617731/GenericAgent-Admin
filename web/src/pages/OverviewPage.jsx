@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Activity, CalendarClock, Download, FileCode2, MessageSquare, Play, Power, RefreshCw, Server, ShieldAlert } from 'lucide-react'
 
 const countOf = (items) => Array.isArray(items) ? items.length : 0
@@ -44,8 +44,34 @@ function Panel({ area, title, children }) {
 
 export function OverviewPage({
   t, text, services, schedule, observability, observabilityError, onRefreshObservability, version, root,
+  githubMirror = '', onSaveGitHubMirror,
 }) {
   const copy = t.overview
+  const [mirrorDraft, setMirrorDraft] = useState(githubMirror)
+  const [mirrorBaseline, setMirrorBaseline] = useState(githubMirror)
+  const [mirrorSaving, setMirrorSaving] = useState(false)
+  const [mirrorNotice, setMirrorNotice] = useState(null)
+  useEffect(() => {
+    const nextMirror = githubMirror || ''
+    setMirrorDraft(nextMirror)
+    setMirrorBaseline(nextMirror)
+  }, [githubMirror])
+  const mirrorDirty = mirrorDraft !== mirrorBaseline
+  const saveGitHubMirror = async () => {
+    if (!mirrorDirty || typeof onSaveGitHubMirror !== 'function') return
+    setMirrorSaving(true)
+    setMirrorNotice(null)
+    try {
+      const savedMirror = await onSaveGitHubMirror(mirrorDraft)
+      setMirrorDraft(savedMirror || '')
+      setMirrorBaseline(savedMirror || '')
+      setMirrorNotice({ kind: 'success', message: copy.githubMirrorSaved })
+    } catch (error) {
+      setMirrorNotice({ kind: 'error', message: copy.githubMirrorSaveFailed(error.message) })
+    } finally {
+      setMirrorSaving(false)
+    }
+  }
   const { info, check, status, busy, gitBusy, gitStatus, autostart } = version
   const updateMessage = status?.error || (status?.stage === 'queued' ? copy.updateQueued : (status?.message || status?.stage))
   const missingCore = observability?.missingCore || []
@@ -147,6 +173,24 @@ export function OverviewPage({
             <p className={status.error ? 'err' : 'muted'}>{updateMessage}</p>
             <code>{status.stage}</code>
           </div>}
+          <form className="overview-mirror" onSubmit={(event) => { event.preventDefault(); saveGitHubMirror() }}>
+            <label htmlFor="overview-github-mirror">{text.network.githubMirror}</label>
+            <p id="overview-github-mirror-help" className="muted">{text.network.githubMirrorHelp}</p>
+            <div className="overview-mirror-control">
+              <input
+                id="overview-github-mirror"
+                type="url"
+                value={mirrorDraft}
+                onChange={(event) => { setMirrorDraft(event.target.value); setMirrorNotice(null) }}
+                placeholder={text.network.githubMirrorPlaceholder}
+                aria-describedby="overview-github-mirror-help"
+              />
+              <button className="primary" type="submit" disabled={mirrorSaving || !mirrorDirty || typeof onSaveGitHubMirror !== 'function'}>
+                {mirrorSaving ? t.busy : copy.saveGitHubMirror}
+              </button>
+            </div>
+            {mirrorNotice && <p className={`overview-mirror-notice ${mirrorNotice.kind}`} role="status">{mirrorNotice.message}</p>}
+          </form>
           <div className="overview-panel-actions">
             <button type="button" onClick={version.checkVersion} disabled={busy || status?.running}>{busy ? t.busy : copy.checkUpdate}</button>
             <button className="primary" type="button" onClick={version.updateVersion} disabled={busy || status?.running || !check?.update}>

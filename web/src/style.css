@@ -8917,6 +8917,37 @@ html[data-theme="warm"] .overview-page {
   box-shadow: none;
 }
 .overview-page .overview-panel .version-card::before { display: none; }
+.overview-page .overview-mirror {
+  display: grid;
+  gap: 5px;
+  margin-top: 2px;
+  padding-top: 11px;
+  border-top: 1px solid var(--overview-line);
+}
+.overview-page .overview-mirror label { font-size: 12px; font-weight: 750; }
+.overview-page .overview-mirror .muted { margin: 0; font-size: 11px; line-height: 1.4; }
+.overview-page .overview-mirror-control { display: flex; align-items: stretch; gap: 7px; }
+.overview-page .overview-mirror-control input {
+  min-width: 0;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--overview-line);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+}
+.overview-page .overview-mirror-control input:focus {
+  outline: none;
+  border-color: var(--overview-accent);
+  box-shadow: 0 0 0 2px var(--overview-accent-soft) !important;
+}
+.overview-page .overview-mirror-control button { min-width: max-content; white-space: nowrap; }
+.overview-page .overview-mirror-notice { margin: 0; font-size: 11px; }
+.overview-page .overview-mirror-notice.success { color: var(--overview-ok); }
+.overview-page .overview-mirror-notice.error { color: var(--overview-error); }
 .overview-page .overview-panel .version-head,
 .overview-page .overview-panel .autostart-head { color: var(--text); }
 .overview-page .overview-panel .version-head svg,
@@ -9040,6 +9071,8 @@ html[data-color-scheme="dark"] .overview-page button.primary:hover:not(:disabled
   .overview-page .overview-health-state { order: 3; }
   .overview-page .overview-panel-actions { display: grid; grid-template-columns: 1fr; }
   .overview-page .overview-panel-actions button { width: 100%; }
+  .overview-page .overview-mirror-control { display: grid; grid-template-columns: 1fr; }
+  .overview-page .overview-mirror-control button { width: 100%; }
 }
 
 /* Settings — compact, task-oriented environment configuration */

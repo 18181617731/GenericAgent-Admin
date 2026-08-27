@@ -201,6 +201,17 @@ export default function App() {
     } catch (e) { setMsg(e.message) } finally { setBusy(false) }
   }
 
+  const saveGitHubMirror = async (value) => {
+    const c = await api('/api/config', {
+      dangerous: true,
+      method: 'PUT',
+      body: JSON.stringify({ ...(savedCfg || cfg || {}), github_mirror: value }),
+    })
+    setSavedCfg(c)
+    setCfg(current => ({ ...(current || {}), github_mirror: c.github_mirror || '' }))
+    return c.github_mirror || ''
+  }
+
   const viewServiceLogs = (name) => { setTab('logs'); logStream.select(name) }
   const startService = (name) => services.serviceAction(name, 'start')
   const stopService = (name) => services.serviceAction(name, 'stop')
@@ -286,6 +297,8 @@ export default function App() {
               onRefreshObservability={() => readObservability().catch(error => { setObservability(null); setObservabilityError(error.message) })}
               version={version}
               root={root}
+              githubMirror={savedCfg?.github_mirror || ''}
+              onSaveGitHubMirror={saveGitHubMirror}
             />}
             {tab==='settings' && <GeneralPage
               t={t}

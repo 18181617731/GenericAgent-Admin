@@ -18,6 +18,7 @@ export const I18N = {
       attention: '需要关注', allClear: '没有阻断项', failedChecks: '未通过的检查', advisory: '提示', runningServices: '运行中的服务', noRunning: '没有进程在运行',
       checkStates: { ok: '正常', missing: '缺失', empty: '为空', optional_missing: '可选缺失' },
       autostartTitle: '开机自启', autostartOn: '登录后自动启动', autostartOff: '需要手动启动',
+      saveGitHubMirror: '\u4fdd\u5b58\u955c\u50cf', githubMirrorSaved: '\u955c\u50cf\u914d\u7f6e\u5df2\u4fdd\u5b58', githubMirrorSaveFailed: error => `\u4fdd\u5b58\u5931\u8d25\uff1a${error}`,
     },
     service: {
       model: '模型', defaultModel: '默认（启动时选择）', returnCode: '返回码', startedAt: '启动时间', workdir: '工作目录', command: '命令', log: '日志',
@@ -86,6 +87,7 @@ export const I18N = {
       attention: 'Needs attention', allClear: 'Nothing blocking', failedChecks: 'Failed checks', advisory: 'Warnings', runningServices: 'Running services', noRunning: 'No processes running',
       checkStates: { ok: 'OK', missing: 'Missing', empty: 'Empty', optional_missing: 'Optional missing' },
       autostartTitle: 'Autostart', autostartOn: 'Starts after login', autostartOff: 'Starts only when you open it',
+      saveGitHubMirror: 'Save mirror', githubMirrorSaved: 'Mirror settings saved.', githubMirrorSaveFailed: error => `Save failed: ${error}`,
     },
     service: {
       model: 'Model', defaultModel: 'Default (choose at startup)', returnCode: 'Return code', startedAt: 'Started', workdir: 'Working directory', command: 'Command', log: 'Log',
