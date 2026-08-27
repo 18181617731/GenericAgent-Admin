@@ -6498,8 +6498,11 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   min-width: 0;
   min-height: 0;
   height: 100%;
-  max-height: none;
-  overflow-y: hidden;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   padding: 2px;
 }
 .oa-cascade-providers { border-right: 1px solid rgba(0,0,0,.07); padding-right: 6px; }
