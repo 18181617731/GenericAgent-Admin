@@ -3194,7 +3194,10 @@ function ReasoningEffortSlider({ options = [], value = 'off', onChange, label })
         <div className="oa-reasoning-slider-visual" aria-hidden="true">
           <span className="oa-reasoning-slider-fill" />
           <span className="oa-reasoning-slider-ticks">
-            {options.map((option, index) => <i key={option.value} className={index <= currentIndex ? 'is-filled' : ''} />)}
+            {options.map((option, index) => {
+              const tickClass = [index <= currentIndex ? 'is-filled' : '', index === currentIndex ? 'is-current' : ''].filter(Boolean).join(' ')
+              return <i key={option.value} className={tickClass} />
+            })}
           </span>
           <span className="oa-reasoning-slider-thumb" />
         </div>

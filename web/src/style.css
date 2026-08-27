@@ -6515,38 +6515,49 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 }
 .oa-reasoning-slider-container {
   display: grid;
-  grid-template-columns: 38px minmax(62px, 1fr);
+  grid-template-columns: 36px minmax(62px, 1fr);
   align-items: stretch;
-  gap: 10px;
+  gap: 8px;
   min-height: 176px;
-  padding: 6px 8px 8px;
+  padding: 6px 6px 8px;
 }
 .oa-reasoning-slider-control {
   position: relative;
-  width: 38px;
+  width: 36px;
   height: 176px;
+  cursor: ns-resize;
 }
 .oa-reasoning-slider-visual {
   position: absolute;
-  top: 10px;
-  bottom: 10px;
+  top: 9px;
+  bottom: 9px;
   left: 50%;
-  width: 4px;
+  width: 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 24%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, var(--surface-strong));
   transform: translateX(-50%);
   pointer-events: none;
 }
+.oa-reasoning-slider-visual::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+}
 .oa-reasoning-slider-fill {
   position: absolute;
-  inset: auto 0 0;
+  z-index: 1;
+  inset: auto 2px 2px;
   height: 0;
-  border-radius: inherit;
-  background: var(--accent);
-  transition: height .16s ease;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 72%, white 8%);
+  transition: height .18s cubic-bezier(.2, .8, .2, 1);
 }
 .oa-reasoning-slider-ticks {
   position: absolute;
+  z-index: 2;
   inset: 0;
   display: flex;
   flex-direction: column-reverse;
@@ -6555,37 +6566,43 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
 }
 .oa-reasoning-slider-ticks i {
   position: relative;
-  z-index: 1;
   width: 8px;
-  height: 2px;
-  border-radius: 99px;
-  background: var(--surface-strong);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 28%, transparent);
-  transition: width .16s ease, background .16s ease;
+  height: 8px;
+  border: 2px solid var(--surface-strong);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 24%, var(--surface-strong));
+  transition: background .16s ease, transform .16s ease;
 }
 .oa-reasoning-slider-ticks i.is-filled {
+  background: color-mix(in srgb, var(--accent) 62%, var(--surface-strong));
+}
+.oa-reasoning-slider-ticks i.is-current {
   background: var(--accent);
-  box-shadow: none;
+  transform: scale(1.35);
 }
 .oa-reasoning-slider-thumb {
   position: absolute;
   left: 50%;
   bottom: 0;
-  z-index: 2;
-  width: 16px;
-  height: 16px;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
   border: 3px solid var(--surface-strong);
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent), 0 2px 6px rgba(0,0,0,.18);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--text) 18%, transparent);
   transform: translate(-50%, 50%);
-  transition: bottom .16s ease, box-shadow .16s ease, transform .16s ease;
+  transition: bottom .18s cubic-bezier(.2, .8, .2, 1), box-shadow .16s ease, transform .16s ease;
+}
+.oa-reasoning-slider-thumb::before,
+.oa-reasoning-slider-thumb::after {
+  content: none;
 }
 .oa-reasoning-slider {
   position: absolute;
   inset: 0;
-  z-index: 3;
-  width: 38px;
+  z-index: 4;
+  width: 36px;
   height: 176px;
   margin: 0;
   opacity: 0;
@@ -6594,8 +6611,12 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   direction: rtl;
 }
 .oa-reasoning-slider-control:hover .oa-reasoning-slider-thumb {
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent), 0 2px 7px rgba(0,0,0,.2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent), 0 2px 5px color-mix(in srgb, var(--text) 16%, transparent);
   transform: translate(-50%, 50%) scale(1.06);
+}
+.oa-reasoning-slider-control:has(.oa-reasoning-slider:active) .oa-reasoning-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  transform: translate(-50%, 50%) scale(.94);
 }
 .oa-reasoning-slider-control:has(.oa-reasoning-slider:focus-visible) {
   border-radius: 12px;
