@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import katex from 'katex'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
-import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldRefreshChatSnapshot } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
@@ -4042,12 +4042,9 @@ export default function ChatApp() {
       } : x))
     }
     if (ev.type === 'user' && ev.message) {
-      setMessages(xs => {
-        if (!isActiveSession(sessionId)) return xs
-        return clientUserID
-          ? xs.map(m => m.id === clientUserID ? ev.message : m)
-          : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message])
-      })
+      setMessages(xs => isActiveSession(sessionId)
+        ? mergeStreamUserMessage(xs, ev.message, clientUserID)
+        : xs)
     }
     if (ev.type === 'start' && ev.run_started_at_ms > 0) {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
@@ -4281,7 +4278,10 @@ export default function ChatApp() {
 
       const nextRun = !sameStreamRun(currentRun, availableRun)
       if (nextRun) {
+        clientUserID = nextStreamClientUserID({ clientUserID, awaitingRun, currentRun })
         currentRun = availableRun
+        // A local optimistic user id only belongs to the first explicitly
+        // admitted run. Later backend-started rounds must append their own user turn.
         pendingId = availableRun.pendingId || `resume-${Date.now()}`
         cursor = 0
         replay = false
@@ -4377,7 +4377,7 @@ export default function ChatApp() {
     finally { setBusy(false); setStreamingSid(''); if (id) loadSessions(id).catch(()=>{}) }
   }
 
-  const attachRunningStream = async (id, { waitForRun = false } = {}) => {
+  const attachRunningStream = async (id, { waitForRun = false, clientUserID = '' } = {}) => {
     if (!id) return
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
@@ -4403,7 +4403,7 @@ export default function ChatApp() {
         if (res.status === 204) return
         if (!res.ok) throw new Error(await res.text())
       }
-      await followChatStream(res, pendingId, '', id, ctrl.signal, waitForRun)
+      await followChatStream(res, pendingId, clientUserID, id, ctrl.signal, waitForRun)
       if (isActiveSession(id)) {
         const list = await loadSessions(id)
         const currentSession = list.find(session => session.id === id)
@@ -5529,7 +5529,7 @@ export default function ChatApp() {
         guidingQueueRef.current = ''
         setGuidingQueueId('')
         setNotice(ct('已引导：中止当前回复并触发队列执行', 'Guided: stopped the current response and triggered queue execution'))
-        await attachRunningStream(id, { waitForRun:true })
+        await attachRunningStream(id, { waitForRun:true, clientUserID:guidedUser.id })
       }
     } catch (e) {
       if (!guideStarted && guidedUser) {

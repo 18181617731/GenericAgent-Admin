@@ -37,6 +37,16 @@ export const scrollFollowAction = ({
   return 'preserve'
 }
 
+export const mergeStreamUserMessage = (messages = [], message = null, clientUserID = '') => {
+  const current = Array.isArray(messages) ? messages : []
+  if (!message || typeof message !== 'object') return current
+  const optimisticIndex = clientUserID ? current.findIndex(item => item?.id === clientUserID) : -1
+  if (optimisticIndex >= 0) {
+    return current.map((item, index) => index === optimisticIndex ? message : item)
+  }
+  return message.id && current.some(item => item?.id === message.id) ? current : [...current, message]
+}
+
 export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   const merged = { ...finalMessage }
   if ((!merged.model_id || !String(merged.model_id).trim()) && streamed.model_id) merged.model_id = streamed.model_id
@@ -162,6 +172,15 @@ export const sameStreamRun = (left, right) => {
   const b = normalizeStreamRunIdentity(right)
   if (a.pendingId && b.pendingId) return a.pendingId === b.pendingId
   return a.startedAtMs > 0 && b.startedAtMs > 0 && a.startedAtMs === b.startedAtMs
+}
+
+// An explicitly admitted run (for example, a guided queued message) may already
+// have an optimistic user bubble while the backend is still creating the run.
+// Preserve that merge key only for the first run attached across that gap.
+export const nextStreamClientUserID = ({ clientUserID = '', awaitingRun = false, currentRun = null } = {}) => {
+  const current = normalizeStreamRunIdentity(currentRun || {})
+  if (!awaitingRun || current.pendingId || current.startedAtMs > 0) return ''
+  return String(clientUserID || '').trim()
 }
 
 // Decide what to do after a stream response ends. A terminal response remains readable from

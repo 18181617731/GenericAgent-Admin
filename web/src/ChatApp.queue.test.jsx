@@ -49,7 +49,7 @@ describe('session-scoped guided-message queue wiring', () => {
     const markStarted = source.indexOf('guideStarted = true', startedCheck)
     const activeCheck = source.indexOf('if (!isActiveSession(id)) return', markStarted)
     const refreshGuided = source.indexOf('await refreshQueue(id)', activeCheck)
-    const reconnect = source.indexOf('await attachRunningStream(id, { waitForRun:true })', refreshGuided)
+    const reconnect = source.indexOf('await attachRunningStream(id, { waitForRun:true, clientUserID:guidedUser.id })', refreshGuided)
     const rollback = source.indexOf('if (!guideStarted && guidedUser)', reconnect)
     const releaseGuiding = source.indexOf('if (guidingQueueRef.current === next.id)', rollback)
     const resetRun = source.indexOf('activeRunRef.current = false', releaseGuiding)
