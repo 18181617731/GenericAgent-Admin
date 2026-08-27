@@ -1183,7 +1183,7 @@ describe('chat model cascade', () => {
     }
   })
 
-  test('changes reasoning through the vertical range and keeps the menu open', () => {
+  test('changes reasoning through text options and keeps the menu open', () => {
     const onReasoningChange = vi.fn()
     const reasoningOptions = [
       { value: 'off', label: '\u9ed8\u8ba4' },
@@ -1200,14 +1200,13 @@ describe('chat model cascade', () => {
     const { rerender } = render(<ProviderModelCascade {...props} reasoningValue="off" />)
 
     fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
-    const slider = screen.getByRole('slider', { name: '\u63a8\u7406\u5f3a\u5ea6' })
-    expect(slider.getAttribute('aria-valuetext')).toBe('\u9ed8\u8ba4')
-    fireEvent.change(slider, { target: { value: '1' } })
+    expect(screen.getByRole('button', { name: '\u9ed8\u8ba4' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
 
     expect(onReasoningChange).toHaveBeenCalledWith('max')
     expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
     rerender(<ProviderModelCascade {...props} reasoningValue="max" />)
-    expect(screen.getByRole('slider', { name: '\u63a8\u7406\u5f3a\u5ea6' }).getAttribute('aria-valuetext')).toBe('Max')
+    expect(screen.getByRole('button', { name: 'Max' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 Max' })).toBeTruthy()
   })
 
