@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow, shouldRefreshChatSnapshot } from './chatStream.js'
 
 test('scroll follow preserves auto mode when fast content growth moves the bottom away', () => {
   assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 320 }), 'preserve')
@@ -303,4 +303,16 @@ test('loop waits across the no-run evaluation gap and finishes only after loop t
     terminal:true,
   }), 'finish')
   assert.equal(decideStreamFollow({ running:false, loop:null, terminal:true }), 'finish')
+})
+
+
+test('idle session summary changes request an authoritative snapshot refresh', () => {
+  const base = { id:'session-1', count:2, updated_at:10, running:false }
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base }), false)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, count:3 }), true)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, updated_at:11 }), true)
+  assert.equal(shouldRefreshChatSnapshot({ ...base, running:true }, base), true)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, running:true }), false)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, id:'session-2', count:3 }), false)
+  assert.equal(shouldRefreshChatSnapshot(null, base), false)
 })

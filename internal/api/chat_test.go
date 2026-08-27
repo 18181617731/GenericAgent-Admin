@@ -2486,6 +2486,56 @@ func TestProcessNextQueuedMessageReplacesCompletedReplayToken(t *testing.T) {
 	}
 }
 
+func TestChatQueuePatchUsesLatestBackendState(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	const sid = "queue-authoritative"
+	initial := chatSession{
+		ID:             sid,
+		QueuedMessages: []chatQueuedMessage{{ID: "q-consumed", Text: "already consumed"}},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), initial); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the backend consuming the item while the browser still has the old snapshot.
+	s.SessionMu.Lock()
+	latest, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err == nil {
+		latest.QueuedMessages = nil
+		err = saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), latest)
+	}
+	s.SessionMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/chat/queue/"+sid, strings.NewReader(`{"op":"enqueue","message":{"id":"q-new","text":"new work"}}`))
+	patchRec := httptest.NewRecorder()
+	s.chatPatchQueue(patchRec, patchReq, sid)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+
+	getRec := httptest.NewRecorder()
+	s.chatGetQueue(getRec, httptest.NewRequest(http.MethodGet, "/api/chat/queue/"+sid, nil), sid)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	var payload struct {
+		Messages []chatQueuedMessage `json:"queued_messages"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].ID != "q-new" {
+		t.Fatalf("authoritative queue resurrected consumed item: %#v", payload.Messages)
+	}
+}
+
 func TestChatQueueRejectsInvalidEntries(t *testing.T) {
 	s := newGoalTestServer(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPut, "/api/chat/queue/queue-session", strings.NewReader(`{"messages":[{"id":"","text":"missing id"}]}`))

@@ -86,6 +86,14 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "queue":
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.chatGetQueue(w, r, parts[1])
+			return
+		}
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.chatPatchQueue(w, r, parts[1])
+			return
+		}
 		if len(parts) == 2 && r.Method == http.MethodPut {
 			s.chatReplaceQueue(w, r, parts[1])
 			return
@@ -518,6 +526,125 @@ func (s *Server) chatSetPinned(w http.ResponseWriter, r *http.Request, sid strin
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "pinned": cs.Pinned})
+}
+
+func validateChatQueuedMessage(item *chatQueuedMessage) error {
+	item.ID = strings.TrimSpace(item.ID)
+	item.Text = strings.TrimSpace(item.Text)
+	if item.ID == "" || (item.Text == "" && len(item.Files) == 0) {
+		return fmt.Errorf("queued message requires id and content")
+	}
+	if len(item.Files) > maxChatUploadFiles {
+		return fmt.Errorf("too many queued message files")
+	}
+	return nil
+}
+
+func (s *Server) chatGetQueue(w http.ResponseWriter, _ *http.Request, sid string) {
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"queued_messages": cs.QueuedMessages})
+}
+
+func (s *Server) chatPatchQueue(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Op      string            `json:"op"`
+		Message chatQueuedMessage `json:"message"`
+		ID      string            `json:"id"`
+	}
+	if err := decodeLimited(r, &req, maxChatPostBodyBytes); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	req.Op = strings.TrimSpace(req.Op)
+	req.ID = strings.TrimSpace(req.ID)
+
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	switch req.Op {
+	case "enqueue":
+		if err := validateChatQueuedMessage(&req.Message); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(cs.QueuedMessages) >= 100 {
+			bad(w, http.StatusBadRequest, "too many queued messages")
+			return
+		}
+		for _, item := range cs.QueuedMessages {
+			if item.ID == req.Message.ID {
+				bad(w, http.StatusConflict, "queue item already exists")
+				return
+			}
+		}
+		cs.QueuedMessages = append(cs.QueuedMessages, req.Message)
+	case "update":
+		if err := validateChatQueuedMessage(&req.Message); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		found := false
+		for i := range cs.QueuedMessages {
+			if cs.QueuedMessages[i].ID == req.Message.ID {
+				cs.QueuedMessages[i] = req.Message
+				found = true
+				break
+			}
+		}
+		if !found {
+			bad(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+	case "remove":
+		if req.ID == "" {
+			bad(w, http.StatusBadRequest, "queue id required")
+			return
+		}
+		found := false
+		next := make([]chatQueuedMessage, 0, len(cs.QueuedMessages))
+		for _, item := range cs.QueuedMessages {
+			if item.ID == req.ID {
+				found = true
+				continue
+			}
+			next = append(next, item)
+		}
+		if !found {
+			bad(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+		cs.QueuedMessages = next
+	default:
+		bad(w, http.StatusBadRequest, "unsupported queue operation")
+		return
+	}
+
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
 }
 
 func (s *Server) chatReplaceQueue(w http.ResponseWriter, r *http.Request, sid string) {

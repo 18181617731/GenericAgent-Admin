@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import katex from 'katex'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
-import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
@@ -3789,9 +3789,10 @@ export default function ChatApp() {
   const [worldlineSwitchingId, setWorldlineSwitchingId] = useState('')
   const worldlineSeqRef = useRef(0)
   const messagesRef = useRef([])
-  // Keep a synchronous mirror of `messages` so async flows (e.g. re-attaching to a running
-  // stream after a page refresh) can read the committed list without waiting for a state updater.
+  const sessionsRef = useRef([])
+  // Keep synchronous mirrors so async reconnect flows do not compare stale render state.
   useEffect(() => { messagesRef.current = messages }, [messages])
+  useEffect(() => { sessionsRef.current = sessions }, [sessions])
   const scrollModeRef = useRef('auto')
   const autoFollowRef = useRef(true)
   const previousScrollTopRef = useRef(0)
@@ -4462,7 +4463,7 @@ export default function ChatApp() {
     setWorldlineRestorePicker(null)
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
-    syncQueue([], { persist:false })
+    applyQueueSnapshot([])
     setQueueEditingId('')
     setQueueDraft('')
     guidingQueueRef.current = ''
@@ -4483,7 +4484,7 @@ export default function ChatApp() {
     scrollModeRef.current = 'auto'
     setSid(d.id)
     setMessages(d.messages || [])
-    syncQueue(Array.isArray(d.queued_messages) ? d.queued_messages : [], { persist:false })
+    applyQueueSnapshot(d.queued_messages, d.id)
     setQueueEditingId('')
     setQueueDraft('')
     guidingQueueRef.current = ''
@@ -4500,6 +4501,17 @@ export default function ChatApp() {
     setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
     if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
+  }
+
+  const refreshActiveSessionSnapshot = async (id) => {
+    if (!id || activeSidRef.current !== id) return
+    const d = await chatApi(`/api/chat/session/${id}`)
+    if (activeSidRef.current !== id || streamAbortRef.current || activeRunRef.current) return
+    setMessages(Array.isArray(d.messages) ? d.messages : [])
+    setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
+    setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
+    setWorkingState(d.working || null)
+    setPlanState(d.plan || null)
   }
 
   const loadWorldline = async (id = activeSidRef.current || sid, { force = false, activate = false } = {}) => {
@@ -4584,7 +4596,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
-    setSid(d.id); setMessages([]); syncQueue([], { persist:false }); setQueueEditingId(''); setQueueDraft(''); guidingQueueRef.current = ''; setGuidingQueueId(''); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopMaxRounds(10); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
+    setSid(d.id); setMessages([]); applyQueueSnapshot([]); setQueueEditingId(''); setQueueDraft(''); guidingQueueRef.current = ''; setGuidingQueueId(''); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopMaxRounds(10); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
     if (selectedProject) await loadSessions(d.id)
   }
@@ -5028,32 +5040,49 @@ export default function ChatApp() {
   }
 
   const removeAttachment = (id) => setAttachments(xs => xs.filter(x => x.id !== id))
-  const syncQueue = (next, { persist = true, sessionId = activeSidRef.current } = {}) => {
+  const applyQueueSnapshot = (messages, sessionId = activeSidRef.current) => {
+    if (sessionId !== activeSidRef.current) return []
+    const next = Array.isArray(messages) ? messages : []
     queuedRef.current = next
     setQueuedMessages(next)
-    if (!persist || !sessionId) return
-    const snapshot = next.map(item => ({ ...item, files:(item.files || []).map(file => ({ ...file })) }))
+    return next
+  }
+  const requestQueue = (operation, payload = {}, sessionId = activeSidRef.current) => {
+    if (!sessionId) return Promise.resolve([])
     const queueURL = addChatInstanceToURL(`/api/chat/queue/${sessionId}`, chatInstanceRef.current)
-    queueWriteRef.current = queueWriteRef.current
+    const request = queueWriteRef.current
       .catch(() => {})
-      .then(() => api(queueURL, { method:'PUT', body:JSON.stringify({ messages:snapshot }) }))
-      .catch(e => {
-        if (e.name !== 'AbortError' && activeSidRef.current === sessionId) setErr(e.message || String(e))
+      .then(async () => {
+        const d = await api(queueURL, { method:'PATCH', body:JSON.stringify({ op:operation, ...payload }) })
+        return applyQueueSnapshot(d.queued_messages, sessionId)
       })
+    queueWriteRef.current = request
+    return request
   }
-  const popQueued = () => {
-    const [first, ...rest] = queuedRef.current
-    if (first) syncQueue(rest)
-    return first
+  const refreshQueue = (sessionId = activeSidRef.current) => {
+    if (!sessionId) return Promise.resolve([])
+    const queueURL = addChatInstanceToURL(`/api/chat/queue/${sessionId}`, chatInstanceRef.current)
+    const request = queueWriteRef.current
+      .catch(() => {})
+      .then(async () => {
+        const d = await api(queueURL)
+        return applyQueueSnapshot(d.queued_messages, sessionId)
+      })
+    queueWriteRef.current = request
+    return request
   }
-  const enqueueMessage = (item) => {
-    const next = [...queuedRef.current, { ...item, id:`q-${Date.now()}-${Math.random().toString(16).slice(2)}`, queuedAt:Date.now() }]
-    syncQueue(next)
-    setNotice(ct(`已加入队列（${next.length} 条）。点击“引导”可中止当前回复并立即发送。`, `Added to queue (${next.length}). Use Guide to stop the current response and send immediately.`))
+  const enqueueMessage = async (item) => {
+    const queued = { ...item, id:`q-${Date.now()}-${Math.random().toString(16).slice(2)}`, queuedAt:Date.now() }
+    try {
+      const next = await requestQueue('enqueue', { message:queued })
+      setNotice(ct(`已加入队列（${next.length} 条）。点击“引导”可中止当前回复并立即发送。`, `Added to queue (${next.length}). Use Guide to stop the current response and send immediately.`))
+    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
   }
-  const removeQueued = (id) => {
-    syncQueue(queuedRef.current.filter(x => x.id !== id))
-    if (queueEditingId === id) { setQueueEditingId(''); setQueueDraft('') }
+  const removeQueued = async (id) => {
+    try {
+      await requestQueue('remove', { id })
+      if (queueEditingId === id) { setQueueEditingId(''); setQueueDraft('') }
+    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
   }
   const editQueued = (id) => {
     const item = queuedRef.current.find(x => x.id === id)
@@ -5067,16 +5096,18 @@ export default function ChatApp() {
     setQueueDraft('')
     setNotice('')
   }
-  const saveQueueEdit = (id) => {
+  const saveQueueEdit = async (id) => {
     const text = queueDraft.trim()
     const item = queuedRef.current.find(x => x.id === id)
     if (!item) return
     if (!text && !(item.files || []).length) { setErr(ct('队列消息不能为空', 'Queued message cannot be empty')); return }
-    syncQueue(queuedRef.current.map(x => x.id === id ? { ...x, text } : x))
-    setQueueEditingId('')
-    setQueueDraft('')
-    setErr('')
-    setNotice(ct('队列消息已更新', 'Queued message updated'))
+    try {
+      await requestQueue('update', { id, message:{ ...item, text } })
+      setQueueEditingId('')
+      setQueueDraft('')
+      setErr('')
+      setNotice(ct('队列消息已更新', 'Queued message updated'))
+    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
   }
   const guideQueuedItem = (id) => {
     if (guidingQueueRef.current) return
@@ -5194,7 +5225,7 @@ export default function ChatApp() {
         return
       }
       if (guidedQueueId) {
-        syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId), { sessionId:id })
+        await refreshQueue(id)
         guidingQueueRef.current = ''
         setGuidingQueueId('')
       }
@@ -5236,6 +5267,13 @@ export default function ChatApp() {
         activeRunRef.current = false
         return
       }
+      // followChatStream only returns after a terminal server state. Release the
+      // local admission lock before the best-effort post-run reloads below, so a
+      // prompt sent as the final output settles starts immediately instead of
+      // being misclassified as queued while those requests are still pending.
+      activeRunRef.current = false
+      setBusy(false)
+      setStreamingSid('')
       if (id) {
         const refreshedSessions = await loadSessions(id).catch(()=>[])
         await openSession(id, false).catch(()=>{})
@@ -5272,11 +5310,7 @@ export default function ChatApp() {
         }
       }
       if (id && isActiveSession(id)) loadWorldline(id).catch(() => {})
-      // Queue execution is now handled by backend automatically
-      // No need to manually loop through queued messages
-      activeRunRef.current = false
-      setBusy(false)
-      setStreamingSid('')
+      // Queue execution is now handled by backend automatically.
     }
   }
 
@@ -5430,7 +5464,7 @@ export default function ChatApp() {
 
 
   const guideQueued = async (item = null) => {
-    const next = item || popQueued()
+    const next = item || queuedRef.current[0]
     if (!next) {
       guidingQueueRef.current = ''
       setGuidingQueueId('')
@@ -5465,7 +5499,7 @@ export default function ChatApp() {
           throw new Error(ct('引导消息未能开始执行', 'The guided message did not start'))
         }
         if (!isActiveSession(id)) return
-        syncQueue(queuedRef.current.filter(x => x.id !== next.id), { sessionId:id })
+        await refreshQueue(id)
         guidingQueueRef.current = ''
         setGuidingQueueId('')
         const guidedUser = {
@@ -5515,26 +5549,43 @@ export default function ChatApp() {
     const refreshList = async () => {
       if (stopped || inFlight || document.hidden) return
       inFlight = true
+      const activeQueueID = activeSidRef.current
+      const queueRefresh = activeQueueID ? refreshQueue(activeQueueID).catch(() => {}) : Promise.resolve()
       try {
         const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
-          setSessions(d.sessions || [])
+          const previous = sessionsRef.current
+          const next = Array.isArray(d.sessions) ? d.sessions : []
+          sessionsRef.current = next
+          setSessions(next)
           setProjects(Array.isArray(d.projects) ? d.projects : [])
           setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
+          const activeID = activeSidRef.current
+          const before = previous.find(item => item.id === activeID)
+          const after = next.find(item => item.id === activeID)
+          if (after?.running && !streamAbortRef.current && !activeRunRef.current) {
+            void attachRunningStream(activeID, { waitForRun:true })
+          } else if (shouldRefreshChatSnapshot(before, after)) {
+            void refreshActiveSessionSnapshot(activeID).catch(() => {})
+          }
         }
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
       } finally {
+        await queueRefresh
         inFlight = false
       }
     }
     const timer = window.setInterval(refreshList, 3000)
     const onVisible = () => { if (!document.hidden) refreshList() }
+    const onOnline = () => refreshList()
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
     return () => {
       stopped = true
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
     }
   }, [chatInstanceID])
 
@@ -5582,7 +5633,7 @@ export default function ChatApp() {
     setWorldlineOpen(false)
     setWorldlineState(null)
     setWorldlineLoading(false)
-    syncQueue([], { persist:false })
+    applyQueueSnapshot([])
     setQueueEditingId('')
     setQueueDraft('')
     guidingQueueRef.current = ''

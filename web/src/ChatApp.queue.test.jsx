@@ -4,11 +4,11 @@ import { describe, expect, test } from 'vitest'
 const source = readFileSync('src/ChatApp.jsx', 'utf8')
 
 describe('session-scoped guided-message queue wiring', () => {
-  test('clears stale queue immediately, then restores the selected session queue', () => {
+  test('clears stale queue immediately, then applies the selected session backend queue', () => {
     const openStart = source.indexOf('const openSession = async')
-    const clearQueue = source.indexOf("syncQueue([], { persist:false })", openStart)
+    const clearQueue = source.indexOf('applyQueueSnapshot([])', openStart)
     const fetchSession = source.indexOf('const d = await chatApi(`/api/chat/session/${id}`)', openStart)
-    const restoreQueue = source.indexOf("syncQueue(Array.isArray(d.queued_messages) ? d.queued_messages : [], { persist:false })", openStart)
+    const restoreQueue = source.indexOf('applyQueueSnapshot(d.queued_messages, d.id)', openStart)
     expect(openStart).toBeGreaterThan(-1)
     expect(clearQueue).toBeGreaterThan(openStart)
     expect(fetchSession).toBeGreaterThan(clearQueue)
@@ -19,14 +19,18 @@ describe('session-scoped guided-message queue wiring', () => {
     const switchStart = source.indexOf('const switchChatInstance =')
     const switchEnd = source.indexOf('\n  }', switchStart)
     const switchSource = source.slice(switchStart, switchEnd)
-    expect(switchSource).toContain("syncQueue([], { persist:false })")
+    expect(switchSource).toContain('applyQueueSnapshot([])')
     expect(switchSource).not.toContain('setQueuedMessages([])')
   })
 
-  test('serializes full queue snapshots to the session API', () => {
-    expect(source).toContain("`/api/chat/queue/${sessionId}`")
-    expect(source).toContain("queueWriteRef.current = queueWriteRef.current")
-    expect(source).toContain("body:JSON.stringify({ messages:snapshot })")
+  test('serializes atomic queue operations and applies backend responses', () => {
+    expect(source).toContain("method:'PATCH'")
+    expect(source).toContain('body:JSON.stringify({ op:operation, ...payload })')
+    expect(source).not.toContain('body:JSON.stringify({ operation, ...payload })')
+    expect(source).toContain('const d = await api(queueURL)')
+    expect(source).toContain('applyQueueSnapshot(d.queued_messages, sessionId)')
+    expect(source.match(/queueWriteRef\.current = request/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(source).not.toContain('body:JSON.stringify({ messages:snapshot })')
   })
 
   test('guiding attaches to the backend-started run for live updates', () => {
@@ -38,8 +42,8 @@ describe('session-scoped guided-message queue wiring', () => {
     const retryGuide = source.indexOf('guideResult = await chatApi(guideURL', cancel)
     const startedCheck = source.indexOf("if (guideResult?.status !== 'started')", retryGuide)
     const activeCheck = source.indexOf('if (!isActiveSession(id)) return', startedCheck)
-    const removeGuided = source.indexOf('syncQueue(queuedRef.current.filter(x => x.id !== next.id)', activeCheck)
-    const clearGuidingRef = source.indexOf("guidingQueueRef.current = ''", removeGuided)
+    const refreshGuided = source.indexOf('await refreshQueue(id)', activeCheck)
+    const clearGuidingRef = source.indexOf("guidingQueueRef.current = ''", refreshGuided)
     const clearGuidingState = source.indexOf("setGuidingQueueId('')", clearGuidingRef)
     const optimisticUser = source.indexOf('id:`guided-${next.id}`', clearGuidingState)
     const reconnect = source.indexOf('await attachRunningStream(id, { waitForRun:true })', optimisticUser)
@@ -54,8 +58,8 @@ describe('session-scoped guided-message queue wiring', () => {
     expect(retryGuide).toBeGreaterThan(cancel)
     expect(startedCheck).toBeGreaterThan(retryGuide)
     expect(activeCheck).toBeGreaterThan(startedCheck)
-    expect(removeGuided).toBeGreaterThan(activeCheck)
-    expect(clearGuidingRef).toBeGreaterThan(removeGuided)
+    expect(refreshGuided).toBeGreaterThan(activeCheck)
+    expect(clearGuidingRef).toBeGreaterThan(refreshGuided)
     expect(clearGuidingState).toBeGreaterThan(clearGuidingRef)
     expect(optimisticUser).toBeGreaterThan(clearGuidingState)
     expect(reconnect).toBeGreaterThan(optimisticUser)
@@ -78,12 +82,28 @@ describe('session-scoped guided-message queue wiring', () => {
     expect(activeCheck).toBeLessThan(cancelEnd)
   })
 
-  test('removes a guided item only after a send has an active session', () => {
+  test('releases local run admission before post-run session reloads', () => {
+    const runStart = source.indexOf('const runSend = async')
+    const terminalFinally = source.indexOf('if (runToken !== runSeqRef.current) return', runStart)
+    const releaseRun = source.indexOf('activeRunRef.current = false', terminalFinally)
+    const releaseBusy = source.indexOf('setBusy(false)', releaseRun)
+    const releaseStreaming = source.indexOf("setStreamingSid('')", releaseBusy)
+    const reloadSessions = source.indexOf('const refreshedSessions = await loadSessions(id)', terminalFinally)
+    const reloadSession = source.indexOf('await openSession(id, false)', reloadSessions)
+    expect(terminalFinally).toBeGreaterThan(runStart)
+    expect(releaseRun).toBeGreaterThan(terminalFinally)
+    expect(releaseBusy).toBeGreaterThan(releaseRun)
+    expect(releaseStreaming).toBeGreaterThan(releaseBusy)
+    expect(reloadSessions).toBeGreaterThan(releaseStreaming)
+    expect(reloadSession).toBeGreaterThan(reloadSessions)
+  })
+
+  test('refreshes the backend queue only after a guided send has an active session', () => {
     const runStart = source.indexOf('const runSend = async')
     const activeCheck = source.indexOf('} else if (!isActiveSession(id)) {', runStart)
-    const removeGuided = source.indexOf('syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId)', runStart)
+    const refreshGuided = source.indexOf('await refreshQueue(id)', activeCheck)
     expect(runStart).toBeGreaterThan(-1)
     expect(activeCheck).toBeGreaterThan(runStart)
-    expect(removeGuided).toBeGreaterThan(activeCheck)
+    expect(refreshGuided).toBeGreaterThan(activeCheck)
   })
 })

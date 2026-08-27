@@ -1,3 +1,11 @@
+export const shouldRefreshChatSnapshot = (previous = null, next = null) => {
+  if (!previous || !next || previous.id !== next.id) return false
+  if (Boolean(next.running)) return false
+  return Number(previous.count || 0) !== Number(next.count || 0)
+    || Number(previous.updated_at || 0) !== Number(next.updated_at || 0)
+    || Boolean(previous.running) !== Boolean(next.running)
+}
+
 export const isBTWCommand = (value) => /^\/btw(?:$|[ \t])/.test(String(value || '').trim())
 
 export const shouldFinishStreamFollow = ({ running, replay, completed, eventCount }) => (
