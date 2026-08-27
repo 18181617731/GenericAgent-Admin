@@ -7,7 +7,7 @@ import { SettingFooter, SettingNote, SettingRow, SettingToggle, SettingsPage, Se
 
 // Fields that belong to the config file this page edits. Everything else in the
 // config object is owned by the backend and must survive a save untouched.
-const CONFIG_FIELDS = ['ga_root', 'python_path', 'chat_data_dir', 'proxy_mode', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'remote_access', 'remote_allow_anonymous', 'port']
+const CONFIG_FIELDS = ['ga_root', 'python_path', 'chat_data_dir', 'proxy_mode', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'github_mirror', 'remote_access', 'remote_allow_anonymous', 'port']
 
 export const configDirty = (draft, saved) => {
   if (!draft || !saved) return false
@@ -190,6 +190,15 @@ export function GeneralPage({
           <input id="settings-no-proxy" value={cfg?.no_proxy || ''} onChange={e=>patch('no_proxy', e.target.value)} placeholder="localhost,127.0.0.1"/>
         </SettingRow>
       </>}
+      <SettingRow label={text.network.githubMirror} hint={text.network.githubMirrorHelp} htmlFor="settings-github-mirror" stacked>
+        <input
+          id="settings-github-mirror"
+          type="url"
+          value={cfg?.github_mirror || ''}
+          onChange={e=>patch('github_mirror', e.target.value)}
+          placeholder={text.network.githubMirrorPlaceholder}
+        />
+      </SettingRow>
       <SettingFooter>
         <SettingNote tone="muted" icon={<ShieldAlert size={14}/>}>{text.confirmNote}</SettingNote>
         <span className={`set-dirty ${dirty ? 'is-dirty' : ''}`}>{dirty ? text.unsaved : text.saved}</span>

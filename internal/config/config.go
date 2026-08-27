@@ -88,6 +88,7 @@ type AppConfig struct {
 	ServiceModels            map[string]int            `json:"service_models,omitempty"`
 	ChatTitleModel           *ChatTitleModelRef        `json:"chat_title_model,omitempty"`
 	UpdateRepoURL            string                    `json:"update_repo_url"`
+	GitHubMirror             string                    `json:"github_mirror"`
 	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
 	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
 	// ChatDefaultLLMNo is the llm_no seeded into freshly created chat sessions.
@@ -305,6 +306,9 @@ func Validate(cfg AppConfig) error {
 			return fmt.Errorf("effective_python is a directory")
 		}
 	}
+	if err := validateHTTPURL("github_mirror", cfg.GitHubMirror); err != nil {
+		return err
+	}
 	switch strings.TrimSpace(cfg.ProxyMode) {
 	case "", "off", "system":
 	case "custom":
@@ -315,6 +319,21 @@ func Validate(cfg AppConfig) error {
 		}
 	default:
 		return fmt.Errorf("proxy_mode must be off, system, or custom")
+	}
+	return nil
+}
+
+func validateHTTPURL(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("%s must be a valid HTTP(S) URL", name)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%s must not contain a query or fragment", name)
 	}
 	return nil
 }

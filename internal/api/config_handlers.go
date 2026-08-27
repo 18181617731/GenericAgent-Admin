@@ -22,6 +22,7 @@ import (
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/ga"
 	"genericagent-admin-go/internal/pyfind"
+	"genericagent-admin-go/internal/version"
 )
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +46,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
+		version.SetGitHubMirror(s.CfgStore.Snapshot().GitHubMirror)
 		writeJSON(w, s.CfgStore.Snapshot())
 		return
 	}

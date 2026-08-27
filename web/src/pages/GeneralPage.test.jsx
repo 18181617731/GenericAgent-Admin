@@ -59,6 +59,22 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('GeneralPage update mirror', () => {
+  it('edits the GitHub mirror and includes it in the saved config', async () => {
+    mockBackend()
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(<Harness onSave={onSave} />)
+
+    const input = screen.getByLabelText('GitHub mirror')
+    await user.type(input, 'https://mirror.example')
+    await user.click(screen.getAllByRole('button', { name: /save changes/i })[0])
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave.mock.calls[0][0].github_mirror).toBe('https://mirror.example')
+  })
+})
+
 describe('GeneralPage remote access', () => {
   it('shows the real listen address instead of the configured port', async () => {
     mockBackend()

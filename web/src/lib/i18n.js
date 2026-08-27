@@ -163,8 +163,8 @@ export const SETTINGS_TEXT = {
       dataHelp: '留空时使用默认目录；可指定独立的 Chat 会话存储位置。',
     },
     network: {
-      title: '网络代理',
-      desc: '仅影响 Chat Python 子进程，不会更改系统全局代理。',
+      title: '网络与更新',
+      desc: '配置 Chat Python 代理以及 GA Admin 更新下载加速。',
       mode: '代理模式',
       off: '关闭',
       system: '跟随系统',
@@ -172,6 +172,9 @@ export const SETTINGS_TEXT = {
       offHelp: 'Chat Python 直接连接网络。',
       systemHelp: '继承当前系统与进程环境中的代理配置。',
       customHelp: '使用下方环境变量启动 Chat Python。',
+      githubMirror: 'GitHub 镜像源',
+      githubMirrorHelp: '可选的 HTTP(S) 镜像前缀，仅用于 GA Admin 更新包和校验文件。例如，配置 https://mirror.example 后会请求 https://mirror.example/https://github.com/...；留空则直连 GitHub。保存后立即生效。',
+      githubMirrorPlaceholder: '例如 https://mirror.example',
     },
     remote: {
       title: '远程访问',
@@ -257,8 +260,8 @@ export const SETTINGS_TEXT = {
       dataHelp: 'Leave blank for the default location, or use a dedicated Chat data directory.',
     },
     network: {
-      title: 'Network proxy',
-      desc: 'Applies only to Chat Python subprocesses and never changes the system proxy.',
+      title: 'Network and updates',
+      desc: 'Configure the Chat Python proxy and accelerated GA Admin update downloads.',
       mode: 'Proxy mode',
       off: 'Off',
       system: 'Use system',
@@ -266,6 +269,9 @@ export const SETTINGS_TEXT = {
       offHelp: 'Chat Python connects directly.',
       systemHelp: 'Inherit proxy settings from the current system and process environment.',
       customHelp: 'Launch Chat Python with the environment variables below.',
+      githubMirror: 'GitHub mirror',
+      githubMirrorHelp: 'Optional HTTP(S) mirror prefix for GA Admin update packages and checksum files only. For example, https://mirror.example requests https://mirror.example/https://github.com/.... Leave blank to connect to GitHub directly. Takes effect immediately after saving.',
+      githubMirrorPlaceholder: 'For example, https://mirror.example',
     },
     remote: {
       title: 'Remote access',

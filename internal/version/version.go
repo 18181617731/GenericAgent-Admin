@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,11 +30,39 @@ var (
 
 var repoLatestURL = "https://api.github.com/repos/Fwind43/GenericAgent-Admin/releases/latest"
 
+var (
+	githubMirrorMu sync.RWMutex
+	githubMirror   string
+)
+
 // SetRepoURL overrides the default update repo URL (e.g. from config.local.json).
 func SetRepoURL(url string) {
 	if url != "" {
 		repoLatestURL = url
 	}
+}
+
+// SetGitHubMirror configures an optional HTTP(S) prefix for GitHub release
+// asset downloads. For example, https://mirror.example turns a release URL
+// into https://mirror.example/https://github.com/owner/repo/releases/....
+func SetGitHubMirror(rawURL string) {
+	githubMirrorMu.Lock()
+	githubMirror = strings.TrimRight(strings.TrimSpace(rawURL), "/")
+	githubMirrorMu.Unlock()
+}
+
+func resolveDownloadURL(rawURL string) string {
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil || !strings.EqualFold(parsed.Hostname(), "github.com") {
+		return rawURL
+	}
+	githubMirrorMu.RLock()
+	mirror := githubMirror
+	githubMirrorMu.RUnlock()
+	if mirror == "" {
+		return rawURL
+	}
+	return mirror + "/" + rawURL
 }
 
 const updateResponseHeaderTimeout = 15 * time.Second
@@ -1194,8 +1223,9 @@ func splitVer(s string) [3]int {
 }
 
 func download(ctx context.Context, url, dest string, maxBytes int64) (err error) {
-	err = retryHTTPRequest(ctx, "download "+url, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	downloadURL := resolveDownloadURL(url)
+	err = retryHTTPRequest(ctx, "download "+downloadURL, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 		if err != nil {
 			return fmt.Errorf("create download request: %w", err)
 		}

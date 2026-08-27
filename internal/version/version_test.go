@@ -20,6 +20,28 @@ import (
 	"time"
 )
 
+func TestResolveDownloadURLWithGitHubMirror(t *testing.T) {
+	SetGitHubMirror("https://mirror.example/base/")
+	t.Cleanup(func() { SetGitHubMirror("") })
+
+	const githubURL = "https://github.com/owner/repo/releases/download/v1/app.zip"
+	if got, want := resolveDownloadURL(githubURL), "https://mirror.example/base/"+githubURL; got != want {
+		t.Fatalf("resolveDownloadURL() = %q, want %q", got, want)
+	}
+	const externalURL = "https://objects.example/app.zip"
+	if got := resolveDownloadURL(externalURL); got != externalURL {
+		t.Fatalf("non-GitHub URL was rewritten: %q", got)
+	}
+}
+
+func TestResolveDownloadURLWithoutMirror(t *testing.T) {
+	SetGitHubMirror("")
+	const rawURL = "https://github.com/owner/repo/releases/download/v1/app.zip"
+	if got := resolveDownloadURL(rawURL); got != rawURL {
+		t.Fatalf("resolveDownloadURL() = %q, want original URL", got)
+	}
+}
+
 func TestNewer(t *testing.T) {
 	cases := []struct {
 		current string
