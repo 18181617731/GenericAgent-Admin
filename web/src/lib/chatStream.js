@@ -37,14 +37,21 @@ export const scrollFollowAction = ({
   return 'preserve'
 }
 
-export const mergeStreamUserMessage = (messages = [], message = null, clientUserID = '') => {
+export const mergeStreamUserMessage = (messages = [], message = null, clientUserID = '', pendingAssistantID = '') => {
   const current = Array.isArray(messages) ? messages : []
   if (!message || typeof message !== 'object') return current
   const optimisticIndex = clientUserID ? current.findIndex(item => item?.id === clientUserID) : -1
   if (optimisticIndex >= 0) {
     return current.map((item, index) => index === optimisticIndex ? message : item)
   }
-  return message.id && current.some(item => item?.id === message.id) ? current : [...current, message]
+  if (message.id && current.some(item => item?.id === message.id)) return current
+  const pendingIndex = pendingAssistantID
+    ? current.findIndex(item => item?.id === pendingAssistantID && item?.role === 'assistant')
+    : -1
+  if (pendingIndex >= 0) {
+    return [...current.slice(0, pendingIndex), message, ...current.slice(pendingIndex)]
+  }
+  return [...current, message]
 }
 
 export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {

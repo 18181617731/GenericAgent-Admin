@@ -4043,7 +4043,7 @@ export default function ChatApp() {
     }
     if (ev.type === 'user' && ev.message) {
       setMessages(xs => isActiveSession(sessionId)
-        ? mergeStreamUserMessage(xs, ev.message, clientUserID)
+        ? mergeStreamUserMessage(xs, ev.message, clientUserID, pendingId)
         : xs)
     }
     if (ev.type === 'start' && ev.run_started_at_ms > 0) {

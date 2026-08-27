@@ -265,6 +265,18 @@ test('streamed user appends when a stale client id belongs to the previous run',
   ])
 })
 
+test('streamed user inserts before the assistant placeholder for its backend-started run', () => {
+  const authoritative = { id:'user-1', role:'user', content:'auto dequeued' }
+  assert.deepEqual(mergeStreamUserMessage([
+    { id:'assistant-0', role:'assistant', content:'prior output' },
+    { id:'assistant-1', role:'assistant', content:'' },
+  ], authoritative, '', 'assistant-1'), [
+    { id:'assistant-0', role:'assistant', content:'prior output' },
+    authoritative,
+    { id:'assistant-1', role:'assistant', content:'' },
+  ])
+})
+
 test('streamed user replay is idempotent by authoritative message id', () => {
   const authoritative = { id:'user-1', role:'user', content:'auto dequeued' }
   const current = [authoritative]
