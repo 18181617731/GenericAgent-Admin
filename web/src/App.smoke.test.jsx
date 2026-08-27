@@ -13,6 +13,7 @@ import { draftChangeSummary } from './lib/modelsEditor.js'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { DEFAULT_THEME_ID, getTheme, THEMES } from './themes'
 import { UsagePage } from './pages/UsagePage.jsx'
+import { registerDialogAdapter } from './lib/danger.js'
 
 // D2: deterministic GSAP stub — real tweens run on rAF timers and made the
 // Models call list assertions flaky in CI (targets mid-animation).
@@ -108,7 +109,18 @@ const reflectService = {
   command: ['agentmain', '--reflect'],
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   window.localStorage.clear()
   vi.restoreAllMocks()
@@ -1577,7 +1589,7 @@ describe('operator shell feedback', () => {
   test('service actions stay local to one card and expose failure recovery', async () => {
     installBrowserPolyfills()
     window.history.replaceState({}, '', '/channels')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const services = [
       { name: 'alpha-ui', kind: 'frontend', running: false, autostart: false },
       { name: 'beta-ui', kind: 'frontend', running: false, autostart: false },

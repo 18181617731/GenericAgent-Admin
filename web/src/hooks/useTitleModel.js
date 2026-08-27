@@ -69,7 +69,7 @@ export function useTitleModel({ t, lang, setMsg, active, fallbackProfiles = [] }
         ? { enable: true, provider_var_name: '', model: '', llm_no: 0 }
         : { enable: true, provider_var_name: rows[rowIndex].providerVarName, model: rows[rowIndex].model, llm_no: rowIndex }
     }
-    if (!confirmDanger('models-title-model', lang === 'zh' ? '保存独立的对话标题模型设置？' : 'Save the independent chat title model setting?')) return false
+    if (!await confirmDanger('models-title-model', lang === 'zh' ? '保存独立的对话标题模型设置？' : 'Save the independent chat title model setting?')) return false
     setSaving(true)
     try {
       const data = await api('/api/models/title-model', { dangerous: true, method: 'PUT', body: JSON.stringify({ model: selected }) })

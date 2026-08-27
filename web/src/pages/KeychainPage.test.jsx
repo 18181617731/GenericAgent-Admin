@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { KeychainPage } from './KeychainPage'
 import { SETTINGS_TEXT } from '../lib/i18n'
+import { registerDialogAdapter } from '../lib/danger'
 
 const reply = payload => Promise.resolve({
   ok: true,
@@ -26,7 +27,18 @@ const setup = (initial = ['ALPHA_KEY', 'BETA_KEY']) => {
   return calls
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   vi.restoreAllMocks()
 })
@@ -42,7 +54,7 @@ describe('KeychainPage', () => {
 
   it('writes a key with dangerous confirmation and clears the secret input', async () => {
     const calls = setup([])
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
 
     await screen.findByText('No keys saved')
@@ -61,7 +73,7 @@ describe('KeychainPage', () => {
 
   it('deletes by name with dangerous confirmation', async () => {
     const calls = setup(['REMOVE_ME'])
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
 
     await screen.findByText('REMOVE_ME')

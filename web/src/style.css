@@ -7,6 +7,60 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+.app-dialog .ant-modal-content {
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  box-shadow: 0 24px 70px rgba(15, 13, 8, .18);
+}
+
+.app-dialog .ant-modal-header,
+.app-dialog .ant-modal-content {
+  background: var(--surface-strong);
+}
+
+.app-dialog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--strong);
+}
+
+.app-dialog-confirm .app-dialog-title svg { color: var(--warning); }
+.app-dialog-alert .app-dialog-title svg { color: var(--info); }
+
+.app-dialog-body {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0 2px;
+}
+
+.app-dialog-body p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.app-dialog-operation {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font: 600 11px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.app-dialog-cancel-hidden { display: none; }
+
+@media (max-width: 560px) {
+  .app-dialog { max-width: calc(100vw - 24px); }
+  .app-dialog .ant-modal-content { padding: 18px; }
+}
+
 :root,
 html[data-theme="warm"] {
   --bg: #FEFCF7;

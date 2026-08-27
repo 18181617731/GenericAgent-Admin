@@ -31,7 +31,7 @@ export function useServices({ t, setMsg, setBusy }) {
   }
 
   const serviceAction = async (name, action, params = null) => {
-    if (!confirmDanger(`service-${action}`, t.service.confirmAction(action, name))) return false
+    if (!await confirmDanger(`service-${action}`, t.service.confirmAction(action, name))) return false
     setActionStates(current => ({ ...current, [name]: { status: 'pending', action, message: t.service.pending(action, name) } }))
     try {
       const body = { name }
@@ -47,7 +47,7 @@ export function useServices({ t, setMsg, setBusy }) {
   }
 
   const toggleAutostart = async (name, enabled) => {
-    if (!confirmDanger('service-autostart', t.service.autostartConfirm(name, enabled))) return
+    if (!await confirmDanger('service-autostart', t.service.autostartConfirm(name, enabled))) return
     setBusy(true)
     try {
       const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) })
@@ -57,7 +57,7 @@ export function useServices({ t, setMsg, setBusy }) {
   }
 
   const setServiceModel = async (name, llm_no) => {
-    if (!confirmDanger('service-model', t.service.modelConfirm(name))) return
+    if (!await confirmDanger('service-model', t.service.modelConfirm(name))) return
     setBusy(true)
     try {
       const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify({ name, llm_no }) })

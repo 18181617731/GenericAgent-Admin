@@ -36,7 +36,7 @@ export function useSchedule({ t, lang, setMsg, setBusy, onOpenSection }) {
   }
 
   const toggleTask = async (id, enabled) => {
-    if (!confirmDanger('schedule-toggle', lang === 'zh' ? `${enabled ? '启用' : '停用'}计划任务 ${id}？` : `${enabled ? 'Enable' : 'Disable'} scheduled task ${id}?`)) return
+    if (!await confirmDanger('schedule-toggle', lang === 'zh' ? `${enabled ? '启用' : '停用'}计划任务 ${id}？` : `${enabled ? 'Enable' : 'Disable'} scheduled task ${id}?`)) return
     setBusy(true)
     try {
       await api('/api/schedule/toggle', { dangerous:true, method:'POST', body: JSON.stringify({ id, enabled }) })
@@ -57,7 +57,7 @@ export function useSchedule({ t, lang, setMsg, setBusy, onOpenSection }) {
 
   const saveTask = async () => {
     const id = taskId || newTaskId
-    if (!confirmDanger('schedule-save', lang === 'zh' ? `保存定时任务 ${id}？后端会写入 JSON 并生成备份。` : `Save scheduled task ${id}? The backend writes JSON and creates a backup.`)) return
+    if (!await confirmDanger('schedule-save', lang === 'zh' ? `保存定时任务 ${id}？后端会写入 JSON 并生成备份。` : `Save scheduled task ${id}? The backend writes JSON and creates a backup.`)) return
     setBusy(true)
     try {
       let raw = JSON.parse(editor)
@@ -77,7 +77,7 @@ export function useSchedule({ t, lang, setMsg, setBusy, onOpenSection }) {
   const createTask = async () => {
     const id = newTaskId.trim()
     if (!id) { setMsg('Schedule task id is required'); return }
-    if (!confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return
+    if (!await confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return
     setBusy(true)
     try {
       const payload = buildScheduleCreateRequest(id, DEFAULT_SCHEDULE_TASK)
@@ -93,7 +93,7 @@ export function useSchedule({ t, lang, setMsg, setBusy, onOpenSection }) {
 
   const deleteTask = async () => {
     if (!taskId) return
-    if (!confirmDanger('schedule-delete', lang === 'zh' ? `删除定时任务 ${taskId}？后端会先生成备份。` : `Delete scheduled task ${taskId}? The backend creates a backup first.`)) return
+    if (!await confirmDanger('schedule-delete', lang === 'zh' ? `删除定时任务 ${taskId}？后端会先生成备份。` : `Delete scheduled task ${taskId}? The backend creates a backup first.`)) return
     setBusy(true)
     try {
       await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: taskId }) })

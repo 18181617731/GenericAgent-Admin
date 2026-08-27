@@ -49,6 +49,7 @@ import {
   providerVarNameOnProtocolChange,
 } from '../lib/modelsProvider'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'
+import { confirmDanger, showAppAlert } from '../lib/danger'
 
 const DEFAULT_PROTOCOL = 'native_oai'
 const OFFICIAL_PROTOCOLS = [
@@ -837,10 +838,10 @@ export function Models({
     appendRows(profiles.map((item, index) => index === profileIndex ? next : item), failoverGroups)
   }
 
-  const removeModel = row => {
+  const removeModel = async row => {
     const profile = profiles[row.profileIndex]
     const config = profileModelConfigs(profile || {})[row.configIndex]
-    if (!window.confirm(text.removeModelConfirm(config?.model || row.variableName))) return
+    if (!await confirmDanger('model-remove', text.removeModelConfirm(config?.model || row.variableName))) return
     const key = memberKeyOf({ provider_var_name: profile?.var_name, model: config?.model })
     setFailoverGroups(groups => groups.map(group => ({
       ...group,
@@ -858,8 +859,8 @@ export function Models({
   const patchGroup = (groupIndex, patch) => setFailoverGroups(current => current.map(
     (group, index) => index === groupIndex ? { ...group, ...patch } : group,
   ))
-  const removeGroup = groupIndex => {
-    if (!window.confirm(text.removeGroupConfirm(failoverGroups[groupIndex]?.var_name || ''))) return
+  const removeGroup = async groupIndex => {
+    if (!await confirmDanger('model-failover-group-remove', text.removeGroupConfirm(failoverGroups[groupIndex]?.var_name || ''))) return
     setFailoverGroups(current => current.filter((_, index) => index !== groupIndex))
   }
   const toggleMember = (groupIndex, candidate) => {
@@ -906,9 +907,9 @@ export function Models({
     })
     setProviderDrawer({ mode: 'create' })
   }
-  const createProvider = () => {
+  const createProvider = async () => {
     if (!String(providerDraft?.display_name || '').trim() || !String(providerDraft?.apibase || '').trim()) {
-      window.alert(text.providerFormIncomplete)
+      await showAppAlert(text.providerFormIncomplete, { operation: 'model-provider-create' })
       return
     }
     addModelProfiles([{ ...providerDraft, apibase: providerDraft.apibase.trim() }])
@@ -916,10 +917,10 @@ export function Models({
     // A provider only matters once it has models, so keep the flow going.
     setAddModelIndex(profiles.length)
   }
-  const removeProvider = index => {
+  const removeProvider = async index => {
     const profile = profiles[index]
     const name = providerName(profile) || text.provider(index + 1)
-    if (!window.confirm(text.deleteConfirm(name, profileModels(profile).length))) return
+    if (!await confirmDanger('model-provider-remove', text.deleteConfirm(name, profileModels(profile).length))) return
     setFailoverGroups(groups => groups.map(group => ({
       ...group,
       members: (group.members || []).filter(member => member.provider_var_name !== profile?.var_name),
@@ -983,7 +984,7 @@ export function Models({
           <Button
             icon={<RotateCcw size={14} />}
             disabled={!changes.total || saving}
-            onClick={() => { if (changes.total && window.confirm(text.discardConfirm)) discardDraft() }}
+            onClick={async () => { if (changes.total && await confirmDanger('models-discard', text.discardConfirm)) discardDraft() }}
           >
             {text.discard}
           </Button>

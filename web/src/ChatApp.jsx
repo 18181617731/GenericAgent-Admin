@@ -17,7 +17,7 @@ import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persi
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
-import { confirmDanger } from './lib/danger'
+import { confirmDanger, showAppAlert } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseStructuredContent } from './lib/structuredContent'
@@ -457,11 +457,11 @@ function FileAttachment({ path }) {
   const isImage = kind === 'image'
   const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
   const open = async (mode) => {
-    if (!confirmDanger('chat-file-open', ct(`使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`, `Open ${mode === 'folder' ? 'the containing folder' : 'this file'} in the desktop system: ${clean}?`))) return
+    if (!await confirmDanger('chat-file-open', ct(`使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`, `Open ${mode === 'folder' ? 'the containing folder' : 'this file'} in the desktop system: ${clean}?`))) return
     try {
       await api('/api/files/open', { dangerous:true, method:'POST', body: JSON.stringify({ path: clean, mode }) })
     } catch (e) {
-      alert(ct(`打开失败：${e?.message || e}`, `Open failed: ${e?.message || e}`))
+      await showAppAlert(ct(`\u6253\u5f00\u5931\u8d25\uff1a${e?.message || e}`, `Open failed: ${e?.message || e}`), { operation: 'chat-file-open' })
     }
   }
   return <span className={`oa-file-card oa-file-kind-${kind}`} title={clean}>
@@ -3925,7 +3925,7 @@ export default function ChatApp() {
     if (!cmdManagerOpen) setCmdEditIdx(-1)
   }, [cmdManagerOpen])
   const saveSlashCmds = async (newCmds) => {
-    if (!confirmDanger('chat-slash-commands-save', ct('保存斜杠命令配置？会写入 GA Admin 配置文件。', 'Save slash-command configuration? This writes the GA Admin configuration file.'))) return
+    if (!await confirmDanger('chat-slash-commands-save', ct('保存斜杠命令配置？会写入 GA Admin 配置文件。', 'Save slash-command configuration? This writes the GA Admin configuration file.'))) return
     try {
       const safeCmds = (newCmds || [])
         .filter(c => !isProtectedSlashCommand(c?.cmd))
@@ -4634,7 +4634,7 @@ export default function ChatApp() {
   }
 
   const deleteSession = async (id) => {
-    if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
+    if (!id || !await confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
     await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
     clearSessionDrafts(id)
     setSessions(xs => xs.filter(x => x.id !== id))
@@ -4687,7 +4687,7 @@ export default function ChatApp() {
     if (batchDeleting) return
     const available = new Set(sessions.map(session => session.id))
     const ids = normalizeSessionIds(selectedSessionIds).filter(id => available.has(id))
-    if (!ids.length || !confirmDanger('chat-session-batch-delete', ct(`永久删除已选的 ${ids.length} 个会话？此操作不可恢复。`, `Permanently delete ${ids.length} selected sessions? This cannot be undone.`))) return
+    if (!ids.length || !await confirmDanger('chat-session-batch-delete', ct(`永久删除已选的 ${ids.length} 个会话？此操作不可恢复。`, `Permanently delete ${ids.length} selected sessions? This cannot be undone.`))) return
 
     setBatchDeleting(true)
     setErr('')
@@ -4834,7 +4834,7 @@ export default function ChatApp() {
   const installChatPythonDeps = async () => {
     const packages = (modelDiagnosis?.install_packages || []).join(' ')
     if (!modelDiagnosis?.fixable || !packages) return
-    if (!confirmDanger('chat-python-install-deps', ct(`为 ${modelDiagnosis.python} 安装缺失依赖：${packages}？将执行 pip install。`, `Install missing dependencies into ${modelDiagnosis.python}: ${packages}? This runs pip install.`))) return
+    if (!await confirmDanger('chat-python-install-deps', ct(`为 ${modelDiagnosis.python} 安装缺失依赖：${packages}？将执行 pip install。`, `Install missing dependencies into ${modelDiagnosis.python}: ${packages}? This runs pip install.`))) return
     setDepsRepairing(true)
     setErr('')
     setNotice(ct('正在安装依赖，首次安装可能需要一两分钟…', 'Installing dependencies; the first run can take a minute or two…'))
@@ -4945,7 +4945,7 @@ export default function ChatApp() {
       setErr(ct('每个预设都需要名称和提示内容', 'Every preset needs a name and prompt content'))
       return
     }
-    if (!confirmDanger('chat-extra-system-prompt-presets-save', ct(`保存 ${next.length} 个全局系统提示预设？这会写入 GA Admin 配置文件。`, `Save ${next.length} global system-prompt presets? This writes the GA Admin configuration file.`))) return
+    if (!await confirmDanger('chat-extra-system-prompt-presets-save', ct(`保存 ${next.length} 个全局系统提示预设？这会写入 GA Admin 配置文件。`, `Save ${next.length} global system-prompt presets? This writes the GA Admin configuration file.`))) return
     setExtraPromptSaving(true)
     try {
       const d = await api('/api/extra-system-prompt-presets', {

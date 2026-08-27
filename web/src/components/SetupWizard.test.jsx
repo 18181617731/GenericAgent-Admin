@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SetupWizard from './SetupWizard.jsx'
 import { SETUP_TEXT } from '../lib/i18n.js'
+import { registerDialogAdapter } from '../lib/danger.js'
 
 const copy = SETUP_TEXT.en
 
@@ -83,7 +84,18 @@ const renderWizard = (props = {}) => {
 
 const button = (name) => screen.getByRole('button', { name })
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   vi.restoreAllMocks()
   window.localStorage.clear()
@@ -155,7 +167,7 @@ describe('first-run wizard step model', () => {
   it('keeps a previously verified interpreter across a remount', async () => {
     const state = readyState({ venv: { ok: false, path: 'C:/ga/.venv' } })
     mockBackend({ state, routes: { '/api/setup/smoke': { ok: true, root: 'C:/ga', python: 'C:/py/python.exe' } } })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
 
     renderWizard()
     await waitFor(() => expect(button(copy.runtime.smoke).disabled).toBe(false))
@@ -174,7 +186,7 @@ describe('first-run wizard step model', () => {
       state: readyState({ venv: { ok: false, path: 'C:/ga/.venv' } }),
       routes: { '/api/setup/smoke': () => reply({ error: 'interpreter exploded' }, false) },
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     renderWizard()
     await waitFor(() => expect(button(copy.runtime.smoke).disabled).toBe(false))
     await userEvent.click(button(copy.runtime.smoke))
@@ -191,7 +203,7 @@ describe('first-run wizard actions', () => {
       routes: { '/api/setup/validate': { ok: true, root: 'C:/ga', health: { ok: true } } },
       onCall: (path, options) => calls.push([path, options]),
     })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirm = mockDialog()
     renderWizard()
 
     await waitFor(() => expect(screen.getByPlaceholderText(copy.root.existingPlaceholder)).toBeTruthy())
@@ -199,7 +211,7 @@ describe('first-run wizard actions', () => {
     await userEvent.click(button(copy.root.validate))
 
     await waitFor(() => expect(calls.some(([path]) => path.includes('/api/setup/validate'))).toBe(true))
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('C:/ga'))
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ operation: 'setup-validate', message: expect.stringContaining('C:/ga') }))
     const [, options] = calls.find(([path]) => path.includes('/api/setup/validate'))
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
     expect(options.method).toBe('POST')
@@ -213,7 +225,7 @@ describe('first-run wizard actions', () => {
       routes: { '/api/setup/python/validate': { ok: true, python, version } },
       onCall: (path, options) => calls.push([path, options]),
     })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirm = mockDialog()
     renderWizard()
 
     const input = await screen.findByPlaceholderText(copy.env.pythonPathPlaceholder)
@@ -222,7 +234,7 @@ describe('first-run wizard actions', () => {
     await userEvent.click(button(copy.env.usePythonPath))
 
     await waitFor(() => expect(calls.some(([path]) => path.includes('/api/setup/python/validate'))).toBe(true))
-    expect(confirm).toHaveBeenCalledWith(`[setup-python-validate] ${copy.confirm.pythonPath(python)}`)
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ operation: 'setup-python-validate', message: copy.confirm.pythonPath(python) }))
     const [, options] = calls.find(([path]) => path.includes('/api/setup/python/validate'))
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
     expect(options.method).toBe('POST')
@@ -233,7 +245,7 @@ describe('first-run wizard actions', () => {
   it('does not call the backend when the confirmation is declined', async () => {
     const calls = []
     mockBackend({ onCall: (path) => calls.push(path) })
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    mockDialog(false)
     renderWizard()
 
     await waitFor(() => expect(button(copy.runtime.createVenv).disabled).toBe(false))
@@ -302,7 +314,7 @@ describe('first-run wizard actions', () => {
         }),
       },
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     renderWizard()
 
     await waitFor(() => expect(button(copy.runtime.installDeps).disabled).toBe(false))
@@ -319,7 +331,7 @@ describe('first-run wizard actions', () => {
     mockBackend({
       routes: { '/api/setup/complete': { ok: true, root: 'C:/ga', config: { ga_root: 'C:/ga' } } },
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     renderWizard({ onComplete })
 
     await waitFor(() => expect(button(copy.runtime.finish).disabled).toBe(false))

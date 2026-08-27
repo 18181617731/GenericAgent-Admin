@@ -31,7 +31,7 @@ export function KeychainPage({ text }) {
       setStatus({ kind: 'error', message: copy.invalid })
       return
     }
-    if (!confirmDanger('keychain-write', copy.confirmAdd(cleanName))) return
+    if (!await confirmDanger('keychain-write', copy.confirmAdd(cleanName))) return
     setBusy(true)
     setStatus(null)
     try {
@@ -48,7 +48,7 @@ export function KeychainPage({ text }) {
   }
 
   const remove = async (keyName) => {
-    if (!confirmDanger('keychain-delete', copy.confirmRemove(keyName))) return
+    if (!await confirmDanger('keychain-delete', copy.confirmRemove(keyName))) return
     setBusy(true)
     setStatus(null)
     try {

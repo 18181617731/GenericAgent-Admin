@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import InstancesPage from './InstancesPage'
+import { registerDialogAdapter } from '../lib/danger'
 
 const reply = (payload, ok = true) => Promise.resolve({
   ok,
@@ -16,7 +17,18 @@ const initialPayload = {
   items: [{ id: 'primary', name: 'Primary', ga_root: 'C:/ga', python_path: '', effective_python: 'C:/Python/python.exe' }],
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   vi.restoreAllMocks()
 })
@@ -51,7 +63,7 @@ describe('InstancesPage', () => {
       instance: { id: 'uploaded', name: 'uploaded', ga_root: 'C:/admin/uploaded', init_status: 'initializing' },
     }
     globalThis.fetch = vi.fn(url => url === '/api/instances/install' ? reply(installed) : reply(initialPayload))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 
@@ -96,7 +108,7 @@ describe('InstancesPage', () => {
       listCalls += 1
       return reply(listCalls === 1 ? initialPayload : ready)
     })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirmSpy = mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 
@@ -108,7 +120,7 @@ describe('InstancesPage', () => {
     await user.type(screen.getByLabelText('Instance ID'), 'genericagent')
     await user.click(screen.getByRole('button', { name: 'Start creating' }))
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('[install_instance]'))
+    expect(confirmSpy).toHaveBeenCalledWith(expect.objectContaining({ operation: 'install_instance' }))
     const [url, options] = globalThis.fetch.mock.calls[1]
     expect(url).toBe('/api/instances/install')
     expect(options.method).toBe('POST')
@@ -138,7 +150,7 @@ describe('InstancesPage', () => {
   it('defaults to the persistent template when one is available', async () => {
     const payload = { ...initialPayload, template_available: true }
     globalThis.fetch = vi.fn(() => reply(payload))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 
@@ -201,7 +213,7 @@ describe('InstancesPage', () => {
       items: [...initialPayload.items, { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', effective_python: 'python' }],
     }
     globalThis.fetch = vi.fn((url) => url === '/api/instances' ? reply(initialPayload) : reply(created))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 
@@ -234,7 +246,7 @@ describe('InstancesPage', () => {
       items: [{ ...initialPayload.items[0], name: 'Primary updated', python_path: 'C:/Python/python.exe' }],
     }
     globalThis.fetch = vi.fn((url) => url === '/api/instances' ? reply(initialPayload) : reply(updated))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 
@@ -280,7 +292,7 @@ describe('InstancesPage', () => {
   it('uses an in-page confirmation and cancels without deleting', async () => {
     const secondary = { id: 'secondary', name: 'Secondary', ga_root: 'D:/ga', python_path: '', effective_python: 'python' }
     globalThis.fetch = vi.fn(() => reply({ ...initialPayload, items: [...initialPayload.items, secondary] }))
-    const confirmSpy = vi.spyOn(window, 'confirm')
+    const confirmSpy = mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 
@@ -305,7 +317,7 @@ describe('InstancesPage', () => {
       if (url === '/api/instances/default') return reply(secondaryDefault)
       return reply(secondaryOnly)
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
 

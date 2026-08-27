@@ -47,7 +47,7 @@ function RemoteAccessSection({ text, t, cfg, patch, dirty, onSave, busy }) {
     setNote(null)
     if (newPassword !== confirmPassword) { setNote({ tone: 'warn', message: text.remote.passwordMismatch }); return }
     if (newPassword.length < MIN_PASSWORD_LENGTH) { setNote({ tone: 'warn', message: text.remote.passwordTooShort }); return }
-    if (!confirmDanger('auth-password', text.remote.confirmSet)) return
+    if (!await confirmDanger('auth-password', text.remote.confirmSet)) return
     setPasswordBusy(true)
     try {
       await api('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword, confirmPassword }) })
@@ -59,7 +59,7 @@ function RemoteAccessSection({ text, t, cfg, patch, dirty, onSave, busy }) {
 
   const removePassword = async () => {
     setNote(null)
-    if (!confirmDanger('auth-password-remove', text.remote.confirmRemove)) return
+    if (!await confirmDanger('auth-password-remove', text.remote.confirmRemove)) return
     setPasswordBusy(true)
     try {
       await api('/api/auth/password', { method: 'DELETE' })
