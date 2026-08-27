@@ -5549,8 +5549,6 @@ export default function ChatApp() {
     const refreshList = async () => {
       if (stopped || inFlight || document.hidden) return
       inFlight = true
-      const activeQueueID = activeSidRef.current
-      const queueRefresh = activeQueueID ? refreshQueue(activeQueueID).catch(() => {}) : Promise.resolve()
       try {
         const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
@@ -5572,7 +5570,6 @@ export default function ChatApp() {
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
       } finally {
-        await queueRefresh
         inFlight = false
       }
     }
@@ -5588,6 +5585,53 @@ export default function ChatApp() {
       window.removeEventListener('online', onOnline)
     }
   }, [chatInstanceID])
+
+  useEffect(() => {
+    if (!sid) return undefined
+    let stopped = false
+    let fallbackTimer = null
+    const syncQueue = () => {
+      if (stopped || document.hidden) return
+      void refreshQueue(sid).catch(() => {})
+    }
+    const stopFallback = () => {
+      if (fallbackTimer === null) return
+      window.clearInterval(fallbackTimer)
+      fallbackTimer = null
+    }
+    const startFallback = () => {
+      if (stopped || fallbackTimer !== null) return
+      syncQueue()
+      fallbackTimer = window.setInterval(syncQueue, 3000)
+    }
+    const eventsURL = addChatInstanceToURL(`/api/chat/queue/${sid}/events`, chatInstanceRef.current)
+    const source = typeof EventSource === 'undefined' ? null : new EventSource(eventsURL)
+    if (source) {
+      source.onopen = () => {
+        stopFallback()
+        syncQueue()
+      }
+      source.onerror = startFallback
+      source.addEventListener('ready', syncQueue)
+      source.addEventListener('queue_changed', syncQueue)
+    } else {
+      startFallback()
+    }
+    const calibrationTimer = window.setInterval(syncQueue, 60000)
+    const onVisible = () => { if (!document.hidden) syncQueue() }
+    const onOnline = () => syncQueue()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+    syncQueue()
+    return () => {
+      stopped = true
+      source?.close()
+      stopFallback()
+      window.clearInterval(calibrationTimer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [sid, chatInstanceID])
 
   useEffect(() => {
     if (!sessionManagerOpen) return

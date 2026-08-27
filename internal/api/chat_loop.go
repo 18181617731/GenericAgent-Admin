@@ -721,6 +721,7 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 		s.endChatRunOwned(sid, token)
 		return false
 	}
+	s.publishChatQueueChanged(sid)
 
 	s.ChatMu.Lock()
 	if current := s.ChatRuns[sid]; current == token {

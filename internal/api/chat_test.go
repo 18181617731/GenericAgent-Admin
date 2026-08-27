@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -2543,5 +2544,78 @@ func TestChatQueueRejectsInvalidEntries(t *testing.T) {
 	s.chatReplaceQueue(rec, req, "queue-session")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChatQueueEventsPublishesPersistedPatch(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	const sid = "queue-sse"
+
+	stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.chatQueueEvents(w, r, sid)
+	}))
+	defer stream.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, stream.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status=%d", resp.StatusCode)
+	}
+
+	events := make(chan string, 2)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "event: ") {
+				events <- strings.TrimPrefix(scanner.Text(), "event: ")
+			}
+		}
+		close(events)
+	}()
+	waitEvent := func(want string) {
+		t.Helper()
+		select {
+		case got := <-events:
+			if got != want {
+				t.Fatalf("event=%q want=%q", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for %q", want)
+		}
+	}
+	waitEvent("ready")
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/chat/queue/"+sid, strings.NewReader(`{"op":"enqueue","message":{"id":"q-sse","text":"pushed"}}`))
+	patchRec := httptest.NewRecorder()
+	s.chatPatchQueue(patchRec, patchReq, sid)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+	waitEvent("queue_changed")
+
+	cancel()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s.ChatRuntime.queueEventMu.Lock()
+		remaining := len(s.ChatRuntime.queueEventSubs[sid])
+		s.ChatRuntime.queueEventMu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("subscriber was not removed after cancellation: %d", remaining)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

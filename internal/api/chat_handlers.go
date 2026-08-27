@@ -86,6 +86,10 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "queue":
+		if len(parts) == 3 && parts[2] == "events" && r.Method == http.MethodGet {
+			s.chatQueueEvents(w, r, parts[1])
+			return
+		}
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.chatGetQueue(w, r, parts[1])
 			return
@@ -540,6 +544,93 @@ func validateChatQueuedMessage(item *chatQueuedMessage) error {
 	return nil
 }
 
+func (s *Server) chatQueueEvents(w http.ResponseWriter, r *http.Request, sid string) {
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	if s.ChatRuntime == nil {
+		bad(w, http.StatusInternalServerError, "chat runtime unavailable")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		bad(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	sid = safeChatID(sid)
+	runtime := s.ChatRuntime
+	updates := make(chan uint64, 1)
+	runtime.queueEventMu.Lock()
+	if runtime.queueEventRev == nil {
+		runtime.queueEventRev = make(map[string]uint64)
+	}
+	if runtime.queueEventSubs == nil {
+		runtime.queueEventSubs = make(map[string]map[chan uint64]struct{})
+	}
+	if runtime.queueEventSubs[sid] == nil {
+		runtime.queueEventSubs[sid] = make(map[chan uint64]struct{})
+	}
+	runtime.queueEventSubs[sid][updates] = struct{}{}
+	revision := runtime.queueEventRev[sid]
+	runtime.queueEventMu.Unlock()
+	defer func() {
+		runtime.queueEventMu.Lock()
+		delete(runtime.queueEventSubs[sid], updates)
+		if len(runtime.queueEventSubs[sid]) == 0 {
+			delete(runtime.queueEventSubs, sid)
+		}
+		runtime.queueEventMu.Unlock()
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	fmt.Fprintf(w, "event: ready\nid: %d\ndata: {\"revision\":%d}\n\n", revision, revision)
+	flusher.Flush()
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case revision := <-updates:
+			fmt.Fprintf(w, "event: queue_changed\nid: %d\ndata: {\"revision\":%d}\n\n", revision, revision)
+			flusher.Flush()
+		case <-keepalive.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *Server) publishChatQueueChanged(sid string) {
+	if s.ChatRuntime == nil {
+		return
+	}
+	sid = safeChatID(sid)
+	runtime := s.ChatRuntime
+	runtime.queueEventMu.Lock()
+	defer runtime.queueEventMu.Unlock()
+	if runtime.queueEventRev == nil {
+		runtime.queueEventRev = make(map[string]uint64)
+	}
+	runtime.queueEventRev[sid]++
+	revision := runtime.queueEventRev[sid]
+	for updates := range runtime.queueEventSubs[sid] {
+		select {
+		case updates <- revision:
+		default:
+			select {
+			case <-updates:
+			default:
+			}
+			updates <- revision
+		}
+	}
+}
+
 func (s *Server) chatGetQueue(w http.ResponseWriter, _ *http.Request, sid string) {
 	if !validChatWorldlineID(sid) {
 		bad(w, http.StatusBadRequest, "invalid session id")
@@ -644,6 +735,7 @@ func (s *Server) chatPatchQueue(w http.ResponseWriter, r *http.Request, sid stri
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.publishChatQueueChanged(sid)
 	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
 }
 
@@ -689,6 +781,7 @@ func (s *Server) chatReplaceQueue(w http.ResponseWriter, r *http.Request, sid st
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.publishChatQueueChanged(sid)
 	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
 }
 
