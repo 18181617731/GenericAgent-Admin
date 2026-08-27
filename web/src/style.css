@@ -17055,3 +17055,61 @@ html[data-color-scheme="dark"] .logs-page {
   .keychain-privacy { padding-right: 14px; padding-left: 14px; }
   .keychain-delete span { display: none; }
 }
+
+
+/* Chat model cascade readability: never hide the selected model or menu labels. */
+.oa-composer .oa-composer-primary-actions {
+  flex-basis: clamp(280px, 34vw, 390px);
+}
+.oa-composer .oa-composer-primary-actions .oa-composer-cascade {
+  flex: 1 1 235px !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto;
+  min-height: 34px;
+}
+.oa-composer .oa-composer-cascade > button {
+  min-height: 32px;
+}
+.oa-composer .oa-cascade-current-model {
+  flex: 1 1 auto;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.oa-composer .oa-cascade-current-effort {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+.oa-cascade-models button {
+  height: auto;
+}
+.oa-cascade-models button span,
+.oa-model-picker-models > button > span:first-child {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+@media (max-width: 680px) {
+  .oa-composer .oa-composer-primary-actions {
+    flex-basis: 0;
+  }
+  .oa-composer .oa-composer-primary-actions .oa-composer-cascade {
+    min-height: 40px;
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+  }
+  .oa-composer .oa-composer-cascade > button {
+    min-height: 34px;
+    height: auto;
+  }
+  .oa-composer .oa-composer-cascade > button > svg:last-child {
+    display: block !important;
+  }
+}
