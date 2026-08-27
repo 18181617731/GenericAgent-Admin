@@ -5472,6 +5472,22 @@ export default function ChatApp() {
     }
     const id = sid
     const wasRunning = busy && streamingSid === sid
+    const guidedUser = id && next.id ? {
+      id:`guided-${next.id}`,
+      role:'user',
+      content:String(next.text || ''),
+      files:Array.isArray(next.files) ? next.files : [],
+      created_at:Math.floor(Date.now()/1000),
+    } : null
+    let guideStarted = false
+    // Project the selected queue item before cancellation or guide network I/O so
+    // the user's action is visible immediately. The stable queue-derived id also
+    // lets the stream/session snapshot replace or deduplicate this local turn.
+    if (guidedUser) {
+      setMessages(xs => isActiveSession(id) && !xs.some(message => message.id === guidedUser.id)
+        ? [...xs, guidedUser]
+        : xs)
+    }
     // Only increment runSeqRef when there's actually a running task to abort
     // Otherwise it will cause the next runSend's token check to fail
     if (wasRunning) {
@@ -5481,7 +5497,12 @@ export default function ChatApp() {
       if (wasRunning) {
         streamAbortRef.current?.abort?.()
         if (id) await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
-        setMessages(xs => xs.map((m, idx) => (idx === xs.length - 1 && m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true } : m))
+        setMessages(xs => {
+          const pendingAssistantIndex = xs.findLastIndex(message => message.role === 'assistant' && !message.content)
+          return xs.map((message, index) => index === pendingAssistantIndex
+            ? { ...message, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true }
+            : message)
+        })
       }
       // Call backend guide API to trigger queue execution, then attach to the
       // newly-created run so its user turn and output appear without a reload.
@@ -5498,24 +5519,22 @@ export default function ChatApp() {
         if (guideResult?.status !== 'started') {
           throw new Error(ct('引导消息未能开始执行', 'The guided message did not start'))
         }
+        guideStarted = true
         if (!isActiveSession(id)) return
         await refreshQueue(id)
         guidingQueueRef.current = ''
         setGuidingQueueId('')
-        const guidedUser = {
-          id:`guided-${next.id}`,
-          role:'user',
-          content:String(next.text || ''),
-          files:Array.isArray(next.files) ? next.files : [],
-          created_at:Math.floor(Date.now()/1000),
-        }
-        setMessages(xs => isActiveSession(id) && !xs.some(message => message.id === guidedUser.id)
-          ? [...xs, guidedUser]
-          : xs)
         setNotice(ct('已引导：中止当前回复并触发队列执行', 'Guided: stopped the current response and triggered queue execution'))
         await attachRunningStream(id, { waitForRun:true })
       }
     } catch (e) {
+      if (!guideStarted && guidedUser) {
+        setMessages(xs => xs.filter(message => message.id !== guidedUser.id))
+        if (guidingQueueRef.current === next.id) {
+          guidingQueueRef.current = ''
+          setGuidingQueueId('')
+        }
+      }
       setErr(e.message || String(e))
     } finally {
       // attachRunningStream owns busy/streamingSid. A concurrent re-attach may have
