@@ -723,6 +723,11 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	}
 	s.publishChatQueueChanged(sid)
 
+	// Automatic queue consumption bypasses the frontend's optimistic guide path.
+	// Publish the persisted user turn on the run stream so attached clients render
+	// it immediately; replay and the frontend's message-id dedupe make reconnects safe.
+	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": queuedUserMsg})
+
 	s.ChatMu.Lock()
 	if current := s.ChatRuns[sid]; current == token {
 		current.PendingAssistantID = pendingID

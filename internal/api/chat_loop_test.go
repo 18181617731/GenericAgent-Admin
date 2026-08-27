@@ -67,6 +67,29 @@ func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
 		t.Fatalf("queued run token = %p, want a new token after completed %p", started, completed)
 	}
 
+	s.ChatMu.Lock()
+	events := append([][]byte(nil), started.Events...)
+	s.ChatMu.Unlock()
+	if len(events) < 2 {
+		t.Fatalf("queued run events = %q, want user before queue_item_start", events)
+	}
+	var userEvent struct {
+		Type    string      `json:"type"`
+		Message chatMessage `json:"message"`
+	}
+	if err := json.Unmarshal(events[0], &userEvent); err != nil {
+		t.Fatalf("decode queued user event: %v", err)
+	}
+	if userEvent.Type != "user" || userEvent.Message.ID == "" || userEvent.Message.Role != "user" || userEvent.Message.Content != "send me next" {
+		t.Fatalf("queued user event = %#v", userEvent)
+	}
+	var startEvent struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(events[1], &startEvent); err != nil || startEvent.Type != "queue_item_start" {
+		t.Fatalf("event after queued user = %q, decoded=%#v err=%v", events[1], startEvent, err)
+	}
+
 	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +99,9 @@ func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
 	}
 	if len(stored.Messages) < 3 || stored.Messages[len(stored.Messages)-2].Role != "user" || stored.Messages[len(stored.Messages)-2].Content != "send me next" {
 		t.Fatalf("messages = %#v, want queued user message followed by pending assistant", stored.Messages)
+	}
+	if stored.Messages[len(stored.Messages)-2].ID != userEvent.Message.ID {
+		t.Fatalf("stream user id = %q, persisted user id = %q", userEvent.Message.ID, stored.Messages[len(stored.Messages)-2].ID)
 	}
 }
 
