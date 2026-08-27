@@ -36,7 +36,8 @@ describe('session-scoped guided-message queue wiring', () => {
   test('guiding projects the user turn immediately, then attaches to the backend-started run', () => {
     const guideStart = source.indexOf('const guideQueued = async')
     const optimisticUser = source.indexOf('id:`guided-${next.id}`', guideStart)
-    const optimisticProjection = source.indexOf('setMessages(xs => isActiveSession(id)', optimisticUser)
+    const restoreFollow = source.indexOf('setFollowState(true)', optimisticUser)
+    const optimisticProjection = source.indexOf('setMessages(xs => isActiveSession(id)', restoreFollow)
     const guideTry = source.indexOf('    try {', optimisticProjection)
     const abortPendingAssistant = source.indexOf("const pendingAssistantIndex = xs.findLastIndex(message => message.role === 'assistant' && !message.content)", guideTry)
     const guideURL = source.indexOf('const guideURL = `/api/chat/guide/${id}/${next.id}`', guideTry)
@@ -56,7 +57,8 @@ describe('session-scoped guided-message queue wiring', () => {
     const guideFinally = source.slice(source.lastIndexOf('} finally {', resetRun), guideEnd)
     expect(guideStart).toBeGreaterThan(-1)
     expect(optimisticUser).toBeGreaterThan(guideStart)
-    expect(optimisticProjection).toBeGreaterThan(optimisticUser)
+    expect(restoreFollow).toBeGreaterThan(optimisticUser)
+    expect(optimisticProjection).toBeGreaterThan(restoreFollow)
     expect(guideTry).toBeGreaterThan(optimisticProjection)
     expect(abortPendingAssistant).toBeGreaterThan(guideTry)
     expect(abortPendingAssistant).toBeLessThan(guideURL)
@@ -114,6 +116,17 @@ describe('session-scoped guided-message queue wiring', () => {
     expect(runStart).toBeGreaterThan(-1)
     expect(activeCheck).toBeGreaterThan(runStart)
     expect(refreshGuided).toBeGreaterThan(activeCheck)
+  })
+
+  test('does not replace an optimistic guided turn with a heartbeat snapshot', () => {
+    const refreshStart = source.indexOf('const refreshList = async')
+    const attach = source.indexOf('void attachRunningStream(activeID, { waitForRun:true })', refreshStart)
+    const guardedSnapshot = source.indexOf('} else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {', attach)
+    const refreshSnapshot = source.indexOf('void refreshActiveSessionSnapshot(activeID)', guardedSnapshot)
+    expect(refreshStart).toBeGreaterThan(-1)
+    expect(attach).toBeGreaterThan(refreshStart)
+    expect(guardedSnapshot).toBeGreaterThan(attach)
+    expect(refreshSnapshot).toBeGreaterThan(guardedSnapshot)
   })
 
   test('uses SSE invalidation with authoritative GET and polling fallback', () => {

@@ -5484,6 +5484,10 @@ export default function ChatApp() {
     // the user's action is visible immediately. The stable queue-derived id also
     // lets the stream/session snapshot replace or deduplicate this local turn.
     if (guidedUser) {
+      // Guiding is an explicit jump to the newest turn. Restore follow before the
+      // optimistic append so the layout effect reveals it in the same paint.
+      scrollModeRef.current = 'smooth'
+      setFollowState(true)
       setMessages(xs => isActiveSession(id) && !xs.some(message => message.id === guidedUser.id)
         ? [...xs, guidedUser]
         : xs)
@@ -5582,7 +5586,7 @@ export default function ChatApp() {
           const after = next.find(item => item.id === activeID)
           if (after?.running && !streamAbortRef.current && !activeRunRef.current) {
             void attachRunningStream(activeID, { waitForRun:true })
-          } else if (shouldRefreshChatSnapshot(before, after)) {
+          } else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {
             void refreshActiveSessionSnapshot(activeID).catch(() => {})
           }
         }
