@@ -6113,10 +6113,6 @@ export default function ChatApp() {
           <span>{err}</span>
           <button type="button" onClick={() => setErr('')} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '18px', lineHeight: '1', padding: '0 4px' }} aria-label="关闭">&times;</button>
         </div>}
-        {notice && <div className="oa-banner">
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice('')} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '18px', lineHeight: '1', padding: '0 4px' }} aria-label="关闭">&times;</button>
-        </div>}
       </div>
       <div className={`oa-workspace ${loopRailOpen ? 'has-loop' : ''} ${btwRailOpen && btwMessages.length > 0 ? 'has-btw' : ''} ${!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen) ? 'has-launchers' : ''}`}>
         <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) pauseFollow() }} onTouchMove={()=>{ if (!isNearBottom(threadRef.current)) pauseFollow() }}>
