@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -79,6 +80,27 @@ func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
 }
 
 func TestChatGuideCancelsActiveRunAndStartsSelectedQueueItem(t *testing.T) {
+	capturedReq := make(chan map[string]interface{}, 1)
+	releaseWorker := make(chan struct{})
+	oldStart := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			var req map[string]interface{}
+			_ = json.NewDecoder(stdinR).Decode(&req)
+			capturedReq <- req
+			<-releaseWorker
+		}()
+		return &chatWorker{SID: "guide-interrupts-active-run", Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() {
+		close(releaseWorker)
+		startChatWorkerFunc = oldStart
+	}()
+
 	s := newChatLoopTestServer(t)
 	sid := "guide-interrupts-active-run"
 	const pendingID = "assistant-active"
@@ -146,6 +168,28 @@ func TestChatGuideCancelsActiveRunAndStartsSelectedQueueItem(t *testing.T) {
 	}
 	if canceled.Content != "partial answer\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]" || !canceled.Error {
 		t.Fatalf("canceled partial message = %#v", canceled)
+	}
+
+	select {
+	case req := <-capturedReq:
+		if req["prompt"] != "run this guidance now" {
+			t.Fatalf("worker prompt = %#v", req["prompt"])
+		}
+		history, ok := req["history"].([]interface{})
+		if !ok || len(history) != 2 {
+			t.Fatalf("worker history = %#v, want interrupted user/assistant pair only", req["history"])
+		}
+		first, _ := history[0].(map[string]interface{})
+		second, _ := history[1].(map[string]interface{})
+		if first["content"] != "current request" || second["content"] != "partial answer\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]" {
+			t.Fatalf("worker history lost interrupted turn: %#v", history)
+		}
+		rawHistory, ok := req["raw_history"].([]interface{})
+		if !ok || len(rawHistory) != 2 {
+			t.Fatalf("worker raw_history = %#v, want interrupted raw turn", req["raw_history"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for guided worker request")
 	}
 }
 

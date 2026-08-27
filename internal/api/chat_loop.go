@@ -662,17 +662,6 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	cs.QueuedMessages = append(cs.QueuedMessages[:queueIndex], cs.QueuedMessages[queueIndex+1:]...)
 	cs.UpdatedAt = time.Now().Unix()
 
-	cmdReq := map[string]interface{}{
-		"prompt": queuedItem.Text,
-		"files":  queuedItem.Files,
-	}
-	if queuedItem.LLMNo > 0 {
-		cmdReq["llmNo"] = queuedItem.LLMNo
-	}
-	if queuedItem.ReasoningEffort != "" {
-		cmdReq["reasoningEffort"] = queuedItem.ReasoningEffort
-	}
-
 	pendingID := newChatID()
 	runStartedAtMS := time.Now().UnixMilli()
 	pendingMsg := chatMessage{
@@ -681,20 +670,43 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 		CreatedAt:      time.Now().Unix(),
 		RunStartedAtMS: runStartedAtMS,
 	}
-	cs.Messages = append(cs.Messages, chatMessage{
+	queuedUserMsg := chatMessage{
 		ID:        newChatID(),
 		Role:      "user",
 		Content:   queuedItem.Text,
 		Files:     convertChatUploadsToMaps(queuedItem.Files),
 		CreatedAt: time.Now().Unix(),
-	}, pendingMsg)
+	}
+	cs.Messages = append(cs.Messages, queuedUserMsg, pendingMsg)
 	if queuedItem.LLMNo > 0 {
 		cs.Settings.LLMNo = queuedItem.LLMNo
 	}
 	if queuedItem.ReasoningEffort != "" {
 		cs.Settings.ReasoningEffort = queuedItem.ReasoningEffort
 	}
-	cmdReq["_ga_pending_assistant_id"] = pendingID
+	workerHistory := append([]chatMessage(nil), cs.Messages...)
+	for i := len(workerHistory) - 1; i >= 0; i-- {
+		if workerHistory[i].ID == queuedUserMsg.ID {
+			workerHistory = workerHistory[:i]
+			break
+		}
+	}
+	cmdReq := map[string]interface{}{
+		"prompt":                   queuedItem.Text,
+		"files":                    queuedItem.Files,
+		"history":                  workerHistory,
+		"raw_history":              cs.RawHistory,
+		"history_info":             cs.HistoryInfo,
+		"working":                  cs.Working,
+		"workspace":                cs.Workspace,
+		"project_mode":             cs.ProjectMode,
+		"extra_sys_prompts":        cs.ExtraSysPrompts,
+		"llm_no":                   cs.Settings.LLMNo,
+		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"ga_root":                  s.CfgStore.Snapshot().GARoot,
+		"_ga_pending_assistant_id": pendingID,
+		"_ga_run_started_at_ms":    runStartedAtMS,
+	}
 
 	// Publish the pending assistant identity together with the persisted session.
 	// Reattaching clients use these fields to bind live deltas to the placeholder;
