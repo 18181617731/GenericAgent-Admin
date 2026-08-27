@@ -129,6 +129,16 @@ describe('session-scoped guided-message queue wiring', () => {
     expect(refreshSnapshot).toBeGreaterThan(guardedSnapshot)
   })
 
+  test('keeps queue send and stop as separate actions while the current session is running', () => {
+    expect(source).toContain("disabled={!prompt.trim() && !attachments.length}")
+    expect(source).toContain("onClick={() => send()}")
+    expect(source).toContain("ct('加入发送队列', 'Add to send queue')")
+    expect(source).toContain("{isCurrentRunning && <button")
+    expect(source).toContain('className="oa-stop"')
+    expect(source).toContain("onClick={() => cancelRun(sid)}")
+    expect(source).not.toContain("onClick={() => isCurrentRunning ? cancelRun(sid) : send()}")
+  })
+
   test('uses SSE invalidation with authoritative GET and polling fallback', () => {
     const eventsURL = source.indexOf('`/api/chat/queue/${sid}/events`')
     const eventSource = source.indexOf('new EventSource(eventsURL)', eventsURL)

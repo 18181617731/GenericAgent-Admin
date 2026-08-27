@@ -6428,13 +6428,20 @@ export default function ChatApp() {
                 onReasoningChange={saveReasoningEffort}
                 reasoningOptions={REASONING_EFFORT_OPTIONS.map(option => option.value === 'off' ? { ...option, label: defaultReasoningLabel } : option)} />
               <button
-                className={`oa-send ${isCurrentRunning ? 'is-stop' : ''}`}
+                className="oa-send"
                 type="button"
-                disabled={!isCurrentRunning && !prompt.trim() && !attachments.length}
-                onClick={() => isCurrentRunning ? cancelRun(sid) : send()}
-                title={isCurrentRunning ? ct('停止生成', 'Stop generating') : ct('发送', 'Send')}
-                aria-label={isCurrentRunning ? ct('停止生成', 'Stop generating') : ct('发送', 'Send')}
-              >{isCurrentRunning ? <Square size={12} fill="currentColor" strokeWidth={0}/> : <Send size={17}/>}</button>
+                disabled={!prompt.trim() && !attachments.length}
+                onClick={() => send()}
+                title={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')}
+                aria-label={isCurrentRunning ? ct('加入发送队列', 'Add to send queue') : ct('发送', 'Send')}
+              ><Send size={17}/></button>
+              {isCurrentRunning && <button
+                className="oa-stop"
+                type="button"
+                onClick={() => cancelRun(sid)}
+                title={ct('停止生成', 'Stop generating')}
+                aria-label={ct('停止生成', 'Stop generating')}
+              ><Square size={12} fill="currentColor" strokeWidth={0}/></button>}
             </div>
           </div>
         </div>
