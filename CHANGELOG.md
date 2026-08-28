@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.100 - 2026-08-29
+
+### Continuous verification reliability
+- Wait for the GSAP animation to settle before asserting that the scheduler Start button is accessible in the smoke test.
+- Harden scheduler smoke coverage against Ubuntu and CI runner timing variance without changing scheduler product behavior.
+- Validate the fix with full Web verification on Windows and Ubuntu using Node 22.
+
 ## v1.0.99 - 2026-08-28
 
 ### Scheduled task workbench
