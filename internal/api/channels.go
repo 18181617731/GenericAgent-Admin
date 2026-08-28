@@ -128,6 +128,7 @@ func (s *Server) channels(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		go s.RestartChatFeishuBridge()
 		writeJSON(w, s.loadChannelsResponse())
 	default:
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")

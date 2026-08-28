@@ -70,6 +70,66 @@ func TestEmbeddedChatHubBridgeIsMaterialized(t *testing.T) {
 	}
 }
 
+func TestChatSessionBridgeAPIExposesAllSessionsWithoutLiveOutput(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	s := New(store, nil, nil, nil)
+	cs := chatSession{ID: "session-private", Title: "Private chat", Messages: []chatMessage{
+		{Role: "user", Content: "task"},
+		{Role: "assistant", Content: "final response"},
+	}}
+	if err := saveChatSession(store.Snapshot(), cs); err != nil {
+		t.Fatal(err)
+	}
+
+	const token = "private-secret"
+	hub := s.chatHubAPI(token)
+	private := s.chatSessionBridgeAPI(token, true)
+	if got := hubRequest(t, hub, token, http.MethodGet, "/session/_/session-private/outputs", "").Code; got != http.StatusNotFound {
+		t.Fatalf("Hub hidden session status = %d, want %d", got, http.StatusNotFound)
+	}
+	w := hubRequest(t, private, token, http.MethodGet, "/sessions", "")
+	var listing struct {
+		Sessions []chatHubSession `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || len(listing.Sessions) != 1 || listing.Sessions[0].SessionID != "session-private" {
+		t.Fatalf("private sessions status=%d listing=%#v", w.Code, listing.Sessions)
+	}
+
+	run := s.beginChatRun("session-private")
+	if run == nil {
+		t.Fatal("beginChatRun returned nil")
+	}
+	defer s.endChatRunOwned("session-private", run)
+	s.publishChatRun("session-private", map[string]interface{}{"delta": "in-flight"})
+
+	decodeOutputs := func(path string) []interface{} {
+		t.Helper()
+		response := hubRequest(t, private, token, http.MethodGet, path, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("outputs status = %d: %s", response.Code, response.Body.String())
+		}
+		var payload struct {
+			Tasks []map[string]interface{} `json:"tasks"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		outputs, _ := payload.Tasks[0]["outputs"].([]interface{})
+		return outputs
+	}
+	stable := decodeOutputs("/session/_/session-private/outputs?live=0")
+	if len(stable) != 1 || stable[0] != "final response" {
+		t.Fatalf("stable outputs = %#v", stable)
+	}
+	live := decodeOutputs("/session/_/session-private/outputs")
+	if len(live) != 2 || live[1] != "in-flight" {
+		t.Fatalf("live outputs = %#v", live)
+	}
+}
+
 func TestChatHubAPIExposesPersistentSessionAndControlsRun(t *testing.T) {
 	store := config.NewStore(t.TempDir())
 	s := New(store, nil, nil, nil)

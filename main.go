@@ -107,6 +107,7 @@ func main() {
 	server := adminhttp.NewServer(listener.Addr().String(), auth.Middleware(srv.Routes()))
 	go srv.StartAutostartServices()
 	go srv.StartChatHubBridge()
+	go srv.StartChatFeishuBridge()
 	go func() {
 		log.Printf("GenericAgent Admin Go listening on %s (bound to %s)", url, listener.Addr())
 		if launch.Headless {

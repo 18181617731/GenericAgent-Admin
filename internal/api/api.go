@@ -60,6 +60,9 @@ type Server struct {
 	chatHubBridgeMu         sync.Mutex
 	chatHubBridgeCmd        *exec.Cmd
 	chatHubBridgeServer     *http.Server
+	chatFeishuBridgeMu      sync.Mutex
+	chatFeishuBridgeCmd     *exec.Cmd
+	chatFeishuBridgeServer  *http.Server
 	instanceInstallMu       sync.Mutex
 	instanceInstallWG       sync.WaitGroup
 	instanceInstallTasks    map[string]*instanceInstallTask
@@ -1112,6 +1115,7 @@ func (s *Server) ShutdownCleanup() {
 	// workers and managed services from receiving their stop requests.
 	s.cancelInstanceInstalls()
 	s.StopChatHubBridge()
+	s.StopChatFeishuBridge()
 	s.StopManagedServices()
 	if s.ReactApp != nil {
 		_ = s.ReactApp.stop()

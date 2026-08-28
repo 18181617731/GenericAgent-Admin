@@ -47,7 +47,7 @@ func (s *Server) chatHubServerForInstance(instanceID string) (*Server, error) {
 	return server, err
 }
 
-func (s *Server) listChatHubSessions() []chatHubSession {
+func (s *Server) listChatHubSessions(allowAll bool) []chatHubSession {
 	cfg := s.CfgStore.Snapshot()
 	ids := make([]string, 0, len(cfg.Instances)+1)
 	seen := map[string]bool{}
@@ -83,7 +83,7 @@ func (s *Server) listChatHubSessions() []chatHubSession {
 			}
 			sid := strings.TrimSuffix(entry.Name(), ".json")
 			cs, err := loadChatSession(server.CfgStore.Snapshot(), sid)
-			if err != nil || cs.ID == "" || !cs.HubEnabled {
+			if err != nil || cs.ID == "" || (!allowAll && !cs.HubEnabled) {
 				continue
 			}
 			advertisedInstanceID := instanceID
@@ -142,13 +142,17 @@ func chatHubLiveTasks(tasks []map[string]interface{}, partial string) []map[stri
 }
 
 func (s *Server) chatHubAPI(token string) http.Handler {
+	return s.chatSessionBridgeAPI(token, false)
+}
+
+func (s *Server) chatSessionBridgeAPI(token string, allowAll bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			bad(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(w, map[string]interface{}{"sessions": s.listChatHubSessions()})
+		writeJSON(w, map[string]interface{}{"sessions": s.listChatHubSessions(allowAll)})
 	})
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/session/"), "/")
@@ -166,14 +170,14 @@ func (s *Server) chatHubAPI(token string) http.Handler {
 			return
 		}
 		cs, err := loadChatSession(server.CfgStore.Snapshot(), sid)
-		if err != nil || !cs.HubEnabled {
-			bad(w, http.StatusNotFound, "session not available in Hub")
+		if err != nil || (!allowAll && !cs.HubEnabled) {
+			bad(w, http.StatusNotFound, "session not available to bridge")
 			return
 		}
 		switch op {
 		case "outputs":
 			tasks := chatHubTasks(cs)
-			if server.chatRunActive(sid) {
+			if r.URL.Query().Get("live") != "0" && server.chatRunActive(sid) {
 				tasks = chatHubLiveTasks(tasks, server.chatRunPartialContent(sid))
 			}
 			writeJSON(w, map[string]interface{}{"tasks": tasks})
