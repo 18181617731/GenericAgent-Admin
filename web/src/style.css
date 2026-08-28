@@ -17057,14 +17057,24 @@ html[data-color-scheme="dark"] .logs-page {
 }
 
 
-/* Chat model cascade readability: never hide the selected model or menu labels. */
-.oa-composer .oa-composer-primary-actions {
-  flex-basis: clamp(280px, 34vw, 390px);
+/* Chat model cascade readability: keep the trigger content-sized on desktop. */
+@media (min-width: 681px) {
+  .oa-composer .oa-composer-primary-actions {
+    flex: 0 1 auto;
+    width: fit-content;
+    max-width: 100%;
+  }
+  .oa-composer .oa-composer-primary-actions .oa-composer-cascade {
+    flex: 0 1 auto !important;
+    width: fit-content !important;
+    min-width: 170px !important;
+    max-width: 320px !important;
+  }
+  .oa-composer .oa-cascade-current-model {
+    flex: 0 1 auto;
+  }
 }
 .oa-composer .oa-composer-primary-actions .oa-composer-cascade {
-  flex: 1 1 235px !important;
-  width: auto !important;
-  max-width: none !important;
   height: auto;
   min-height: 34px;
 }
