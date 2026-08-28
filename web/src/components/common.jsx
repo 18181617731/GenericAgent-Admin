@@ -87,7 +87,7 @@ export function ChannelServiceTable({ services = [], onStart, onStop, onLogs, on
         <span className="channel-service-controls">
           <button disabled={isPending || svc.running} onClick={() => startAction(svc.name)}><Play size={14}/>{t.start}</button>
           <button disabled={isPending || !svc.running || isExternalShared} title={isExternalShared ? t.service?.sharedStopDisabled : undefined} onClick={() => onStop(svc.name)}><Square size={14}/>{t.stop}</button>
-          <button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>
+          {!svc.no_logs && <button onClick={() => onLogs?.(svc.name)}><Eye size={14}/>{t.logs}</button>}
           {svc.name === 'frontends/hub.py' && <button type="button" onClick={onOpenHub} title="打开 Hub 面板"><ExternalLink size={14}/>Hub</button>}
           <label className="toggle-inline"><input type="checkbox" checked={!!svc.autostart} onChange={e => onAutostart?.(svc.name, e.target.checked)} />{t.autostartService}</label>
         </span>

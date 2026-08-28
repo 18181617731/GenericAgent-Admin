@@ -404,9 +404,15 @@ func TestRouteSideEffectAuditIsMethodAware(t *testing.T) {
 import (
 	"net/http"
 	"os"
+	"os/exec"
 )
 
 type Server struct{}
+type worker struct{}
+
+func (w *worker) start() {
+	exec.Command("worker")
+}
 
 func (s *Server) postOnly(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
@@ -663,7 +669,7 @@ func routeSideEffectsByHandlerForMethodFromSource(dir string, method string) (ma
 		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
+			if !ok || fn.Body == nil || !isServerMethodOrPackageFunction(fn) {
 				continue
 			}
 			found := map[string]bool{}
@@ -683,6 +689,22 @@ func routeSideEffectsByHandlerForMethodFromSource(dir string, method string) (ma
 	}
 	propagateStringSetFromCalls(sideEffects, calls)
 	return sideEffects, nil
+}
+
+func isServerMethodOrPackageFunction(fn *ast.FuncDecl) bool {
+	if fn.Recv == nil {
+		return true
+	}
+	for _, field := range fn.Recv.List {
+		receiver := field.Type
+		if pointer, ok := receiver.(*ast.StarExpr); ok {
+			receiver = pointer.X
+		}
+		if ident, ok := receiver.(*ast.Ident); ok && ident.Name == "Server" {
+			return true
+		}
+	}
+	return false
 }
 
 func collectSideEffectsAndCalls(n ast.Node, found map[string]bool, called map[string]bool) {

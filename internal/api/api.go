@@ -49,24 +49,25 @@ type Server struct {
 	// PasswordConfigured reports whether an admin password exists. The
 	// credential itself lives outside this package, so remote-access settings
 	// ask through this hook before they can be saved.
-	PasswordConfigured      func() bool
-	listenMu                sync.RWMutex
-	listenAddress           string
-	listenURL               string
-	titleBackfillStarted    bool
-	chatSessionMutationHook func()
-	chatExactSaveHook       func(chatSession) error
-	chatWorldlineRPCHook    func(string, map[string]interface{}) error
-	chatHubBridgeMu         sync.Mutex
-	chatHubBridgeCmd        *exec.Cmd
-	chatHubBridgeServer     *http.Server
-	chatFeishuBridgeMu      sync.Mutex
-	chatFeishuBridgeCmd     *exec.Cmd
-	chatFeishuBridgeServer  *http.Server
-	instanceInstallMu       sync.Mutex
-	instanceInstallWG       sync.WaitGroup
-	instanceInstallTasks    map[string]*instanceInstallTask
-	instanceInstallsClosing bool
+	PasswordConfigured        func() bool
+	listenMu                  sync.RWMutex
+	listenAddress             string
+	listenURL                 string
+	titleBackfillStarted      bool
+	chatSessionMutationHook   func()
+	chatExactSaveHook         func(chatSession) error
+	chatWorldlineRPCHook      func(string, map[string]interface{}) error
+	chatHubBridgeMu           sync.Mutex
+	chatHubBridgeCmd          *exec.Cmd
+	chatHubBridgeServer       *http.Server
+	chatFeishuBridgeMu        sync.Mutex
+	chatFeishuBridgeCmd       *exec.Cmd
+	chatFeishuBridgeServer    *http.Server
+	chatFeishuBridgeStartedAt time.Time
+	instanceInstallMu         sync.Mutex
+	instanceInstallWG         sync.WaitGroup
+	instanceInstallTasks      map[string]*instanceInstallTask
+	instanceInstallsClosing   bool
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
@@ -1067,6 +1068,7 @@ func (s *Server) reactAppProxy(w http.ResponseWriter, r *http.Request) {
 
 // StopManagedServices stops GenericAgent child services managed by the Admin UI.
 func (s *Server) StopManagedServices() {
+	s.StopChatFeishuBridge()
 	for _, manager := range s.managedServiceManagers() {
 		manager.StopAll()
 	}
@@ -1078,6 +1080,9 @@ func (s *Server) RunningManagedServices() int {
 	running := 0
 	for _, manager := range s.managedServiceManagers() {
 		running += manager.RunningProcessCount()
+	}
+	if s.IsChatFeishuBridgeRunning() {
+		running++
 	}
 	return running
 }

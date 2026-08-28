@@ -29,6 +29,7 @@ type ServiceInfo struct {
 	ModelNo    *int     `json:"model_no,omitempty"`
 	Shared     bool     `json:"shared,omitempty"`
 	Managed    bool     `json:"managed,omitempty"`
+	NoLogs     bool     `json:"no_logs,omitempty"`
 }
 
 type runningProc struct {

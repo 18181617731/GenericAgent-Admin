@@ -341,7 +341,7 @@ func TestChannelProfilesMatchOfficialFrontends(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	wantIDs := []string{"feishu", "wecom", "dingtalk", "discord", "qq", "telegram", "wechat"}
+	wantIDs := []string{"feishu", "feishu_admin", "wecom", "dingtalk", "discord", "qq", "telegram", "wechat"}
 	if len(resp.Profiles) != len(wantIDs) {
 		t.Fatalf("profile count=%d want=%d: %+v", len(resp.Profiles), len(wantIDs), resp.Profiles)
 	}

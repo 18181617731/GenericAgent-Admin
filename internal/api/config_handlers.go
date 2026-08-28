@@ -1051,6 +1051,12 @@ func (s *Server) StartAutostartServices() {
 		if name == "" {
 			continue
 		}
+		if name == adminFeishuServiceName {
+			if err := s.StartChatFeishuBridge(); err != nil {
+				log.Printf("service autostart %s failed: %v", name, err)
+			}
+			continue
+		}
 		if _, err := s.Svc.Start(name); err != nil {
 			log.Printf("service autostart %s failed: %v", name, err)
 		}

@@ -319,11 +319,11 @@ def main():
     state_path = os.environ["GA_ADMIN_FEISHU_STATE"]
     config_path = os.environ["GA_ADMIN_FEISHU_CONFIG"]
     config = _load_config(config_path)
-    app_id = str(config.get("fs_app_id") or "").strip()
-    app_secret = str(config.get("fs_app_secret") or "").strip()
-    allowed = _allowed_users(config.get("fs_allowed_users", []))
+    app_id = str(config.get("feishu_admin_app_id") or "").strip()
+    app_secret = str(config.get("feishu_admin_app_secret") or "").strip()
+    allowed = _allowed_users(config.get("feishu_admin_allowed_users", []))
     if not app_id or not app_secret:
-        print("[feishu_admin_bridge] fs_app_id/fs_app_secret not configured", flush=True)
+        print("[feishu_admin_bridge] dedicated App ID/App Secret not configured", flush=True)
         return
 
     try:

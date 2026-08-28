@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -81,6 +82,12 @@ var channelDefinitions = []channelProfile{
 		{Name: "fs_allowed_users", Label: "允许用户", Type: "list", Placeholder: "ou_xxx,ou_yyy；留空或 * 为公开访问"},
 		{Name: "fs_public_access", Label: "公开访问（兼容）", Type: "bool", Value: "false"},
 	}},
+	{ID: "feishu_admin", Name: "飞书 Admin 会话同步", Description: "独立于原飞书 fsapp；配置后由用户在前端服务中选择启动。", Testable: true, Fields: []channelField{
+		{Name: "feishu_admin_app_id", Label: "App ID", Placeholder: "cli_xxx"},
+		{Name: "feishu_admin_app_secret", Label: "App Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "feishu_admin_allowed_users", Label: "允许用户", Type: "list", Placeholder: "ou_xxx,ou_yyy；留空或 * 为公开访问"},
+		{Name: "feishu_admin_public_access", Label: "公开访问", Type: "bool", Value: "false"},
+	}},
 	{ID: "wecom", Name: "企业微信", Description: "企业微信机器人/应用通道凭据、欢迎语与允许用户。", Testable: true, Fields: []channelField{
 		{Name: "wecom_bot_id", Label: "Bot ID / Agent ID", Placeholder: "1000002"},
 		{Name: "wecom_secret", Label: "Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
@@ -128,7 +135,11 @@ func (s *Server) channels(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		go s.RestartChatFeishuBridge()
+		go func() {
+			if err := s.RestartChatFeishuBridgeIfRunning(); err != nil {
+				log.Printf("restart Feishu Admin sync after channel save: %v", err)
+			}
+		}()
 		writeJSON(w, s.loadChannelsResponse())
 	default:
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -218,6 +229,8 @@ func testChannelCredentials(profileID string, values map[string]string) (bool, s
 	switch profileID {
 	case "feishu":
 		return testFeishuCredentials(values["fs_app_id"], values["fs_app_secret"])
+	case "feishu_admin":
+		return testFeishuCredentials(values["feishu_admin_app_id"], values["feishu_admin_app_secret"])
 	case "wecom":
 		return testWeComCredentials(values["wecom_bot_id"], values["wecom_secret"])
 	case "dingtalk":
