@@ -149,7 +149,7 @@ func TestWorldlineWorkerHelper(t *testing.T) {
 				},
 				"raw_history":  []map[string]interface{}{{"role": "assistant", "content": "raw " + prompt}},
 				"history_info": []interface{}{map[string]interface{}{"prompt": prompt}},
-				"working":      map[string]interface{}{"prompt": prompt},
+				"working":      map[string]interface{}{"prompt": prompt, "images": req["images"]},
 			}
 			if enc.Encode(response) != nil {
 				return
@@ -484,6 +484,10 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		name, mime := "report.txt", "text/plain"
+		if strings.EqualFold(filepath.Ext(path), ".png") {
+			name, mime = "report.png", "image/png"
+		}
 		found := false
 		for i := range current.Messages {
 			if current.Messages[i].ID != sourceID || current.Messages[i].Role != "user" {
@@ -491,10 +495,14 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 			}
 			current.Messages[i].Files = []map[string]interface{}{{
 				"path": path,
-				"name": "report.txt",
-				"mime": "text/plain",
+				"name": name,
+				"mime": mime,
 			}}
-			current.Messages[i].Content += "\n\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n[FILE:" + path + "]"
+			ref := "[FILE:" + path + "]"
+			if mime == "image/png" {
+				ref = "[image:" + path + "]"
+			}
+			current.Messages[i].Content += "\n\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n" + ref
 			found = true
 			break
 		}
@@ -530,12 +538,21 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		display := wantPrompt + "\n\n[附件已保存]\n[FILE:" + wantPath + "]"
+		name, mime, ref := "report.txt", "text/plain", "[FILE:"+wantPath+"]"
+		wantImage := strings.EqualFold(filepath.Ext(wantPath), ".png")
+		if wantImage {
+			name, mime, ref = "report.png", "image/png", "[image:"+wantPath+"]"
+		}
+		display := wantPrompt + "\n\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n" + ref
 		if len(got.Messages) != 2 || got.Messages[0].ID != wantUserID || got.Messages[0].Content != display || got.Messages[1].Content != "answer "+display {
 			t.Fatalf("exact branch messages = %+v, want user=%s display=%s", got.Messages, wantUserID, display)
 		}
-		if len(got.Messages[0].Files) != 1 || got.Messages[0].Files[0]["path"] != wantPath || got.Messages[0].Files[0]["name"] != "report.txt" || got.Messages[0].Files[0]["mime"] != "text/plain" {
+		if len(got.Messages[0].Files) != 1 || got.Messages[0].Files[0]["path"] != wantPath || got.Messages[0].Files[0]["name"] != name || got.Messages[0].Files[0]["mime"] != mime {
 			t.Fatalf("exact branch attachment = %+v, want path=%s", got.Messages[0].Files, wantPath)
+		}
+		images, ok := got.Working["images"].([]interface{})
+		if !ok || (wantImage && (len(images) != 1 || images[0] != wantPath)) || (!wantImage && len(images) != 0) {
+			t.Fatalf("exact branch worker images = %#v, want image=%t path=%s", got.Working["images"], wantImage, wantPath)
 		}
 		if len(got.RawHistory) != 1 || got.RawHistory[0]["content"] != "raw "+display || got.Working["prompt"] != display {
 			t.Fatalf("exact branch restore state = raw=%+v working=%+v, want display=%s", got.RawHistory, got.Working, display)
@@ -543,9 +560,9 @@ func TestWorldlineEditResendUsesSameSIDAndPersistsExactBranch(t *testing.T) {
 	}
 
 	switchBranch(s, "right")
-	attachSource("u-right", "uploads/right-report.txt")
+	attachSource("u-right", "uploads/right-report.png")
 	resend(s, "u-right", "edited right")
-	assertExact("edited-u-right", "edited right", "uploads/right-report.txt")
+	assertExact("edited-u-right", "edited right", "uploads/right-report.png")
 	if len(stateActivations) != 1 || !stateActivations[0] {
 		t.Fatalf("resend state activation after first edit = %#v, want [true]", stateActivations)
 	}

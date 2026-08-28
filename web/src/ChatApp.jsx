@@ -5906,19 +5906,6 @@ export default function ChatApp() {
 
   return <div ref={chatScope} className={`oa-chat ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <label className="oa-sidebar-instance" title={ct('切换实例会更新当前侧栏中的会话', 'Switching instances updates the sessions in this sidebar')}>
-        <span>{ct('GA 实例', 'GA instance')}</span>
-        <select
-          aria-label={ct('选择 GA 实例', 'Select GA instance')}
-          value={chatInstanceID}
-          onChange={event=>switchChatInstance(event.target.value)}
-          disabled={chatInstancesLoading || !chatInstances.length}
-        >
-          {chatInstancesLoading && <option value={chatInstanceID}>{ct('加载实例…', 'Loading instances…')}</option>}
-          {!chatInstancesLoading && !chatInstances.length && <option value="">{ct('默认实例', 'Default instance')}</option>}
-          {chatInstances.map(instance => <option key={instance.id} value={instance.id} disabled={instance.initializing}>{instance.name}{instance.initializing ? ct('（初始化中）', ' (initializing)') : ''}</option>)}
-        </select>
-      </label>
       <div className="oa-side-head">
         <div className="oa-sidebar-search">
           <Search size={15}/>
@@ -6028,6 +6015,19 @@ export default function ChatApp() {
         </div>
       })()}
       <div className="oa-sidebar-foot">
+        <label className="oa-sidebar-instance" title={ct('切换实例会更新当前侧栏中的会话', 'Switching instances updates the sessions in this sidebar')}>
+          <span>{ct('GA 实例', 'GA instance')}</span>
+          <select
+            aria-label={ct('选择 GA 实例', 'Select GA instance')}
+            value={chatInstanceID}
+            onChange={event=>switchChatInstance(event.target.value)}
+            disabled={chatInstancesLoading || !chatInstances.length}
+          >
+            {chatInstancesLoading && <option value={chatInstanceID}>{ct('加载实例…', 'Loading instances…')}</option>}
+            {!chatInstancesLoading && !chatInstances.length && <option value="">{ct('默认实例', 'Default instance')}</option>}
+            {chatInstances.map(instance => <option key={instance.id} value={instance.id} disabled={instance.initializing}>{instance.name}{instance.initializing ? ct('（初始化中）', ' (initializing)') : ''}</option>)}
+          </select>
+        </label>
         <button onClick={()=>window.location.href='/admin'}><Settings size={15}/>{ct('设置', 'Settings')}</button>
       </div>
     </aside>

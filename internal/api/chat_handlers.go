@@ -1256,6 +1256,7 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		"extra_sys_prompts":        cs.ExtraSysPrompts,
 		"llm_no":                   cs.Settings.LLMNo,
 		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"images":                   chatVisionImagePaths(saved),
 		"ga_root":                  s.CfgStore.Snapshot().GARoot,
 		"_ga_worldline_resend":     strings.TrimSpace(req.SourceUserMessageID) != "",
 		"_ga_pending_assistant_id": pendingMsg.ID,

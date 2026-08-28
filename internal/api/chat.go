@@ -2681,6 +2681,19 @@ func chatUploadPromptRef(path, name, mime string) string {
 	return "[FILE:" + path + "]"
 }
 
+func chatVisionImagePaths(files []map[string]interface{}) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		path, _ := file["path"].(string)
+		path = strings.TrimSpace(path)
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
 func cloneChatFileMetadata(files []map[string]interface{}) []map[string]interface{} {
 	if len(files) == 0 {
 		return nil

@@ -1,4 +1,5 @@
 import glob, json, os, sys, time, traceback, threading, queue, re
+import base64, mimetypes
 from pathlib import Path
 
 
@@ -596,6 +597,66 @@ def _install_outbound_model_hooks(agent):
     return restore
 
 
+def _install_image_injection(agent, image_paths):
+    """Inject this turn's images into the first native backend call only."""
+    paths = [os.fspath(value).strip() for value in (image_paths or [])
+             if isinstance(value, (str, os.PathLike)) and os.fspath(value).strip()]
+    if not paths:
+        return lambda: None
+    try:
+        from llmcore import NativeToolClient
+        client = agent.llmclient
+        if not isinstance(client, NativeToolClient):
+            return lambda: None
+        backend = client.backend
+        original_ask = backend.ask
+        had_instance_attr = 'ask' in vars(backend)
+        instance_value = vars(backend).get('ask')
+    except (ImportError, AttributeError, TypeError):
+        return lambda: None
+
+    active = [True]
+
+    def restore():
+        if not active[0]:
+            return
+        active[0] = False
+        try:
+            if had_instance_attr:
+                backend.ask = instance_value
+            else:
+                delattr(backend, 'ask')
+        except (AttributeError, TypeError):
+            try:
+                backend.ask = original_ask
+            except Exception:
+                pass
+
+    def patched_ask(msg):
+        restore()
+        if isinstance(msg, dict) and isinstance(msg.get('content'), list):
+            for path in paths:
+                try:
+                    mime = mimetypes.guess_type(path)[0] or 'image/png'
+                    if mime not in {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}:
+                        continue
+                    with open(path, 'rb') as image_file:
+                        data = base64.b64encode(image_file.read()).decode('ascii')
+                    msg['content'].append({
+                        'type': 'image',
+                        'source': {'type': 'base64', 'media_type': mime, 'data': data},
+                    })
+                except (OSError, ValueError):
+                    continue
+        return (yield from original_ask(msg))
+
+    try:
+        backend.ask = patched_ask
+    except (AttributeError, TypeError):
+        active[0] = False
+    return restore
+
+
 def _json_clone(value, fallback):
     try:
         return json.loads(json.dumps(value, ensure_ascii=False, default=str))
@@ -644,6 +705,11 @@ def _normalize_request(req):
     if not isinstance(prompts, list):
         prompts = []
     normalized['extra_sys_prompts'] = [str(value).strip() for value in prompts if str(value).strip()]
+    images = normalized.get('images')
+    if not isinstance(images, list):
+        images = []
+    normalized['images'] = [os.fspath(value).strip() for value in images
+                            if isinstance(value, (str, os.PathLike)) and os.fspath(value).strip()]
     if normalized.get('reasoning_effort') is not None and not isinstance(normalized.get('reasoning_effort'), str):
         normalized['reasoning_effort'] = None
     return normalized
@@ -2448,6 +2514,7 @@ def handle_request(agent, worker, req):
             emit({'type': 'plan_update', 'plan': plan})
         return plan
 
+    restore_image_injection = _install_image_injection(agent, req.get('images'))
     restore_model_hooks = _install_outbound_model_hooks(agent)
     try:
         if _up_context:
@@ -2550,6 +2617,7 @@ def handle_request(agent, worker, req):
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
         _clear_tool_timer_emitter(emit)
+        restore_image_injection()
         restore_model_hooks()
 
 

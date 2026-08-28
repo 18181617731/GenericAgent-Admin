@@ -886,7 +886,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-hist", strings.NewReader(`{"prompt":"second question","client_user_id":"u1"}`))
+	imageData := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	body := fmt.Sprintf(`{"prompt":"second question","client_user_id":"u1","files":[{"name":"sample.png","type":"image/png","dataURL":"data:image/png;base64,%s"},{"name":"notes.txt","type":"text/plain","dataURL":"data:text/plain;base64,dGV4dA=="}]}`, imageData)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-hist", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.Routes().ServeHTTP(rr, req)
@@ -896,7 +898,8 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if captured == nil {
 		t.Fatalf("worker request was not captured")
 	}
-	if captured["prompt"] != "second question" {
+	prompt, _ := captured["prompt"].(string)
+	if !strings.HasPrefix(prompt, "second question\n\n[附件已保存]\n") || !strings.Contains(prompt, "[image:") || !strings.Contains(prompt, "[FILE:") {
 		t.Fatalf("prompt=%#v", captured["prompt"])
 	}
 	if captured["llm_no"].(float64) != 2 {
@@ -904,6 +907,17 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if captured["project_mode"] != "alpha" {
 		t.Fatalf("project_mode=%#v want alpha", captured["project_mode"])
+	}
+	images, ok := captured["images"].([]interface{})
+	if !ok || len(images) != 1 {
+		t.Fatalf("images=%#v want one supported image", captured["images"])
+	}
+	imagePath, ok := images[0].(string)
+	if !ok || filepath.Ext(imagePath) != ".png" {
+		t.Fatalf("image path=%#v want saved PNG path", images[0])
+	}
+	if data, err := os.ReadFile(imagePath); err != nil || string(data) != "png-bytes" {
+		t.Fatalf("saved image data=%q err=%v", data, err)
 	}
 	extraPrompts, ok := captured["extra_sys_prompts"].([]interface{})
 	if !ok || len(extraPrompts) != 2 || extraPrompts[0] != "be concise" || extraPrompts[1] != "cite sources" {

@@ -2,6 +2,7 @@ import importlib.util
 import os
 import queue
 import sys
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -798,6 +799,60 @@ class PlanPayloadAdapterTests(unittest.TestCase):
             "status": "done",
         }])
         self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
+
+
+class ImageInjectionTest(unittest.TestCase):
+    def test_native_backend_gets_images_on_first_call_only_and_is_restored(self):
+        requests = []
+
+        class FakeBackend:
+            def ask(self, request):
+                requests.append(request)
+                yield "ok"
+
+        class NativeToolClient:
+            def __init__(self, backend):
+                self.backend = backend
+
+        llmcore = ModuleType("llmcore")
+        llmcore.NativeToolClient = NativeToolClient
+        backend = FakeBackend()
+        agent = SimpleNamespace(llmclient=NativeToolClient(backend))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "sample.png"
+            image_path.write_bytes(b"png-bytes")
+            with mock.patch.dict(sys.modules, {"llmcore": llmcore}):
+                restore = chat_worker._install_image_injection(agent, [str(image_path)])
+                first = {"content": [{"type": "text", "text": "look"}]}
+                self.assertEqual(list(backend.ask(first)), ["ok"])
+                self.assertNotIn("ask", vars(backend))
+
+                image = first["content"][1]
+                self.assertEqual(image["type"], "image")
+                self.assertEqual(image["source"]["type"], "base64")
+                self.assertEqual(image["source"]["media_type"], "image/png")
+                self.assertEqual(image["source"]["data"], "cG5nLWJ5dGVz")
+
+                second = {"content": [{"type": "text", "text": "again"}]}
+                self.assertEqual(list(backend.ask(second)), ["ok"])
+                self.assertEqual(len(second["content"]), 1)
+                restore()
+
+        self.assertEqual(requests, [first, second])
+
+    def test_non_native_client_is_not_patched(self):
+        llmcore = ModuleType("llmcore")
+        llmcore.NativeToolClient = type("NativeToolClient", (), {})
+        backend = SimpleNamespace(ask=lambda request: iter(("ok",)))
+        agent = SimpleNamespace(llmclient=SimpleNamespace(backend=backend))
+        original = backend.ask
+
+        with mock.patch.dict(sys.modules, {"llmcore": llmcore}):
+            restore = chat_worker._install_image_injection(agent, ["sample.png"])
+            restore()
+
+        self.assertIs(backend.ask, original)
 
 
 class FakeReloadAgent:
