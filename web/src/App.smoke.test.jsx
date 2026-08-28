@@ -2026,7 +2026,7 @@ describe('scheduled task execution history', () => {
     expect(workbench).toBeTruthy()
     expect(servicePanel).toBeTruthy()
     expect(workbench.compareDocumentPosition(servicePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(servicePanel).getByRole('button', { name: /启动|Start/i, hidden: true })).toBeTruthy()
+    await waitFor(() => expect(within(servicePanel).getByRole('button', { name: /启动|Start/i })).toBeTruthy())
 
     const cards = () => [...document.querySelectorAll('.scheduled-task-row')]
     fireEvent.click(cards()[0])
