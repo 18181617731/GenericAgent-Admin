@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.98 - 2026-08-28
+
+### Scheduled task execution history
+- Show the selected scheduled task's recent execution history directly below the editor, with task-scoped empty states and responsive desktop/mobile stacking.
+- Preview a selected execution artifact in place on the scheduled-task page while preserving the full reports subpage navigation from the task card.
+- Invalidate stale artifact requests during task and route changes, release busy state safely, and cover task switching, empty history, in-place preview, navigation, and recovery regressions.
+
 ## v1.0.97 - 2026-08-28
 
 ### Upstream integration and local compatibility
