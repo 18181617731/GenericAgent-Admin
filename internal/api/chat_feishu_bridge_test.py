@@ -11,6 +11,65 @@ bridge_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge_module)
 
 
+class FeishuCardPayloadTest(unittest.TestCase):
+    def test_task_card_matches_official_fsapp_shape(self):
+        payload = json.loads(bridge_module._task_card("### Result\n\n**done**"))
+        self.assertEqual(payload["schema"], "2.0")
+        self.assertEqual(payload["config"], {"streaming_mode": False, "width_mode": "fill"})
+        self.assertEqual(payload["body"]["elements"], [
+            {"tag": "markdown", "content": "**✅ 已完成**"},
+            {"tag": "hr"},
+            {"tag": "markdown", "content": "### Result\n\n**done**"},
+        ])
+
+    def test_info_card_uses_markdown(self):
+        payload = json.loads(bridge_module._info_card("**GA Admin**\n\n/list"))
+        self.assertEqual(payload["body"]["elements"], [
+            {"tag": "markdown", "content": "**GA Admin**\n\n/list"},
+        ])
+
+    def test_send_prefers_interactive_completion_card(self):
+        attempts = []
+
+        class Response:
+            def success(self):
+                return True
+
+        def send_once(msg_type, content):
+            attempts.append((msg_type, content))
+            return Response()
+
+        self.assertTrue(bridge_module._send_with_fallback(send_once, "answer", completed=True))
+        self.assertEqual([item[0] for item in attempts], ["interactive"])
+        self.assertEqual(
+            json.loads(attempts[0][1])["body"]["elements"][0]["content"],
+            "**\u2705 \u5df2\u5b8c\u6210**",
+        )
+
+    def test_send_falls_back_to_plain_text(self):
+        attempts = []
+
+        class Response:
+            code = 230001
+            msg = "card rejected"
+
+            def __init__(self, ok):
+                self.ok = ok
+
+            def success(self):
+                return self.ok
+
+        responses = iter([Response(False), Response(True)])
+
+        def send_once(msg_type, content):
+            attempts.append((msg_type, content))
+            return next(responses)
+
+        self.assertTrue(bridge_module._send_with_fallback(send_once, "plain **text**"))
+        self.assertEqual([item[0] for item in attempts], ["interactive", "text"])
+        self.assertEqual(json.loads(attempts[1][1]), {"text": "plain **text**"})
+
+
 class FakeAPI:
     def __init__(self):
         self.items = [
@@ -38,7 +97,9 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.api = FakeAPI()
         self.sent = []
         self.bridge = bridge_module.FeishuAdminBridge(
-            self.api, self.store, lambda chat_id, text: self.sent.append((chat_id, text)) or True
+            self.api,
+            self.store,
+            lambda chat_id, text, completed=False: self.sent.append((chat_id, text, completed)) or True,
         )
 
     def tearDown(self):
@@ -97,13 +158,16 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.assertEqual(self.sent, [])
         self.api.tasks_by_sid["s1"][-1]["outputs"] = ["world"]
         self.bridge.poll_once()
-        self.assertEqual(self.sent, [("chat-a", "world")])
+        self.assertEqual(self.sent, [("chat-a", "world", True)])
 
     def test_admin_side_turn_is_forwarded(self):
         self.bridge.handle("chat-a", "/switch s1")
         self.api.tasks_by_sid["s1"].append({"input": "from admin", "outputs": ["answer"]})
         self.bridge.poll_once()
-        self.assertEqual(self.sent, [("chat-a", "[Admin]\nfrom admin"), ("chat-a", "answer")])
+        self.assertEqual(self.sent, [
+            ("chat-a", "[Admin]\nfrom admin", False),
+            ("chat-a", "answer", True),
+        ])
 
     def test_failed_send_is_retried_without_advancing_cursor(self):
         self.bridge.handle("chat-a", "/switch s1")
@@ -111,8 +175,8 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.api.tasks_by_sid["s1"].append({"input": "from admin", "outputs": ["answer"]})
         attempts = []
 
-        def flaky_send(chat_id, text):
-            attempts.append((chat_id, text))
+        def flaky_send(chat_id, text, completed=False):
+            attempts.append((chat_id, text, completed))
             return len(attempts) > 1
 
         self.bridge.send = flaky_send
@@ -120,9 +184,9 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.assertEqual(self.store.get("chat-a")["cursor"], initial_cursor)
         self.bridge.poll_once()
         self.assertEqual(attempts, [
-            ("chat-a", "[Admin]\nfrom admin"),
-            ("chat-a", "[Admin]\nfrom admin"),
-            ("chat-a", "answer"),
+            ("chat-a", "[Admin]\nfrom admin", False),
+            ("chat-a", "[Admin]\nfrom admin", False),
+            ("chat-a", "answer", True),
         ])
         self.assertEqual(self.store.get("chat-a")["cursor"], initial_cursor + 2)
 

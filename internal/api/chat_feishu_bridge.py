@@ -103,6 +103,44 @@ def _split_text(text, limit=3500):
     return chunks
 
 
+def _card(elements):
+    return json.dumps({
+        "schema": "2.0",
+        "config": {"streaming_mode": False, "width_mode": "fill"},
+        "body": {"elements": elements},
+    }, ensure_ascii=False)
+
+
+def _info_card(text):
+    return _card([{"tag": "markdown", "content": str(text or "")}])
+
+
+def _task_card(text):
+    return _card([
+        {"tag": "markdown", "content": "**\u2705 \u5df2\u5b8c\u6210**"},
+        {"tag": "hr"},
+        {"tag": "markdown", "content": str(text or "_(\u65e0\u6587\u672c\u8f93\u51fa)_")},
+    ])
+
+
+def _send_with_fallback(send_once, text, completed=False):
+    attempts = [
+        ("interactive", _task_card(text) if completed else _info_card(text)),
+        ("text", json.dumps({"text": text}, ensure_ascii=False)),
+    ]
+    for msg_type, content in attempts:
+        try:
+            response = send_once(msg_type, content)
+            if response.success():
+                return True
+            print("[feishu_admin_bridge] %s send failed: %s %s" % (
+                msg_type, response.code, response.msg,
+            ), flush=True)
+        except Exception as exc:
+            print("[feishu_admin_bridge] %s send failed: %s" % (msg_type, exc), flush=True)
+    return False
+
+
 class AdminAPI:
     def __init__(self, base, token):
         self.base = base.rstrip("/")
@@ -322,7 +360,8 @@ class FeishuAdminBridge:
                         delivered = True
                     else:
                         payload = ("[Admin]\n" + text) if role == "user" else text
-                        delivered = all(self.send(chat_id, chunk) for chunk in _split_text(payload))
+                        completed = role == "assistant"
+                        delivered = all(self.send(chat_id, chunk, completed) for chunk in _split_text(payload))
                     if not delivered:
                         break
                     cursor += 1
@@ -358,20 +397,14 @@ def main():
 
     rest_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).log_level(lark.LogLevel.INFO).build()
 
-    def send(chat_id, text):
-        try:
+    def send(chat_id, text, completed=False):
+        def send_once(msg_type, content):
             request = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(
-                CreateMessageRequestBody.builder().receive_id(chat_id).msg_type("text").content(
-                    json.dumps({"text": text}, ensure_ascii=False)
-                ).build()
+                CreateMessageRequestBody.builder().receive_id(chat_id).msg_type(msg_type).content(content).build()
             ).build()
-            response = rest_client.im.v1.message.create(request)
-            if response.success():
-                return True
-            print("[feishu_admin_bridge] send failed: %s %s" % (response.code, response.msg), flush=True)
-        except Exception as exc:
-            print("[feishu_admin_bridge] send failed: %s" % exc, flush=True)
-        return False
+            return rest_client.im.v1.message.create(request)
+
+        return _send_with_fallback(send_once, text, completed)
 
     bridge = FeishuAdminBridge(AdminAPI(base, token), BindingStore(state_path), send)
     seen = set()
