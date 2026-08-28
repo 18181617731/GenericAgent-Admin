@@ -6530,9 +6530,7 @@ html[data-color-scheme="dark"] .oa-topbar-tools .theme-picker--compact .theme-pi
   bottom: calc(100% + 8px);
   width: 520px;
   max-width: min(520px, calc(100vw - 24px));
-  min-height: 220px;
-  max-height: min(80vh, 500px);
-  height: auto;
+  height: clamp(220px, 34vh, 308px);
   display: grid;
   grid-template-columns: minmax(110px, 20%) minmax(160px, 1fr) minmax(110px, 26%);
   padding: 6px;
