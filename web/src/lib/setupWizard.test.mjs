@@ -12,6 +12,7 @@ import {
   setupSteps,
   statusTone,
   writeSetupEvidence,
+  normalizeRootPath,
 } from './setupWizard.js'
 import { SETUP_TEXT } from './i18n.js'
 
@@ -22,6 +23,12 @@ const memoryStorage = (seed = {}) => {
     setItem: (key, value) => { data[key] = String(value) },
   }
 }
+
+test('normalizes macOS pasted paths', () => {
+  assert.equal(normalizeRootPath('  \"/Users/me/ga\"\n'), '/Users/me/ga')
+  assert.equal(normalizeRootPath('file:///Users/me/GA%20Root/'), '/Users/me/GA Root')
+  assert.equal(normalizeRootPath('\n/Users/me/ga/\t'), '/Users/me/ga')
+})
 
 const healthyState = (extra = {}) => ({
   ok: true,

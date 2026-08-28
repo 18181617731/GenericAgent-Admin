@@ -195,7 +195,7 @@ jobs:
           cat > "$name/README.txt" <<EOF
           GenericAgent Admin Go ${tag}
 
-          Run ga-admin.exe on Windows, or ga-admin on macOS/Linux.
+          Run ga-admin.exe on Windows. On macOS, double-click ga-admin.app in Finder; do not launch the executable inside the app bundle directly.
           Linux servers without DISPLAY/Wayland enter headless mode automatically; use --headless or GA_ADMIN_HEADLESS=1 to force it.
           The executable embeds the React/Vite web UI.
           GenericAgent services still require your local GenericAgent Python environment.

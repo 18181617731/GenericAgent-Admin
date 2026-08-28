@@ -17,6 +17,7 @@ import { SchedulerServiceRow } from './components/schedule.jsx'
 import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
 import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
 import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
+import { registerDialogAdapter } from './lib/danger.js'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -94,7 +95,18 @@ const reflectService = {
   command: ['agentmain', '--reflect'],
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   window.localStorage.clear()
   window.history.replaceState({}, '', '/')
@@ -1806,7 +1818,7 @@ describe('operator shell feedback', () => {
   test('service actions stay local to one card and expose failure recovery', async () => {
     installBrowserPolyfills()
     window.history.replaceState({}, '', '/channels')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const services = [
       { name: 'alpha-ui', kind: 'frontend', running: false, autostart: false },
       { name: 'beta-ui', kind: 'frontend', running: false, autostart: false },
@@ -2594,7 +2606,7 @@ describe('chat loop controls', () => {
       if (path === '/api/instances') return jsonResponse({ items:[] })
       if (path === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path === '/api/chat/session/loop-session') return jsonResponse({ ...sessions[0], messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
-      if (path === '/api/chat/state/loop-session') return jsonResponse({ llms:[model], settings:{ llm_no:0, tools_mode:'official' }, loop:stoppedLoop })
+      if (path === '/api/chat/state/loop-session') return jsonResponse({ llms:[model], settings:{ llm_no:0, tools_mode:'official' }, loop:startedBody ? { enabled:true, status:'waiting', epoch:1, round:0, max_rounds:3, controller_prompt:startedBody.objective, controller_llm_no:startedBody.controller_llm_no } : stoppedLoop })
       if (path === '/api/chat/loop/loop-session/start') {
         startedBody = JSON.parse(options.body)
         return jsonResponse({ ok:true, loop:{ enabled:true, status:'waiting', epoch:1, round:0, max_rounds:startedBody.max_rounds, controller_prompt:startedBody.objective, controller_llm_no:startedBody.controller_llm_no } })

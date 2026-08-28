@@ -12,6 +12,36 @@ import (
 	"unicode/utf8"
 )
 
+func TestPythonUTF8EnvOverridesEncoding(t *testing.T) {
+	env := pythonUTF8Env([]string{
+		"PATH=C:\\bin",
+		"pythonioencoding=gbk",
+		"PYTHONUTF8=0",
+		"PythonIoEncoding=cp936",
+		"OTHER=value",
+	})
+	values := make(map[string][]string)
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		values[strings.ToUpper(key)] = append(values[strings.ToUpper(key)], value)
+	}
+	if got := values["PYTHONIOENCODING"]; len(got) != 1 || got[0] != "utf-8" {
+		t.Fatalf("PYTHONIOENCODING = %#v, want [utf-8]", got)
+	}
+	if got := values["PYTHONUTF8"]; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("PYTHONUTF8 = %#v, want [1]", got)
+	}
+	if got := values["PATH"]; len(got) != 1 || got[0] != `C:\bin` {
+		t.Fatalf("PATH = %#v, want [C:\\bin]", got)
+	}
+	if got := values["OTHER"]; len(got) != 1 || got[0] != "value" {
+		t.Fatalf("OTHER = %#v, want [value]", got)
+	}
+}
+
 func TestProfileAcceptsBooleanFakeCCSystemPrompt(t *testing.T) {
 	data := []byte(`{"profiles":[{"var_name":"api_config_main","type":"native_claude","name":"main","apibase":"https://api.example/v1","model":"claude-test","apikey":"sk-real-secret","fake_cc_system_prompt":true}]}`)
 	var draft Draft

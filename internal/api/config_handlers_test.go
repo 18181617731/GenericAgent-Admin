@@ -178,7 +178,7 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	if err := os.WriteFile(py, []byte("stub"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "custom", HTTPProxy: "http://127.0.0.1:7890"}
+	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "custom", HTTPProxy: "http://127.0.0.1:7890", GitHubMirror: "https://mirror.example"}
 	body, _ := json.Marshal(payload)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
@@ -190,6 +190,9 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	var got config.AppConfig
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
+	}
+	if got.GitHubMirror != "https://mirror.example" {
+		t.Fatalf("github_mirror = %q, want persisted mirror", got.GitHubMirror)
 	}
 	wantChatDataDir := filepath.Join(s.CfgStore.Root, "data")
 	if got.ChatDataDir != wantChatDataDir {

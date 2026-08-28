@@ -641,80 +641,86 @@ func convertChatUploadsToMaps(uploads []chatUpload) []map[string]interface{} {
 	return result
 }
 
-// processNextQueuedMessage executes the next queued message for a session.
+// processNextQueuedMessage executes the first queued message for a session.
 // It is called after a chat run completes successfully and there are queued messages.
-func (s *Server) processNextQueuedMessage(sid string) {
+func (s *Server) processNextQueuedMessage(sid string) bool {
+	return s.processQueuedMessage(sid, "")
+}
+
+// processQueuedMessage reserves the session, removes the requested queue item,
+// persists its pending assistant message, and starts the worker. An empty queueID
+// selects the first item. Reserving before dequeueing prevents a competing run
+// from causing an item to be removed and later reinserted in the wrong position.
+func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	sid = safeChatID(sid)
+	queueID = strings.TrimSpace(queueID)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		return false
+	}
 
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil || len(cs.QueuedMessages) == 0 {
 		s.SessionMu.Unlock()
-		return
+		s.endChatRunOwned(sid, token)
+		return false
 	}
-
-	// Pop the first queued message
-	queuedItem := cs.QueuedMessages[0]
-	cs.QueuedMessages = cs.QueuedMessages[1:]
-	cs.UpdatedAt = time.Now().Unix()
-
-	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
-		s.SessionMu.Unlock()
-		return
+	queueIndex := 0
+	if queueID != "" {
+		queueIndex = -1
+		for i := range cs.QueuedMessages {
+			if cs.QueuedMessages[i].ID == queueID {
+				queueIndex = i
+				break
+			}
+		}
+		if queueIndex < 0 {
+			s.SessionMu.Unlock()
+			s.endChatRunOwned(sid, token)
+			return false
+		}
 	}
+	queuedItem := cs.QueuedMessages[queueIndex]
 	s.SessionMu.Unlock()
 
-	// Publish queue status event
-	s.publishChatRun(sid, map[string]interface{}{
-		"type":             "queue_item_start",
-		"queue_item_id":    queuedItem.ID,
-		"remaining_count":  len(cs.QueuedMessages),
-	})
-
-	// Build the request payload for the queued message
-	cmdReq := map[string]interface{}{
-		"prompt": queuedItem.Text,
-		"files":  queuedItem.Files,
-	}
-	if queuedItem.LLMNo > 0 {
-		cmdReq["llmNo"] = queuedItem.LLMNo
-	}
-	if queuedItem.ReasoningEffort != "" {
-		cmdReq["reasoningEffort"] = queuedItem.ReasoningEffort
-	}
-
-	// Trigger the chat post internally
-	// We need to acquire a run token and call runChatWorkerOwned
-	token := &chatRun{
-		SID:         sid,
-		Events:      make([][]byte, 0, 64),
-		Subscribers: make(map[chan []byte]bool),
-	}
-
+	// Publish the queue identity before removing it from persisted state. Do not
+	// take ChatMu while holding SessionMu: saveChatRunPending uses the opposite
+	// lock order while atomically publishing the pending assistant identity.
 	s.ChatMu.Lock()
-	if s.ChatRuns[sid] != nil {
-		// Another run is already active, put the item back
+	if current := s.ChatRuns[sid]; current != token || current.Done || current.Canceled {
 		s.ChatMu.Unlock()
-		s.SessionMu.Lock()
-		cs2, _ := loadChatSession(s.CfgStore.Snapshot(), sid)
-		cs2.QueuedMessages = append([]chatQueuedMessage{queuedItem}, cs2.QueuedMessages...)
-		_ = saveChatSessionLocked(s.CfgStore.Snapshot(), cs2)
-		s.SessionMu.Unlock()
-		return
+		s.endChatRunOwned(sid, token)
+		return false
 	}
-	s.ChatRuns[sid] = token
+	token.QueueID = queuedItem.ID
 	s.ChatMu.Unlock()
 
-	// Reload session with the queued message removed
+	// Reload under SessionMu because queue replacement may have happened while
+	// the lock was released to publish the token identity.
 	s.SessionMu.Lock()
 	cs, err = loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err != nil {
 		s.SessionMu.Unlock()
 		s.endChatRunOwned(sid, token)
-		return
+		return false
 	}
+	queueIndex = -1
+	for i := range cs.QueuedMessages {
+		if cs.QueuedMessages[i].ID == queuedItem.ID {
+			queueIndex = i
+			queuedItem = cs.QueuedMessages[i]
+			break
+		}
+	}
+	if queueIndex < 0 {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	cs.QueuedMessages = append(cs.QueuedMessages[:queueIndex], cs.QueuedMessages[queueIndex+1:]...)
+	cs.UpdatedAt = time.Now().Unix()
 
-	// Create pending message
 	pendingID := newChatID()
 	runStartedAtMS := time.Now().UnixMilli()
 	pendingMsg := chatMessage{
@@ -723,36 +729,76 @@ func (s *Server) processNextQueuedMessage(sid string) {
 		CreatedAt:      time.Now().Unix(),
 		RunStartedAtMS: runStartedAtMS,
 	}
-
-	// Create user message from queued item
-	userMsg := chatMessage{
+	queuedUserMsg := chatMessage{
 		ID:        newChatID(),
 		Role:      "user",
 		Content:   queuedItem.Text,
 		Files:     convertChatUploadsToMaps(queuedItem.Files),
 		CreatedAt: time.Now().Unix(),
 	}
-
-	cs.Messages = append(cs.Messages, userMsg, pendingMsg)
-	updateChatTitle(&cs)
-
-	// Apply settings from queued item
+	cs.Messages = append(cs.Messages, queuedUserMsg, pendingMsg)
 	if queuedItem.LLMNo > 0 {
 		cs.Settings.LLMNo = queuedItem.LLMNo
 	}
 	if queuedItem.ReasoningEffort != "" {
 		cs.Settings.ReasoningEffort = queuedItem.ReasoningEffort
 	}
-
-	cmdReq["_ga_pending_assistant_id"] = pendingID
-
-	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
-		s.SessionMu.Unlock()
-		s.endChatRunOwned(sid, token)
-		return
+	workerHistory := append([]chatMessage(nil), cs.Messages...)
+	for i := len(workerHistory) - 1; i >= 0; i-- {
+		if workerHistory[i].ID == queuedUserMsg.ID {
+			workerHistory = workerHistory[:i]
+			break
+		}
 	}
-	s.SessionMu.Unlock()
+	cmdReq := map[string]interface{}{
+		"prompt":                   queuedItem.Text,
+		"files":                    queuedItem.Files,
+		"history":                  workerHistory,
+		"raw_history":              cs.RawHistory,
+		"history_info":             cs.HistoryInfo,
+		"working":                  cs.Working,
+		"workspace":                cs.Workspace,
+		"project_mode":             cs.ProjectMode,
+		"extra_sys_prompts":        cs.ExtraSysPrompts,
+		"llm_no":                   cs.Settings.LLMNo,
+		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"ga_root":                  s.CfgStore.Snapshot().GARoot,
+		"_ga_pending_assistant_id": pendingID,
+		"_ga_run_started_at_ms":    runStartedAtMS,
+	}
 
-	// Start the worker
+	// Publish the pending assistant identity together with the persisted session.
+	// Reattaching clients use these fields to bind live deltas to the placeholder;
+	// without them a guided queue run only appears after the final session reload.
+	s.SessionMu.Unlock()
+	owned, saveErr := s.saveChatRunPending(sid, token, pendingID, runStartedAtMS, func() error {
+		s.SessionMu.Lock()
+		defer s.SessionMu.Unlock()
+		return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+	})
+	if !owned || saveErr != nil {
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	s.publishChatQueueChanged(sid)
+
+	// Automatic queue consumption bypasses the frontend's optimistic guide path.
+	// Publish the persisted user turn on the run stream so attached clients render
+	// it immediately; replay and the frontend's message-id dedupe make reconnects safe.
+	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": queuedUserMsg})
+
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current == token {
+		current.PendingAssistantID = pendingID
+		current.RunStartedAtMS = runStartedAtMS
+	}
+	s.ChatMu.Unlock()
+
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":            "queue_item_start",
+		"queue_item_id":   queuedItem.ID,
+		"remaining_count": len(cs.QueuedMessages),
+	})
 	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
+	return true
 }

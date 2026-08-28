@@ -289,6 +289,7 @@ var (
 
 type chatRun struct {
 	SID                string
+	QueueID            string
 	Events             [][]byte
 	Done               bool
 	Canceled           bool
@@ -756,7 +757,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if s.chatRunCanceled(sid) {
 			content := strings.TrimSpace(partial)
 			if content != "" {
-				content += "\n\n[已中止生成]"
+				content += "\n\n[用户手动中止生成]"
 			} else {
 				content = "已停止生成"
 			}
@@ -1134,11 +1135,19 @@ func chatSessionForClient(cs chatSession) chatSession {
 	return cs
 }
 
-func (s *Server) chatRunActive(sid string) bool {
+func (s *Server) chatRunState(sid string) (bool, string, int64) {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
-	return r != nil && !r.Done
+	if r == nil || r.Done {
+		return false, "", 0
+	}
+	return true, r.PendingAssistantID, r.RunStartedAtMS
+}
+
+func (s *Server) chatRunActive(sid string) bool {
+	running, _, _ := s.chatRunState(sid)
+	return running
 }
 
 func (s *Server) beginChatRun(sid string) *chatRun {
@@ -1348,7 +1357,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	}
 	content := strings.TrimSpace(chatPartialContentFromEvents(events))
 	if content != "" {
-		content += "\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]"
+		content += "\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]"
 	} else {
 		content = "\u5df2\u505c\u6b62\u751f\u6210"
 	}
@@ -1734,6 +1743,9 @@ func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []model
 
 func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
 	item["provider"] = configured.provider
+	if configured.reasoningEffort != "" {
+		item["reasoning_effort"] = configured.reasoningEffort
+	}
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
 	}
@@ -2881,6 +2893,19 @@ func chatUploadPromptRef(path, name, mime string) string {
 		return "[image:" + path + "]"
 	}
 	return "[FILE:" + path + "]"
+}
+
+func chatVisionImagePaths(files []map[string]interface{}) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		path, _ := file["path"].(string)
+		path = strings.TrimSpace(path)
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func sanitizeChatUploadName(name string) string {

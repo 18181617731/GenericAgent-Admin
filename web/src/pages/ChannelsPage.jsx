@@ -62,7 +62,7 @@ export function ChannelsPage({ frontendSvcs, t, actionStates = {}, onStart, onSt
     }))
   }
   const save = async () => {
-    if (!confirmDanger('channels-save', text.saveConfirm)) return
+    if (!await confirmDanger('channels-save', text.saveConfirm)) return
     setSaving(true); setMsg({ kind: 'pending', text: text.saving })
     try {
       const d = await api('/api/channels', { dangerous:true, method:'PUT', body: JSON.stringify({ profiles: config?.profiles || [] }) })

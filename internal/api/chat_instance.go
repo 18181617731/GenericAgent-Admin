@@ -26,6 +26,9 @@ type chatRuntime struct {
 	chatMu           sync.Mutex
 	sessionMu        sync.Mutex
 	usageMu          sync.Mutex
+	queueEventMu     sync.Mutex
+	queueEventRev    map[string]uint64
+	queueEventSubs   map[string]map[chan uint64]struct{}
 	runs             map[string]*chatRun
 	workers          map[string]*chatWorker
 	titleJobs        map[string]bool
@@ -50,9 +53,11 @@ func (r *chatRuntimeRegistry) runtime(instanceID string) *chatRuntime {
 		return runtime
 	}
 	runtime := &chatRuntime{
-		runs:      make(map[string]*chatRun),
-		workers:   make(map[string]*chatWorker),
-		titleJobs: make(map[string]bool),
+		queueEventRev:  make(map[string]uint64),
+		queueEventSubs: make(map[string]map[chan uint64]struct{}),
+		runs:           make(map[string]*chatRun),
+		workers:        make(map[string]*chatWorker),
+		titleJobs:      make(map[string]bool),
 	}
 	r.entries[instanceID] = runtime
 	return runtime

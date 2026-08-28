@@ -96,6 +96,23 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatSetPinned(w, r, parts[1])
 			return
 		}
+	case "queue":
+		if len(parts) == 3 && parts[2] == "events" && r.Method == http.MethodGet {
+			s.chatQueueEvents(w, r, parts[1])
+			return
+		}
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.chatGetQueue(w, r, parts[1])
+			return
+		}
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.chatPatchQueue(w, r, parts[1])
+			return
+		}
+		if len(parts) == 2 && r.Method == http.MethodPut {
+			s.chatReplaceQueue(w, r, parts[1])
+			return
+		}
 	case "archive":
 		if len(parts) == 2 && r.Method == http.MethodPatch {
 			s.chatSetArchived(w, r, parts[1])
@@ -530,6 +547,252 @@ func (s *Server) chatSetPinned(w http.ResponseWriter, r *http.Request, sid strin
 	writeJSON(w, map[string]interface{}{"ok": true, "pinned": cs.Pinned})
 }
 
+func validateChatQueuedMessage(item *chatQueuedMessage) error {
+	item.ID = strings.TrimSpace(item.ID)
+	item.Text = strings.TrimSpace(item.Text)
+	if item.ID == "" || (item.Text == "" && len(item.Files) == 0) {
+		return fmt.Errorf("queued message requires id and content")
+	}
+	if len(item.Files) > maxChatUploadFiles {
+		return fmt.Errorf("too many queued message files")
+	}
+	return nil
+}
+
+func (s *Server) chatQueueEvents(w http.ResponseWriter, r *http.Request, sid string) {
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	if s.ChatRuntime == nil {
+		bad(w, http.StatusInternalServerError, "chat runtime unavailable")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		bad(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	sid = safeChatID(sid)
+	runtime := s.ChatRuntime
+	updates := make(chan uint64, 1)
+	runtime.queueEventMu.Lock()
+	if runtime.queueEventRev == nil {
+		runtime.queueEventRev = make(map[string]uint64)
+	}
+	if runtime.queueEventSubs == nil {
+		runtime.queueEventSubs = make(map[string]map[chan uint64]struct{})
+	}
+	if runtime.queueEventSubs[sid] == nil {
+		runtime.queueEventSubs[sid] = make(map[chan uint64]struct{})
+	}
+	runtime.queueEventSubs[sid][updates] = struct{}{}
+	revision := runtime.queueEventRev[sid]
+	runtime.queueEventMu.Unlock()
+	defer func() {
+		runtime.queueEventMu.Lock()
+		delete(runtime.queueEventSubs[sid], updates)
+		if len(runtime.queueEventSubs[sid]) == 0 {
+			delete(runtime.queueEventSubs, sid)
+		}
+		runtime.queueEventMu.Unlock()
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	fmt.Fprintf(w, "event: ready\nid: %d\ndata: {\"revision\":%d}\n\n", revision, revision)
+	flusher.Flush()
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case revision := <-updates:
+			fmt.Fprintf(w, "event: queue_changed\nid: %d\ndata: {\"revision\":%d}\n\n", revision, revision)
+			flusher.Flush()
+		case <-keepalive.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *Server) publishChatQueueChanged(sid string) {
+	if s.ChatRuntime == nil {
+		return
+	}
+	sid = safeChatID(sid)
+	runtime := s.ChatRuntime
+	runtime.queueEventMu.Lock()
+	defer runtime.queueEventMu.Unlock()
+	if runtime.queueEventRev == nil {
+		runtime.queueEventRev = make(map[string]uint64)
+	}
+	runtime.queueEventRev[sid]++
+	revision := runtime.queueEventRev[sid]
+	for updates := range runtime.queueEventSubs[sid] {
+		select {
+		case updates <- revision:
+		default:
+			select {
+			case <-updates:
+			default:
+			}
+			updates <- revision
+		}
+	}
+}
+
+func (s *Server) chatGetQueue(w http.ResponseWriter, _ *http.Request, sid string) {
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"queued_messages": cs.QueuedMessages})
+}
+
+func (s *Server) chatPatchQueue(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Op      string            `json:"op"`
+		Message chatQueuedMessage `json:"message"`
+		ID      string            `json:"id"`
+	}
+	if err := decodeLimited(r, &req, maxChatPostBodyBytes); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	sid = safeChatID(sid)
+	req.Op = strings.TrimSpace(req.Op)
+	req.ID = strings.TrimSpace(req.ID)
+
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	switch req.Op {
+	case "enqueue":
+		if err := validateChatQueuedMessage(&req.Message); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(cs.QueuedMessages) >= 100 {
+			bad(w, http.StatusBadRequest, "too many queued messages")
+			return
+		}
+		for _, item := range cs.QueuedMessages {
+			if item.ID == req.Message.ID {
+				bad(w, http.StatusConflict, "queue item already exists")
+				return
+			}
+		}
+		cs.QueuedMessages = append(cs.QueuedMessages, req.Message)
+	case "update":
+		if err := validateChatQueuedMessage(&req.Message); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		found := false
+		for i := range cs.QueuedMessages {
+			if cs.QueuedMessages[i].ID == req.Message.ID {
+				cs.QueuedMessages[i] = req.Message
+				found = true
+				break
+			}
+		}
+		if !found {
+			bad(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+	case "remove":
+		if req.ID == "" {
+			bad(w, http.StatusBadRequest, "queue id required")
+			return
+		}
+		found := false
+		next := make([]chatQueuedMessage, 0, len(cs.QueuedMessages))
+		for _, item := range cs.QueuedMessages {
+			if item.ID == req.ID {
+				found = true
+				continue
+			}
+			next = append(next, item)
+		}
+		if !found {
+			bad(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+		cs.QueuedMessages = next
+	default:
+		bad(w, http.StatusBadRequest, "unsupported queue operation")
+		return
+	}
+
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.publishChatQueueChanged(sid)
+	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
+}
+
+func (s *Server) chatReplaceQueue(w http.ResponseWriter, r *http.Request, sid string) {
+	var req struct {
+		Messages []chatQueuedMessage `json:"messages"`
+	}
+	if err := decodeLimited(r, &req, maxChatPostBodyBytes); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validChatWorldlineID(sid) {
+		bad(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	if len(req.Messages) > 100 {
+		bad(w, http.StatusBadRequest, "too many queued messages")
+		return
+	}
+	for i := range req.Messages {
+		if err := validateChatQueuedMessage(&req.Messages[i]); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	sid = safeChatID(sid)
+	s.SessionMu.Lock()
+	defer s.SessionMu.Unlock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cs.QueuedMessages = req.Messages
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.publishChatQueueChanged(sid)
+	writeJSON(w, map[string]interface{}{"ok": true, "queued_messages": cs.QueuedMessages})
+}
+
 func (s *Server) chatSetArchived(w http.ResponseWriter, r *http.Request, sid string) {
 	var req struct {
 		Archived bool `json:"archived"`
@@ -581,13 +844,26 @@ func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queu
 		return
 	}
 
-	// Check if already running
+	// A guide can race with automatic queue consumption after cancellation. The
+	// run token retains the source queue ID, so retries for that exact item are
+	// idempotent even when the item has already left the persisted queue.
 	s.ChatMu.Lock()
-	alreadyRunning := s.ChatRuns[sid] != nil && !s.ChatRuns[sid].Done
+	current := s.ChatRuns[sid]
+	matchingRun := current != nil && current.QueueID == queueID
+	anotherQueueRunning := current != nil && !current.Done && current.QueueID != "" && current.QueueID != queueID
+	matchingDone := matchingRun && current.Done
 	s.ChatMu.Unlock()
 
-	if alreadyRunning {
-		// If already running, the queue will be processed after current run completes
+	if matchingRun {
+		status := "already_started"
+		if matchingDone {
+			status = "already_completed"
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "status": status})
+		return
+	}
+	if anotherQueueRunning {
+		// If another queued item is active, this one remains queued until it completes.
 		writeJSON(w, map[string]interface{}{"ok": true, "status": "queued", "message": "will execute after current run"})
 		return
 	}
@@ -615,9 +891,14 @@ func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queu
 		return
 	}
 
-	// Trigger queue execution
-	go s.processNextQueuedMessage(sid)
-
+	if _, err := s.cancelChatRun(sid); err != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", err))
+		return
+	}
+	if !s.processQueuedMessage(sid, queueID) {
+		bad(w, http.StatusConflict, "queued message could not be started")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "status": "started"})
 }
 
@@ -718,8 +999,8 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 	if payload := chatDiagnosisPayload(diagnoseChatLLMList(cfg, len(llms), err)); payload != nil {
 		backend["diagnosis"] = payload
 	}
-	running := s.chatRunActive(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})
+	running, pendingAssistantID, runStartedAtMS := s.chatRunState(sid)
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
@@ -1019,6 +1300,7 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		"extra_sys_prompts":        cs.ExtraSysPrompts,
 		"llm_no":                   cs.Settings.LLMNo,
 		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"images":                   chatVisionImagePaths(saved),
 		"ga_root":                  s.CfgStore.Snapshot().GARoot,
 		"_ga_worldline_resend":     strings.TrimSpace(req.SourceUserMessageID) != "",
 		"_ga_pending_assistant_id": pendingMsg.ID,
@@ -1040,7 +1322,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request, sid string) 
 	s.streamChatRun(w, r, safeChatID(sid), from)
 }
 
-func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
+func (s *Server) cancelChatRun(sid string) (bool, error) {
 	sid = safeChatID(sid)
 	var cmd *exec.Cmd
 	var worker *chatWorker
@@ -1052,8 +1334,7 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	run := s.ChatRuns[sid]
 	if run == nil || run.Done {
 		s.ChatMu.Unlock()
-		writeJSON(w, map[string]interface{}{"ok": true, "running": false})
-		return
+		return false, nil
 	}
 	run.Canceled = true
 	token = run
@@ -1078,11 +1359,16 @@ func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) 
 	}
 	s.ChatMu.Unlock()
 	s.endChatRunOwned(sid, token)
-	if persistErr != nil {
-		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", persistErr))
+	return true, persistErr
+}
+
+func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
+	running, err := s.cancelChatRun(sid)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", err))
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "running": false})
+	writeJSON(w, map[string]interface{}{"ok": true, "running": running && s.chatRunActive(sid)})
 }
 
 func (s *Server) chatFile(w http.ResponseWriter, r *http.Request, name string) {

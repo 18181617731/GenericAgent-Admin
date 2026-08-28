@@ -4,7 +4,7 @@ import katex from 'katex'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
-import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './lib/chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
@@ -18,7 +18,7 @@ import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persi
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
-import { confirmDanger } from './lib/danger'
+import { confirmDanger, showAppAlert } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
 import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantFinalResult, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseStructuredContent } from './lib/structuredContent'
@@ -446,11 +446,11 @@ function FileAttachment({ path, resolvedPath = '' }) {
   const isImage = kind === 'image'
   const imageUrl = `/api/files/image?path=${encodeURIComponent(clean)}`
   const open = async (mode) => {
-    if (!confirmDanger('chat-file-open', ct(`使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`, `Open ${mode === 'folder' ? 'the containing folder' : 'this file'} in the desktop system: ${clean}?`))) return
+    if (!await confirmDanger('chat-file-open', ct(`使用系统桌面打开${mode === 'folder' ? '文件所在位置' : '文件'}：${clean}？`, `Open ${mode === 'folder' ? 'the containing folder' : 'this file'} in the desktop system: ${clean}?`))) return
     try {
       await api('/api/files/open', { dangerous:true, method:'POST', body: JSON.stringify({ path: clean, mode }) })
     } catch (e) {
-      alert(ct(`打开失败：${e?.message || e}`, `Open failed: ${e?.message || e}`))
+      await showAppAlert(ct(`\u6253\u5f00\u5931\u8d25\uff1a${e?.message || e}`, `Open failed: ${e?.message || e}`), { operation: 'chat-file-open' })
     }
   }
   const imageLabel = ct(`查看图片 ${name}`, `View image ${name}`)
@@ -2451,7 +2451,7 @@ function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskRep
   )
 }
 
-const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, turnUsages, ultraplan_state }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, turnUsages, ultraplan_state, runStartedAtMS = 0, clockNow = 0, modelID = '' }) {
   const [openTurns, setOpenTurns] = useState({})
   const [stackOpen, setStackOpen] = useState(pending)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
@@ -2467,7 +2467,21 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
   }, [content, structuredContent])
   const hasTurnSplit = parsed.runs.length > 0
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
-  if (!content && pending && !hasLiveUltraPlan) return <div className="oa-content oa-thinking">{ct('正在思考…', 'Thinking…')}</div>
+  if (!content && pending && !hasLiveUltraPlan) {
+    const startedAt = Number(runStartedAtMS) || 0
+    const elapsedSeconds = startedAt > 0 ? Math.max(0, Math.floor(((Number(clockNow) || Date.now()) - startedAt) / 1000)) : 0
+    const waitingLabel = modelID
+      ? ct('模型已接入，正在生成', 'Model connected, generating')
+      : elapsedSeconds < 2
+        ? ct('正在连接模型', 'Connecting to model')
+        : ct('正在准备回复', 'Preparing response')
+    return <div className="oa-content oa-thinking" role="status" aria-label={waitingLabel}>
+      <span className="oa-thinking-pulse" aria-hidden="true"><i/><i/><i/></span>
+      <span className="oa-thinking-label">{waitingLabel}</span>
+      {elapsedSeconds >= 3 && <span className="oa-thinking-time" aria-hidden="true">{elapsedSeconds}s</span>}
+      {modelID && <span className="oa-thinking-model" title={modelID}>{modelID}</span>}
+    </div>
+  }
   if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
   const boxedRuns = parsed.runs.slice(0, -1)
   const lastRun = parsed.runs[parsed.runs.length - 1]
@@ -2556,11 +2570,36 @@ const formatCompactElapsedMs = (ms = 0) => {
   if (safe < 1000) return `${(safe / 1000).toFixed(1)}s`
   return formatElapsedMs(safe).replaceAll(' ', '')
 }
-const getElapsedMs = (m, now = Date.now()) => {
+export const getElapsedMs = (m, now = Date.now(), live = true) => {
   if (!m || m.role !== 'assistant') return 0
   if (m.elapsed_ms > 0) return m.elapsed_ms
-  if (m.run_started_at_ms > 0) return Math.max(0, now - m.run_started_at_ms)
+  if (live && m.run_started_at_ms > 0) return Math.max(0, now - m.run_started_at_ms)
   return 0
+}
+
+export const freezeActiveAssistantElapsed = (messages = [], stoppedAtMs = Date.now()) => {
+  const targetIndex = messages.findLastIndex(m => (
+    m?.role === 'assistant'
+    && Number(m.run_started_at_ms) > 0
+    && !(Number(m.elapsed_ms) > 0)
+  ))
+  if (targetIndex < 0) return messages
+  return messages.map((m, index) => {
+    if (index !== targetIndex) return m
+    const toolElapsedMs = Math.max(0, Number(m.tool_elapsed_ms) || 0)
+    const toolLiveMs = Math.max(0, Number(m.tool_live_elapsed_ms) || 0)
+    const toolActiveCount = Math.max(0, Number(m.tool_live_active_count) || 0)
+    const toolUpdatedAtMs = Number(m.tool_live_updated_at_ms) || Number(m.tool_live_timing_at_ms) || 0
+    const projectedToolMs = toolUpdatedAtMs > 0 && toolActiveCount > 0
+      ? toolLiveMs + Math.max(0, Number(stoppedAtMs) - toolUpdatedAtMs) * toolActiveCount
+      : toolLiveMs
+    return {
+      ...m,
+      elapsed_ms: Math.max(1, Number(stoppedAtMs) - Number(m.run_started_at_ms)),
+      tool_elapsed_ms: Math.max(toolElapsedMs, projectedToolMs),
+      tool_live_active_count: 0,
+    }
+  })
 }
 const formatTokens = (count = 0) => {
   const num = Math.max(0, Number(count) || 0)
@@ -3131,6 +3170,66 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
   </>
 })
 
+function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, systemPromptActive, systemPromptLabel }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const triggerId = React.useId()
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  const actions = [
+    { icon: Paperclip, label: ct('附件', 'Attachments'), onClick: onAttach, active: false },
+    { icon: Sparkles, label: ct('命令', 'Commands'), onClick: onCommands, active: commandsOpen },
+    { icon: Bot, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
+  ]
+
+  return (
+    <div className="oa-composer-actions" ref={ref}>
+      <button
+        id={triggerId}
+        type="button"
+        className={`oa-composer-actions-trigger ${open ? 'is-open' : ''}`}
+        onClick={() => setOpen(!open)}
+        title={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
+        aria-label={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <Plus size={17} />
+      </button>
+      {open && (
+        <div className="oa-composer-actions-menu" role="menu" aria-labelledby={triggerId}>
+          {actions.map((action, i) => {
+            const Icon = action.icon
+            return (
+              <button
+                key={i}
+                type="button"
+                className={action.active ? 'is-active' : ''}
+                onClick={() => {
+                  action.onClick()
+                  setOpen(false)
+                }}
+                role="menuitem"
+              >
+                <Icon size={16} />
+                <span>{action.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PlanTodoCard({ plan }) {
   const listRef = useRef(null)
   const [expanded, setExpanded] = useState(true)
@@ -3476,6 +3575,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [])
   const runSeqRef = useRef(0)
   const activeRunRef = useRef(false)
+  const queueWriteRef = useRef(Promise.resolve())
   const guidingQueueRef = useRef('')
   const openSeqRef = useRef(0)
   const activeSidRef = useRef('')
@@ -3487,6 +3587,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [worldlineSwitchingId, setWorldlineSwitchingId] = useState('')
   const worldlineSeqRef = useRef(0)
   const messagesRef = useRef([])
+  const sessionsRef = useRef([])
   useEffect(() => {
     if (!privacyMode) return
     setSessionSearchOpen(false)
@@ -3515,6 +3616,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   // Keep a synchronous mirror of `messages` so async flows (e.g. re-attaching to a running
   // stream after a page refresh) can read the committed list without waiting for a state updater.
   useEffect(() => { messagesRef.current = messages }, [messages])
+  useEffect(() => { sessionsRef.current = sessions }, [sessions])
   const scrollModeRef = useRef('auto')
   const autoFollowRef = useRef(true)
   const previousScrollTopRef = useRef(0)
@@ -3523,6 +3625,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
+  const didInitializeChatInstanceRef = useRef(false)
   useEffect(() => {
     setSessionSearchHistory(loadSessionSearchHistory(chatInstanceID))
     setDraftSessionIds(new Set(listChatSessionDraftIds(chatInstanceID)))
@@ -3747,7 +3850,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (!cmdManagerOpen) setCmdEditIdx(-1)
   }, [cmdManagerOpen])
   const saveSlashCmds = async (newCmds) => {
-    if (!confirmDanger('chat-slash-commands-save', ct('保存斜杠命令配置？会写入 GA Admin 配置文件。', 'Save slash-command configuration? This writes the GA Admin configuration file.'))) return
+    if (!await confirmDanger('chat-slash-commands-save', ct('保存斜杠命令配置？会写入 GA Admin 配置文件。', 'Save slash-command configuration? This writes the GA Admin configuration file.'))) return
     try {
       const safeCmds = (newCmds || [])
         .filter(c => !isProtectedSlashCommand(c?.cmd))
@@ -3828,12 +3931,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       } : x))
     }
     if (ev.type === 'user' && ev.message) {
-      setMessages(xs => {
-        if (!isActiveSession(sessionId)) return xs
-        return clientUserID
-          ? xs.map(m => m.id === clientUserID ? ev.message : m)
-          : (xs.some(m => m.id === ev.message.id) ? xs : [...xs, ev.message])
-      })
+      setMessages(xs => isActiveSession(sessionId)
+        ? mergeStreamUserMessage(xs, ev.message, clientUserID, pendingId)
+        : xs)
     }
     if (ev.type === 'start' && ev.run_started_at_ms > 0) {
       setMessages(xs => isActiveSession(sessionId) ? xs.map(m =>
@@ -3978,7 +4078,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     signal?.addEventListener('abort', aborted, { once:true })
   })
 
-  const followChatStream = async (initialRes, pendingId, clientUserID, sessionId, signal) => {
+  const followChatStream = async (initialRes, pendingId, clientUserID, sessionId, signal, awaitingRun = false) => {
     let res = initialRes
     let cursor = 0
     let replay = false
@@ -4033,6 +4133,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         currentRun,
         availableRun,
         terminal,
+        awaitingRun,
       })
       if (action === 'finish') return commandPatch
       if (action === 'wait') {
@@ -4042,7 +4143,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
       const nextRun = !sameStreamRun(currentRun, availableRun)
       if (nextRun) {
+        clientUserID = nextStreamClientUserID({ clientUserID, awaitingRun, currentRun })
         currentRun = availableRun
+        // A local optimistic user id only belongs to the first explicitly
+        // admitted run. Later backend-started rounds must append their own user turn.
         pendingId = availableRun.pendingId || `resume-${Date.now()}`
         cursor = 0
         replay = false
@@ -4132,17 +4236,27 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const cancelRun = async (id = sid) => {
     if (!id) return
+    const stoppedAtMs = Date.now()
+    if (isActiveSession(id)) {
+      setMessages(xs => freezeActiveAssistantElapsed(xs, stoppedAtMs))
+      setStreamClock(stoppedAtMs)
+    }
     try {
       streamAbortRef.current?.abort?.()
       await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
       setMessages(xs => xs.map(m => (m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止。', 'Stopped.'), error:true } : m))
       setSessions(xs => xs.map(s => s.id === id ? { ...s, running:false } : s))
       setNotice(ct('已中止当前执行', 'Current run stopped'))
+      // Aborting the local stream lets runSend's finally reload before the
+      // server has persisted the canceled turn. Reload once more only after
+      // cancel returns, otherwise the context drawer can stay on that stale
+      // (and for a first turn, empty) raw_history snapshot.
+      if (isActiveSession(id)) await openSession(id, false)
     } catch (e) { setErr(e.message || String(e)) }
     finally { setBusy(false); setStreamingSid(''); if (id) loadSessions(id).catch(()=>{}) }
   }
 
-  const attachRunningStream = async (id, { waitForRun = false } = {}) => {
+  const attachRunningStream = async (id, { waitForRun = false, clientUserID = '' } = {}) => {
     if (!id) return
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
@@ -4250,6 +4364,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
     setSid(id)
+    applyQueueSnapshot([])
     setSessionPrompt(loadChatSessionDraft(chatInstanceRef.current, id), id)
     setBusy(false)
     setStreamingSid('')
@@ -4262,6 +4377,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     scrollModeRef.current = 'auto'
     setSid(d.id)
     setMessages(d.messages || [])
+    applyQueueSnapshot(d.queued_messages, d.id)
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
     setWorkingState(d.working || null)
@@ -4274,6 +4390,17 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
     await loadChatState(d.id, openToken)
     if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
+  }
+
+  const refreshActiveSessionSnapshot = async (id) => {
+    if (!id || activeSidRef.current !== id) return
+    const d = await chatApi(`/api/chat/session/${id}`)
+    if (activeSidRef.current !== id || streamAbortRef.current || activeRunRef.current) return
+    setMessages(Array.isArray(d.messages) ? d.messages : [])
+    setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
+    setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
+    setWorkingState(d.working || null)
+    setPlanState(d.plan || null)
   }
 
   const loadWorldline = async (id = activeSidRef.current || sid, { force = false } = {}) => {
@@ -4909,7 +5036,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const installChatPythonDeps = async () => {
     const packages = (modelDiagnosis?.install_packages || []).join(' ')
     if (!modelDiagnosis?.fixable || !packages) return
-    if (!confirmDanger('chat-python-install-deps', ct(`为 ${modelDiagnosis.python} 安装缺失依赖：${packages}？将执行 pip install。`, `Install missing dependencies into ${modelDiagnosis.python}: ${packages}? This runs pip install.`))) return
+    if (!await confirmDanger('chat-python-install-deps', ct(`为 ${modelDiagnosis.python} 安装缺失依赖：${packages}？将执行 pip install。`, `Install missing dependencies into ${modelDiagnosis.python}: ${packages}? This runs pip install.`))) return
     setDepsRepairing(true)
     setErr('')
     setNotice(ct('正在安装依赖，首次安装可能需要一两分钟…', 'Installing dependencies; the first run can take a minute or two…'))
@@ -5021,7 +5148,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setErr(ct('每个预设都需要名称和提示内容', 'Every preset needs a name and prompt content'))
       return
     }
-    if (!confirmDanger('chat-extra-system-prompt-presets-save', ct(`保存 ${next.length} 个全局系统提示预设？这会写入 GA Admin 配置文件。`, `Save ${next.length} global system-prompt presets? This writes the GA Admin configuration file.`))) return
+    if (!await confirmDanger('chat-extra-system-prompt-presets-save', ct(`保存 ${next.length} 个全局系统提示预设？这会写入 GA Admin 配置文件。`, `Save ${next.length} global system-prompt presets? This writes the GA Admin configuration file.`))) return
     setExtraPromptSaving(true)
     try {
       const d = await api('/api/extra-system-prompt-presets', {
@@ -5080,20 +5207,49 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const removeAttachment = (id) => setAttachments(xs => xs.filter(x => x.id !== id))
-  const syncQueue = (next) => { queuedRef.current = next; setQueuedMessages(next) }
-  const popQueued = () => {
-    const [first, ...rest] = queuedRef.current
-    syncQueue(rest)
-    return first
+  const applyQueueSnapshot = (messages, sessionId = activeSidRef.current) => {
+    if (sessionId !== activeSidRef.current) return []
+    const next = Array.isArray(messages) ? messages : []
+    queuedRef.current = next
+    setQueuedMessages(next)
+    return next
   }
-  const enqueueMessage = (item) => {
-    const next = [...queuedRef.current, { ...item, id:`q-${Date.now()}-${Math.random().toString(16).slice(2)}`, queuedAt:Date.now() }]
-    syncQueue(next)
-    setNotice(ct(`已加入队列（${next.length} 条）。点击“引导”可中止当前回复并立即发送。`, `Added to queue (${next.length}). Use Guide to stop the current response and send immediately.`))
+  const requestQueue = (operation, payload = {}, sessionId = activeSidRef.current) => {
+    if (!sessionId) return Promise.resolve([])
+    const queueURL = addChatInstanceToURL(`/api/chat/queue/${sessionId}`, chatInstanceRef.current)
+    const request = queueWriteRef.current
+      .catch(() => {})
+      .then(async () => {
+        const d = await api(queueURL, { method:'PATCH', body:JSON.stringify({ op:operation, ...payload }) })
+        return applyQueueSnapshot(d.queued_messages, sessionId)
+      })
+    queueWriteRef.current = request
+    return request
   }
-  const removeQueued = (id) => {
-    syncQueue(queuedRef.current.filter(x => x.id !== id))
-    if (queueEditingId === id) { setQueueEditingId(''); setQueueDraft('') }
+  const refreshQueue = (sessionId = activeSidRef.current) => {
+    if (!sessionId) return Promise.resolve([])
+    const queueURL = addChatInstanceToURL(`/api/chat/queue/${sessionId}`, chatInstanceRef.current)
+    const request = queueWriteRef.current
+      .catch(() => {})
+      .then(async () => {
+        const d = await api(queueURL)
+        return applyQueueSnapshot(d.queued_messages, sessionId)
+      })
+    queueWriteRef.current = request
+    return request
+  }
+  const enqueueMessage = async (item) => {
+    const queued = { ...item, id:`q-${Date.now()}-${Math.random().toString(16).slice(2)}`, queuedAt:Date.now() }
+    try {
+      const next = await requestQueue('enqueue', { message:queued })
+      setNotice(ct(`已加入队列（${next.length} 条）。点击“引导”可中止当前回复并立即发送。`, `Added to queue (${next.length}). Use Guide to stop the current response and send immediately.`))
+    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
+  }
+  const removeQueued = async (id) => {
+    try {
+      await requestQueue('remove', { id })
+      if (queueEditingId === id) { setQueueEditingId(''); setQueueDraft('') }
+    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
   }
   const editQueued = (id) => {
     const item = queuedRef.current.find(x => x.id === id)
@@ -5107,16 +5263,18 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setQueueDraft('')
     setNotice('')
   }
-  const saveQueueEdit = (id) => {
+  const saveQueueEdit = async (id) => {
     const text = queueDraft.trim()
     const item = queuedRef.current.find(x => x.id === id)
     if (!item) return
     if (!text && !(item.files || []).length) { setErr(ct('队列消息不能为空', 'Queued message cannot be empty')); return }
-    syncQueue(queuedRef.current.map(x => x.id === id ? { ...x, text } : x))
-    setQueueEditingId('')
-    setQueueDraft('')
-    setErr('')
-    setNotice(ct('队列消息已更新', 'Queued message updated'))
+    try {
+      await requestQueue('update', { id, message:{ ...item, text } })
+      setQueueEditingId('')
+      setQueueDraft('')
+      setErr('')
+      setNotice(ct('队列消息已更新', 'Queued message updated'))
+    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
   }
   const guideQueuedItem = (id) => {
     if (guidingQueueRef.current) return
@@ -5206,11 +5364,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const runSend = async (item = {}) => {
     const guidedQueueId = guidingQueueRef.current
-    if (guidedQueueId) {
-      syncQueue(queuedRef.current.filter(x => x.id !== guidedQueueId))
-      guidingQueueRef.current = ''
-      setGuidingQueueId('')
-    }
     const text = String(item.text || '').trim()
     const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
@@ -5244,6 +5397,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         setSid(id); setStreamingSid(id)
       } else if (!isActiveSession(id)) {
         return
+      }
+      if (guidedQueueId) {
+        await refreshQueue(id)
+        guidingQueueRef.current = ''
+        setGuidingQueueId('')
       }
       const clientUserID = `u-${Date.now()}`
       setStreamingSid(id)
@@ -5287,6 +5445,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         activeRunRef.current = false
         return
       }
+      // followChatStream only returns after a terminal server state. Release the
+      // local admission lock before the best-effort post-run reloads below, so a
+      // prompt sent as the final output settles starts immediately instead of
+      // being misclassified as queued while those requests are still pending.
+      activeRunRef.current = false
+      setBusy(false)
+      setStreamingSid('')
       if (id) {
         const refreshedSessions = await loadSessions(id).catch(()=>[])
         await openSession(id, false).catch(()=>{})
@@ -5324,17 +5489,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         }
       }
       if (id && isActiveSession(id)) loadWorldline(id).catch(() => {})
-      const next = popQueued()
-      if (next) {
-        setNotice(ct(`继续发送队列消息（剩余 ${Math.max(queuedRef.current.length, 0)} 条）`, `Continuing queued messages (${Math.max(queuedRef.current.length, 0)} remaining)`))
-        setTimeout(() => runSend(next), 0)
-      } else {
-        if (streamCompleted) publishNotification({ category: 'chat', level: 'success', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: notificationPrompt || latestUserPrompt(messagesRef.current), status: 'completed', lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id}:${pending?.id || runToken}:done` })
-        else if (runError?.name !== 'AbortError' && runError) publishNotification({ category: 'chat', level: 'error', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: notificationPrompt || latestUserPrompt(messagesRef.current), status: 'failed', error: runError.message || runError, lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id || 'new'}:${pending?.id || runToken}:error` })
-        activeRunRef.current = false
-        setBusy(false)
-        setStreamingSid('')
-      }
+      // Queue execution is backend-authoritative; only publish this run's local notification.
+      if (streamCompleted) publishNotification({ category: 'chat', level: 'success', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: notificationPrompt || latestUserPrompt(messagesRef.current), status: 'completed', lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id}:${pending?.id || runToken}:done` })
+      else if (runError?.name !== 'AbortError' && runError) publishNotification({ category: 'chat', level: 'error', ...buildChatNotification({ session: sessionForNotification, sessionId: id, prompt: notificationPrompt || latestUserPrompt(messagesRef.current), status: 'failed', error: runError.message || runError, lang: chatLanguage() }), route: 'chat', dedupeKey: `chat:${id || 'new'}:${pending?.id || runToken}:error` })
+      activeRunRef.current = false
+      setBusy(false)
+      setStreamingSid('')
     }
   }
 
@@ -5452,6 +5612,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const handlePromptKeyDown = (e) => {
+    // macOS 中文输入法确认英文候选词时也会派发 Enter；此时不能提交消息。
+    if (e.isComposing || e.keyCode === 229) return
     const currentValue = e.currentTarget.value
     if (cmdDrawer.open && cmdEditIdx === -1) {
       if (e.key === 'ArrowDown') {
@@ -5510,7 +5672,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
 
   const guideQueued = async (item = null) => {
-    const next = item || popQueued()
+    const next = item || queuedRef.current[0]
     if (!next) {
       guidingQueueRef.current = ''
       setGuidingQueueId('')
@@ -5518,6 +5680,26 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     const id = sid
     const wasRunning = busy && streamingSid === sid
+    const guidedUser = id && next.id ? {
+      id:`guided-${next.id}`,
+      role:'user',
+      content:String(next.text || ''),
+      files:Array.isArray(next.files) ? next.files : [],
+      created_at:Math.floor(Date.now()/1000),
+    } : null
+    let guideStarted = false
+    // Project the selected queue item before cancellation or guide network I/O so
+    // the user's action is visible immediately. The stable queue-derived id also
+    // lets the stream/session snapshot replace or deduplicate this local turn.
+    if (guidedUser) {
+      // Guiding is an explicit jump to the newest turn. Restore follow before the
+      // optimistic append so the layout effect reveals it in the same paint.
+      scrollModeRef.current = 'smooth'
+      setFollowState(true)
+      setMessages(xs => isActiveSession(id) && !xs.some(message => message.id === guidedUser.id)
+        ? [...xs, guidedUser]
+        : xs)
+    }
     // Only increment runSeqRef when there's actually a running task to abort
     // Otherwise it will cause the next runSend's token check to fail
     if (wasRunning) {
@@ -5527,18 +5709,49 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (wasRunning) {
         streamAbortRef.current?.abort?.()
         if (id) await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
-        setMessages(xs => xs.map((m, idx) => (idx === xs.length - 1 && m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true } : m))
+        setMessages(xs => {
+          const pendingAssistantIndex = xs.findLastIndex(message => message.role === 'assistant' && !message.content)
+          return xs.map((message, index) => index === pendingAssistantIndex
+            ? { ...message, content:ct('已中止，改为执行引导消息。', 'Stopped and switched to the guided message.'), error:true }
+            : message)
+        })
       }
-      // Call backend guide API to trigger queue execution
+      // Call backend guide API to trigger queue execution, then attach to the
+      // newly-created run so its user turn and output appear without a reload.
       if (id && next.id) {
-        await chatApi(`/api/chat/guide/${id}/${next.id}`, { method:'POST', body:'{}' })
+        const guideURL = `/api/chat/guide/${id}/${next.id}`
+        let guideResult = await chatApi(guideURL, { method:'POST', body:'{}' })
+        // The local stream state can lag behind the backend. If guide reports
+        // an active run, cancel that server-owned run and retry exactly once;
+        // otherwise waitForRun would poll forever while the item stays queued.
+        if (guideResult?.status === 'queued') {
+          await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
+          guideResult = await chatApi(guideURL, { method:'POST', body:'{}' })
+        }
+        if (guideResult?.status !== 'started') {
+          throw new Error(ct('引导消息未能开始执行', 'The guided message did not start'))
+        }
+        guideStarted = true
+        if (!isActiveSession(id)) return
+        await refreshQueue(id)
+        guidingQueueRef.current = ''
+        setGuidingQueueId('')
         setNotice(ct('已引导：中止当前回复并触发队列执行', 'Guided: stopped the current response and triggered queue execution'))
+        await attachRunningStream(id, { waitForRun:true, clientUserID:guidedUser.id })
       }
     } catch (e) {
+      if (!guideStarted && guidedUser) {
+        setMessages(xs => xs.filter(message => message.id !== guidedUser.id))
+        if (guidingQueueRef.current === next.id) {
+          guidingQueueRef.current = ''
+          setGuidingQueueId('')
+        }
+      }
       setErr(e.message || String(e))
     } finally {
-      setBusy(false)
-      setStreamingSid('')
+      // attachRunningStream owns busy/streamingSid. A concurrent re-attach may have
+      // replaced this guide's controller, so clearing those here would hide the live run.
+      activeRunRef.current = false
     }
   }
 
@@ -5575,6 +5788,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [])
 
   useEffect(() => {
+    if (!didInitializeChatInstanceRef.current) {
+      didInitializeChatInstanceRef.current = true
+      return undefined
+    }
     loadSessions('', { open:true }).catch(e => { if (e?.name !== 'AbortError') setErr(e.message) })
   }, [chatInstanceID])
 
@@ -5587,9 +5804,20 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       try {
         const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
-          setSessions(d.sessions || [])
+          const previous = sessionsRef.current
+          const next = Array.isArray(d.sessions) ? d.sessions : []
+          sessionsRef.current = next
+          setSessions(next)
           setProjects(Array.isArray(d.projects) ? d.projects : [])
           setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
+          const activeID = activeSidRef.current
+          const before = previous.find(item => item.id === activeID)
+          const after = next.find(item => item.id === activeID)
+          if (after?.running && !streamAbortRef.current && !activeRunRef.current) {
+            void attachRunningStream(activeID, { waitForRun:true })
+          } else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {
+            void refreshActiveSessionSnapshot(activeID).catch(() => {})
+          }
         }
       } catch {
         // Background refresh is best-effort; keep manual refresh errors visible only.
@@ -5599,13 +5827,63 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     const timer = window.setInterval(refreshList, 3000)
     const onVisible = () => { if (!document.hidden) refreshList() }
+    const onOnline = () => refreshList()
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
     return () => {
       stopped = true
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
     }
   }, [chatInstanceID])
+
+  useEffect(() => {
+    if (!sid) return undefined
+    let stopped = false
+    let fallbackTimer = null
+    const syncQueue = () => {
+      if (stopped || document.hidden) return
+      void refreshQueue(sid).catch(() => {})
+    }
+    const stopFallback = () => {
+      if (fallbackTimer === null) return
+      window.clearInterval(fallbackTimer)
+      fallbackTimer = null
+    }
+    const startFallback = () => {
+      if (stopped || fallbackTimer !== null) return
+      syncQueue()
+      fallbackTimer = window.setInterval(syncQueue, 3000)
+    }
+    const eventsURL = addChatInstanceToURL(`/api/chat/queue/${sid}/events`, chatInstanceRef.current)
+    const source = typeof EventSource === 'undefined' ? null : new EventSource(eventsURL)
+    if (source) {
+      source.onopen = () => {
+        stopFallback()
+        syncQueue()
+      }
+      source.onerror = startFallback
+      source.addEventListener('ready', syncQueue)
+      source.addEventListener('queue_changed', syncQueue)
+    } else {
+      startFallback()
+    }
+    const calibrationTimer = window.setInterval(syncQueue, 60000)
+    const onVisible = () => { if (!document.hidden) syncQueue() }
+    const onOnline = () => syncQueue()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+    syncQueue()
+    return () => {
+      stopped = true
+      source?.close()
+      stopFallback()
+      window.clearInterval(calibrationTimer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [sid, chatInstanceID])
 
   useEffect(() => {
     if (!sessionManagerOpen) return
@@ -5633,6 +5911,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     runSeqRef.current += 1
     activeRunRef.current = false
     activeSidRef.current = ''
+    applyQueueSnapshot([])
     chatInstanceRef.current = nextID
     persistChatInstanceID(nextID)
     setChatInstanceID(nextID)
@@ -5654,7 +5933,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     sessionSearchRequestRef.current += 1
     setSessionSearchResults([])
     setSessionSearchError('')
-    setQueuedMessages([])
     setAttachments([])
     setErr('')
     setNotice(ct('已切换 GA 实例', 'GA instance switched'))

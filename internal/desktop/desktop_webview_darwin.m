@@ -39,8 +39,9 @@ static void ga_desktop_forget(int32_t id);
 	forNavigationAction:(WKNavigationAction *)navigationAction
 	windowFeatures:(WKWindowFeatures *)windowFeatures {
 	NSURLRequest *request = navigationAction.request;
-	if (request.URL != nil) {
-		[webView loadRequest:request];
+	NSURL *url = request.URL;
+	if (url != nil) {
+		[[NSWorkspace sharedWorkspace] openURL:url];
 	}
 	return nil;
 }
@@ -58,6 +59,39 @@ static void ga_desktop_forget(int32_t id);
 @end
 
 static NSMutableDictionary<NSNumber *, GADesktopHost *> *gaDesktopHosts;
+
+static NSMenuItem *ga_desktop_edit_item(NSString *title, SEL action, NSString *key) {
+	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:key];
+	item.target = nil;
+	item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+	return item;
+}
+
+static void ga_desktop_install_edit_menu(void) {
+	NSMenu *mainMenu = NSApp.mainMenu;
+	if (mainMenu == nil) {
+		mainMenu = [[NSMenu alloc] initWithTitle:@""];
+		NSApp.mainMenu = mainMenu;
+	}
+	for (NSMenuItem *item in mainMenu.itemArray) {
+		if ([item.submenu.title isEqualToString:@"Edit"]) {
+			return;
+		}
+	}
+
+	NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+	[editMenu addItem:ga_desktop_edit_item(@"Undo", @selector(undo:), @"z")];
+	[editMenu addItem:ga_desktop_edit_item(@"Redo", @selector(redo:), @"Z")];
+	[editMenu addItem:[NSMenuItem separatorItem]];
+	[editMenu addItem:ga_desktop_edit_item(@"Cut", @selector(cut:), @"x")];
+	[editMenu addItem:ga_desktop_edit_item(@"Copy", @selector(copy:), @"c")];
+	[editMenu addItem:ga_desktop_edit_item(@"Paste", @selector(paste:), @"v")];
+	[editMenu addItem:ga_desktop_edit_item(@"Select All", @selector(selectAll:), @"a")];
+
+	NSMenuItem *editRoot = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
+	editRoot.submenu = editMenu;
+	[mainMenu addItem:editRoot];
+}
 
 static void ga_desktop_init(void) {
 	static dispatch_once_t once;
@@ -115,6 +149,7 @@ static void ga_desktop_create_on_main(
 		goDesktopFailed(id, "desktop window id is already in use");
 		return;
 	}
+	ga_desktop_install_edit_menu();
 
 	if (width <= 0) {
 		width = 1280;

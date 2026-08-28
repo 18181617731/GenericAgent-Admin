@@ -7,6 +7,7 @@ import './fonts/misans.css'
 import 'katex/dist/katex.min.css'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
+import { AppDialogHost } from './components/AppDialogHost.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
 import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
 import { applyUIScaleToDocument, DEFAULT_UI_SCALE, getInitialUIScale, stepUIScale, UI_SCALE_STORAGE_KEY } from './lib/uiScale.js'
@@ -76,6 +77,7 @@ function LocalizedRoot() {
       ...activeTheme.antdToken,
     },
   }}>
+    <AppDialogHost />
     <ErrorBoundary>
       <AuthGate lang={lang} theme={colorMode} onLanguageChange={chooseLanguage} onThemeChange={setColorMode}>
         <Suspense fallback={<RouteFallback label={loading} />}>

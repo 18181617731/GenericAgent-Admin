@@ -1,6 +1,10 @@
 import React, { useEffect, useRef } from 'react'
 import { Alert, Button, Input, Typography } from 'antd'
 import { Check, CheckCircle2, Download, FolderOpen, GitPullRequest, Play, RefreshCw, Terminal, Wand2 } from 'lucide-react'
+import {
+  installTargetPath,
+  normalizeRootPath,
+} from '../lib/setupWizard.js'
 import { SETUP_TEXT } from '../lib/i18n.js'
 import { useSetupWizard } from '../hooks/useSetupWizard.js'
 
@@ -156,9 +160,11 @@ export default function SetupWizard({ initialRoot = '', lang = 'zh', text, onCom
                   placeholder={copy.root.existingPlaceholder} disabled={working} allowClear />
                 <Button icon={<FolderOpen size={15}/>} onClick={() => wizard.browse('root')}
                   disabled={working} loading={busy === 'setup-browse-root'}>{copy.root.browse}</Button>
+                <Button onClick={wizard.readClipboard}
+                  disabled={working} loading={busy === 'setup-clipboard'}>{copy.root.clipboard}</Button>
               </div>
               <Button type="primary" icon={<CheckCircle2 size={15}/>} onClick={wizard.validateRoot}
-                disabled={working || !rootDraft.trim()} loading={busy === 'setup-validate'}>
+                disabled={working || !normalizeRootPath(rootDraft)} loading={busy === 'setup-validate'}>
                 {copy.root.validate}
               </Button>
             </div>

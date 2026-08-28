@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GeneralPage } from './GeneralPage'
 import { I18N, SETTINGS_TEXT } from '../lib/i18n'
+import { registerDialogAdapter } from '../lib/danger'
 
 const reply = (payload, ok = true) => Promise.resolve({
   ok,
@@ -54,9 +55,36 @@ const mockBackend = ({ auth = { username: 'admin', passwordSet: false, managedBy
   return fetchMock
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   vi.restoreAllMocks()
+})
+
+describe('GeneralPage update mirror', () => {
+  it('edits the GitHub mirror and includes it in the saved config', async () => {
+    mockBackend()
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(<Harness onSave={onSave} />)
+
+    const input = screen.getByLabelText('GitHub mirror')
+    await user.type(input, 'https://mirror.example')
+    await user.click(screen.getAllByRole('button', { name: /save changes/i })[0])
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave.mock.calls[0][0].github_mirror).toBe('https://mirror.example')
+  })
 })
 
 describe('GeneralPage remote access', () => {
@@ -119,7 +147,7 @@ describe('GeneralPage remote access', () => {
   it('sets a first password without asking for a current one', async () => {
     const calls = []
     mockBackend({ onCall: (url, options) => calls.push([url, options]) })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<Harness />)
 
@@ -141,7 +169,7 @@ describe('GeneralPage remote access', () => {
   it('rejects a mismatched confirmation before calling the API', async () => {
     const calls = []
     mockBackend({ onCall: (url) => calls.push(url) })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirmSpy = mockDialog()
     const user = userEvent.setup()
     render(<Harness />)
 
@@ -185,7 +213,7 @@ describe('GeneralPage remote access', () => {
   it('removes the password through DELETE after a confirmation', async () => {
     const calls = []
     mockBackend({ auth: { username: 'admin', passwordSet: true, managedByEnvironment: false }, onCall: (url, options) => calls.push([url, options]) })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<Harness />)
 
@@ -204,7 +232,7 @@ describe('GeneralPage remote access', () => {
       if (url === '/api/auth/password' && options.method === 'DELETE') return reply({ error: 'remote access requires a password' }, false)
       return reply({})
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const user = userEvent.setup()
     render(<Harness config={{ ...baseConfig, remote_access: true }} />)
 

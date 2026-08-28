@@ -23,7 +23,7 @@ const versionStub = (gitStatus) => ({
   toggleAutostart: vi.fn(),
 })
 
-const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [] } = {}) => render(<OverviewPage
+const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [], githubMirror = '', onSaveGitHubMirror = vi.fn() } = {}) => render(<OverviewPage
   t={I18N[lang]}
   text={SETTINGS_TEXT[lang]}
   services={services}
@@ -33,6 +33,8 @@ const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [] }
   onRefreshObservability={vi.fn()}
   version={versionStub(gitStatus)}
   root="E:/Work/GenericAgent"
+  githubMirror={githubMirror}
+  onSaveGitHubMirror={onSaveGitHubMirror}
 />)
 
 describe('OverviewPage', () => {

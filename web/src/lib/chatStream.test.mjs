@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow } from './chatStream.js'
+import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow, shouldRefreshChatSnapshot } from './chatStream.js'
 
 test('scroll follow preserves auto mode when fast content growth moves the bottom away', () => {
   assert.equal(scrollFollowAction({ nearBottom: false, previousScrollTop: 320, scrollTop: 320 }), 'preserve')
@@ -229,6 +229,45 @@ test('loop follow remains active only for backend-hosted transitional states', (
   assert.equal(isLoopFollowActive(null), false)
 })
 
+test('streamed user replaces its optimistic bubble when the local id still exists', () => {
+  const authoritative = { id:'user-1', role:'user', content:'queued message' }
+  assert.deepEqual(mergeStreamUserMessage([
+    { id:'client-1', role:'user', content:'optimistic' },
+    { id:'assistant-0', role:'assistant', content:'prior' },
+  ], authoritative, 'client-1'), [
+    authoritative,
+    { id:'assistant-0', role:'assistant', content:'prior' },
+  ])
+})
+
+test('streamed user appends when a stale client id belongs to the previous run', () => {
+  const prior = [{ id:'user-0', role:'user', content:'prior' }]
+  const authoritative = { id:'user-1', role:'user', content:'auto dequeued' }
+  assert.deepEqual(mergeStreamUserMessage(prior, authoritative, 'missing-client-id'), [
+    ...prior,
+    authoritative,
+  ])
+})
+
+test('streamed user inserts before the assistant placeholder for its backend-started run', () => {
+  const authoritative = { id:'user-1', role:'user', content:'auto dequeued' }
+  assert.deepEqual(mergeStreamUserMessage([
+    { id:'assistant-0', role:'assistant', content:'prior output' },
+    { id:'assistant-1', role:'assistant', content:'' },
+  ], authoritative, '', 'assistant-1'), [
+    { id:'assistant-0', role:'assistant', content:'prior output' },
+    authoritative,
+    { id:'assistant-1', role:'assistant', content:'' },
+  ])
+})
+
+test('streamed user replay is idempotent by authoritative message id', () => {
+  const authoritative = { id:'user-1', role:'user', content:'auto dequeued' }
+  const current = [authoritative]
+  assert.equal(mergeStreamUserMessage(current, authoritative, ''), current)
+  assert.equal(mergeStreamUserMessage(current, authoritative, 'missing-client-id'), current)
+})
+
 test('run identity prefers pending id and safely falls back to start time', () => {
   assert.equal(sameStreamRun(
     { pendingId:'assistant-1', startedAtMs:10 },
@@ -240,6 +279,24 @@ test('run identity prefers pending id and safely falls back to start time', () =
   ), false)
   assert.equal(sameStreamRun({ startedAtMs:10 }, { startedAtMs:10 }), true)
   assert.equal(sameStreamRun({}, {}), false)
+})
+
+test('guided optimistic merge key belongs only to the first admitted run', () => {
+  assert.equal(nextStreamClientUserID({
+    clientUserID:'guided-queue-1',
+    awaitingRun:true,
+    currentRun:{ pendingId:'', startedAtMs:0 },
+  }), 'guided-queue-1')
+  assert.equal(nextStreamClientUserID({
+    clientUserID:'guided-queue-1',
+    awaitingRun:true,
+    currentRun:{ pendingId:'assistant-1', startedAtMs:10 },
+  }), '')
+  assert.equal(nextStreamClientUserID({
+    clientUserID:'guided-queue-1',
+    awaitingRun:false,
+    currentRun:{ pendingId:'', startedAtMs:0 },
+  }), '')
 })
 
 test('terminal replay is never mistaken for the next loop round', () => {
@@ -260,6 +317,21 @@ test('terminal replay is never mistaken for the next loop round', () => {
   }), 'attach')
 })
 
+test('explicit run admission waits across the idle creation gap', () => {
+  assert.equal(decideStreamFollow({
+    running:false,
+    currentRun:{ pendingId:'', startedAtMs:0 },
+    availableRun:{ pendingId:'', startedAtMs:0 },
+    awaitingRun:true,
+  }), 'wait')
+  assert.equal(decideStreamFollow({
+    running:false,
+    currentRun:{ pendingId:'assistant-1', startedAtMs:10 },
+    awaitingRun:true,
+  }), 'finish')
+  assert.equal(decideStreamFollow({ running:false, awaitingRun:false }), 'finish')
+})
+
 test('loop waits across the no-run evaluation gap and finishes only after loop terminal state', () => {
   assert.equal(decideStreamFollow({
     running:false,
@@ -272,4 +344,19 @@ test('loop waits across the no-run evaluation gap and finishes only after loop t
     terminal:true,
   }), 'finish')
   assert.equal(decideStreamFollow({ running:false, loop:null, terminal:true }), 'finish')
+})
+
+
+test('idle session summary changes request an authoritative snapshot refresh', () => {
+  const base = { id:'session-1', count:2, updated_at:10, running:false }
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base }), false)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, count:3 }), true)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, updated_at:11 }), true)
+  const isoBase = { ...base, updated_at:'2026-07-17T13:00:00Z' }
+  assert.equal(shouldRefreshChatSnapshot(isoBase, { ...isoBase }), false)
+  assert.equal(shouldRefreshChatSnapshot(isoBase, { ...isoBase, updated_at:'2026-07-17T13:00:01Z' }), true)
+  assert.equal(shouldRefreshChatSnapshot({ ...base, running:true }, base), true)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, running:true }), false)
+  assert.equal(shouldRefreshChatSnapshot(base, { ...base, id:'session-2', count:3 }), false)
+  assert.equal(shouldRefreshChatSnapshot(null, base), false)
 })
