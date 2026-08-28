@@ -207,10 +207,13 @@ func (s *Server) chatSessionBridgeAPI(token string, allowAll bool) http.Handler 
 			if run {
 				partial = server.chatRunPartialContent(sid)
 			}
+			runID, turns := server.chatRunStructuredSnapshot(sid)
 			writeJSON(w, map[string]interface{}{
 				"tasks":   chatHubTasks(cs),
 				"run":     run,
+				"run_id":  runID,
 				"partial": partial,
+				"turns":   turns,
 			})
 		case "state":
 			writeJSON(w, map[string]interface{}{"run": server.chatRunActive(sid)})

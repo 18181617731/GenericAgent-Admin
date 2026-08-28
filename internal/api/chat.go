@@ -270,6 +270,7 @@ var (
 )
 
 type chatRun struct {
+	ID                 string
 	SID                string
 	QueueID            string
 	Events             [][]byte
@@ -1071,7 +1072,7 @@ func (s *Server) beginChatRun(sid string) *chatRun {
 	if r := s.ChatRuns[sid]; r != nil && !r.Done {
 		return nil
 	}
-	token := &chatRun{SID: sid, Subscribers: map[chan []byte]bool{}}
+	token := &chatRun{ID: newChatID(), SID: sid, Subscribers: map[chan []byte]bool{}}
 	s.ChatRuns[sid] = token
 	return token
 }
@@ -1322,6 +1323,29 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallback...)
 	cs.UpdatedAt = now.Unix()
 	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+}
+
+func (s *Server) chatRunStructuredSnapshot(sid string) (string, []map[string]interface{}) {
+	s.ChatMu.Lock()
+	var runID string
+	var events [][]byte
+	if run := s.ChatRuns[sid]; run != nil {
+		runID = run.ID
+		events = make([][]byte, len(run.Events))
+		for i, event := range run.Events {
+			events[i] = append([]byte(nil), event...)
+		}
+	}
+	s.ChatMu.Unlock()
+
+	turns := make([]map[string]interface{}, 0)
+	for _, event := range events {
+		var value map[string]interface{}
+		if json.Unmarshal(event, &value) == nil && value["type"] == "turn" {
+			turns = append(turns, value)
+		}
+	}
+	return runID, turns
 }
 
 func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {

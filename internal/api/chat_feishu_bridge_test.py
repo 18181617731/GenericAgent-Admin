@@ -97,6 +97,155 @@ class FeishuCardPayloadTest(unittest.TestCase):
             self.assertEqual(calls[0][0], "chat-a")
             self.assertEqual(calls[0][2:], ("interactive", "chat_id"))
 
+    def test_live_task_card_forwards_structured_step_then_done(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.calls = []
+
+            def step(self, summary, detail=""):
+                self.calls.append(("step", summary, detail))
+                self.steps.append((summary, detail))
+
+            def done(self, text):
+                self.calls.append(("done", text))
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        card.step("Inspect state", "checked")
+        card.done("finished")
+        self.assertEqual(official.calls, [
+            ("step", "Inspect state", "checked"),
+            ("done", "finished"),
+        ])
+
+    def test_live_task_card_suppresses_final_already_shown_in_last_turn(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.final = None
+                self.pushes = 0
+                self.done_calls = []
+
+            def step(self, summary, detail=""):
+                self.steps.append((summary, detail))
+
+            def _push(self):
+                self.pushes += 1
+                return True
+
+            def done(self, text):
+                self.done_calls.append(text)
+                self.status = "\u2705 \u5df2\u5b8c\u6210"
+                self.final = text
+                self._push()
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        card.step("Answer", "### \U0001f4dd Output\nfinished", final_candidate="finished")
+        card.done("  finished\n")
+        self.assertEqual(official.status, "\u2705 \u5df2\u5b8c\u6210")
+        self.assertEqual(official.final, "")
+        self.assertEqual(official.pushes, 1)
+        self.assertEqual(official.done_calls, [])
+
+    def test_live_task_card_suppresses_admin_running_header_around_last_turn(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.final = None
+                self.pushes = 0
+                self.done_calls = []
+
+            def step(self, summary, detail=""):
+                self.steps.append((summary, detail))
+
+            def _push(self):
+                self.pushes += 1
+                return True
+
+            def done(self, text):
+                self.done_calls.append(text)
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        card.step("Answer", "shown", final_candidate="finished")
+        card.done("**LLM Running (Turn 1) ...**\n\nfinished")
+        self.assertEqual(official.status, "\u2705 \u5df2\u5b8c\u6210")
+        self.assertEqual(official.final, "")
+        self.assertEqual(official.pushes, 1)
+        self.assertEqual(official.done_calls, [])
+
+    def test_live_task_card_keeps_distinct_final_inside_admin_running_header(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.done_calls = []
+
+            def step(self, summary, detail=""):
+                self.steps.append((summary, detail))
+
+            def done(self, text):
+                self.done_calls.append(text)
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        card.step("Inspect", "shown", final_candidate="intermediate")
+        wrapped = "**LLM Running (Turn 12) ...**\n\ndistinct final"
+        card.done(wrapped)
+        self.assertEqual(official.done_calls, [wrapped])
+
+    def test_live_task_card_duplicate_final_patch_failure_does_not_repeat_text(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.final = None
+                self.fallbacks = []
+
+            def step(self, summary, detail=""):
+                self.steps.append((summary, detail))
+
+            def _push(self):
+                return False
+
+            def _fallback_text(self, text, final=False):
+                self.fallbacks.append((text, final))
+
+            def done(self, text):
+                raise AssertionError("duplicate final must not call official done")
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        card.step("Answer", "shown", final_candidate="finished")
+        card.done("finished")
+        self.assertEqual(official.status, "\u2705 \u5df2\u5b8c\u6210")
+        self.assertEqual(official.final, "")
+        self.assertEqual(official.fallbacks, [("\u2705 \u5df2\u5b8c\u6210", True)])
+        self.assertNotIn("finished", official.fallbacks[0][0])
+
+    def test_live_task_card_keeps_distinct_final_after_last_turn(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.done_calls = []
+
+            def step(self, summary, detail=""):
+                self.steps.append((summary, detail))
+
+            def done(self, text):
+                self.done_calls.append(text)
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        card.step("Inspect", "### \U0001f4dd Output\nintermediate", final_candidate="intermediate")
+        card.done("distinct final")
+        self.assertEqual(official.done_calls, ["distinct final"])
+
     def test_live_task_card_retries_failed_partial_patch(self):
         class OfficialCard:
             def __init__(self):
@@ -147,12 +296,18 @@ class RecordingCard:
     def __init__(self, update_results=None):
         self.events = []
         self.update_results = list(update_results or [])
+        self.last_final_candidate = ""
 
     def start(self):
         self.events.append(("start", ""))
 
     def update(self, text):
         self.events.append(("update", text))
+        return self.update_results.pop(0) if self.update_results else True
+
+    def step(self, summary, detail="", final_candidate=""):
+        self.events.append(("step", summary, detail))
+        self.last_final_candidate = str(final_candidate or "").strip()
         return self.update_results.pop(0) if self.update_results else True
 
     def done(self, text):
@@ -262,7 +417,7 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         ])
         self.assertEqual(self.store.get("chat-a")["cursor"], initial_cursor + 2)
 
-    def test_streaming_card_updates_then_completes_without_phantom_card(self):
+    def test_structured_turns_update_same_card_exactly_once_then_complete(self):
         cards = []
 
         def new_card(chat_id):
@@ -276,40 +431,67 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.api.snapshot_value = {
             "tasks": self.api.tasks_by_sid["s1"],
             "run": True,
-            "partial": "draft",
+            "run_id": "r1",
+            "partial": "cumulative draft must not become a turn",
+            "turns": [
+                {"summary": "Inspect state", "thinking": "reason", "content": "checked", "tool_calls": []},
+            ],
         }
         self.bridge.poll_once()
-        self.assertEqual(cards[0][1].events, [("start", ""), ("update", "draft")])
-
-        self.api.tasks_by_sid["s1"][-1]["outputs"] = ["final"]
         self.bridge.poll_once()
         self.assertEqual(cards[0][1].events, [
             ("start", ""),
-            ("update", "draft"),
+            ("step", "Inspect state", "### 💭 Thinking\nreason\n\n### 📝 Output\nchecked"),
+        ])
+
+        self.api.snapshot_value["turns"].append({
+            "summary": "Apply fix",
+            "thinking": "",
+            "content": "patched",
+            "tool_calls": [{"tool_name": "file_patch", "args": {"path": "a.py"}}],
+        })
+        self.bridge.poll_once()
+        self.api.tasks_by_sid["s1"][-1]["outputs"] = ["final"]
+        self.api.snapshot_value["run"] = False
+        self.bridge.poll_once()
+        self.assertEqual(cards[0][1].events, [
+            ("start", ""),
+            ("step", "Inspect state", "### 💭 Thinking\nreason\n\n### 📝 Output\nchecked"),
+            ("step", "Apply fix", '### 🛠 Tool Calls\n- `file_patch`({"path": "a.py"})\n\n### 📝 Output\npatched'),
             ("done", "final"),
         ])
         self.assertEqual(len(cards), 1)
         self.assertEqual(self.bridge.active_cards, {})
-        self.assertEqual(self.store.get("chat-a")["cursor"], 4)
         self.assertEqual(self.sent, [])
+        self.bridge.poll_once()
+        self.assertEqual(len(cards), 1)
 
-    def test_failed_partial_update_is_retried_on_next_poll(self):
-        card = RecordingCard(update_results=[False, True])
+        self.api.snapshot_value = {
+            "tasks": self.api.tasks_by_sid["s1"],
+            "run": True,
+            "run_id": "r2",
+            "partial": "next draft",
+            "turns": [{"summary": "Next task", "thinking": "", "content": "started", "tool_calls": []}],
+        }
+        self.bridge.poll_once()
+        self.assertEqual(len(cards), 2)
+        self.assertEqual(cards[1][1].events, [
+            ("start", ""),
+            ("step", "Next task", "### \U0001f4dd Output\nstarted"),
+        ])
+
+    def test_partial_without_structured_turn_creates_no_panel(self):
+        card = RecordingCard()
         self.bridge.card_factory = lambda chat_id: card
         self.bridge.handle("chat-a", "/switch s1")
         self.api.snapshot_value = {
             "tasks": self.api.tasks_by_sid["s1"],
             "run": True,
             "partial": "draft",
+            "turns": [],
         }
         self.bridge.poll_once()
-        self.bridge.poll_once()
-        self.assertEqual(card.events, [
-            ("start", ""),
-            ("update", "draft"),
-            ("update", "draft"),
-        ])
-        self.assertEqual(len(self.bridge.active_cards), 1)
+        self.assertEqual(card.events, [("start", "")])
 
     def test_switch_retires_active_card_and_clears_pending_echo(self):
         card = RecordingCard()

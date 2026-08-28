@@ -148,8 +148,32 @@ def _task_snapshot(value):
             value.get("tasks", []) or [],
             bool(value.get("run")),
             str(value.get("partial") or "").strip(),
+            value.get("turns", []) or [],
+            str(value.get("run_id") or ""),
         )
-    return value or [], False, ""
+    return value or [], False, "", [], ""
+
+
+def _build_turn_detail(turn):
+    parts = []
+    thinking = str(turn.get("thinking") or "").strip()
+    if thinking:
+        parts.append("### \U0001f4ad Thinking\n" + thinking)
+    tool_calls = turn.get("tool_calls") or []
+    if tool_calls:
+        lines = []
+        for tool_call in tool_calls:
+            name = tool_call.get("tool_name", "?")
+            args = {key: value for key, value in (tool_call.get("args") or {}).items()
+                    if not str(key).startswith("_")}
+            lines.append("- `%s`(%s)" % (
+                name, json.dumps(args, ensure_ascii=False)[:200],
+            ))
+        parts.append("### \U0001f6e0 Tool Calls\n" + "\n".join(lines))
+    content = str(turn.get("content") or "").strip()
+    if content and content != "...":
+        parts.append("### \U0001f4dd Output\n" + content)
+    return "\n\n".join(parts)
 
 
 def _load_official_task_card(ga_root, send_raw, patch_card, send_message):
@@ -181,6 +205,7 @@ class _LiveTaskCard:
     def __init__(self, official_card):
         self.card = official_card
         self.last_partial = ""
+        self.last_final_candidate = ""
 
     def start(self):
         self.card.start()
@@ -201,7 +226,29 @@ class _LiveTaskCard:
         self.last_partial = partial
         return True
 
+    def step(self, summary, detail="", final_candidate=""):
+        self.card.step(summary, detail)
+        self.last_partial = ""
+        self.last_final_candidate = str(final_candidate or "").strip()
+
     def done(self, text):
+        final = str(text or "").strip()
+        comparable = final
+        match = re.fullmatch(
+            r"\*\*LLM Running \(Turn \d+\) \.\.\.\*\*\s*(.*)",
+            final,
+            flags=re.DOTALL,
+        )
+        if match:
+            comparable = match.group(1).strip()
+        if self.last_final_candidate and comparable == self.last_final_candidate:
+            self.card.status = "\u2705 \u5df2\u5b8c\u6210"
+            self.card.final = ""
+            if not self.card._push():
+                fallback = getattr(self.card, "_fallback_text", None)
+                if fallback:
+                    fallback("\u2705 \u5df2\u5b8c\u6210", final=True)
+            return
         self.card.done(text)
 
     def fail(self, message):
@@ -284,6 +331,7 @@ class FeishuAdminBridge:
         self.send = send
         self.card_factory = card_factory
         self.active_cards = {}
+        self.turn_cursors = {}
         self.active_cards_lock = threading.RLock()
         self.pending_inputs = {}
         self.pending_lock = threading.Lock()
@@ -451,7 +499,11 @@ class FeishuAdminBridge:
         chat_id = str(chat_id)
         with self.active_cards_lock:
             keys = [key for key in self.active_cards if key[0] == chat_id]
-            return [self.active_cards.pop(key) for key in keys]
+            cards = [self.active_cards.pop(key) for key in keys]
+            turn_keys = [key for key in self.turn_cursors if key[0] == chat_id]
+            for key in turn_keys:
+                self.turn_cursors.pop(key, None)
+            return cards
 
     @staticmethod
     def _retire_cards(cards, message):
@@ -474,7 +526,7 @@ class FeishuAdminBridge:
     def poll_once(self):
         for chat_id, binding in self.store.snapshot():
             try:
-                tasks, running, partial = self._snapshot(binding)
+                tasks, running, partial, turns, run_id = self._snapshot(binding)
                 events = _events(tasks)
                 with self.active_cards_lock:
                     latest = self.store.get(chat_id)
@@ -487,6 +539,30 @@ class FeishuAdminBridge:
                     changed = cursor != int(binding.get("cursor", 0))
                     completed_in_snapshot = False
                     key = self._card_key(chat_id, binding)
+                    saved_turn_cursor = self.turn_cursors.get(key)
+                    if (isinstance(saved_turn_cursor, tuple) and len(saved_turn_cursor) == 2
+                            and saved_turn_cursor[0] == run_id):
+                        turn_cursor = max(0, int(saved_turn_cursor[1]))
+                    else:
+                        turn_cursor = 0
+                    if turn_cursor > len(turns):
+                        turn_cursor = 0
+                    if self.card_factory:
+                        while turn_cursor < len(turns):
+                            turn = turns[turn_cursor]
+                            summary = str(turn.get("summary") or "").strip()
+                            if summary:
+                                card = self.active_cards.get(key)
+                                if card is None:
+                                    card = self._new_card(chat_id)
+                                    self.active_cards[key] = card
+                                card.step(
+                                    summary,
+                                    _build_turn_detail(turn),
+                                    final_candidate=turn.get("content"),
+                                )
+                            turn_cursor += 1
+                            self.turn_cursors[key] = (run_id, turn_cursor)
                     while cursor < len(events):
                         role, text = events[cursor]
                         if role == "user" and self._consume_pending(chat_id, text):
@@ -511,11 +587,8 @@ class FeishuAdminBridge:
                     if changed:
                         self._save_cursor(chat_id, binding, cursor)
                     if running and not completed_in_snapshot and cursor == len(events) and self.card_factory:
-                        card = self.active_cards.get(key)
-                        if card is None:
-                            card = self._new_card(chat_id)
-                            self.active_cards[key] = card
-                        card.update(partial)
+                        if key not in self.active_cards:
+                            self.active_cards[key] = self._new_card(chat_id)
             except Exception as exc:
                 print("[feishu_admin_bridge] poll %s failed: %s" % (chat_id, exc), flush=True)
 

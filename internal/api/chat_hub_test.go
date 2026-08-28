@@ -104,6 +104,10 @@ func TestChatSessionBridgeAPIExposesAllSessionsWithoutLiveOutput(t *testing.T) {
 	}
 	defer s.endChatRunOwned("session-private", run)
 	s.publishChatRun("session-private", map[string]interface{}{"delta": "in-flight"})
+	s.publishChatRun("session-private", map[string]interface{}{
+		"type": "turn", "summary": "Inspect state", "thinking": "reason",
+		"content": "checked", "tool_calls": []interface{}{},
+	})
 
 	decodeOutputs := func(path string) []interface{} {
 		t.Helper()
@@ -136,13 +140,18 @@ func TestChatSessionBridgeAPIExposesAllSessionsWithoutLiveOutput(t *testing.T) {
 	var snapshot struct {
 		Tasks   []map[string]interface{} `json:"tasks"`
 		Run     bool                     `json:"run"`
+		RunID   string                   `json:"run_id"`
 		Partial string                   `json:"partial"`
+		Turns   []map[string]interface{} `json:"turns"`
 	}
 	if err := json.Unmarshal(snapshotResponse.Body.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if !snapshot.Run || snapshot.Partial != "in-flight" {
-		t.Fatalf("snapshot run=%v partial=%q", snapshot.Run, snapshot.Partial)
+	if !snapshot.Run || snapshot.RunID != run.ID || snapshot.Partial != "in-flight" {
+		t.Fatalf("snapshot run=%v runID=%q partial=%q", snapshot.Run, snapshot.RunID, snapshot.Partial)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0]["summary"] != "Inspect state" || snapshot.Turns[0]["content"] != "checked" {
+		t.Fatalf("snapshot turns = %#v", snapshot.Turns)
 	}
 	snapshotOutputs, _ := snapshot.Tasks[0]["outputs"].([]interface{})
 	if len(snapshotOutputs) != 1 || snapshotOutputs[0] != "final response" {

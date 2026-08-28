@@ -2473,6 +2473,26 @@ def handle_request(agent, worker, req):
     _up_thread = None
     _last_plan = ['']
     _set_tool_timer_emitter(emit)
+    turn_hook_key = 'ga_admin_structured_turn_' + new_id()
+
+    def emit_structured_turn(ctx):
+        summary = str(ctx.get('summary') or '').strip()
+        if not summary:
+            return
+        response = ctx.get('response')
+        emit({
+            'type': 'turn',
+            'summary': summary,
+            'thinking': str(getattr(response, 'thinking', '') or ''),
+            'content': str(getattr(response, 'content', '') or ''),
+            'tool_calls': list(ctx.get('tool_calls') or []),
+        })
+
+    turn_hooks = getattr(agent, '_turn_end_hooks', None)
+    if turn_hooks is None:
+        turn_hooks = {}
+        agent._turn_end_hooks = turn_hooks
+    turn_hooks[turn_hook_key] = emit_structured_turn
     try:
         _goal_card_baseline = _goal_state_files(root_for_req)
     except Exception:
@@ -2616,6 +2636,9 @@ def handle_request(agent, worker, req):
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
+        turn_hooks = getattr(agent, '_turn_end_hooks', None)
+        if isinstance(turn_hooks, dict):
+            turn_hooks.pop(turn_hook_key, None)
         _clear_tool_timer_emitter(emit)
         restore_image_injection()
         restore_model_hooks()
