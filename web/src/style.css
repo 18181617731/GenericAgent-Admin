@@ -13467,7 +13467,7 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
   width:auto !important;
   max-width:220px !important;
   margin-left:0;
-  padding:0 7px 0 4px !important;
+  padding:0 10px 0 7px !important;
 }
 .oa-composer .oa-composer-primary-actions .oa-send,
 .oa-composer .oa-composer-primary-actions .oa-stop {
@@ -13516,7 +13516,7 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
     width:auto !important;
     min-width:0 !important;
     max-width:none !important;
-    padding:0 5px 0 4px !important;
+    padding:0 7px 0 6px !important;
   }
   .oa-composer .oa-composer-cascade > button > svg:last-child {
     display:none !important;
