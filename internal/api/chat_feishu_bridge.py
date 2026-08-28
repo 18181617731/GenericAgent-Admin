@@ -19,13 +19,15 @@ from pathlib import Path
 
 HELP = (
     "GA Admin \u4f1a\u8bdd\u540c\u6b65\u6307\u4ee4:\n"
-    "/list - \u5217\u51fa Admin \u4f1a\u8bdd\n"
-    "/switch <\u5e8f\u53f7|session_id|instance/session_id> - \u5207\u6362\u4f1a\u8bdd\n"
+    "/list [\u9875\u7801] - \u5206\u9875\u5217\u51fa Admin \u4f1a\u8bdd\uff08\u6bcf\u9875 10 \u6761\uff09\n"
+    "/switch <\u5168\u5c40\u5e8f\u53f7|session_id|instance/session_id> - \u5207\u6362\u4f1a\u8bdd\n"
     "/current - \u67e5\u770b\u5f53\u524d\u4f1a\u8bdd\n"
     "/unbind - \u89e3\u9664\u7ed1\u5b9a\n"
     "/help - \u663e\u793a\u5e2e\u52a9\n\n"
-    "\u4e5f\u53ef\u4f7f\u7528 /ga list\u3001/ga switch <...>\u3002"
+    "\u4e5f\u53ef\u4f7f\u7528 /ga list 2\u3001/ga switch <...>\u3002"
 )
+
+LIST_PAGE_SIZE = 10
 
 
 def _request(base, token, path, method="GET", data=None):
@@ -202,14 +204,35 @@ class FeishuAdminBridge:
         display_instance = "default" if instance_id == "_" else instance_id
         return "%s [%s/%s]" % (title, display_instance, item.get("session_id", ""))
 
-    def _list(self):
+    def _list(self, page_text=""):
+        page_text = str(page_text or "").strip()
+        if page_text and not page_text.isdigit():
+            return "\u9875\u7801\u5fc5\u987b\u662f\u6b63\u6574\u6570\uff0c\u4f8b\u5982 /list 2\u3002"
+        page = int(page_text or "1")
+        if page < 1:
+            return "\u9875\u7801\u5fc5\u987b\u4ece 1 \u5f00\u59cb\u3002"
         sessions = self.api.sessions()
         if not sessions:
             return "Admin \u4e2d\u6682\u65e0\u53ef\u7528\u4f1a\u8bdd\u3002"
-        lines = ["Admin \u4f1a\u8bdd\uff08\u6309\u6700\u8fd1\u66f4\u65b0\u6392\u5e8f\uff09:"]
-        for index, item in enumerate(sessions, 1):
+        page_count = (len(sessions) + LIST_PAGE_SIZE - 1) // LIST_PAGE_SIZE
+        if page > page_count:
+            return "\u9875\u7801\u8d85\u51fa\u8303\u56f4\uff0c\u5f53\u524d\u5171 %d \u9875\u3002" % page_count
+        start = (page - 1) * LIST_PAGE_SIZE
+        end = min(start + LIST_PAGE_SIZE, len(sessions))
+        lines = [
+            "Admin \u4f1a\u8bdd\uff08\u7b2c %d/%d \u9875\uff0c\u5171 %d \u4e2a\uff1b\u987a\u5e8f\u540c Admin \u6700\u8fd1\u5bf9\u8bdd\uff09:"
+            % (page, page_count, len(sessions))
+        ]
+        for index, item in enumerate(sessions[start:end], start + 1):
             lines.append("%d. %s" % (index, self._label(item)))
-        lines.append("\n\u4f7f\u7528 /switch <\u5e8f\u53f7> \u5207\u6362\u3002")
+        navigation = []
+        if page > 1:
+            navigation.append("/list %d" % (page - 1))
+        if page < page_count:
+            navigation.append("/list %d" % (page + 1))
+        if navigation:
+            lines.append("\n\u7ffb\u9875: " + " | ".join(navigation))
+        lines.append("\u4f7f\u7528 /switch <\u5168\u5c40\u5e8f\u53f7> \u5207\u6362\u3002")
         return "\n".join(lines)
 
     def _select(self, selector):
@@ -236,7 +259,7 @@ class FeishuAdminBridge:
             if command == "/help":
                 return HELP
             if command == "/list":
-                return self._list()
+                return self._list(argument)
             if command == "/current":
                 binding = self.store.get(chat_id)
                 return ("\u5f53\u524d: " + self._label(binding)) if binding else "\u5f53\u524d\u672a\u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"

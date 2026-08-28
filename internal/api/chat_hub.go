@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -24,6 +25,8 @@ type chatHubSession struct {
 	InstanceID string `json:"instance_id"`
 	SessionID  string `json:"session_id"`
 	Title      string `json:"title"`
+	UpdatedAt  int64  `json:"updated_at"`
+	Pinned     bool   `json:"pinned"`
 }
 
 func chatHubPeer(instanceID, sessionID string) string {
@@ -92,9 +95,26 @@ func (s *Server) listChatHubSessions(allowAll bool) []chatHubSession {
 				// slash before dispatch, so the bridge uses "_" for legacy scope.
 				advertisedInstanceID = "_"
 			}
-			out = append(out, chatHubSession{Peer: chatHubPeer(instanceID, cs.ID), InstanceID: advertisedInstanceID, SessionID: cs.ID, Title: cs.Title})
+			out = append(out, chatHubSession{
+				Peer: chatHubPeer(instanceID, cs.ID), InstanceID: advertisedInstanceID,
+				SessionID: cs.ID, Title: cs.Title, UpdatedAt: cs.UpdatedAt, Pinned: cs.Pinned,
+			})
 		}
 	}
+	// Match the Admin chat history view: pinned sessions first, then the most
+	// recently updated sessions. Identity fields make same-second ties stable.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Pinned != out[j].Pinned {
+			return out[i].Pinned
+		}
+		if out[i].UpdatedAt != out[j].UpdatedAt {
+			return out[i].UpdatedAt > out[j].UpdatedAt
+		}
+		if out[i].InstanceID != out[j].InstanceID {
+			return out[i].InstanceID < out[j].InstanceID
+		}
+		return out[i].SessionID < out[j].SessionID
+	})
 	return out
 }
 

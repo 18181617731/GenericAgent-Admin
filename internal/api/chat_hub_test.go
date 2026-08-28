@@ -130,6 +130,51 @@ func TestChatSessionBridgeAPIExposesAllSessionsWithoutLiveOutput(t *testing.T) {
 	}
 }
 
+func TestChatHubSessionListMatchesHistoryOrder(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	s := New(store, nil, nil, nil)
+	fixtures := []chatSession{
+		{ID: "session-recent", Title: "Recent", UpdatedAt: 300},
+		{ID: "session-pinned", Title: "Pinned", UpdatedAt: 100, Pinned: true},
+		{ID: "session-older", Title: "Older", UpdatedAt: 200},
+	}
+	s.SessionMu.Lock()
+	for _, cs := range fixtures {
+		if err := saveChatSessionPreserveUpdatedAtLocked(store.Snapshot(), cs); err != nil {
+			s.SessionMu.Unlock()
+			t.Fatal(err)
+		}
+	}
+	s.SessionMu.Unlock()
+
+	const token = "private-secret"
+	w := hubRequest(t, s.chatSessionBridgeAPI(token, true), token, http.MethodGet, "/sessions", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d: %s", w.Code, w.Body.String())
+	}
+	var listing struct {
+		Sessions []chatHubSession `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Sessions) != 3 {
+		t.Fatalf("sessions = %#v", listing.Sessions)
+	}
+	wantIDs := []string{"session-pinned", "session-recent", "session-older"}
+	for i, wantID := range wantIDs {
+		if listing.Sessions[i].SessionID != wantID {
+			t.Fatalf("sessions[%d].session_id = %q, want %q; all=%#v", i, listing.Sessions[i].SessionID, wantID, listing.Sessions)
+		}
+	}
+	if !listing.Sessions[0].Pinned || listing.Sessions[0].UpdatedAt != 100 {
+		t.Fatalf("pinned metadata = %#v", listing.Sessions[0])
+	}
+	if listing.Sessions[1].Pinned || listing.Sessions[1].UpdatedAt != 300 {
+		t.Fatalf("recent metadata = %#v", listing.Sessions[1])
+	}
+}
+
 func TestChatHubAPIExposesPersistentSessionAndControlsRun(t *testing.T) {
 	store := config.NewStore(t.TempDir())
 	s := New(store, nil, nil, nil)

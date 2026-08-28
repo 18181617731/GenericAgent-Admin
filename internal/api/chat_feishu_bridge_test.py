@@ -53,6 +53,42 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.assertEqual(self.store.get("chat-a")["cursor"], 2)
         self.assertIn("First", self.bridge.handle("chat-a", "/current"))
 
+    def test_list_paginates_with_global_switch_numbers(self):
+        self.api.items = [
+            {
+                "peer": "ga-admin/default/s%d" % index,
+                "instance_id": "_",
+                "session_id": "s%d" % index,
+                "title": "Session %d" % index,
+            }
+            for index in range(1, 13)
+        ]
+        self.api.tasks_by_sid = {"s%d" % index: [] for index in range(1, 13)}
+
+        first = self.bridge.handle("chat-a", "/list")
+        self.assertIn("\u7b2c 1/2 \u9875", first)
+        self.assertIn("1. Session 1", first)
+        self.assertIn("10. Session 10", first)
+        self.assertNotIn("11. Session 11", first)
+        self.assertIn("/list 2", first)
+
+        second = self.bridge.handle("chat-a", "/ga list 2")
+        self.assertIn("\u7b2c 2/2 \u9875", second)
+        self.assertNotIn("10. Session 10", second)
+        self.assertIn("11. Session 11", second)
+        self.assertIn("12. Session 12", second)
+        self.assertIn("/list 1", second)
+        self.assertNotIn("/list 3", second)
+
+        switched = self.bridge.handle("chat-a", "/switch 11")
+        self.assertIn("Session 11", switched)
+        self.assertEqual(self.store.get("chat-a")["session_id"], "s11")
+
+    def test_list_rejects_invalid_page(self):
+        self.assertIn("\u6b63\u6574\u6570", self.bridge.handle("chat-a", "/list nope"))
+        self.assertIn("\u4ece 1 \u5f00\u59cb", self.bridge.handle("chat-a", "/list 0"))
+        self.assertIn("\u5171 1 \u9875", self.bridge.handle("chat-a", "/list 2"))
+
     def test_feishu_input_is_persisted_but_not_echoed(self):
         self.bridge.handle("chat-a", "/switch 1")
         self.assertIsNone(self.bridge.handle("chat-a", "hello"))
