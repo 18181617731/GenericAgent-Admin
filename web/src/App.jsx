@@ -34,7 +34,7 @@ import { dashboardSummary } from './lib/dashboard'
 import { autonomousServices, goalWorkflowServices, guardianServices, scheduleServices } from './lib/serviceDomains'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
-import { ScheduleArtifactPreview, ScheduleReportTree, SchedulerServiceRow, TaskRow } from './components/schedule'
+import { ScheduleArtifactPreview, ScheduleReportTree, ScheduleTaskHistory, SchedulerServiceRow, TaskRow } from './components/schedule'
 import { ErrorBoundary, GlobalFeedback, RouteFallback } from './components/feedback'
 import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
@@ -367,6 +367,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
   const [taskRunStates, setTaskRunStates] = useState({}), [scheduleReportTaskId, setScheduleReportTaskId] = useState('')
   const scheduleRunTimers = useRef(new Map())
+  const scheduleArtifactRequest = useRef(0)
+  const scheduleArtifactBusyRequest = useRef(null)
   const [goals, setGoals] = useState([]), [goalObjective, setGoalObjective] = useState(''), [goalBudget, setGoalBudget] = useState(480), [goalMaxTurns, setGoalMaxTurns] = useState(200), [goalLLMNo, setGoalLLMNo] = useState(''), [goalHive, setGoalHive] = useState(false), [selectedGoal, setSelectedGoal] = useState(''), [goalOutput, setGoalOutput] = useState(''), [goalOutputMeta, setGoalOutputMeta] = useState(null)
   const [goalOutputBytes, setGoalOutputBytes] = useState(() => localStorage.getItem('ga-admin-goal-output-bytes') || '120000')
   const [goalAutoRefresh, setGoalAutoRefresh] = useState(() => localStorage.getItem('ga-admin-goal-auto-refresh') !== 'false')
@@ -416,6 +418,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const schedule = scheduleData || inv.schedule || {}
   const overview = useMemo(() => dashboardSummary(services, schedule), [services, schedule])
   const tasks = normalizeScheduleTasksPayload(schedule).tasks
+  const selectedScheduleTask = tasks.find(task => String(task?.id || task?.name || '') === String(taskId))
   const fileDirty = fileEditorDirty(fileContent, loadedFileContent)
   const taskDirty = fileEditorDirty(taskEditor, loadedTaskEditor)
   const settingsDirty = configDraftDirty(root, cfg, persistedCfg)
@@ -904,7 +907,58 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
   const runSearch = async () => { setBusy(true); try { const d = await api(`/api/files/search?path=${encodeURIComponent(browsePath)}&q=${encodeURIComponent(fileSearch)}&limit=80`); setSearchHits(d.hits || []) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
 
-  const loadTask = useCallback(async (id) => { if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return; setBusy(true); try { const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`); const content = safeJson(d.raw); setTaskId(d.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setTab('tasks'); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }, [taskDirty, taskId])
+  const beginScheduleArtifactRequest = () => {
+    const requestId = ++scheduleArtifactRequest.current
+    scheduleArtifactBusyRequest.current = requestId
+    setBusy(true)
+    return requestId
+  }
+  const finishScheduleArtifactRequest = requestId => {
+    if (scheduleArtifactBusyRequest.current !== requestId) return
+    scheduleArtifactBusyRequest.current = null
+    setBusy(false)
+  }
+  const invalidateScheduleArtifact = clearPreview => {
+    const invalidatedRequestId = scheduleArtifactRequest.current
+    ++scheduleArtifactRequest.current
+    if (scheduleArtifactBusyRequest.current === invalidatedRequestId) {
+      scheduleArtifactBusyRequest.current = null
+      setBusy(false)
+    }
+    if (clearPreview) {
+      setScheduleArtifactTitle('')
+      setScheduleArtifact('')
+    }
+  }
+
+  const loadTask = useCallback(async (id) => {
+    if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return
+    const previousTask = { id: taskId, editor: taskEditor, loadedEditor: loadedTaskEditor }
+    const requestId = beginScheduleArtifactRequest()
+    setTaskId(id)
+    setTaskEditor('{}')
+    setLoadedTaskEditor('{}')
+    setScheduleReportTaskId('')
+    setScheduleArtifactTitle('')
+    setScheduleArtifact('')
+    try {
+      const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`)
+      if (requestId !== scheduleArtifactRequest.current) return
+      const content = safeJson(d.raw)
+      setTaskId(d.id || id)
+      setTaskEditor(content)
+      setLoadedTaskEditor(content)
+      setTab('tasks')
+      setTaskSubTab('scheduled')
+    } catch(e){
+      if (requestId === scheduleArtifactRequest.current) {
+        setTaskId(previousTask.id)
+        setTaskEditor(previousTask.editor)
+        setLoadedTaskEditor(previousTask.loadedEditor)
+        setMsg(e.message)
+      }
+    } finally{ finishScheduleArtifactRequest(requestId) }
+  }, [loadedTaskEditor, taskDirty, taskEditor, taskId])
   const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const createTask = async () => { const id = newTaskId.trim(); if (!id) { setMsg('Schedule task id is required'); return }; if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。创建新任务将替换当前编辑器内容，是否继续？`)) return; if (!confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return; setBusy(true); try { const payload = buildScheduleCreateRequest(id, DEFAULT_SCHEDULE_TASK); const d = await api('/api/schedule/create', { dangerous:true, method:'POST', body: JSON.stringify(payload) }); const created = d.task || DEFAULT_SCHEDULE_TASK; const content = safeJson(created.raw || payload.task); setTaskId(created.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setMsg(t.hints.taskSaved); await loadScheduleTasks(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -915,7 +969,17 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     scheduleDefaultTaskSelected.current = true
     loadTask(firstID)
   }, [tab, taskSubTab, taskId, taskDirty, scheduleData?.tasks, loadTask])
-  const readScheduleArtifact = async (path, targetTab = 'tasks') => { setBusy(true); try { const d = await api(`/api/schedule/artifact?path=${encodeURIComponent(path)}`); setScheduleArtifactTitle(path); setScheduleArtifact(d.content || ''); setTab(targetTab); setTaskSubTab('reports') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const readScheduleArtifact = async (path, targetTab = 'tasks', targetSubTab = 'reports') => {
+    const requestId = beginScheduleArtifactRequest()
+    try {
+      const d = await api(`/api/schedule/artifact?path=${encodeURIComponent(path)}`)
+      if (requestId !== scheduleArtifactRequest.current) return
+      setScheduleArtifactTitle(path)
+      setScheduleArtifact(d.content || '')
+      setTab(targetTab)
+      setTaskSubTab(targetSubTab)
+    } catch(e){ if (requestId === scheduleArtifactRequest.current) setMsg(e.message) } finally{ finishScheduleArtifactRequest(requestId) }
+  }
 
   const loadTitleModel = async () => {
     const data = await api('/api/models/title-model')
@@ -1213,10 +1277,12 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     dismissMessage()
     if (nextTab === 'chat') {
       if (hasUnsavedChanges && !window.confirm('当前有未保存的文件、任务或配置更改。进入独立 Chat 页面将放弃这些更改，是否继续？')) return false
+      if (tab === 'tasks') invalidateScheduleArtifact(taskSubTab === 'scheduled')
       allowUnloadRef.current = true
       window.location.href = buildRoute('chat')
       return true
     }
+    if (tab === 'tasks' && nextTab !== 'tasks') invalidateScheduleArtifact(taskSubTab === 'scheduled')
     pushRoute(nextTab)
     setTab(nextTab)
     return true
@@ -1254,6 +1320,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const navigateTaskSubTab = nextSubTab => {
     if (!TASK_SUB_TABS.includes(nextSubTab)) return
     dismissMessage()
+    invalidateScheduleArtifact(nextSubTab === 'scheduled')
     pushRoute('tasks', nextSubTab)
     setTab('tasks')
     setTaskSubTab(nextSubTab)
@@ -1478,21 +1545,30 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
                   : <p className="muted">{t.hints.noTasks}</p>}
             </div>
           </Panel>
-          <Panel title={`${t.lists.editor} · ${taskId || t.empty}`}>
-            <div className="editor-mode-toggle">
-              <button className={editorMode==='form' ? 'active' : ''} onClick={()=>setEditorMode('form')}><SlidersHorizontal size={14}/>{t.tasks.form}</button>
-              <button className={editorMode==='json' ? 'active' : ''} onClick={()=>setEditorMode('json')}><Code2 size={14}/>{t.tasks.json}</button>
-            </div>
-            <p className="muted">{editorMode==='json' ? t.hints.jsonHelp : t.tasks.formHelp}</p>
-            {editorMode==='json'
-              ? <textarea className="json-editor compact-editor" value={taskEditor} onChange={e=>setTaskEditor(e.target.value)}/>
-              : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t} llms={llms} schedulerModelNo={schedulerModelNo}/>}
-            <div className="actions">
-              <span className={taskDirty ? 'status-pill warn' : 'status-pill ok'}>{taskDirty ? '有未保存更改' : '编辑器已同步'}</span>
-              <button onClick={saveTask} disabled={!taskDirty || (!taskId && !newTaskId)}><Save size={14}/>{t.save}</button>
-            </div>
-          </Panel>
-          </div>
+           <div className="schedule-editor-stack">
+             <Panel title={`${t.lists.editor} · ${taskId || t.empty}`}>
+               <div className="editor-mode-toggle">
+                 <button className={editorMode==='form' ? 'active' : ''} onClick={()=>setEditorMode('form')}><SlidersHorizontal size={14}/>{t.tasks.form}</button>
+                 <button className={editorMode==='json' ? 'active' : ''} onClick={()=>setEditorMode('json')}><Code2 size={14}/>{t.tasks.json}</button>
+               </div>
+               <p className="muted">{editorMode==='json' ? t.hints.jsonHelp : t.tasks.formHelp}</p>
+               {editorMode==='json'
+                 ? <textarea className="json-editor compact-editor" value={taskEditor} onChange={e=>setTaskEditor(e.target.value)}/>
+                 : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t} llms={llms} schedulerModelNo={schedulerModelNo}/>}
+               <div className="actions">
+                 <span className={taskDirty ? 'status-pill warn' : 'status-pill ok'}>{taskDirty ? '有未保存更改' : '编辑器已同步'}</span>
+                 <button onClick={saveTask} disabled={!taskDirty || (!taskId && !newTaskId)}><Save size={14}/>{t.save}</button>
+               </div>
+             </Panel>
+             <Panel title={`${t.lists.recentReports} · ${selectedScheduleTask?.id || selectedScheduleTask?.name || t.empty}`} className="schedule-task-history-panel">
+               <ScheduleTaskHistory task={selectedScheduleTask} selectedPath={scheduleArtifactTitle} onSelect={path=>readScheduleArtifact(path, 'tasks', 'scheduled')} t={t}/>
+               {selectedScheduleTask && scheduleArtifactTitle && <div className="schedule-task-history-preview">
+                 <div className="schedule-task-history-preview-title">{scheduleArtifactTitle}</div>
+                 <ScheduleArtifactPreview title={scheduleArtifactTitle} content={scheduleArtifact} empty={t.empty}/>
+               </div>}
+             </Panel>
+           </div>
+           </div>
         </>}
 
         {taskSubTab==='reports' && <div className="workspace tasks-workspace">

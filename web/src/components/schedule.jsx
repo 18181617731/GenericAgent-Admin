@@ -91,6 +91,28 @@ export function ScheduleReportTree({ tasks = [], selectedPath, onSelect, focusTa
   </div>
 }
 
+const reportDisplayTime = report => {
+  if (!report?.mod_time) return ''
+  const date = new Date(report.mod_time)
+  return Number.isNaN(date.getTime()) ? String(report.mod_time) : date.toLocaleString()
+}
+
+export function ScheduleTaskHistory({ task, selectedPath, onSelect, t }) {
+  const text = t?.tasks || {}
+  const id = task?.id || task?.name || text.unnamed || 'task'
+  const reports = (task?.recent_reports || []).slice(0, 30)
+  if (!task) return <p className="muted">{t?.empty || '暂无'}</p>
+  if (!reports.length) return <p className="muted">{text.noReports || t?.empty || '暂无执行记录'}</p>
+  return <div className="schedule-task-history" aria-label={`${id} ${t?.lists?.recentReports || 'Execution records'}`}>
+    <div className="schedule-task-history-summary">{text.reportCount ? text.reportCount(reports.length) : `${reports.length} records`}</div>
+    <div className="schedule-report-items">
+      {reports.map(report => <button type="button" key={report.path} className={selectedPath === report.path ? 'active' : ''} aria-current={selectedPath === report.path ? 'true' : undefined} onClick={() => onSelect?.(report.path)}>
+        <FileText size={15}/><span><b>{report.name || report.path}</b><small>{reportDisplayTime(report)}</small></span>
+      </button>)}
+    </div>
+  </div>
+}
+
 export function ScheduleArtifactPreview({ title, content, empty }) {
   if (!content) return <div className="schedule-artifact-empty">{empty}</div>
   return <article className="artifact-view schedule-artifact-markdown" aria-label={title || '执行记录预览'}>

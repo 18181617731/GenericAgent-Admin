@@ -4062,6 +4062,17 @@ pre, code { font-variant-ligatures: none; }
 .schedule-report-items > button span:not(small) { overflow-wrap:anywhere; }
 .schedule-report-items small { color:var(--muted); font-size:11px; }
 .schedule-report-items > .muted { margin:10px 12px 12px 35px; }
+.schedule-editor-stack { display:grid; gap:16px; min-width:0; }
+.schedule-task-history-panel { min-width:0; }
+.schedule-task-history { display:grid; gap:10px; min-width:0; }
+.schedule-task-history-summary { color:var(--muted); font-size:12px; }
+.schedule-task-history .schedule-report-items { max-height:360px; overflow:auto; border:1px solid var(--border); border-radius:8px; }
+.schedule-task-history .schedule-report-items > button { padding-left:12px; }
+.schedule-task-history .schedule-report-items > button span { min-width:0; }
+.schedule-task-history .schedule-report-items > button b { overflow-wrap:anywhere; font-size:12px; font-weight:650; }
+.schedule-task-history-preview { display:grid; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+.schedule-task-history-preview-title { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.schedule-task-history-preview .schedule-artifact-markdown { min-height:180px; max-height:420px; }
 .schedule-artifact-empty { display:grid; place-items:center; min-height:260px; color:var(--muted); border:1px dashed var(--border); border-radius:8px; }
 .schedule-artifact-markdown { min-height:260px; max-height:calc(100vh - 300px); padding:16px; overflow:auto; font-family:inherit !important; line-height:1.7; }
 .schedule-artifact-markdown > :first-child { margin-top:0; }
@@ -4081,7 +4092,9 @@ pre, code { font-variant-ligatures: none; }
   .task-run, .task-reports { min-height:34px; }
   .task-toggle, .task-delete { width:32px; min-width:32px; height:32px; }
   .schedule-report-items > button { padding-left:27px; }
+  .schedule-task-history .schedule-report-items > button { padding-left:10px; }
   .schedule-artifact-markdown { min-height:220px; max-height:none; padding:12px; font-size:14px; }
+  .schedule-task-history-preview .schedule-artifact-markdown { max-height:none; }
 }
 
 @media (max-width: 1180px) {
