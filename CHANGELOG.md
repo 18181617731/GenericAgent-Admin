@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.99 - 2026-08-28
+
+### Scheduled task workbench
+- Refactor scheduled tasks into a Codex-inspired two-pane workbench with compact task selection, search and state filters, and a first-viewport layout focused on task operations.
+- Show each selected task's recent execution history with task-scoped empty states, in-place artifact previews, and responsive mobile list/detail navigation while preserving reports navigation.
+- Clear stale execution artifacts when a new task is created, keep the creation disclosure open on cancellation or failure, and prevent duplicate submissions during async creation.
+- Add component, App smoke, and schedule regression coverage for filtering, history switching, empty states, preview cleanup, creation outcomes, and responsive workbench behavior.
+
 ## v1.0.98 - 2026-08-28
 
 ### Scheduled task execution history
