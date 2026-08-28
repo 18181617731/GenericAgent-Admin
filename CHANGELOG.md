@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.97 - 2026-08-28
+
+### Upstream integration and local compatibility
+- Sync upstream image input, chat sidebar, Loop, worldline, and app-dialog capabilities while preserving the local compact/privacy view, remote CMD, and update-restart flows.
+- Make chat queue state authoritative through the backend REST/SSE API, add cross-platform directory-picker coverage, and keep the updater's direct GitHub download with configured and built-in mirror fallbacks.
+- Fix repeated session snapshot polling for ISO `updated_at` values and extend mobile model/reasoning, attachment, queue, stop, and dialog regression coverage.
+
 ## v1.0.96 - 2026-08-25
 
 ### Remote CMD / Codex TUI
