@@ -69,6 +69,53 @@ class FeishuCardPayloadTest(unittest.TestCase):
         self.assertEqual([item[0] for item in attempts], ["interactive", "text"])
         self.assertEqual(json.loads(attempts[1][1]), {"text": "plain **text**"})
 
+    def test_official_task_card_is_loaded_without_importing_fsapp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            frontends = Path(temp) / "frontends"
+            frontends.mkdir()
+            (frontends / "fsapp.py").write_text(
+                "raise RuntimeError('fsapp module must not be imported')\n"
+                "class _TaskCard:\n"
+                "    marker = 'official-source'\n"
+                "    def __init__(self, receive_id, receive_id_type):\n"
+                "        self.receive_id = receive_id\n"
+                "        self.receive_id_type = receive_id_type\n"
+                "    def start(self):\n"
+                "        return _send_raw(self.receive_id, _card_raw([]), 'interactive', self.receive_id_type)\n",
+                encoding="utf-8",
+            )
+            calls = []
+            task_card = bridge_module._load_official_task_card(
+                temp,
+                lambda *args: calls.append(args) or "message-id",
+                lambda *args: True,
+                lambda *args, **kwargs: True,
+            )
+            card = task_card("chat-a", "chat_id")
+            self.assertEqual(card.marker, "official-source")
+            self.assertEqual(card.start(), "message-id")
+            self.assertEqual(calls[0][0], "chat-a")
+            self.assertEqual(calls[0][2:], ("interactive", "chat_id"))
+
+    def test_live_task_card_retries_failed_partial_patch(self):
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.push_results = [False, True]
+                self.pushes = 0
+
+            def _push(self):
+                self.pushes += 1
+                return self.push_results.pop(0)
+
+        official = OfficialCard()
+        card = bridge_module._LiveTaskCard(official)
+        self.assertFalse(card.update("draft"))
+        self.assertTrue(card.update("draft"))
+        self.assertEqual(official.pushes, 2)
+        self.assertEqual(official.steps, [("\u5b9e\u65f6\u8f93\u51fa", "draft")])
+
 
 class FakeAPI:
     def __init__(self):
@@ -78,6 +125,7 @@ class FakeAPI:
         ]
         self.tasks_by_sid = {"s1": [{"input": "old", "outputs": ["done"]}], "s2": []}
         self.puts = []
+        self.snapshot_value = None
 
     def sessions(self):
         return list(self.items)
@@ -85,9 +133,33 @@ class FakeAPI:
     def tasks(self, item):
         return self.tasks_by_sid[item["session_id"]]
 
+    def snapshot(self, item):
+        if self.snapshot_value is None:
+            return {"tasks": self.tasks(item), "run": False, "partial": ""}
+        return self.snapshot_value
+
     def put(self, item, text):
         self.puts.append((item["session_id"], text))
         self.tasks_by_sid[item["session_id"]].append({"input": text, "outputs": []})
+
+
+class RecordingCard:
+    def __init__(self, update_results=None):
+        self.events = []
+        self.update_results = list(update_results or [])
+
+    def start(self):
+        self.events.append(("start", ""))
+
+    def update(self, text):
+        self.events.append(("update", text))
+        return self.update_results.pop(0) if self.update_results else True
+
+    def done(self, text):
+        self.events.append(("done", text))
+
+    def fail(self, text):
+        self.events.append(("fail", text))
 
 
 class FeishuAdminBridgeTest(unittest.TestCase):
@@ -189,6 +261,74 @@ class FeishuAdminBridgeTest(unittest.TestCase):
             ("chat-a", "answer", True),
         ])
         self.assertEqual(self.store.get("chat-a")["cursor"], initial_cursor + 2)
+
+    def test_streaming_card_updates_then_completes_without_phantom_card(self):
+        cards = []
+
+        def new_card(chat_id):
+            card = RecordingCard()
+            cards.append((chat_id, card))
+            return card
+
+        self.bridge.card_factory = new_card
+        self.bridge.handle("chat-a", "/switch s1")
+        self.assertIsNone(self.bridge.handle("chat-a", "hello"))
+        self.api.snapshot_value = {
+            "tasks": self.api.tasks_by_sid["s1"],
+            "run": True,
+            "partial": "draft",
+        }
+        self.bridge.poll_once()
+        self.assertEqual(cards[0][1].events, [("start", ""), ("update", "draft")])
+
+        self.api.tasks_by_sid["s1"][-1]["outputs"] = ["final"]
+        self.bridge.poll_once()
+        self.assertEqual(cards[0][1].events, [
+            ("start", ""),
+            ("update", "draft"),
+            ("done", "final"),
+        ])
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(self.bridge.active_cards, {})
+        self.assertEqual(self.store.get("chat-a")["cursor"], 4)
+        self.assertEqual(self.sent, [])
+
+    def test_failed_partial_update_is_retried_on_next_poll(self):
+        card = RecordingCard(update_results=[False, True])
+        self.bridge.card_factory = lambda chat_id: card
+        self.bridge.handle("chat-a", "/switch s1")
+        self.api.snapshot_value = {
+            "tasks": self.api.tasks_by_sid["s1"],
+            "run": True,
+            "partial": "draft",
+        }
+        self.bridge.poll_once()
+        self.bridge.poll_once()
+        self.assertEqual(card.events, [
+            ("start", ""),
+            ("update", "draft"),
+            ("update", "draft"),
+        ])
+        self.assertEqual(len(self.bridge.active_cards), 1)
+
+    def test_switch_retires_active_card_and_clears_pending_echo(self):
+        card = RecordingCard()
+        self.bridge.card_factory = lambda chat_id: card
+        self.bridge.handle("chat-a", "/switch s1")
+        self.api.snapshot_value = {
+            "tasks": self.api.tasks_by_sid["s1"],
+            "run": True,
+            "partial": "draft",
+        }
+        self.bridge.poll_once()
+        self.assertIsNone(self.bridge.handle("chat-a", "pending"))
+
+        response = self.bridge.handle("chat-a", "/switch work/s2")
+        self.assertIn("Second", response)
+        self.assertEqual(card.events[-1], ("fail", "\u5df2\u5207\u6362 Admin \u4f1a\u8bdd"))
+        self.assertEqual(self.bridge.active_cards, {})
+        self.assertNotIn("chat-a", self.bridge.pending_inputs)
+        self.assertEqual(self.store.get("chat-a")["session_id"], "s2")
 
     def test_binding_survives_reload(self):
         self.bridge.handle("chat-a", "/switch work/s2")

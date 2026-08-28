@@ -128,6 +128,26 @@ func TestChatSessionBridgeAPIExposesAllSessionsWithoutLiveOutput(t *testing.T) {
 	if len(live) != 2 || live[1] != "in-flight" {
 		t.Fatalf("live outputs = %#v", live)
 	}
+
+	snapshotResponse := hubRequest(t, private, token, http.MethodGet, "/session/_/session-private/snapshot", "")
+	if snapshotResponse.Code != http.StatusOK {
+		t.Fatalf("snapshot status = %d: %s", snapshotResponse.Code, snapshotResponse.Body.String())
+	}
+	var snapshot struct {
+		Tasks   []map[string]interface{} `json:"tasks"`
+		Run     bool                     `json:"run"`
+		Partial string                   `json:"partial"`
+	}
+	if err := json.Unmarshal(snapshotResponse.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Run || snapshot.Partial != "in-flight" {
+		t.Fatalf("snapshot run=%v partial=%q", snapshot.Run, snapshot.Partial)
+	}
+	snapshotOutputs, _ := snapshot.Tasks[0]["outputs"].([]interface{})
+	if len(snapshotOutputs) != 1 || snapshotOutputs[0] != "final response" {
+		t.Fatalf("snapshot stable outputs = %#v", snapshotOutputs)
+	}
 }
 
 func TestChatHubSessionListMatchesHistoryOrder(t *testing.T) {

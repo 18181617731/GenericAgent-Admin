@@ -4,6 +4,7 @@ The process owns no chat state. It only keeps Feishu chat-to-Admin session bindi
 all conversation reads, writes, busy state, and persistence remain inside Admin's
 private loopback API.
 """
+import ast
 import importlib.util
 import json
 import os
@@ -141,6 +142,72 @@ def _send_with_fallback(send_once, text, completed=False):
     return False
 
 
+def _task_snapshot(value):
+    if isinstance(value, dict):
+        return (
+            value.get("tasks", []) or [],
+            bool(value.get("run")),
+            str(value.get("partial") or "").strip(),
+        )
+    return value or [], False, ""
+
+
+def _load_official_task_card(ga_root, send_raw, patch_card, send_message):
+    """Load only fsapp._TaskCard, without importing fsapp or its credentials."""
+    source_path = Path(ga_root) / "frontends" / "fsapp.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, str(source_path))
+    class_node = next(
+        (node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_TaskCard"),
+        None,
+    )
+    if class_node is None:
+        raise RuntimeError("official fsapp _TaskCard not found: %s" % source_path)
+    isolated = ast.Module(body=[class_node], type_ignores=[])
+    ast.fix_missing_locations(isolated)
+    namespace = {
+        "_card_raw": _card,
+        "_send_raw": send_raw,
+        "_patch_card": patch_card,
+        "send_message": send_message,
+        "_display_text": lambda text: str(text or ""),
+    }
+    exec(compile(isolated, str(source_path), "exec"), namespace)
+    return namespace["_TaskCard"]
+
+
+class _LiveTaskCard:
+    """Adapt live Admin text to the official fsapp task-card lifecycle."""
+    def __init__(self, official_card):
+        self.card = official_card
+        self.last_partial = ""
+
+    def start(self):
+        self.card.start()
+
+    def update(self, partial):
+        partial = str(partial or "").strip()
+        if not partial or partial == self.last_partial:
+            return True
+        summary = "\u5b9e\u65f6\u8f93\u51fa"
+        if self.card.steps:
+            self.card.steps[-1] = (summary, partial)
+            self.card.status = "\u23f3 \u5de5\u4f5c\u4e2d \u00b7 Turn %d" % len(self.card.steps)
+        else:
+            self.card.steps.append((summary, partial))
+            self.card.status = "\u23f3 \u5de5\u4f5c\u4e2d \u00b7 Turn %d" % len(self.card.steps)
+        if not self.card._push():
+            return False
+        self.last_partial = partial
+        return True
+
+    def done(self, text):
+        self.card.done(text)
+
+    def fail(self, message):
+        self.card.fail(message)
+
+
 class AdminAPI:
     def __init__(self, base, token):
         self.base = base.rstrip("/")
@@ -158,6 +225,9 @@ class AdminAPI:
     def tasks(self, item):
         path = self._path(item, "outputs") + "?live=0"
         return _request(self.base, self.token, path).get("tasks", [])
+
+    def snapshot(self, item):
+        return _request(self.base, self.token, self._path(item, "snapshot"))
 
     def put(self, item, text):
         return _request(self.base, self.token, self._path(item, "put"), "POST", {"text": text})
@@ -208,12 +278,21 @@ class BindingStore:
 
 
 class FeishuAdminBridge:
-    def __init__(self, api, store, send):
+    def __init__(self, api, store, send, card_factory=None):
         self.api = api
         self.store = store
         self.send = send
+        self.card_factory = card_factory
+        self.active_cards = {}
+        self.active_cards_lock = threading.RLock()
         self.pending_inputs = {}
         self.pending_lock = threading.Lock()
+
+    def _snapshot(self, binding):
+        snapshot = getattr(self.api, "snapshot", None)
+        if callable(snapshot):
+            return _task_snapshot(snapshot(binding))
+        return self.api.tasks(binding), False, ""
 
     @staticmethod
     def _command(text):
@@ -302,7 +381,12 @@ class FeishuAdminBridge:
                 binding = self.store.get(chat_id)
                 return ("\u5f53\u524d: " + self._label(binding)) if binding else "\u5f53\u524d\u672a\u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"
             if command == "/unbind":
-                return "\u5df2\u89e3\u9664\u4f1a\u8bdd\u7ed1\u5b9a\u3002" if self.store.remove(chat_id) else "\u5f53\u524d\u672a\u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"
+                with self.active_cards_lock:
+                    removed = self.store.remove(chat_id)
+                    cards = self._take_chat_cards(chat_id)
+                    self._clear_pending(chat_id)
+                self._retire_cards(cards, "\u5df2\u89e3\u9664\u4f1a\u8bdd\u7ed1\u5b9a")
+                return "\u5df2\u89e3\u9664\u4f1a\u8bdd\u7ed1\u5b9a\u3002" if removed else "\u5f53\u524d\u672a\u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"
             if command == "/switch":
                 if not argument:
                     return self._list()
@@ -316,7 +400,11 @@ class FeishuAdminBridge:
                     "peer": selected.get("peer", ""),
                     "cursor": len(_events(self.api.tasks(selected))),
                 }
-                self.store.set(chat_id, binding)
+                with self.active_cards_lock:
+                    cards = self._take_chat_cards(chat_id)
+                    self._clear_pending(chat_id)
+                    self.store.set(chat_id, binding)
+                self._retire_cards(cards, "\u5df2\u5207\u6362 Admin \u4f1a\u8bdd")
                 return "\u5df2\u5207\u6362\u5230: " + self._label(binding)
             if command:
                 return "\u672a\u77e5\u6307\u4ee4\u3002\n\n" + HELP
@@ -346,31 +434,88 @@ class FeishuAdminBridge:
                 return True
         return False
 
+    @staticmethod
+    def _card_key(chat_id, binding):
+        return (
+            str(chat_id),
+            str(binding.get("instance_id") or "_"),
+            str(binding.get("session_id") or ""),
+        )
+
+    def _new_card(self, chat_id):
+        card = self.card_factory(chat_id)
+        card.start()
+        return card
+
+    def _take_chat_cards(self, chat_id):
+        chat_id = str(chat_id)
+        with self.active_cards_lock:
+            keys = [key for key in self.active_cards if key[0] == chat_id]
+            return [self.active_cards.pop(key) for key in keys]
+
+    @staticmethod
+    def _retire_cards(cards, message):
+        for card in cards:
+            try:
+                card.fail(message)
+            except Exception as exc:
+                print("[feishu_admin_bridge] retire card failed: %s" % exc, flush=True)
+
+    def _clear_pending(self, chat_id):
+        with self.pending_lock:
+            self.pending_inputs.pop(chat_id, None)
+
+    def _save_cursor(self, chat_id, binding, cursor):
+        latest = self.store.get(chat_id)
+        if latest and self._card_key(chat_id, latest) == self._card_key(chat_id, binding):
+            latest["cursor"] = cursor
+            self.store.set(chat_id, latest)
+
     def poll_once(self):
         for chat_id, binding in self.store.snapshot():
             try:
-                events = _events(self.api.tasks(binding))
-                cursor = max(0, int(binding.get("cursor", 0)))
-                if cursor > len(events):
-                    cursor = len(events)
-                changed = cursor != int(binding.get("cursor", 0))
-                while cursor < len(events):
-                    role, text = events[cursor]
-                    if role == "user" and self._consume_pending(chat_id, text):
-                        delivered = True
-                    else:
-                        payload = ("[Admin]\n" + text) if role == "user" else text
-                        completed = role == "assistant"
-                        delivered = all(self.send(chat_id, chunk, completed) for chunk in _split_text(payload))
-                    if not delivered:
-                        break
-                    cursor += 1
-                    changed = True
-                if changed:
+                tasks, running, partial = self._snapshot(binding)
+                events = _events(tasks)
+                with self.active_cards_lock:
                     latest = self.store.get(chat_id)
-                    if latest and latest.get("session_id") == binding.get("session_id"):
-                        latest["cursor"] = cursor
-                        self.store.set(chat_id, latest)
+                    if not latest or self._card_key(chat_id, latest) != self._card_key(chat_id, binding):
+                        continue
+                    binding = latest
+                    cursor = max(0, int(binding.get("cursor", 0)))
+                    if cursor > len(events):
+                        cursor = len(events)
+                    changed = cursor != int(binding.get("cursor", 0))
+                    completed_in_snapshot = False
+                    key = self._card_key(chat_id, binding)
+                    while cursor < len(events):
+                        role, text = events[cursor]
+                        if role == "user" and self._consume_pending(chat_id, text):
+                            delivered = True
+                        elif role == "assistant" and self.card_factory:
+                            card = self.active_cards.get(key)
+                            if card is None:
+                                card = self._new_card(chat_id)
+                            card.done(text)
+                            self.active_cards.pop(key, None)
+                            delivered = True
+                        else:
+                            payload = ("[Admin]\n" + text) if role == "user" else text
+                            completed = role == "assistant"
+                            delivered = all(self.send(chat_id, chunk, completed) for chunk in _split_text(payload))
+                        if not delivered:
+                            break
+                        if role == "assistant":
+                            completed_in_snapshot = True
+                        cursor += 1
+                        changed = True
+                    if changed:
+                        self._save_cursor(chat_id, binding, cursor)
+                    if running and not completed_in_snapshot and cursor == len(events) and self.card_factory:
+                        card = self.active_cards.get(key)
+                        if card is None:
+                            card = self._new_card(chat_id)
+                            self.active_cards[key] = card
+                        card.update(partial)
             except Exception as exc:
                 print("[feishu_admin_bridge] poll %s failed: %s" % (chat_id, exc), flush=True)
 
@@ -390,12 +535,59 @@ def main():
 
     try:
         import lark_oapi as lark
-        from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+        from lark_oapi.api.im.v1 import (
+            CreateMessageRequest,
+            CreateMessageRequestBody,
+            PatchMessageRequest,
+            PatchMessageRequestBody,
+        )
     except ImportError as exc:
         print("[feishu_admin_bridge] lark_oapi unavailable: %s" % exc, flush=True)
         return
 
     rest_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).log_level(lark.LogLevel.INFO).build()
+
+    def send_raw(receive_id, payload, msg_type, receive_id_type):
+        try:
+            request = CreateMessageRequest.builder().receive_id_type(receive_id_type).request_body(
+                CreateMessageRequestBody.builder().receive_id(receive_id).msg_type(msg_type).content(payload).build()
+            ).build()
+            response = rest_client.im.v1.message.create(request)
+            if response.success():
+                return response.data.message_id if response.data else None
+            print("[feishu_admin_bridge] %s send failed: %s %s" % (
+                msg_type, response.code, response.msg,
+            ), flush=True)
+        except Exception as exc:
+            print("[feishu_admin_bridge] %s send failed: %s" % (msg_type, exc), flush=True)
+        return None
+
+    def patch_card(message_id, payload):
+        try:
+            request = PatchMessageRequest.builder().message_id(message_id).request_body(
+                PatchMessageRequestBody.builder().content(payload).build()
+            ).build()
+            response = rest_client.im.v1.message.patch(request)
+            if not response.success():
+                print("[feishu_admin_bridge] card patch failed: %s %s" % (
+                    response.code, response.msg,
+                ), flush=True)
+            return response.success()
+        except Exception as exc:
+            print("[feishu_admin_bridge] card patch failed: %s" % exc, flush=True)
+            return False
+
+    def official_send_message(receive_id, content, msg_type="text", use_card=False,
+                              receive_id_type="open_id"):
+        if use_card:
+            return send_raw(receive_id, _info_card(content), "interactive", receive_id_type)
+        if msg_type == "text":
+            content = json.dumps({"text": content}, ensure_ascii=False)
+        return send_raw(receive_id, content, msg_type, receive_id_type)
+
+    official_card = _load_official_task_card(
+        os.environ["GA_ROOT"], send_raw, patch_card, official_send_message,
+    )
 
     def send(chat_id, text, completed=False):
         def send_once(msg_type, content):
@@ -406,7 +598,12 @@ def main():
 
         return _send_with_fallback(send_once, text, completed)
 
-    bridge = FeishuAdminBridge(AdminAPI(base, token), BindingStore(state_path), send)
+    bridge = FeishuAdminBridge(
+        AdminAPI(base, token),
+        BindingStore(state_path),
+        send,
+        card_factory=lambda chat_id: _LiveTaskCard(official_card(chat_id, "chat_id")),
+    )
     seen = set()
     seen_order = []
     seen_lock = threading.Lock()
