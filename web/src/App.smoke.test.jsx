@@ -2017,19 +2017,29 @@ describe('scheduled task execution history', () => {
     })
 
     render(<App />)
-    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
-    expect(document.querySelector('.schedule-editor-stack')).toBeTruthy()
-    expect(document.querySelector('.schedule-task-history-panel .panel-title')?.textContent).toContain('alpha')
+    await screen.findByRole('option', { name: /alpha/ }, { timeout: 10000 })
+    expect(document.querySelector('.scheduled-task-workbench')).toBeTruthy()
+    expect(document.querySelector('.scheduled-task-detail-empty')).toBeTruthy()
+    const workbench = document.querySelector('.scheduled-task-workbench')
+    await waitFor(() => expect(document.querySelector('.schedule-service-panel')).toBeTruthy())
+    const servicePanel = document.querySelector('.schedule-service-panel')
+    expect(workbench).toBeTruthy()
+    expect(servicePanel).toBeTruthy()
+    expect(workbench.compareDocumentPosition(servicePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(servicePanel).getByRole('button', { name: /启动|Start/i, hidden: true })).toBeTruthy()
 
-    const cards = () => [...document.querySelectorAll('.task-row')]
+    const cards = () => [...document.querySelectorAll('.scheduled-task-row')]
+    fireEvent.click(cards()[0])
+    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
+    expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('alpha')
     failedTaskId = 'beta'
     fireEvent.click(cards()[1])
-    await waitFor(() => expect(document.querySelector('.schedule-task-history-panel .panel-title')?.textContent).toContain('alpha'))
-    expect(document.querySelector('.json-editor, .task-form-editor')).toBeTruthy()
+    await waitFor(() => expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('alpha'))
+    expect(document.querySelector('.json-editor, .schedule-form-editor')).toBeTruthy()
     failedTaskId = ''
 
     fireEvent.click(cards()[1])
-    await waitFor(() => expect(document.querySelector('.schedule-task-history-panel .panel-title')?.textContent).toContain('beta'))
+    await waitFor(() => expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('beta'))
     expect(screen.getByText(/No reports|暂无执行记录/i)).toBeTruthy()
     expect(screen.queryByText('alpha-latest.md')).toBeNull()
 
@@ -2042,13 +2052,13 @@ describe('scheduled task execution history', () => {
     expect(document.querySelector('.task-subtabs button.active')?.textContent).toMatch(/Scheduled tasks|定时任务/i)
 
     fireEvent.click(cards()[1])
-    await waitFor(() => expect(document.querySelector('.schedule-task-history-panel .panel-title')?.textContent).toContain('beta'))
+    await waitFor(() => expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('beta'))
     expect(screen.queryByText('Alpha execution report')).toBeNull()
     expect(screen.queryByText('alpha-latest.md')).toBeNull()
 
     fireEvent.click(cards()[0])
     await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
-    fireEvent.click(cards()[0].querySelector('.task-reports'))
+    fireEvent.click(document.querySelector('.scheduled-task-detail .task-reports'))
     await waitFor(() => expect(window.location.pathname).toBe('/tasks/reports'))
     expect(document.querySelector('.schedule-report-tree')).toBeTruthy()
 
@@ -2058,7 +2068,7 @@ describe('scheduled task execution history', () => {
     holdArtifact = true
     fireEvent.click(screen.getByRole('button', { name: /alpha-latest\.md/i }))
     await waitFor(() => expect(releaseArtifact).toEqual(expect.any(Function)))
-    fireEvent.click(cards()[0].querySelector('.task-reports'))
+    fireEvent.click(document.querySelector('.scheduled-task-detail .task-reports'))
     await waitFor(() => expect(window.location.pathname).toBe('/tasks/reports'))
     expect(document.querySelector('.app')?.getAttribute('aria-busy')).not.toBe('true')
     expect(document.querySelector('.task-subtabs button')?.disabled).toBe(false)
@@ -2081,6 +2091,65 @@ describe('scheduled task execution history', () => {
     fireEvent.click(within(document.querySelector('nav[aria-label="主导航"]')).getByRole('button', { name: '定时任务' }))
     await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
     expect(document.querySelector('.task-run')?.disabled).toBe(false)
+  })
+
+  test('clears the old preview before selecting a newly created task', async () => {
+    installBrowserPolyfills()
+    mockDialog(true)
+    window.history.replaceState({}, '', '/tasks/scheduled')
+    let currentTasks = [...tasks]
+    let createRequest = null
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const requestURL = new URL(url, 'http://localhost')
+      const path = requestURL.pathname
+      if (path === '/api/config') return jsonResponse({ host: '127.0.0.1', port: 8787, ga_root: 'C:/ga' })
+      if (path === '/api/ga/health') return jsonResponse({ ok: true, root: 'C:/ga' })
+      if (path === '/api/autostart/status') return jsonResponse({ supported: true, enabled: false })
+      if (path === '/api/version/info') return jsonResponse({ version: 'dev' })
+      if (path === '/api/version/status') return jsonResponse({})
+      if (path === '/api/ga/inventory') return jsonResponse({})
+      if (path === '/api/risk/catalog') return jsonResponse({ items: [] })
+      if (path === '/api/services') return jsonResponse({ services: [{ name: 'reflect/scheduler.py', kind: 'reflect', running: false }] })
+      if (path === '/api/ga/git-status') return jsonResponse({ ok: true, available: false })
+      if (path === '/api/schedule/tasks') return jsonResponse({ enabled: currentTasks.filter(task => task.enabled).length, tasks: currentTasks })
+      if (path === '/api/schedule/task') {
+        const id = requestURL.searchParams.get('id')
+        const task = currentTasks.find(item => item.id === id)
+        return jsonResponse({ id, raw: JSON.stringify(task || {}) })
+      }
+      if (path === '/api/schedule/artifact') return jsonResponse({ content: '# Alpha execution report' })
+      if (path === '/api/schedule/create') {
+        createRequest = JSON.parse(options.body)
+        const created = { id: 'created-task', enabled: false, schedule: '', repeat: 'manual', prompt: 'created prompt', recent_reports: [] }
+        currentTasks = [...currentTasks, created]
+        return jsonResponse({ task: { ...created, raw: JSON.stringify(created) } })
+      }
+      if (path === '/api/goals/list') return jsonResponse({ goals: [] })
+      if (path === '/api/autonomous/approvals') return jsonResponse({ items: [] })
+      return jsonResponse({})
+    })
+
+    render(<App />)
+    await screen.findByRole('option', { name: /alpha/ }, { timeout: 10000 })
+    fireEvent.click(screen.getByRole('option', { name: /alpha/ }))
+    await screen.findByRole('button', { name: /alpha-latest\.md/i }, { timeout: 10000 })
+    fireEvent.click(screen.getByRole('button', { name: /alpha-latest\.md/i }))
+    await screen.findByText('Alpha execution report')
+    expect(document.querySelector('.schedule-task-history-preview')).toBeTruthy()
+
+    const toolbar = document.querySelector('.scheduled-workbench-toolbar')
+    fireEvent.click(within(toolbar).getByRole('button', { name: '创建' }))
+    const disclosure = document.querySelector('.scheduled-task-create-disclosure')
+    fireEvent.change(within(disclosure).getByRole('textbox'), { target: { value: 'created-task' } })
+    fireEvent.click(within(disclosure).getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(createRequest?.task).toBeTruthy())
+    await waitFor(() => expect(document.querySelector('.scheduled-task-detail h3')?.textContent).toBe('created-task'))
+    expect(screen.getByText(/暂无执行记录/)).toBeTruthy()
+    expect(screen.queryByText('Alpha execution report')).toBeNull()
+    expect(screen.queryByText('alpha-latest.md')).toBeNull()
+    expect(document.querySelector('.schedule-task-history-preview')).toBeNull()
+    expect(window.location.pathname).toBe('/tasks/scheduled')
   })
 })
 

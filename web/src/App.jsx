@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Code2, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
+import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
 import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
@@ -12,9 +12,9 @@ import { confirmDanger } from './lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from './lib/filesSafety'
 import { clearMemoryChatDraft, queueMemoryChatDraft } from './lib/memoryChatDraft'
 import { configDraftDirty } from './lib/configDraft'
-import { firstRuntimeModelNo, runtimeModelDescription } from './lib/modelDefaults.js'
+import { firstRuntimeModelNo } from './lib/modelDefaults.js'
 import { gitSyncPresentation } from './lib/gitSync'
-import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, firstScheduleTaskID, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './lib/schedule'
+import { DEFAULT_SCHEDULE_TASK, buildScheduleCreateRequest, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './lib/schedule'
 import { modelValidationSummary, validateModelProfiles } from './lib/modelsValidation'
 import { applyFailoverConfig, applyModelOrder, applyModelAndFailoverOrder, applyProviderOrder, mergePersistedFailoverConfig, mergePersistedModelOrder, normalizeFailoverGroups, orderedModelAndFailoverRows, orderedModelRows, orderedProviderProfiles, remapFailoverGroupReferences } from './lib/modelsEditor'
 import { providerDisplayName } from './lib/modelsProvider'
@@ -34,7 +34,8 @@ import { dashboardSummary } from './lib/dashboard'
 import { autonomousServices, goalWorkflowServices, guardianServices, scheduleServices } from './lib/serviceDomains'
 import { ChannelServiceTable, EntryList, ObservabilityCard, Panel, SecretInput, ServiceRow, Stat } from './components/common'
 import { TurnList } from './components/turns'
-import { ScheduleArtifactPreview, ScheduleReportTree, ScheduleTaskHistory, SchedulerServiceRow, TaskRow } from './components/schedule'
+import { ScheduleArtifactPreview, ScheduleReportTree, SchedulerServiceRow } from './components/schedule'
+import { ScheduledTaskWorkbench } from './components/ScheduledTaskWorkbench.jsx'
 import { ErrorBoundary, GlobalFeedback, RouteFallback } from './components/feedback'
 import { ModelCascadePicker } from './components/ModelCascadePicker'
 import { ProcessGuard } from './components/ProcessGuard'
@@ -102,84 +103,6 @@ export const I18N = withUpstreamI18n({
     fields: { varName: 'Var name', type: 'Type', name: 'Name', model: 'Model', apiBase: 'API base URL', apiKey: 'API Key', stream: 'Stream', maxRetries: 'Retries', readTimeout: 'Timeout', reasoningEffort: 'Reasoning effort', editor: 'JSON content', objective: 'Objective', budgetMinutes: 'Budget minutes', maxTurns: 'Max turns', llmNo: 'LLM # (optional)', pythonPath: 'Python interpreter (optional)', pythonAuto: 'leave empty for auto', chatDataDir: 'Chat data directory (optional)', chatDataAuto: 'empty = %APPDATA%\\GenericAgent-Admin', goalRuns: 'Goal runs', goalHive: 'Hive mode', hiveBoard: 'Hive board', hiveWorker: 'Hive worker', hiveCwd: 'Hive cwd', outputTail: 'Output tail', maxBytes: 'Max bytes', outputPreset64k: '64K', outputPreset256k: '256K', outputPreset1m: '1M', outputDefault: 'Default 64K', outputShown: 'Shown', outputLines: 'Lines', outputLimit: 'Limit', autoRefresh: 'Auto refresh', notRunning: 'not running', startGoalMode: 'Start Goal Mode', goalPlaceholder: 'Describe the sustained objective for GA Goal Mode', pid: 'PID', turn: 'turn', remaining: 'remaining', elapsed: 'elapsed', started: 'started', ended: 'ended', updated: 'updated', stateFile: 'state', logFile: 'log', logMissing: 'log not created', logReady: 'log ready', outputStatus: 'output status', source: 'source', control: 'control', trust: 'trust', rawStatus: 'raw status', lastEvent: 'last event', errorClass: 'error class' }
   }
 })
-
-const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 }) => {
-  const text = t.tasks
-  let data
-  try { data = JSON.parse(value) } catch {}
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return <textarea className="json-editor compact-editor" value={value} placeholder={text.parseFailed} onChange={e=>onChange(e.target.value)}/>
-  }
-  const updateField = (key, val) => {
-    const next = { ...data, [key]: val }
-    onChange(JSON.stringify(next, null, 2))
-  }
-  const updateModel = value => {
-    const next = { ...data }
-    if (value === '') delete next.llm_no
-    else next.llm_no = Number(value)
-    onChange(JSON.stringify(next, null, 2))
-  }
-  const extraKeys = Object.keys(data).filter(k => !['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'].includes(k))
-  const repeatOptions = ['manual','daily','weekly','every_2h','every_4h','every_6h','every_8h','every_12h','once']
-  const taskModels = llms.filter(model => Number.isInteger(Number(model?.index)) && Number(model.index) >= 0)
-  const effectiveSchedulerModelNo = normalizeScheduleModelNo(schedulerModelNo)
-  const schedulerModel = taskModels.find(model => Number(model.index) === effectiveSchedulerModelNo)
-  const schedulerModelText = schedulerModel
-    ? runtimeModelDescription(schedulerModel, text.unnamedModel)
-    : `#${effectiveSchedulerModelNo}`
-  const followSchedulerLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
-
-  return <div className="schedule-form-editor">
-    <div className="form-field">
-      <label>{text.enabledLabel}</label>
-      <label className="toggle-switch">
-        <input type="checkbox" checked={!!data.enabled} onChange={e => updateField('enabled', e.target.checked)} />
-        <span className="toggle-slider"></span>
-        <span className="toggle-label">{data.enabled ? t.enabled : t.disabled}</span>
-      </label>
-    </div>
-    <div className="form-field">
-      <label>{text.maxDelay}</label>
-      <input type="number" value={data.max_delay_hours ?? ''} onChange={e => updateField('max_delay_hours', e.target.value ? parseInt(e.target.value, 10) : 0)} />
-    </div>
-    <div className="form-field">
-      <label>{text.repeat}</label>
-      <select value={data.repeat || ''} onChange={e => updateField('repeat', e.target.value)}>
-        <option value="">{text.choose}</option>
-        {repeatOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-      </select>
-    </div>
-    <div className="form-field">
-      <label>{text.schedule}</label>
-      <input type="text" value={data.schedule || ''} onChange={e => updateField('schedule', e.target.value)} placeholder={text.schedulePlaceholder}/>
-    </div>
-    <div className="form-field">
-      <label>{text.executionModel}</label>
-      <ModelCascadePicker
-        models={taskModels}
-        value={data.llm_no ?? ''}
-        allowDefault
-        defaultLabel={`${followSchedulerLabel}${t.autostart === '开机自启' ? '：' : ': '}${schedulerModelText}`}
-        label=""
-        showLabel={false}
-        placement="auto"
-        align="start"
-        className="schedule-task-model-cascade"
-        onChange={updateModel}
-      />
-      <small>{text.executionModelHelp}</small>
-    </div>
-    <div className="form-field">
-      <label>{text.prompt}</label>
-      <textarea value={data.prompt || ''} onChange={e => updateField('prompt', e.target.value)} placeholder={text.promptPlaceholder}/>
-    </div>
-    {extraKeys.length > 0 && <details className="extra-fields">
-      <summary>{text.extraFields} ({extraKeys.length})</summary>
-      <pre>{JSON.stringify(Object.fromEntries(Object.entries(data).filter(([k]) => !['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'].includes(k))), null, 2)}</pre>
-    </details>}
-  </div>
-}
 
 const OverviewPage = ({
   t, lang, services, guardianSvcs, serviceActionStates, schedule, observability, observabilityError, refreshObservability,
@@ -362,7 +285,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [loadedTaskEditor, setLoadedTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [editorMode, setEditorMode] = useState('form')
   const [scheduleData, setScheduleData] = useState(null), [scheduleLoading, setScheduleLoading] = useState(false), [scheduleError, setScheduleError] = useState('')
-  const scheduleInitialLoad = useRef(false), scheduleDefaultTaskSelected = useRef(false)
+  const scheduleInitialLoad = useRef(false)
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
   const [taskRunStates, setTaskRunStates] = useState({}), [scheduleReportTaskId, setScheduleReportTaskId] = useState('')
@@ -645,7 +568,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const toggleServiceAutostart = async (name, enabled) => { if (!confirmDanger('service-autostart', t.service.autostartConfirm(name, enabled))) return; setBusy(true); try { const d = await api('/api/services/autostart', { dangerous:true, method:'POST', body: JSON.stringify({ name, enabled }) }); setServices(d.services || []); setMsg(enabled ? t.enabled : t.disabled) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const setServiceModel = async (name, llm_no) => { setBusy(true); try { const body = { name, llm_no: llm_no === '' || llm_no === null || llm_no === undefined ? null : Number(llm_no) }; const d = await api('/api/services/model', { dangerous:true, method:'POST', body: JSON.stringify(body) }); setServices(d.services || []); setMsg(t.service.modelUpdated) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadServiceLogs = (name = logStream.selected) => { if (name) logStream.select(name) }
-  const viewServiceLogs = (name) => { setTab('logs'); loadServiceLogs(name) }
+  const viewServiceLogs = (name) => { if (tab === 'tasks') invalidateScheduleArtifact(taskSubTab === 'scheduled'); setTab('logs'); loadServiceLogs(name) }
   const openHub = () => window.open('http://127.0.0.1:19737', '_blank', 'noopener,noreferrer')
   const pickGoalId = (items = [], preferred = '') => {
     if (preferred && items.some(g => g.id === preferred)) return preferred
@@ -918,12 +841,12 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     scheduleArtifactBusyRequest.current = null
     setBusy(false)
   }
-  const invalidateScheduleArtifact = clearPreview => {
+  const invalidateScheduleArtifact = (clearPreview, releaseBusy = true) => {
     const invalidatedRequestId = scheduleArtifactRequest.current
     ++scheduleArtifactRequest.current
     if (scheduleArtifactBusyRequest.current === invalidatedRequestId) {
       scheduleArtifactBusyRequest.current = null
-      setBusy(false)
+      if (releaseBusy) setBusy(false)
     }
     if (clearPreview) {
       setScheduleArtifactTitle('')
@@ -933,11 +856,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const loadTask = useCallback(async (id) => {
     if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return
-    const previousTask = { id: taskId, editor: taskEditor, loadedEditor: loadedTaskEditor }
     const requestId = beginScheduleArtifactRequest()
-    setTaskId(id)
-    setTaskEditor('{}')
-    setLoadedTaskEditor('{}')
     setScheduleReportTaskId('')
     setScheduleArtifactTitle('')
     setScheduleArtifact('')
@@ -952,23 +871,45 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       setTaskSubTab('scheduled')
     } catch(e){
       if (requestId === scheduleArtifactRequest.current) {
-        setTaskId(previousTask.id)
-        setTaskEditor(previousTask.editor)
-        setLoadedTaskEditor(previousTask.loadedEditor)
         setMsg(e.message)
       }
     } finally{ finishScheduleArtifactRequest(requestId) }
-  }, [loadedTaskEditor, taskDirty, taskEditor, taskId])
+  }, [taskDirty, taskId])
+  const clearTaskSelection = () => {
+    if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。返回任务列表将丢弃当前编辑内容，是否继续？`)) return
+    invalidateScheduleArtifact(true)
+    setTaskId('')
+    setTaskEditor('{}')
+    setLoadedTaskEditor('{}')
+    setScheduleReportTaskId('')
+  }
   const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const createTask = async () => { const id = newTaskId.trim(); if (!id) { setMsg('Schedule task id is required'); return }; if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。创建新任务将替换当前编辑器内容，是否继续？`)) return; if (!confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return; setBusy(true); try { const payload = buildScheduleCreateRequest(id, DEFAULT_SCHEDULE_TASK); const d = await api('/api/schedule/create', { dangerous:true, method:'POST', body: JSON.stringify(payload) }); const created = d.task || DEFAULT_SCHEDULE_TASK; const content = safeJson(created.raw || payload.task); setTaskId(created.id || id); setTaskEditor(content); setLoadedTaskEditor(content); setMsg(t.hints.taskSaved); await loadScheduleTasks(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
-  useEffect(() => {
-    if (tab !== 'tasks' || taskSubTab !== 'scheduled' || scheduleDefaultTaskSelected.current || taskId || taskDirty) return
-    const firstID = firstScheduleTaskID(scheduleData?.tasks)
-    if (!firstID) return
-    scheduleDefaultTaskSelected.current = true
-    loadTask(firstID)
-  }, [tab, taskSubTab, taskId, taskDirty, scheduleData?.tasks, loadTask])
+  const createTask = async () => {
+    const id = newTaskId.trim()
+    if (!id) { setMsg('Schedule task id is required'); return false }
+    if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。创建新任务将替换当前编辑器内容，是否继续？`)) return false
+    if (!await confirmDanger('schedule-create', `Create schedule task ${id}? This writes a sche_tasks JSON file.`)) return false
+    setBusy(true)
+    try {
+      const payload = buildScheduleCreateRequest(id, DEFAULT_SCHEDULE_TASK)
+      const d = await api('/api/schedule/create', { dangerous:true, method:'POST', body: JSON.stringify(payload) })
+      const created = d.task || DEFAULT_SCHEDULE_TASK
+      const content = safeJson(created.raw || payload.task)
+      await loadScheduleTasks()
+      invalidateScheduleArtifact(true, false)
+      setScheduleReportTaskId('')
+      setTaskId(created.id || id)
+      setTaskEditor(content)
+      setLoadedTaskEditor(content)
+      setMsg(t.hints.taskSaved)
+      setTaskSubTab('scheduled')
+      return true
+    } catch(e){
+      setMsg(e.message)
+      return false
+    } finally{ setBusy(false) }
+  }
+  const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { invalidateScheduleArtifact(true); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const readScheduleArtifact = async (path, targetTab = 'tasks', targetSubTab = 'reports') => {
     const requestId = beginScheduleArtifactRequest()
     try {
@@ -1501,16 +1442,50 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       {tab==='local-cmd' && <LocalCmdPage lang={lang}/>}
 
       {tab==='tasks' && <><section className="tasks-page">
+        <div className="subtabs task-subtabs">
+          <button className={taskSubTab==='scheduled' ? 'active' : ''} onClick={()=>navigateTaskSubTab('scheduled')}><CalendarClock size={14}/>{t.lists.scheduledTasks}</button>
+          <button className={taskSubTab==='reports' ? 'active' : ''} onClick={()=>navigateTaskSubTab('reports')}><FolderCog size={14}/>{t.lists.recentReports}</button>
+        </div>
+
+        {taskSubTab==='scheduled' && <ScheduledTaskWorkbench
+          tasks={tasks}
+          selectedTask={selectedScheduleTask}
+          selectedTaskId={taskId}
+          scheduleLoading={scheduleLoading}
+          scheduleError={scheduleError}
+          scheduleLogExists={schedule.log?.exists}
+          newTaskId={newTaskId}
+          setNewTaskId={setNewTaskId}
+          createTask={createTask}
+          loadScheduleTasks={loadScheduleTasks}
+          onScheduleLog={() => readScheduleArtifact('sche_tasks/scheduler.log')}
+          loadTask={loadTask}
+          clearTaskSelection={clearTaskSelection}
+          taskEditor={taskEditor}
+          setTaskEditor={setTaskEditor}
+          editorMode={editorMode}
+          setEditorMode={setEditorMode}
+          taskDirty={taskDirty}
+          saveTask={saveTask}
+          busy={busy}
+          llms={llms}
+          t={t}
+          schedulerModelNo={schedulerModelNo}
+          scheduleArtifactTitle={scheduleArtifactTitle}
+          scheduleArtifact={scheduleArtifact}
+          onSelectArtifact={path => readScheduleArtifact(path, 'tasks', 'scheduled')}
+          onToggle={toggleTask}
+          onDelete={deleteTask}
+          onRun={runTask}
+          onReports={openTaskReports}
+          taskRunStates={taskRunStates}
+        />}
+
         <div className="stats schedule-stats">
           <div className="stat"><CalendarClock/><span>{t.lists.scheduledTasks}</span><b>{tasks.length}</b></div>
           <div className="stat"><CalendarClock/><span>{t.cards.enabledTasks || t.enabled}</span><b>{schedule.enabled || 0}</b></div>
           <div className="stat"><FolderCog/><span>{t.cards.reports || '报告'}</span><b>{schedule.done_count || 0}</b></div>
           <div className="stat"><ShieldAlert/><span>{t.error}</span><b>{schedule.errors || 0}</b></div>
-        </div>
-
-        <div className="subtabs task-subtabs">
-          <button className={taskSubTab==='scheduled' ? 'active' : ''} onClick={()=>navigateTaskSubTab('scheduled')}><CalendarClock size={14}/>{t.lists.scheduledTasks}</button>
-          <button className={taskSubTab==='reports' ? 'active' : ''} onClick={()=>navigateTaskSubTab('reports')}><FolderCog size={14}/>{t.lists.recentReports}</button>
         </div>
 
         {taskSubTab==='scheduled' && <>
@@ -1524,51 +1499,6 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
           </Panel>
           </div>
 
-          <div className="workspace tasks-workspace">
-          <Panel title={t.lists.scheduledTasks}>
-            <div className="task-create">
-              <div className="task-create-input-row">
-                <input value={newTaskId} onChange={e=>setNewTaskId(e.target.value)} placeholder={t.hints.newTaskId}/>
-              </div>
-              <div className="task-create-btn-row">
-                <button onClick={createTask} disabled={busy || !newTaskId.trim()}><FileCode2 size={14}/>{t.create}</button>
-                <button onClick={()=>loadScheduleTasks()} disabled={scheduleLoading}><RefreshCw size={14}/>{t.refresh}</button>
-                {schedule.log?.exists && <button onClick={()=>readScheduleArtifact('sche_tasks/scheduler.log')}><Terminal size={14}/>{t.nav.logs}</button>}
-              </div>
-            </div>
-            {scheduleError && <p className="err-text">{scheduleError}</p>}
-            <div className="task-list clean-list" aria-busy={scheduleLoading}>
-              {scheduleLoading
-                ? <p className="muted">{t.busy}</p>
-                : tasks.length
-                  ? tasks.map((task, idx) => <TaskRow key={task.id || task.name || idx} task={task} llms={llms} t={t} schedulerModelNo={schedulerModelNo} selected={taskId === (task.id || task.name)} onToggle={toggleTask} onEdit={loadTask} onDelete={deleteTask} onRun={runTask} onReports={openTaskReports} runState={taskRunStates[task.id || task.name]}/>)
-                  : <p className="muted">{t.hints.noTasks}</p>}
-            </div>
-          </Panel>
-           <div className="schedule-editor-stack">
-             <Panel title={`${t.lists.editor} · ${taskId || t.empty}`}>
-               <div className="editor-mode-toggle">
-                 <button className={editorMode==='form' ? 'active' : ''} onClick={()=>setEditorMode('form')}><SlidersHorizontal size={14}/>{t.tasks.form}</button>
-                 <button className={editorMode==='json' ? 'active' : ''} onClick={()=>setEditorMode('json')}><Code2 size={14}/>{t.tasks.json}</button>
-               </div>
-               <p className="muted">{editorMode==='json' ? t.hints.jsonHelp : t.tasks.formHelp}</p>
-               {editorMode==='json'
-                 ? <textarea className="json-editor compact-editor" value={taskEditor} onChange={e=>setTaskEditor(e.target.value)}/>
-                 : <TaskFormEditor value={taskEditor} onChange={setTaskEditor} t={t} llms={llms} schedulerModelNo={schedulerModelNo}/>}
-               <div className="actions">
-                 <span className={taskDirty ? 'status-pill warn' : 'status-pill ok'}>{taskDirty ? '有未保存更改' : '编辑器已同步'}</span>
-                 <button onClick={saveTask} disabled={!taskDirty || (!taskId && !newTaskId)}><Save size={14}/>{t.save}</button>
-               </div>
-             </Panel>
-             <Panel title={`${t.lists.recentReports} · ${selectedScheduleTask?.id || selectedScheduleTask?.name || t.empty}`} className="schedule-task-history-panel">
-               <ScheduleTaskHistory task={selectedScheduleTask} selectedPath={scheduleArtifactTitle} onSelect={path=>readScheduleArtifact(path, 'tasks', 'scheduled')} t={t}/>
-               {selectedScheduleTask && scheduleArtifactTitle && <div className="schedule-task-history-preview">
-                 <div className="schedule-task-history-preview-title">{scheduleArtifactTitle}</div>
-                 <ScheduleArtifactPreview title={scheduleArtifactTitle} content={scheduleArtifact} empty={t.empty}/>
-               </div>}
-             </Panel>
-           </div>
-           </div>
         </>}
 
         {taskSubTab==='reports' && <div className="workspace tasks-workspace">
