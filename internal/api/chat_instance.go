@@ -23,17 +23,22 @@ func (e *chatInstanceNotFoundError) Error() string {
 // Keeping the mutexes with the maps prevents request-scoped Server copies from
 // accidentally copying a live mutex.
 type chatRuntime struct {
-	chatMu           sync.Mutex
-	sessionMu        sync.Mutex
-	usageMu          sync.Mutex
-	queueEventMu     sync.Mutex
-	queueEventRev    map[string]uint64
-	queueEventSubs   map[string]map[chan uint64]struct{}
-	runs             map[string]*chatRun
-	workers          map[string]*chatWorker
-	titleJobs        map[string]bool
-	loopRecoveryOnce sync.Once
-	loopRecoveryErr  error
+	chatMu              sync.Mutex
+	sessionMu           sync.Mutex
+	usageMu             sync.Mutex
+	queueEventMu        sync.Mutex
+	queueEventRev       map[string]uint64
+	queueEventSubs      map[string]map[chan uint64]struct{}
+	runs                map[string]*chatRun
+	workers             map[string]*chatWorker
+	titleJobs           map[string]bool
+	loopRecoveryOnce    sync.Once
+	loopRecoveryErr     error
+	sessionListMu       sync.Mutex
+	sessionListPath     string
+	sessionListEntries  map[string]chatSessionListIndexEntry
+	sessionListLoaded   bool
+	sessionListLoadHook func(string)
 }
 
 type chatRuntimeRegistry struct {

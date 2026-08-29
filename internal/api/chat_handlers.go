@@ -16,32 +16,23 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	items := []map[string]interface{}{}
-	if err := ensureChatDataMigrated(s.CfgStore.Snapshot()); err != nil {
-		bad(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := os.MkdirAll(chatSessionDir(s.CfgStore.Snapshot()), 0755); err != nil {
-		bad(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	entries, err := os.ReadDir(chatSessionDir(s.CfgStore.Snapshot()))
+	cfg := s.CfgStore.Snapshot()
+	summaries, err := s.loadChatSessionSummaries(cfg)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		cs, err := loadChatSession(s.CfgStore.Snapshot(), strings.TrimSuffix(e.Name(), ".json"))
-		if err != nil {
-			continue
-		}
-		items = append(items, map[string]interface{}{"id": cs.ID, "title": cs.Title, "title_source": cs.TitleSource, "updated_at": cs.UpdatedAt, "count": len(cs.Messages), "running": s.chatRunActive(cs.ID), "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "hub_enabled": cs.HubEnabled, "pinned": cs.Pinned, "loop": cs.Loop})
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].UpdatedAt > summaries[j].UpdatedAt })
+	items := make([]map[string]interface{}, 0, len(summaries))
+	for _, summary := range summaries {
+		items = append(items, map[string]interface{}{
+			"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource,
+			"updated_at": summary.UpdatedAt, "count": summary.Count, "running": s.chatRunActive(summary.ID),
+			"workspace": summary.Workspace, "project_mode": summary.ProjectMode,
+			"hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "loop": summary.Loop,
+		})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(int64) > items[j]["updated_at"].(int64) })
-	projects, pinnedProjects := chatProjectNamesFor(s.CfgStore.Snapshot())
+	projects, pinnedProjects := chatProjectNamesFor(cfg)
 	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "pinned_projects": pinnedProjects})
 }
 
