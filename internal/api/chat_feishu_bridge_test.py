@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("chat_feishu_bridge.py")
@@ -266,6 +267,22 @@ class FeishuCardPayloadTest(unittest.TestCase):
         self.assertEqual(official.steps, [("\u5b9e\u65f6\u8f93\u51fa", "draft")])
 
 
+class AdminAPITest(unittest.TestCase):
+    def test_cancel_posts_encoded_abort_path(self):
+        api = bridge_module.AdminAPI("http://127.0.0.1:8919/private/", "secret")
+        item = {"instance_id": "work/one", "session_id": "session two"}
+        with mock.patch.object(bridge_module, "_request", return_value={"ok": True}) as request:
+            result = api.cancel(item)
+
+        self.assertEqual(result, {"ok": True})
+        request.assert_called_once_with(
+            "http://127.0.0.1:8919/private",
+            "secret",
+            "/session/work%2Fone/session%20two/abort",
+            "POST",
+        )
+
+
 class FakeAPI:
     def __init__(self):
         self.items = [
@@ -275,9 +292,28 @@ class FakeAPI:
         self.tasks_by_sid = {"s1": [{"input": "old", "outputs": ["done"]}], "s2": []}
         self.puts = []
         self.snapshot_value = None
+        self.created_instances = []
+        self.create_error = None
+        self.cancels = []
+        self.cancel_error = None
 
     def sessions(self):
         return list(self.items)
+
+    def create(self, instance_id="_"):
+        self.created_instances.append(instance_id)
+        if self.create_error is not None:
+            raise self.create_error
+        sid = "new-" + str(len(self.created_instances))
+        item = {
+            "peer": "ga-admin/" + instance_id + "/" + sid,
+            "instance_id": instance_id,
+            "session_id": sid,
+            "title": "\u65b0\u4f1a\u8bdd",
+        }
+        self.items.insert(0, item)
+        self.tasks_by_sid[sid] = []
+        return item
 
     def tasks(self, item):
         return self.tasks_by_sid[item["session_id"]]
@@ -290,6 +326,12 @@ class FakeAPI:
     def put(self, item, text):
         self.puts.append((item["session_id"], text))
         self.tasks_by_sid[item["session_id"]].append({"input": text, "outputs": []})
+
+    def cancel(self, item):
+        self.cancels.append(item["session_id"])
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        return {"ok": True}
 
 
 class RecordingCard:
@@ -340,6 +382,97 @@ class FeishuAdminBridgeTest(unittest.TestCase):
         self.assertIn("First", result)
         self.assertEqual(self.store.get("chat-a")["cursor"], 2)
         self.assertIn("First", self.bridge.handle("chat-a", "/current"))
+
+    def test_new_uses_bound_instance_and_replaces_local_state(self):
+        self.bridge.handle("chat-a", "/switch 2")
+        old_card = RecordingCard()
+        old_key = self.bridge._card_key("chat-a", self.store.get("chat-a"))
+        self.bridge.active_cards[old_key] = old_card
+        self.bridge.pending_inputs["chat-a"] = ["stale"]
+
+        result = self.bridge.handle("chat-a", "/new")
+
+        self.assertIn("\u65b0\u4f1a\u8bdd", result)
+        self.assertEqual(self.api.created_instances, ["work"])
+        self.assertEqual(self.store.get("chat-a"), {
+            "instance_id": "work",
+            "session_id": "new-1",
+            "title": "\u65b0\u4f1a\u8bdd",
+            "peer": "ga-admin/work/new-1",
+            "cursor": 0,
+        })
+        self.assertNotIn("chat-a", self.bridge.pending_inputs)
+        self.assertEqual(self.bridge.active_cards, {})
+        self.assertEqual(old_card.events, [("fail", "\u5df2\u65b0\u5efa Admin \u4f1a\u8bdd")])
+
+    def test_new_without_binding_uses_default_instance(self):
+        result = self.bridge.handle("chat-a", "/ga new")
+
+        self.assertIn("\u65b0\u4f1a\u8bdd", result)
+        self.assertEqual(self.api.created_instances, ["_"])
+        self.assertEqual(self.store.get("chat-a")["instance_id"], "_")
+        self.assertEqual(self.store.get("chat-a")["cursor"], 0)
+
+    def test_new_failure_preserves_binding_cards_and_pending(self):
+        self.bridge.handle("chat-a", "/switch 1")
+        original = self.store.get("chat-a")
+        old_card = RecordingCard()
+        old_key = self.bridge._card_key("chat-a", original)
+        self.bridge.active_cards[old_key] = old_card
+        self.bridge.pending_inputs["chat-a"] = ["keep"]
+        self.api.create_error = RuntimeError("create failed")
+
+        result = self.bridge.handle("chat-a", "/new")
+
+        self.assertIn("create failed", result)
+        self.assertEqual(self.store.get("chat-a"), original)
+        self.assertIs(self.bridge.active_cards[old_key], old_card)
+        self.assertEqual(old_card.events, [])
+        self.assertEqual(self.bridge.pending_inputs["chat-a"], ["keep"])
+
+    def test_stop_posts_abort_and_preserves_local_state(self):
+        self.bridge.handle("chat-a", "/switch 1")
+        original = self.store.get("chat-a")
+        card = RecordingCard()
+        card_key = self.bridge._card_key("chat-a", original)
+        self.bridge.active_cards[card_key] = card
+        self.bridge.pending_inputs["chat-a"] = ["keep"]
+
+        result = self.bridge.handle("chat-a", "/ga stop")
+
+        self.assertIn("\u5df2\u8bf7\u6c42\u4e2d\u6b62", result)
+        self.assertEqual(self.api.cancels, ["s1"])
+        self.assertEqual(self.store.get("chat-a"), original)
+        self.assertIs(self.bridge.active_cards[card_key], card)
+        self.assertEqual(card.events, [])
+        self.assertEqual(self.bridge.pending_inputs["chat-a"], ["keep"])
+
+    def test_stop_requires_binding(self):
+        result = self.bridge.handle("chat-a", "/stop")
+
+        self.assertIn("\u8bf7\u5148\u4f7f\u7528 /switch", result)
+        self.assertEqual(self.api.cancels, [])
+
+    def test_stop_failure_preserves_binding_cards_and_pending(self):
+        self.bridge.handle("chat-a", "/switch 1")
+        original = self.store.get("chat-a")
+        card = RecordingCard()
+        card_key = self.bridge._card_key("chat-a", original)
+        self.bridge.active_cards[card_key] = card
+        self.bridge.pending_inputs["chat-a"] = ["keep"]
+        self.api.cancel_error = RuntimeError("cancel failed")
+
+        result = self.bridge.handle("chat-a", "/stop")
+
+        self.assertIn("cancel failed", result)
+        self.assertEqual(self.api.cancels, ["s1"])
+        self.assertEqual(self.store.get("chat-a"), original)
+        self.assertIs(self.bridge.active_cards[card_key], card)
+        self.assertEqual(card.events, [])
+        self.assertEqual(self.bridge.pending_inputs["chat-a"], ["keep"])
+
+    def test_help_lists_stop(self):
+        self.assertIn("/stop", self.bridge.handle("chat-a", "/help"))
 
     def test_list_paginates_with_global_switch_numbers(self):
         self.api.items = [

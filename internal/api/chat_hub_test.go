@@ -204,6 +204,62 @@ func TestChatHubSessionListMatchesHistoryOrder(t *testing.T) {
 	}
 }
 
+func TestPrivateChatBridgeCanCreatePersistentSession(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	cfg := store.Snapshot()
+	cfg.ChatDefaultLLMNo = 2
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := New(store, nil, nil, nil)
+	token := "private-token"
+	private := s.chatSessionBridgeAPI(token, true)
+	hub := s.chatSessionBridgeAPI(token, false)
+
+	unauthorized := httptest.NewRecorder()
+	private.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/session/_/new", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized new status = %d, want %d", unauthorized.Code, http.StatusUnauthorized)
+	}
+	if hidden := hubRequest(t, hub, token, http.MethodPost, "/session/_/new", ""); hidden.Code != http.StatusNotFound {
+		t.Fatalf("Hub new status = %d, want %d", hidden.Code, http.StatusNotFound)
+	}
+
+	created := hubRequest(t, private, token, http.MethodPost, "/session/_/new", "")
+	if created.Code != http.StatusOK {
+		t.Fatalf("private new status = %d: %s", created.Code, created.Body.String())
+	}
+	var item chatHubSession
+	if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.SessionID == "" || item.InstanceID != "_" || item.Title != "新会话" || item.Peer != chatHubPeer("", item.SessionID) {
+		t.Fatalf("created session = %#v", item)
+	}
+	persisted, err := loadChatSession(store.Snapshot(), item.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ID != item.SessionID || persisted.Title != "新会话" || persisted.Settings != s.defaultChatSettings() {
+		t.Fatalf("persisted session = %#v; default settings = %#v", persisted, s.defaultChatSettings())
+	}
+	if len(persisted.Messages) != 0 || len(persisted.RawHistory) != 0 {
+		t.Fatalf("new session must be empty: messages=%#v raw_history=%#v", persisted.Messages, persisted.RawHistory)
+	}
+
+	put := hubRequest(t, private, token, http.MethodPost, "/session/_/"+item.SessionID+"/put", `{"text":"first message"}`)
+	if put.Code == http.StatusNotFound {
+		t.Fatalf("first put could not load persisted session: %s", put.Body.String())
+	}
+	if put.Code != http.StatusOK {
+		t.Fatalf("first put status = %d: %s", put.Code, put.Body.String())
+	}
+	if !s.chatRunActive(item.SessionID) {
+		t.Fatal("first put did not start the new session")
+	}
+	s.chatCancel(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/chat/cancel/"+item.SessionID, nil), item.SessionID)
+}
+
 func TestChatHubAPIExposesPersistentSessionAndControlsRun(t *testing.T) {
 	store := config.NewStore(t.TempDir())
 	s := New(store, nil, nil, nil)

@@ -21,8 +21,10 @@ from pathlib import Path
 HELP = (
     "GA Admin \u4f1a\u8bdd\u540c\u6b65\u6307\u4ee4:\n"
     "/list [\u9875\u7801] - \u5206\u9875\u5217\u51fa Admin \u4f1a\u8bdd\uff08\u6bcf\u9875 10 \u6761\uff09\n"
+    "/new - \u65b0\u5efa\u5e76\u5207\u6362\u5230 Admin \u4f1a\u8bdd\n"
     "/switch <\u5168\u5c40\u5e8f\u53f7|session_id|instance/session_id> - \u5207\u6362\u4f1a\u8bdd\n"
     "/current - \u67e5\u770b\u5f53\u524d\u4f1a\u8bdd\n"
+    "/stop - \u4e2d\u6b62\u5f53\u524d\u8f93\u51fa\n"
     "/unbind - \u89e3\u9664\u7ed1\u5b9a\n"
     "/help - \u663e\u793a\u5e2e\u52a9\n\n"
     "\u4e5f\u53ef\u4f7f\u7528 /ga list 2\u3001/ga switch <...>\u3002"
@@ -263,6 +265,10 @@ class AdminAPI:
     def sessions(self):
         return _request(self.base, self.token, "/sessions?all=1").get("sessions", [])
 
+    def create(self, instance_id="_"):
+        instance_id = urllib.parse.quote(str(instance_id or "_"), safe="")
+        return _request(self.base, self.token, "/session/%s/new" % instance_id, "POST")
+
     @staticmethod
     def _path(item, operation):
         instance_id = urllib.parse.quote(str(item["instance_id"]), safe="")
@@ -278,6 +284,9 @@ class AdminAPI:
 
     def put(self, item, text):
         return _request(self.base, self.token, self._path(item, "put"), "POST", {"text": text})
+
+    def cancel(self, item):
+        return _request(self.base, self.token, self._path(item, "abort"), "POST")
 
 
 class BindingStore:
@@ -428,6 +437,12 @@ class FeishuAdminBridge:
             if command == "/current":
                 binding = self.store.get(chat_id)
                 return ("\u5f53\u524d: " + self._label(binding)) if binding else "\u5f53\u524d\u672a\u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"
+            if command == "/stop":
+                binding = self.store.get(chat_id)
+                if not binding:
+                    return "\u8bf7\u5148\u4f7f\u7528 /switch <\u5e8f\u53f7> \u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"
+                self.api.cancel(binding)
+                return "\u5df2\u8bf7\u6c42\u4e2d\u6b62\u5f53\u524d\u8f93\u51fa\u3002"
             if command == "/unbind":
                 with self.active_cards_lock:
                     removed = self.store.remove(chat_id)
@@ -435,6 +450,23 @@ class FeishuAdminBridge:
                     self._clear_pending(chat_id)
                 self._retire_cards(cards, "\u5df2\u89e3\u9664\u4f1a\u8bdd\u7ed1\u5b9a")
                 return "\u5df2\u89e3\u9664\u4f1a\u8bdd\u7ed1\u5b9a\u3002" if removed else "\u5f53\u524d\u672a\u7ed1\u5b9a Admin \u4f1a\u8bdd\u3002"
+            if command == "/new":
+                current = self.store.get(chat_id)
+                instance_id = str((current or {}).get("instance_id") or "_")
+                selected = self.api.create(instance_id)
+                binding = {
+                    "instance_id": selected.get("instance_id") or instance_id,
+                    "session_id": selected["session_id"],
+                    "title": selected.get("title") or "\u65b0\u4f1a\u8bdd",
+                    "peer": selected.get("peer", ""),
+                    "cursor": 0,
+                }
+                with self.active_cards_lock:
+                    cards = self._take_chat_cards(chat_id)
+                    self._clear_pending(chat_id)
+                    self.store.set(chat_id, binding)
+                self._retire_cards(cards, "\u5df2\u65b0\u5efa Admin \u4f1a\u8bdd")
+                return "\u5df2\u65b0\u5efa\u5e76\u5207\u6362\u5230: " + self._label(binding)
             if command == "/switch":
                 if not argument:
                     return self._list()

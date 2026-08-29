@@ -176,6 +176,51 @@ func (s *Server) chatSessionBridgeAPI(token string, allowAll bool) http.Handler 
 	})
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/session/"), "/")
+		if len(parts) == 2 && parts[1] == "new" {
+			if !allowAll {
+				bad(w, http.StatusNotFound, "not found")
+				return
+			}
+			if r.Method != http.MethodPost {
+				bad(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			advertisedInstanceID := parts[0]
+			instanceID := advertisedInstanceID
+			if instanceID == "_" {
+				instanceID = ""
+			}
+			server, err := s.chatHubServerForInstance(instanceID)
+			if err != nil {
+				bad(w, http.StatusNotFound, err.Error())
+				return
+			}
+			cs := chatSession{
+				ID:         newChatID(),
+				Title:      "\u65b0\u4f1a\u8bdd",
+				Messages:   []chatMessage{},
+				Settings:   server.defaultChatSettings(),
+				RawHistory: []map[string]interface{}{},
+			}
+			if err := saveChatSession(server.CfgStore.Snapshot(), cs); err != nil {
+				bad(w, http.StatusInternalServerError, "failed to create session")
+				return
+			}
+			persisted, err := loadChatSession(server.CfgStore.Snapshot(), cs.ID)
+			if err != nil {
+				bad(w, http.StatusInternalServerError, "failed to load created session")
+				return
+			}
+			writeJSON(w, chatHubSession{
+				Peer:       chatHubPeer(instanceID, persisted.ID),
+				InstanceID: advertisedInstanceID,
+				SessionID:  persisted.ID,
+				Title:      persisted.Title,
+				UpdatedAt:  persisted.UpdatedAt,
+				Pinned:     persisted.Pinned,
+			})
+			return
+		}
 		if len(parts) != 3 {
 			bad(w, http.StatusNotFound, "not found")
 			return
