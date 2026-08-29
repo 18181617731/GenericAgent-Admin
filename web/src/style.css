@@ -17165,3 +17165,34 @@ html .oa-sidebar .oa-project-group.is-pinned {
 }
 .oa-sidebar .oa-project-group .oa-session-row { margin:0; }
 .oa-sidebar .oa-project-group .oa-session-row:last-child { border-bottom:0; }
+
+/* Match expanded sidebar controls to their compact collapsed counterparts. */
+.oa-side-head > .oa-new-chat,
+.oa-side-head > .oa-icon-btn {
+  width:36px;
+  min-width:36px;
+  height:36px;
+  min-height:36px;
+  margin-left:0;
+  padding:0;
+  border:0;
+  border-radius:10px;
+  color:var(--text) !important;
+  background:transparent !important;
+  box-shadow:none;
+  transition:background .16s ease, box-shadow .16s ease, transform .16s ease, opacity .16s ease;
+}
+.oa-side-head > .oa-new-chat > svg,
+.oa-side-head > .oa-icon-btn > svg { opacity:1; }
+.oa-side-head > .oa-new-chat:hover,
+.oa-side-head > .oa-icon-btn:hover {
+  color:var(--text) !important;
+  background:var(--oa-side-hover) !important;
+  box-shadow:none;
+  transform:none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oa-side-head > .oa-new-chat,
+  .oa-side-head > .oa-icon-btn { transition:none; }
+}
