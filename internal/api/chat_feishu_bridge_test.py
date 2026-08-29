@@ -480,6 +480,75 @@ class FeishuAdminBridgeTest(unittest.TestCase):
             ("step", "Next task", "### \U0001f4dd Output\nstarted"),
         ])
 
+    def test_multi_output_assistant_completes_only_on_last_output(self):
+        cards = []
+
+        class OfficialCard:
+            def __init__(self):
+                self.steps = []
+                self.status = ""
+                self.final = None
+                self.starts = 0
+                self.pushes = 0
+                self.done_calls = []
+
+            def start(self):
+                self.starts += 1
+
+            def step(self, summary, detail=""):
+                self.steps.append((summary, detail))
+
+            def _push(self):
+                self.pushes += 1
+                return True
+
+            def done(self, text):
+                self.done_calls.append(text)
+                self.status = "\u2705 \u5df2\u5b8c\u6210"
+                self.final = text
+                self._push()
+
+        def new_card(chat_id):
+            official = OfficialCard()
+            cards.append((chat_id, official))
+            return bridge_module._LiveTaskCard(official)
+
+        self.bridge.card_factory = new_card
+        self.bridge.handle("chat-a", "/switch s1")
+        self.assertIsNone(self.bridge.handle("chat-a", "hello"))
+        self.api.snapshot_value = {
+            "tasks": self.api.tasks_by_sid["s1"],
+            "run": True,
+            "run_id": "r1",
+            "partial": "",
+            "turns": [
+                {"summary": "Inspect", "thinking": "", "content": "final", "tool_calls": []},
+            ],
+        }
+        self.bridge.poll_once()
+
+        self.api.tasks_by_sid["s1"][-1]["outputs"] = [
+            "**LLM Running (Turn 1) ...**\n\ntool turn output",
+            "**LLM Running (Turn 2) ...**\n\nfinal",
+        ]
+        self.api.snapshot_value["run"] = False
+        self.bridge.poll_once()
+
+        self.assertEqual(len(cards), 1)
+        official = cards[0][1]
+        self.assertEqual(official.starts, 1)
+        self.assertEqual(official.steps, [("Inspect", "### \U0001f4dd Output\nfinal")])
+        self.assertEqual(official.status, "\u2705 \u5df2\u5b8c\u6210")
+        self.assertEqual(official.final, "")
+        self.assertEqual(official.done_calls, [])
+        self.assertEqual(official.pushes, 1)
+        self.assertEqual(self.bridge.active_cards, {})
+        self.assertEqual(self.sent, [])
+        self.assertEqual(
+            self.store.get("chat-a")["cursor"],
+            len(bridge_module._events(self.api.tasks_by_sid["s1"])),
+        )
+
     def test_partial_without_structured_turn_creates_no_panel(self):
         card = RecordingCard()
         self.bridge.card_factory = lambda chat_id: card

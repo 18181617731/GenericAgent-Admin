@@ -565,7 +565,13 @@ class FeishuAdminBridge:
                             self.turn_cursors[key] = (run_id, turn_cursor)
                     while cursor < len(events):
                         role, text = events[cursor]
-                        if role == "user" and self._consume_pending(chat_id, text):
+                        terminal_assistant = (
+                            role == "assistant"
+                            and (cursor + 1 == len(events) or events[cursor + 1][0] != "assistant")
+                        )
+                        if role == "assistant" and not terminal_assistant and self.card_factory:
+                            delivered = True
+                        elif role == "user" and self._consume_pending(chat_id, text):
                             delivered = True
                         elif role == "assistant" and self.card_factory:
                             card = self.active_cards.get(key)
@@ -580,7 +586,7 @@ class FeishuAdminBridge:
                             delivered = all(self.send(chat_id, chunk, completed) for chunk in _split_text(payload))
                         if not delivered:
                             break
-                        if role == "assistant":
+                        if terminal_assistant:
                             completed_in_snapshot = True
                         cursor += 1
                         changed = True
