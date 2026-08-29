@@ -22,6 +22,7 @@ type channelField struct {
 	Label       string `json:"label"`
 	Secret      bool   `json:"secret,omitempty"`
 	Type        string `json:"type,omitempty"`
+	LiteralType string `json:"-"`
 	Value       string `json:"value,omitempty"`
 	HasValue    bool   `json:"has_value,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
@@ -110,7 +111,7 @@ var channelDefinitions = []channelProfile{
 	}},
 	{ID: "telegram", Name: "Telegram", Description: "Telegram Bot Token 与允许用户；可复用全局 proxy 配置。", Testable: true, Fields: []channelField{
 		{Name: "tg_bot_token", Label: "Bot Token", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
-		{Name: "tg_allowed_users", Label: "允许用户", Type: "list", Placeholder: "user_id1,user_id2"},
+		{Name: "tg_allowed_users", Label: "允许用户", Type: "list", LiteralType: "integer_list", Placeholder: "user_id1,user_id2"},
 	}},
 	{ID: "wechat", Name: "微信", Description: "无需 mykey 凭据；启动 wechatapp.py 后按日志中的二维码扫码登录。", Testable: false, Fields: []channelField{}},
 }
@@ -541,7 +542,7 @@ func (s *Server) saveChannels(profiles []channelProfile) error {
 			if def.Secret && f.Value == "" {
 				values[def.Name] = existing[def.Name]
 			} else {
-				value, err := encodeChannelValue(f.Value, def.Type)
+				value, err := encodeChannelValue(f.Value, channelLiteralType(def))
 				if err != nil {
 					return fmt.Errorf("%s: %w", def.Name, err)
 				}
@@ -686,7 +687,7 @@ func upsertChannelAssignments(content string, values map[string]string) string {
 	for _, p := range channelDefinitions {
 		for _, f := range p.Fields {
 			allowed[f.Name] = true
-			formatted[f.Name] = fmt.Sprintf("%s = %s", f.Name, formatPythonLiteral(values[f.Name], f.Type))
+			formatted[f.Name] = fmt.Sprintf("%s = %s", f.Name, formatPythonLiteral(values[f.Name], channelLiteralType(f)))
 		}
 	}
 	seen := map[string]bool{}
@@ -763,9 +764,17 @@ func normalizeChannelDisplayValue(raw, typ string) string {
 	}
 }
 
+func channelLiteralType(f channelField) string {
+	if f.LiteralType != "" {
+		return f.LiteralType
+	}
+	return f.Type
+}
+
 func encodeChannelValue(v, typ string) (string, error) {
 	v = strings.TrimSpace(v)
-	if typ == "bool" {
+	switch typ {
+	case "bool":
 		switch {
 		case strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on"):
 			return "true", nil
@@ -774,8 +783,28 @@ func encodeChannelValue(v, typ string) (string, error) {
 		default:
 			return "", fmt.Errorf("invalid boolean value %q", v)
 		}
+	case "integer_list":
+		ids := []int64{}
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(part, 10, 64)
+			if err != nil || id <= 0 {
+				return "", fmt.Errorf("invalid integer user ID %q", part)
+			}
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		return strings.Join(parts, ","), nil
+	default:
+		return v, nil
 	}
-	return v, nil
 }
 
 func formatPythonLiteral(v, typ string) string {
@@ -796,6 +825,11 @@ func formatPythonLiteral(v, typ string) string {
 		sort.Strings(parts)
 		b, _ := json.Marshal(parts)
 		return string(b)
+	case "integer_list":
+		if v == "" {
+			return "[]"
+		}
+		return "[" + v + "]"
 	default:
 		b, _ := json.Marshal(v)
 		return string(b)
