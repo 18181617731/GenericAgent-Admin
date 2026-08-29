@@ -14,6 +14,7 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, FolderPlus, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
+import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
@@ -3812,6 +3813,9 @@ export default function ChatApp() {
   const streamAbortRef = useRef(null)
   const chatInstanceRef = useRef(chatInstanceID)
   const chatRequestEpochRef = useRef(0)
+  const chatLaunchIntentRef = useRef(readChatLaunchIntent())
+  const chatLaunchStartedRef = useRef(false)
+  const openedChatInstanceRef = useRef('')
   const chatApi = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
     const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
@@ -4650,6 +4654,7 @@ export default function ChatApp() {
     setSid(d.id); setMessages([]); applyQueueSnapshot([]); setQueueEditingId(''); setQueueDraft(''); guidingQueueRef.current = ''; setGuidingQueueId(''); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopMaxRounds(10); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
     if (selectedProject) await loadSessions(d.id)
+    return d.id
   }
 
   const newSession = async () => {
@@ -5614,8 +5619,29 @@ export default function ChatApp() {
   }, [])
 
   useEffect(() => {
-    loadSessions('', { open:true }).catch(e => { if (e?.name !== 'AbortError') setErr(e.message) })
-  }, [chatInstanceID])
+    if (chatInstancesLoading) return
+    const instanceKey = chatInstanceID || '__default__'
+    if (openedChatInstanceRef.current === instanceKey) return
+    openedChatInstanceRef.current = instanceKey
+    const intent = chatLaunchIntentRef.current
+    const openInitialChat = async () => {
+      try {
+        if (!intent.newChat || chatLaunchStartedRef.current) {
+          await loadSessions('', { open:true })
+          return
+        }
+        chatLaunchStartedRef.current = true
+        const newSessionID = await createSession()
+        if (!newSessionID) return
+        if (intent.prompt) setSessionPrompt(intent.prompt, newSessionID)
+        clearChatLaunchIntent()
+        requestAnimationFrame(() => promptRef.current?.focus())
+      } catch (e) {
+        if (e?.name !== 'AbortError') setErr(e.message)
+      }
+    }
+    void openInitialChat()
+  }, [chatInstanceID, chatInstancesLoading])
 
   useEffect(() => {
     let stopped = false
