@@ -558,13 +558,100 @@ const normalizeToolParts = (parts = []) => {
   return out
 }
 
+const isMermaidFence = (lang = '') => String(lang || '').trim().split(/\s+/, 1)[0].toLowerCase() === 'mermaid'
+
+let mermaidRenderSequence = 0
+let mermaidRenderQueue = Promise.resolve()
+
+const renderMermaidSvg = (source, colorScheme) => {
+  const render = async () => {
+    const module = await import('mermaid')
+    const mermaid = module.default || module
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: colorScheme === 'dark' ? 'dark' : 'neutral',
+    })
+    mermaidRenderSequence += 1
+    return mermaid.render(`oa-mermaid-${Date.now().toString(36)}-${mermaidRenderSequence}`, source)
+  }
+  const pending = mermaidRenderQueue.then(render, render)
+  mermaidRenderQueue = pending.then(() => undefined, () => undefined)
+  return pending
+}
+
+function MermaidDiagram({ source = '' }) {
+  const hostRef = useRef(null)
+  const bindFunctionsRef = useRef(null)
+  const [colorScheme, setColorScheme] = useState(() => globalThis.document?.documentElement?.dataset?.colorScheme || 'light')
+  const [state, setState] = useState({ status: 'loading', svg: '', error: '' })
+
+  useEffect(() => {
+    const root = globalThis.document?.documentElement
+    if (!root || typeof globalThis.MutationObserver !== 'function') return undefined
+    const observer = new globalThis.MutationObserver(() => {
+      setColorScheme(root.dataset.colorScheme || 'light')
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ['data-color-scheme'] })
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    bindFunctionsRef.current = null
+    setState({ status: 'loading', svg: '', error: '' })
+    renderMermaidSvg(source, colorScheme).then(({ svg, bindFunctions }) => {
+      if (!active) return
+      bindFunctionsRef.current = bindFunctions || null
+      setState({ status: 'ready', svg, error: '' })
+    }).catch(error => {
+      if (!active) return
+      setState({ status: 'error', svg: '', error: String(error?.message || error || ct('未知错误', 'Unknown error')) })
+    })
+    return () => { active = false }
+  }, [source, colorScheme])
+
+  useLayoutEffect(() => {
+    if (state.status === 'ready' && hostRef.current && bindFunctionsRef.current) {
+      bindFunctionsRef.current(hostRef.current)
+    }
+  }, [state.status, state.svg])
+
+  return <div className={`oa-mermaid-card ${state.status === 'error' ? 'is-error' : ''}`}>
+    <div className="oa-code-head">
+      <span>Mermaid</span>
+      <CopyButton text={source} compact />
+    </div>
+    {state.status === 'loading' && <div className="oa-mermaid-status" role="status">{ct('正在绘制图表…', 'Rendering diagram…')}</div>}
+    {state.status === 'ready' && <div
+      ref={hostRef}
+      className="oa-mermaid-diagram"
+      role="img"
+      aria-label={ct('Mermaid 图表', 'Mermaid diagram')}
+      dangerouslySetInnerHTML={{ __html: state.svg }}
+    />}
+    {state.status === 'error' && <>
+      <div className="oa-mermaid-error" role="alert">{ct('图表语法无效，已显示源码：', 'Invalid diagram syntax; showing source:')} {state.error}</div>
+      <pre><code>{source}</code></pre>
+    </>}
+  </div>
+}
+
 const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
   const stats = useMemo(() => textRenderStats(text), [text])
   const parts = useMemo(() => stats.tooLarge ? [] : normalizeToolParts(splitMarkdownParts(text)).slice(0, MARKDOWN_BLOCK_LIMIT), [text, stats.tooLarge])
   if (stats.tooLarge) return <div className="oa-md"><LongTextPreview text={text} stats={stats} /></div>
   return <div className="oa-md">
     {parts.map((p, idx) => p.type === 'code'
-      ? <div className="oa-code-card" key={idx}>
+      ? isMermaidFence(p.lang)
+        ? p.closed
+          ? <MermaidDiagram key={idx} source={p.text} />
+          : <div className="oa-mermaid-card" key={idx}>
+            <div className="oa-code-head"><span>Mermaid</span><CopyButton text={p.text} compact /></div>
+            <div className="oa-mermaid-status" role="status">{ct('正在接收图表内容…', 'Receiving diagram…')}</div>
+          </div>
+        : <div className="oa-code-card" key={idx}>
           <div className="oa-code-head"><span>{p.lang || ct('代码', 'Code')}</span><CopyButton text={p.text} compact /></div>
           <pre><code>{p.text}</code></pre>
         </div>
