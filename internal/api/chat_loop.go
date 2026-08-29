@@ -25,6 +25,7 @@ const (
 
 var (
 	chatLoopNextPromptTagRE = regexp.MustCompile(`(?is)</?next_prompt\s*>`)
+	chatLoopContinueTagRE   = regexp.MustCompile(`(?is)</?loop_continue\s*>`)
 	chatLoopCompleteTagRE   = regexp.MustCompile(`(?is)</?loop_complete\s*>`)
 	errChatLoopStale        = errors.New("stale chat loop decision")
 )
@@ -101,26 +102,20 @@ func chatLoopHasTerminalAssistant(cs chatSession) bool {
 }
 
 func chatLoopControllerPrompt(objective string, round, maxRounds int) string {
-	return fmt.Sprintf(`You are the controller for an autonomous task loop. Do not perform the task yourself.
+	return fmt.Sprintf(`You are the supervisor for an autonomous task loop. Do not perform the task yourself and do not plan or prescribe the next action.
 
 Loop objective (quoted): %q
 Completed automatic rounds: %d of %d.
 
-Review the conversation and choose exactly one outcome:
-1. If the objective is fully complete and no useful action remains, output exactly one loop_complete XML element containing a brief reason.
-2. If useful work remains, output exactly one next_prompt XML element containing the self-contained instruction for the main agent's next turn.
+Review the conversation and make exactly one binary decision:
+1. If the objective is fully complete, output exactly <loop_complete>brief completion reason</loop_complete>.
+2. If the objective is not fully complete, output exactly <loop_continue>continue</loop_continue>.
 
-The only valid response shapes are:
-<loop_complete>brief completion reason</loop_complete>
-<next_prompt>specific next action</next_prompt>
-
-Do not output both elements. Do not use placeholders such as ellipses, "continue", "none", or "TBD" as the next prompt. Do not add prose outside the chosen XML element.`, objective, round, maxRounds)
+Do not describe what to do next. Do not provide a plan, instruction, summary, explanation, markdown fence, or any text outside the single chosen XML element.`, objective, round, maxRounds)
 }
 
 type chatLoopDecision struct {
 	Complete bool
-	NoAction bool
-	Prompt   string
 }
 
 func extractLastChatLoopElementAt(content string, tagRE *regexp.Regexp) (string, int, bool) {
@@ -148,38 +143,16 @@ func parseChatLoopNextPrompt(content string) string {
 	return prompt
 }
 
-func isChatLoopPlaceholderPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(prompt)), ""))
-	if normalized == "" {
-		return true
-	}
-	switch normalized {
-	case "continue", "none", "null", "n/a", "na", "tbd", "placeholder", "继续", "待定":
-		return true
-	}
-	for _, r := range normalized {
-		switch r {
-		case '.', '…', '·', '-', '_', '—':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func parseChatLoopDecision(content string) (chatLoopDecision, error) {
-	prompt, promptEnd, hasPrompt := extractLastChatLoopElementAt(content, chatLoopNextPromptTagRE)
+	_, continueEnd, hasContinue := extractLastChatLoopElementAt(content, chatLoopContinueTagRE)
 	_, completeEnd, hasComplete := extractLastChatLoopElementAt(content, chatLoopCompleteTagRE)
-	if hasComplete && (!hasPrompt || completeEnd > promptEnd) {
+	if hasComplete && (!hasContinue || completeEnd > continueEnd) {
 		return chatLoopDecision{Complete: true}, nil
 	}
-	if !hasPrompt {
-		return chatLoopDecision{}, errors.New("controller returned no decision element")
+	if hasContinue {
+		return chatLoopDecision{}, nil
 	}
-	if isChatLoopPlaceholderPrompt(prompt) {
-		return chatLoopDecision{Complete: true, NoAction: true}, nil
-	}
-	return chatLoopDecision{Prompt: prompt}, nil
+	return chatLoopDecision{}, errors.New("controller returned no usable loop_complete or loop_continue element")
 }
 
 func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid string) {
@@ -284,7 +257,20 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
-	if err != nil || !cs.Loop.Enabled || cs.Loop.Status == chatLoopStatusEvaluating {
+	if err != nil {
+		s.SessionMu.Unlock()
+		return
+	}
+
+	// Check queued messages first
+	if success && len(cs.QueuedMessages) > 0 {
+		s.SessionMu.Unlock()
+		go s.processNextQueuedMessage(sid)
+		return
+	}
+
+	// Then check loop mode
+	if !cs.Loop.Enabled || cs.Loop.Status == chatLoopStatusEvaluating {
 		s.SessionMu.Unlock()
 		return
 	}
@@ -340,14 +326,10 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 		return
 	}
 	if decision.Complete {
-		reason := "controller_complete"
-		if decision.NoAction {
-			reason = "controller_no_action"
-		}
-		s.finishChatLoop(sid, epoch, chatLoopStatusCompleted, reason)
+		s.finishChatLoop(sid, epoch, chatLoopStatusCompleted, "controller_complete")
 		return
 	}
-	s.continueChatLoop(sid, epoch, decision.Prompt)
+	s.continueChatLoop(sid, epoch, chatLoopAdvancePrompt)
 }
 
 func (s *Server) finishChatLoop(sid string, epoch int64, status, reason string) {
@@ -405,7 +387,7 @@ func (s *Server) continueChatLoop(sid string, epoch int64, prompt string) {
 		latest.Loop.Round++
 		latest.Loop.Status = chatLoopStatusRunning
 		latest.Loop.StopReason = ""
-		appendChatLoopRecord(&latest.Loop, "continue", "Controller queued the next step.", prompt)
+		appendChatLoopRecord(&latest.Loop, "continue", "Supervisor requested another round.", "")
 		latest.Messages = append(latest.Messages, userMsg, pendingMsg)
 		latest.UpdatedAt = time.Now().Unix()
 		updateChatTitle(&latest)
@@ -518,4 +500,184 @@ func normalizePersistedChatLoop(state chatLoopState) (chatLoopState, bool) {
 	state.Epoch++
 	state.MaxRounds = normalizeChatLoopMaxRounds(state.MaxRounds)
 	return state, true
+}
+
+// convertChatUploadsToMaps converts []chatUpload to []map[string]interface{} for message files
+func convertChatUploadsToMaps(uploads []chatUpload) []map[string]interface{} {
+	if len(uploads) == 0 {
+		return nil
+	}
+	result := make([]map[string]interface{}, len(uploads))
+	for i, upload := range uploads {
+		result[i] = map[string]interface{}{
+			"id":      upload.ID,
+			"name":    upload.Name,
+			"type":    upload.Type,
+			"size":    upload.Size,
+			"dataURL": upload.DataURL,
+		}
+	}
+	return result
+}
+
+// processNextQueuedMessage executes the first queued message for a session.
+// It is called after a chat run completes successfully and there are queued messages.
+func (s *Server) processNextQueuedMessage(sid string) bool {
+	return s.processQueuedMessage(sid, "")
+}
+
+// processQueuedMessage reserves the session, removes the requested queue item,
+// persists its pending assistant message, and starts the worker. An empty queueID
+// selects the first item. Reserving before dequeueing prevents a competing run
+// from causing an item to be removed and later reinserted in the wrong position.
+func (s *Server) processQueuedMessage(sid, queueID string) bool {
+	sid = safeChatID(sid)
+	queueID = strings.TrimSpace(queueID)
+	token := s.beginChatRun(sid)
+	if token == nil {
+		return false
+	}
+
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil || len(cs.QueuedMessages) == 0 {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	queueIndex := 0
+	if queueID != "" {
+		queueIndex = -1
+		for i := range cs.QueuedMessages {
+			if cs.QueuedMessages[i].ID == queueID {
+				queueIndex = i
+				break
+			}
+		}
+		if queueIndex < 0 {
+			s.SessionMu.Unlock()
+			s.endChatRunOwned(sid, token)
+			return false
+		}
+	}
+	queuedItem := cs.QueuedMessages[queueIndex]
+	s.SessionMu.Unlock()
+
+	// Publish the queue identity before removing it from persisted state. Do not
+	// take ChatMu while holding SessionMu: saveChatRunPending uses the opposite
+	// lock order while atomically publishing the pending assistant identity.
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current != token || current.Done || current.Canceled {
+		s.ChatMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	token.QueueID = queuedItem.ID
+	s.ChatMu.Unlock()
+
+	// Reload under SessionMu because queue replacement may have happened while
+	// the lock was released to publish the token identity.
+	s.SessionMu.Lock()
+	cs, err = loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	queueIndex = -1
+	for i := range cs.QueuedMessages {
+		if cs.QueuedMessages[i].ID == queuedItem.ID {
+			queueIndex = i
+			queuedItem = cs.QueuedMessages[i]
+			break
+		}
+	}
+	if queueIndex < 0 {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	cs.QueuedMessages = append(cs.QueuedMessages[:queueIndex], cs.QueuedMessages[queueIndex+1:]...)
+	cs.UpdatedAt = time.Now().Unix()
+
+	pendingID := newChatID()
+	runStartedAtMS := time.Now().UnixMilli()
+	pendingMsg := chatMessage{
+		ID:             pendingID,
+		Role:           "assistant",
+		CreatedAt:      time.Now().Unix(),
+		RunStartedAtMS: runStartedAtMS,
+	}
+	queuedUserMsg := chatMessage{
+		ID:        newChatID(),
+		Role:      "user",
+		Content:   queuedItem.Text,
+		Files:     convertChatUploadsToMaps(queuedItem.Files),
+		CreatedAt: time.Now().Unix(),
+	}
+	cs.Messages = append(cs.Messages, queuedUserMsg, pendingMsg)
+	if queuedItem.LLMNo > 0 {
+		cs.Settings.LLMNo = queuedItem.LLMNo
+	}
+	if queuedItem.ReasoningEffort != "" {
+		cs.Settings.ReasoningEffort = queuedItem.ReasoningEffort
+	}
+	workerHistory := append([]chatMessage(nil), cs.Messages...)
+	for i := len(workerHistory) - 1; i >= 0; i-- {
+		if workerHistory[i].ID == queuedUserMsg.ID {
+			workerHistory = workerHistory[:i]
+			break
+		}
+	}
+	cmdReq := map[string]interface{}{
+		"prompt":                   queuedItem.Text,
+		"files":                    queuedItem.Files,
+		"history":                  workerHistory,
+		"raw_history":              cs.RawHistory,
+		"history_info":             cs.HistoryInfo,
+		"working":                  cs.Working,
+		"workspace":                cs.Workspace,
+		"project_mode":             cs.ProjectMode,
+		"extra_sys_prompts":        cs.ExtraSysPrompts,
+		"llm_no":                   cs.Settings.LLMNo,
+		"reasoning_effort":         cs.Settings.ReasoningEffort,
+		"ga_root":                  s.CfgStore.Snapshot().GARoot,
+		"_ga_pending_assistant_id": pendingID,
+		"_ga_run_started_at_ms":    runStartedAtMS,
+	}
+
+	// Publish the pending assistant identity together with the persisted session.
+	// Reattaching clients use these fields to bind live deltas to the placeholder;
+	// without them a guided queue run only appears after the final session reload.
+	s.SessionMu.Unlock()
+	owned, saveErr := s.saveChatRunPending(sid, token, pendingID, runStartedAtMS, func() error {
+		s.SessionMu.Lock()
+		defer s.SessionMu.Unlock()
+		return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+	})
+	if !owned || saveErr != nil {
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	s.publishChatQueueChanged(sid)
+
+	// Automatic queue consumption bypasses the frontend's optimistic guide path.
+	// Publish the persisted user turn on the run stream so attached clients render
+	// it immediately; replay and the frontend's message-id dedupe make reconnects safe.
+	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": queuedUserMsg})
+
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current == token {
+		current.PendingAssistantID = pendingID
+		current.RunStartedAtMS = runStartedAtMS
+	}
+	s.ChatMu.Unlock()
+
+	s.publishChatRun(sid, map[string]interface{}{
+		"type":            "queue_item_start",
+		"queue_item_id":   queuedItem.ID,
+		"remaining_count": len(cs.QueuedMessages),
+	})
+	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
+	return true
 }

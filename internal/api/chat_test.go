@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -927,10 +928,17 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 			}
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{"type": "model", "model_id": "vendor/model-real", "llm_no": 2})
 			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
-				"type":         "done",
-				"message":      done,
-				"ctx_chars":    3800,
-				"ctx_msgs":     3,
+				"type":      "done",
+				"message":   done,
+				"ctx_chars": 3800,
+				"ctx_msgs":  3,
+				"usage": map[string]interface{}{
+					"input_tokens": 310, "output_tokens": 18, "generation_ms": 900,
+				},
+				"usages": []map[string]interface{}{
+					{"input_tokens": 120, "output_tokens": 5, "generation_ms": 300},
+					{"input_tokens": 190, "output_tokens": 13, "generation_ms": 600},
+				},
 				"raw_history":  rawHistory,
 				"history_info": []interface{}{map[string]interface{}{"turn": "final"}},
 				"working":      map[string]interface{}{"phase": "complete"},
@@ -960,7 +968,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-hist", strings.NewReader(`{"prompt":"second question","client_user_id":"u1"}`))
+	imageData := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	body := fmt.Sprintf(`{"prompt":"second question","client_user_id":"u1","files":[{"name":"sample.png","type":"image/png","dataURL":"data:image/png;base64,%s"},{"name":"notes.txt","type":"text/plain","dataURL":"data:text/plain;base64,dGV4dA=="}]}`, imageData)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session-hist", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.Routes().ServeHTTP(rr, req)
@@ -970,7 +980,8 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if captured == nil {
 		t.Fatalf("worker request was not captured")
 	}
-	if captured["prompt"] != "second question" {
+	prompt, _ := captured["prompt"].(string)
+	if !strings.HasPrefix(prompt, "second question\n\n[附件已保存]\n") || !strings.Contains(prompt, "[image:") || !strings.Contains(prompt, "[FILE:") {
 		t.Fatalf("prompt=%#v", captured["prompt"])
 	}
 	if captured["llm_no"].(float64) != 2 {
@@ -978,6 +989,17 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if captured["project_mode"] != "alpha" {
 		t.Fatalf("project_mode=%#v want alpha", captured["project_mode"])
+	}
+	images, ok := captured["images"].([]interface{})
+	if !ok || len(images) != 1 {
+		t.Fatalf("images=%#v want one supported image", captured["images"])
+	}
+	imagePath, ok := images[0].(string)
+	if !ok || filepath.Ext(imagePath) != ".png" {
+		t.Fatalf("image path=%#v want saved PNG path", images[0])
+	}
+	if data, err := os.ReadFile(imagePath); err != nil || string(data) != "png-bytes" {
+		t.Fatalf("saved image data=%q err=%v", data, err)
 	}
 	extraPrompts, ok := captured["extra_sys_prompts"].([]interface{})
 	if !ok || len(extraPrompts) != 2 || extraPrompts[0] != "be concise" || extraPrompts[1] != "cite sources" {
@@ -1012,11 +1034,20 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	if strings.Contains(rr.Body.String(), "first question") || strings.Contains(rr.Body.String(), "first answer") || strings.Contains(rr.Body.String(), "raw_history") || strings.Contains(rr.Body.String(), "tool_result") {
 		t.Fatalf("stream unexpectedly leaked prior/raw history: %s", rr.Body.String())
 	}
+	if strings.Contains(rr.Body.String(), "model_first_token") {
+		t.Fatalf("stream leaked internal first-token marker: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"first_token_ms":`) || strings.Contains(rr.Body.String(), `"first_token_ms":0`) {
+		t.Fatalf("stream terminal message missing non-zero first-token timing: %s", rr.Body.String())
+	}
 	if strings.Count(rr.Body.String(), `"model_id":"vendor/model-real"`) < 2 {
 		t.Fatalf("stream missing model event or terminal message model_id: %s", rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), `"ctx_chars":3800`) || !strings.Contains(rr.Body.String(), `"ctx_msgs":3`) {
 		t.Fatalf("stream terminal message missing context stats: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"generation_ms":900`) || !strings.Contains(rr.Body.String(), `"generation_ms":300`) || !strings.Contains(rr.Body.String(), `"generation_ms":600`) {
+		t.Fatalf("stream terminal event missing generation timing: %s", rr.Body.String())
 	}
 	stored, err := loadChatSession(s.CfgStore.Snapshot(), "session-hist")
 	if err != nil {
@@ -1027,6 +1058,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if stored.Messages[len(stored.Messages)-1].LLMNo == nil || *stored.Messages[len(stored.Messages)-1].LLMNo != 2 {
 		t.Fatalf("stored assistant llm_no=%v want 2: %#v", stored.Messages[len(stored.Messages)-1].LLMNo, stored.Messages)
+	}
+	if storedFinal.Usage["generation_ms"] != 900 || len(storedFinal.Usages) != 2 || storedFinal.Usages[0]["generation_ms"] != 300 || storedFinal.Usages[1]["generation_ms"] != 600 {
+		t.Fatalf("stored assistant generation timing mismatch: usage=%#v usages=%#v", storedFinal.Usage, storedFinal.Usages)
 	}
 
 	reloadReq := httptest.NewRequest(http.MethodGet, "/api/chat/session/session-hist", nil)
@@ -1044,6 +1078,9 @@ func TestChatPostSendsPriorMessagesRawHistoryAndPersistsModelID(t *testing.T) {
 	}
 	if reloaded.Messages[len(reloaded.Messages)-1].LLMNo == nil || *reloaded.Messages[len(reloaded.Messages)-1].LLMNo != 2 {
 		t.Fatalf("reloaded assistant llm_no=%v want 2: %#v", reloaded.Messages[len(reloaded.Messages)-1].LLMNo, reloaded.Messages)
+	}
+	if reloadedFinal.Usage["generation_ms"] != 900 || len(reloadedFinal.Usages) != 2 || reloadedFinal.Usages[0]["generation_ms"] != 300 || reloadedFinal.Usages[1]["generation_ms"] != 600 {
+		t.Fatalf("reloaded assistant generation timing mismatch: usage=%#v usages=%#v", reloadedFinal.Usage, reloadedFinal.Usages)
 	}
 	if len(stored.RawHistory) != 3 {
 		t.Fatalf("stored raw_history len=%d want 3: %#v", len(stored.RawHistory), stored.RawHistory)
@@ -2501,5 +2538,300 @@ func TestChatPickedModelBecomesDefaultForNewSessions(t *testing.T) {
 	}
 	if cs.Settings.LLMNo != 4 {
 		t.Fatalf("unsaved session llm_no=%d want 4", cs.Settings.LLMNo)
+	}
+}
+
+func TestChatGuideIsIdempotentWhenQueuedItemAlreadyStarted(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	sid := "guide-race-session"
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Title: "Guide race"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = &chatRun{SID: sid, QueueID: "q-takeover", Subscribers: map[chan []byte]bool{}}
+	s.ChatMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/guide/"+sid+"/q-takeover", nil)
+	rr := httptest.NewRecorder()
+	s.chatGuidePost(rr, req, sid, "q-takeover")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guide raced with queue consumption: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != "already_started" {
+		t.Fatalf("status=%v want already_started", payload["status"])
+	}
+}
+
+func TestChatGuideStillRejectsUnknownQueueItem(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	sid := "guide-missing-session"
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	if err := saveChatSession(s.CfgStore.Snapshot(), chatSession{ID: sid, Title: "Guide missing"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = &chatRun{SID: sid, QueueID: "q-other", Done: true, Subscribers: map[chan []byte]bool{}}
+	s.ChatMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/guide/"+sid+"/q-missing", nil)
+	rr := httptest.NewRecorder()
+	s.chatGuidePost(rr, req, sid, "q-missing")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown queue item: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestChatQueuePersistsWithSessionAndSurvivesRunSave(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	initial := chatSession{
+		ID:        "queue-session",
+		Title:     "Queue",
+		UpdatedAt: 123,
+		Messages:  []chatMessage{},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), initial); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"messages":[{"id":"q-1","text":"continue this work","files":[{"id":"file-1","name":"notes.txt","type":"text/plain","size":5,"dataURL":"data:text/plain;base64,aGVsbG8="}],"llmNo":3,"reasoningEffort":"high","queuedAt":456}]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/chat/queue/queue-session", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.chatReplaceQueue(rec, req, initial.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save queue status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.UpdatedAt != baseline.UpdatedAt {
+		t.Fatalf("queue update changed session ordering timestamp: got %d want %d", stored.UpdatedAt, baseline.UpdatedAt)
+	}
+	if len(stored.QueuedMessages) != 1 || stored.QueuedMessages[0].ID != "q-1" || stored.QueuedMessages[0].LLMNo != 3 {
+		t.Fatalf("stored queue=%#v", stored.QueuedMessages)
+	}
+	if files := stored.QueuedMessages[0].Files; len(files) != 1 || files[0].ID != "file-1" || files[0].Size != 5 || files[0].DataURL == "" {
+		t.Fatalf("stored queue files=%#v", files)
+	}
+
+	staleRunResult := initial
+	staleRunResult.Messages = []chatMessage{{ID: "a-1", Role: "assistant", Content: "done"}}
+	preserveLatestChatUserMetadata(&staleRunResult, stored)
+	if len(staleRunResult.QueuedMessages) != 1 || staleRunResult.QueuedMessages[0].ID != "q-1" {
+		t.Fatalf("run save dropped concurrent queue update: %#v", staleRunResult.QueuedMessages)
+	}
+
+	getRec := httptest.NewRecorder()
+	s.chatGetSession(getRec, httptest.NewRequest(http.MethodGet, "/api/chat/session/queue-session", nil), initial.ID)
+	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), `"queued_messages"`) || !strings.Contains(getRec.Body.String(), `"q-1"`) {
+		t.Fatalf("session response does not restore queue: status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+}
+
+func TestProcessNextQueuedMessageReplacesCompletedReplayToken(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	sid := "queue-after-completed-run"
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), chatSession{
+		ID:             sid,
+		QueuedMessages: []chatQueuedMessage{{ID: "q-next", Text: "take over now"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	completed := &chatRun{SID: sid, Done: true, Events: [][]byte{[]byte(`{"type":"done"}`)}}
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = completed
+	s.ChatMu.Unlock()
+
+	s.processNextQueuedMessage(sid)
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.QueuedMessages) != 0 {
+		t.Fatalf("completed replay token blocked queue: %#v", stored.QueuedMessages)
+	}
+	if len(stored.Messages) < 2 || stored.Messages[len(stored.Messages)-2].Role != "user" || stored.Messages[len(stored.Messages)-2].Content != "take over now" {
+		t.Fatalf("queued user message was not persisted: %#v", stored.Messages)
+	}
+	s.ChatMu.Lock()
+	current := s.ChatRuns[sid]
+	s.ChatMu.Unlock()
+	if current == nil || current == completed {
+		t.Fatalf("completed replay token was not replaced: current=%p completed=%p", current, completed)
+	}
+	if current.PendingAssistantID == "" || current.RunStartedAtMS <= 0 {
+		t.Fatalf("queued run did not expose stream identity: pending=%q started=%d", current.PendingAssistantID, current.RunStartedAtMS)
+	}
+	foundPending := false
+	for _, message := range stored.Messages {
+		if message.ID == current.PendingAssistantID && message.Role == "assistant" && message.RunStartedAtMS == current.RunStartedAtMS {
+			foundPending = true
+			break
+		}
+	}
+	if !foundPending {
+		t.Fatalf("stream identity does not match persisted assistant: pending=%q started=%d messages=%#v", current.PendingAssistantID, current.RunStartedAtMS, stored.Messages)
+	}
+}
+
+func TestChatQueuePatchUsesLatestBackendState(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	const sid = "queue-authoritative"
+	initial := chatSession{
+		ID:             sid,
+		QueuedMessages: []chatQueuedMessage{{ID: "q-consumed", Text: "already consumed"}},
+	}
+	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), initial); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the backend consuming the item while the browser still has the old snapshot.
+	s.SessionMu.Lock()
+	latest, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err == nil {
+		latest.QueuedMessages = nil
+		err = saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), latest)
+	}
+	s.SessionMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/chat/queue/"+sid, strings.NewReader(`{"op":"enqueue","message":{"id":"q-new","text":"new work"}}`))
+	patchRec := httptest.NewRecorder()
+	s.chatPatchQueue(patchRec, patchReq, sid)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+
+	getRec := httptest.NewRecorder()
+	s.chatGetQueue(getRec, httptest.NewRequest(http.MethodGet, "/api/chat/queue/"+sid, nil), sid)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	var payload struct {
+		Messages []chatQueuedMessage `json:"queued_messages"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].ID != "q-new" {
+		t.Fatalf("authoritative queue resurrected consumed item: %#v", payload.Messages)
+	}
+}
+
+func TestChatQueueRejectsInvalidEntries(t *testing.T) {
+	s := newGoalTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPut, "/api/chat/queue/queue-session", strings.NewReader(`{"messages":[{"id":"","text":"missing id"}]}`))
+	rec := httptest.NewRecorder()
+	s.chatReplaceQueue(rec, req, "queue-session")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChatQueueEventsPublishesPersistedPatch(t *testing.T) {
+	root := t.TempDir()
+	s := newGoalTestServer(t, root)
+	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
+		cfg.ChatDataDir = filepath.Join(root, "chat-data")
+	})
+	const sid = "queue-sse"
+
+	stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.chatQueueEvents(w, r, sid)
+	}))
+	defer stream.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, stream.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status=%d", resp.StatusCode)
+	}
+
+	events := make(chan string, 2)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "event: ") {
+				events <- strings.TrimPrefix(scanner.Text(), "event: ")
+			}
+		}
+		close(events)
+	}()
+	waitEvent := func(want string) {
+		t.Helper()
+		select {
+		case got := <-events:
+			if got != want {
+				t.Fatalf("event=%q want=%q", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for %q", want)
+		}
+	}
+	waitEvent("ready")
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/chat/queue/"+sid, strings.NewReader(`{"op":"enqueue","message":{"id":"q-sse","text":"pushed"}}`))
+	patchRec := httptest.NewRecorder()
+	s.chatPatchQueue(patchRec, patchReq, sid)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+	waitEvent("queue_changed")
+
+	cancel()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s.ChatRuntime.queueEventMu.Lock()
+		remaining := len(s.ChatRuntime.queueEventSubs[sid])
+		s.ChatRuntime.queueEventMu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("subscriber was not removed after cancellation: %d", remaining)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

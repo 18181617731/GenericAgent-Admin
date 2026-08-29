@@ -1,3 +1,11 @@
+export const shouldRefreshChatSnapshot = (previous = null, next = null) => {
+  if (!previous || !next || previous.id !== next.id) return false
+  if (Boolean(next.running)) return false
+  return Number(previous.count || 0) !== Number(next.count || 0)
+    || Number(previous.updated_at || 0) !== Number(next.updated_at || 0)
+    || Boolean(previous.running) !== Boolean(next.running)
+}
+
 export const isBTWCommand = (value) => /^\/btw(?:$|[ \t])/.test(String(value || '').trim())
 
 export const shouldFinishStreamFollow = ({ running, replay, completed, eventCount }) => (
@@ -10,6 +18,23 @@ export const scrollFollowAction = ({ nearBottom, previousScrollTop, scrollTop, e
   return 'preserve'
 }
 
+export const mergeStreamUserMessage = (messages = [], message = null, clientUserID = '', pendingAssistantID = '') => {
+  const current = Array.isArray(messages) ? messages : []
+  if (!message || typeof message !== 'object') return current
+  const optimisticIndex = clientUserID ? current.findIndex(item => item?.id === clientUserID) : -1
+  if (optimisticIndex >= 0) {
+    return current.map((item, index) => index === optimisticIndex ? message : item)
+  }
+  if (message.id && current.some(item => item?.id === message.id)) return current
+  const pendingIndex = pendingAssistantID
+    ? current.findIndex(item => item?.id === pendingAssistantID && item?.role === 'assistant')
+    : -1
+  if (pendingIndex >= 0) {
+    return [...current.slice(0, pendingIndex), message, ...current.slice(pendingIndex)]
+  }
+  return [...current, message]
+}
+
 export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   const merged = { ...finalMessage }
   if ((!merged.model_id || !String(merged.model_id).trim()) && streamed.model_id) merged.model_id = streamed.model_id
@@ -17,8 +42,17 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
   if ((!Array.isArray(merged.usages) || merged.usages.length === 0) && Array.isArray(streamed.usages) && streamed.usages.length) {
     merged.usages = streamed.usages
   }
+  if (!(Number(merged.elapsed_ms) > 0) && Number(streamed.elapsed_ms) > 0) merged.elapsed_ms = streamed.elapsed_ms
+  if (!(Number(merged.llm_elapsed_ms) > 0) && Number(streamed.llm_elapsed_ms) > 0) merged.llm_elapsed_ms = streamed.llm_elapsed_ms
+  if (!(Number(merged.tool_elapsed_ms) > 0) && Number(streamed.tool_elapsed_ms) > 0) merged.tool_elapsed_ms = streamed.tool_elapsed_ms
+  if (!(Number(merged.first_token_ms) > 0) && Number(streamed.first_token_ms) > 0) merged.first_token_ms = streamed.first_token_ms
+  if (!(Number(merged.run_started_at_ms) > 0) && Number(streamed.run_started_at_ms) > 0) merged.run_started_at_ms = streamed.run_started_at_ms
   if (!(Number(merged.ctx_chars) > 0) && Number(streamed.ctx_chars) > 0) merged.ctx_chars = streamed.ctx_chars
   if (!(Number(merged.ctx_msgs) > 0) && Number(streamed.ctx_msgs) > 0) merged.ctx_msgs = streamed.ctx_msgs
+  // Preserve structured_content from finalMessage (done event)
+  if (Array.isArray(finalMessage.structured_content) && finalMessage.structured_content.length > 0) {
+    merged.structured_content = finalMessage.structured_content
+  }
   return merged
 }
 
@@ -128,14 +162,26 @@ export const sameStreamRun = (left, right) => {
   return a.startedAtMs > 0 && b.startedAtMs > 0 && a.startedAtMs === b.startedAtMs
 }
 
+// An explicitly admitted run (for example, a guided queued message) may already
+// have an optimistic user bubble while the backend is still creating the run.
+// Preserve that merge key only for the first run attached across that gap.
+export const nextStreamClientUserID = ({ clientUserID = '', awaitingRun = false, currentRun = null } = {}) => {
+  const current = normalizeStreamRunIdentity(currentRun || {})
+  if (!awaitingRun || current.pendingId || current.startedAtMs > 0) return ''
+  return String(clientUserID || '').trim()
+}
+
 // Decide what to do after a stream response ends. A terminal response remains readable from
 // the replay endpoint until the next run starts, so it must never be attached as a new round.
-export const decideStreamFollow = ({ running = false, loop = null, currentRun = null, availableRun = null, terminal = false } = {}) => {
+export const decideStreamFollow = ({ running = false, loop = null, currentRun = null, availableRun = null, terminal = false, awaitingRun = false } = {}) => {
   const loopActive = isLoopFollowActive(loop)
   if (running) {
     if (!availableRun?.pendingId && !(Number(availableRun?.startedAtMs) > 0)) return 'wait'
     if (terminal && sameStreamRun(currentRun, availableRun)) return 'wait'
     return 'attach'
   }
+  // Guide admission and run creation are separate backend steps. During that
+  // short gap state is idle, but the caller explicitly knows a run is coming.
+  if (awaitingRun && !currentRun?.pendingId && !(Number(currentRun?.startedAtMs) > 0)) return 'wait'
   return loopActive ? 'wait' : 'finish'
 }

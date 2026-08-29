@@ -12,6 +12,36 @@ import (
 	"unicode/utf8"
 )
 
+func TestPythonUTF8EnvOverridesEncoding(t *testing.T) {
+	env := pythonUTF8Env([]string{
+		"PATH=C:\\bin",
+		"pythonioencoding=gbk",
+		"PYTHONUTF8=0",
+		"PythonIoEncoding=cp936",
+		"OTHER=value",
+	})
+	values := make(map[string][]string)
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		values[strings.ToUpper(key)] = append(values[strings.ToUpper(key)], value)
+	}
+	if got := values["PYTHONIOENCODING"]; len(got) != 1 || got[0] != "utf-8" {
+		t.Fatalf("PYTHONIOENCODING = %#v, want [utf-8]", got)
+	}
+	if got := values["PYTHONUTF8"]; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("PYTHONUTF8 = %#v, want [1]", got)
+	}
+	if got := values["PATH"]; len(got) != 1 || got[0] != `C:\bin` {
+		t.Fatalf("PATH = %#v, want [C:\\bin]", got)
+	}
+	if got := values["OTHER"]; len(got) != 1 || got[0] != "value" {
+		t.Fatalf("OTHER = %#v, want [value]", got)
+	}
+}
+
 func TestProfileAcceptsBooleanFakeCCSystemPrompt(t *testing.T) {
 	data := []byte(`{"profiles":[{"var_name":"api_config_main","type":"native_claude","name":"main","apibase":"https://api.example/v1","model":"claude-test","apikey":"sk-real-secret","fake_cc_system_prompt":true}]}`)
 	var draft Draft
@@ -1301,6 +1331,59 @@ func TestRenderExplicitFailoverGroupKeepsRoutingNamesUnique(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestDuplicateModelInstancesRoundTripWithFailoverMembers(t *testing.T) {
+	profiles := []Profile{{
+		VarName: "native_oai_config_shared", Type: "native_oai", Name: "shared",
+		APIBase: "https://shared.example/v1", APIKey: "sk-shared", Model: "gpt-same",
+		ModelConfigs: []ModelConfig{
+			{InstanceID: "instance-primary", Model: "gpt-same", Name: "same-primary"},
+			{InstanceID: "instance-backup", Model: "gpt-same", Name: "same-backup"},
+		},
+	}}
+	groups := []FailoverGroup{{
+		VarName: "mixin_config_same",
+		Members: []FailoverMember{
+			{InstanceID: "instance-primary", ProviderVarName: "native_oai_config_shared", Model: "gpt-same"},
+			{InstanceID: "instance-backup", ProviderVarName: "native_oai_config_shared", Model: "gpt-same"},
+		},
+	}}
+	rendered, err := RenderWithFailoverGroups(profiles, groups)
+	if err != nil {
+		t.Fatalf("RenderWithFailoverGroups() error = %v", err)
+	}
+	for _, want := range []string{
+		`_ga_admin_model_instances = {"native_oai_config_shared": "instance-primary", "native_oai_config_shared_2": "instance-backup"}`,
+		`"llm_nos": ["same-primary", "same-backup"]`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(rendered), 0600); err != nil {
+		t.Fatalf("write rendered mykey.py: %v", err)
+	}
+	draft, err := ImportMyKeyWithPython(root, "", true)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 1 || len(draft.Profiles[0].ModelConfigs) != 2 {
+		t.Fatalf("round-trip profiles = %#v", draft.Profiles)
+	}
+	configs := draft.Profiles[0].ModelConfigs
+	if configs[0].Model != "gpt-same" || configs[1].Model != "gpt-same" || configs[0].InstanceID != "instance-primary" || configs[1].InstanceID != "instance-backup" {
+		t.Fatalf("round-trip configs = %#v", configs)
+	}
+	if len(draft.FailoverGroups) != 1 || len(draft.FailoverGroups[0].Members) != 2 {
+		t.Fatalf("round-trip failover groups = %#v", draft.FailoverGroups)
+	}
+	members := draft.FailoverGroups[0].Members
+	if members[0].InstanceID != "instance-primary" || members[1].InstanceID != "instance-backup" {
+		t.Fatalf("round-trip members = %#v", members)
 	}
 }
 

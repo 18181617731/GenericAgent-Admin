@@ -60,6 +60,7 @@ func main() {
 		}
 	}
 	version.SetRepoURL(cfgStore.Snapshot().UpdateRepoURL)
+	version.SetGitHubMirror(cfgStore.Snapshot().GitHubMirror)
 	svc := service.NewManagerWithPython(cfgStore.Snapshot().GARoot, cfgStore.Snapshot().EffectivePython, cfgStore.Snapshot().BufferLines)
 	models := modelconfig.NewStore(cwd)
 	static, err := fs.Sub(webFS, "web/dist")
@@ -100,6 +101,90 @@ func main() {
 			_ = server.Shutdown(ctx)
 		},
 	)
+}
+
+type internalLaunchOptions struct {
+	HelperManifest   string
+	ConfirmOperation string
+	PublicArgs       []string
+}
+
+func parseInternalLaunchArgs(args []string) (internalLaunchOptions, error) {
+	result := internalLaunchOptions{PublicArgs: make([]string, 0, len(args))}
+	helperSeen := false
+	confirmSeen := false
+
+	readValue := func(name string, index *int) (string, error) {
+		arg := args[*index]
+		if strings.HasPrefix(arg, name+"=") {
+			value := strings.TrimSpace(strings.TrimPrefix(arg, name+"="))
+			if value == "" {
+				return "", fmt.Errorf("%s requires a non-empty value", name)
+			}
+			return value, nil
+		}
+		if *index+1 >= len(args) {
+			return "", fmt.Errorf("%s requires a value", name)
+		}
+		*index++
+		value := strings.TrimSpace(args[*index])
+		if value == "" {
+			return "", fmt.Errorf("%s requires a non-empty value", name)
+		}
+		return value, nil
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--update-helper" || strings.HasPrefix(arg, "--update-helper="):
+			if helperSeen || confirmSeen {
+				return internalLaunchOptions{}, errors.New("update helper and confirmation modes must each appear exactly once and cannot be combined")
+			}
+			value, err := readValue("--update-helper", &i)
+			if err != nil {
+				return internalLaunchOptions{}, err
+			}
+			helperSeen = true
+			result.HelperManifest = value
+		case arg == "--update-confirm" || strings.HasPrefix(arg, "--update-confirm="):
+			if confirmSeen || helperSeen {
+				return internalLaunchOptions{}, errors.New("update helper and confirmation modes must each appear exactly once and cannot be combined")
+			}
+			value, err := readValue("--update-confirm", &i)
+			if err != nil {
+				return internalLaunchOptions{}, err
+			}
+			confirmSeen = true
+			result.ConfirmOperation = value
+		default:
+			result.PublicArgs = append(result.PublicArgs, arg)
+		}
+	}
+	return result, nil
+}
+
+func openListenerAndConfirm(
+	open func() (net.Listener, error),
+	operationID string,
+	confirm func(string) error,
+) (net.Listener, error) {
+	listener, err := open()
+	if err != nil {
+		return nil, err
+	}
+	if operationID == "" {
+		return listener, nil
+	}
+	if confirm == nil {
+		_ = listener.Close()
+		return nil, errors.New("update confirmation handler is unavailable")
+	}
+	if err := confirm(operationID); err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("confirm replacement startup: %w", err)
+	}
+	return listener, nil
 }
 
 type launchOptions struct {
@@ -185,6 +270,25 @@ func hasGraphicalSession() bool {
 		}
 	}
 	return false
+}
+
+func runCleanupWithTimeout(cleanup func(), timeout time.Duration) bool {
+	if cleanup == nil {
+		return true
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cleanup()
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func waitForShutdownSignal(server *http.Server, cleanup func()) {

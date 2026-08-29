@@ -167,7 +167,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
     const creating = editor === 'create'
     const action = installing ? 'install_instance' : creating ? 'create_instance' : 'update_instance'
     const prompt = installing ? copy.confirmInstall : creating ? copy.confirmCreate : copy.confirmUpdate
-    if (!confirmDanger(action, prompt)) return
+    if (!await confirmDanger(action, prompt)) return
     setBusy(installing ? 'install' : 'save')
     setError('')
     setNotice('')
@@ -197,7 +197,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
   }
 
   const setDefault = async (instance) => {
-    if (!confirmDanger('set_default_instance', copy.confirmDefault(instance.name || instance.id))) return
+    if (!await confirmDanger('set_default_instance', copy.confirmDefault(instance.name || instance.id))) return
     setBusy(`default:${instance.id}`)
     setError('')
     setNotice('')

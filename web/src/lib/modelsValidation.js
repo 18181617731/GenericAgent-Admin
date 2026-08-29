@@ -46,12 +46,9 @@ export function validateModelProfiles(profiles = []) {
     else if (!/(api|config|cookie)/i.test(varName)) errors.push('varNameDiscoveryToken')
     else if ((counts.get(varName) || 0) > 1) errors.push('varNameDuplicate')
 
-    const seenModels = new Set()
     for (const config of configs) {
       const model = text(config.model)
       if (!model) errors.push('modelRequired')
-      else if (seenModels.has(model)) errors.push('modelDuplicate')
-      else seenModels.add(model)
 
       const maxRetries = numberValue(config.max_retries ?? 3)
       const readTimeout = numberValue(config.read_timeout ?? 300)

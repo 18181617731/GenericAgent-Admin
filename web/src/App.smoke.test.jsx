@@ -94,7 +94,18 @@ const reflectService = {
   command: ['agentmain', '--reflect'],
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   window.localStorage.clear()
   window.history.replaceState({}, '', '/')
@@ -537,6 +548,28 @@ describe('channel frontend gates', () => {
     expect(screen.getByRole('status').textContent).toMatch(/Start: Busy/i)
   })
 
+  test('keeps an external shared Hub visible but not stoppable', () => {
+    const onStop = vi.fn()
+    render(
+      <ChannelServiceTable
+        services={[{ ...reflectService, name: 'frontends/hub.py', kind: 'frontend', running: true, shared: true, managed: false, pid: 29812 }]}
+        t={t}
+        onStart={vi.fn()}
+        onStop={onStop}
+        onLogs={vi.fn()}
+        onAutostart={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(t.service.sharedRunning)).toBeTruthy()
+    expect(screen.getByText(t.service.sharedHubNotice)).toBeTruthy()
+    const stopButton = screen.getByRole('button', { name: /Stop/i })
+    expect(stopButton.disabled).toBe(true)
+    expect(stopButton.title).toBe(t.service.sharedStopDisabled)
+    fireEvent.click(stopButton)
+    expect(onStop).not.toHaveBeenCalled()
+  })
+
   test('shows a contextual service failure and retries the same action', () => {
     const onStart = vi.fn()
     render(
@@ -773,7 +806,7 @@ describe('Models provider editor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /重\s*试/ }))
     await waitFor(() => expect(discoverModels).toHaveBeenCalledTimes(2))
-    expect(await screen.findByText(/没有发现新的模型/)).toBeTruthy()
+    expect(await screen.findByText(/没有发现模型/)).toBeTruthy()
   })
 
   test('inserts a discovered candidate into the profile', async () => {
@@ -1011,7 +1044,7 @@ describe('chat response model identity', () => {
       />,
     )
 
-    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m 30s')
+    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m30s')
   })
 
   test('uses the persisted terminal elapsed duration instead of continuing the live clock', () => {
@@ -1242,7 +1275,7 @@ describe('chat model cascade', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' }).id).toBe(trigger.getAttribute('aria-controls'))
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' }).id).toBe(trigger.getAttribute('aria-controls'))
 
     fireEvent.mouseEnter(screen.getByRole('option', { name: 'Beta' }))
     expect(screen.getByText('Beta One')).toBeTruthy()
@@ -1253,12 +1286,12 @@ describe('chat model cascade', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger))
 
     fireEvent.click(trigger)
-    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })
+    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })
     expect(reopenedMenu.textContent).toContain('Alpha One')
     expect(reopenedMenu.textContent).not.toContain('Beta One')
   })
 
-  test('selects a previewed provider model and closes the menu', () => {
+  test('selects a previewed provider model and keeps the combined menu open', () => {
     const onChange = vi.fn()
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
 
@@ -1267,7 +1300,7 @@ describe('chat model cascade', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Beta One' }))
 
     expect(onChange).toHaveBeenCalledWith('b-1')
-    expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u548c\u6a21\u578b' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
   })
 
   test('uses a body portal and click-only provider switching on mobile', () => {
@@ -1311,6 +1344,33 @@ describe('chat model cascade', () => {
         value: originalMatchMedia,
       })
     }
+  })
+
+  test('changes reasoning through text options and keeps the menu open', () => {
+    const onReasoningChange = vi.fn()
+    const reasoningOptions = [
+      { value: 'off', label: '\u9ed8\u8ba4' },
+      { value: 'max', label: 'Max' },
+    ]
+    const props = {
+      groups,
+      selectedProvider: 'alpha',
+      value: 'a-1',
+      onChange: vi.fn(),
+      reasoningOptions,
+      onReasoningChange,
+    }
+    const { rerender } = render(<ProviderModelCascade {...props} reasoningValue="off" />)
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
+    expect(screen.getByRole('button', { name: '\u9ed8\u8ba4' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
+
+    expect(onReasoningChange).toHaveBeenCalledWith('max')
+    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
+    rerender(<ProviderModelCascade {...props} reasoningValue="max" />)
+    expect(screen.getByRole('button', { name: 'Max' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 Max' })).toBeTruthy()
   })
 
   test('scrolls only the model column when the current model is below its viewport', () => {
@@ -1679,7 +1739,7 @@ describe('operator shell feedback', () => {
   test('service actions stay local to one card and expose failure recovery', async () => {
     installBrowserPolyfills()
     window.history.replaceState({}, '', '/channels')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const services = [
       { name: 'alpha-ui', kind: 'frontend', running: false, autostart: false },
       { name: 'beta-ui', kind: 'frontend', running: false, autostart: false },

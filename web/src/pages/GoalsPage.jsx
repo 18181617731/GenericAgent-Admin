@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, Copy, Eye, Play, RefreshCw, Square, Target, Terminal, Trash2, XCircle } from 'lucide-react'
-import { copyText, formatBytes, formatDuration, formatGoalTime, goalBudgetPercent, goalTurnPercent, outputLineCount } from '../lib/format'
+import { copyText, formatBytes, formatDuration, formatGoalTime, goalBudgetPercent, goalTurnPercent, modelLabel, outputLineCount } from '../lib/format'
 import { Panel } from '../components/common'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from '../components/ModelProviderCascade.jsx'
 import { GoalWorkflowGuide } from '../components/ServicePlacement.jsx'

@@ -1,4 +1,5 @@
 import glob, json, os, sys, time, traceback, threading, queue, re
+import base64, mimetypes
 from pathlib import Path
 
 
@@ -155,8 +156,50 @@ _CURRENT_USAGE = {
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
 # "[Output]" line marks the end of one turn, so we snapshot and reset there.
 _TURN_USAGES = []
+# Monotonic timestamp of the first observable streamed chunk in the active
+# outbound LLM call. It is consumed atomically when GA prints [Output].
+_GENERATION_STARTED_AT = None
 # Latest context-size stats parsed from llmcore's [Debug] lines.
 _CTX_STATS = {'ctx_chars': 0, 'ctx_msgs': 0}
+
+
+def _clear_generation_timer_locked():
+    """Clear the active generation timer while _USAGE_LOCK is held."""
+    global _GENERATION_STARTED_AT
+    _GENERATION_STARTED_AT = None
+
+
+def _reset_generation_timer():
+    """Start a fresh outbound-call timing scope without claiming a start yet."""
+    with _USAGE_LOCK:
+        _clear_generation_timer_locked()
+
+
+def _mark_generation_started(item, request_started_at=None):
+    """Record generation start and request-to-first-token time for this call."""
+    if not isinstance(item, str):
+        return False
+    chunk = item.strip()
+    if not chunk or chunk.startswith(('!!!Error:', '[Error:')):
+        return False
+    now = time.perf_counter()
+    global _GENERATION_STARTED_AT
+    with _USAGE_LOCK:
+        if _GENERATION_STARTED_AT is None:
+            _GENERATION_STARTED_AT = now
+        if request_started_at is not None and 'ttft_ms' not in _CURRENT_USAGE:
+            _CURRENT_USAGE['ttft_ms'] = max(1, int(round((now - request_started_at) * 1000)))
+    return True
+
+
+def _consume_generation_ms_locked():
+    """Return measured generation time and clear it while the usage lock is held."""
+    global _GENERATION_STARTED_AT
+    started_at = _GENERATION_STARTED_AT
+    _GENERATION_STARTED_AT = None
+    if started_at is None:
+        return 0
+    return max(1, int(round((time.perf_counter() - started_at) * 1000)))
 
 
 class _UsageCapturingStderr:
@@ -204,6 +247,9 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['output_tokens'] = int(m.group(1))
                 # Snapshot this completed turn and reset the buffer for the next.
                 turn_snapshot = dict(_CURRENT_USAGE)
+                generation_ms = _consume_generation_ms_locked()
+                if generation_ms > 0:
+                    turn_snapshot['generation_ms'] = generation_ms
                 _TURN_USAGES.append(turn_snapshot)
                 turn_index = len(_TURN_USAGES) - 1
                 _CURRENT_USAGE['input_tokens'] = 0
@@ -211,6 +257,7 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['cache_read_tokens'] = 0
                 _CURRENT_USAGE['output_tokens'] = 0
                 _CURRENT_USAGE['cached_tokens'] = 0
+                _CURRENT_USAGE.pop('ttft_ms', None)
                 # Replace the live Cache snapshot at the same index with this
                 # completed turn once output usage becomes available.
                 try:
@@ -260,7 +307,9 @@ def _reset_usage():
         _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
+        _CURRENT_USAGE.pop('ttft_ms', None)
         _TURN_USAGES.clear()
+        _clear_generation_timer_locked()
 
 
 def _snapshot_usage():
@@ -283,6 +332,117 @@ def _snapshot_turn_usages():
                 or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
             usages.append(dict(_CURRENT_USAGE))
         return usages
+
+
+# Tool execution timing belongs to the Admin worker.  GA already exposes
+# tool_before/tool_after hooks; keep the accumulator here so chat reporting does
+# not depend on Langfuse being configured (or even installed).
+_TOOL_TIMER_LOCK = threading.Lock()
+_TOOL_TIMER_ACTIVE = {}
+_TOOL_TIMER_TOTAL_SECONDS = 0.0
+_TOOL_TIMER_EMITTER = None
+_TOOL_TIMER_HOOK_INSTALLED = False
+
+
+def _set_tool_timer_emitter(emitter):
+    """Bind the current request's protocol emitter to tool timing hooks."""
+    global _TOOL_TIMER_EMITTER
+    with _TOOL_TIMER_LOCK:
+        _TOOL_TIMER_EMITTER = emitter
+
+
+def _clear_tool_timer_emitter(emitter=None):
+    global _TOOL_TIMER_EMITTER
+    with _TOOL_TIMER_LOCK:
+        if emitter is None or _TOOL_TIMER_EMITTER is emitter:
+            _TOOL_TIMER_EMITTER = None
+
+
+def _tool_timer_snapshot():
+    """Read tool timing without consuming it, including currently active calls."""
+    now = time.perf_counter()
+    with _TOOL_TIMER_LOCK:
+        total = _TOOL_TIMER_TOTAL_SECONDS
+        active_count = 0
+        for stack in _TOOL_TIMER_ACTIVE.values():
+            active_count += len(stack)
+            total += sum(max(0.0, now - started_at) for started_at in stack)
+        emitter = _TOOL_TIMER_EMITTER
+    return emitter, {
+        'tool_elapsed_ms': max(0, int(round(total * 1000))),
+        'tool_active_count': active_count,
+        'tool_timing_at_ms': int(time.time() * 1000),
+    }
+
+
+def _emit_tool_timing():
+    emitter, snapshot = _tool_timer_snapshot()
+    if emitter is not None:
+        try:
+            emitter({'type': 'tool_timing', **snapshot})
+        except Exception:
+            # Timing telemetry must never break the actual tool/request path.
+            pass
+    return snapshot
+
+
+def _install_tool_timer_hook():
+    """Subscribe once to GA's existing tool lifecycle without modifying GA."""
+    global _TOOL_TIMER_HOOK_INSTALLED
+    if _TOOL_TIMER_HOOK_INSTALLED:
+        return True
+    try:
+        from plugins import hooks as plugin_hooks
+    except (ImportError, AttributeError):
+        # Some isolated tests and older GA roots do not expose the hook module.
+        # Keep chat functional and retry after the request root is installed.
+        return False
+
+    def _before(ctx):
+        thread_id = threading.get_ident()
+        with _TOOL_TIMER_LOCK:
+            _TOOL_TIMER_ACTIVE.setdefault(thread_id, []).append(time.perf_counter())
+        _emit_tool_timing()
+        return ctx
+
+    def _after(ctx):
+        global _TOOL_TIMER_TOTAL_SECONDS
+        thread_id = threading.get_ident()
+        now = time.perf_counter()
+        with _TOOL_TIMER_LOCK:
+            stack = _TOOL_TIMER_ACTIVE.get(thread_id)
+            if stack:
+                _TOOL_TIMER_TOTAL_SECONDS += max(0.0, now - stack.pop())
+                if not stack:
+                    _TOOL_TIMER_ACTIVE.pop(thread_id, None)
+        _emit_tool_timing()
+        return ctx
+
+    plugin_hooks.register('tool_before')(_before)
+    plugin_hooks.register('tool_after')(_after)
+    _TOOL_TIMER_HOOK_INSTALLED = True
+
+
+def _reset_tool_elapsed():
+    """Reset Admin's request-local tool timer and ensure hooks are installed."""
+    global _TOOL_TIMER_TOTAL_SECONDS
+    _install_tool_timer_hook()
+    with _TOOL_TIMER_LOCK:
+        _TOOL_TIMER_ACTIVE.clear()
+        _TOOL_TIMER_TOTAL_SECONDS = 0.0
+
+
+def _consume_tool_elapsed_ms():
+    """Atomically consume tool time, closing starts left open by tool errors."""
+    global _TOOL_TIMER_TOTAL_SECONDS
+    now = time.perf_counter()
+    with _TOOL_TIMER_LOCK:
+        total = _TOOL_TIMER_TOTAL_SECONDS
+        for stack in _TOOL_TIMER_ACTIVE.values():
+            total += sum(max(0.0, now - started_at) for started_at in stack)
+        _TOOL_TIMER_ACTIVE.clear()
+        _TOOL_TIMER_TOTAL_SECONDS = 0.0
+    return max(1, int(round(total * 1000))) if total > 0 else 0
 
 
 def emit(ev):
@@ -398,9 +558,11 @@ def _sync_usage_llm_no(agent):
 
 def _finalize_incomplete_turn_usage():
     with _USAGE_LOCK:
+        _clear_generation_timer_locked()
         if not (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
                 or _CURRENT_USAGE['cache_creation_tokens']
-                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
+                or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']
+                or _CURRENT_USAGE.get('ttft_ms')):
             return
         turn_snapshot = dict(_CURRENT_USAGE)
         turn_index = len(_TURN_USAGES)
@@ -410,27 +572,40 @@ def _finalize_incomplete_turn_usage():
         _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
+        _CURRENT_USAGE.pop('ttft_ms', None)
     try:
         emit({'type': 'turn_usage', 'index': turn_index, 'usage': turn_snapshot})
     except Exception:
         pass
 
 
-def _track_outbound_attempt(result):
+def _track_outbound_attempt(result, request_started_at=None):
     """Preserve an outbound stream while closing usage for transport errors."""
     try:
         iterator = iter(result)
     except TypeError:
         return result
+    if request_started_at is None:
+        request_started_at = time.perf_counter()
 
     def tracked():
+        _reset_generation_timer()
+        first_token_emitted = False
         while True:
             try:
                 item = next(iterator)
             except StopIteration as stop:
+                _reset_generation_timer()
                 return stop.value
+            except BaseException:
+                _reset_generation_timer()
+                raise
             if isinstance(item, str) and item.lstrip().startswith('!!!Error:'):
                 _finalize_incomplete_turn_usage()
+            elif _mark_generation_started(item, request_started_at):
+                if not first_token_emitted:
+                    emit({'type': 'model_first_token'})
+                    first_token_emitted = True
             yield item
 
     return tracked()
@@ -441,6 +616,8 @@ def _install_outbound_model_hooks(agent):
     try:
         backend = agent.llmclient.backend
         sessions = list(getattr(backend, '_sessions', ()) or ())
+        if not sessions and callable(getattr(backend, 'raw_ask', None)):
+            sessions = [backend]
     except Exception:
         sessions = []
     originals = []
@@ -461,7 +638,9 @@ def _install_outbound_model_hooks(agent):
                         emit({'type': 'model', 'model_id': model_id})
             except Exception:
                 pass
-            return _track_outbound_attempt(_original(*args, **kwargs))
+            request_started_at = time.perf_counter()
+            result = _original(*args, **kwargs)
+            return _track_outbound_attempt(result, request_started_at)
 
         try:
             session.raw_ask = wrapped
@@ -479,6 +658,66 @@ def _install_outbound_model_hooks(agent):
             except Exception:
                 pass
 
+    return restore
+
+
+def _install_image_injection(agent, image_paths):
+    """Inject this turn's images into the first native backend call only."""
+    paths = [os.fspath(value).strip() for value in (image_paths or [])
+             if isinstance(value, (str, os.PathLike)) and os.fspath(value).strip()]
+    if not paths:
+        return lambda: None
+    try:
+        from llmcore import NativeToolClient
+        client = agent.llmclient
+        if not isinstance(client, NativeToolClient):
+            return lambda: None
+        backend = client.backend
+        original_ask = backend.ask
+        had_instance_attr = 'ask' in vars(backend)
+        instance_value = vars(backend).get('ask')
+    except (ImportError, AttributeError, TypeError):
+        return lambda: None
+
+    active = [True]
+
+    def restore():
+        if not active[0]:
+            return
+        active[0] = False
+        try:
+            if had_instance_attr:
+                backend.ask = instance_value
+            else:
+                delattr(backend, 'ask')
+        except (AttributeError, TypeError):
+            try:
+                backend.ask = original_ask
+            except Exception:
+                pass
+
+    def patched_ask(msg):
+        restore()
+        if isinstance(msg, dict) and isinstance(msg.get('content'), list):
+            for path in paths:
+                try:
+                    mime = mimetypes.guess_type(path)[0] or 'image/png'
+                    if mime not in {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}:
+                        continue
+                    with open(path, 'rb') as image_file:
+                        data = base64.b64encode(image_file.read()).decode('ascii')
+                    msg['content'].append({
+                        'type': 'image',
+                        'source': {'type': 'base64', 'media_type': mime, 'data': data},
+                    })
+                except (OSError, ValueError):
+                    continue
+        return (yield from original_ask(msg))
+
+    try:
+        backend.ask = patched_ask
+    except (AttributeError, TypeError):
+        active[0] = False
     return restore
 
 
@@ -530,6 +769,11 @@ def _normalize_request(req):
     if not isinstance(prompts, list):
         prompts = []
     normalized['extra_sys_prompts'] = [str(value).strip() for value in prompts if str(value).strip()]
+    images = normalized.get('images')
+    if not isinstance(images, list):
+        images = []
+    normalized['images'] = [os.fspath(value).strip() for value in images
+                            if isinstance(value, (str, os.PathLike)) and os.fspath(value).strip()]
     if normalized.get('reasoning_effort') is not None and not isinstance(normalized.get('reasoning_effort'), str):
         normalized['reasoning_effort'] = None
     return normalized
@@ -766,16 +1010,20 @@ def _maybe_handle_effort_command(agent, prompt):
 
 def _apply_reasoning_effort_setting(agent, value):
     raw = str(value or '').strip().lower()
-    if raw in ('', 'off', 'clear', 'unset'):
-        effort = None
-    elif raw in EFFORT_LEVELS:
-        effort = raw
-    else:
+    if raw not in EFFORT_LEVELS and raw not in ('', 'clear', 'unset'):
         return
     try:
         backend = getattr(getattr(agent, 'llmclient', None), 'backend', None)
-        if backend is not None:
-            setattr(backend, 'reasoning_effort', effort)
+        if backend is None:
+            return
+        marker = '_ga_admin_configured_reasoning_effort'
+        if not hasattr(backend, marker):
+            setattr(backend, marker, getattr(backend, 'reasoning_effort', None))
+        if raw in ('', 'off', 'clear', 'unset'):
+            effort = getattr(backend, marker)
+        else:
+            effort = raw
+        setattr(backend, 'reasoning_effort', effort)
     except Exception:
         pass
 
@@ -2321,7 +2569,9 @@ def handle_title_request(agent, req):
 
 def handle_request(agent, worker, req):
     req = _normalize_request(req)
+    request_started = time.time()
     _reset_usage()  # Clear usage accumulator for this turn
+    _reset_tool_elapsed()
     prompt = req.get('prompt') or ''
     history = req.get('history') or []
     raw_history = req.get('raw_history') or []
@@ -2366,6 +2616,7 @@ def handle_request(agent, worker, req):
         return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
     chunks = []
+    first_token_ms = 0
     _up_context = None
     if ultraplan_objective:
         _up_context = {
@@ -2386,6 +2637,7 @@ def handle_request(agent, worker, req):
     _up_stop = threading.Event() if _up_context else None
     _up_thread = None
     _last_plan = ['']
+    _set_tool_timer_emitter(emit)
     try:
         _goal_card_baseline = _goal_state_files(root_for_req)
     except Exception:
@@ -2427,6 +2679,7 @@ def handle_request(agent, worker, req):
             emit({'type': 'plan_update', 'plan': plan})
         return plan
 
+    restore_image_injection = _install_image_injection(agent, req.get('images'))
     restore_model_hooks = _install_outbound_model_hooks(agent)
     try:
         if _up_context:
@@ -2458,6 +2711,8 @@ def handle_request(agent, worker, req):
             if 'next' in item:
                 delta = str(item.get('next') or '')
                 if delta:
+                    if first_token_ms <= 0:
+                        first_token_ms = max(1, int((time.time() - request_started) * 1000))
                     chunks.append(delta)
                     emit({'type': 'delta', 'delta': delta})
                 emit_plan_update(''.join(chunks))
@@ -2476,14 +2731,16 @@ def handle_request(agent, worker, req):
                 _commit_worldline(agent, prompt)
                 plan = emit_plan_update(text)
                 _ctx_chars, _ctx_msgs = _snapshot_ctx_stats(agent)
-                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
+                emit({'type': 'done', 'message': msg, 'usage': usage, 'usages': usages, 'llm_elapsed_ms': int(item.get('llm_elapsed_ms') or 0), 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'history_info': state.get('history_info') or [], 'working': state.get('working') or {}, 'plan': plan, 'reasoning_effort': _snapshot_reasoning_effort(agent), 'ctx_chars': _ctx_chars, 'ctx_msgs': _ctx_msgs})
                 return
     except Exception as e:
         msg = {'id': new_id(), 'role': 'assistant', 'content': '执行失败：%s\n%s' % (e, traceback.format_exc()), 'created_at': int(time.time()), 'model_id': _snapshot_model_id(agent), 'llm_no': _snapshot_llm_no(agent), 'error': True}
         usage = _snapshot_usage()
         usages = _snapshot_turn_usages()
-        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
+        emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
+        _clear_tool_timer_emitter(emit)
+        restore_image_injection()
         restore_model_hooks()
 
 

@@ -8,6 +8,8 @@ export const shouldReportVersionPollError = (graceUntil, now = Date.now()) => (
   !Number.isFinite(graceUntil) || graceUntil <= 0 || now >= graceUntil
 )
 
+export const shouldAdoptStatusCheck = status => Boolean(status?.running && status?.check)
+
 export const shouldReloadAfterVersionUpdate = (status, observedRunning) => (
   Boolean(observedRunning && status?.stage === 'done' && !status?.running && !status?.error)
 )

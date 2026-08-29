@@ -53,7 +53,6 @@ import {
 import {
   nextProviderVarName,
   providerDisplayName,
-  providerVarNameFromDisplayName,
   providerVarNameOnProtocolChange,
 } from '../lib/modelsProvider'
 import { modelRiskCatalog, modelValidationSummary, validateModelProfiles } from '../lib/modelsValidation'

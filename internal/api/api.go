@@ -123,7 +123,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/check", s.versionCheck)
 	mux.HandleFunc("/api/version/status", s.versionStatus)
 	mux.HandleFunc("/api/risk/catalog", s.riskCatalog)
+	mux.HandleFunc("/api/keychain", s.requireDangerousConfirm(s.keychainHandler))
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
+	mux.HandleFunc("/api/version/restart", s.requireDangerousConfirm(s.versionRestart))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
 	mux.HandleFunc("/api/ga/runtime/repair", s.requireDangerousConfirm(s.gaRuntimeRepair))
@@ -1143,4 +1145,5 @@ func (s *Server) ShutdownCleanup() {
 		_ = s.ReactApp.stop()
 	}
 	s.CloseChatWorkers()
+	s.waitForInstanceInstalls()
 }

@@ -200,6 +200,7 @@ type chatSession struct {
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 	Loop                   chatLoopState            `json:"loop"`
+	QueuedMessages         []chatQueuedMessage      `json:"queued_messages,omitempty"`
 }
 
 const (
@@ -224,7 +225,22 @@ const (
 	chatTitleSourceManual    = "manual"
 )
 
-type chatUpload struct{ Name, Type, DataURL string }
+type chatUpload struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	DataURL string `json:"dataURL"`
+}
+
+type chatQueuedMessage struct {
+	ID              string       `json:"id"`
+	Text            string       `json:"text"`
+	Files           []chatUpload `json:"files,omitempty"`
+	LLMNo           int          `json:"llmNo"`
+	ReasoningEffort string       `json:"reasoningEffort,omitempty"`
+	QueuedAt        int64        `json:"queuedAt"`
+}
 
 type chatTitleExchange struct {
 	User               string `json:"user"`
@@ -254,6 +270,7 @@ var (
 
 type chatRun struct {
 	SID                string
+	QueueID            string
 	Events             [][]byte
 	Done               bool
 	Canceled           bool
@@ -533,6 +550,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var taskOutputsAccumulator = make(map[string][]string)
 	var terminalLine []byte
 	var readErr error
+	var firstTokenMS int64
 	for {
 		line, err := readChatWorkerLine(reader)
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -639,6 +657,10 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				msg["error_info"] = final.ErrorInfo
 			}
 			msg["elapsed_ms"] = final.ElapsedMS
+			if firstTokenMS > 0 {
+				final.FirstTokenMS = firstTokenMS
+				msg["first_token_ms"] = firstTokenMS
+			}
 			ev["message"] = msg
 			final.Usage, final.Usages = chatUsageFromEvent(ev)
 			final.CtxChars, final.CtxMsgs = chatCtxStatsFromEvent(ev)
@@ -668,6 +690,14 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			if final.GoalState != nil {
 				msg["goal_state"] = final.GoalState
 			}
+			if v, ok := ev["llm_elapsed_ms"].(float64); ok && v > 0 {
+				final.LLMElapsedMS = int64(v)
+				msg["llm_elapsed_ms"] = final.LLMElapsedMS
+			}
+			if v, ok := ev["tool_elapsed_ms"].(float64); ok && v > 0 {
+				final.ToolElapsedMS = int64(v)
+				msg["tool_elapsed_ms"] = final.ToolElapsedMS
+			}
 			if v, ok := ev["reasoning_effort"].(string); ok {
 				finalReasoningEffort = v
 				final.ReasoningEffort = normalizeChatSettings(chatSettings{ReasoningEffort: v}).ReasoningEffort
@@ -683,6 +713,16 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			break
 		}
+		if ev["type"] == "model_first_token" {
+			if firstTokenMS == 0 {
+				firstTokenMS = elapsedMillis()
+			}
+			if err != nil {
+				readErr = err
+				break
+			}
+			continue
+		}
 		s.publishChatLine(sid, line)
 		if err != nil {
 			readErr = err
@@ -694,7 +734,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if s.chatRunCanceled(sid) {
 			content := strings.TrimSpace(partial)
 			if content != "" {
-				content += "\n\n[已中止生成]"
+				content += "\n\n[用户手动中止生成]"
 			} else {
 				content = "已停止生成"
 			}
@@ -1028,11 +1068,19 @@ func chatSessionForClient(cs chatSession) chatSession {
 	return cs
 }
 
-func (s *Server) chatRunActive(sid string) bool {
+func (s *Server) chatRunState(sid string) (bool, string, int64) {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
-	return r != nil && !r.Done
+	if r == nil || r.Done {
+		return false, "", 0
+	}
+	return true, r.PendingAssistantID, r.RunStartedAtMS
+}
+
+func (s *Server) chatRunActive(sid string) bool {
+	running, _, _ := s.chatRunState(sid)
+	return running
 }
 
 func (s *Server) beginChatRun(sid string) *chatRun {
@@ -1242,7 +1290,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	}
 	content := strings.TrimSpace(chatPartialContentFromEvents(events))
 	if content != "" {
-		content += "\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]"
+		content += "\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]"
 	} else {
 		content = "\u5df2\u505c\u6b62\u751f\u6210"
 	}
@@ -1622,6 +1670,9 @@ func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []model
 
 func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
 	item["provider"] = configured.provider
+	if configured.reasoningEffort != "" {
+		item["reasoning_effort"] = configured.reasoningEffort
+	}
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
 	}
@@ -2205,6 +2256,7 @@ func (s *Server) saveChatSessionExact(cs chatSession) error {
 func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) {
 	candidate.Pinned = latest.Pinned
 	candidate.Loop = latest.Loop
+	candidate.QueuedMessages = latest.QueuedMessages
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title
@@ -2795,6 +2847,64 @@ func chatUploadPromptRef(path, name, mime string) string {
 		return "[image:" + path + "]"
 	}
 	return "[FILE:" + path + "]"
+}
+
+func chatVisionImagePaths(files []map[string]interface{}) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		path, _ := file["path"].(string)
+		path = strings.TrimSpace(path)
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func cloneChatFileMetadata(files []map[string]interface{}) []map[string]interface{} {
+	if len(files) == 0 {
+		return nil
+	}
+	cloned := make([]map[string]interface{}, 0, len(files))
+	for _, file := range files {
+		if file == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		copyFile := make(map[string]interface{}, len(file))
+		for key, value := range file {
+			copyFile[key] = value
+		}
+		cloned = append(cloned, copyFile)
+	}
+	return cloned
+}
+
+func chatMessageAttachmentRefs(msg chatMessage) []string {
+	refs := make([]string, 0, len(msg.Files))
+	for _, file := range msg.Files {
+		path, _ := file["path"].(string)
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		name, _ := file["name"].(string)
+		mime, _ := file["mime"].(string)
+		refs = append(refs, chatUploadPromptRef(path, name, mime))
+	}
+	if len(refs) > 0 {
+		return refs
+	}
+	// Older sessions may have the saved path only in the prompt text.
+	// Preserve those references when Files metadata was not persisted.
+	for _, line := range strings.Split(msg.Content, "\n") {
+		line = strings.TrimSpace(line)
+		if (strings.HasPrefix(line, "[FILE:") || strings.HasPrefix(line, "[image:")) && strings.HasSuffix(line, "]") {
+			refs = append(refs, line)
+		}
+	}
+	return refs
 }
 
 func sanitizeChatUploadName(name string) string {

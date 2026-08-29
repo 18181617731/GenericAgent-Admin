@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { ConfigProvider, theme as antdTheme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
+import './fonts/misans.css'
+import 'katex/dist/katex.min.css'
 import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
@@ -70,10 +72,11 @@ function LocalizedRoot() {
     token: {
       colorPrimary: '#10a37f',
       borderRadius: 10,
-      fontFamily: 'Inter, system-ui, sans-serif',
+      fontFamily: 'var(--font)',
       ...activeTheme.antdToken,
     },
   }}>
+    <AppDialogHost />
     <ErrorBoundary>
       <AuthGate lang={lang} theme={colorMode} onLanguageChange={chooseLanguage} onThemeChange={setColorMode}>
         <Suspense fallback={<RouteFallback label={loading} />}>

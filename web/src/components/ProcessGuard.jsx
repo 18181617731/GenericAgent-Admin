@@ -39,7 +39,7 @@ export function ProcessGuard() {
   }, [])
 
   const adoptProcess = async (pid) => {
-    if (!confirmDanger('ga-process-adopt', `接管 GA 进程 PID ${pid}？这会影响正在运行的任务。`)) return
+    if (!await confirmDanger('ga-process-adopt', `接管 GA 进程 PID ${pid}？这会影响正在运行的任务。`)) return
     setActingPid(pid)
     setError('')
     try {
@@ -54,7 +54,7 @@ export function ProcessGuard() {
   }
 
   const killProcess = async (pid) => {
-    if (!confirmDanger('ga-process-kill', `终止 GA 进程 PID ${pid}？这会影响正在运行的任务。`)) return
+    if (!await confirmDanger('ga-process-kill', `终止 GA 进程 PID ${pid}？这会影响正在运行的任务。`)) return
     setActingPid(pid)
     setError('')
     try {
