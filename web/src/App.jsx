@@ -439,7 +439,6 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       setScheduleData(normalized)
       return normalized
     } catch (e) {
-      setScheduleData({ enabled: false, version: 'unknown', tasks: [] })
       setScheduleError(e.message)
       if (!quiet) setMsg(e.message)
       throw e
@@ -551,7 +550,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
           api('/api/ga/inventory'),
         ])
         if (!active) return
-        const current = buildNotificationSnapshot({ schedule, goals: goals?.goals || [], approvals, inventory })
+        const normalizedSchedule = normalizeScheduleTasksPayload(schedule)
+        setScheduleData(normalizedSchedule)
+        setScheduleError('')
+        const current = buildNotificationSnapshot({ schedule: normalizedSchedule, goals: goals?.goals || [], approvals, inventory })
         const events = collectNotificationEvents(notificationMonitorRef.current.snapshot, current)
         notificationMonitorRef.current.snapshot = current
         events.forEach(event => publishNotification(event))

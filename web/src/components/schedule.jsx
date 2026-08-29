@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, Eye, FileText, History, LoaderCircle, Play, Power, Square, Trash2 } from 'lucide-react'
@@ -6,12 +6,15 @@ import { effectiveScheduleModelNo, hasScheduleTaskModel } from '../lib/schedule'
 import { firstRuntimeModelNo, runtimeModelDescription } from '../lib/modelDefaults.js'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from './ModelProviderCascade.jsx'
 
-const taskState = (task) => {
-  if (task.error || task.status === 'ERROR') return 'error'
-  return task.enabled ? 'enabled' : 'disabled'
-}
+const taskRunState = task => task?.latest_run?.status || 'never_run'
 
-const taskStateLabel = (state, t) => state === 'error' ? t.error : (state === 'enabled' ? t.enabled : t.disabled)
+const taskRunStateLabel = (state, t) => {
+  const zh = t.autostart === '开机自启'
+  const labels = zh
+    ? { success: '成功', partial: '部分完成', blocked: '阻塞', waiting: '等待中', failed: '失败', skipped: '已跳过', unknown: '结果未知', never_run: '未运行' }
+    : { success: 'Success', partial: 'Partial', blocked: 'Blocked', waiting: 'Waiting', failed: 'Failed', skipped: 'Skipped', unknown: 'Unknown', never_run: 'Never run' }
+  return labels[state] || labels.unknown
+}
 
 const taskModelLabel = (task, llms, t, schedulerModelNo) => {
   const modelNo = effectiveScheduleModelNo(task, schedulerModelNo)
@@ -26,11 +29,15 @@ const taskModelLabel = (task, llms, t, schedulerModelNo) => {
   return `${prefix}${zh ? '：' : ': '}${modelText}`
 }
 
-export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, onEdit, onDelete, onRun, onReports, runState = null, selected = false }) {
+export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, onEdit, onDelete, onRun, onReports, runState: activeRunState = null, selected = false }) {
   const id = task.id || task.name || t.tasks.unnamed
-  const state = taskState(task)
-  const status = taskStateLabel(state, t)
-  const isRunning = runState?.status === 'pending'
+  const runState = taskRunState(task)
+  const status = taskRunStateLabel(runState, t)
+  const isRunning = activeRunState?.status === 'pending'
+  const zh = t.autostart === '开机自启'
+  const executedAt = task.latest_run?.executed_at ? new Date(task.latest_run.executed_at) : null
+  const validExecutedAt = executedAt && !Number.isNaN(executedAt.getTime())
+  const resultDetail = task.latest_run?.reason || task.latest_run?.summary || ''
   const openTask = () => onEdit?.(id)
   const onKeyDown = event => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -39,14 +46,14 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
     }
   }
   return (
-    <article className={`task-row task-state-${state}${selected ? ' is-selected' : ''}`} role="button" aria-pressed={selected} tabIndex={0} onClick={openTask} onKeyDown={onKeyDown}>
+    <article className={`task-row task-run-${runState}${selected ? ' is-selected' : ''}`} role="button" aria-pressed={selected} tabIndex={0} onClick={openTask} onKeyDown={onKeyDown}>
       <div className="task-card-head">
         <div className="task-card-title">
           <b>{id}</b>
           <span>{task.schedule || t.tasks.unscheduled} · {task.repeat || t.tasks.manual}</span>
         </div>
         <div className="task-card-actions">
-          <span className={`task-state-badge ${state}`}>{status}</span>
+          <span className={`task-state-badge run-${runState}`}>{status}</span>
           <button type="button" className="task-run" title={isRunning ? t.tasks.runPending : t.tasks.runNow} aria-label={`${isRunning ? t.tasks.runPending : t.tasks.runNow} ${id}`} disabled={isRunning} onClick={event => { event.stopPropagation(); onRun?.(id) }}>
             {isRunning ? <LoaderCircle size={14} className="is-spinning"/> : <Play size={14}/>}<span>{isRunning ? t.tasks.runPending : t.tasks.runNow}</span>
           </button>
@@ -55,11 +62,16 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
           <button type="button" className="task-delete" title={`${t.remove} ${id}`} aria-label={`${t.remove} ${id}`} onClick={event => { event.stopPropagation(); onDelete?.(id) }}><Trash2 size={15}/></button>
         </div>
       </div>
+      <div className="task-latest-run">
+        <span>{zh ? '最近执行' : 'Latest run'}：{validExecutedAt ? executedAt.toLocaleString() : (zh ? '暂无' : 'None')}</span>
+        <small className={`task-config-state ${task.enabled ? 'enabled' : 'disabled'}`}>{task.enabled ? t.enabled : t.disabled}</small>
+      </div>
+      {resultDetail && <em className={`task-run-detail ${runState}`}>{resultDetail}</em>}
       <span className="task-model"><FileText size={14}/>{taskModelLabel(task, llms, t, schedulerModelNo)}</span>
-      {!task.enabled && state !== 'error' && <em className="muted">{t.tasks.explicitEnable}</em>}
+      {!task.enabled && <em className="muted">{t.tasks.explicitEnable}</em>}
       {task.error && <em className="err-text">{task.error}</em>}
       {task.next_hint && <em>{task.next_hint}</em>}
-      {runState?.message && <div className={`task-run-status ${runState.status || ''}`} role={runState.status === 'error' ? 'alert' : 'status'} aria-live="polite">{runState.message}</div>}
+      {activeRunState?.message && <div className={`task-run-status ${activeRunState.status || ''}`} role={activeRunState.status === 'error' ? 'alert' : 'status'} aria-live="polite">{activeRunState.message}</div>}
       <p>{task.prompt || t.empty}</p>
     </article>
   )

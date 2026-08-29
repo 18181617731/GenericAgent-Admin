@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildScheduleCreateRequest, effectiveScheduleModelNo, firstScheduleTaskID, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './schedule.js'
+import { buildScheduleCreateRequest, effectiveScheduleModelNo, firstScheduleTaskID, normalizeScheduleLatestRun, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './schedule.js'
 
 test('normalizeScheduleTasksPayload gives stable empty and row states', () => {
   assert.deepEqual(normalizeScheduleTasksPayload(null).tasks, [])
@@ -9,6 +9,27 @@ test('normalizeScheduleTasksPayload gives stable empty and row states', () => {
   assert.equal(state.tasks.length, 1)
   assert.equal(state.tasks[0].status, 'enabled')
   assert.deepEqual(state.tasks[0].recent_reports, [])
+  assert.equal(state.tasks[0].latest_run.status, 'never_run')
+})
+
+test('normalizeScheduleLatestRun preserves execution result independently of enabled config', () => {
+  const failed = normalizeScheduleTasksPayload({ tasks: [{ id: 'daily', enabled: false, latest_run: { status: 'ERROR', executed_at: '2026-08-29T10:00:00Z', reason: 'login timed out', report_path: 'sche_tasks/done/run.md' } }] }).tasks[0]
+  assert.equal(failed.enabled, false)
+  assert.equal(failed.status, 'disabled')
+  assert.deepEqual(failed.latest_run, {
+    status: 'failed', executed_at: '2026-08-29T10:00:00Z', summary: '', reason: 'login timed out', report_path: 'sche_tasks/done/run.md',
+  })
+  assert.equal(normalizeScheduleLatestRun({ status: 'PARTIAL' }).status, 'partial')
+  assert.equal(normalizeScheduleLatestRun({ status: 'pending' }).status, 'waiting')
+  assert.equal(normalizeScheduleLatestRun({ status: 'SKIPPED' }).status, 'skipped')
+  assert.equal(normalizeScheduleLatestRun({ status: 'unexpected' }).status, 'unknown')
+})
+
+test('normalizeScheduleLatestRun falls back to latest report metadata and never-run', () => {
+  assert.deepEqual(normalizeScheduleLatestRun(null, { mod_time: '2026-08-29T09:00:00Z', path: 'sche_tasks/done/legacy.md' }), {
+    status: 'unknown', executed_at: '2026-08-29T09:00:00Z', summary: '', reason: '', report_path: 'sche_tasks/done/legacy.md',
+  })
+  assert.equal(normalizeScheduleLatestRun(null, null).status, 'never_run')
 })
 
 test('buildScheduleCreateRequest trims id and includes default task body', () => {
@@ -34,6 +55,10 @@ test('schedule UI refreshes /api/schedule/tasks and confirms dangerous create', 
   assert.match(app, /api\('\/api\/schedule\/tasks'\)/)
   assert.match(app, /const loadScheduleTasks = async/)
   assert.match(app, /setScheduleError\(e\.message\)/)
+  assert.match(app, /window\.setInterval\(poll, 15000\)/)
+  assert.match(app, /setScheduleData\(normalizedSchedule\)/)
+  assert.match(app, /notificationMonitorRef\.current\.busy/)
+  assert.match(app, /return \(\) => \{ active = false; window\.clearInterval\(timer\) \}/)
   assert.match(app, /confirmDanger\('schedule-create'/)
   assert.match(app, /api\('\/api\/schedule\/create', \{ dangerous:true, method:'POST'/)
   assert.ok(app.includes("api('/api/schedule/run'"))
@@ -89,7 +114,9 @@ test('schedule UI exposes model selection, card editing, and grouped markdown re
   assert.match(app, /schedulerModelNo/)
   assert.match(app, /followSchedulerLabel/)
   assert.match(app, /selected=\{taskId === \(task\.id \|\| task\.name\)\}/)
-  assert.match(component, /task-state-\$\{state\}/)
+  assert.match(component, /task-run-\$\{runState\}/)
+  assert.match(component, /task\.latest_run\?\.reason \|\| task\.latest_run\?\.summary/)
+  assert.match(component, /task-config-state/)
   assert.match(component, /Scheduler actual model/)
   assert.match(component, /Start with GA Admin/)
   assert.match(component, /is-selected/)
@@ -104,4 +131,13 @@ test('schedule UI exposes model selection, card editing, and grouped markdown re
   assert.ok(component.includes('className="task-run"'))
   assert.ok(component.includes('className="task-reports"'))
   assert.doesNotMatch(component, /mini-reports/)
+})
+
+test('latest run colors and mobile layout override legacy task status styles', () => {
+  const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+  assert.ok(style.lastIndexOf('.task-row.task-run-failed') > style.lastIndexOf('.task-row.status-overdue'))
+  assert.match(style, /\.task-row\.task-run-failed \{[^}]*border-left-color:#dc2626 !important;[^}]*background:/)
+  assert.match(style, /\.task-row\.task-run-blocked,\.task-row\.task-run-waiting,\.task-row\.task-run-partial/)
+  assert.match(style, /@media \(max-width:640px\) \{[\s\S]*?\.task-card-head \{ display:grid; grid-template-columns:minmax\(0,1fr\); \}/)
+  assert.match(style, /\.task-row \{ max-width:100%; overflow:hidden; \}/)
 })
