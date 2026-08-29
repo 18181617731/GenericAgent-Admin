@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import { ChatMessage } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
@@ -30,6 +30,110 @@ describe('assistant markdown rendering', () => {
     const container = renderAssistant('_stressed_ but not snake_case_name here')
     expect(container.querySelector('.oa-md em').textContent).toBe('stressed')
     expect(container.querySelector('.oa-md').textContent).toContain('snake_case_name')
+  })
+
+  test('renders file_patch calls as a dedicated file diff instead of raw JSON arguments', () => {
+    const args = JSON.stringify({
+      path: 'src/components/Demo.jsx',
+      old_content: 'const value = 1\nconst stable = true',
+      new_content: 'const value = 2\nconst stable = true',
+    })
+    const container = renderAssistant([
+      '\u{1F6E0}\uFE0F Tool: `file_patch`',
+      '```text',
+      args,
+      '```',
+    ].join('\n'))
+
+    const panel = container.querySelector('.oa-file-tool-args.is-patch')
+    expect(panel).toBeTruthy()
+    expect(panel.querySelector('.oa-patch-file-id strong').textContent).toBe('Demo.jsx')
+    expect(panel.querySelector('.oa-patch-file-id span').textContent).toBe('src/components/Demo.jsx')
+    expect(panel.querySelector('.oa-file-tool-badge')).toBeNull()
+    expect(panel.querySelector('.oa-diff-stats-add').textContent).toBe('+1')
+    expect(panel.querySelector('.oa-diff-stats-del').textContent).toBe('\u22121')
+    const toggle = panel.querySelector('.oa-patch-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.textContent).toContain('\u6536\u8d77')
+    expect(panel.querySelector('.oa-diff-add .oa-diff-text').textContent).toBe('const value = 2')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(panel.querySelector('.oa-diff')).toBeNull()
+    fireEvent.click(toggle)
+    expect(panel.querySelector('.oa-diff')).toBeTruthy()
+    expect(panel.querySelector('.oa-diff-del .oa-diff-text').textContent).toBe('const value = 1')
+    expect(container.querySelector('.ga-tool-arg')).toBeNull()
+  })
+
+  test('starts a large file_patch collapsed and expands it on demand', () => {
+    const before = Array.from({ length: 13 }, (_, i) => `const value${i} = ${i}`).join('\n')
+    const after = Array.from({ length: 13 }, (_, i) => `const value${i} = ${i + 1}`).join('\n')
+    const args = JSON.stringify({ path: 'src/large.js', old_content: before, new_content: after })
+    const container = renderAssistant([
+      '\u{1F6E0}\uFE0F Tool: `file_patch`',
+      '```text',
+      args,
+      '```',
+    ].join('\n'))
+
+    const panel = container.querySelector('.oa-file-tool-args.is-patch')
+    const toggle = panel.querySelector('.oa-patch-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.textContent).toContain('\u5c55\u5f00')
+    expect(panel.querySelector('.oa-diff')).toBeNull()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(panel.querySelectorAll('.oa-diff-add').length).toBe(13)
+    expect(panel.querySelectorAll('.oa-diff-del').length).toBe(13)
+  })
+
+  test('renders file_write with the same compact file bar and collapsible diff as file_patch', () => {
+    const args = JSON.stringify({
+      path: 'src/generated/config.js',
+      content: 'export const enabled = true\nexport const retries = 3',
+      mode: 'append',
+    })
+    const container = renderAssistant([
+      '\u{1F6E0}\uFE0F Tool: `file_write`',
+      '```text',
+      args,
+      '```',
+    ].join('\n'))
+
+    const panel = container.querySelector('.oa-file-tool-args.is-patch.is-write')
+    expect(panel).toBeTruthy()
+    expect(panel.querySelector('.oa-patch-file-id strong').textContent).toBe('config.js')
+    expect(panel.querySelector('.oa-patch-file-id > span').textContent).toBe('src/generated/config.js')
+    expect(panel.querySelector('.oa-patch-mode').textContent).toBe('append')
+    expect(panel.querySelector('.oa-file-tool-badge')).toBeNull()
+    expect(panel.querySelector('.oa-file-tool-path')).toBeNull()
+    expect(panel.querySelector('.oa-diff-stats-add').textContent).toBe('+2')
+    expect(panel.querySelector('.oa-diff-stats-del').textContent).toBe('\u22120')
+    const toggle = panel.querySelector('.oa-patch-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(panel.querySelectorAll('.oa-diff-add').length).toBe(2)
+    fireEvent.click(toggle)
+    expect(panel.querySelector('.oa-diff')).toBeNull()
+  })
+
+  test('starts a large file_write collapsed and expands it on demand', () => {
+    const content = Array.from({ length: 13 }, (_, i) => `line ${i + 1}`).join('\n')
+    const args = JSON.stringify({ path: 'src/generated/large.txt', content, mode: 'overwrite' })
+    const container = renderAssistant([
+      '\u{1F6E0}\uFE0F Tool: `file_write`',
+      '```text',
+      args,
+      '```',
+    ].join('\n'))
+
+    const panel = container.querySelector('.oa-file-tool-args.is-patch.is-write')
+    const toggle = panel.querySelector('.oa-patch-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(panel.querySelector('.oa-diff')).toBeNull()
+    expect(panel.querySelector('.oa-patch-mode')).toBeNull()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(panel.querySelectorAll('.oa-diff-add').length).toBe(13)
   })
 
   test('renders a blockquote as a quote element', () => {
@@ -127,5 +231,45 @@ describe('assistant markdown rendering', () => {
     expect(md.querySelector('h2').textContent).toBe('Next')
     expect(md.querySelector('hr')).toBeTruthy()
     expect(md.querySelector('p').textContent).toBe('body text')
+  })
+})
+
+describe('assistant pre-token feedback', () => {
+  test('progresses from connection feedback to elapsed model generation, then yields to the first token', () => {
+    const startedAt = 10_000
+    const baseMessage = {
+      id: 'a-pending', role: 'assistant', content: '', files: [], created_at: 10,
+      run_started_at_ms: startedAt,
+    }
+    const view = render(
+      <ChatMessage message={baseMessage} pending clockNow={startedAt} onAskReply={vi.fn()} />,
+    )
+
+    let indicator = view.container.querySelector('.oa-thinking')
+    expect(indicator.getAttribute('role')).toBe('status')
+    expect(indicator.textContent).toContain('\u6b63\u5728\u8fde\u63a5\u6a21\u578b')
+    expect(indicator.querySelector('.oa-thinking-time')).toBeNull()
+
+    view.rerender(
+      <ChatMessage message={baseMessage} pending clockNow={startedAt + 4_000} onAskReply={vi.fn()} />,
+    )
+    indicator = view.container.querySelector('.oa-thinking')
+    expect(indicator.textContent).toContain('\u6b63\u5728\u51c6\u5907\u56de\u590d')
+    expect(indicator.querySelector('.oa-thinking-time').textContent).toBe('4s')
+    expect(indicator.querySelector('.oa-thinking-model')).toBeNull()
+
+    view.rerender(
+      <ChatMessage message={{ ...baseMessage, model_id: 'gpt-5.6-sol' }} pending clockNow={startedAt + 8_000} onAskReply={vi.fn()} />,
+    )
+    indicator = view.container.querySelector('.oa-thinking')
+    expect(indicator.textContent).toContain('\u6a21\u578b\u5df2\u63a5\u5165\uff0c\u6b63\u5728\u751f\u6210')
+    expect(indicator.querySelector('.oa-thinking-time').textContent).toBe('8s')
+    expect(indicator.querySelector('.oa-thinking-model').textContent).toBe('gpt-5.6-sol')
+
+    view.rerender(
+      <ChatMessage message={{ ...baseMessage, content: '\u7b2c\u4e00\u4e2a token' }} pending clockNow={startedAt + 8_100} onAskReply={vi.fn()} />,
+    )
+    expect(view.container.querySelector('.oa-thinking')).toBeNull()
+    expect(view.container.textContent).toContain('\u7b2c\u4e00\u4e2a token')
   })
 })

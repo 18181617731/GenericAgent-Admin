@@ -10,22 +10,50 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate uses protocol-specific denominators. Modern providers report
-// uncached input, cache creation, and cache read as disjoint buckets. Legacy
-// cached_tokens is already a subset of input_tokens, so adding it again would
-// inflate the denominator.
+// Cache hit rate differs by API:
+// - Modern (Claude): cache_read / (output + cache_read) — portion of generation from cache
+// - Legacy: cached / output — cache as a ratio to output (different semantic)
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
-    const read = cacheReadTokens(usage)
-    const input = tokenCount(usage?.input_tokens)
-    const creation = tokenCount(usage?.cache_creation_tokens)
-    const hasModernBuckets = creation > 0 || tokenCount(usage?.cache_read_tokens) > 0
-    acc.read += read
-    acc.base += hasModernBuckets ? input + creation + read : input
+    const canonicalRead = tokenCount(usage?.cache_read_tokens)
+    const legacyCached = tokenCount(usage?.cached_tokens)
+    const output = tokenCount(usage?.output_tokens)
+
+    const isModern = canonicalRead > 0 || tokenCount(usage?.cache_creation_tokens) > 0
+
+    if (isModern) {
+      // Modern API: cache_read / (output + cache_read)
+      acc.modernRead += canonicalRead
+      acc.modernOutput += output
+    } else if (legacyCached > 0) {
+      // Legacy API: cached / output
+      acc.legacyCached += legacyCached
+      acc.legacyOutput += output
+    }
     return acc
-  }, { read: 0, base: 0 })
-  return totals.base > 0 ? Math.round(totals.read / totals.base * 100) : 0
+  }, { modernRead: 0, modernOutput: 0, legacyCached: 0, legacyOutput: 0 })
+
+  // Calculate rates separately then combine via weighted average
+  let totalWeight = 0
+  let weightedSum = 0
+
+  if (totals.modernRead > 0 || totals.modernOutput > 0) {
+    const modernDenominator = totals.modernOutput + totals.modernRead
+    if (modernDenominator > 0) {
+      const modernRate = totals.modernRead / modernDenominator
+      weightedSum += modernRate * modernDenominator
+      totalWeight += modernDenominator
+    }
+  }
+
+  if (totals.legacyCached > 0 && totals.legacyOutput > 0) {
+    const legacyRate = totals.legacyCached / totals.legacyOutput
+    weightedSum += legacyRate * totals.legacyOutput
+    totalWeight += totals.legacyOutput
+  }
+
+  return totalWeight > 0 ? Math.round(weightedSum / totalWeight * 100) : 0
 }
 
 // Generation speed must use only calls with an observed first chunk -> Output

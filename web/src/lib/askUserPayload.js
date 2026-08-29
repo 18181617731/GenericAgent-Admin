@@ -128,9 +128,10 @@ export const parseAskUserPayload = (raw = '') => {
   const text = stripAskUserFence(source)
   if (!text) return { question:'', candidates:[], raw:'', structured:false }
   const scanTarget = candidatesToParse.find(x => /"(?:question|prompt|message|candidates)"/i.test(x)) || text
-  const question = fallbackStringField(scanTarget, ['question', 'prompt', 'message']) || text
+  const explicitQuestion = fallbackStringField(scanTarget, ['question', 'prompt', 'message'])
+  const question = explicitQuestion || text
   const opts = fallbackCandidates(scanTarget)
-  return { question, candidates:opts, raw:text, structured:Boolean(question || opts.length) }
+  return { question, candidates:opts, raw:text, structured:Boolean(explicitQuestion || opts.length) }
 }
 
 export const getAskUserPayload = (call = {}) => {

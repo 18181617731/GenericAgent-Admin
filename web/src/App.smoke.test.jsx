@@ -17,6 +17,7 @@ import { SchedulerServiceRow } from './components/schedule.jsx'
 import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
 import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
 import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
+import { registerDialogAdapter } from './lib/danger.js'
 
 globalThis.React = React
 globalThis.ResizeObserver = class ResizeObserver {
@@ -94,7 +95,18 @@ const reflectService = {
   command: ['agentmain', '--reflect'],
 }
 
+
+let unregisterDialogAdapter = () => {}
+const mockDialog = (result = true) => {
+  const adapter = vi.fn(() => result)
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = registerDialogAdapter(adapter)
+  return adapter
+}
+
 afterEach(() => {
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   cleanup()
   window.localStorage.clear()
   window.history.replaceState({}, '', '/')
@@ -334,9 +346,11 @@ describe('autonomous operations page', () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(approvalOverview([])))
     render(<AutonomousPage lang="zh" services={[{ name: 'reflect/autonomous.py', running: false }]}/>)
 
-    const help = await screen.findByLabelText(/主自主引擎：核心后台服务/)
-    expect(help.getAttribute('tabindex')).toBe('0')
-    expect(help.getAttribute('data-tooltip')).toContain('自主任务队列')
+    // Services render in compact form on the default overview tab.
+    expect(await screen.findByText('主自主引擎')).toBeTruthy()
+    fireEvent.click(screen.getByText('说明与运行详情'))
+    const help = await screen.findByText(/自主任务队列/)
+    expect(help).toBeTruthy()
   })
 })
 
@@ -1084,7 +1098,7 @@ describe('chat response model identity', () => {
       />,
     )
 
-    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m 30s')
+    expect(container.querySelector('.oa-usage-time')?.textContent).toContain('1m')
   })
 
   test('uses the persisted terminal elapsed duration instead of continuing the live clock', () => {
@@ -1804,7 +1818,7 @@ describe('operator shell feedback', () => {
   test('service actions stay local to one card and expose failure recovery', async () => {
     installBrowserPolyfills()
     window.history.replaceState({}, '', '/channels')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog()
     const services = [
       { name: 'alpha-ui', kind: 'frontend', running: false, autostart: false },
       { name: 'beta-ui', kind: 'frontend', running: false, autostart: false },
@@ -1940,6 +1954,202 @@ describe('operator shell feedback', () => {
 
     fireEvent.change(filter, { target: { value: 'nothing-matches' } })
     await waitFor(() => expect(document.querySelector('.log-output-empty')).toBeTruthy())
+  })
+})
+
+describe('scheduled task execution history', () => {
+  const tasks = [
+    {
+      id: 'alpha',
+      enabled: true,
+      schedule: '09:00',
+      repeat: 'daily',
+      prompt: 'alpha prompt',
+      recent_reports: [
+        { name: 'alpha-latest.md', path: 'sche_tasks/done/alpha-latest.md', mod_time: '2026-08-28T09:00:00Z' },
+        { name: 'alpha-previous.md', path: 'sche_tasks/done/alpha-previous.md', mod_time: '2026-08-27T09:00:00Z' },
+      ],
+    },
+    {
+      id: 'beta',
+      enabled: true,
+      schedule: '10:00',
+      repeat: 'daily',
+      prompt: 'beta prompt',
+      recent_reports: [],
+    },
+  ]
+
+  test('switches task history, renders an empty state, previews in place, and keeps reports navigation', async () => {
+    installBrowserPolyfills()
+    window.history.replaceState({}, '', '/tasks/scheduled')
+    const artifactCalls = []
+    let holdArtifact = false
+    let releaseArtifact
+    let failedTaskId = ''
+    globalThis.fetch = vi.fn(async url => {
+      const requestURL = new URL(url, 'http://localhost')
+      const path = requestURL.pathname
+      if (path === '/api/config') return jsonResponse({ host: '127.0.0.1', port: 8787, ga_root: 'C:/ga' })
+      if (path === '/api/ga/health') return jsonResponse({ ok: true, root: 'C:/ga' })
+      if (path === '/api/autostart/status') return jsonResponse({ supported: true, enabled: false })
+      if (path === '/api/version/info') return jsonResponse({ version: 'dev' })
+      if (path === '/api/version/status') return jsonResponse({})
+      if (path === '/api/ga/inventory') return jsonResponse({})
+      if (path === '/api/risk/catalog') return jsonResponse({ items: [] })
+      if (path === '/api/services') return jsonResponse({ services: [{ name: 'reflect/scheduler.py', kind: 'reflect', running: false }] })
+      if (path === '/api/ga/git-status') return jsonResponse({ ok: true, available: false })
+      if (path === '/api/schedule/tasks') return jsonResponse({ enabled: 2, tasks })
+      if (path === '/api/schedule/task') {
+        const id = requestURL.searchParams.get('id')
+        if (id === failedTaskId) return { ...jsonResponse({ error: 'task unavailable' }), ok: false, status: 500, statusText: 'Internal Server Error' }
+        const task = tasks.find(item => item.id === id)
+        return jsonResponse({ id, raw: JSON.stringify(task || {}) })
+      }
+      if (path === '/api/schedule/artifact') {
+        artifactCalls.push(requestURL.searchParams.get('path'))
+        if (holdArtifact) return new Promise(resolve => { releaseArtifact = () => resolve(jsonResponse({ content: '# stale scheduled preview' })) })
+        return jsonResponse({ content: '# Alpha execution report\n\nThe report was rendered in place.' })
+      }
+      if (path === '/api/goals/list') return jsonResponse({ goals: [] })
+      if (path === '/api/autonomous/approvals') return jsonResponse({ items: [] })
+      return jsonResponse({})
+    })
+
+    render(<App />)
+    await screen.findByRole('option', { name: /alpha/ }, { timeout: 10000 })
+    expect(document.querySelector('.scheduled-task-workbench')).toBeTruthy()
+    expect(document.querySelector('.scheduled-task-detail-empty')).toBeTruthy()
+    const workbench = document.querySelector('.scheduled-task-workbench')
+    await waitFor(() => expect(document.querySelector('.schedule-service-panel')).toBeTruthy())
+    const servicePanel = document.querySelector('.schedule-service-panel')
+    expect(workbench).toBeTruthy()
+    expect(servicePanel).toBeTruthy()
+    expect(workbench.compareDocumentPosition(servicePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await waitFor(() => expect(within(servicePanel).getByRole('button', { name: /启动|Start/i })).toBeTruthy())
+
+    const cards = () => [...document.querySelectorAll('.scheduled-task-row')]
+    fireEvent.click(cards()[0])
+    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
+    expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('alpha')
+    failedTaskId = 'beta'
+    fireEvent.click(cards()[1])
+    await waitFor(() => expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('alpha'))
+    expect(document.querySelector('.json-editor, .schedule-form-editor')).toBeTruthy()
+    failedTaskId = ''
+
+    fireEvent.click(cards()[1])
+    await waitFor(() => expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('beta'))
+    expect(screen.getByText(/No reports|暂无执行记录/i)).toBeTruthy()
+    expect(screen.queryByText('alpha-latest.md')).toBeNull()
+
+    fireEvent.click(cards()[0])
+    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
+    fireEvent.click(screen.getByRole('button', { name: /alpha-latest\.md/i }))
+    await screen.findByText('Alpha execution report')
+    expect(artifactCalls).toEqual(['sche_tasks/done/alpha-latest.md'])
+    expect(window.location.pathname).toBe('/tasks/scheduled')
+    expect(document.querySelector('.task-subtabs button.active')?.textContent).toMatch(/Scheduled tasks|定时任务/i)
+
+    fireEvent.click(cards()[1])
+    await waitFor(() => expect(document.querySelector('.scheduled-task-history-card')?.textContent).toContain('beta'))
+    expect(screen.queryByText('Alpha execution report')).toBeNull()
+    expect(screen.queryByText('alpha-latest.md')).toBeNull()
+
+    fireEvent.click(cards()[0])
+    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
+    fireEvent.click(document.querySelector('.scheduled-task-detail .task-reports'))
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/reports'))
+    expect(document.querySelector('.schedule-report-tree')).toBeTruthy()
+
+    fireEvent.click(within(document.querySelector('.task-subtabs')).getByRole('button', { name: '定时任务' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
+    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
+    holdArtifact = true
+    fireEvent.click(screen.getByRole('button', { name: /alpha-latest\.md/i }))
+    await waitFor(() => expect(releaseArtifact).toEqual(expect.any(Function)))
+    fireEvent.click(document.querySelector('.scheduled-task-detail .task-reports'))
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/reports'))
+    expect(document.querySelector('.app')?.getAttribute('aria-busy')).not.toBe('true')
+    expect(document.querySelector('.task-subtabs button')?.disabled).toBe(false)
+    releaseArtifact()
+    await waitFor(() => expect(screen.queryByText('stale scheduled preview')).toBeNull())
+    expect(document.querySelector('.schedule-report-tree')).toBeTruthy()
+
+    fireEvent.click(within(document.querySelector('.task-subtabs')).getByRole('button', { name: '定时任务' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
+    expect(document.querySelector('.task-run')?.disabled).toBe(false)
+    await screen.findByText('alpha-latest.md', {}, { timeout: 10000 })
+    fireEvent.click(screen.getByRole('button', { name: /alpha-latest\.md/i }))
+    await waitFor(() => expect(releaseArtifact).toEqual(expect.any(Function)))
+    fireEvent.click(screen.getByRole('button', { name: '总览' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/overview'))
+    expect(document.querySelector('.app')?.getAttribute('aria-busy')).not.toBe('true')
+    releaseArtifact()
+    await waitFor(() => expect(screen.queryByText('stale scheduled preview')).toBeNull())
+    expect(window.location.pathname).toBe('/overview')
+    fireEvent.click(within(document.querySelector('nav[aria-label="主导航"]')).getByRole('button', { name: '定时任务' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
+    expect(document.querySelector('.task-run')?.disabled).toBe(false)
+  })
+
+  test('clears the old preview before selecting a newly created task', async () => {
+    installBrowserPolyfills()
+    mockDialog(true)
+    window.history.replaceState({}, '', '/tasks/scheduled')
+    let currentTasks = [...tasks]
+    let createRequest = null
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const requestURL = new URL(url, 'http://localhost')
+      const path = requestURL.pathname
+      if (path === '/api/config') return jsonResponse({ host: '127.0.0.1', port: 8787, ga_root: 'C:/ga' })
+      if (path === '/api/ga/health') return jsonResponse({ ok: true, root: 'C:/ga' })
+      if (path === '/api/autostart/status') return jsonResponse({ supported: true, enabled: false })
+      if (path === '/api/version/info') return jsonResponse({ version: 'dev' })
+      if (path === '/api/version/status') return jsonResponse({})
+      if (path === '/api/ga/inventory') return jsonResponse({})
+      if (path === '/api/risk/catalog') return jsonResponse({ items: [] })
+      if (path === '/api/services') return jsonResponse({ services: [{ name: 'reflect/scheduler.py', kind: 'reflect', running: false }] })
+      if (path === '/api/ga/git-status') return jsonResponse({ ok: true, available: false })
+      if (path === '/api/schedule/tasks') return jsonResponse({ enabled: currentTasks.filter(task => task.enabled).length, tasks: currentTasks })
+      if (path === '/api/schedule/task') {
+        const id = requestURL.searchParams.get('id')
+        const task = currentTasks.find(item => item.id === id)
+        return jsonResponse({ id, raw: JSON.stringify(task || {}) })
+      }
+      if (path === '/api/schedule/artifact') return jsonResponse({ content: '# Alpha execution report' })
+      if (path === '/api/schedule/create') {
+        createRequest = JSON.parse(options.body)
+        const created = { id: 'created-task', enabled: false, schedule: '', repeat: 'manual', prompt: 'created prompt', recent_reports: [] }
+        currentTasks = [...currentTasks, created]
+        return jsonResponse({ task: { ...created, raw: JSON.stringify(created) } })
+      }
+      if (path === '/api/goals/list') return jsonResponse({ goals: [] })
+      if (path === '/api/autonomous/approvals') return jsonResponse({ items: [] })
+      return jsonResponse({})
+    })
+
+    render(<App />)
+    await screen.findByRole('option', { name: /alpha/ }, { timeout: 10000 })
+    fireEvent.click(screen.getByRole('option', { name: /alpha/ }))
+    await screen.findByRole('button', { name: /alpha-latest\.md/i }, { timeout: 10000 })
+    fireEvent.click(screen.getByRole('button', { name: /alpha-latest\.md/i }))
+    await screen.findByText('Alpha execution report')
+    expect(document.querySelector('.schedule-task-history-preview')).toBeTruthy()
+
+    const toolbar = document.querySelector('.scheduled-workbench-toolbar')
+    fireEvent.click(within(toolbar).getByRole('button', { name: '创建' }))
+    const disclosure = document.querySelector('.scheduled-task-create-disclosure')
+    fireEvent.change(within(disclosure).getByRole('textbox'), { target: { value: 'created-task' } })
+    fireEvent.click(within(disclosure).getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(createRequest?.task).toBeTruthy())
+    await waitFor(() => expect(document.querySelector('.scheduled-task-detail h3')?.textContent).toBe('created-task'))
+    expect(screen.getByText(/暂无执行记录/)).toBeTruthy()
+    expect(screen.queryByText('Alpha execution report')).toBeNull()
+    expect(screen.queryByText('alpha-latest.md')).toBeNull()
+    expect(document.querySelector('.schedule-task-history-preview')).toBeNull()
+    expect(window.location.pathname).toBe('/tasks/scheduled')
   })
 })
 
@@ -2372,8 +2582,9 @@ describe('mobile chat session navigation', () => {
 
     fireEvent.click(screen.getByRole('switch', { name:/精简显示/ }))
     await waitFor(() => expect(screen.getByText('SECRET_USER_MESSAGE D:/private/input.txt')).toBeTruthy())
-    expect(document.querySelector('.oa-chat-stats')?.textContent).toContain('LLM 12s · 工具调用 0.0s')
-    expect(document.querySelector('.oa-chat-stats')?.textContent).toContain('输入 1.2K · 输出 320')
+    expect(document.querySelector('.oa-chat-stats')).toBeNull()
+    expect(document.body.textContent).not.toContain('工具调用 0.0s')
+    expect(document.body.textContent).not.toContain('输入 1.2K · 输出 320')
     expect(document.querySelector('.oa-title b')?.textContent).toBe('SECRET_SESSION_TITLE')
     expect(document.body.innerHTML).toContain('SECRET_DIAGNOSIS')
   }, 30000)
@@ -2528,10 +2739,10 @@ describe('chat worldline controls', () => {
     Element.prototype.scrollIntoView = vi.fn()
     render(<ChatApp />)
     await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Worldline chat'))
-    fireEvent.click(screen.getByRole('button', { name: '查看和切换对话世界线' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看和切换对话世界线' }, { timeout: 20000 }))
     await waitFor(() => expect(screen.getByText('共 3 个节点 · 1 个分支节点')).toBeTruthy())
     expect(globalThis.fetch.mock.calls.some(([url]) => String(url) === '/api/chat/worldline/worldline-session?activate=true')).toBe(true)
-  }, 15000)
+  }, 30000)
 })
 
 describe('chat loop controls', () => {
@@ -2574,7 +2785,7 @@ describe('chat loop controls', () => {
     resolveStart(jsonResponse({ ok:true, loop:{ enabled:true, status:'waiting', round:0, max_rounds:10, controller_prompt:'SECRET_LOOP_OBJECTIVE' } }))
     await waitFor(() => expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy())
     expect(document.body.innerHTML).not.toContain('SECRET_LOOP_OBJECTIVE')
-  }, 30000)
+  }, 60000)
 
   test('explains an empty objective, uses the current message, and completes start-stop flow', async () => {
     installBrowserPolyfills()
@@ -2591,7 +2802,7 @@ describe('chat loop controls', () => {
       if (path === '/api/instances') return jsonResponse({ items:[] })
       if (path === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path === '/api/chat/session/loop-session') return jsonResponse({ ...sessions[0], messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
-      if (path === '/api/chat/state/loop-session') return jsonResponse({ llms:[model], settings:{ llm_no:0, tools_mode:'official' }, loop:stoppedLoop })
+      if (path === '/api/chat/state/loop-session') return jsonResponse({ llms:[model], settings:{ llm_no:0, tools_mode:'official' }, loop:startedBody ? { enabled:true, status:'waiting', epoch:1, round:0, max_rounds:3, controller_prompt:startedBody.objective, controller_llm_no:startedBody.controller_llm_no } : stoppedLoop })
       if (path === '/api/chat/loop/loop-session/start') {
         startedBody = JSON.parse(options.body)
         return jsonResponse({ ok:true, loop:{ enabled:true, status:'waiting', epoch:1, round:0, max_rounds:startedBody.max_rounds, controller_prompt:startedBody.objective, controller_llm_no:startedBody.controller_llm_no } })

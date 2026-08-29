@@ -23,6 +23,7 @@ const COPY = {
     reportSearch: '搜索执行记录', reportCount: count => `${count} 条记录`, noReports: '没有匹配的执行记录', selectReport: '选择左侧记录查看详情',
     backToReports: '返回记录列表', download: '下载原文件', loading: '正在加载', loadFailed: '读取失败',
     latestResult: '最近执行结果', reportReady: '已生成报告', openReport: '查看完整记录', noResult: '报告已生成，打开完整记录查看执行详情。',
+    quickCreatePlaceholder: '用一句话描述你的任务，例如：每天早上整理一次收件箱', quickCreate: '智能创建', manualCreate: '手动新建', quickCreateParsing: 'AI 解析中…', quickCreatePreview: 'AI 已解析出任务草稿，可直接创建或继续编辑：', quickCreateFallback: '智能解析暂不可用，将按你的原文创建草稿。', quickCreateCreate: '创建草稿', quickCreateEditFull: '编辑完整表单', quickCreateCancel: '取消', quickCreateModel: count => `解析模型：${count}`,
   },
   en: {
     services: 'Runtime', approvals: 'Approvals', records: 'Execution records', refresh: 'Refresh', running: 'Running', stopped: 'Stopped',
@@ -48,6 +49,7 @@ const COPY = {
     reportSearch: 'Search execution records', reportCount: count => `${count} records`, noReports: 'No matching execution records', selectReport: 'Select a record to view details',
     backToReports: 'Back to records', download: 'Download original', loading: 'Loading', loadFailed: 'Could not load',
     latestResult: 'Latest result', reportReady: 'Report ready', openReport: 'Open full record', noResult: 'The report is ready. Open the full record for execution details.',
+    quickCreatePlaceholder: 'Describe your task in one line, e.g. tidy the inbox every morning', quickCreate: 'Smart create', manualCreate: 'New manually', quickCreateParsing: 'Parsing with AI…', quickCreatePreview: 'AI drafted a task. Create it directly or keep editing:', quickCreateFallback: 'Smart parsing is unavailable; the draft will use your raw input.', quickCreateCreate: 'Create draft', quickCreateEditFull: 'Edit full form', quickCreateCancel: 'Cancel', quickCreateModel: count => `Parsed by ${count}`,
   },
 }
 

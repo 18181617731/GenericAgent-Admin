@@ -149,7 +149,7 @@ func TestWorldlineWorkerHelper(t *testing.T) {
 				},
 				"raw_history":  []map[string]interface{}{{"role": "assistant", "content": "raw " + prompt}},
 				"history_info": []interface{}{map[string]interface{}{"prompt": prompt}},
-				"working":      map[string]interface{}{"prompt": prompt},
+				"working":      map[string]interface{}{"prompt": prompt, "images": req["images"]},
 			}
 			if enc.Encode(response) != nil {
 				return

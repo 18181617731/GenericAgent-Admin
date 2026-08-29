@@ -23,13 +23,15 @@ test('follows interrupted streams with an event cursor', () => {
   assert.match(source, /followChatStream\(res, pending\.id/)
 })
 
-test('primes completion audio on send and publishes notification after queued work drains', () => {
+test('primes completion audio on send and keeps queue execution backend-authoritative', () => {
   const primeIndex = source.indexOf('primeChatCompletionTone()')
-  const queueIndex = source.indexOf('const next = popQueued()', primeIndex)
-  const notifyIndex = source.indexOf('if (streamCompleted) publishNotification(', queueIndex)
+  const queueIndex = source.indexOf("requestQueue('enqueue'")
+  const notifyIndex = source.indexOf('if (streamCompleted) publishNotification(', primeIndex)
   assert.ok(primeIndex >= 0)
-  assert.ok(queueIndex > primeIndex)
-  assert.ok(notifyIndex > queueIndex)
+  assert.ok(queueIndex >= 0)
+  assert.ok(notifyIndex > primeIndex)
+  assert.match(source, /Queue execution is backend-authoritative/)
+  assert.doesNotMatch(source, /const next = popQueued\(\)/)
   assert.match(source, /buildChatNotification\(\{ session: sessionForNotification, sessionId: id, prompt: notificationPrompt/)
   assert.doesNotMatch(source, /message:\s*`会话 \$\{id\} 已完成回复。`/)
 })

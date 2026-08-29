@@ -100,7 +100,7 @@ export function useGoals({ t, lang, setMsg, setBusy, active }) {
       if (model !== null && model < 0) throw new Error(t.hints.goalLLMNonNegative)
       const body = { objective: goalObjective, budget_minutes: budgetMinutes, max_turns: turns, hive: !!hive }
       if (model !== null) body.llm_no = model
-      if (!confirmDanger('goals-start', lang === 'zh' ? `启动${hive ? ' Hive' : ''}自主目标？预算 ${budgetMinutes} 分钟，最大轮次 ${turns || '不限'}。` : `Start${hive ? ' a Hive' : ' an'} autonomous goal? Budget: ${budgetMinutes} minutes. Maximum turns: ${turns || 'unlimited'}.`)) return
+      if (!await confirmDanger('goals-start', lang === 'zh' ? `启动${hive ? ' Hive' : ''}自主目标？预算 ${budgetMinutes} 分钟，最大轮次 ${turns || '不限'}。` : `Start${hive ? ' a Hive' : ' an'} autonomous goal? Budget: ${budgetMinutes} minutes. Maximum turns: ${turns || 'unlimited'}.`)) return
       const d = await api('/api/goals/start', { dangerous:true, method:'POST', body: JSON.stringify(body) })
       setMsg(`${t.hints.goalStarted}: ${d.goal?.id || ''}`)
       setObjective('')
@@ -114,7 +114,7 @@ export function useGoals({ t, lang, setMsg, setBusy, active }) {
     if (!goal) return
     const exact = !!goal.managed
     const template = exact ? (t.hints.goalStopExactConfirm || t.hints.goalStopConfirm) : (t.hints.goalStopSoftConfirm || t.hints.goalStopConfirm)
-    if (!confirmDanger('goals-stop', template.replace('{id}', goal.id || '-').replace('{pid}', goal.pid || '-'))) return
+    if (!await confirmDanger('goals-stop', template.replace('{id}', goal.id || '-').replace('{pid}', goal.pid || '-'))) return
     setBusy(true); setMsg('')
     try {
       const body = { id: goal.id }
@@ -128,7 +128,7 @@ export function useGoals({ t, lang, setMsg, setBusy, active }) {
 
   const remove = async (goal) => {
     if (!goal) return
-    if (!confirmDanger('goals-delete', t.hints.goalDeleteConfirm.replace('{id}', goal.id || '-'))) return
+    if (!await confirmDanger('goals-delete', t.hints.goalDeleteConfirm.replace('{id}', goal.id || '-'))) return
     setBusy(true); setMsg('')
     try {
       await api('/api/goals/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: goal.id }) })

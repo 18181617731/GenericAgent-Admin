@@ -2,9 +2,9 @@ export const I18N = {
   zh: {
     appName: 'GA Admin', autostart: '开机自启', autostartService: '自启动', backup: '写操作会自动备份', busy: '执行中', cancel: '取消', clear: '清空', close: '关闭', copy: '复制', create: '创建', delete: '删除', disableAutostart: '关闭自启', disabled: '停用', download: '下载', empty: '暂无', enableAutostart: '开启自启', enabled: '启用', error: '错误', hide: '隐藏', language: '语言', loading: '加载中…', logs: '日志', mainNavigation: '主导航', read: '读取', ready: '就绪', refresh: '刷新', remove: '删除', retry: '重试', root: 'GenericAgent 根目录', running: '运行中', save: '保存', saveTitleModel: '保存标题模型', search: '搜索', show: '显示', start: '启动', stop: '停止', stopped: '已停止', switchTheme: '切换主题', tagline: 'GenericAgent 设置与管理中心', tail: '尾读', titleModel: '对话标题模型', titleModelDisabled: '禁用自动标题生成', titleModelFollowConversation: '跟随当前对话模型', titleModelHelp: '新会话和旧会话的标题生成使用此模型，可与对话模型不同。', titleModelSaved: '标题模型设置已保存', unsupported: '不支持',
     serviceDesc: { scheduler: '定时任务调度器：每 120 秒扫描 sche_tasks/ 中的任务，按 once/daily/weekly/every_Nh 等周期到期触发，并归档 L4 会话记录。', autonomous: '自主待机驱动：每 30 分钟检测一次，当用户离开超过 30 分钟，便提示智能体按自动化 SOP 自行推进任务。' },
-    nav: { overview: '总览', chat: '对话', instances: 'GA 实例', notifications: '通知', files: '文件', memory: '记忆', tasks: '任务', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '常规', logs: '日志' },
+    nav: { overview: '总览', chat: '对话', instances: 'GA 实例', notifications: '通知', files: '文件', memory: '记忆', 'local-cmd': '本地 CMD', tasks: '任务', channels: '通道', autonomous: '自主进化', usage: '用量总览', schedule: '定时', goals: 'Goal 模式', models: '模型', settings: '常规', logs: '日志' },
     navGroups: { general: '通用', agent: '智能体', automation: '自动化', system: '系统' },
-    desc: { overview: '运行状态、GA Admin 版本与 GA 源代码更新。', chat: '对话体验相关的偏好设置。', instances: '管理隔离的 GA 运行目录、Python 解释器和默认实例。', notifications: '查看系统通知与后台运行提示。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', memory: '浏览工作区记忆与相关文件。', tasks: '任务型服务、sche_tasks 定时任务、Goal/自主运行与报告。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '自主待机驱动与自动化任务推进状态。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 中的模型配置。', settings: '语言、外观、路径与网络等基础偏好。', usage: '按模型、会话与日期统计的 token 用量。', logs: '进程状态与输出日志。' },
+    desc: { overview: '运行状态、GA Admin 版本与 GA 源代码更新。', chat: '对话体验相关的偏好设置。', instances: '管理隔离的 GA 运行目录、Python 解释器和默认实例。', notifications: '查看系统通知与后台运行提示。', files: '安全浏览 GA 根目录内文本文件，支持 tail 与搜索。', memory: '浏览工作区记忆与相关文件。', 'local-cmd': '通过浏览器连接服务端 Windows 主机上的可交互 CMD。', tasks: '任务型服务、sche_tasks 定时任务、Goal/自主运行与报告。', channels: '桌面、TUI、Web、IM Bot 等前端入口。', autonomous: '自主待机驱动与自动化任务推进状态。', schedule: 'sche_tasks JSON 定时任务详情、编辑、创建与删除。', goals: '复用 GA Goal Mode SOP 与 reflect/goal_mode.py 的持续目标控制台。', models: '按服务商读取、预览和保存 GA mykey.py 模型配置。', settings: '语言、外观、路径与网络等基础偏好。', usage: '按模型、会话与日期统计的 token 用量。', logs: '进程状态与输出日志。' },
     cards: { processes: '进程', running: '运行中', stopped: '已停止', memoryLayers: '记忆层', sopTools: 'SOP/工具', schedule: '定时任务', enabledTasks: '已启用', reports: '报告', coreFiles: '核心文件', reflect: '反思脚本', health: 'GA 健康', capabilities: '能力', risks: '风险', version: '版本管理' },
     overview: {
       observability: '只读观测', healthChecks: '健康检查', coreFiles: '核心文件', memorySops: '记忆 SOP', riskRules: '风险规则', healthy: '健康端点报告正常', needsAttention: '健康端点需要关注', awaitingSnapshot: '等待只读快照', generatedAt: '生成时间', missingCore: '核心文件缺失',
@@ -18,6 +18,7 @@ export const I18N = {
       attention: '需要关注', allClear: '没有阻断项', failedChecks: '未通过的检查', advisory: '提示', runningServices: '运行中的服务', noRunning: '没有进程在运行',
       checkStates: { ok: '正常', missing: '缺失', empty: '为空', optional_missing: '可选缺失' },
       autostartTitle: '开机自启', autostartOn: '登录后自动启动', autostartOff: '需要手动启动',
+      saveGitHubMirror: '\u4fdd\u5b58\u955c\u50cf', githubMirrorSaved: '\u955c\u50cf\u914d\u7f6e\u5df2\u4fdd\u5b58', githubMirrorSaveFailed: error => `\u4fdd\u5b58\u5931\u8d25\uff1a${error}`,
     },
     service: {
       model: '模型', defaultModel: '默认（启动时选择）', returnCode: '返回码', startedAt: '启动时间', workdir: '工作目录', command: '命令', log: '日志',
@@ -70,9 +71,9 @@ export const I18N = {
   en: {
     appName: 'GA Admin', tagline: 'GenericAgent settings & management hub', root: 'GenericAgent root', save: 'Save', refresh: 'Refresh', busy: 'Busy', ready: 'Ready', error: 'Error', empty: 'Empty', enabled: 'Enabled', disabled: 'Disabled', start: 'Start', stop: 'Stop', running: 'Running', stopped: 'Stopped', language: 'Language', copy: 'Copy', clear: 'Clear', delete: 'Delete', show: 'Show', hide: 'Hide', search: 'Search', read: 'Read', create: 'Create', remove: 'Delete', backup: 'writes create backups', autostart: 'Autostart', enableAutostart: 'Enable autostart', disableAutostart: 'Disable autostart', unsupported: 'Unsupported', titleModel: 'Chat title model', titleModelDisabled: 'Disable automatic title generation', titleModelHelp: 'Use this model for new and existing chat titles, independently of the conversation model.', titleModelFollowConversation: 'Follow the current conversation model', saveTitleModel: 'Save title model', titleModelSaved: 'Title model setting saved', tail: 'Tail', download: 'Download', autostartService: 'Autostart', logs: 'Logs', close: 'Close', cancel: 'Cancel', retry: 'Retry', loading: 'Loading…', mainNavigation: 'Main navigation', switchTheme: 'Switch theme',
     serviceDesc: { scheduler: 'Scheduled-task runner: scans sche_tasks/ every 120s and fires tasks when their once/daily/weekly/every_Nh cadence is due, also archiving L4 session logs.', autonomous: 'Idle autonomy driver: checks every 30 min and, once the user has been away for over 30 min, prompts the agent to advance tasks on its own per the automation SOP.' },
-    nav: { overview: 'Overview', chat: 'Chat', instances: 'GA Instances', notifications: 'Notifications', files: 'Files', memory: 'Memory', tasks: 'Tasks', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Hive Mode', models: 'Models', settings: 'General', logs: 'Logs' },
+    nav: { overview: 'Overview', chat: 'Chat', instances: 'GA Instances', notifications: 'Notifications', files: 'Files', memory: 'Memory', 'local-cmd': 'Local CMD', tasks: 'Tasks', channels: 'Channels', autonomous: 'Autonomous', usage: 'Usage', schedule: 'Schedule', goals: 'Hive Mode', models: 'Models', settings: 'General', logs: 'Logs' },
     navGroups: { general: 'General', agent: 'Agent', automation: 'Automation', system: 'System' },
-    desc: { overview: 'Runtime status, GA Admin releases, and GA source updates.', chat: 'Preferences that shape the chat experience.', instances: 'Manage isolated GA runtime roots, Python interpreters, and the default instance.', notifications: 'Review system notifications and background updates.', files: 'Safely browse text files inside GA root with tail and search.', memory: 'Browse workspace memory and related files.', tasks: 'Task services, sche_tasks scheduled jobs, goal/autonomous runs and reports.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Idle autonomy and automated task progress.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Language, appearance, paths, and network basics.', usage: 'Token usage by model, session, and day.', logs: 'Process state and output logs.' },
+    desc: { overview: 'Runtime status, GA Admin releases, and GA source updates.', chat: 'Preferences that shape the chat experience.', instances: 'Manage isolated GA runtime roots, Python interpreters, and the default instance.', notifications: 'Review system notifications and background updates.', files: 'Safely browse text files inside GA root with tail and search.', memory: 'Browse workspace memory and related files.', 'local-cmd': 'Connect through the browser to an interactive CMD on the server Windows host.', tasks: 'Task services, sche_tasks scheduled jobs, goal/autonomous runs and reports.', channels: 'Desktop, TUI, Web and IM Bot entrypoints.', autonomous: 'Idle autonomy and automated task progress.', schedule: 'View, edit, create and delete sche_tasks JSON jobs.', goals: 'Continuous objective control console backed by GA Goal Mode SOP and reflect/goal_mode.py.', models: 'Import, preview and write GA mykey.py model config.', settings: 'Language, appearance, paths, and network basics.', usage: 'Token usage by model, session, and day.', logs: 'Process state and output logs.' },
     cards: { processes: 'Processes', running: 'Running', stopped: 'Stopped', memoryLayers: 'Memory layers', sopTools: 'SOP/tools', schedule: 'Scheduled jobs', enabledTasks: 'Enabled', reports: 'Reports', coreFiles: 'Core files', reflect: 'Reflect scripts', health: 'GA health', capabilities: 'Capabilities', risks: 'Risks', version: 'Version management' },
     overview: {
       observability: 'Read-only observability', healthChecks: 'Health checks', coreFiles: 'Core files', memorySops: 'Memory SOPs', riskRules: 'Risk rules', healthy: 'Health endpoints are reporting normally', needsAttention: 'Health endpoints need attention', awaitingSnapshot: 'Waiting for a read-only snapshot', generatedAt: 'Generated', missingCore: 'Missing core files',
@@ -86,6 +87,7 @@ export const I18N = {
       attention: 'Needs attention', allClear: 'Nothing blocking', failedChecks: 'Failed checks', advisory: 'Warnings', runningServices: 'Running services', noRunning: 'No processes running',
       checkStates: { ok: 'OK', missing: 'Missing', empty: 'Empty', optional_missing: 'Optional missing' },
       autostartTitle: 'Autostart', autostartOn: 'Starts after login', autostartOff: 'Starts only when you open it',
+      saveGitHubMirror: 'Save mirror', githubMirrorSaved: 'Mirror settings saved.', githubMirrorSaveFailed: error => `Save failed: ${error}`,
     },
     service: {
       model: 'Model', defaultModel: 'Default (choose at startup)', returnCode: 'Return code', startedAt: 'Started', workdir: 'Working directory', command: 'Command', log: 'Log',
@@ -163,8 +165,8 @@ export const SETTINGS_TEXT = {
       dataHelp: '留空时使用默认目录；可指定独立的 Chat 会话存储位置。',
     },
     network: {
-      title: '网络代理',
-      desc: '仅影响 Chat Python 子进程，不会更改系统全局代理。',
+      title: '网络与更新',
+      desc: '配置 Chat Python 代理以及 GA Admin 更新下载加速。',
       mode: '代理模式',
       off: '关闭',
       system: '跟随系统',
@@ -172,6 +174,9 @@ export const SETTINGS_TEXT = {
       offHelp: 'Chat Python 直接连接网络。',
       systemHelp: '继承当前系统与进程环境中的代理配置。',
       customHelp: '使用下方环境变量启动 Chat Python。',
+      githubMirror: 'GitHub 镜像源',
+      githubMirrorHelp: '可选的 HTTP(S) 镜像前缀，仅用于 GA Admin 更新包和校验文件。例如，配置 https://mirror.example 后会请求 https://mirror.example/https://github.com/...；留空则直连 GitHub。保存后立即生效。',
+      githubMirrorPlaceholder: '例如 https://mirror.example',
     },
     remote: {
       title: '远程访问',
@@ -205,6 +210,9 @@ export const SETTINGS_TEXT = {
       passwordTooShort: '密码至少需要 8 个字符。',
       confirmSet: '更新 GA Admin 访问密码？远程连接将改用新密码认证。',
       confirmRemove: '移除访问密码？移除后将无法开启“需要密码”的远程访问。',
+    },
+    keychain: {
+      title: '本机密钥库', eyebrow: '安全凭据', desc: '管理与 GA 共用的 ~/ga_keychain.enc。仅显示密钥名称，密钥值不会回显。', protected: '密钥值永不回显', inventory: '已保存的密钥', inventoryDesc: '这里只读取名称，不会从密钥库取回密钥值。', editor: '新增或更新', editorDesc: '名称相同时，确认后将替换原密钥值。', loading: '正在读取密钥名称…', retry: '重试', refresh: '刷新密钥名称', keysLabel: '个密钥', emptyHelp: '在右侧添加第一个凭据。', valueHelp: '提交后此值不会再次显示。', saving: '正在保存…', pathLabel: '存储位置', name: '名称', value: '密钥值', add: '保存密钥', remove: '删除', empty: '暂无密钥', confirmAdd: name => `写入密钥“${name}”？`, confirmRemove: name => `删除密钥“${name}”？`, saved: '密钥已保存。', removed: '密钥已删除。', invalid: '请填写名称和密钥值。', loadFailed: '读取密钥名称失败。',
     },
     startup: {
       title: '启动',
@@ -254,8 +262,8 @@ export const SETTINGS_TEXT = {
       dataHelp: 'Leave blank for the default location, or use a dedicated Chat data directory.',
     },
     network: {
-      title: 'Network proxy',
-      desc: 'Applies only to Chat Python subprocesses and never changes the system proxy.',
+      title: 'Network and updates',
+      desc: 'Configure the Chat Python proxy and accelerated GA Admin update downloads.',
       mode: 'Proxy mode',
       off: 'Off',
       system: 'Use system',
@@ -263,6 +271,9 @@ export const SETTINGS_TEXT = {
       offHelp: 'Chat Python connects directly.',
       systemHelp: 'Inherit proxy settings from the current system and process environment.',
       customHelp: 'Launch Chat Python with the environment variables below.',
+      githubMirror: 'GitHub mirror',
+      githubMirrorHelp: 'Optional HTTP(S) mirror prefix for GA Admin update packages and checksum files only. For example, https://mirror.example requests https://mirror.example/https://github.com/.... Leave blank to connect to GitHub directly. Takes effect immediately after saving.',
+      githubMirrorPlaceholder: 'For example, https://mirror.example',
     },
     remote: {
       title: 'Remote access',
@@ -296,6 +307,9 @@ export const SETTINGS_TEXT = {
       passwordTooShort: 'The password needs at least 8 characters.',
       confirmSet: 'Update the GA Admin access password? Remote connections will authenticate with the new credential.',
       confirmRemove: 'Remove the access password? Password-protected remote access cannot be enabled without one.',
+    },
+    keychain: {
+      title: 'Local keychain', eyebrow: 'Secure credentials', desc: 'Manage ~/ga_keychain.enc shared with GA. Only key names are shown; secret values are never displayed.', protected: 'Secret values stay hidden', inventory: 'Saved keys', inventoryDesc: 'Only names are read; secret values are never retrieved from the keychain.', editor: 'Add or update', editorDesc: 'A matching name replaces the old secret after confirmation.', loading: 'Loading key names…', retry: 'Retry', refresh: 'Refresh key names', keysLabel: 'keys', emptyHelp: 'Add the first credential on the right.', valueHelp: 'This value will not be shown again after submission.', saving: 'Saving…', pathLabel: 'Storage', name: 'Name', value: 'Secret value', add: 'Save key', remove: 'Remove', empty: 'No keys saved', confirmAdd: name => `Write key “${name}”?`, confirmRemove: name => `Remove key “${name}”?`, saved: 'Key saved.', removed: 'Key removed.', invalid: 'Enter both a name and a secret value.', loadFailed: 'Could not load key names.',
     },
     startup: {
       title: 'Startup',
@@ -366,6 +380,9 @@ export const SETUP_TEXT = {
       unselected: '待接管',
       existingLabel: '已有 GA 根目录',
       existingPlaceholder: '选择或粘贴 GA 根目录',
+      clipboard: '从剪贴板读取',
+      clipboardRead: '已从剪贴板读取路径。',
+      clipboardUnsupported: '当前窗口无法读取剪贴板，请允许剪贴板访问后重试。',
       validate: '验证并接管',
       or: '或',
       installLabel: '安装到父目录',
@@ -465,6 +482,9 @@ export const SETUP_TEXT = {
       unselected: 'Not configured',
       existingLabel: 'Existing GA root',
       existingPlaceholder: 'Choose or paste the GA root',
+      clipboard: 'Read from clipboard',
+      clipboardRead: 'Path read from the clipboard.',
+      clipboardUnsupported: 'This window cannot read the clipboard. Allow clipboard access and try again.',
       validate: 'Validate and use',
       or: 'or',
       installLabel: 'Install into parent directory',

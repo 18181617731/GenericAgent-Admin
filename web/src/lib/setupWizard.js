@@ -14,7 +14,22 @@ const EVIDENCE_STORE_KEY = 'ga-admin-setup-evidence'
 
 const toolNamed = (tools, name) => (Array.isArray(tools) ? tools : []).find(tool => tool?.name === name) || { name, ok: false }
 
-export const normalizeRootPath = (value) => String(value ?? '').trim().replace(/\\/g, '/').replace(/(?!^)\/+$/, '')
+export const normalizeRootPath = (value) => {
+  let path = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  // macOS Finder/Terminal may copy a quoted path or a file:// URL. Accept both
+  // forms so the native WKWebView does not make the operator retype it.
+  if ((path.startsWith('"') && path.endsWith('"')) || (path.startsWith("'") && path.endsWith("'"))) {
+    path = path.slice(1, -1).trim()
+  }
+  if (/^file:\/\//i.test(path)) {
+    try {
+      path = decodeURIComponent(new URL(path).pathname)
+    } catch {
+      path = path.replace(/^file:\/\//i, '')
+    }
+  }
+  return path.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/(?!^)\/+$/, '')
+}
 
 export const samePath = (a, b) => normalizeRootPath(a).toLowerCase() === normalizeRootPath(b).toLowerCase()
 

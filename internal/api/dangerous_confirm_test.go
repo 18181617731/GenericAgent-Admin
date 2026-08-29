@@ -353,6 +353,7 @@ func TestRegisteredGetRoutesDoNotReachUnreviewedSideEffects(t *testing.T) {
 		"/api/usage/overview":     true, // First GET migrates legacy per-message usage into the independent ledger.
 		"/api/setup/env":          true, // GET setup diagnostics intentionally run tool version probes (git/python/uv/npm).
 		"/api/tmwebdriver/status": true, // GET TMWebDriver diagnostics intentionally run local process/python dependency probes.
+		"/api/keychain":           true, // GET decrypts the local keychain to list names; it never writes or returns values.
 	}
 
 	var unreviewed []string
@@ -1068,6 +1069,9 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/files/write", `{}`},
 		{http.MethodPost, "/api/files/delete", `{}`},
 		{http.MethodPost, "/api/files/open", `{}`},
+		{http.MethodPost, "/api/local-cmd/open", `{}`},
+		{http.MethodPost, "/api/local-cmd/sessions", `{}`},
+		{http.MethodPost, "/api/local-cmd/sessions/", `{}`},
 		{http.MethodPost, "/api/schedule/task", `{}`},
 		{http.MethodPut, "/api/schedule/task", `{"id":"task","task":{}}`},
 		{http.MethodPost, "/api/schedule/create", `{}`},
@@ -1102,9 +1106,13 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPost, "/api/services/model", `{}`},
 		{http.MethodPost, "/api/autonomous/approvals", `{}`},
 		{http.MethodPost, "/api/autonomous/approvals/review", `{}`},
+		{http.MethodPost, "/api/autonomous/tasks", `{}`},
+		{http.MethodPost, "/api/autonomous/tasks/", `{}`},
+		{http.MethodPost, "/api/autonomous/runs/", `{}`},
 		{http.MethodPost, "/api/models/export", `{}`},
 		{http.MethodPut, "/api/models/title-model", `{"invalid_payload":true}`},
 		{http.MethodPut, "/api/channels", `{}`},
+		{http.MethodPut, "/api/keychain", `{}`},
 		{http.MethodPut, "/api/extra-system-prompt-presets", `{}`},
 		{http.MethodPost, "/api/chat/python/install-deps", `{}`},
 	}

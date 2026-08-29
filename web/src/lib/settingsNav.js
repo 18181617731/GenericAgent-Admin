@@ -7,7 +7,7 @@ export const SETTINGS_GROUPS = [
   { id: 'general', items: ['overview', 'settings', 'chat'] },
   { id: 'agent', items: ['models', 'instances', 'channels'] },
   { id: 'automation', items: ['tasks', 'goals', 'autonomous'] },
-  { id: 'system', items: ['files', 'usage', 'logs', 'notifications', 'memory'] },
+  { id: 'system', items: ['files', 'usage', 'logs', 'notifications', 'memory', 'local-cmd'] },
 ]
 
 export const settingsNavItems = () => SETTINGS_GROUPS.flatMap(group => group.items)

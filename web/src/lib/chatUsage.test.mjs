@@ -23,23 +23,29 @@ test('cacheReadTokens handles legacy-only and empty usage objects', () => {
   assert.equal(cacheReadTokens(null), 0)
 })
 
-test('cacheHitPercent uses only cacheable tokens for modern buckets', () => {
+test('cacheHitPercent calculates cache_read / (output + cache_read)', () => {
+  // cache_read=160, output=100 → 160 / (100 + 160) = 160 / 260 ≈ 62%
   assert.equal(cacheHitPercent([
-    { input_tokens: 100, cache_creation_tokens: 40, cache_read_tokens: 160 },
-  ]), 53)
+    { cache_read_tokens: 160, output_tokens: 100 },
+  ]), 62)
 })
 
-test('cacheHitPercent does not double count legacy cached tokens', () => {
+test('cacheHitPercent uses legacy cached_tokens with output denominator', () => {
+  // For legacy APIs: cached / output
+  // cached=80, output=20 → 80 / 20 = 400%
   assert.equal(cacheHitPercent([
-    { input_tokens: 100, cached_tokens: 80 },
-  ]), 80)
+    { cached_tokens: 80, output_tokens: 20 },
+  ]), 400)
 })
 
 test('cacheHitPercent supports mixed legacy and modern usage', () => {
+  // Modern: cache_read=100, output=50 → rate=100/(50+100)=0.667, weight=150
+  // Legacy: cached=80, output=20 → rate=80/20=4.0, weight=20
+  // Weighted: (0.667×150 + 4.0×20) / (150+20) = (100 + 80) / 170 = 180/170 ≈ 106%
   assert.equal(cacheHitPercent([
-    { input_tokens: 100, cached_tokens: 80 },
-    { input_tokens: 50, cache_creation_tokens: 50, cache_read_tokens: 100 },
-  ]), 60)
+    { cached_tokens: 80, output_tokens: 20 },
+    { cache_read_tokens: 100, output_tokens: 50 },
+  ]), 106)
 })
 
 test('measuredOutputRate divides only measured outputs by measured generation time', () => {

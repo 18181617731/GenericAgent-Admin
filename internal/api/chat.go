@@ -48,6 +48,9 @@ type chatMessage struct {
 	CtxChars        int                      `json:"ctx_chars,omitempty"`
 	CtxMsgs         int                      `json:"ctx_msgs,omitempty"`
 	ElapsedMS       int64                    `json:"elapsed_ms,omitempty"`
+	LLMElapsedMS    int64                    `json:"llm_elapsed_ms,omitempty"`
+	ToolElapsedMS   int64                    `json:"tool_elapsed_ms,omitempty"`
+	FirstTokenMS    int64                    `json:"first_token_ms,omitempty"`
 	RunStartedAtMS  int64                    `json:"run_started_at_ms,omitempty"`
 	UltraPlanState  map[string]interface{}   `json:"ultraplan_state,omitempty"`
 	GoalState       map[string]interface{}   `json:"goal_state,omitempty"`
@@ -216,6 +219,7 @@ type chatSession struct {
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
 	Loop                   chatLoopState            `json:"loop"`
+	QueuedMessages         []chatQueuedMessage      `json:"queued_messages,omitempty"`
 }
 
 const (
@@ -240,7 +244,22 @@ const (
 	chatTitleSourceManual    = "manual"
 )
 
-type chatUpload struct{ Name, Type, DataURL string }
+type chatUpload struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	DataURL string `json:"dataURL"`
+}
+
+type chatQueuedMessage struct {
+	ID              string       `json:"id"`
+	Text            string       `json:"text"`
+	Files           []chatUpload `json:"files,omitempty"`
+	LLMNo           int          `json:"llmNo"`
+	ReasoningEffort string       `json:"reasoningEffort,omitempty"`
+	QueuedAt        int64        `json:"queuedAt"`
+}
 
 type chatTitleExchange struct {
 	User               string `json:"user"`
@@ -270,6 +289,7 @@ var (
 
 type chatRun struct {
 	SID                string
+	QueueID            string
 	Events             [][]byte
 	Done               bool
 	Canceled           bool
@@ -551,6 +571,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	var taskOutputsAccumulator = make(map[string][]string)
 	var terminalLine []byte
 	var readErr error
+	var firstTokenMS int64
 	for {
 		line, err := readChatWorkerLine(reader)
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -577,6 +598,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				value := int(modelNo)
 				finalLLMNo = &value
 			}
+		}
+		if ev["type"] == "model_first_token" && firstTokenMS <= 0 {
+			firstTokenMS = elapsedMillis()
 		}
 		if ev["type"] == "ultraplan_event" {
 			if state := chatUltraPlanStateFromEvent(ev); state != nil {
@@ -656,6 +680,9 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			if final.ElapsedMS <= 0 {
 				final.ElapsedMS = elapsedMillis()
 			}
+			if firstTokenMS <= 0 {
+				firstTokenMS = final.ElapsedMS
+			}
 			if ev["type"] == "error" || final.Error {
 				normalizeChatErrorMessage(&final, "")
 				msg["content"] = final.Content
@@ -663,6 +690,18 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 				msg["error_info"] = final.ErrorInfo
 			}
 			msg["elapsed_ms"] = final.ElapsedMS
+			if firstTokenMS > 0 {
+				final.FirstTokenMS = firstTokenMS
+				msg["first_token_ms"] = firstTokenMS
+			}
+			if value, ok := ev["llm_elapsed_ms"].(float64); ok && value > 0 {
+				final.LLMElapsedMS = int64(value)
+				msg["llm_elapsed_ms"] = final.LLMElapsedMS
+			}
+			if value, ok := ev["tool_elapsed_ms"].(float64); ok && value > 0 {
+				final.ToolElapsedMS = int64(value)
+				msg["tool_elapsed_ms"] = final.ToolElapsedMS
+			}
 			ev["message"] = msg
 			final.Usage, final.Usages = chatUsageFromEvent(ev)
 			final.CtxChars, final.CtxMsgs = chatCtxStatsFromEvent(ev)
@@ -718,7 +757,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		if s.chatRunCanceled(sid) {
 			content := strings.TrimSpace(partial)
 			if content != "" {
-				content += "\n\n[已中止生成]"
+				content += "\n\n[用户手动中止生成]"
 			} else {
 				content = "已停止生成"
 			}
@@ -1096,11 +1135,19 @@ func chatSessionForClient(cs chatSession) chatSession {
 	return cs
 }
 
-func (s *Server) chatRunActive(sid string) bool {
+func (s *Server) chatRunState(sid string) (bool, string, int64) {
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[safeChatID(sid)]
-	return r != nil && !r.Done
+	if r == nil || r.Done {
+		return false, "", 0
+	}
+	return true, r.PendingAssistantID, r.RunStartedAtMS
+}
+
+func (s *Server) chatRunActive(sid string) bool {
+	running, _, _ := s.chatRunState(sid)
+	return running
 }
 
 func (s *Server) beginChatRun(sid string) *chatRun {
@@ -1310,7 +1357,7 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	}
 	content := strings.TrimSpace(chatPartialContentFromEvents(events))
 	if content != "" {
-		content += "\n\n[\u5df2\u4e2d\u6b62\u751f\u6210]"
+		content += "\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]"
 	} else {
 		content = "\u5df2\u505c\u6b62\u751f\u6210"
 	}
@@ -1696,6 +1743,9 @@ func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []model
 
 func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
 	item["provider"] = configured.provider
+	if configured.reasoningEffort != "" {
+		item["reasoning_effort"] = configured.reasoningEffort
+	}
 	if chatLLMModel(item) == "" {
 		item["model"] = configured.model
 	}
@@ -2252,6 +2302,7 @@ func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) 
 	candidate.Pinned = latest.Pinned
 	candidate.Archived = latest.Archived
 	candidate.Loop = latest.Loop
+	candidate.QueuedMessages = latest.QueuedMessages
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title
@@ -2842,6 +2893,19 @@ func chatUploadPromptRef(path, name, mime string) string {
 		return "[image:" + path + "]"
 	}
 	return "[FILE:" + path + "]"
+}
+
+func chatVisionImagePaths(files []map[string]interface{}) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		path, _ := file["path"].(string)
+		path = strings.TrimSpace(path)
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func sanitizeChatUploadName(name string) string {

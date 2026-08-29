@@ -2,21 +2,30 @@ import React, { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, Eye, FileText, History, LoaderCircle, Play, Power, Square, Trash2 } from 'lucide-react'
-import { effectiveScheduleModelNo, hasScheduleTaskModel } from '../lib/schedule'
+import { effectiveScheduleModelNo, hasScheduleTaskModel, normalizeScheduleModelNo } from '../lib/schedule'
 import { firstRuntimeModelNo, runtimeModelDescription } from '../lib/modelDefaults.js'
+import { ModelCascadePicker } from './ModelCascadePicker.jsx'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from './ModelProviderCascade.jsx'
 
-const taskRunState = task => task?.latest_run?.status || 'never_run'
+export const taskState = (task) => {
+  const status = String(task?.status || '').toUpperCase()
+  if (task?.error || status === 'ERROR' || status === 'OVERDUE') return 'error'
+  return task.enabled ? 'enabled' : 'disabled'
+}
 
-const taskRunStateLabel = (state, t) => {
-  const zh = t.autostart === '开机自启'
+export const taskStateLabel = (state, t) => state === 'error' ? (t.tasks?.anomaly || t.error) : (state === 'enabled' ? t.enabled : t.disabled)
+
+export const taskRunState = task => task?.latest_run?.status || 'never_run'
+
+export const taskRunStateLabel = (state, t) => {
+  const zh = t?.autostart === '开机自启'
   const labels = zh
     ? { success: '成功', partial: '部分完成', blocked: '阻塞', waiting: '等待中', failed: '失败', skipped: '已跳过', unknown: '结果未知', never_run: '未运行' }
     : { success: 'Success', partial: 'Partial', blocked: 'Blocked', waiting: 'Waiting', failed: 'Failed', skipped: 'Skipped', unknown: 'Unknown', never_run: 'Never run' }
   return labels[state] || labels.unknown
 }
 
-const taskModelLabel = (task, llms, t, schedulerModelNo) => {
+export const taskModelLabel = (task, llms, t, schedulerModelNo) => {
   const modelNo = effectiveScheduleModelNo(task, schedulerModelNo)
   const model = llms.find(item => Number(item?.index) === modelNo)
   const modelText = model
@@ -27,6 +36,38 @@ const taskModelLabel = (task, llms, t, schedulerModelNo) => {
     ? (t.tasks.taskModelPrefix || (zh ? '任务指定模型' : 'Task model'))
     : (t.tasks.schedulerModelPrefix || (zh ? '调度器实际模型' : 'Scheduler actual model'))
   return `${prefix}${zh ? '：' : ': '}${modelText}`
+}
+
+export const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo = 0 }) => {
+  const text = t.tasks
+  let data
+  try { data = JSON.parse(value) } catch {}
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return <textarea className="json-editor compact-editor" value={value} placeholder={text.parseFailed} onChange={event => onChange(event.target.value)}/>
+  }
+  const updateField = (key, val) => onChange(JSON.stringify({ ...data, [key]: val }, null, 2))
+  const updateModel = modelValue => {
+    const next = { ...data }
+    if (modelValue === '') delete next.llm_no
+    else next.llm_no = Number(modelValue)
+    onChange(JSON.stringify(next, null, 2))
+  }
+  const extraKeys = Object.keys(data).filter(key => !['enabled', 'max_delay_hours', 'repeat', 'schedule', 'prompt', 'llm_no'].includes(key))
+  const repeatOptions = ['manual', 'daily', 'weekly', 'every_2h', 'every_4h', 'every_6h', 'every_8h', 'every_12h', 'once']
+  const taskModels = llms.filter(model => Number.isInteger(Number(model?.index)) && Number(model.index) >= 0)
+  const schedulerNo = normalizeScheduleModelNo(schedulerModelNo)
+  const schedulerModel = taskModels.find(model => Number(model.index) === schedulerNo)
+  const schedulerText = schedulerModel ? runtimeModelDescription(schedulerModel, text.unnamedModel) : `#${schedulerNo}`
+  const followLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
+  return <div className="schedule-form-editor">
+    <div className="form-field"><label>{text.enabledLabel}</label><label className="toggle-switch"><input type="checkbox" checked={!!data.enabled} onChange={event => updateField('enabled', event.target.checked)}/><span className="toggle-slider"></span><span className="toggle-label">{data.enabled ? t.enabled : t.disabled}</span></label></div>
+    <div className="form-field"><label>{text.maxDelay}</label><input type="number" value={data.max_delay_hours ?? ''} onChange={event => updateField('max_delay_hours', event.target.value ? parseInt(event.target.value, 10) : 0)}/></div>
+    <div className="form-field"><label>{text.repeat}</label><select value={data.repeat || ''} onChange={event => updateField('repeat', event.target.value)}><option value="">{text.choose}</option>{repeatOptions.map(option => <option key={option} value={option}>{option}</option>)}</select></div>
+    <div className="form-field"><label>{text.schedule}</label><input type="text" value={data.schedule || ''} onChange={event => updateField('schedule', event.target.value)} placeholder={text.schedulePlaceholder}/></div>
+    <div className="form-field"><label>{text.executionModel}</label><ModelCascadePicker models={taskModels} value={data.llm_no ?? ''} allowDefault defaultLabel={`${followLabel}${t.autostart === '开机自启' ? '：' : ': '}${schedulerText}`} label="" showLabel={false} placement="auto" align="start" className="schedule-task-model-cascade" onChange={updateModel}/><small>{text.executionModelHelp}</small></div>
+    <div className="form-field"><label>{text.prompt}</label><textarea value={data.prompt || ''} onChange={event => updateField('prompt', event.target.value)} placeholder={text.promptPlaceholder}/></div>
+    {extraKeys.length > 0 && <details className="extra-fields"><summary>{text.extraFields} ({extraKeys.length})</summary><pre>{JSON.stringify(Object.fromEntries(extraKeys.map(key => [key, data[key]])), null, 2)}</pre></details>}
+  </div>
 }
 
 export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, onEdit, onDelete, onRun, onReports, runState: activeRunState = null, selected = false }) {
@@ -100,6 +141,28 @@ export function ScheduleReportTree({ tasks = [], selectedPath, onSelect, focusTa
         </div>}
       </section>
     }) : <p className="muted">{t.empty}</p>}
+  </div>
+}
+
+const reportDisplayTime = report => {
+  if (!report?.mod_time) return ''
+  const date = new Date(report.mod_time)
+  return Number.isNaN(date.getTime()) ? String(report.mod_time) : date.toLocaleString()
+}
+
+export function ScheduleTaskHistory({ task, selectedPath, onSelect, t }) {
+  const text = t?.tasks || {}
+  const id = task?.id || task?.name || text.unnamed || 'task'
+  const reports = (task?.recent_reports || []).slice(0, 30)
+  if (!task) return <p className="muted">{t?.empty || '暂无'}</p>
+  if (!reports.length) return <p className="muted">{text.noReports || '暂无执行记录'}</p>
+  return <div className="schedule-task-history" aria-label={`${id} ${t?.lists?.recentReports || 'Execution records'}`}>
+    <div className="schedule-task-history-summary">{text.reportCount ? text.reportCount(reports.length) : `${reports.length} records`}</div>
+    <div className="schedule-report-items">
+      {reports.map(report => <button type="button" key={report.path} className={selectedPath === report.path ? 'active' : ''} aria-current={selectedPath === report.path ? 'true' : undefined} onClick={() => onSelect?.(report.path)}>
+        <FileText size={15}/><span><b>{report.name || report.path}</b><small>{reportDisplayTime(report)}</small></span>
+      </button>)}
+    </div>
   </div>
 }
 

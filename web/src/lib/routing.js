@@ -1,4 +1,4 @@
-export const NAV_ITEMS = ['overview','instances','chat','notifications','files','memory','channels','tasks','autonomous','usage','goals','models','settings','logs']
+export const NAV_ITEMS = ['overview','instances','chat','notifications','files','memory','local-cmd','channels','tasks','autonomous','usage','goals','models','settings','logs']
 export const ROUTE_TABS = NAV_ITEMS
 export const TASK_SUB_TABS = ['scheduled','reports']
 

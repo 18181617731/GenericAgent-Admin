@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -35,6 +36,187 @@ func saveChatLoopTestSession(t *testing.T, s *Server, cs chatSession) {
 	}
 	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatalf("save chat session: %v", err)
+	}
+}
+
+func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "queue-after-completed-run"
+	saveChatLoopTestSession(t, s, chatSession{
+		ID:       sid,
+		Messages: []chatMessage{{ID: "assistant-old", Role: "assistant", Content: "done"}},
+		QueuedMessages: []chatQueuedMessage{{
+			ID: "queued-1", Text: "send me next",
+		}},
+	})
+
+	completed := s.beginChatRun(sid)
+	if completed == nil {
+		t.Fatal("failed to create completed run fixture")
+	}
+	s.endChatRunOwned(sid, completed)
+	if s.chatRunActive(sid) {
+		t.Fatal("completed run is still active")
+	}
+
+	s.processNextQueuedMessage(sid)
+
+	s.ChatMu.Lock()
+	started := s.ChatRuns[sid]
+	s.ChatMu.Unlock()
+	if started == nil || started == completed {
+		t.Fatalf("queued run token = %p, want a new token after completed %p", started, completed)
+	}
+
+	s.ChatMu.Lock()
+	events := append([][]byte(nil), started.Events...)
+	s.ChatMu.Unlock()
+	if len(events) < 2 {
+		t.Fatalf("queued run events = %q, want user before queue_item_start", events)
+	}
+	var userEvent struct {
+		Type    string      `json:"type"`
+		Message chatMessage `json:"message"`
+	}
+	if err := json.Unmarshal(events[0], &userEvent); err != nil {
+		t.Fatalf("decode queued user event: %v", err)
+	}
+	if userEvent.Type != "user" || userEvent.Message.ID == "" || userEvent.Message.Role != "user" || userEvent.Message.Content != "send me next" {
+		t.Fatalf("queued user event = %#v", userEvent)
+	}
+	var startEvent struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(events[1], &startEvent); err != nil || startEvent.Type != "queue_item_start" {
+		t.Fatalf("event after queued user = %q, decoded=%#v err=%v", events[1], startEvent, err)
+	}
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.QueuedMessages) != 0 {
+		t.Fatalf("queued messages = %#v, want consumed", stored.QueuedMessages)
+	}
+	if len(stored.Messages) < 3 || stored.Messages[len(stored.Messages)-2].Role != "user" || stored.Messages[len(stored.Messages)-2].Content != "send me next" {
+		t.Fatalf("messages = %#v, want queued user message followed by pending assistant", stored.Messages)
+	}
+	if stored.Messages[len(stored.Messages)-2].ID != userEvent.Message.ID {
+		t.Fatalf("stream user id = %q, persisted user id = %q", userEvent.Message.ID, stored.Messages[len(stored.Messages)-2].ID)
+	}
+}
+
+func TestChatGuideCancelsActiveRunAndStartsSelectedQueueItem(t *testing.T) {
+	capturedReq := make(chan map[string]interface{}, 1)
+	releaseWorker := make(chan struct{})
+	oldStart := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			var req map[string]interface{}
+			_ = json.NewDecoder(stdinR).Decode(&req)
+			capturedReq <- req
+			<-releaseWorker
+		}()
+		return &chatWorker{SID: "guide-interrupts-active-run", Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() {
+		close(releaseWorker)
+		startChatWorkerFunc = oldStart
+	}()
+
+	s := newChatLoopTestServer(t)
+	sid := "guide-interrupts-active-run"
+	const pendingID = "assistant-active"
+	saveChatLoopTestSession(t, s, chatSession{
+		ID: sid,
+		Messages: []chatMessage{
+			{ID: "user-active", Role: "user", Content: "current request", CreatedAt: 1},
+			{ID: pendingID, Role: "assistant", CreatedAt: 2, RunStartedAtMS: 1234},
+		},
+		QueuedMessages: []chatQueuedMessage{
+			{ID: "queued-first", Text: "leave me queued"},
+			{ID: "queued-guide", Text: "run this guidance now"},
+		},
+	})
+
+	active := s.beginChatRun(sid)
+	if active == nil {
+		t.Fatal("failed to create active run")
+	}
+	s.ChatMu.Lock()
+	active.PendingAssistantID = pendingID
+	active.RunStartedAtMS = 1234
+	s.ChatMu.Unlock()
+	s.publishChatRun(sid, map[string]interface{}{"type": "delta", "delta": "partial answer"})
+
+	rr := httptest.NewRecorder()
+	s.chatGuidePost(rr, httptest.NewRequest(http.MethodPost, "/api/chat/guide/"+sid+"/queued-guide", nil), sid, "queued-guide")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guide status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"started"`) {
+		t.Fatalf("guide body=%s, want started", rr.Body.String())
+	}
+	if !active.Canceled {
+		t.Fatal("guide did not cancel the active run")
+	}
+
+	s.ChatMu.Lock()
+	started := s.ChatRuns[sid]
+	s.ChatMu.Unlock()
+	if started == nil || started == active {
+		t.Fatalf("guide run token = %p, want replacement for %p", started, active)
+	}
+	defer s.endChatRunOwned(sid, started)
+
+	stored, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.QueuedMessages) != 1 || stored.QueuedMessages[0].ID != "queued-first" {
+		t.Fatalf("queued messages = %#v, want untouched first item", stored.QueuedMessages)
+	}
+	if len(stored.Messages) < 4 {
+		t.Fatalf("messages = %#v, want canceled output and guided turn", stored.Messages)
+	}
+	if got := stored.Messages[len(stored.Messages)-2]; got.Role != "user" || got.Content != "run this guidance now" {
+		t.Fatalf("guided user message = %#v", got)
+	}
+	var canceled chatMessage
+	for _, msg := range stored.Messages {
+		if msg.ID == pendingID {
+			canceled = msg
+			break
+		}
+	}
+	if canceled.Content != "partial answer\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]" || !canceled.Error {
+		t.Fatalf("canceled partial message = %#v", canceled)
+	}
+
+	select {
+	case req := <-capturedReq:
+		if req["prompt"] != "run this guidance now" {
+			t.Fatalf("worker prompt = %#v", req["prompt"])
+		}
+		history, ok := req["history"].([]interface{})
+		if !ok || len(history) != 2 {
+			t.Fatalf("worker history = %#v, want interrupted user/assistant pair only", req["history"])
+		}
+		first, _ := history[0].(map[string]interface{})
+		second, _ := history[1].(map[string]interface{})
+		if first["content"] != "current request" || second["content"] != "partial answer\n\n[\u7528\u6237\u624b\u52a8\u4e2d\u6b62\u751f\u6210]" {
+			t.Fatalf("worker history lost interrupted turn: %#v", history)
+		}
+		rawHistory, ok := req["raw_history"].([]interface{})
+		if !ok || len(rawHistory) != 2 {
+			t.Fatalf("worker raw_history = %#v, want interrupted raw turn", req["raw_history"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for guided worker request")
 	}
 }
 
@@ -267,6 +449,38 @@ func TestChatLoopStateAppearsInSessionAPIs(t *testing.T) {
 	}
 	if len(listPayload.Sessions) != 1 || listPayload.Sessions[0].ID != sid || !reflect.DeepEqual(listPayload.Sessions[0].Loop, want) {
 		t.Fatalf("sessions payload = %#v", listPayload.Sessions)
+	}
+}
+
+func TestChatStateShipsActiveRunIdentity(t *testing.T) {
+	s := newChatLoopTestServer(t)
+	sid := "state-run-identity"
+	token := s.beginChatRun(sid)
+	if token == nil {
+		t.Fatal("beginChatRun returned nil")
+	}
+	const pendingID = "assistant-pending"
+	const startedAtMS int64 = 1787725441243
+	owned, err := s.saveChatRunPending(sid, token, pendingID, startedAtMS, func() error { return nil })
+	if err != nil || !owned {
+		t.Fatalf("saveChatRunPending owned=%v err=%v", owned, err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.chatState(rec, httptest.NewRequest(http.MethodGet, "/api/chat/state/"+sid, nil), sid)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Running            bool   `json:"running"`
+		PendingAssistantID string `json:"pending_assistant_id"`
+		RunStartedAtMS     int64  `json:"run_started_at_ms"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Running || payload.PendingAssistantID != pendingID || payload.RunStartedAtMS != startedAtMS {
+		t.Fatalf("state run identity = %#v", payload)
 	}
 }
 

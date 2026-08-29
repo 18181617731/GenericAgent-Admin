@@ -148,6 +148,29 @@ func TestRemoteAccessAllowsAnonymousWhenOptedIn(t *testing.T) {
 	if got := authRequest(handler, http.MethodGet, "/api/config", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusNoContent {
 		t.Fatalf("anonymous remote request = %d, want 204", got.Code)
 	}
+	if got := authRequest(handler, http.MethodGet, "/api/local-cmd/sessions/abc", "192.168.1.2:5000", "", "", nil); got.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous remote local CMD request = %d, want 401", got.Code)
+	}
+}
+
+func TestRemoteLocalCmdAcceptsConfiguredBasicAuth(t *testing.T) {
+	root := t.TempDir()
+	store := testConfigStore(t, root, func(cfg *config.AppConfig) {
+		cfg.RemoteAccess = true
+		cfg.RemoteAllowAnonymous = true
+	})
+	manager, err := newManager(root, "", "", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := manager.Middleware(okHandler())
+	password := "Abc12345"
+	if got := authRequest(handler, http.MethodPost, authPasswordPath, "127.0.0.1:5000", "", "", setPasswordRequest{NewPassword: password, ConfirmPassword: password}); got.Code != http.StatusOK {
+		t.Fatalf("set password = %d", got.Code)
+	}
+	if got := authRequest(handler, http.MethodGet, "/api/local-cmd/sessions/abc", "192.168.1.2:5000", "admin", password, nil); got.Code != http.StatusNoContent {
+		t.Fatalf("authenticated remote local CMD request = %d, want 204", got.Code)
+	}
 }
 
 func TestPasswordEndpointRejectsUnauthenticatedRemoteClients(t *testing.T) {

@@ -135,10 +135,19 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     return result.path
   })
 
-  const validateRoot = () => {
+  const readClipboard = () => run('setup-clipboard', async () => {
+    if (!globalThis.navigator?.clipboard?.readText) throw new Error(text.root.clipboardUnsupported)
+    const value = normalizeRootPath(await globalThis.navigator.clipboard.readText())
+    if (!value) return reject(text.runtime.blocked.noRoot)
+    setRootDraft(value)
+    setNotice({ tone: 'success', text: text.root.clipboardRead })
+    return value
+  })
+
+  const validateRoot = async () => {
     const target = normalizeRootPath(rootDraft)
     if (!target) return reject(text.runtime.blocked.noRoot)
-    if (!confirmDanger('setup-validate', text.confirm.validate(target))) return null
+    if (!await confirmDanger('setup-validate', text.confirm.validate(target))) return null
     return run('setup-validate', async () => {
       const result = await api('/api/setup/validate', { dangerous: true, method: 'POST', body: JSON.stringify({ path: target }) })
       await reload()
@@ -149,11 +158,11 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const installGA = () => {
+  const installGA = async () => {
     const parent = normalizeRootPath(installDraft)
     if (!parent) return reject(text.messages.needInstallParent)
     const source = env.git.ok ? text.root.sourceGit : text.root.sourceArchive
-    if (!confirmDanger('setup-install', text.confirm.install(source, parent, installTargetPath(parent)))) return null
+    if (!await confirmDanger('setup-install', text.confirm.install(source, parent, installTargetPath(parent)))) return null
     return run('setup-install', async () => {
       const result = await api('/api/setup/install', { dangerous: true, method: 'POST', body: JSON.stringify({ path: parent }) })
       if (result?.root) setRootDraft(result.root)
@@ -165,10 +174,10 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const validatePython = () => {
+  const validatePython = async () => {
     const candidate = pythonDraft.trim()
     if (!candidate) return reject(text.env.pythonPathRequired)
-    if (!confirmDanger('setup-python-validate', text.confirm.pythonPath(candidate))) return null
+    if (!await confirmDanger('setup-python-validate', text.confirm.pythonPath(candidate))) return null
     return run('setup-python-validate', async () => {
       const result = await api('/api/setup/python/validate', {
         dangerous: true,
@@ -182,9 +191,9 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const installPython = () => {
+  const installPython = async () => {
     if (!env.canInstallPython) return reject(text.env.pythonInstallerUnavailable)
-    if (!confirmDanger('setup-python-install', text.confirm.python)) return null
+    if (!await confirmDanger('setup-python-install', text.confirm.python)) return null
     return run('setup-python-install', async () => {
       const result = await api('/api/setup/python/install', { dangerous: true, method: 'POST', body: JSON.stringify({}) })
       await reload()
@@ -193,10 +202,10 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const createVenv = () => {
+  const createVenv = async () => {
     const target = progress.savedRoot
     if (!target) return reject(text.runtime.blocked.noRoot)
-    if (!confirmDanger('setup-venv-create', text.confirm.venv(target))) return null
+    if (!await confirmDanger('setup-venv-create', text.confirm.venv(target))) return null
     return run('setup-venv-create', async () => {
       const result = await api('/api/setup/venv/create', { dangerous: true, method: 'POST', body: JSON.stringify({ root: target }) })
       await reload()
@@ -205,10 +214,10 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const installDeps = () => {
+  const installDeps = async () => {
     const target = progress.savedRoot
     if (!target) return reject(text.runtime.blocked.noRoot)
-    if (!confirmDanger('setup-deps-install', text.confirm.deps(target, progress.python || 'python'))) return null
+    if (!await confirmDanger('setup-deps-install', text.confirm.deps(target, progress.python || 'python'))) return null
     return run('setup-deps-install', async () => {
       setLogLines([])
       setNotice({ tone: 'info', text: text.messages.depsRunning })
@@ -226,10 +235,10 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const runSmoke = () => {
+  const runSmoke = async () => {
     const target = progress.savedRoot
     if (!target) return reject(text.runtime.blocked.noRoot)
-    if (!confirmDanger('setup-smoke', text.confirm.smoke(target))) return null
+    if (!await confirmDanger('setup-smoke', text.confirm.smoke(target))) return null
     return run('setup-smoke', async () => {
       let result
       try {
@@ -249,11 +258,11 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     })
   }
 
-  const finish = () => {
+  const finish = async () => {
     const target = progress.savedRoot
     if (!target) return reject(text.runtime.blocked.noRoot)
     const question = progress.depsReady ? text.confirm.finish : text.confirm.finishUnverified
-    if (!confirmDanger('setup-complete', question)) return null
+    if (!await confirmDanger('setup-complete', question)) return null
     return run('setup-complete', async () => {
       const result = await api('/api/setup/complete', { dangerous: true, method: 'POST', body: JSON.stringify({ root: target }) })
       setNotice({ tone: 'success', text: text.messages.completing })
@@ -282,6 +291,7 @@ export function useSetupWizard({ text, initialRoot = '', onComplete } = {}) {
     logLines,
     refresh,
     browse,
+    readClipboard,
     validateRoot,
     installGA,
     validatePython,

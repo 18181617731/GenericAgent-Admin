@@ -140,7 +140,7 @@ func (a *Manager) Middleware(next http.Handler) http.Handler {
 // authorize reports whether a non-loopback request may proceed, answering it
 // with a challenge when it may not.
 func (a *Manager) authorize(w http.ResponseWriter, r *http.Request) bool {
-	if a.anonymousRemoteAllowed() {
+	if a.anonymousRemoteAllowed() && !requiresLocalCmdAuthentication(r.URL.Path) {
 		return true
 	}
 	if a.authenticateRequest(r) {
@@ -148,6 +148,10 @@ func (a *Manager) authorize(w http.ResponseWriter, r *http.Request) bool {
 	}
 	a.challenge(w)
 	return false
+}
+
+func requiresLocalCmdAuthentication(path string) bool {
+	return path == "/api/local-cmd" || strings.HasPrefix(path, "/api/local-cmd/")
 }
 
 func (a *Manager) challenge(w http.ResponseWriter) {

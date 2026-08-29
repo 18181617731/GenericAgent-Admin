@@ -119,7 +119,7 @@ export function useModelsConfig({ t, lang, setMsg, setBusy, active, onPersist })
   // draft carries it as list position, which is what the user actually
   // dragged.
   const saveAll = async () => {
-    if (!confirmDanger('models-save', lang === 'zh' ? '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？' : 'Saving model configuration updates mykey.py and may overwrite the active configuration. Continue?')) return false
+    if (!await confirmDanger('models-save', lang === 'zh' ? '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？' : 'Saving model configuration updates mykey.py and may overwrite the active configuration. Continue?')) return false
     const nextProfiles = applyProviderOrder(profiles)
     const cleanGroups = normalizeFailoverGroups(failoverGroups)
     setSaveState({ status: 'saving', error: '', savedAt: null })

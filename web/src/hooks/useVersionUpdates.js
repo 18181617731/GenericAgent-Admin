@@ -89,7 +89,7 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
   }
 
   const updateVersion = async () => {
-    if (!confirmDanger('version-update', t.overview.versionUpdateConfirm)) return
+    if (!await confirmDanger('version-update', t.overview.versionUpdateConfirm)) return
     setVersionBusy(true)
     try {
       restartGraceUntil.current = beginVersionRestartGrace()
@@ -122,7 +122,7 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy }) {
     const prompt = lang === 'zh'
       ? (next ? '启用 GA Admin 开机自启动？' : '禁用 GA Admin 开机自启动？')
       : (next ? 'Enable GA Admin at login?' : 'Disable GA Admin at login?')
-    if (!confirmDanger('admin-autostart', prompt)) return
+    if (!await confirmDanger('admin-autostart', prompt)) return
     setBusy(true); setMsg('')
     try {
       const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { dangerous:true, method:'POST' })

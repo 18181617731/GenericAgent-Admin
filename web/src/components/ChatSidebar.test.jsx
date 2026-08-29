@@ -93,7 +93,7 @@ describe('ChatSidebar', () => {
   })
 
   test('should switch between sessions and projects tabs and create a project chat', () => {
-    const props = baseProps()
+    const props = baseProps({ projectGroups:[...projectGroups, { name:'EmptyProject', sessions:[] }] })
     function ProjectHarness() {
       const [tab, setTab] = useState('history')
       const [expanded, setExpanded] = useState(new Set())
@@ -121,11 +121,15 @@ describe('ChatSidebar', () => {
 
     fireEvent.click(projectsTab)
     expect(projectsTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector('.oa-session-manager-title small')?.textContent).toBe('2')
     const expand = screen.getByRole('button', { name: '展开 GenericAgent' })
+    const projectBody = document.querySelector('.oa-project-body')
+    expect(projectBody?.hidden).toBe(true)
     fireEvent.click(expand)
     fireEvent.click(screen.getByRole('button', { name: '在 GenericAgent 中新建对话' }))
 
     expect(expand.getAttribute('aria-expanded')).toBe('true')
+    expect(projectBody?.hidden).toBe(false)
     expect(props.onNewProjectSession).toHaveBeenCalledWith('GenericAgent')
   })
 

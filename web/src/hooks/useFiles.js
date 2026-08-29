@@ -87,8 +87,8 @@ export function useFiles({ t, setMsg, setBusy, onOpen }) {
 
   const saveFile = async () => {
     if (!loadedPath || !path || !fileEditorDirty(content, loadedContent)) return
-    if (path !== loadedPath && !confirmDanger('files-retarget', `Editor content was loaded from ${loadedPath}, but will be saved to ${path}. Continue?`)) return
-    if (!confirmDanger('files-write', `Write file ${path}? This overwrites content and the backend will create a backup.`)) return
+    if (path !== loadedPath && !await confirmDanger('files-retarget', `Editor content was loaded from ${loadedPath}, but will be saved to ${path}. Continue?`)) return
+    if (!await confirmDanger('files-write', `Write file ${path}? This overwrites content and the backend will create a backup.`)) return
     setBusy(true)
     setStatus({ kind: 'pending', action: 'save', message: `Saving ${path}...` })
     try {
@@ -121,7 +121,7 @@ export function useFiles({ t, setMsg, setBusy, onOpen }) {
 
   const deleteFile = async (target = path) => {
     if (!target) return
-    if (!confirmDanger('files-delete', `Delete ${target}? This removes the file or directory under GA root.`)) return
+    if (!await confirmDanger('files-delete', `Delete ${target}? This removes the file or directory under GA root.`)) return
     setBusy(true)
     try {
       await api('/api/files/delete', { dangerous:true, method:'POST', body: JSON.stringify({ path: target }) })

@@ -52,6 +52,7 @@ test('effectiveScheduleModelNo resolves task overrides and scheduler fallback', 
 
 test('schedule UI refreshes /api/schedule/tasks and confirms dangerous create', () => {
   const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
+  const workbench = readFileSync(new URL('../components/ScheduledTaskWorkbench.jsx', import.meta.url), 'utf8')
   assert.match(app, /api\('\/api\/schedule\/tasks'\)/)
   assert.match(app, /const loadScheduleTasks = async/)
   assert.match(app, /setScheduleError\(e\.message\)/)
@@ -63,8 +64,8 @@ test('schedule UI refreshes /api/schedule/tasks and confirms dangerous create', 
   assert.match(app, /api\('\/api\/schedule\/create', \{ dangerous:true, method:'POST'/)
   assert.ok(app.includes("api('/api/schedule/run'"))
   assert.ok(app.includes('/api/schedule/run/status?run_id='))
-  assert.match(app, /<RefreshCw size=\{14\}\/>\{t\.refresh\}/)
-  assert.match(app, /\{t\.hints\.noTasks\}/)
+  assert.match(workbench, /<RefreshCw size=\{15\}\/>/)
+  assert.match(workbench, /copy\.noMatch/)
 })
 
 
@@ -109,14 +110,17 @@ test('normalizeScheduleTasksPayload preserves a valid task model selection', () 
 test('schedule UI exposes model selection, card editing, and grouped markdown reports', () => {
   const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
   const component = readFileSync(new URL('../components/schedule.jsx', import.meta.url), 'utf8')
+  const workbench = readFileSync(new URL('../components/ScheduledTaskWorkbench.jsx', import.meta.url), 'utf8')
   assert.match(app, /const known = \['enabled','max_delay_hours','repeat','schedule','prompt','llm_no'\]/)
   assert.match(app, /<ScheduleReportTree tasks=\{tasks\}/)
   assert.match(app, /schedulerModelNo/)
-  assert.match(app, /followSchedulerLabel/)
-  assert.match(app, /selected=\{taskId === \(task\.id \|\| task\.name\)\}/)
+  assert.match(component, /followLabel/)
+  assert.match(workbench, /aria-selected=\{selected\}/)
+  assert.match(workbench, /onSelect=\{loadTask\}/)
   assert.match(component, /task-run-\$\{runState\}/)
   assert.match(component, /task\.latest_run\?\.reason \|\| task\.latest_run\?\.summary/)
   assert.match(component, /task-config-state/)
+  assert.match(workbench, /task-run-\$\{runState\}/)
   assert.match(component, /Scheduler actual model/)
   assert.match(component, /Start with GA Admin/)
   assert.match(component, /is-selected/)

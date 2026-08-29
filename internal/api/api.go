@@ -67,6 +67,8 @@ type Server struct {
 	instanceInstallWG       sync.WaitGroup
 	instanceInstallTasks    map[string]*instanceInstallTask
 	instanceInstallsClosing bool
+	localCmdMu              sync.Mutex
+	localCmdSessions        *localCmdRegistry
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
@@ -147,6 +149,15 @@ func (s *Server) passwordConfigured() bool {
 	return s.PasswordConfigured()
 }
 
+func (s *Server) localCmdRegistry() *localCmdRegistry {
+	s.localCmdMu.Lock()
+	defer s.localCmdMu.Unlock()
+	if s.localCmdSessions == nil {
+		s.localCmdSessions = newLocalCmdRegistry()
+	}
+	return s.localCmdSessions
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.health)
@@ -155,6 +166,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/version/check", s.versionCheck)
 	mux.HandleFunc("/api/version/status", s.versionStatus)
 	mux.HandleFunc("/api/risk/catalog", s.riskCatalog)
+	mux.HandleFunc("/api/keychain", s.requireDangerousConfirm(s.keychainHandler))
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
 	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
 	mux.HandleFunc("/api/ga/health", s.gaHealth)
@@ -200,6 +212,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
+	mux.HandleFunc("/api/local-cmd/open", s.requireDangerousConfirm(s.localCmdOpen))
+	mux.HandleFunc("/api/local-cmd/directories", s.localCmdDirectories)
+	mux.HandleFunc("/api/local-cmd/sessions", s.requireDangerousConfirm(s.localCmdCreateSession))
+	mux.HandleFunc("/api/local-cmd/sessions/", s.requireDangerousConfirm(s.localCmdSessionRoute))
 	mux.HandleFunc("/api/setup/validate", s.requireDangerousConfirm(s.setupValidate))
 	mux.HandleFunc("/api/setup/install", s.requireDangerousConfirm(s.setupInstall))
 	mux.HandleFunc("/api/setup/python/validate", s.requireDangerousConfirm(s.setupPythonValidate))
@@ -220,6 +236,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/services/model", s.requireDangerousConfirm(s.serviceModel))
 	mux.HandleFunc("/api/autonomous/approvals", s.requireDangerousConfirm(s.autonomousApprovals))
 	mux.HandleFunc("/api/autonomous/approvals/review", s.requireDangerousConfirm(s.autonomousApprovalReview))
+	mux.HandleFunc("/api/autonomous/tasks", s.requireDangerousConfirm(s.autonomousTasks))
+	mux.HandleFunc("/api/autonomous/tasks/", s.requireDangerousConfirm(s.autonomousTasks))
+	mux.HandleFunc("/api/autonomous/runs/", s.requireDangerousConfirm(s.autonomousRuns))
 	mux.HandleFunc("/api/logs/", s.logs)
 	mux.HandleFunc("/api/ga/processes", s.gaProcesses)
 	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.killGAProcess))
@@ -303,6 +322,9 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/write", Level: "dangerous", Action: "write_file", Reason: "writes into GA workspace; handler creates backup before overwrite"},
 	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
+	{Path: "/api/local-cmd/open", Level: "dangerous", Action: "open_local_cmd_legacy", Reason: "legacy endpoint starts a visible local Windows cmd.exe window; remote UI does not call it"},
+	{Path: "/api/local-cmd/sessions", Level: "dangerous", Action: "create_remote_cmd_session", Reason: "starts a Windows ConPTY cmd.exe session reachable through the authenticated Admin browser"},
+	{Path: "/api/local-cmd/sessions/", Level: "dangerous", Action: "control_remote_cmd_session", Reason: "writes input, resizes, or terminates a remote Windows ConPTY session"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
@@ -328,6 +350,10 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/services/model", Level: "reversible", Action: "set_service_model", Reason: "changes the persisted model used to launch a reflect/autonomous service"},
 	{Path: "/api/autonomous/approvals", Level: "reversible", Action: "decide_autonomous_approval", Reason: "records a user approval decision; approved items are queued once in GA temp/TODO.txt for SOP-governed execution"},
 	{Path: "/api/autonomous/approvals/review", Level: "reversible", Action: "review_autonomous_approval", Reason: "sends pending autonomous proposals to the configured review model; does not approve or execute them"},
+	{Path: "/api/autonomous/tasks", Level: "reversible", Action: "manage_autonomous_tasks", Reason: "creates and updates the versioned autonomous task, run, and event ledgers"},
+	{Path: "/api/autonomous/tasks/", Level: "reversible", Action: "control_autonomous_task", Reason: "changes autonomous task execution state and records an auditable event"},
+	{Path: "/api/autonomous/tasks/parse", Level: "reversible", Action: "parse_autonomous_task_input", Reason: "sends a one-line task description to the configured model to draft task fields; falls back to the raw input and writes nothing"},
+	{Path: "/api/autonomous/runs/", Level: "reversible", Action: "inspect_autonomous_run", Reason: "reads a task run and its event history"},
 	{Path: "/api/tmwebdriver/repair", Level: "reversible", Action: "start_tmwebdriver_master", Reason: "starts a persistent TMWebDriver master process on localhost:18766"},
 	{Path: "/api/tmwebdriver/install-deps", Level: "dangerous", Action: "install_tmwebdriver_deps", Reason: "runs pip install with Tsinghua PyPI mirror for TMWebDriver dependencies"},
 	{Path: "/api/ga/git-mirror", Level: "reversible", Action: "configure_git_mirror", Reason: "updates global git insteadOf mirror for github.com URLs"},
@@ -351,6 +377,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/ga/processes/kill", Level: "dangerous", Action: "kill_ga_process", Reason: "terminates a GA-related process by PID after explicit dangerous authorization"},
 	{Path: "/api/ga/processes/adopt", Level: "dangerous", Action: "adopt_ga_process", Reason: "marks an external GA process as managed by Admin-Go for subsequent supervision"},
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
+	{Path: "/api/keychain", Level: "dangerous", Action: "edit_keychain", Reason: "writes or deletes encrypted local keychain credentials"},
 	{Path: "/api/chat/python/install-deps", Level: "dangerous", Action: "install_chat_python_deps", Reason: "runs pip install with Tsinghua PyPI mirror for the GA runtime imports the chat interpreter reports missing"},
 }
 
@@ -1220,4 +1247,5 @@ func (s *Server) ShutdownCleanup() {
 		_ = s.ReactApp.stop()
 	}
 	s.CloseChatWorkers()
+	s.localCmdRegistry().close()
 }

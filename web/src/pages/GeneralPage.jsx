@@ -7,7 +7,7 @@ import { SettingFooter, SettingNote, SettingRow, SettingToggle, SettingsPage, Se
 
 // Fields that belong to the config file this page edits. Everything else in the
 // config object is owned by the backend and must survive a save untouched.
-const CONFIG_FIELDS = ['ga_root', 'python_path', 'chat_data_dir', 'proxy_mode', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'remote_access', 'remote_allow_anonymous', 'port']
+const CONFIG_FIELDS = ['ga_root', 'python_path', 'chat_data_dir', 'proxy_mode', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'github_mirror', 'remote_access', 'remote_allow_anonymous', 'port']
 
 export const configDirty = (draft, saved) => {
   if (!draft || !saved) return false
@@ -47,7 +47,7 @@ function RemoteAccessSection({ text, t, cfg, patch, dirty, onSave, busy }) {
     setNote(null)
     if (newPassword !== confirmPassword) { setNote({ tone: 'warn', message: text.remote.passwordMismatch }); return }
     if (newPassword.length < MIN_PASSWORD_LENGTH) { setNote({ tone: 'warn', message: text.remote.passwordTooShort }); return }
-    if (!confirmDanger('auth-password', text.remote.confirmSet)) return
+    if (!await confirmDanger('auth-password', text.remote.confirmSet)) return
     setPasswordBusy(true)
     try {
       await api('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword, confirmPassword }) })
@@ -59,7 +59,7 @@ function RemoteAccessSection({ text, t, cfg, patch, dirty, onSave, busy }) {
 
   const removePassword = async () => {
     setNote(null)
-    if (!confirmDanger('auth-password-remove', text.remote.confirmRemove)) return
+    if (!await confirmDanger('auth-password-remove', text.remote.confirmRemove)) return
     setPasswordBusy(true)
     try {
       await api('/api/auth/password', { method: 'DELETE' })
@@ -190,6 +190,15 @@ export function GeneralPage({
           <input id="settings-no-proxy" value={cfg?.no_proxy || ''} onChange={e=>patch('no_proxy', e.target.value)} placeholder="localhost,127.0.0.1"/>
         </SettingRow>
       </>}
+      <SettingRow label={text.network.githubMirror} hint={text.network.githubMirrorHelp} htmlFor="settings-github-mirror" stacked>
+        <input
+          id="settings-github-mirror"
+          type="url"
+          value={cfg?.github_mirror || ''}
+          onChange={e=>patch('github_mirror', e.target.value)}
+          placeholder={text.network.githubMirrorPlaceholder}
+        />
+      </SettingRow>
       <SettingFooter>
         <SettingNote tone="muted" icon={<ShieldAlert size={14}/>}>{text.confirmNote}</SettingNote>
         <span className={`set-dirty ${dirty ? 'is-dirty' : ''}`}>{dirty ? text.unsaved : text.saved}</span>
@@ -198,6 +207,7 @@ export function GeneralPage({
     </SettingsSection>
 
     <RemoteAccessSection text={text} t={t} cfg={cfg} patch={patch} dirty={dirty} onSave={onSave} busy={busy}/>
+
 
     <SettingsSection title={text.startup.title} description={text.startup.desc} icon={<Power size={17}/>}>
       <SettingToggle

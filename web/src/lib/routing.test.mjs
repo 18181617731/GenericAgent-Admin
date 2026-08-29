@@ -42,3 +42,9 @@ test('GA instances has a stable refreshable route', () => {
   assert.deepEqual(parseRoute(), { tab: 'instances', taskSubTab: 'services' })
   assert.equal(buildRoute('instances'), '/instances')
 })
+
+test('Local CMD has a stable refreshable route', () => {
+  setLocation('http://localhost/local-cmd')
+  assert.deepEqual(parseRoute(), { tab: 'local-cmd', taskSubTab: 'scheduled' })
+  assert.equal(buildRoute('local-cmd'), '/local-cmd')
+})

@@ -41,6 +41,11 @@ var (
 	restartLaunchArgs []string
 )
 
+var (
+	githubMirrorMu sync.RWMutex
+	githubMirror   string
+)
+
 // SetRepoURL overrides the default update repo URL (e.g. from config.local.json).
 func SetRepoURL(url string) {
 	url = strings.TrimSpace(url)
@@ -58,6 +63,15 @@ func SetRepoURL(url string) {
 		}
 	}
 	repoLatestURL = url
+}
+
+// SetGitHubMirror configures an optional HTTP(S) prefix for GitHub release
+// asset downloads while preserving the local updater's direct and fallback
+// mirror strategy.
+func SetGitHubMirror(rawURL string) {
+	githubMirrorMu.Lock()
+	githubMirror = strings.TrimRight(strings.TrimSpace(rawURL), "/")
+	githubMirrorMu.Unlock()
 }
 
 // SetRestartArguments records the effective server launch configuration so a
@@ -1349,7 +1363,14 @@ func releaseDownloadCandidates(rawURL string) []releaseDownloadCandidate {
 	if disabled, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("GA_ADMIN_UPDATE_DISABLE_MIRRORS"))); disabled {
 		return candidates
 	}
-	prefixes := append(parseUpdateMirrorPrefixes(os.Getenv("GA_ADMIN_UPDATE_MIRRORS")), updateMirrorPrefixes...)
+	githubMirrorMu.RLock()
+	configuredMirror := githubMirror
+	githubMirrorMu.RUnlock()
+	prefixes := parseUpdateMirrorPrefixes(os.Getenv("GA_ADMIN_UPDATE_MIRRORS"))
+	if configuredMirror != "" {
+		prefixes = append(prefixes, configuredMirror)
+	}
+	prefixes = append(prefixes, updateMirrorPrefixes...)
 	seen := map[string]bool{rawURL: true}
 	for _, prefix := range prefixes {
 		prefix = strings.TrimSpace(prefix)

@@ -69,6 +69,7 @@ func main() {
 		log.Printf("portable auto-init: %v", err)
 	}
 	version.SetRepoURL(cfgStore.Snapshot().UpdateRepoURL)
+	version.SetGitHubMirror(cfgStore.Snapshot().GitHubMirror)
 	svc := service.NewManagerWithPython(cfgStore.Snapshot().GARoot, cfgStore.Snapshot().EffectivePython, cfgStore.Snapshot().BufferLines)
 	models := modelconfig.NewStore(cwd)
 	static, err := fs.Sub(webFS, "web/dist")

@@ -2,6 +2,65 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.100 - 2026-08-29
+
+### Continuous verification reliability
+- Wait for the GSAP animation to settle before asserting that the scheduler Start button is accessible in the smoke test.
+- Harden scheduler smoke coverage against Ubuntu and CI runner timing variance without changing scheduler product behavior.
+- Validate the fix with full Web verification on Windows and Ubuntu using Node 22.
+
+## v1.0.99 - 2026-08-28
+
+### Scheduled task workbench
+- Refactor scheduled tasks into a Codex-inspired two-pane workbench with compact task selection, search and state filters, and a first-viewport layout focused on task operations.
+- Show each selected task's recent execution history with task-scoped empty states, in-place artifact previews, and responsive mobile list/detail navigation while preserving reports navigation.
+- Clear stale execution artifacts when a new task is created, keep the creation disclosure open on cancellation or failure, and prevent duplicate submissions during async creation.
+- Add component, App smoke, and schedule regression coverage for filtering, history switching, empty states, preview cleanup, creation outcomes, and responsive workbench behavior.
+
+## v1.0.98 - 2026-08-28
+
+### Scheduled task execution history
+- Show the selected scheduled task's recent execution history directly below the editor, with task-scoped empty states and responsive desktop/mobile stacking.
+- Preview a selected execution artifact in place on the scheduled-task page while preserving the full reports subpage navigation from the task card.
+- Invalidate stale artifact requests during task and route changes, release busy state safely, and cover task switching, empty history, in-place preview, navigation, and recovery regressions.
+
+## v1.0.97 - 2026-08-28
+
+### Upstream integration and local compatibility
+- Sync upstream image input, chat sidebar, Loop, worldline, and app-dialog capabilities while preserving the local compact/privacy view, remote CMD, and update-restart flows.
+- Make chat queue state authoritative through the backend REST/SSE API, add cross-platform directory-picker coverage, and keep the updater's direct GitHub download with configured and built-in mirror fallbacks.
+- Fix repeated session snapshot polling for ISO `updated_at` values and extend mobile model/reasoning, attachment, queue, stop, and dialog regression coverage.
+
+## v1.0.96 - 2026-08-25
+
+### Remote CMD / Codex TUI
+- Replace text-only remote terminal rendering with an xterm.js terminal that preserves raw ANSI/VT bytes, cursor movement, full-screen TUI state, and interactive Codex/Vim sessions.
+- Forward terminal input one key event at a time with UTF-8 encoding, retain mobile shortcuts, and automatically fit and deduplicate ConPTY resize updates.
+- Preserve replay/reconnect behavior and session ownership when clearing or disposing the browser terminal.
+- Initialize Windows ConPTY `cmd.exe` sessions with `TERM=xterm-256color`, `COLORTERM=truecolor`, and `chcp 65001` so Codex can start its full-screen terminal UI.
+- Add frontend, controller, terminal, Windows process, and ConPTY regression coverage, including exact Windows path placeholder rendering.
+
+### Keychain management
+- Add the upstream local keychain management API and settings page for storing and removing local credentials through the Admin interface.
+
+## v1.0.95 - 2026-08-25
+
+### Browser remote CMD
+- Run a real Windows ConPTY CMD session on the Admin host from the browser, with server-side working directories and no local desktop window.
+- Add a server directory browser, NDJSON output replay/reconnect, localStorage session recovery, mobile command shortcuts, and terminal ANSI/UTF-8 handling.
+- Require Basic Auth for remote Local CMD routes even when anonymous remote access is enabled, and protect session creation, input, resize, and deletion with dangerous-action confirmation.
+- Bound sessions, input, output replay buffers, idle lifetime, detached grace periods, and cleanup to prevent orphaned processes and unbounded resource use.
+- Add backend, Windows ConPTY integration, authentication, protocol, cleanup, directory, and frontend regression coverage.
+
+## v1.0.94 - 2026-08-24
+
+### Local CMD workspace
+- Add a lazy-loaded Local CMD menu and page where users can enter or browse to any local directory before opening a real independent Windows command prompt.
+- Require an explicit dangerous-action confirmation for CMD process launch, with clear platform and security guidance in the UI.
+- Validate trimmed absolute directories against the local filesystem, preserving support for spaces, Unicode, UNC paths, and drive paths without restricting access to the configured GA root.
+- Launch `cmd.exe` with Windows `CreateProcessW`, a visible normal new console, interactive standard handles, a trusted absolute system path, and safe command-line quoting.
+- Add backend and frontend regression coverage for confirmation, path validation, directory browsing, launch parameters, visible-window flags, handle cleanup, loading states, cancellation, and errors.
+
 ## v1.0.91 - 2026-08-18
 
 ### Compact chat footer

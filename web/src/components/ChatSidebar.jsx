@@ -73,6 +73,7 @@ export default function ChatSidebar({
   const menuActionBusy = Boolean(menuSession && sessionActionID === menuSession.id)
   const archiveBlockedByRunning = Boolean(menuSession?.running)
   const archiveLabel = archiveBlockedByRunning ? ct('运行中，暂不可归档', 'Running; archiving unavailable') : ct('归档', 'Archive')
+  const sidebarItemCount = sidebarTab === 'projects' ? projectGroups.length : sessions.length
   const collapseButtonRef = useRef(null)
   const sidebarRef = useRef(null)
   const previousFocusRef = useRef(null)
@@ -174,7 +175,7 @@ export default function ChatSidebar({
       </div>
 
       <div className="oa-session-manager-head">
-        <span className="oa-session-manager-title">{sidebarTab === 'projects' ? projectTabLabel : historyLabel} <small>{sessions.length}</small></span>
+        <span className="oa-session-manager-title">{sidebarTab === 'projects' ? projectTabLabel : historyLabel} <small>{sidebarItemCount}</small></span>
         <span className="oa-session-manager-actions">
           {sidebarTab === 'projects' && <button className="oa-session-manage-open" type="button" onClick={onOpenProjectDraft} disabled={privacyMode || projectCreating || projectDraftOpen} title={privacyMode ? ct('当前视图不可新建项目', 'Projects cannot be created in the current view') : undefined}><FolderPlus size={13} aria-hidden="true"/>{ct('新建', 'New')}</button>}
           <button className="oa-session-manage-open" type="button" onClick={onOpenSessionManager} disabled={!sessions.length || batchDeleting}>{ct('管理', 'Manage')}</button>
