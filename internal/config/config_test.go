@@ -414,6 +414,26 @@ func requireConfigEqual(t *testing.T, got, want AppConfig) {
 	}
 }
 
+func TestValidateGitHubMirror(t *testing.T) {
+	valid := []string{"", "https://mirror.example", "http://127.0.0.1:8080/base/"}
+	for _, mirror := range valid {
+		cfg := Default()
+		cfg.GitHubMirror = mirror
+		if err := Validate(cfg); err != nil {
+			t.Fatalf("Validate(github_mirror=%q) returned %v", mirror, err)
+		}
+	}
+
+	invalid := []string{"mirror.example", "ftp://mirror.example", "https://mirror.example/?token=x", "https://mirror.example/#fragment"}
+	for _, mirror := range invalid {
+		cfg := Default()
+		cfg.GitHubMirror = mirror
+		if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "github_mirror") {
+			t.Fatalf("Validate(github_mirror=%q) error = %v, want github_mirror error", mirror, err)
+		}
+	}
+}
+
 func TestStoreSnapshotDoesNotAliasReferenceFields(t *testing.T) {
 	store := NewStore(t.TempDir())
 	if err := store.Save(configWithReferenceFields(t, store)); err != nil {

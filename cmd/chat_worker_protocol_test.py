@@ -2,6 +2,8 @@ import importlib.util
 import os
 import queue
 import sys
+import tempfile
+import threading
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -54,6 +56,102 @@ class FakeAgent:
         return output
 
 
+class ToolTimerTests(unittest.TestCase):
+    def setUp(self):
+        self.old_installed = chat_worker._TOOL_TIMER_HOOK_INSTALLED
+        with chat_worker._TOOL_TIMER_LOCK:
+            self.old_active = chat_worker._TOOL_TIMER_ACTIVE.copy()
+            self.old_total = chat_worker._TOOL_TIMER_TOTAL_SECONDS
+            chat_worker._TOOL_TIMER_ACTIVE.clear()
+            chat_worker._TOOL_TIMER_TOTAL_SECONDS = 0.0
+        chat_worker._TOOL_TIMER_HOOK_INSTALLED = False
+
+    def tearDown(self):
+        with chat_worker._TOOL_TIMER_LOCK:
+            chat_worker._TOOL_TIMER_ACTIVE.clear()
+            chat_worker._TOOL_TIMER_ACTIVE.update(self.old_active)
+            chat_worker._TOOL_TIMER_TOTAL_SECONDS = self.old_total
+        chat_worker._TOOL_TIMER_HOOK_INSTALLED = self.old_installed
+
+    @staticmethod
+    def fake_plugins():
+        registry = {}
+        hooks = ModuleType("plugins.hooks")
+
+        def register(event):
+            def decorator(callback):
+                registry.setdefault(event, []).append(callback)
+                return callback
+            return decorator
+
+        def trigger(event, ctx=None):
+            value = ctx or {}
+            for callback in registry.get(event, []):
+                value = callback(value)
+            return value
+
+        hooks.register = register
+        hooks.trigger = trigger
+        package = ModuleType("plugins")
+        package.hooks = hooks
+        return package, hooks, registry
+
+    def install_fake_hooks(self):
+        package, hooks, registry = self.fake_plugins()
+        with mock.patch.dict(sys.modules, {
+            "plugins": package,
+            "plugins.hooks": hooks,
+        }):
+            chat_worker._reset_tool_elapsed()
+        return hooks, registry
+
+    def test_tool_hooks_accumulate_and_consume_elapsed_ms(self):
+        hooks, registry = self.install_fake_hooks()
+        self.assertEqual(len(registry["tool_before"]), 1)
+        self.assertEqual(len(registry["tool_after"]), 1)
+
+        with mock.patch.object(
+            chat_worker.time, "perf_counter",
+            side_effect=[10.0, 10.125, 10.125, 10.125],
+        ):
+            hooks.trigger("tool_before", {"tool_name": "file_read"})
+            hooks.trigger("tool_after", {"tool_name": "file_read"})
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 125)
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
+
+    def test_consume_closes_unfinished_tool_from_worker_thread(self):
+        hooks, _ = self.install_fake_hooks()
+        started = threading.Event()
+
+        def begin_tool():
+            hooks.trigger("tool_before", {"tool_name": "code_run"})
+            started.set()
+
+        with mock.patch.object(
+            chat_worker.time, "perf_counter",
+            side_effect=[20.0, 20.4, 20.4],
+        ):
+            worker = threading.Thread(target=begin_tool)
+            worker.start()
+            self.assertTrue(started.wait(timeout=1))
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 400)
+            self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
+
+    def test_reset_installs_hooks_only_once_and_clears_elapsed_time(self):
+        package, hooks, registry = self.fake_plugins()
+        modules = {"plugins": package, "plugins.hooks": hooks}
+        with mock.patch.dict(sys.modules, modules):
+            chat_worker._reset_tool_elapsed()
+            hooks.trigger("tool_before", {})
+            chat_worker._reset_tool_elapsed()
+
+        self.assertEqual(len(registry["tool_before"]), 1)
+        self.assertEqual(len(registry["tool_after"]), 1)
+        self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
+
+
 class ChatWorkerProtocolTest(unittest.TestCase):
     def setUp(self):
         self.events = []
@@ -77,6 +175,25 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "project_mode": "",
             "reasoning_effort": "high",
         }
+
+    def test_default_reasoning_effort_inherits_configured_backend_value(self):
+        backend = SimpleNamespace(reasoning_effort="medium")
+        agent = SimpleNamespace(llmclient=SimpleNamespace(backend=backend))
+
+        chat_worker._apply_reasoning_effort_setting(agent, "high")
+        self.assertEqual(backend.reasoning_effort, "high")
+
+        chat_worker._apply_reasoning_effort_setting(agent, "off")
+        self.assertEqual(backend.reasoning_effort, "medium")
+
+    def test_default_reasoning_effort_preserves_unset_backend_value(self):
+        backend = SimpleNamespace(reasoning_effort=None)
+        agent = SimpleNamespace(llmclient=SimpleNamespace(backend=backend))
+
+        chat_worker._apply_reasoning_effort_setting(agent, "max")
+        chat_worker._apply_reasoning_effort_setting(agent, "off")
+
+        self.assertIsNone(backend.reasoning_effort)
 
     def test_resume_reaches_official_put_task_literal_and_done_state_sync(self):
         agent = FakeAgent()
@@ -178,7 +295,7 @@ class ChatWorkerProtocolTest(unittest.TestCase):
 
         restore = chat_worker._install_outbound_model_hooks(agent)
         try:
-            with mock.patch.object(chat_worker.time, "perf_counter", side_effect=[10.0, 10.5]):
+            with mock.patch.object(chat_worker.time, "perf_counter", side_effect=[10.0, 11.0, 11.4, 11.9]):
                 self.assertIn("!!!Error: HTTP 503", "".join(failed.raw_ask([])))
                 self.assertEqual("".join(fallback.raw_ask([])), "ok")
         finally:
@@ -186,11 +303,15 @@ class ChatWorkerProtocolTest(unittest.TestCase):
 
         self.assertEqual(chat_worker._snapshot_turn_usages(), [
             {"input_tokens": 100, "cache_creation_tokens": 20, "cache_read_tokens": 80, "output_tokens": 0, "cached_tokens": 0},
-            {"input_tokens": 200, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30, "cached_tokens": 0, "generation_ms": 500},
+            {"input_tokens": 200, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30, "cached_tokens": 0, "ttft_ms": 400, "generation_ms": 500},
         ])
         usage_events = [event for event in self.events if event.get("type") == "turn_usage"]
         self.assertEqual(usage_events[-2]["index"], 1)
         self.assertEqual(usage_events[-1]["index"], 1)
+        self.assertEqual(
+            [event for event in self.events if event.get("type") == "model_first_token"],
+            [{"type": "model_first_token"}],
+        )
 
     def test_outbound_model_events_follow_each_mixin_fallback_attempt(self):
         class LeafSession:
@@ -680,6 +801,60 @@ class PlanPayloadAdapterTests(unittest.TestCase):
             "status": "done",
         }])
         self.assertEqual((adapted["done"], adapted["total"], adapted["complete"]), (1, 1, True))
+
+
+class ImageInjectionTest(unittest.TestCase):
+    def test_native_backend_gets_images_on_first_call_only_and_is_restored(self):
+        requests = []
+
+        class FakeBackend:
+            def ask(self, request):
+                requests.append(request)
+                yield "ok"
+
+        class NativeToolClient:
+            def __init__(self, backend):
+                self.backend = backend
+
+        llmcore = ModuleType("llmcore")
+        llmcore.NativeToolClient = NativeToolClient
+        backend = FakeBackend()
+        agent = SimpleNamespace(llmclient=NativeToolClient(backend))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "sample.png"
+            image_path.write_bytes(b"png-bytes")
+            with mock.patch.dict(sys.modules, {"llmcore": llmcore}):
+                restore = chat_worker._install_image_injection(agent, [str(image_path)])
+                first = {"content": [{"type": "text", "text": "look"}]}
+                self.assertEqual(list(backend.ask(first)), ["ok"])
+                self.assertNotIn("ask", vars(backend))
+
+                image = first["content"][1]
+                self.assertEqual(image["type"], "image")
+                self.assertEqual(image["source"]["type"], "base64")
+                self.assertEqual(image["source"]["media_type"], "image/png")
+                self.assertEqual(image["source"]["data"], "cG5nLWJ5dGVz")
+
+                second = {"content": [{"type": "text", "text": "again"}]}
+                self.assertEqual(list(backend.ask(second)), ["ok"])
+                self.assertEqual(len(second["content"]), 1)
+                restore()
+
+        self.assertEqual(requests, [first, second])
+
+    def test_non_native_client_is_not_patched(self):
+        llmcore = ModuleType("llmcore")
+        llmcore.NativeToolClient = type("NativeToolClient", (), {})
+        backend = SimpleNamespace(ask=lambda request: iter(("ok",)))
+        agent = SimpleNamespace(llmclient=SimpleNamespace(backend=backend))
+        original = backend.ask
+
+        with mock.patch.dict(sys.modules, {"llmcore": llmcore}):
+            restore = chat_worker._install_image_injection(agent, ["sample.png"])
+            restore()
+
+        self.assertIs(backend.ask, original)
 
 
 class FakeReloadAgent:
