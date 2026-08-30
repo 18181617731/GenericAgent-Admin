@@ -127,9 +127,135 @@ class WorldlineSidecarTests(unittest.TestCase):
             'Readable node title',
         )
 
+    def test_worldline_title_skips_tool_result_messages_masquerading_as_user(self):
+        store = SimpleNamespace(
+            root_id='root',
+            head='root',
+            nodes={'root': {'parent': None, 'children': []}},
+            rebuild_history=lambda _node_id: [],
+        )
+        history = [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'tool_result', 'content': {'result': '{"status":"success"}'}},
+                    {'type': 'text', 'text': '### [WORKING MEMORY]\ninternal state'},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'text', 'text': 'Actual human request'}],
+            },
+        ]
+
+        self.assertEqual(
+            worker._worldline_title(store, history, 'fallback'),
+            'Actual human request',
+        )
+
+    def test_worldline_title_falls_back_when_only_new_user_entry_is_a_tool_result(self):
+        store = SimpleNamespace(
+            root_id='root',
+            head='root',
+            nodes={'root': {'parent': None, 'children': []}},
+            rebuild_history=lambda _node_id: [],
+        )
+        history = [{
+            'role': 'user',
+            'content': [{'type': 'tool_result', 'content': {'result': 'not a title'}}],
+        }]
+
+        self.assertEqual(worker._worldline_title(store, history, 'fallback prompt'), 'fallback prompt')
+
     def test_worldline_content_text_handles_nested_result(self):
         content = [{'type': 'tool_result', 'content': {'result': 'Useful result'}}]
         self.assertEqual(worker._worldline_content_text(content), 'Useful result')
+
+    def test_projected_title_preserves_stored_value_when_conv_blob_is_missing(self):
+        store = SimpleNamespace(
+            nodes={'node': {'conv': 'missing-conv'}},
+            _get_blob=mock.Mock(side_effect=FileNotFoundError('missing blob')),
+        )
+
+        self.assertEqual(
+            worker._projected_worldline_title(store, 'node', 'Stored title'),
+            'Stored title',
+        )
+
+    def test_projection_repairs_legacy_tool_result_title_without_persisting(self):
+        history_delta = [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'tool_result', 'content': {'result': '{"status":"success"}'}},
+                    {'type': 'text', 'text': '### [WORKING MEMORY]\ninternal state'},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'text', 'text': 'Actual human request'}],
+            },
+        ]
+        legacy_title = '{"status":"success"} ### [WORKING MEMORY] internal state'
+        store = SimpleNamespace(
+            root_id='root',
+            head='node',
+            nodes={
+                'root': {'parent': None, 'children': ['node'], 'title': 'origin'},
+                'node': {
+                    'parent': 'root', 'children': [], 'title': legacy_title,
+                    'conv': 'node-conv',
+                },
+            },
+            _get_blob=lambda blob: json.dumps(history_delta).encode('utf-8') if blob == 'node-conv' else b'[]',
+        )
+        tree = SimpleNamespace(root_id='root', nodes={
+            'root': SimpleNamespace(
+                id='root', parent_id=None, children=['node'], title='origin',
+                kind='origin', files=[], ago=0, rw_tag=None,
+            ),
+            'node': SimpleNamespace(
+                id='node', parent_id='root', children=[], title=legacy_title,
+                kind='edit', files=[], ago=0, rw_tag=None,
+            ),
+        })
+
+        with mock.patch('frontends.worldline.tree_from_store', return_value=tree):
+            projection = worker._worldline_nodes(store)
+
+        by_id = {node['id']: node for node in projection['nodes']}
+        self.assertEqual(by_id['node']['title'], 'Actual human request')
+        self.assertEqual(store.nodes['node']['title'], legacy_title)
+
+    def test_projection_preserves_custom_title_even_when_delta_contains_tool_result(self):
+        history_delta = [
+            {
+                'role': 'user',
+                'content': [{'type': 'tool_result', 'content': 'tool output'}],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'text', 'text': 'Actual human request'}],
+            },
+        ]
+        store = SimpleNamespace(
+            root_id='node', head='node',
+            nodes={'node': {
+                'parent': None, 'children': [], 'title': 'Custom checkpoint title',
+                'conv': 'node-conv',
+            }},
+            _get_blob=lambda blob: json.dumps(history_delta).encode('utf-8'),
+        )
+        tree = SimpleNamespace(root_id='node', nodes={
+            'node': SimpleNamespace(
+                id='node', parent_id=None, children=[], title='Custom checkpoint title',
+                kind='edit', files=[], ago=0, rw_tag=None,
+            ),
+        })
+        with mock.patch('frontends.worldline.tree_from_store', return_value=tree):
+            projection = worker._worldline_nodes(store)
+
+        self.assertEqual(projection['nodes'][0]['title'], 'Custom checkpoint title')
 
     def test_projection_preserves_sibling_order_repeated_title_identity_and_path(self):
         nodes = {

@@ -2877,6 +2877,9 @@ export const CommandResultCard = memo(function CommandResultCard({ result = {} }
   )
 })
 
+export const worldlineReadURL = (sessionID, activate = false) =>
+  `/api/chat/worldline/${sessionID}${activate ? '?activate=true' : ''}`
+
 export const worldlineRestoreCommand = (nodeID, mode = 'both', target = 'at') => {
   const id = String(nodeID || '').trim()
   const restoreMode = ['both', 'conversation', 'code'].includes(mode) ? mode : 'both'
@@ -4597,8 +4600,7 @@ export default function ChatApp() {
     const token = ++worldlineSeqRef.current
     setWorldlineLoading(true)
     try {
-      const url = `/api/chat/worldline/${id}${activate ? '?activate=true' : ''}`
-      const d = await api(url)
+      const d = await api(worldlineReadURL(id, activate))
       if (token !== worldlineSeqRef.current || activeSidRef.current !== id) return
       setWorldlineState({ sessionID: id, ...d })
     } catch (e) {
@@ -4612,7 +4614,7 @@ export default function ChatApp() {
   const toggleWorldline = () => {
     const next = !worldlineOpen
     setWorldlineOpen(next)
-    if (next) loadWorldline(activeSidRef.current || sid, { force: true, activate: true }).catch(() => {})
+    if (next) loadWorldline(activeSidRef.current || sid, { force: true }).catch(() => {})
   }
 
   const switchWorldline = async (nodeId) => {
@@ -6272,7 +6274,7 @@ export default function ChatApp() {
         switchingId={worldlineSwitchingId}
         disabled={isCurrentRunning}
         onClose={() => setWorldlineOpen(false)}
-        onRefresh={() => loadWorldline(sid, { force: true, activate: true }).catch(() => {})}
+        onRefresh={() => loadWorldline(sid, { force: true }).catch(() => {})}
         onSwitch={switchWorldline}
       />}
       <div className="oa-banner-slot">
