@@ -1710,7 +1710,11 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255
 .oa-math .katex-error{color:var(--danger,#b42318);font-family:"SFMono-Regular",Consolas,monospace;font-size:.9em}
 .oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--code-bg);border:1px solid var(--border);box-shadow:none}
 .oa-mermaid-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--border);box-shadow:none}
-.oa-mermaid-diagram{min-height:120px;padding:18px;overflow:auto;background:var(--surface);display:flex;align-items:center;justify-content:center}
+/* Mermaid measures foreignObject labels outside the markdown tree. Keep the
+   mounted diagram on that same typography baseline so its fixed boxes do not
+   wrap or clip after inheriting chat prose styles. */
+.oa-mermaid-diagram{min-height:120px;padding:18px;overflow:auto;background:var(--surface);display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal}
+.oa-mermaid-diagram foreignObject p{white-space:inherit}
 .oa-mermaid-diagram svg{display:block;max-width:100%;height:auto;margin:auto}
 .oa-mermaid-status{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--surface)}
 .oa-mermaid-error{padding:10px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--danger,#b42318) 8%,var(--surface));color:var(--danger,#b42318);font-size:12px;line-height:1.5;overflow-wrap:anywhere}

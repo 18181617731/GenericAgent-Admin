@@ -1050,6 +1050,8 @@ describe('chat response identity and time', () => {
     }))
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('Request --> Response'))
     expect(bindFunctions).toHaveBeenCalled()
+    expect(appStyles).toMatch(/\.oa-mermaid-diagram\{[^}]*font-weight:450;[^}]*letter-spacing:normal;[^}]*white-space:normal;[^}]*word-break:normal;[^}]*overflow-wrap:normal/)
+    expect(appStyles).toContain('.oa-mermaid-diagram foreignObject p{white-space:inherit}')
   })
 
   test('waits for a streamed mermaid fence to close before rendering its final source', async () => {
