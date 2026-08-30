@@ -50,6 +50,9 @@ func addUsageValue(dst *usageTotals, key string, value int) {
 		dst.OutputTokens += value
 	case "total_tokens", "total_token_count":
 		dst.TotalTokens += value
+	case "input_tokens_include_cache_read":
+		// Per-turn protocol metadata used by the chat UI, not token usage.
+		return
 	default:
 		if dst.Other == nil {
 			dst.Other = map[string]int{}
@@ -58,33 +61,49 @@ func addUsageValue(dst *usageTotals, key string, value int) {
 	}
 }
 
-func normalizedMessageUsage(message chatMessage) (usageTotals, bool) {
-	// Prefer usages (per-turn breakdown) when available; it is authoritative because
-	// the legacy usage field can be overwritten by a terminal SSE event with all-zero values.
-	var values map[string]int
-	if len(message.Usages) > 0 {
-		values = map[string]int{}
-		for _, turn := range message.Usages {
-			for key, value := range turn {
-				values[key] += value
-			}
-		}
-	} else {
-		values = message.Usage
+func usageInputIncludesCacheRead(values map[string]int) bool {
+	if flag, ok := values["input_tokens_include_cache_read"]; ok {
+		return flag == 1
 	}
+	// Compatibility for sessions persisted before the explicit protocol flag.
+	// cached_tokens was always a subset of input. Older workers normalized that
+	// value into cache_read_tokens, so recover the common OpenAI shape when read
+	// is no larger than input and no Claude cache-creation bucket is present.
+	if values["cached_tokens"] > 0 {
+		return true
+	}
+	read := values["cache_read_tokens"]
+	return read > 0 && values["cache_creation_tokens"] == 0 && read <= values["input_tokens"]
+}
+
+func normalizedUsageValues(values map[string]int) usageTotals {
 	var totals usageTotals
 	for key, value := range values {
 		addUsageValue(&totals, key, value)
 	}
-	// Modern Claude usage reports uncached input, cache creation, and cache read
-	// as disjoint categories. Keep the latter two in Other for breakdowns while
-	// including them in the billed input total. Legacy cached_tokens is already
-	// a subset of input_tokens and must not be added again.
-	totals.InputTokens += totals.Other["cache_creation_tokens"] + totals.Other["cache_read_tokens"]
+	if !usageInputIncludesCacheRead(values) {
+		totals.InputTokens += totals.Other["cache_creation_tokens"] + totals.Other["cache_read_tokens"]
+	}
 	if totals.TotalTokens == 0 {
 		totals.TotalTokens = totals.InputTokens + totals.OutputTokens
 	}
-	return totals, len(values) > 0
+	return totals
+}
+
+func normalizedMessageUsage(message chatMessage) (usageTotals, bool) {
+	// Prefer usages (per-turn breakdown) when available; it is authoritative because
+	// the legacy usage field can be overwritten by a terminal SSE event with all-zero values.
+	if len(message.Usages) > 0 {
+		var totals usageTotals
+		for _, turn := range message.Usages {
+			mergeUsageTotals(&totals, normalizedUsageValues(turn))
+		}
+		return totals, true
+	}
+	if len(message.Usage) == 0 {
+		return usageTotals{}, false
+	}
+	return normalizedUsageValues(message.Usage), true
 }
 
 func mergeUsageTotals(dst *usageTotals, src usageTotals) {

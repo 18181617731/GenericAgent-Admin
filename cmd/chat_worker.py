@@ -100,7 +100,10 @@ _CURRENT_USAGE = {
     'cache_creation_tokens': 0,
     'cache_read_tokens': 0,
     'output_tokens': 0,
-    'cached_tokens': 0,  # Legacy input/cached protocol only.
+    'cached_tokens': 0,  # Legacy alias retained for persisted-session compatibility.
+    # 1 for OpenAI-style usage where cache read is included in input_tokens;
+    # 0 for Claude-style disjoint input/creation/read counters.
+    'input_tokens_include_cache_read': 0,
 }
 # Per-internal-turn usage snapshots for the current request. GA core prints a
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
@@ -184,9 +187,11 @@ class _UsageCapturingStderr:
                     if 'creation' in fields or 'read' in fields:
                         _CURRENT_USAGE['cache_creation_tokens'] = fields.get('creation', 0)
                         _CURRENT_USAGE['cache_read_tokens'] = fields.get('read', 0)
+                        _CURRENT_USAGE['input_tokens_include_cache_read'] = 0
                     else:
                         _CURRENT_USAGE['cache_creation_tokens'] = 0
                         _CURRENT_USAGE['cache_read_tokens'] = fields.get('cached', 0)
+                        _CURRENT_USAGE['input_tokens_include_cache_read'] = 1
                     # Retain the legacy response field as an always-zero alias.
                     # Old persisted sessions are handled by the frontend fallback.
                     _CURRENT_USAGE['cached_tokens'] = 0
@@ -207,6 +212,7 @@ class _UsageCapturingStderr:
                 _CURRENT_USAGE['cache_read_tokens'] = 0
                 _CURRENT_USAGE['output_tokens'] = 0
                 _CURRENT_USAGE['cached_tokens'] = 0
+                _CURRENT_USAGE['input_tokens_include_cache_read'] = 0
                 _CURRENT_USAGE.pop('ttft_ms', None)
                 # Replace the live Cache snapshot at the same index with this
                 # completed turn once output usage becomes available.
@@ -257,6 +263,7 @@ def _reset_usage():
         _CURRENT_USAGE['cache_read_tokens'] = 0
         _CURRENT_USAGE['output_tokens'] = 0
         _CURRENT_USAGE['cached_tokens'] = 0
+        _CURRENT_USAGE['input_tokens_include_cache_read'] = 0
         _CURRENT_USAGE.pop('ttft_ms', None)
         _TURN_USAGES.clear()
         _clear_generation_timer_locked()
