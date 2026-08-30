@@ -140,6 +140,8 @@ export default function ThemePicker({ value, onChange, lang = 'en', variant = 'd
       className="theme-picker-trigger"
       aria-haspopup="dialog"
       aria-expanded={open}
+      aria-label={`${text.title}: ${activeTheme.label[lang] || activeTheme.label.en}`}
+      title={variant === 'compact' ? `${text.title}: ${activeTheme.label[lang] || activeTheme.label.en}` : undefined}
       onClick={() => setOpen(current => !current)}
     >
       <span className="theme-picker-trigger-icon"><Palette size={16}/></span>

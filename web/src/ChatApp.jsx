@@ -6210,13 +6210,15 @@ export default function ChatApp() {
         </div>}
         <div className="oa-title"><b>{current ? shortTitle(current) : ct('新对话', 'New chat')}</b>{current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <div className="oa-topbar-tools" role="toolbar" aria-label={ct('聊天工具', 'Chat tools')}>
-          <ThemePicker value={theme} onChange={setTheme} lang={chatLanguage()} variant="compact" />
-          <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={ct('查看发给模型的 raw_history', 'View raw_history sent to the model')}>
-            <PanelRightOpen size={16}/>{ct('上下文', 'Context')}<span>{rawHistory?.length || 0}</span>
-          </button>
-          <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title="查看/切换对话世界线分支">
-            <GitBranch size={16}/>世界线{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
-          </button>
+          <div className="oa-topbar-view-tools" role="group" aria-label={ct('对话视图', 'Conversation views')}>
+            <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid} title={ct('查看发给模型的 raw_history', 'View raw_history sent to the model')}>
+              <PanelRightOpen size={16}/>{ct('上下文', 'Context')}<span>{rawHistory?.length || 0}</span>
+            </button>
+            <button className={`oa-context-btn oa-worldline-btn ${worldlineOpen ? 'is-open' : ''}`} type="button" onClick={toggleWorldline} disabled={!sid} title={ct('查看/切换对话世界线分支', 'View or switch conversation timeline branches')}>
+              <GitBranch size={16}/>{ct('世界线', 'Timeline')}{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
+            </button>
+          </div>
+          <ThemePicker className="oa-topbar-theme" value={theme} onChange={setTheme} lang={chatLanguage()} variant="compact" />
         </div>
         <button
           ref={mobileToolsTriggerRef}
