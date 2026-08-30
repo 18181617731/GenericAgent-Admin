@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -941,9 +942,16 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		}
 		p = "index.html"
 	}
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
+	switch {
+	case p == "index.html":
+		w.Header().Set("Cache-Control", "no-cache")
+	case isHashedStaticAsset(p):
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	default:
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+	}
 	if strings.HasSuffix(p, ".js") {
 		w.Header().Set("Content-Type", "application/javascript")
 	} else if strings.HasSuffix(p, ".css") {
@@ -951,15 +959,15 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	} else if strings.HasSuffix(p, ".html") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	if contentType := staticContentType(name); contentType != "" {
+	if contentType := staticContentType(p); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
 
 	body := data
-	if staticGzipEligible(name) {
+	if staticGzipEligible(p) {
 		w.Header().Set("Vary", "Accept-Encoding")
 		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			if cached, ok := s.staticGzip.Load(name); ok {
+			if cached, ok := s.staticGzip.Load(p); ok {
 				body = cached.([]byte)
 			} else {
 				var compressed bytes.Buffer
@@ -967,7 +975,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 				_, _ = zw.Write(data)
 				_ = zw.Close()
 				body = compressed.Bytes()
-				s.staticGzip.Store(name, body)
+				s.staticGzip.Store(p, body)
 			}
 			w.Header().Set("Content-Encoding", "gzip")
 		}
@@ -977,6 +985,25 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(body)
+}
+
+func isHashedStaticAsset(name string) bool {
+	if !strings.HasPrefix(name, "assets/") {
+		return false
+	}
+	base := strings.TrimSuffix(path.Base(name), path.Ext(name))
+	if len(base) < 9 || base[len(base)-9] != '-' {
+		return false
+	}
+	for _, fingerprintChar := range base[len(base)-8:] {
+		if !((fingerprintChar >= 'a' && fingerprintChar <= 'z') ||
+			(fingerprintChar >= 'A' && fingerprintChar <= 'Z') ||
+			(fingerprintChar >= '0' && fingerprintChar <= '9') ||
+			fingerprintChar == '_' || fingerprintChar == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func staticContentType(name string) string {

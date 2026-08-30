@@ -64,7 +64,7 @@ test('ChatApp forgets deleted sessions and clears snapshots when switching insta
   const scrollStart = source.indexOf('const markProgrammaticScroll =', switchStart)
 
   assert.match(source, /forgetSessionScroll\(sessionScrollSnapshotsRef\.current, id\)/)
-  assert.match(source, /forgetSessionScroll\(sessionScrollSnapshotsRef\.current, result\.deletedIds\)/)
+  assert.match(source, /forgetSessionScroll\(sessionScrollSnapshotsRef\.current, result\.(?:deletedIds|succeededIds)\)/)
   assert.ok(switchStart >= 0)
   assert.ok(scrollStart > switchStart)
   assert.match(source.slice(switchStart, scrollStart), /sessionScrollSnapshotsRef\.current\.clear\(\)/)

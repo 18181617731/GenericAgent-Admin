@@ -533,17 +533,15 @@ func currentUpdateSource() (string, string) {
 	return repoLatestURL, repoLatestURL
 }
 
-func updateSupportStatus() (bool, string) {
+var updateSupportStatus = func() (bool, string) {
 	return updateSupportStatusFor(runtime.GOOS)
 }
 
 func updateSupportStatusFor(goos string) (bool, string) {
-	switch goos {
-	case "windows", "linux", "darwin":
+	if goos == "windows" {
 		return true, ""
-	default:
-		return false, "one-click self update is only implemented for Windows, macOS, and Linux packages"
 	}
+	return false, "one-click self update is only available for Windows packages"
 }
 
 func effectiveVersion() string {
@@ -892,7 +890,7 @@ try {
 }
 `,
 		powerShellSingleQuoted(oldExe),
-		powerShellSingleQuoted(filepath.Dir(oldExe)),
+		powerShellSingleQuoted(windowsPathDir(oldExe)),
 		powerShellSingleQuoted(newExe),
 		powerShellSingleQuoted(backup),
 		powerShellSingleQuoted(worker),
@@ -908,6 +906,21 @@ try {
 
 func powerShellSingleQuoted(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+// windowsPathDir extracts the parent of a Windows executable path even when
+// tests generate the PowerShell script on a non-Windows host. filepath.Dir
+// follows the build host's separators and treats backslashes as ordinary
+// characters on Linux, producing "." and an invalid restart working directory.
+func windowsPathDir(value string) string {
+	value = strings.TrimRight(value, `\\/`)
+	if index := strings.LastIndexAny(value, `\\/`); index >= 0 {
+		if index > 0 && value[index-1] == ':' {
+			return value[:index+1]
+		}
+		return value[:index]
+	}
+	return "."
 }
 
 func windowsLaunchCommandLine(args []string) string {
@@ -1009,7 +1022,7 @@ Start-Process -FilePath $Old -ArgumentList $LaunchArgs -WorkingDirectory $OldDir
 exit 1
 `,
 		powerShellSingleQuoted(oldExe),
-		powerShellSingleQuoted(filepath.Dir(oldExe)),
+		powerShellSingleQuoted(windowsPathDir(oldExe)),
 		powerShellSingleQuoted(newExe),
 		powerShellSingleQuoted(backup),
 		powerShellSingleQuoted(worker),

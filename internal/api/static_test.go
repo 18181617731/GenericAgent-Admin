@@ -85,10 +85,10 @@ func TestStaticMissingAssetDoesNotFallbackToIndex(t *testing.T) {
 func TestStaticCachesAndCompressesHashedAssets(t *testing.T) {
 	body := strings.Repeat("console.log('compress me');", 40)
 	s := &Server{Static: fstest.MapFS{
-		"assets/app-abc123.js": &fstest.MapFile{Data: []byte(body)},
+		"assets/app-abc12345.js": &fstest.MapFile{Data: []byte(body)},
 	}}
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/assets/app-abc123.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/assets/app-abc12345.js", nil)
 	req.Header.Set("Accept-Encoding", "br, gzip")
 	s.static(rr, req)
 
@@ -120,6 +120,22 @@ func TestStaticCachesAndCompressesHashedAssets(t *testing.T) {
 	}
 	if string(decoded) != body {
 		t.Fatalf("decoded body mismatch: got %d bytes want %d", len(decoded), len(body))
+	}
+}
+
+func TestHashedStaticAssetRecognizesViteFingerprintsOnlyUnderAssets(t *testing.T) {
+	cases := map[string]bool{
+		"assets/app-abc12345.js":              true,
+		"assets/archive-C8wc8-U8.js":          true,
+		"assets/KaTeX-Regular-Di6jR-x-.woff2": true,
+		"assets/app.js":                       false,
+		"assets/my-static-file.js":            false,
+		"index-abc123.js":                     false,
+	}
+	for name, want := range cases {
+		if got := isHashedStaticAsset(name); got != want {
+			t.Fatalf("isHashedStaticAsset(%q)=%v want %v", name, got, want)
+		}
 	}
 }
 

@@ -57,7 +57,7 @@ func (m *Manager) ScanGAProcesses() (GAProcessSnapshot, error) {
 	}
 	m.mu.Unlock()
 
-	var items []GAProcessInfo
+	items := make([]GAProcessInfo, 0)
 	self := os.Getpid()
 	for _, row := range rows {
 		if row.pid <= 0 {

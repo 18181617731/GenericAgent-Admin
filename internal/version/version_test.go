@@ -81,9 +81,13 @@ func TestSelectAssets(t *testing.T) {
 
 func TestSelectAssetsRequiresExactPlatformSuffix(t *testing.T) {
 	wantSuffix := fmt.Sprintf("%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	otherPlatform := "linux-amd64"
+	if wantSuffix == otherPlatform+".zip" {
+		otherPlatform = "windows-amd64"
+	}
 	rel := Release{Assets: []Asset{
-		{Name: "ga-admin-linux-amd64.zip"},
-		{Name: "ga-admin-linux-amd64.zip.sha256"},
+		{Name: "ga-admin-" + otherPlatform + ".zip"},
+		{Name: "ga-admin-" + otherPlatform + ".zip.sha256"},
 		{Name: "ga-admin-" + wantSuffix + ".sha256"},
 	}}
 	asset, sum := selectAssets(rel)
@@ -591,6 +595,46 @@ func TestCurrentReportsUpdateSupportStatus(t *testing.T) {
 	}
 }
 
+func TestUpdateSupportMatchesPublishedPackagePlatforms(t *testing.T) {
+	cases := []struct {
+		goos      string
+		supported bool
+	}{
+		{goos: "windows", supported: true},
+		{goos: "linux", supported: false},
+		{goos: "darwin", supported: false},
+		{goos: "plan9", supported: false},
+	}
+	for _, tc := range cases {
+		supported, reason := updateSupportStatusFor(tc.goos)
+		if supported != tc.supported {
+			t.Fatalf("updateSupportStatusFor(%q) supported=%v want %v", tc.goos, supported, tc.supported)
+		}
+		if supported && reason != "" {
+			t.Fatalf("updateSupportStatusFor(%q) reason=%q for supported platform", tc.goos, reason)
+		}
+		if !supported && reason == "" {
+			t.Fatalf("updateSupportStatusFor(%q) missing unsupported reason", tc.goos)
+		}
+	}
+}
+
+func TestWindowsPathDirIsIndependentOfBuildHost(t *testing.T) {
+	cases := map[string]string{
+		`C:\Program Files\GA Admin\ga-admin.exe`: `C:\Program Files\GA Admin`,
+		`C:\ga-admin.exe`:                        `C:\`,
+		`C:/ga-admin.exe`:                        `C:/`,
+		`\\?\C:\ga-admin.exe`:                    `\\?\C:\`,
+		`\\server\share\ga-admin.exe`:            `\\server\share`,
+		`ga-admin.exe`:                           `.`,
+	}
+	for input, want := range cases {
+		if got := windowsPathDir(input); got != want {
+			t.Fatalf("windowsPathDir(%q)=%q want %q", input, got, want)
+		}
+	}
+}
+
 func TestBuildBatReleaseMetadataContract(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	batPath := filepath.Join(root, "build.bat")
@@ -1016,23 +1060,30 @@ func TestCurrentUpdateStatusReportsCorruptStatusFile(t *testing.T) {
 func TestStartApplyLatestChecksumFailureWritesReadableStatus(t *testing.T) {
 	oldURL := repoLatestURL
 	oldStatus := statusPathOverride
+	oldSupportStatus := updateSupportStatus
 	statusPathOverride = filepath.Join(t.TempDir(), "ga-admin-update-status.json")
-	defer func() { repoLatestURL = oldURL; statusPathOverride = oldStatus }()
+	updateSupportStatus = func() (bool, string) { return true, "" }
+	defer func() {
+		repoLatestURL = oldURL
+		statusPathOverride = oldStatus
+		updateSupportStatus = oldSupportStatus
+	}()
 
-	zipPath := filepath.Join(t.TempDir(), "ga-admin-v9.9.9-windows-amd64.zip")
+	assetName := fmt.Sprintf("ga-admin-v9.9.9-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	zipPath := filepath.Join(t.TempDir(), assetName)
 	makeUpdateZip(t, zipPath)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/latest":
 			_ = json.NewEncoder(w).Encode(Release{TagName: "v9.9.9", Assets: []Asset{
-				{Name: "ga-admin-v9.9.9-windows-amd64.zip", BrowserDownloadURL: serverURL(r, "/asset.zip")},
-				{Name: "ga-admin-v9.9.9-windows-amd64.zip.sha256", BrowserDownloadURL: serverURL(r, "/asset.zip.sha256")},
+				{Name: assetName, BrowserDownloadURL: serverURL(r, "/asset.zip")},
+				{Name: assetName + ".sha256", BrowserDownloadURL: serverURL(r, "/asset.zip.sha256")},
 			}})
 		case "/asset.zip":
 			http.ServeFile(w, r, zipPath)
 		case "/asset.zip.sha256":
-			_, _ = w.Write([]byte("0000000000000000000000000000000000000000000000000000000000000000  ga-admin-v9.9.9-windows-amd64.zip\n"))
+			_, _ = w.Write([]byte("0000000000000000000000000000000000000000000000000000000000000000  " + assetName + "\n"))
 		default:
 			http.NotFound(w, r)
 		}

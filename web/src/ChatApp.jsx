@@ -4792,6 +4792,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     try {
       await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
       clearSessionDrafts(id)
+      forgetSessionScroll(sessionScrollSnapshotsRef.current, id)
       const activeDeleted = id === sid
       setSessions(xs => xs.filter(x => x.id !== id))
       if (activeDeleted) clearSessionView({ noticeText:ct('会话已删除', 'Session deleted') })
@@ -4883,6 +4884,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     try {
       const result = await runChatSessionBatch(ids, actionOne)
       if (action === 'delete') clearSessionDrafts(result.succeededIds)
+      if (action === 'delete') forgetSessionScroll(sessionScrollSnapshotsRef.current, result.succeededIds)
       const currentRemoved = (action === 'archive' || action === 'delete') && result.succeededIds.includes(currentID)
       if (currentRemoved) clearSessionView()
       let active = sessions.filter(session => !result.succeededIds.includes(session.id) || (action !== 'archive' && action !== 'delete'))
