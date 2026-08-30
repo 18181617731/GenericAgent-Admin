@@ -15,6 +15,7 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
+import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
@@ -551,13 +552,100 @@ const normalizeToolParts = (parts = []) => {
   return out
 }
 
+const isMermaidFence = (lang = '') => String(lang || '').trim().split(/\s+/, 1)[0].toLowerCase() === 'mermaid'
+
+let mermaidRenderSequence = 0
+let mermaidRenderQueue = Promise.resolve()
+
+const renderMermaidSvg = (source, colorScheme) => {
+  const render = async () => {
+    const module = await import('mermaid')
+    const mermaid = module.default || module
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: colorScheme === 'dark' ? 'dark' : 'neutral',
+    })
+    mermaidRenderSequence += 1
+    return mermaid.render(`oa-mermaid-${Date.now().toString(36)}-${mermaidRenderSequence}`, source)
+  }
+  const pending = mermaidRenderQueue.then(render, render)
+  mermaidRenderQueue = pending.then(() => undefined, () => undefined)
+  return pending
+}
+
+function MermaidDiagram({ source = '' }) {
+  const hostRef = useRef(null)
+  const bindFunctionsRef = useRef(null)
+  const [colorScheme, setColorScheme] = useState(() => globalThis.document?.documentElement?.dataset?.colorScheme || 'light')
+  const [state, setState] = useState({ status: 'loading', svg: '', error: '' })
+
+  useEffect(() => {
+    const root = globalThis.document?.documentElement
+    if (!root || typeof globalThis.MutationObserver !== 'function') return undefined
+    const observer = new globalThis.MutationObserver(() => {
+      setColorScheme(root.dataset.colorScheme || 'light')
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ['data-color-scheme'] })
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    bindFunctionsRef.current = null
+    setState({ status: 'loading', svg: '', error: '' })
+    renderMermaidSvg(source, colorScheme).then(({ svg, bindFunctions }) => {
+      if (!active) return
+      bindFunctionsRef.current = bindFunctions || null
+      setState({ status: 'ready', svg, error: '' })
+    }).catch(error => {
+      if (!active) return
+      setState({ status: 'error', svg: '', error: String(error?.message || error || ct('未知错误', 'Unknown error')) })
+    })
+    return () => { active = false }
+  }, [source, colorScheme])
+
+  useLayoutEffect(() => {
+    if (state.status === 'ready' && hostRef.current && bindFunctionsRef.current) {
+      bindFunctionsRef.current(hostRef.current)
+    }
+  }, [state.status, state.svg])
+
+  return <div className={`oa-mermaid-card ${state.status === 'error' ? 'is-error' : ''}`}>
+    <div className="oa-code-head">
+      <span>Mermaid</span>
+      <CopyButton text={source} compact />
+    </div>
+    {state.status === 'loading' && <div className="oa-mermaid-status" role="status">{ct('正在绘制图表…', 'Rendering diagram…')}</div>}
+    {state.status === 'ready' && <div
+      ref={hostRef}
+      className="oa-mermaid-diagram"
+      role="img"
+      aria-label={ct('Mermaid 图表', 'Mermaid diagram')}
+      dangerouslySetInnerHTML={{ __html: state.svg }}
+    />}
+    {state.status === 'error' && <>
+      <div className="oa-mermaid-error" role="alert">{ct('图表语法无效，已显示源码：', 'Invalid diagram syntax; showing source:')} {state.error}</div>
+      <pre><code>{source}</code></pre>
+    </>}
+  </div>
+}
+
 const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply, onQuickReply, quickReplyDisabled = false }) {
   const stats = useMemo(() => textRenderStats(text), [text])
   const parts = useMemo(() => stats.tooLarge ? [] : normalizeToolParts(splitMarkdownParts(text)).slice(0, MARKDOWN_BLOCK_LIMIT), [text, stats.tooLarge])
   if (stats.tooLarge) return <div className="oa-md"><LongTextPreview text={text} stats={stats} /></div>
   return <div className="oa-md">
     {parts.map((p, idx) => p.type === 'code'
-      ? <div className="oa-code-card" key={idx}>
+      ? isMermaidFence(p.lang)
+        ? p.closed
+          ? <MermaidDiagram key={idx} source={p.text} />
+          : <div className="oa-mermaid-card" key={idx}>
+            <div className="oa-code-head"><span>Mermaid</span><CopyButton text={p.text} compact /></div>
+            <div className="oa-mermaid-status" role="status">{ct('正在接收图表内容…', 'Receiving diagram…')}</div>
+          </div>
+        : <div className="oa-code-card" key={idx}>
           <div className="oa-code-head"><span>{p.lang || ct('代码', 'Code')}</span><CopyButton text={p.text} compact /></div>
           <pre><code>{p.text}</code></pre>
         </div>
@@ -3558,6 +3646,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (timer != null) window.clearTimeout(timer)
     }
   }, [collapsed])
+  const chatLaunchIntentRef = useRef(readChatLaunchIntent())
+  const chatLaunchStartedRef = useRef(false)
+  const openedChatInstanceRef = useRef('')
   const chatApi = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
     const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
@@ -3625,7 +3716,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
-  const didInitializeChatInstanceRef = useRef(false)
   useEffect(() => {
     setSessionSearchHistory(loadSessionSearchHistory(chatInstanceID))
     setDraftSessionIds(new Set(listChatSessionDraftIds(chatInstanceID)))
@@ -4585,7 +4675,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     clearSessionDrafts(d.id)
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? firstRuntimeModelNo(llms))
     await loadChatState(d.id, openToken)
-    if (projectMode) await loadSessions(d.id)
+    if (selectedProject) await loadSessions(d.id)
+    return d.id
   }
 
   const newSession = async () => {
@@ -5756,22 +5847,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   useEffect(() => {
-    const initialize = async () => {
-      try {
-        const draft = memoryDraftRef.current
-        if (draft) {
-          await newSession()
-          setPrompt(draft.prompt)
-          setNotice(ct('已创建文件优化对话。请先审阅草稿，确认后再发送。', 'File-improvement chat created. Review the draft before sending.'))
-          window.setTimeout(() => promptRef.current?.focus(), 0)
-          return
-        }
-        await loadSessions('', { open:true })
-      } catch (error) {
-        setErr(error?.message || String(error))
-      }
-    }
-    initialize()
     loadPromptPresets().catch(e=>setErr(e.message))
     api('/api/instances').then(payload => {
       const options = chatInstanceOptions(payload)
@@ -5788,12 +5863,38 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [])
 
   useEffect(() => {
-    if (!didInitializeChatInstanceRef.current) {
-      didInitializeChatInstanceRef.current = true
-      return undefined
+    if (chatInstancesLoading) return
+    const instanceKey = chatInstanceID || '__default__'
+    if (openedChatInstanceRef.current === instanceKey) return
+    openedChatInstanceRef.current = instanceKey
+    const intent = chatLaunchIntentRef.current
+    const openInitialChat = async () => {
+      try {
+        const draft = memoryDraftRef.current
+        if (draft) {
+          const newSessionID = await createSession()
+          if (!newSessionID) return
+          setSessionPrompt(draft.prompt, newSessionID)
+          setNotice(ct('已创建文件优化对话。请先审阅草稿，确认后再发送。', 'File-improvement chat created. Review the draft before sending.'))
+          requestAnimationFrame(() => promptRef.current?.focus())
+          return
+        }
+        if (!intent.newChat || chatLaunchStartedRef.current) {
+          await loadSessions('', { open:true })
+          return
+        }
+        chatLaunchStartedRef.current = true
+        const newSessionID = await createSession()
+        if (!newSessionID) return
+        if (intent.prompt) setSessionPrompt(intent.prompt, newSessionID)
+        clearChatLaunchIntent()
+        requestAnimationFrame(() => promptRef.current?.focus())
+      } catch (e) {
+        if (e?.name !== 'AbortError') setErr(e.message)
+      }
     }
-    loadSessions('', { open:true }).catch(e => { if (e?.name !== 'AbortError') setErr(e.message) })
-  }, [chatInstanceID])
+    void openInitialChat()
+  }, [chatInstanceID, chatInstancesLoading])
 
   useEffect(() => {
     let stopped = false

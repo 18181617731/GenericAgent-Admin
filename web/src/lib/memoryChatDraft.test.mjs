@@ -39,6 +39,7 @@ test('full chat workspace starts a fresh session with the memory draft', () => {
 
   assert.match(chatApp, /import \{ consumeMemoryChatDraft \} from '\.\/lib\/memoryChatDraft\.js'/)
   assert.match(chatApp, /const memoryDraftRef = useRef\(consumeMemoryChatDraft\(\)\)/)
-  assert.match(chatApp, /if \(draft\) \{\n\s*await newSession\(\)\n\s*setPrompt\(draft\.prompt\)/)
+  assert.match(chatApp, /if \(draft\) \{\n\s*const newSessionID = await createSession\(\)/)
+  assert.match(chatApp, /setSessionPrompt\(draft\.prompt, newSessionID\)/)
   assert.match(chatApp, /Review the draft before sending/)
 })

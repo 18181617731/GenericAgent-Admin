@@ -26,6 +26,17 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() {}
 }
 
+const mermaidMocks = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(),
+}))
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: mermaidMocks.initialize,
+    render: mermaidMocks.render,
+  },
+}))
+
 const appStyles = readFileSync('src/style.css', 'utf8')
 const adminMobileStyles = readFileSync('src/admin-mobile.css', 'utf8')
 
@@ -108,6 +119,8 @@ afterEach(() => {
   unregisterDialogAdapter()
   unregisterDialogAdapter = () => {}
   cleanup()
+  mermaidMocks.initialize.mockReset()
+  mermaidMocks.render.mockReset()
   window.localStorage.clear()
   window.history.replaceState({}, '', '/')
   vi.restoreAllMocks()
@@ -1230,6 +1243,75 @@ describe('chat response model identity', () => {
     expect(container.querySelector('.oa-md img')).toBeNull()
     expect(container.querySelector('.oa-md')?.textContent).toContain('<img src=x onerror="window.__markdownInjected=true">')
     expect(container.querySelector('.oa-md')?.textContent).not.toContain('<br>')
+  })
+
+  test('renders mermaid fences as safe diagrams and keeps the source copyable', async () => {
+    const bindFunctions = vi.fn()
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg viewBox="0 0 120 60"><title>Request flow</title><path d="M0 0L10 10" /></svg>',
+      bindFunctions,
+    })
+    const content = ['```mermaid', 'flowchart LR', '  Request --> Response', '```'].join('\n')
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'mermaid-success', role: 'assistant', content }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByRole('img', { name: 'Mermaid \u56fe\u8868' })).toBeTruthy()
+    expect(container.querySelector('.oa-mermaid-diagram svg title')?.textContent).toBe('Request flow')
+    expect(container.querySelector('.oa-code-card')).toBeNull()
+    expect(mermaidMocks.initialize).toHaveBeenCalledWith(expect.objectContaining({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: 'neutral',
+    }))
+    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('Request --> Response'))
+    expect(bindFunctions).toHaveBeenCalled()
+    expect(appStyles).toMatch(/\.oa-mermaid-diagram\{[^}]*font-weight:450;[^}]*letter-spacing:normal;[^}]*white-space:normal;[^}]*word-break:normal;[^}]*overflow-wrap:normal/)
+    expect(appStyles).toContain('.oa-mermaid-diagram foreignObject p{white-space:inherit}')
+  })
+
+  test('waits for a streamed mermaid fence to close before rendering its final source', async () => {
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg viewBox="0 0 120 60"><title>Final stream</title></svg>',
+    })
+    const renderMessage = content => <ChatMessage
+      message={{ id: 'mermaid-stream', role: 'assistant', content }}
+      pending={true}
+      onAskReply={vi.fn()}
+    />
+    const view = render(renderMessage('```mermaid\nflowchart LR\n  A -->'))
+
+    expect(screen.getByRole('status').textContent).toContain('\u6b63\u5728\u63a5\u6536\u56fe\u8868\u5185\u5bb9')
+    expect(mermaidMocks.render).not.toHaveBeenCalled()
+
+    view.rerender(renderMessage('```mermaid\nflowchart LR\n  A --> B'))
+    expect(mermaidMocks.render).not.toHaveBeenCalled()
+
+    view.rerender(renderMessage('```mermaid\nflowchart LR\n  A --> B\n```'))
+    expect(await screen.findByRole('img', { name: 'Mermaid \u56fe\u8868' })).toBeTruthy()
+    expect(mermaidMocks.render).toHaveBeenCalledTimes(1)
+    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('A --> B'))
+  })
+
+  test('falls back to mermaid source when the diagram syntax is invalid', async () => {
+    mermaidMocks.render.mockRejectedValue(new Error('Parse error on line 2'))
+    const source = 'flowchart LR\n  A -- broken'
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'mermaid-invalid', role: 'assistant', content: `\`\`\`MERMAID\n${source}\n\`\`\`` }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Parse error on line 2')
+    expect(container.querySelector('.oa-mermaid-card.is-error pre code')?.textContent).toBe(`${source}\n`)
+    expect(container.querySelector('.oa-mermaid-diagram')).toBeNull()
   })
 
   test('renders an explicit empty result for a worldline command', () => {

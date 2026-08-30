@@ -21,6 +21,7 @@
     "gsap": "^3.15.0",
     "katex": "^0.18.4",
     "lucide-react": "latest",
+    "mermaid": "^11.17.2",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "^10.1.0",

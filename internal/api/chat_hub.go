@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -24,6 +25,8 @@ type chatHubSession struct {
 	InstanceID string `json:"instance_id"`
 	SessionID  string `json:"session_id"`
 	Title      string `json:"title"`
+	UpdatedAt  int64  `json:"updated_at"`
+	Pinned     bool   `json:"pinned"`
 }
 
 func chatHubPeer(instanceID, sessionID string) string {
@@ -47,7 +50,7 @@ func (s *Server) chatHubServerForInstance(instanceID string) (*Server, error) {
 	return server, err
 }
 
-func (s *Server) listChatHubSessions() []chatHubSession {
+func (s *Server) listChatHubSessions(allowAll bool) []chatHubSession {
 	cfg := s.CfgStore.Snapshot()
 	ids := make([]string, 0, len(cfg.Instances)+1)
 	seen := map[string]bool{}
@@ -83,7 +86,7 @@ func (s *Server) listChatHubSessions() []chatHubSession {
 			}
 			sid := strings.TrimSuffix(entry.Name(), ".json")
 			cs, err := loadChatSession(server.CfgStore.Snapshot(), sid)
-			if err != nil || cs.ID == "" || !cs.HubEnabled {
+			if err != nil || cs.ID == "" || (!allowAll && !cs.HubEnabled) {
 				continue
 			}
 			advertisedInstanceID := instanceID
@@ -92,9 +95,26 @@ func (s *Server) listChatHubSessions() []chatHubSession {
 				// slash before dispatch, so the bridge uses "_" for legacy scope.
 				advertisedInstanceID = "_"
 			}
-			out = append(out, chatHubSession{Peer: chatHubPeer(instanceID, cs.ID), InstanceID: advertisedInstanceID, SessionID: cs.ID, Title: cs.Title})
+			out = append(out, chatHubSession{
+				Peer: chatHubPeer(instanceID, cs.ID), InstanceID: advertisedInstanceID,
+				SessionID: cs.ID, Title: cs.Title, UpdatedAt: cs.UpdatedAt, Pinned: cs.Pinned,
+			})
 		}
 	}
+	// Match the Admin chat history view: pinned sessions first, then the most
+	// recently updated sessions. Identity fields make same-second ties stable.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Pinned != out[j].Pinned {
+			return out[i].Pinned
+		}
+		if out[i].UpdatedAt != out[j].UpdatedAt {
+			return out[i].UpdatedAt > out[j].UpdatedAt
+		}
+		if out[i].InstanceID != out[j].InstanceID {
+			return out[i].InstanceID < out[j].InstanceID
+		}
+		return out[i].SessionID < out[j].SessionID
+	})
 	return out
 }
 
@@ -142,16 +162,65 @@ func chatHubLiveTasks(tasks []map[string]interface{}, partial string) []map[stri
 }
 
 func (s *Server) chatHubAPI(token string) http.Handler {
+	return s.chatSessionBridgeAPI(token, false)
+}
+
+func (s *Server) chatSessionBridgeAPI(token string, allowAll bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			bad(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(w, map[string]interface{}{"sessions": s.listChatHubSessions()})
+		writeJSON(w, map[string]interface{}{"sessions": s.listChatHubSessions(allowAll)})
 	})
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/session/"), "/")
+		if len(parts) == 2 && parts[1] == "new" {
+			if !allowAll {
+				bad(w, http.StatusNotFound, "not found")
+				return
+			}
+			if r.Method != http.MethodPost {
+				bad(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			advertisedInstanceID := parts[0]
+			instanceID := advertisedInstanceID
+			if instanceID == "_" {
+				instanceID = ""
+			}
+			server, err := s.chatHubServerForInstance(instanceID)
+			if err != nil {
+				bad(w, http.StatusNotFound, err.Error())
+				return
+			}
+			cs := chatSession{
+				ID:         newChatID(),
+				Title:      "\u65b0\u4f1a\u8bdd",
+				Messages:   []chatMessage{},
+				Settings:   server.defaultChatSettings(),
+				RawHistory: []map[string]interface{}{},
+			}
+			if err := saveChatSession(server.CfgStore.Snapshot(), cs); err != nil {
+				bad(w, http.StatusInternalServerError, "failed to create session")
+				return
+			}
+			persisted, err := loadChatSession(server.CfgStore.Snapshot(), cs.ID)
+			if err != nil {
+				bad(w, http.StatusInternalServerError, "failed to load created session")
+				return
+			}
+			writeJSON(w, chatHubSession{
+				Peer:       chatHubPeer(instanceID, persisted.ID),
+				InstanceID: advertisedInstanceID,
+				SessionID:  persisted.ID,
+				Title:      persisted.Title,
+				UpdatedAt:  persisted.UpdatedAt,
+				Pinned:     persisted.Pinned,
+			})
+			return
+		}
 		if len(parts) != 3 {
 			bad(w, http.StatusNotFound, "not found")
 			return
@@ -166,17 +235,31 @@ func (s *Server) chatHubAPI(token string) http.Handler {
 			return
 		}
 		cs, err := loadChatSession(server.CfgStore.Snapshot(), sid)
-		if err != nil || !cs.HubEnabled {
-			bad(w, http.StatusNotFound, "session not available in Hub")
+		if err != nil || (!allowAll && !cs.HubEnabled) {
+			bad(w, http.StatusNotFound, "session not available to bridge")
 			return
 		}
 		switch op {
 		case "outputs":
 			tasks := chatHubTasks(cs)
-			if server.chatRunActive(sid) {
+			if r.URL.Query().Get("live") != "0" && server.chatRunActive(sid) {
 				tasks = chatHubLiveTasks(tasks, server.chatRunPartialContent(sid))
 			}
 			writeJSON(w, map[string]interface{}{"tasks": tasks})
+		case "snapshot":
+			run := server.chatRunActive(sid)
+			partial := ""
+			if run {
+				partial = server.chatRunPartialContent(sid)
+			}
+			runID, turns := server.chatRunStructuredSnapshot(sid)
+			writeJSON(w, map[string]interface{}{
+				"tasks":   chatHubTasks(cs),
+				"run":     run,
+				"run_id":  runID,
+				"partial": partial,
+				"turns":   turns,
+			})
 		case "state":
 			writeJSON(w, map[string]interface{}{"run": server.chatRunActive(sid)})
 		case "put":

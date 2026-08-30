@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +22,7 @@ type channelField struct {
 	Label       string `json:"label"`
 	Secret      bool   `json:"secret,omitempty"`
 	Type        string `json:"type,omitempty"`
+	LiteralType string `json:"-"`
 	Value       string `json:"value,omitempty"`
 	HasValue    bool   `json:"has_value,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
@@ -81,6 +83,12 @@ var channelDefinitions = []channelProfile{
 		{Name: "fs_allowed_users", Label: "允许用户", Type: "list", Placeholder: "ou_xxx,ou_yyy；留空或 * 为公开访问"},
 		{Name: "fs_public_access", Label: "公开访问（兼容）", Type: "bool", Value: "false"},
 	}},
+	{ID: "feishu_admin", Name: "飞书 Admin 会话同步", Description: "独立于原飞书 fsapp；配置后由用户在前端服务中选择启动。", Testable: true, Fields: []channelField{
+		{Name: "feishu_admin_app_id", Label: "App ID", Placeholder: "cli_xxx"},
+		{Name: "feishu_admin_app_secret", Label: "App Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
+		{Name: "feishu_admin_allowed_users", Label: "允许用户", Type: "list", Placeholder: "ou_xxx,ou_yyy；留空或 * 为公开访问"},
+		{Name: "feishu_admin_public_access", Label: "公开访问", Type: "bool", Value: "false"},
+	}},
 	{ID: "wecom", Name: "企业微信", Description: "企业微信机器人/应用通道凭据、欢迎语与允许用户。", Testable: true, Fields: []channelField{
 		{Name: "wecom_bot_id", Label: "Bot ID / Agent ID", Placeholder: "1000002"},
 		{Name: "wecom_secret", Label: "Secret", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
@@ -103,7 +111,7 @@ var channelDefinitions = []channelProfile{
 	}},
 	{ID: "telegram", Name: "Telegram", Description: "Telegram Bot Token 与允许用户；可复用全局 proxy 配置。", Testable: true, Fields: []channelField{
 		{Name: "tg_bot_token", Label: "Bot Token", Secret: true, Placeholder: "留空则保留 mykey.py 中现有值"},
-		{Name: "tg_allowed_users", Label: "允许用户", Type: "list", Placeholder: "user_id1,user_id2"},
+		{Name: "tg_allowed_users", Label: "允许用户", Type: "list", LiteralType: "integer_list", Placeholder: "user_id1,user_id2"},
 	}},
 	{ID: "wechat", Name: "微信", Description: "无需 mykey 凭据；启动 wechatapp.py 后按日志中的二维码扫码登录。", Testable: false, Fields: []channelField{}},
 }
@@ -128,6 +136,11 @@ func (s *Server) channels(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		go func() {
+			if err := s.RestartChatFeishuBridgeIfRunning(); err != nil {
+				log.Printf("restart Feishu Admin sync after channel save: %v", err)
+			}
+		}()
 		writeJSON(w, s.loadChannelsResponse())
 	default:
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -217,6 +230,8 @@ func testChannelCredentials(profileID string, values map[string]string) (bool, s
 	switch profileID {
 	case "feishu":
 		return testFeishuCredentials(values["fs_app_id"], values["fs_app_secret"])
+	case "feishu_admin":
+		return testFeishuCredentials(values["feishu_admin_app_id"], values["feishu_admin_app_secret"])
 	case "wecom":
 		return testWeComCredentials(values["wecom_bot_id"], values["wecom_secret"])
 	case "dingtalk":
@@ -527,7 +542,7 @@ func (s *Server) saveChannels(profiles []channelProfile) error {
 			if def.Secret && f.Value == "" {
 				values[def.Name] = existing[def.Name]
 			} else {
-				value, err := encodeChannelValue(f.Value, def.Type)
+				value, err := encodeChannelValue(f.Value, channelLiteralType(def))
 				if err != nil {
 					return fmt.Errorf("%s: %w", def.Name, err)
 				}
@@ -672,7 +687,7 @@ func upsertChannelAssignments(content string, values map[string]string) string {
 	for _, p := range channelDefinitions {
 		for _, f := range p.Fields {
 			allowed[f.Name] = true
-			formatted[f.Name] = fmt.Sprintf("%s = %s", f.Name, formatPythonLiteral(values[f.Name], f.Type))
+			formatted[f.Name] = fmt.Sprintf("%s = %s", f.Name, formatPythonLiteral(values[f.Name], channelLiteralType(f)))
 		}
 	}
 	seen := map[string]bool{}
@@ -749,9 +764,17 @@ func normalizeChannelDisplayValue(raw, typ string) string {
 	}
 }
 
+func channelLiteralType(f channelField) string {
+	if f.LiteralType != "" {
+		return f.LiteralType
+	}
+	return f.Type
+}
+
 func encodeChannelValue(v, typ string) (string, error) {
 	v = strings.TrimSpace(v)
-	if typ == "bool" {
+	switch typ {
+	case "bool":
 		switch {
 		case strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on"):
 			return "true", nil
@@ -760,8 +783,28 @@ func encodeChannelValue(v, typ string) (string, error) {
 		default:
 			return "", fmt.Errorf("invalid boolean value %q", v)
 		}
+	case "integer_list":
+		ids := []int64{}
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(part, 10, 64)
+			if err != nil || id <= 0 {
+				return "", fmt.Errorf("invalid integer user ID %q", part)
+			}
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		return strings.Join(parts, ","), nil
+	default:
+		return v, nil
 	}
-	return v, nil
 }
 
 func formatPythonLiteral(v, typ string) string {
@@ -782,6 +825,11 @@ func formatPythonLiteral(v, typ string) string {
 		sort.Strings(parts)
 		b, _ := json.Marshal(parts)
 		return string(b)
+	case "integer_list":
+		if v == "" {
+			return "[]"
+		}
+		return "[" + v + "]"
 	default:
 		b, _ := json.Marshal(v)
 		return string(b)

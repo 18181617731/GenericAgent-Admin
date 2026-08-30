@@ -1879,6 +1879,16 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover,html[data-color-scheme=
 .oa-math-display .katex-display{margin:0;min-width:max-content}
 .oa-math .katex-error{color:var(--danger,#b42318);font-family:"SFMono-Regular",Consolas,monospace;font-size:.9em}
 .oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--code-bg);border:1px solid var(--border);box-shadow:none}
+.oa-mermaid-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--border);box-shadow:none}
+/* Mermaid measures foreignObject labels outside the markdown tree. Keep the
+   mounted diagram on that same typography baseline so its fixed boxes do not
+   wrap or clip after inheriting chat prose styles. */
+.oa-mermaid-diagram{min-height:120px;padding:18px;overflow:auto;background:var(--surface);display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal}
+.oa-mermaid-diagram foreignObject p{white-space:inherit}
+.oa-mermaid-diagram svg{display:block;max-width:100%;height:auto;margin:auto}
+.oa-mermaid-status{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--surface)}
+.oa-mermaid-error{padding:10px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--danger,#b42318) 8%,var(--surface));color:var(--danger,#b42318);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.oa-mermaid-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:var(--code-bg);color:var(--code-text);font-size:13px;line-height:20px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
 .oa-code-head{height:38px;background:var(--surface-muted);color: var(--text);display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;text-transform:none;border-bottom:1px solid var(--border)}
 .oa-code-head span{color: var(--text);font-weight:500}
 .oa-code-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:var(--code-bg);color: var(--code-text);font-size:13px;line-height:20px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
@@ -21113,4 +21123,35 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   .task-latest-run { align-items:flex-start; }
   .task-model { min-width:0; overflow-wrap:anywhere; }
   .task-run-detail { width:100%; box-sizing:border-box; }
+}
+
+/* Match expanded sidebar controls to their compact collapsed counterparts. */
+.oa-side-head > .oa-new-chat,
+.oa-side-head > .oa-icon-btn {
+  width:36px;
+  min-width:36px;
+  height:36px;
+  min-height:36px;
+  margin-left:0;
+  padding:0;
+  border:0;
+  border-radius:10px;
+  color:var(--text) !important;
+  background:transparent !important;
+  box-shadow:none;
+  transition:background .16s ease, box-shadow .16s ease, transform .16s ease, opacity .16s ease;
+}
+.oa-side-head > .oa-new-chat > svg,
+.oa-side-head > .oa-icon-btn > svg { opacity:1; }
+.oa-side-head > .oa-new-chat:hover,
+.oa-side-head > .oa-icon-btn:hover {
+  color:var(--text) !important;
+  background:var(--oa-side-hover) !important;
+  box-shadow:none;
+  transform:none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oa-side-head > .oa-new-chat,
+  .oa-side-head > .oa-icon-btn { transition:none; }
 }

@@ -13,7 +13,7 @@ export const splitMarkdownParts = (text = '') => {
   let last = 0, match
   while ((match = closedFenceRe.exec(src)) !== null) {
     if (match.index > last) parts.push({ type:'text', text:src.slice(last, match.index) })
-    parts.push({ type:'code', fence:match[1], lang:(match[2] || '').trim(), text:match[3] || '' })
+    parts.push({ type:'code', fence:match[1], lang:(match[2] || '').trim(), text:match[3] || '', closed:true })
     last = closedFenceRe.lastIndex
   }
   if (last < src.length) {
@@ -22,7 +22,7 @@ export const splitMarkdownParts = (text = '') => {
     if (open) {
       const fenceAt = open.index + open[1].length
       if (fenceAt > 0) parts.push({ type:'text', text:tail.slice(0, fenceAt) })
-      parts.push({ type:'code', fence:open[2], lang:(open[3] || '').trim(), text:tail.slice(open.index + open[0].length) })
+      parts.push({ type:'code', fence:open[2], lang:(open[3] || '').trim(), text:tail.slice(open.index + open[0].length), closed:false })
     } else {
       parts.push({ type:'text', text:tail })
     }

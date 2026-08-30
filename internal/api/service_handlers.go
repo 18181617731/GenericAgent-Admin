@@ -34,6 +34,9 @@ func (s *Server) servicesWithAutostart(manager *service.Manager) []service.Servi
 	for _, name := range s.CfgStore.Snapshot().ServiceAutostart {
 		auto[name] = true
 	}
+	if manager == s.Svc {
+		items = append(items, s.adminFeishuServiceInfo())
+	}
 	models := s.CfgStore.Snapshot().ServiceModels
 	for i := range items {
 		items[i].Autostart = auto[items[i].Name]
@@ -47,6 +50,21 @@ func (s *Server) servicesWithAutostart(manager *service.Manager) []service.Servi
 	return items
 }
 
+func (s *Server) adminFeishuServiceInfo() service.ServiceInfo {
+	running, pid, startedAt := s.chatFeishuBridgeStatus()
+	return service.ServiceInfo{
+		Name:      adminFeishuServiceName,
+		Kind:      "frontend",
+		Command:   []string{"ga-admin", "feishu-admin-sync"},
+		WorkDir:   s.CfgStore.Snapshot().GARoot,
+		Running:   running,
+		PID:       pid,
+		StartedAt: startedAt,
+		Managed:   true,
+		NoLogs:    true,
+	}
+}
+
 func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -57,7 +75,16 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setResolvedInstanceHeader(w, instanceID)
-	writeJSON(w, manager.Summary())
+	summary := manager.Summary()
+	if manager == s.Svc {
+		summary["total"]++
+		if s.IsChatFeishuBridgeRunning() {
+			summary["running"]++
+		} else {
+			summary["stopped"]++
+		}
+	}
+	writeJSON(w, summary)
 }
 
 type nameReq struct {
@@ -100,6 +127,16 @@ func (s *Server) startServiceWithManager(manager *service.Manager, name string, 
 	if manager == nil {
 		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
 	}
+	name = strings.TrimSpace(name)
+	if name == adminFeishuServiceName {
+		if manager != s.Svc {
+			return service.ServiceInfo{}, service.ErrServiceNotFound
+		}
+		if err := s.StartChatFeishuBridge(); err != nil {
+			return service.ServiceInfo{}, err
+		}
+		return s.adminFeishuServiceInfo(), nil
+	}
 	svc, ok := manager.Find(name)
 	if !ok {
 		return service.ServiceInfo{}, service.ErrServiceNotFound
@@ -139,6 +176,16 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
+	if strings.TrimSpace(q.Name) == adminFeishuServiceName {
+		if manager != s.Svc {
+			bad(w, http.StatusNotFound, "service not found")
+			return
+		}
+		s.StopChatFeishuBridge()
+		setResolvedInstanceHeader(w, instanceID)
+		writeJSON(w, s.adminFeishuServiceInfo())
+		return
+	}
 	if err := manager.Stop(q.Name); err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -158,6 +205,9 @@ func (s *Server) stopAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	manager.StopAll()
+	if manager == s.Svc {
+		s.StopChatFeishuBridge()
+	}
 	setResolvedInstanceHeader(w, instanceID)
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -179,14 +229,22 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
-	svc, ok := s.Svc.Find(q.Name)
-	if !ok {
-		bad(w, 404, "service not found")
-		return
-	}
-	if q.Enabled && !service.SupportsManualLifecycle(svc) {
-		bad(w, 400, "service autostart is managed by its Goal or checklist workflow")
-		return
+	q.Name = strings.TrimSpace(q.Name)
+	if q.Name == adminFeishuServiceName {
+		if manager != s.Svc {
+			bad(w, http.StatusNotFound, "service not found")
+			return
+		}
+	} else {
+		svc, ok := manager.Find(q.Name)
+		if !ok {
+			bad(w, 404, "service not found")
+			return
+		}
+		if q.Enabled && !service.SupportsManualLifecycle(svc) {
+			bad(w, 400, "service autostart is managed by its Goal or checklist workflow")
+			return
+		}
 	}
 	cfg := s.CfgStore.Snapshot()
 	seen := map[string]bool{}

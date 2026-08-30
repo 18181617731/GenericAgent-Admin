@@ -40,7 +40,7 @@ test('prompt preset save cannot target or update a different active session', ()
 })
 
 test('prompt presets load on initial render so a saved selection has its real name', () => {
-  const mount = functionBlock(main, '  useEffect(() => {\n    const initialize = async () =>', '  useEffect(() => {\n    let stopped')
+  const mount = functionBlock(main, "  useEffect(() => {\n    loadPromptPresets().catch", "  useEffect(() => {\n    if (chatInstancesLoading) return")
   assert.match(mount, /loadPromptPresets\(\)\.catch/)
   assert.match(mount, /\}, \[\]\)/)
 })

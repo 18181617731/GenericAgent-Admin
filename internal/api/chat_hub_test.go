@@ -70,6 +70,196 @@ func TestEmbeddedChatHubBridgeIsMaterialized(t *testing.T) {
 	}
 }
 
+func TestChatSessionBridgeAPIExposesAllSessionsWithoutLiveOutput(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	s := New(store, nil, nil, nil)
+	cs := chatSession{ID: "session-private", Title: "Private chat", Messages: []chatMessage{
+		{Role: "user", Content: "task"},
+		{Role: "assistant", Content: "final response"},
+	}}
+	if err := saveChatSession(store.Snapshot(), cs); err != nil {
+		t.Fatal(err)
+	}
+
+	const token = "private-secret"
+	hub := s.chatHubAPI(token)
+	private := s.chatSessionBridgeAPI(token, true)
+	if got := hubRequest(t, hub, token, http.MethodGet, "/session/_/session-private/outputs", "").Code; got != http.StatusNotFound {
+		t.Fatalf("Hub hidden session status = %d, want %d", got, http.StatusNotFound)
+	}
+	w := hubRequest(t, private, token, http.MethodGet, "/sessions", "")
+	var listing struct {
+		Sessions []chatHubSession `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || len(listing.Sessions) != 1 || listing.Sessions[0].SessionID != "session-private" {
+		t.Fatalf("private sessions status=%d listing=%#v", w.Code, listing.Sessions)
+	}
+
+	run := s.beginChatRun("session-private")
+	if run == nil {
+		t.Fatal("beginChatRun returned nil")
+	}
+	defer s.endChatRunOwned("session-private", run)
+	s.publishChatRun("session-private", map[string]interface{}{"delta": "in-flight"})
+	s.publishChatRun("session-private", map[string]interface{}{
+		"type": "turn", "summary": "Inspect state", "thinking": "reason",
+		"content": "checked", "tool_calls": []interface{}{},
+	})
+
+	decodeOutputs := func(path string) []interface{} {
+		t.Helper()
+		response := hubRequest(t, private, token, http.MethodGet, path, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("outputs status = %d: %s", response.Code, response.Body.String())
+		}
+		var payload struct {
+			Tasks []map[string]interface{} `json:"tasks"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		outputs, _ := payload.Tasks[0]["outputs"].([]interface{})
+		return outputs
+	}
+	stable := decodeOutputs("/session/_/session-private/outputs?live=0")
+	if len(stable) != 1 || stable[0] != "final response" {
+		t.Fatalf("stable outputs = %#v", stable)
+	}
+	live := decodeOutputs("/session/_/session-private/outputs")
+	if len(live) != 2 || live[1] != "in-flight" {
+		t.Fatalf("live outputs = %#v", live)
+	}
+
+	snapshotResponse := hubRequest(t, private, token, http.MethodGet, "/session/_/session-private/snapshot", "")
+	if snapshotResponse.Code != http.StatusOK {
+		t.Fatalf("snapshot status = %d: %s", snapshotResponse.Code, snapshotResponse.Body.String())
+	}
+	var snapshot struct {
+		Tasks   []map[string]interface{} `json:"tasks"`
+		Run     bool                     `json:"run"`
+		RunID   string                   `json:"run_id"`
+		Partial string                   `json:"partial"`
+		Turns   []map[string]interface{} `json:"turns"`
+	}
+	if err := json.Unmarshal(snapshotResponse.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Run || snapshot.RunID != run.ID || snapshot.Partial != "in-flight" {
+		t.Fatalf("snapshot run=%v runID=%q partial=%q", snapshot.Run, snapshot.RunID, snapshot.Partial)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0]["summary"] != "Inspect state" || snapshot.Turns[0]["content"] != "checked" {
+		t.Fatalf("snapshot turns = %#v", snapshot.Turns)
+	}
+	snapshotOutputs, _ := snapshot.Tasks[0]["outputs"].([]interface{})
+	if len(snapshotOutputs) != 1 || snapshotOutputs[0] != "final response" {
+		t.Fatalf("snapshot stable outputs = %#v", snapshotOutputs)
+	}
+}
+
+func TestChatHubSessionListMatchesHistoryOrder(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	s := New(store, nil, nil, nil)
+	fixtures := []chatSession{
+		{ID: "session-recent", Title: "Recent", UpdatedAt: 300},
+		{ID: "session-pinned", Title: "Pinned", UpdatedAt: 100, Pinned: true},
+		{ID: "session-older", Title: "Older", UpdatedAt: 200},
+	}
+	s.SessionMu.Lock()
+	for _, cs := range fixtures {
+		if err := saveChatSessionPreserveUpdatedAtLocked(store.Snapshot(), cs); err != nil {
+			s.SessionMu.Unlock()
+			t.Fatal(err)
+		}
+	}
+	s.SessionMu.Unlock()
+
+	const token = "private-secret"
+	w := hubRequest(t, s.chatSessionBridgeAPI(token, true), token, http.MethodGet, "/sessions", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d: %s", w.Code, w.Body.String())
+	}
+	var listing struct {
+		Sessions []chatHubSession `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Sessions) != 3 {
+		t.Fatalf("sessions = %#v", listing.Sessions)
+	}
+	wantIDs := []string{"session-pinned", "session-recent", "session-older"}
+	for i, wantID := range wantIDs {
+		if listing.Sessions[i].SessionID != wantID {
+			t.Fatalf("sessions[%d].session_id = %q, want %q; all=%#v", i, listing.Sessions[i].SessionID, wantID, listing.Sessions)
+		}
+	}
+	if !listing.Sessions[0].Pinned || listing.Sessions[0].UpdatedAt != 100 {
+		t.Fatalf("pinned metadata = %#v", listing.Sessions[0])
+	}
+	if listing.Sessions[1].Pinned || listing.Sessions[1].UpdatedAt != 300 {
+		t.Fatalf("recent metadata = %#v", listing.Sessions[1])
+	}
+}
+
+func TestPrivateChatBridgeCanCreatePersistentSession(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	cfg := store.Snapshot()
+	cfg.ChatDefaultLLMNo = 2
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := New(store, nil, nil, nil)
+	token := "private-token"
+	private := s.chatSessionBridgeAPI(token, true)
+	hub := s.chatSessionBridgeAPI(token, false)
+
+	unauthorized := httptest.NewRecorder()
+	private.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/session/_/new", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized new status = %d, want %d", unauthorized.Code, http.StatusUnauthorized)
+	}
+	if hidden := hubRequest(t, hub, token, http.MethodPost, "/session/_/new", ""); hidden.Code != http.StatusNotFound {
+		t.Fatalf("Hub new status = %d, want %d", hidden.Code, http.StatusNotFound)
+	}
+
+	created := hubRequest(t, private, token, http.MethodPost, "/session/_/new", "")
+	if created.Code != http.StatusOK {
+		t.Fatalf("private new status = %d: %s", created.Code, created.Body.String())
+	}
+	var item chatHubSession
+	if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.SessionID == "" || item.InstanceID != "_" || item.Title != "新会话" || item.Peer != chatHubPeer("", item.SessionID) {
+		t.Fatalf("created session = %#v", item)
+	}
+	persisted, err := loadChatSession(store.Snapshot(), item.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ID != item.SessionID || persisted.Title != "新会话" || persisted.Settings != s.defaultChatSettings() {
+		t.Fatalf("persisted session = %#v; default settings = %#v", persisted, s.defaultChatSettings())
+	}
+	if len(persisted.Messages) != 0 || len(persisted.RawHistory) != 0 {
+		t.Fatalf("new session must be empty: messages=%#v raw_history=%#v", persisted.Messages, persisted.RawHistory)
+	}
+
+	put := hubRequest(t, private, token, http.MethodPost, "/session/_/"+item.SessionID+"/put", `{"text":"first message"}`)
+	if put.Code == http.StatusNotFound {
+		t.Fatalf("first put could not load persisted session: %s", put.Body.String())
+	}
+	if put.Code != http.StatusOK {
+		t.Fatalf("first put status = %d: %s", put.Code, put.Body.String())
+	}
+	if !s.chatRunActive(item.SessionID) {
+		t.Fatal("first put did not start the new session")
+	}
+	s.chatCancel(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/chat/cancel/"+item.SessionID, nil), item.SessionID)
+}
+
 func TestChatHubAPIExposesPersistentSessionAndControlsRun(t *testing.T) {
 	store := config.NewStore(t.TempDir())
 	s := New(store, nil, nil, nil)

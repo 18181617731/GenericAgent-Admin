@@ -213,6 +213,43 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", done)
         self.assertIn("usages", done)
 
+    def test_structured_turn_hook_publishes_official_turn_and_is_removed(self):
+        class TurnAgent(FakeAgent):
+            def put_task(self, prompt, source=None):
+                hooks = list(self._turn_end_hooks.values())
+                self.assert_hook_count = len(hooks)
+                hooks[0]({
+                    "summary": "checked files",
+                    "response": SimpleNamespace(
+                        thinking="inspect repository",
+                        content="implemented fix",
+                    ),
+                    "tool_calls": [{"name": "file_read", "arguments": {"path": "a.py"}}],
+                })
+                return super().put_task(prompt, source=source)
+
+        agent = TurnAgent()
+        chat_worker.handle_request(agent, FakeWorker(), self.request())
+
+        self.assertEqual(agent.assert_hook_count, 1)
+        turn = next(event for event in self.events if event.get("type") == "turn")
+        self.assertEqual(turn, {
+            "type": "turn",
+            "summary": "checked files",
+            "thinking": "inspect repository",
+            "content": "implemented fix",
+            "tool_calls": [{"name": "file_read", "arguments": {"path": "a.py"}}],
+        })
+        self.assertEqual(agent._turn_end_hooks, {})
+
+    def test_structured_turn_hook_is_removed_after_request_error(self):
+        agent = FakeAgent(fail=True)
+
+        chat_worker.handle_request(agent, FakeWorker(), self.request())
+
+        self.assertEqual(agent._turn_end_hooks, {})
+        self.assertTrue(any(event.get("type") == "error" for event in self.events))
+
     def test_usage_is_published_on_cache_then_completed_at_the_same_index(self):
         chat_worker._reset_usage()
         capture = chat_worker._UsageCapturingStderr(mock.Mock())

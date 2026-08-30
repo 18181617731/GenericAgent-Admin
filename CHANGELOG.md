@@ -2,6 +2,18 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.101 - 2026-08-30
+
+### Upstream chat and channel integration
+- Add dedicated Feishu Admin session synchronization with paginated session listing, `/new`, `/stop`, instance/session switching, and structured task-card updates that reuse the official Feishu card flow without duplicating final output.
+- Keep Feishu multi-turn output on one task card, improve bridge message presentation, and write Telegram allowlist IDs as integers.
+- Cache chat-session summaries, render Mermaid diagrams safely from Markdown, open self-update requests in a new chat, and align expanded sidebar actions with the compact controls.
+
+### Security and lifecycle reliability
+- Make Feishu Admin authorization fail closed: an empty allowlist denies access unless public access is explicitly enabled, while exact sender matches and the explicit `*` wildcard remain supported.
+- Require the Feishu bridge child process to survive a startup readiness window before reporting it as running, and clean up its listener, server, and temporary script when dependencies or the official task-card implementation fail during startup.
+- Include the synthetic Feishu Admin bridge in service summary counts and close persistent chat workers deterministically in Loop tests so Windows temporary directories are not left locked.
+
 ## v1.0.100 - 2026-08-29
 
 ### Continuous verification reliability

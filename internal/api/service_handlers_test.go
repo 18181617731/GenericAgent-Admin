@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,7 +137,21 @@ func TestServicesSummaryReturnsCountsOnGET(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/services/summary", nil)
 	h.ServeHTTP(rr, req)
 	body := rr.Body.String()
-	for _, want := range []string{`"total":1`, `"running":0`, `"stopped":1`} {
+	for _, want := range []string{`"total":2`, `"running":0`, `"stopped":2`} {
+		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
+			t.Fatalf("status=%d missing %s body=%s", rr.Code, want, body)
+		}
+	}
+}
+
+func TestServicesSummaryCountsRunningAdminFeishuBridge(t *testing.T) {
+	s := newServiceHandlerTestServer(t, t.TempDir())
+	s.chatFeishuBridgeCmd = &exec.Cmd{Process: &os.Process{Pid: 12345}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/services/summary", nil)
+	s.Routes().ServeHTTP(rr, req)
+	body := rr.Body.String()
+	for _, want := range []string{`"total":1`, `"running":1`, `"stopped":0`} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("status=%d missing %s body=%s", rr.Code, want, body)
 		}
@@ -164,6 +179,115 @@ func TestLogLinesQueryIsBounded(t *testing.T) {
 		if !tc.ok && err == nil {
 			t.Fatalf("lines=%q unexpectedly accepted as %d", tc.raw, got)
 		}
+	}
+}
+
+func TestAdminFeishuServiceRejectsOriginalFeishuCredentials(t *testing.T) {
+	root := t.TempDir()
+	content := "fs_app_id = \"original-app\"\nfs_app_secret = \"original-secret\"\n"
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := newServiceHandlerTestServer(t, root)
+
+	err := s.StartChatFeishuBridge()
+	if err == nil || !strings.Contains(err.Error(), "configure the Feishu Admin sync channel") {
+		t.Fatalf("StartChatFeishuBridge error=%v, want dedicated credential guidance", err)
+	}
+	if s.IsChatFeishuBridgeRunning() {
+		t.Fatal("original fs_* credentials unexpectedly started the Admin sync service")
+	}
+}
+
+func TestSavingAdminFeishuChannelDoesNotStartService(t *testing.T) {
+	root := t.TempDir()
+	s := newServiceHandlerTestServer(t, root)
+	h := s.Routes()
+	body := `{"profiles":[{"id":"feishu_admin","fields":[
+		{"name":"feishu_admin_app_id","value":"admin-app"},
+		{"name":"feishu_admin_app_secret","value":"admin-secret"},
+		{"name":"feishu_admin_allowed_users","value":""},
+		{"name":"feishu_admin_public_access","value":"false"}
+	]}]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/channels", strings.NewReader(body))
+	markDangerous(req)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/channels status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if s.IsChatFeishuBridgeRunning() || s.Svc.HasRunningProcesses() {
+		t.Fatal("saving Feishu Admin credentials unexpectedly started a service")
+	}
+}
+
+func TestRestartingStoppedAdminFeishuServiceDoesNotStartIt(t *testing.T) {
+	root := t.TempDir()
+	content := "feishu_admin_app_id = \"admin-app\"\nfeishu_admin_app_secret = \"admin-secret\"\n"
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := newServiceHandlerTestServer(t, root)
+
+	if err := s.RestartChatFeishuBridgeIfRunning(); err != nil {
+		t.Fatalf("RestartChatFeishuBridgeIfRunning: %v", err)
+	}
+	if s.IsChatFeishuBridgeRunning() {
+		t.Fatal("restarting a stopped Feishu Admin service unexpectedly started it")
+	}
+}
+
+func TestAdminFeishuServiceDiscoveryAndAutostartAreIndependent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "frontends"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "frontends", "fsapp.py"), []byte("# original Feishu channel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := newServiceHandlerTestServer(t, root)
+
+	find := func(items []service.ServiceInfo, name string) (service.ServiceInfo, bool) {
+		for _, item := range items {
+			if item.Name == name {
+				return item, true
+			}
+		}
+		return service.ServiceInfo{}, false
+	}
+	items := s.servicesWithAutostart(s.Svc)
+	original, ok := find(items, "frontends/fsapp.py")
+	if !ok {
+		t.Fatal("original frontends/fsapp.py service was not discovered")
+	}
+	adminSync, ok := find(items, adminFeishuServiceName)
+	if !ok {
+		t.Fatalf("dedicated %s service was not discovered", adminFeishuServiceName)
+	}
+	if original.Autostart || adminSync.Autostart || adminSync.Running {
+		t.Fatalf("unexpected initial state: original=%+v admin=%+v", original, adminSync)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/services/autostart", strings.NewReader(
+		`{"name":"admin/feishuapp.py","enabled":true}`,
+	))
+	markDangerous(req)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable Admin Feishu autostart status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	items = s.servicesWithAutostart(s.Svc)
+	original, _ = find(items, "frontends/fsapp.py")
+	adminSync, _ = find(items, adminFeishuServiceName)
+	if original.Autostart || !adminSync.Autostart {
+		t.Fatalf("autostart settings were coupled: original=%+v admin=%+v", original, adminSync)
+	}
+	if adminSync.Running || s.Svc.HasRunningProcesses() {
+		t.Fatal("changing autostart unexpectedly started a service immediately")
 	}
 }
 
@@ -263,7 +387,9 @@ func TestServiceRoutesEnforceWorkflowAndModelBoundaries(t *testing.T) {
 
 func TestStartAutostartServicesUsesConfiguredServiceStartup(t *testing.T) {
 	s := newServiceHandlerTestServer(t, t.TempDir())
-	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"} })
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+		cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"}
+	})
 	previous := startAutostartService
 	started := []string{}
 	startAutostartService = func(_ *Server, name string) error {

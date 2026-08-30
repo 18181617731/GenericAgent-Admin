@@ -39,9 +39,30 @@ func saveChatLoopTestSession(t *testing.T, s *Server, cs chatSession) {
 	}
 }
 
+func cleanupChatLoopTestWorker(t *testing.T, s *Server, sid string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		s.CloseChatWorkers()
+		if !s.chatRunActive(sid) {
+			// A run can publish its completed state just before its final session
+			// write returns. Synchronize with that write before TempDir cleanup.
+			s.SessionMu.Lock()
+			s.SessionMu.Unlock()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Error("chat loop workers did not stop during test cleanup")
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "queue-after-completed-run"
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	saveChatLoopTestSession(t, s, chatSession{
 		ID:       sid,
 		Messages: []chatMessage{{ID: "assistant-old", Role: "assistant", Content: "done"}},
@@ -318,6 +339,7 @@ func TestNormalizePersistedChatLoopPausesActiveState(t *testing.T) {
 func TestChatLoopStartAndStopAPI(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-start-stop"
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	saveChatLoopTestSession(t, s, chatSession{ID: sid})
 	oldStartChatWorker := startChatWorkerFunc
 	releaseWorker := make(chan struct{})
@@ -602,6 +624,7 @@ func TestAppendChatLoopRecordBoundsHistoryAndUnicode(t *testing.T) {
 func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-controller-retry"
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	const unusableReply = "<next_prompt>verify the shipped release</next_prompt>"
 	cs := chatSession{ID: sid, Loop: chatLoopState{
 		Enabled:          true,
@@ -707,6 +730,7 @@ func TestEvaluateChatLoopFailsAfterRetryBudget(t *testing.T) {
 func TestContinueChatLoopAllowsRepeatedContinueSignal(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-repeated-continue"
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	saveChatLoopTestSession(t, s, chatSession{ID: sid, Loop: chatLoopState{
 		Enabled:          true,
 		Status:           chatLoopStatusEvaluating,

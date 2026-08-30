@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Activity, CalendarClock, Download, FileCode2, MessageSquare, Play, Power, RefreshCw, Server, ShieldAlert } from 'lucide-react'
+import { navigateToNewChat } from '../lib/chatLaunchIntent'
 
 const countOf = (items) => Array.isArray(items) ? items.length : 0
 
@@ -242,7 +243,7 @@ export function OverviewPage({
         </p>
         <div className="overview-panel-actions">
           {sourceAvailable && <button type="button" onClick={version.checkSource} disabled={gitBusy}>{gitBusy ? t.busy : copy.checkLatest}</button>}
-          <button className="primary" type="button" onClick={() => { window.location.href = '/' }}>
+          <button className="primary" type="button" onClick={() => navigateToNewChat('/update')}>
             <MessageSquare size={14} aria-hidden="true"/>{copy.sourceSelfUpdateCta}
           </button>
         </div>
