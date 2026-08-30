@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ type Server struct {
 	InstanceManagers *instanceManagerRegistry
 	Models           *modelconfig.Store
 	Static           fs.FS
+	staticGzip       sync.Map
 	ReactApp         *reactAppBridge
 	ChatMu           *sync.Mutex
 	SessionMu        *sync.Mutex
@@ -949,7 +951,87 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	} else if strings.HasSuffix(p, ".html") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	_, _ = w.Write(data)
+	if contentType := staticContentType(name); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+
+	body := data
+	if staticGzipEligible(name) {
+		w.Header().Set("Vary", "Accept-Encoding")
+		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			if cached, ok := s.staticGzip.Load(name); ok {
+				body = cached.([]byte)
+			} else {
+				var compressed bytes.Buffer
+				zw := gzip.NewWriter(&compressed)
+				_, _ = zw.Write(data)
+				_ = zw.Close()
+				body = compressed.Bytes()
+				s.staticGzip.Store(name, body)
+			}
+			w.Header().Set("Content-Encoding", "gzip")
+		}
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+func staticContentType(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".js", ".mjs":
+		return "application/javascript"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	}
+	return mime.TypeByExtension(path.Ext(name))
+}
+
+func staticGzipEligible(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".css", ".html", ".js", ".json", ".mjs", ".svg", ".txt", ".xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func acceptsGzip(header string) bool {
+	gzipQuality := -1.0
+	wildcardQuality := -1.0
+	for _, item := range strings.Split(header, ",") {
+		parts := strings.Split(item, ";")
+		encoding := strings.ToLower(strings.TrimSpace(parts[0]))
+		quality := 1.0
+		for _, parameter := range parts[1:] {
+			keyValue := strings.SplitN(strings.TrimSpace(parameter), "=", 2)
+			if len(keyValue) != 2 || !strings.EqualFold(strings.TrimSpace(keyValue[0]), "q") {
+				continue
+			}
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(keyValue[1]), 64)
+			if err != nil || parsed < 0 || parsed > 1 {
+				quality = 0
+			} else {
+				quality = parsed
+			}
+		}
+		switch encoding {
+		case "gzip":
+			gzipQuality = quality
+		case "*":
+			wildcardQuality = quality
+		}
+	}
+	if gzipQuality >= 0 {
+		return gzipQuality > 0
+	}
+	return wildcardQuality > 0
 }
 
 type reactAppBridge struct {

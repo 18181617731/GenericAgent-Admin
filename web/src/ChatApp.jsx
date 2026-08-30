@@ -17,6 +17,7 @@ import { api, apiStream } from './lib/api'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID, requestChatInstance } from './lib/chatInstanceScope'
 import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
+import { forgetSessionScroll, rememberSessionScroll, sessionScrollRestore } from './lib/chatSessionScroll'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger, showAppAlert } from './lib/danger'
@@ -3713,6 +3714,20 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const previousScrollTopRef = useRef(0)
   const previousScrollHeightRef = useRef(0)
   const followSettleUntilRef = useRef(0)
+  const sessionScrollSnapshotsRef = useRef(new Map())
+  const pendingSessionScrollRestoreRef = useRef(null)
+  const pendingRenderedSessionRef = useRef('')
+  const renderedSessionRef = useRef('')
+  const rememberRenderedSessionScroll = () => {
+    const thread = threadRef.current
+    if (!thread || !renderedSessionRef.current) return
+    rememberSessionScroll(
+      sessionScrollSnapshotsRef.current,
+      renderedSessionRef.current,
+      thread.scrollTop,
+      autoFollowRef.current,
+    )
+  }
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
@@ -4447,6 +4462,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const openSession = async (id, refreshList = true) => {
+    rememberRenderedSessionScroll()
+    pendingSessionScrollRestoreRef.current = null
+    pendingRenderedSessionRef.current = ''
     setWorldlineRestorePicker(null)
     const openToken = ++openSeqRef.current
     activeSidRef.current = id
@@ -4458,10 +4476,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessionPrompt(loadChatSessionDraft(chatInstanceRef.current, id), id)
     setBusy(false)
     setStreamingSid('')
-    setAutoFollow(true)
-    setShowFollow(false)
     const d = await chatApi(`/api/chat/session/${id}`)
     if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
+    const scrollRestore = sessionScrollRestore(sessionScrollSnapshotsRef.current, d.id)
+    pendingSessionScrollRestoreRef.current = scrollRestore ? { sessionID: d.id, ...scrollRestore } : null
+    pendingRenderedSessionRef.current = d.id
+    autoFollowRef.current = !scrollRestore
+    setAutoFollow(!scrollRestore)
+    setShowFollow(false)
     activeSidRef.current = d.id
     persistSelectedChatSessionID(chatInstanceRef.current, d.id)
     scrollModeRef.current = 'auto'
@@ -4670,6 +4692,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     streamAbortRef.current = null
     const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
     if (openToken !== openSeqRef.current) return
+    forgetSessionScroll(sessionScrollSnapshotsRef.current, d.id)
+    pendingSessionScrollRestoreRef.current = null
+    pendingRenderedSessionRef.current = d.id
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
@@ -6004,6 +6029,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const switchChatInstance = (nextValue) => {
     const nextID = String(nextValue || '').trim()
     if (!nextID || nextID === chatInstanceRef.current) return
+    rememberRenderedSessionScroll()
+    sessionScrollSnapshotsRef.current.clear()
+    pendingSessionScrollRestoreRef.current = null
+    pendingRenderedSessionRef.current = ''
+    renderedSessionRef.current = ''
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
     chatRequestEpochRef.current += 1
@@ -6140,7 +6170,20 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   useLayoutEffect(() => {
-    if (autoFollow) {
+    if (sid && pendingRenderedSessionRef.current === sid) {
+      renderedSessionRef.current = sid
+      pendingRenderedSessionRef.current = ''
+    }
+    const scrollRestore = pendingSessionScrollRestoreRef.current
+    if (scrollRestore?.sessionID === sid) {
+      pendingSessionScrollRestoreRef.current = null
+      const thread = threadRef.current
+      if (thread) {
+        thread.scrollTop = scrollRestore.scrollTop
+        markProgrammaticScroll(thread, FOLLOW_SETTLE_MS)
+      }
+      setShowFollow(!isNearBottom(thread) && threadCanScroll(thread))
+    } else if (autoFollow) {
       const behavior = scrollModeRef.current || 'auto'
       scrollModeRef.current = 'auto'
       scrollToThreadEnd(behavior)
@@ -6150,7 +6193,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setShowFollow(!isNearBottom(threadRef.current) && threadCanScroll(threadRef.current))
     }
     syncJumpSent()
-  }, [messages, busy, autoFollow])
+  }, [messages, busy, autoFollow, sid])
 
   const lastThreadMessageId = messages.reduce((id, message) => message.kind === 'btw' ? id : message.id, '')
   useEffect(() => {
