@@ -2502,6 +2502,10 @@ def handle_request(agent, worker, req):
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
+    # A real agent turn may run tools before its final history is committed. Activate
+    # worldline now so the pre-edit hook can snapshot those writes; drawer reads stay
+    # side-effect free because only the write path reaches this point.
+    _ensure_worldline_store(agent, root_for_req, applied_workspace)
     chunks = []
     first_token_ms = 0
     _up_context = None
