@@ -37,7 +37,7 @@ func TestChatSessionSummaryIndexCachesAndInvalidates(t *testing.T) {
 	first := chatSession{ID: "summary-first", Title: "First", UpdatedAt: 20, Messages: []chatMessage{{ID: "m1"}}}
 	second := chatSession{ID: "summary-second", Title: "Second", UpdatedAt: 10, Messages: []chatMessage{{ID: "m2"}, {ID: "m3"}}}
 	for _, cs := range []chatSession{first, second} {
-		if err := saveChatSessionLocked(cfg, cs); err != nil {
+		if err := saveChatSessionPreserveUpdatedAtLocked(cfg, cs); err != nil {
 			t.Fatal(err)
 		}
 	}

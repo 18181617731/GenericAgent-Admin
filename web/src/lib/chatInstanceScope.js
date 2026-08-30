@@ -10,6 +10,9 @@ export const addChatInstanceToURL = (url, instanceID) => {
   return `${parsed.pathname}${parsed.search}${parsed.hash}`
 }
 
+export const requestChatInstance = (request, instanceID, url, options) =>
+  request(addChatInstanceToURL(url, instanceID), options)
+
 export const initialChatInstanceID = ({ location = window.location, storage = window.sessionStorage } = {}) => {
   const fromURL = normalizeChatInstanceID(new URLSearchParams(location.search).get('instance_id'))
   if (fromURL) return fromURL

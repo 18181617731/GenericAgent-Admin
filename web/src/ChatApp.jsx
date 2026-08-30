@@ -14,7 +14,7 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
-import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
+import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID, requestChatInstance } from './lib/chatInstanceScope'
 import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
@@ -43,7 +43,7 @@ import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 import { hasSubagentLaunch } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
-import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
+import { consumeMemoryChatDraft, createMemoryChatDraftSession } from './lib/memoryChatDraft.js'
 import { firstRuntimeModelNo } from './lib/modelDefaults.js'
 import { clearSessionSearchHistory, loadSessionSearchHistory, saveSessionSearchHistory, sessionSearchScopeOptions } from './lib/chatSessionSearch.js'
 import { lastUserMessageID, nextActiveSession } from './lib/chatSessionActions.js'
@@ -3651,7 +3651,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const openedChatInstanceRef = useRef('')
   const chatApi = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
-    const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
+    const result = await requestChatInstance(api, chatInstanceRef.current, url, options)
     if (epoch !== chatRequestEpochRef.current) throw new DOMException('Chat instance changed', 'AbortError')
     return result
   }, [])
@@ -4668,7 +4668,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
+    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
     if (openToken !== openSeqRef.current) return
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
@@ -5872,9 +5872,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       try {
         const draft = memoryDraftRef.current
         if (draft) {
-          const newSessionID = await createSession()
-          if (!newSessionID) return
-          setSessionPrompt(draft.prompt, newSessionID)
+          const claimed = await createMemoryChatDraftSession(memoryDraftRef, createSession)
+          if (!claimed) return
+          setSessionPrompt(claimed.draft.prompt, claimed.sessionID)
           setNotice(ct('已创建文件优化对话。请先审阅草稿，确认后再发送。', 'File-improvement chat created. Review the draft before sending.'))
           requestAnimationFrame(() => promptRef.current?.focus())
           return

@@ -13,6 +13,10 @@ This file records manually curated release changes for GenericAgent Admin Go.
 - Make Feishu Admin authorization fail closed: an empty allowlist denies access unless public access is explicitly enabled, while exact sender matches and the explicit `*` wildcard remain supported.
 - Require the Feishu bridge child process to survive a startup readiness window before reporting it as running, and clean up its listener, server, and temporary script when dependencies or the official task-card implementation fail during startup.
 - Include the synthetic Feishu Admin bridge in service summary counts and close persistent chat workers deterministically in Loop tests so Windows temporary directories are not left locked.
+- Hide archived chats from Hub and Feishu session discovery and reject all bridge operations against archived session IDs.
+- Keep new-chat creation scoped to the selected GenericAgent instance and consume memory-file draft launches exactly once after a session is created.
+- Regenerate the web dependency lock with npm 10 so release runners can install the complete optional `@emnapi` dependency graph.
+- Stabilize the session-summary cache regression test by preserving its explicit ordering timestamps.
 
 ## v1.0.100 - 2026-08-29
 
