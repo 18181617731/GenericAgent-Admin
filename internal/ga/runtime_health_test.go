@@ -93,6 +93,20 @@ func TestProbeChatWorkerRuntimeAcceptsCompleteModelHook(t *testing.T) {
 	}
 }
 
+func TestValidateChatWorkerHooksAllowsOtherFinallyCleanupBeforeModelRestore(t *testing.T) {
+	content := "def _install_outbound_model_hooks(agent):\n    return lambda: None\n\nrestore_model_hooks = _install_outbound_model_hooks(agent)\ntry:\n    pass\nfinally:\n    turn_hooks.clear()\n    restore_image_injection()\n    restore_model_hooks()\n"
+	if err := validateChatWorkerHooks(content); err != nil {
+		t.Fatalf("complete cleanup block was rejected: %v", err)
+	}
+}
+
+func TestValidateChatWorkerHooksRejectsRestoreOutsideFinally(t *testing.T) {
+	content := "def _install_outbound_model_hooks(agent):\n    return lambda: None\n\nrestore_model_hooks = _install_outbound_model_hooks(agent)\ntry:\n    pass\nfinally:\n    restore_image_injection()\nrestore_model_hooks()\n"
+	if err := validateChatWorkerHooks(content); err == nil {
+		t.Fatal("model hook restore outside finally must be rejected")
+	}
+}
+
 func TestRepairLegacyUltraplanScriptsIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "temp", "ultraplan_demo", "admin_chat_ultraplan.py")

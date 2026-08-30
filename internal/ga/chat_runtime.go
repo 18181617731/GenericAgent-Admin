@@ -93,10 +93,34 @@ func validateChatWorkerHooks(content string) error {
 	if !hasPythonFunctionDefinition(normalized, "_install_outbound_model_hooks") {
 		return fmt.Errorf("Chat 对话运行组件缺少模型路由钩子，普通对话会在启动前失败")
 	}
-	if !strings.Contains(normalized, "restore_model_hooks = _install_outbound_model_hooks(agent)") || !strings.Contains(normalized, "finally:\n        restore_model_hooks()") {
+	if !strings.Contains(normalized, "restore_model_hooks = _install_outbound_model_hooks(agent)") || !hasPythonFinallyCall(normalized, "restore_model_hooks()") {
 		return fmt.Errorf("Chat 对话运行组件的模型路由钩子不完整")
 	}
 	return nil
+}
+
+func hasPythonFinallyCall(content, call string) bool {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	for index, line := range lines {
+		if strings.TrimSpace(line) != "finally:" {
+			continue
+		}
+		finallyIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+		for _, nested := range lines[index+1:] {
+			trimmed := strings.TrimSpace(nested)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			indent := len(nested) - len(strings.TrimLeft(nested, " \t"))
+			if indent <= finallyIndent {
+				break
+			}
+			if trimmed == call {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasPythonFunctionDefinition(content, name string) bool {

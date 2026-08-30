@@ -17,6 +17,7 @@ This file records manually curated release changes for GenericAgent Admin Go.
 - Keep new-chat creation scoped to the selected GenericAgent instance and consume memory-file draft launches exactly once after a session is created.
 - Regenerate the web dependency lock with npm 10 so release runners can install the complete optional `@emnapi` dependency graph.
 - Stabilize the session-summary cache regression test by preserving its explicit ordering timestamps.
+- Accept additional deterministic cleanup inside the chat worker's `finally` block without falsely failing the packaged-runtime health check.
 
 ## v1.0.100 - 2026-08-29
 
