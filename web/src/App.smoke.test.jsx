@@ -2693,7 +2693,7 @@ describe('mobile chat session navigation', () => {
 
     fireEvent.keyDown(document, { key:'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog', { name:'聊天工具' })).toBeNull())
-    expect(document.activeElement).toBe(trigger)
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
   test('returns focus to the mobile sidebar trigger after Escape closes the drawer', async () => {
