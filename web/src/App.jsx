@@ -21,11 +21,11 @@ import { useSchedule } from './hooks/useSchedule'
 import { useServices } from './hooks/useServices'
 import { useTitleModel } from './hooks/useTitleModel'
 import { useVersionUpdates } from './hooks/useVersionUpdates'
-import { OverviewPage } from './pages/OverviewPage'
-import { GeneralPage } from './pages/GeneralPage'
-import { ChatSettingsPage } from './pages/ChatSettingsPage'
-import { KeychainPage } from './pages/KeychainPage'
-// 页面级代码分割：重量级页面按需加载，首屏只下载设置壳与三个轻量设置页。
+// Page-level code splitting keeps the app shell small and loads each route on demand.
+const OverviewPage = lazy(() => import('./pages/OverviewPage'))
+const GeneralPage = lazy(() => import('./pages/GeneralPage'))
+const ChatSettingsPage = lazy(() => import('./pages/ChatSettingsPage'))
+const KeychainPage = lazy(() => import('./pages/KeychainPage'))
 const GoalsPage = lazy(() => import('./pages/GoalsPage').then(m => ({ default: m.GoalsPage })))
 const UsagePage = lazy(() => import('./pages/UsagePage').then(m => ({ default: m.UsagePage })))
 const InstancesPage = lazy(() => import('./pages/InstancesPage'))
