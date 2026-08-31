@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const css = readFileSync(resolve(here, '../style.css'), 'utf8').replace(/\r\n?/g, '\n')
 const mainSource = readFileSync(resolve(here, '../main.jsx'), 'utf8').replace(/\r\n?/g, '\n')
+const chatSource = readFileSync(resolve(here, '../ChatApp.jsx'), 'utf8').replace(/\r\n?/g, '\n')
 
 const ruleBodies = (selector) => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -387,4 +388,18 @@ test('chat topbar separates conversation views from the appearance control', () 
   const componentRules = [cluster, group, theme, base, divider, badge, hover, open, openBadge, focus, disabled].join('\n')
   assert.doesNotMatch(componentRules, /(?:#(?:000|111|fff)(?:fff)?\b|var\(--(?:d-|n-ffffff|i-111111|i-222222))/i)
   assert.doesNotMatch(css, /html\[data-color-scheme="dark"\][^{]*\.oa-context-btn/i)
+})
+
+test('project badge stays compact, semantic, and readable under title pressure', () => {
+  const badge = ruleBodies('.oa-title .oa-project-badge').join('\n')
+  const label = ruleBodies('.oa-title .oa-project-badge > span').join('\n')
+  const collapsed = ruleBodies('.oa-chat.is-collapsed .oa-title .oa-project-badge').join('\n')
+
+  assert.match(chatSource, /className="oa-project-badge"[^>]*><FolderOpen size=\{12\} aria-hidden="true"\/><span>\{current\.project_mode\}<\/span>/)
+  assert.doesNotMatch(chatSource, /className="oa-project-badge"[^>]*>Project:/)
+  assert.match(badge, /flex\s*:\s*0\s+0\s+auto/i)
+  assert.match(badge, /max-width\s*:\s*min\(240px,calc\(100vw\s*-\s*360px\)\)/i)
+  assert.match(label, /overflow\s*:\s*hidden/i)
+  assert.match(label, /text-overflow\s*:\s*ellipsis/i)
+  assert.match(collapsed, /max-width\s*:\s*min\(180px,50%\)/i)
 })
