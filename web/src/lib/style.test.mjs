@@ -238,6 +238,7 @@ test('theme-specific metadata and settings actions keep readable foregrounds', (
   assert.match(usageTotalRule, /flex-wrap\s*:\s*nowrap/i)
   assert.match(usageTotalRule, /overflow-x\s*:\s*auto/i)
   assert.match(usageTotalRule, /white-space\s*:\s*nowrap/i)
+  assert.match(ruleBodies('.oa-message.assistant .oa-msg-footer > .oa-usage.oa-usage-total').join('\n'), /flex\s*:\s*1\s+1\s+0/i)
   assert.match(ruleBodies('.oa-usage.oa-usage-total > *').join('\n'), /flex\s*:\s*0\s+0\s+auto/i)
   assert.match(css, /\.oa-usage\.oa-usage-total::-webkit-scrollbar\s*\{[^}]*display\s*:\s*none/i)
   assert.match(css, /\.oa-turn-toggle:hover \.oa-usage-inline,\s*\.oa-turn-current-head:hover \.oa-usage-inline\s*\{[^}]*opacity\s*:\s*1/i)

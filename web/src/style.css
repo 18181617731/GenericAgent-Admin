@@ -13676,7 +13676,7 @@ html[data-color-scheme="dark"] .oa-chat .oa-composer:focus-within {
 }
 .oa-message.assistant .oa-msg-footer:empty { display: none; }
 .oa-message.assistant .oa-msg-footer > .oa-usage.oa-usage-total {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
