@@ -3527,7 +3527,7 @@ export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeycha
   const actions = [
     { icon: Paperclip, label: ct('附件', 'Attachments'), onClick: onAttach, active: false },
     { icon: Sparkles, label: ct('命令', 'Commands'), onClick: onCommands, active: commandsOpen },
-    { icon: Bot, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
+    { icon: FileText, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
     { icon: KeyRound, label: ct('密钥管理', 'Keychain'), onClick: onKeychain, active: keychainOpen },
     { icon: Bot, label: ct('自主行动', 'Auto-action'), onClick: onAutorun, active: autorunEnabled },
     { icon: Orbit, label: 'Loop', onClick: onLoop, active: loopOpen },

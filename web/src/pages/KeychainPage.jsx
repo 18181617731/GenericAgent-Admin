@@ -10,12 +10,15 @@ export function KeychainPage({ text }) {
   const [value, setValue] = useState('')
   const [status, setStatus] = useState({ kind: 'loading', message: copy.loading })
   const [busy, setBusy] = useState(false)
+  const [activePanel, setActivePanel] = useState('inventory')
 
   const load = useCallback(async () => {
     setStatus({ kind: 'loading', message: copy.loading })
     try {
       const data = await api('/api/keychain')
-      setKeys(Array.isArray(data?.keys) ? data.keys : [])
+      const nextKeys = Array.isArray(data?.keys) ? data.keys : []
+      setKeys(nextKeys)
+      if (nextKeys.length === 0) setActivePanel('editor')
       setStatus(null)
     } catch (error) {
       setStatus({ kind: 'error', message: `${copy.loadFailed} ${error.message}` })
@@ -38,9 +41,11 @@ export function KeychainPage({ text }) {
       const data = await api('/api/keychain', {
         method: 'PUT', dangerous: true, body: JSON.stringify({ name: cleanName, value }),
       })
-      setKeys(Array.isArray(data?.keys) ? data.keys : [])
+      const nextKeys = Array.isArray(data?.keys) ? data.keys : []
+      setKeys(nextKeys)
       setName('')
       setValue('')
+      setActivePanel('inventory')
       setStatus({ kind: 'success', message: copy.saved })
     } catch (error) {
       setStatus({ kind: 'error', message: error.message })
@@ -55,7 +60,9 @@ export function KeychainPage({ text }) {
       const data = await api('/api/keychain', {
         method: 'DELETE', dangerous: true, body: JSON.stringify({ name: keyName }),
       })
-      setKeys(Array.isArray(data?.keys) ? data.keys : [])
+      const nextKeys = Array.isArray(data?.keys) ? data.keys : []
+      setKeys(nextKeys)
+      if (nextKeys.length === 0) setActivePanel('editor')
       setStatus({ kind: 'success', message: copy.removed })
     } catch (error) {
       setStatus({ kind: 'error', message: error.message })
@@ -66,7 +73,17 @@ export function KeychainPage({ text }) {
   const feedback = status && !loading && !(status.kind === 'error' && keys.length === 0) ? status : null
 
   return <div className="keychain-page">
-    <div className="keychain-workspace">
+    <div className="keychain-workspace" data-active-panel={activePanel}>
+      <div className="keychain-view-switch" role="group" aria-label={copy.title}>
+        <button type="button" className={activePanel === 'inventory' ? 'is-active' : ''}
+          aria-pressed={activePanel === 'inventory'} onClick={() => setActivePanel('inventory')}>
+          <span>{copy.inventory}</span><span className="keychain-view-count" data-count={keys.length} aria-hidden="true"/>
+        </button>
+        <button type="button" className={activePanel === 'editor' ? 'is-active' : ''}
+          aria-pressed={activePanel === 'editor'} onClick={() => setActivePanel('editor')}>
+          <Plus size={14} aria-hidden="true"/><span>{copy.editor}</span>
+        </button>
+      </div>
       <section className="keychain-inventory" aria-labelledby="keychain-inventory-title">
         <div className="keychain-section-head">
           <div>

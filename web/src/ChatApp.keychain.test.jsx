@@ -30,7 +30,12 @@ describe('composer action menu', () => {
     />)
 
     fireEvent.click(screen.getByRole('button', { name: /更多操作|more actions/i }))
-    const autorunItem = screen.getByRole('menuitem', { name: /自主行动|autonomous mode/i })
+    const systemPromptItem = screen.getByRole('menuitem', { name: /系统提示|system prompt/i })
+    const autorunItem = screen.getByRole('menuitem', { name: /自主行动|auto-action/i })
+    expect(systemPromptItem.querySelector('.lucide-file-text')).toBeTruthy()
+    expect(systemPromptItem.querySelector('.lucide-bot')).toBeNull()
+    expect(autorunItem.querySelector('.lucide-bot')).toBeTruthy()
+    expect(autorunItem.querySelector('.lucide-file-text')).toBeNull()
     expect(autorunItem.classList.contains('is-active')).toBe(true)
     fireEvent.click(autorunItem)
     expect(onAutorun).toHaveBeenCalledOnce()
