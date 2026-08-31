@@ -3508,7 +3508,7 @@ export function ProviderModelCascade({
   )
 }
 
-export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, triggerRef }) {
+export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const fallbackTriggerRef = useRef(null)
@@ -3529,6 +3529,8 @@ export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeycha
     { icon: Sparkles, label: ct('命令', 'Commands'), onClick: onCommands, active: commandsOpen },
     { icon: Bot, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
     { icon: KeyRound, label: ct('密钥管理', 'Keychain'), onClick: onKeychain, active: keychainOpen },
+    { icon: Bot, label: ct('自主行动', 'Auto-action'), onClick: onAutorun, active: autorunEnabled },
+    { icon: Orbit, label: 'Loop', onClick: onLoop, active: loopOpen },
   ]
 
   return (
@@ -3539,8 +3541,8 @@ export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeycha
         type="button"
         className={`oa-composer-actions-trigger ${open ? 'is-open' : ''}`}
         onClick={() => setOpen(!open)}
-        title={ct('附件、命令、系统提示与密钥管理', 'Attachments, commands, system prompt, and keychain')}
-        aria-label={ct('附件、命令、系统提示与密钥管理', 'Attachments, commands, system prompt, and keychain')}
+        title={ct('更多操作', 'More actions')}
+        aria-label={ct('更多操作', 'More actions')}
         aria-haspopup="menu"
         aria-expanded={open}
       >
@@ -6340,18 +6342,6 @@ export default function ChatApp() {
               <GitBranch size={16}/>{ct('世界线', 'Timeline')}{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
             </button>
           </div>
-          <button
-            type="button"
-            className={`oa-autorun-toggle ${autorunEnabled ? 'is-active' : ''}`}
-            onClick={toggleAutorun}
-            aria-pressed={autorunEnabled}
-            title={autorunEnabled
-              ? ct('\u5df2\u5141\u8bb8\uff1a\u6bcf\u6b21\u56de\u590d 30 \u5206\u949f\u540e\u542f\u52a8', 'Enabled: starts 30 minutes after each reply')
-              : ct('\u5141\u8bb8\u81ea\u4e3b\u884c\u52a8', 'Enable auto-action')}
-          >
-            <span className="oa-autorun-dot" aria-hidden="true" />
-            <span>{ct('\u81ea\u4e3b', 'Auto')}</span>
-          </button>
           <ThemePicker className="oa-topbar-theme" value={theme} onChange={setTheme} lang={chatLanguage()} variant="compact" />
         </div>
         <button
@@ -6386,16 +6376,6 @@ export default function ChatApp() {
           >
             <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{(worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
           </button>
-          <button
-            type="button"
-            className={`oa-mobile-tools-item oa-mobile-autorun ${autorunEnabled ? 'is-active' : ''}`}
-            onClick={()=>{ toggleAutorun(); setMobileToolsOpen(false) }}
-            aria-pressed={autorunEnabled}
-          >
-            <Bot size={17}/>
-            <span className="oa-mobile-tools-item-copy">{ct('\u81ea\u4e3b\u884c\u52a8', 'Auto-action')}</span>
-            <b className="oa-mobile-tools-item-badge">{autorunEnabled ? ct('\u5df2\u5141\u8bb8', 'On') : ct('\u5df2\u7981\u6b62', 'Off')}</b>
-          </button>
           <ThemePicker
             className="oa-mobile-tools-theme"
             value={theme}
@@ -6429,7 +6409,7 @@ export default function ChatApp() {
           <button type="button" onClick={() => setErr('')} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '18px', lineHeight: '1', padding: '0 4px' }} aria-label="关闭">&times;</button>
         </div>}
       </div>
-      <div className={`oa-workspace ${loopRailOpen ? 'has-loop' : ''} ${btwRailOpen && btwMessages.length > 0 ? 'has-btw' : ''} ${!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen) ? 'has-launchers' : ''}`}>
+      <div className={`oa-workspace ${loopRailOpen ? 'has-loop' : ''} ${btwRailOpen && btwMessages.length > 0 ? 'has-btw' : ''} ${btwMessages.length > 0 && !btwRailOpen ? 'has-launchers' : ''}`}>
         <section className="oa-thread" ref={threadRef} onScroll={updateFollowFromScroll} onWheel={e=>{ if (e.deltaY < 0) pauseFollow() }} onTouchMove={()=>{ if (!isNearBottom(threadRef.current)) pauseFollow() }}>
           {messages.length === 0 && <div className="oa-empty">
             <h1>今天想让 GenericAgent 做什么？</h1>
@@ -6544,14 +6524,10 @@ export default function ChatApp() {
             />)}
           </div>
         </aside>}
-        {(!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen)) && <div className="oa-rail-launchers" aria-label={ct('已收起的右侧栏', 'Collapsed right rails')}>
-          {!loopRailOpen && <button type="button" className="oa-btw-collapsed oa-loop-collapsed" onClick={()=>setLoopRailOpen(true)} aria-expanded="false" aria-controls="oa-loop-rail" title={ct('展开 Loop 栏', 'Expand Loop rail')}>
-            <Orbit size={15} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/><span>LOOP</span>
-            {loopState?.enabled && <b>{Number(loopState.round) || 0}</b>}
-          </button>}
-          {btwMessages.length > 0 && !btwRailOpen && <button type="button" className="oa-btw-collapsed oa-btw-only-collapsed" onClick={()=>setBtwRailOpen(true)} aria-expanded="false" aria-controls="oa-btw-rail" title={ct('展开侧问栏', 'Expand side-question rail')}>
+        {btwMessages.length > 0 && !btwRailOpen && <div className="oa-rail-launchers" aria-label={ct('已收起的右侧栏', 'Collapsed right rails')}>
+          <button type="button" className="oa-btw-collapsed oa-btw-only-collapsed" onClick={()=>setBtwRailOpen(true)} aria-expanded="false" aria-controls="oa-btw-rail" title={ct('展开侧问栏', 'Expand side-question rail')}>
             <MessageSquarePlus size={15}/><span>BTW</span><b>{btwMessages.length}</b>
-          </button>}
+          </button>
         </div>}
       </div>
 
@@ -6725,10 +6701,14 @@ export default function ChatApp() {
               onCommands={() => setCmdManagerOpen(true)}
               onSystemPrompt={openExtraPromptEditor}
               onKeychain={() => setKeychainOpen(true)}
+              onAutorun={toggleAutorun}
+              onLoop={() => setLoopRailOpen(true)}
               commandsOpen={cmdManagerOpen}
               keychainOpen={keychainOpen}
               systemPromptActive={extraPromptOpen || extraSysPromptPresetID}
               systemPromptLabel={extraSysPromptPresetID ? activePromptPreset.name : ''}
+              autorunEnabled={autorunEnabled}
+              loopOpen={loopRailOpen}
               triggerRef={composerActionsTriggerRef}
             />
             <div className="oa-composer-primary-actions">

@@ -10,6 +10,39 @@ import { ChatKeychainDialog, ComposerActions } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
 
+describe('composer action menu', () => {
+  test('exposes autonomous mode and Loop from the composer action menu', () => {
+    const onAutorun = vi.fn()
+    const onLoop = vi.fn()
+    render(<ComposerActions
+      onAttach={vi.fn()}
+      onCommands={vi.fn()}
+      onSystemPrompt={vi.fn()}
+      onKeychain={vi.fn()}
+      onAutorun={onAutorun}
+      onLoop={onLoop}
+      commandsOpen={false}
+      keychainOpen={false}
+      systemPromptActive={false}
+      systemPromptLabel=""
+      autorunEnabled
+      loopOpen={false}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: /更多操作|more actions/i }))
+    const autorunItem = screen.getByRole('menuitem', { name: /自主行动|autonomous mode/i })
+    expect(autorunItem.classList.contains('is-active')).toBe(true)
+    fireEvent.click(autorunItem)
+    expect(onAutorun).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /更多操作|more actions/i }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Loop$/i }))
+    expect(onLoop).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+})
+
 describe('chat keychain access', () => {
   test('exposes keychain from the composer action menu', () => {
     const onKeychain = vi.fn()
@@ -24,7 +57,7 @@ describe('chat keychain access', () => {
       systemPromptLabel=""
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: /密钥管理|keychain/i }))
+    fireEvent.click(screen.getByRole('button', { name: /更多操作|more actions/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /密钥管理|keychain/i }))
 
     expect(onKeychain).toHaveBeenCalledOnce()
