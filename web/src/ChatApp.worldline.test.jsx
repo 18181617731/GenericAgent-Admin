@@ -3,9 +3,16 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { isWorldlinePickerResult, WorldlinePanel, WorldlineRestoreDialog, worldlineRestoreCommand } from './ChatApp.jsx'
+import { isWorldlinePickerResult, worldlineReadURL, WorldlinePanel, WorldlineRestoreDialog, worldlineRestoreCommand } from './ChatApp.jsx'
 
 afterEach(() => cleanup())
+
+describe('worldline read contract', () => {
+  test('keeps drawer reads passive unless activation is explicit', () => {
+    expect(worldlineReadURL('session-1')).toBe('/api/chat/worldline/session-1')
+    expect(worldlineReadURL('session-1', true)).toBe('/api/chat/worldline/session-1?activate=true')
+  })
+})
 
 describe('worldline restore-point chooser', () => {
   test('builds the complete official restore command from all selections', () => {

@@ -150,7 +150,10 @@ _CURRENT_USAGE = {
     'cache_creation_tokens': 0,
     'cache_read_tokens': 0,
     'output_tokens': 0,
-    'cached_tokens': 0,  # Legacy input/cached protocol only.
+    'cached_tokens': 0,  # Legacy alias retained for persisted-session compatibility.
+    # 1 for OpenAI-style usage where cache read is included in input_tokens;
+    # 0 for Claude-style disjoint input/creation/read counters.
+    'input_tokens_include_cache_read': 0,
 }
 # Per-internal-turn usage snapshots for the current request. GA core prints a
 # "[Cache] ..." then "[Output] tokens=N" pair per internal LLM call; the
@@ -230,9 +233,11 @@ class _UsageCapturingStderr:
                     if 'creation' in fields or 'read' in fields:
                         _CURRENT_USAGE['cache_creation_tokens'] = fields.get('creation', 0)
                         _CURRENT_USAGE['cache_read_tokens'] = fields.get('read', 0)
+                        _CURRENT_USAGE['input_tokens_include_cache_read'] = 0
                     else:
                         _CURRENT_USAGE['cache_creation_tokens'] = 0
                         _CURRENT_USAGE['cache_read_tokens'] = fields.get('cached', 0)
+                        _CURRENT_USAGE['input_tokens_include_cache_read'] = 1
                     # Retain the legacy response field as an always-zero alias.
                     # Old persisted sessions are handled by the frontend fallback.
                     _CURRENT_USAGE['cached_tokens'] = 0
@@ -1790,12 +1795,27 @@ def _worldline_content_text(value):
     return _chat_content_text(value)
 
 
+def _worldline_has_tool_content(value):
+    """Return whether structured content contains a tool request or result block."""
+    if isinstance(value, list):
+        return any(_worldline_has_tool_content(item) for item in value)
+    if isinstance(value, dict):
+        block_type = str(value.get('type') or '').strip().lower()
+        if block_type in ('tool_result', 'tool_use'):
+            return True
+        return any(_worldline_has_tool_content(item) for item in value.values())
+    return False
+
+
 def _worldline_title(store, history, fallback):
     parent = store.head if store.head in store.nodes else store.root_id
     parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
     for item in (history or [])[parent_len:]:
         if isinstance(item, dict) and str(item.get('role') or '').lower() == 'user':
-            text = _worldline_content_text(item.get('content')).strip()
+            content = item.get('content')
+            if _worldline_has_tool_content(content):
+                continue
+            text = _worldline_content_text(content).strip()
             if text:
                 title = _strip_worldline_project_mode(text).replace('\n', ' ').strip()
                 if title:
@@ -2247,6 +2267,43 @@ def _bind_worldline_head(store, ga_root, sid, req):
     return _json_clone(sidecar['bindings'][node_id], {})
 
 
+def _projected_worldline_title(store, node_id, stored_title):
+    """Repair legacy tool-result titles in the read-only public projection."""
+    try:
+        raw_node = store.nodes.get(node_id) or {}
+        conv = raw_node.get('conv') if isinstance(raw_node, dict) else None
+        if not conv:
+            return stored_title
+        delta = json.loads(store._get_blob(conv).decode('utf-8'))
+        if not isinstance(delta, list):
+            return stored_title
+
+        legacy_matched = False
+        for item in delta:
+            if not isinstance(item, dict) or str(item.get('role') or '').lower() != 'user':
+                continue
+            content = item.get('content')
+            text = _worldline_content_text(content).strip()
+            if not text:
+                continue
+            candidate = _strip_worldline_project_mode(text).replace('\n', ' ').strip()[:160]
+            if not candidate:
+                continue
+            if not legacy_matched:
+                # The pre-fix title algorithm selected the first non-empty user
+                # entry, including tool_result blocks.  Exact equality keeps this
+                # compatibility repair from rewriting intentional/custom titles.
+                if not _worldline_has_tool_content(content) or str(stored_title) != candidate:
+                    return stored_title
+                legacy_matched = True
+                continue
+            if not _worldline_has_tool_content(content):
+                return candidate
+    except (AttributeError, KeyError, OSError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        pass
+    return stored_title
+
+
 def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
     _ensure_bundled_worldline_import_path()
     from frontends.worldline import tree_from_store
@@ -2355,7 +2412,7 @@ def _worldline_nodes(store, sidecar=None, sidecar_status='missing'):
             'children': [child_id for child_id in public_children[node_id] if child_id in seen],
             'depth': max(0, len(public_path(node_id)) - 1),
             'ordinal': binding.get('ordinal', fallback_ordinal) if binding else fallback_ordinal,
-            'title': node.title,
+            'title': _projected_worldline_title(store, node_id, node.title),
             'created_at': binding.get('created_at', 0) if binding else 0,
             'kind': node.kind, 'files': list(node.files),
             'ago': node.ago, 'rw_tag': node.rw_tag,
@@ -2774,6 +2831,10 @@ def handle_request(agent, worker, req):
         _emit_immediate_done(agent, immediate_done, history_info, working)
         return
     prompt = _maybe_expand_official_slash_command(root_for_req, prompt)
+    # A real agent turn may run tools before its final history is committed. Activate
+    # worldline now so the pre-edit hook can snapshot those writes; drawer reads stay
+    # side-effect free because only the write path reaches this point.
+    _ensure_worldline_store(agent, root_for_req, applied_workspace)
     chunks = []
     first_token_ms = 0
     _up_context = None
