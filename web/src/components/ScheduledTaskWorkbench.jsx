@@ -6,7 +6,7 @@ const workbenchCopy = t => {
   const zh = t?.autostart === '开机自启'
   return zh
     ? {
-    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '异常', configError: '配置异常', overdue: '调度逾期', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
+    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
     }
     : {
     title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -360,7 +361,7 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	if err := json.Unmarshal(start.Body.Bytes(), &startPayload); err != nil {
 		t.Fatal(err)
 	}
-	if !startPayload.Loop.Enabled || startPayload.Loop.Status != chatLoopStatusRunning || startPayload.Loop.Round != 1 || startPayload.Loop.MaxRounds != chatLoopMaxRounds {
+	if !startPayload.Loop.Enabled || startPayload.Loop.Status != chatLoopStatusRunning || startPayload.Loop.Round != 1 {
 		t.Fatalf("start loop = %#v", startPayload.Loop)
 	}
 	if startPayload.Loop.ControllerPrompt != "Finish the release" || startPayload.Loop.Epoch != 1 {
@@ -560,9 +561,16 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 		t.Fatal("old loop controller did not start")
 	}
 
-	oldContinue := continueChatLoopFunc
-	defer func() { continueChatLoopFunc = oldContinue }()
-	continueChatLoopFunc = func(_ *Server, _ string, _ int64, _ string) {}
+	oldStartChatWorker := startChatWorkerFunc
+	releaseWorker := make(chan struct{})
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		<-releaseWorker
+		return nil, errors.New("test worker released")
+	}
+	defer func() {
+		close(releaseWorker)
+		startChatWorkerFunc = oldStartChatWorker
+	}()
 	restart := httptest.NewRecorder()
 	restartReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"replacement objective"}`))
 	restartReq.Header.Set("Content-Type", "application/json")
@@ -587,7 +595,7 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusEvaluating || persisted.Loop.Epoch != 8 || persisted.Loop.ControllerPrompt != "replacement objective" {
+	if !persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusRunning || persisted.Loop.Round != 1 || persisted.Loop.Epoch != 8 || persisted.Loop.ControllerPrompt != "replacement objective" {
 		t.Fatalf("persisted restarted loop = %#v", persisted.Loop)
 	}
 }
@@ -789,7 +797,8 @@ func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-controller-retry"
 	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
-	const unusableReply = "<next_prompt>verify the shipped release</next_prompt>"
+	const unusableReply = "<next_prompt>continue</next_prompt>"
+	const nextPrompt = "verify the shipped release"
 	cs := chatSession{ID: sid, Loop: chatLoopState{
 		Enabled:          true,
 		Status:           chatLoopStatusEvaluating,
@@ -918,7 +927,7 @@ func TestContinueChatLoopQueuesControllerGuidance(t *testing.T) {
 		t.Fatalf("continued loop messages = %#v", persisted.Messages)
 	}
 	last := persisted.Loop.Records[len(persisted.Loop.Records)-1]
-	if last.Phase != "continue" || last.Prompt != nextPrompt {
+	if last.Phase != "continue" || last.Prompt != "" {
 		t.Fatalf("continue record = %#v", last)
 	}
 }

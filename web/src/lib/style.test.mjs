@@ -193,6 +193,8 @@ test('mobile density pass keeps the shell compact without shrinking touch contro
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.main,[\s\S]*?padding:8px\s+6px/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.stat\s*\{[^}]*min-height:64px/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.panel,[\s\S]*?padding:10px/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.admin-page-meta\s+\.admin-page-endpoint,[\s\S]*?\.admin-page-meta\s+\.admin-page-health\s*\{[^}]*display:none/i)
+  assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.admin-page-meta\s*\{[^}]*padding:0[^}]*border-top:0/i)
   assert.match(css, /@media\s*\(max-width:680px\)[\s\S]*?\.oa-main\s*\{[^}]*--oa-topbar-h:48px/i)
   assert.match(css, /\.sidebar\s+\.theme-picker-trigger-copy,[\s\S]*?\.theme-picker--compact\s+\.theme-picker-trigger\s*>\s*svg:last-child\s*\{\s*display:none/i)
   assert.match(css, /\.overview-page\s+\.overview-stats\s+\.stat\s*\{[^}]*min-height:64px[^}]*padding:8px\s+9px/i)

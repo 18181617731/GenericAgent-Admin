@@ -13,8 +13,10 @@ import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, KeyRound, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
+import { SETTINGS_TEXT } from './lib/i18n'
+import { KeychainPage } from './pages/KeychainPage'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID, requestChatInstance } from './lib/chatInstanceScope'
 import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -3269,7 +3271,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
   </>
 })
 
-function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, systemPromptActive, systemPromptLabel }) {
+function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const fallbackTriggerRef = useRef(null)
@@ -6508,7 +6510,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <button ref={sidebarToggleRef} className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title={ct('展开侧栏', 'Expand sidebar')} aria-label={ct('展开侧栏', 'Expand sidebar')} aria-controls="oa-chat-sidebar" aria-expanded={!collapsed}><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}><FolderOpen size={12} aria-hidden="true"/><span>{current.project_mode}</span></span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <div className="oa-topbar-actions" aria-label={ct('聊天工具', 'Chat tools')}>
           <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid || privacyMode} title={privacyMode ? ct('当前视图不可查看上下文', 'Context unavailable in the current view') : contextHelpText} aria-label={privacyMode ? ct('当前视图不可查看模型上下文', 'Model context unavailable in the current view') : ct('查看模型上下文', 'View model context')}>
             <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span>{!privacyMode && <span className="oa-context-count">{rawHistory?.length || 0}</span>}{!privacyMode && <ChatFeatureHelp text={contextHelpText}/>}
@@ -6593,7 +6595,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>}
         {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onQuickReply={send} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
         {!privacyMode && <SubagentStatusPanel states={subagents}/>}
-        {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
+        {(showJumpSent || showFollow) && <div className="oa-follow-row">
+          {showFollow && <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')} aria-label={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')}><ChevronDown size={16}/></button>}
+          {showJumpSent && <button className="oa-follow-btn" type="button" onClick={jumpToPreviousSent} title={ct('跳到上一条发送', 'Previous message you sent')} aria-label={ct('跳到上一条发送', 'Previous message you sent')}><ChevronUp size={16}/></button>}
+        </div>}
         <div ref={endRef}/>
       </section>
 

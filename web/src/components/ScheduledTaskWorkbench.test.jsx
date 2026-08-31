@@ -62,7 +62,7 @@ describe('ScheduledTaskWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: /清除筛选/ }))
     fireEvent.click(screen.getByRole('button', { name: /已暂停/ }))
     expect(screen.getAllByRole('option')).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: /异常/ }))
+    fireEvent.click(screen.getByRole('button', { name: /需关注/ }))
     expect(screen.getByRole('option', { name: /gamma/ })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
     const disclosure = document.querySelector('.scheduled-task-create-disclosure')

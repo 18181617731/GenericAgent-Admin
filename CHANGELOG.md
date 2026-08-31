@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.104 - 2026-08-31
+
+### Scheduled task clarity
+- Rename the mixed scheduler-status filter to “需关注” so successful executions are not confused with configuration or overdue warnings.
+- Open a task's latest execution report automatically when navigating from its detail view, removing the extra selection step.
+- Hide duplicated endpoint and health metadata from the compact mobile page header while preserving the notification control.
+
 ## v1.0.101 - 2026-08-30
 
 ### Upstream chat and channel integration

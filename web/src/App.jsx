@@ -1274,6 +1274,9 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setScheduleArtifactTitle('')
     setScheduleArtifact('')
     navigateTaskSubTab('reports')
+    const task = tasks.find(item => String(item?.id || item?.name || '') === String(id))
+    const latestReportPath = String(task?.recent_reports?.[0]?.path || '').trim()
+    if (latestReportPath) readScheduleArtifact(latestReportPath, 'tasks', 'reports')
   }
   const openNotification = item => {
     const route = String(item?.route || 'notifications').replace(/^\/+/, '').split('/')[0]

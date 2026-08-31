@@ -207,6 +207,7 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 	running := s.chatRunActive(sid)
 	startFirstRun := false
 	loopEpoch := int64(0)
+	controllerEpoch := int64(0)
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
 	if err == nil {
@@ -349,6 +350,62 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	go s.evaluateChatLoop(sid, epoch, cs)
 }
 
+func (s *Server) runChatLoopController(sid string, epoch int64, req map[string]interface{}) (chatMessage, error) {
+	sid = safeChatID(sid)
+	owner := &chatLoopControllerRun{Epoch: epoch}
+	observer := &oneShotBTWWorkerObserver{
+		Started: func(worker *chatWorker) bool {
+			s.ChatMu.Lock()
+			defer s.ChatMu.Unlock()
+			current := s.ChatLoopControllers[sid]
+			if current != nil && (current.Epoch > epoch || current.Epoch == epoch && current.Canceled) {
+				return false
+			}
+			owner.Worker = worker
+			s.ChatLoopControllers[sid] = owner
+			return true
+		},
+		Finished: func(worker *chatWorker) {
+			s.ChatMu.Lock()
+			if current := s.ChatLoopControllers[sid]; current == owner && current.Worker == worker {
+				delete(s.ChatLoopControllers, sid)
+			}
+			s.ChatMu.Unlock()
+		},
+	}
+	controllerReq := make(map[string]interface{}, len(req)+1)
+	for key, value := range req {
+		controllerReq[key] = value
+	}
+	controllerReq[oneShotBTWWorkerObserverKey] = observer
+	return runOneShotBTWWorkerFunc(s.CfgStore.Snapshot(), sid+"-loop", controllerReq)
+}
+
+func (s *Server) cancelChatLoopController(sid string, epoch int64) bool {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	current := s.ChatLoopControllers[sid]
+	if current != nil && current.Epoch > epoch {
+		s.ChatMu.Unlock()
+		return false
+	}
+	if current == nil || current.Epoch < epoch {
+		current = &chatLoopControllerRun{Epoch: epoch}
+		s.ChatLoopControllers[sid] = current
+	}
+	current.Canceled = true
+	worker := current.Worker
+	s.ChatMu.Unlock()
+	if worker != nil {
+		worker.Mu.Lock()
+		if worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+		}
+		worker.Mu.Unlock()
+	}
+	return worker != nil
+}
+
 func (s *Server) failChatLoopAfterRun(sid string) {
 	sid = safeChatID(sid)
 	s.SessionMu.Lock()
@@ -472,7 +529,7 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 		if !latest.Loop.Enabled || latest.Loop.Epoch != req.epoch || latest.Loop.Status != req.expectedStatus {
 			return errChatLoopStale
 		}
-		fingerprint := chatLoopPromptFingerprint(prompt)
+		fingerprint := chatLoopPromptFingerprint(req.prompt)
 		if fingerprint != "" && fingerprint == latest.Loop.LastPromptFingerprint {
 			latest.Loop.RepeatStreak++
 		} else {
