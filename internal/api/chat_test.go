@@ -546,6 +546,7 @@ func TestChatProviderDisplayNameMatchesModelsProviderProjection(t *testing.T) {
 		profile modelconfig.Profile
 		want    string
 	}{
+		{profile: modelconfig.Profile{VarName: "native_oai_config_internal", DisplayName: "  Acme Cloud  ", Name: "gpt-5.6-sol"}, want: "Acme Cloud"},
 		{profile: modelconfig.Profile{VarName: "native_oai_config_gpt55_medium_responses", Name: "gpt-5.6-sol"}, want: "gpt55_medium_responses"},
 		{profile: modelconfig.Profile{VarName: "native_claude_config_fwind_opus48", Name: "claude-opus-4-8[1m]"}, want: "fwind_opus48"},
 		{profile: modelconfig.Profile{VarName: "acme_api", Name: "acme-chat"}, want: "acme_api"},
