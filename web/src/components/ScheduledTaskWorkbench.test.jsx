@@ -105,6 +105,23 @@ describe('ScheduledTaskWorkbench', () => {
     expect(within(card).getByText(/最近执行/)).toBeTruthy()
   })
 
+  test('labels an overdue schedule separately from a successful latest execution', () => {
+    const overdue = {
+      ...taskA,
+      status: 'OVERDUE',
+      next_hint: 'last report 44.5 hours ago',
+      latest_run: { status: 'success', executed_at: '2026-08-29T18:06:41Z', summary: 'report saved' },
+    }
+    const { container } = render(<ScheduledTaskWorkbench {...props({ tasks: [overdue] })}/>)
+    const card = container.querySelector('.scheduled-task-row')
+    expect(card?.classList.contains('task-run-success')).toBe(true)
+    expect(within(card).getByText('成功')).toBeTruthy()
+    expect(within(card).getByText('调度逾期')).toBeTruthy()
+    expect(within(card).getByText('last report 44.5 hours ago')).toBeTruthy()
+    expect(within(card).queryByText('异常')).toBeNull()
+    expect(card?.querySelector('.task-config-state')?.classList.contains('overdue')).toBe(true)
+  })
+
   test('keeps actions and editor available, previews a report in place, and replaces history on task switch', () => {
     const onSelectArtifact = vi.fn()
     const handlers = { onSelectArtifact, onRun: vi.fn(), onReports: vi.fn(), onToggle: vi.fn(), onDelete: vi.fn(), saveTask: vi.fn(), setEditorMode: vi.fn() }

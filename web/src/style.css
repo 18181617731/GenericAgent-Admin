@@ -21012,6 +21012,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .scheduled-task-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .scheduled-task-status-dot.enabled { background: var(--ga-accent, #10a37f); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ga-accent, #10a37f) 13%, transparent); }
 .scheduled-task-status-dot.error { background: var(--danger, #b4233a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger, #b4233a) 11%, transparent); }
+.scheduled-task-status-dot.overdue { background: #d97706; box-shadow: 0 0 0 3px color-mix(in srgb, #d97706 11%, transparent); }
 .scheduled-task-detail-heading h3 { min-width: 0; overflow-wrap: anywhere; font-size: 22px; }
 .scheduled-task-detail-heading p { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .scheduled-task-detail-actions { max-width: 440px; }
@@ -21118,6 +21119,11 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .task-latest-run > span,.scheduled-task-row-latest { min-width:0; margin:0; color:var(--text); font-size:12px; overflow-wrap:anywhere; }
 .task-config-state { flex:0 0 auto; padding:2px 7px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:10px; font-style:normal; white-space:nowrap; }
 .task-config-state.enabled { border-color:rgba(8,116,92,.2); color:#08745c; }
+.task-config-state.overdue { border-color:rgba(217,119,6,.3); color:#a45305; background:rgba(217,119,6,.11); }
+.task-config-state.error { border-color:rgba(220,38,38,.3); color:#b91c1c; background:rgba(220,38,38,.1); }
+.task-config-detail { display:block; margin:0 !important; color:var(--muted); font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
+.task-config-detail.overdue { color:#9a4b05; }
+.task-config-detail.error { color:#b91c1c; font-weight:600; }
 .task-run-detail { margin:0 !important; padding:7px 9px; border-radius:6px; background:var(--surface-strong); color:var(--text) !important; font-style:normal; line-height:1.45; overflow-wrap:anywhere; }
 .task-run-detail.failed { color:#b91c1c !important; font-weight:600; }
 .task-run-detail.blocked,.task-run-detail.waiting,.task-run-detail.partial { color:#9a4b05 !important; }
