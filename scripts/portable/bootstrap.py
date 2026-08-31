@@ -157,22 +157,29 @@ def fix_config() -> bool:
 
 
 def verify() -> bool:
-    """Import-check the venv interpreter so failures surface here, not later."""
+    """Check that required modules exist without executing their import hooks."""
     if not usable(VENV_PY):
         return False
     import subprocess
 
+    # Some optional SDKs do substantial work at import time. In particular,
+    # lark_oapi can take longer than a minute on a cold portable extraction.
+    # Bootstrap only needs to validate bundle completeness; actual imports are
+    # performed by the services that use those SDKs.
     probe = (
-        "import sys;"
-        "import " + ", ".join(REQUIRED_IMPORTS) + ";"
-        "print(sys.version.split()[0])"
+        "import importlib.util, sys;"
+        "missing = [name for name in " + repr(REQUIRED_IMPORTS) +
+        " if importlib.util.find_spec(name) is None];"
+        "print(sys.version.split()[0]);"
+        "sys.exit('missing modules: ' + ', '.join(missing) if missing else 0)"
     )
     try:
         res = subprocess.run(
             [VENV_PY, "-c", probe],
             capture_output=True,
             text=True,
-            timeout=90,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         log("WARNING venv probe failed to launch: " + str(exc))

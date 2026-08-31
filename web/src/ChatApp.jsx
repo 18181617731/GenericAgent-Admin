@@ -6,6 +6,7 @@ import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
+import { autorunInitialReplyAt, isAutorunTargetRunning, shouldTriggerAutorun } from './lib/chatAutorun.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -192,6 +193,12 @@ const messageModelIdentity = (message, models = []) => {
   if (modelNo != null) details.push(`内部编号：#${modelNo}`)
   return { label, title: details.join('；') }
 }
+
+export const SessionAutorunBadge = memo(function SessionAutorunBadge({ enabled = false, sessionId = '', targetSessionId = '' }) {
+  if (!enabled || !sessionId || sessionId !== targetSessionId) return null
+  const label = ct('Autorun 已开启', 'Autorun enabled')
+  return <em className="oa-session-autorun-badge" title={label} aria-label={label}>Autorun</em>
+})
 
 const BUILTIN_SLASH_COMMANDS = [
 	{ cmd: '/project', key: '/project', insert: '/project', desc: '列出项目并查看或切换 Project Mode', builtIn: true },
@@ -3265,6 +3272,8 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
 function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, systemPromptActive, systemPromptLabel }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
+  const fallbackTriggerRef = useRef(null)
+  const actionTriggerRef = triggerRef || fallbackTriggerRef
   const triggerId = React.useId()
 
   useEffect(() => {
@@ -3279,18 +3288,22 @@ function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, s
   const actions = [
     { icon: Paperclip, label: ct('附件', 'Attachments'), onClick: onAttach, active: false },
     { icon: Sparkles, label: ct('命令', 'Commands'), onClick: onCommands, active: commandsOpen },
-    { icon: Bot, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
+    { icon: FileText, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
+    { icon: KeyRound, label: ct('密钥管理', 'Keychain'), onClick: onKeychain, active: keychainOpen },
+    { icon: Bot, label: ct('自主行动', 'Auto-action'), onClick: onAutorun, active: autorunEnabled },
+    { icon: Orbit, label: 'Loop', onClick: onLoop, active: loopOpen },
   ]
 
   return (
     <div className="oa-composer-actions" ref={ref}>
       <button
+        ref={actionTriggerRef}
         id={triggerId}
         type="button"
         className={`oa-composer-actions-trigger ${open ? 'is-open' : ''}`}
         onClick={() => setOpen(!open)}
-        title={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
-        aria-label={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
+        title={ct('更多操作', 'More actions')}
+        aria-label={ct('更多操作', 'More actions')}
         aria-haspopup="menu"
         aria-expanded={open}
       >
@@ -3306,7 +3319,7 @@ function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, s
                 type="button"
                 className={action.active ? 'is-active' : ''}
                 onClick={() => {
-                  action.onClick()
+                  action.onClick?.()
                   setOpen(false)
                 }}
                 role="menuitem"
@@ -3319,6 +3332,60 @@ function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, s
         </div>
       )}
     </div>
+  )
+}
+
+export function ChatKeychainDialog({ open, onClose, returnFocusRef }) {
+  const closeButtonRef = useRef(null)
+  const previousFocusRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  const titleId = React.useId()
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    previousFocusRef.current = document.activeElement
+    const focusFrame = requestAnimationFrame(() => closeButtonRef.current?.focus())
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onCloseRef.current?.()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('keydown', handleKeyDown)
+      const returnFocus = returnFocusRef?.current || previousFocusRef.current
+      requestAnimationFrame(() => returnFocus?.focus?.())
+    }
+  }, [open, returnFocusRef])
+
+  if (!open || typeof document === 'undefined') return null
+  const text = SETTINGS_TEXT[chatLanguage()] || SETTINGS_TEXT.zh
+  return createPortal(
+    <div className="oa-keychain-dialog-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <section className="oa-keychain-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header className="oa-keychain-dialog-head">
+          <div>
+            <span className="oa-keychain-dialog-eyebrow">{ct('安全凭据', 'Secure credentials')}</span>
+            <h2 id={titleId}>{ct('密钥管理', 'Keychain')}</h2>
+            <p>{ct('配置会立即用于当前及后续聊天；密钥值始终隐藏。', 'Changes apply to this and future chats; secret values remain hidden.')}</p>
+          </div>
+          <button ref={closeButtonRef} type="button" className="oa-keychain-dialog-close" onClick={onClose} title={ct('关闭', 'Close')} aria-label={ct('关闭密钥管理', 'Close keychain')}>
+            <X size={17}/>
+          </button>
+        </header>
+        <div className="oa-keychain-dialog-body">
+          <KeychainPage text={text}/>
+        </div>
+      </section>
+    </div>,
+    document.body,
   )
 }
 
@@ -3609,6 +3676,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [queueEditingId, setQueueEditingId] = useState('')
   const [queueDraft, setQueueDraft] = useState('')
   const [guidingQueueId, setGuidingQueueId] = useState('')
+  const [autorunEnabled, setAutorunEnabled] = useState(false)
+  const autorunEnabledRef = useRef(false)
+  const autorunLastReplyAtRef = useRef(Date.now())
+  const autorunRunSendRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
@@ -3616,6 +3687,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [subagents, setSubagents] = useState([])
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
+  const [keychainOpen, setKeychainOpen] = useState(false)
   const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
   const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
   const [cfg, setCfg] = useState(null)
@@ -3629,6 +3701,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const endRef = useRef(null)
   const composerWrapRef = useRef(null)
   const fileRef = useRef(null)
+  const composerActionsTriggerRef = useRef(null)
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
   const sessionSearchTriggerRef = useRef(null)
@@ -3874,6 +3947,17 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     el.style.height = next + 'px'
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
+
+  const toggleAutorun = useCallback(() => {
+    const next = !autorunEnabledRef.current
+    autorunEnabledRef.current = next
+    if (next) autorunLastReplyAtRef.current = autorunInitialReplyAt(Date.now())
+    setAutorunEnabled(next)
+    setNotice(next
+      ? ct('\u5df2\u5141\u8bb8\u81ea\u4e3b\u884c\u52a8\uff1a\u7ea6 1 \u5206\u949f\u540e\u542f\u52a8\uff0c\u4e4b\u540e\u6bcf\u6b21\u56de\u590d 30 \u5206\u949f\u540e\u518d\u542f\u52a8', 'Auto-action enabled: starts in about 1 minute, then 30 minutes after each reply')
+      : ct('\u5df2\u7981\u6b62\u81ea\u4e3b\u884c\u52a8', 'Auto-action disabled'))
+  }, [])
+
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
@@ -4306,11 +4390,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLoopObjectiveError(false)
     setErr('')
     try {
-      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, max_rounds:maxRounds, controller_llm_no:controllerLlmNo }) })
+      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, controller_llm_no:controllerLlmNo }) })
       setLoopObjective(objective)
-      setLoopMaxRounds(maxRounds)
       setLoopControllerLlmNo(controllerLlmNo)
-      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, max_rounds:maxRounds, controller_prompt:objective, controller_llm_no:controllerLlmNo }
+      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, controller_prompt:objective, controller_llm_no:controllerLlmNo }
       setLoopState(nextLoopState)
       setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
       if (usesCurrentPrompt) {
