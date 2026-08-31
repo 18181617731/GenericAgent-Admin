@@ -6446,8 +6446,8 @@ export default function ChatApp() {
             onSwitchVersion={switchWorldline}
           />
           {(showJumpSent || showFollow) && <div className="oa-follow-row">
-            {showJumpSent && <button className="oa-follow-btn" type="button" onClick={jumpToPreviousSent} title={ct('跳到上一条发送', 'Previous message you sent')} aria-label={ct('跳到上一条发送', 'Previous message you sent')}><ChevronUp size={16}/></button>}
             {showFollow && <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')} aria-label={isCurrentRunning ? ct('继续跟随', 'Resume following') : ct('回到最新', 'Jump to latest')}><ChevronDown size={16}/></button>}
+            {showJumpSent && <button className="oa-follow-btn" type="button" onClick={jumpToPreviousSent} title={ct('跳到上一条发送', 'Previous message you sent')} aria-label={ct('跳到上一条发送', 'Previous message you sent')}><ChevronUp size={16}/></button>}
           </div>}
         </section>
         {loopRailOpen && <div className="oa-loop-backdrop" onClick={()=>setLoopRailOpen(false)} aria-hidden="true"/>}
