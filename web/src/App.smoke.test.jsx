@@ -1211,39 +1211,43 @@ describe('chat model cascade', () => {
     ])
   })
 
-  test('exposes menu state, resets previews on reopen, and returns focus on Escape', () => {
+  test('shows every provider as a full group, filters by provider or model, resets search on reopen, and returns focus on Escape', () => {
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
     const trigger = screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' })
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' }).id).toBe(trigger.getAttribute('aria-controls'))
-
-    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Alpha' }).nextElementSibling)
+    const dialog = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })
+    expect(dialog.id).toBe(trigger.getAttribute('aria-controls'))
+    expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Alpha One' })).toBeTruthy()
     expect(screen.getByText('Beta One')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-pressed')).toBe('true')
+
+    const search = screen.getByRole('searchbox', { name: '\u641c\u7d22\u670d\u52a1\u5546\u6216\u6a21\u578b' })
+    fireEvent.change(search, { target: { value: 'beta' } })
+    expect(screen.queryByRole('heading', { name: 'Alpha' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
+    expect(screen.getByText('Beta One')).toBeTruthy()
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
 
     fireEvent.click(trigger)
-    const reopenedMenu = screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })
-    expect(reopenedMenu.textContent).toContain('Alpha One')
-    expect(reopenedMenu.textContent).not.toContain('Beta One')
+    expect(screen.getByRole('searchbox', { name: '\u641c\u7d22\u670d\u52a1\u5546\u6216\u6a21\u578b' }).value).toBe('')
+    expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
   })
 
-  test('selects a previewed provider model and keeps the combined menu open', () => {
+  test('selects a model directly from another provider group and keeps the combined menu open', () => {
     const onChange = vi.fn()
     render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={onChange} />)
 
     fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Beta' }))
     fireEvent.scroll(window)
-
     expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()
-    expect(screen.getByText('Beta One')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Beta One' }))
 
     expect(onChange).toHaveBeenCalledWith('b-1')
@@ -1320,21 +1324,18 @@ describe('chat model cascade', () => {
     expect(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 Max' })).toBeTruthy()
   })
 
-  test('scrolls only the model column when the current model is below its viewport', () => {
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-      if (this.classList?.contains('oa-cascade-models')) return { top: 100, bottom: 200 }
-      if (this.getAttribute?.('aria-current') === 'true' && this.closest('.oa-cascade-models')) return { top: 250, bottom: 280 }
-      return { top: 0, bottom: 0 }
-    })
+  test('shows an empty state for unmatched searches and restores the provider catalog when cleared', () => {
+    render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
 
-    try {
-      render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
-      fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: '\u641c\u7d22\u670d\u52a1\u5546\u6216\u6a21\u578b' }), { target: { value: 'not-a-real-model' } })
+    expect(screen.getByText('\u6ca1\u6709\u5339\u914d\u7684\u670d\u52a1\u5546\u6216\u6a21\u578b')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Alpha' })).toBeNull()
 
-      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
-    } finally {
-      rectSpy.mockRestore()
-    }
+    fireEvent.click(screen.getByRole('button', { name: '\u6e05\u9664\u641c\u7d22' }))
+    expect(screen.queryByText('\u6ca1\u6709\u5339\u914d\u7684\u6a21\u578b')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
   })
 })
 

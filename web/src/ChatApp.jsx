@@ -3312,6 +3312,7 @@ export function ProviderModelCascade({
   const [open, setOpen] = useState(false)
   const [mobilePicker, setMobilePicker] = useState(isMobileModelPickerViewport)
   const [previewProvider, setPreviewProvider] = useState(selectedProvider || groups[0]?.value || '')
+  const [query, setQuery] = useState('')
   const ref = useRef()
   const layerRef = useRef(null)
   const triggerRef = useRef(null)
@@ -3319,6 +3320,7 @@ export function ProviderModelCascade({
   const menuId = React.useId()
   const titleId = `${menuId}-title`
   const resetPreview = () => {
+    setQuery('')
     if (selectedProvider && groups.some(group => group.value === selectedProvider)) setPreviewProvider(selectedProvider)
     else setPreviewProvider(groups[0]?.value || '')
   }
@@ -3379,6 +3381,16 @@ export function ProviderModelCascade({
   const previewGroup = groups.find(group => group.value === previewProvider) || activeGroup || groups[0]
   const activeModel = activeGroup?.models.find(model => String(model.value) === String(value))
   const activeReasoning = reasoningOptions.find(option => option.value === reasoningValue)
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filteredGroups = groups.map(group => {
+    const providerMatch = group.label.toLocaleLowerCase().includes(normalizedQuery)
+    return {
+      ...group,
+      models: !normalizedQuery || providerMatch
+        ? group.models
+        : group.models.filter(model => model.label.toLocaleLowerCase().includes(normalizedQuery)),
+    }
+  }).filter(group => group.models.length)
   const displayModel = activeModel?.label || ct('\u672a\u53d1\u73b0\u6a21\u578b', 'No models found')
   const displayReasoning = activeReasoning?.label || ct('\u9ed8\u8ba4', 'Default')
   const displayValue = `${displayModel} \u00b7 ${displayReasoning}`
@@ -3467,32 +3479,40 @@ export function ProviderModelCascade({
         <ChevronDown size={13} />
       </button>
       {open && !mobilePicker && <div id={menuId} className="oa-cascade-menu" role="dialog" aria-label={ct('\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6', 'Provider, model, and reasoning effort')}>
-        <div className="oa-cascade-providers" aria-label={ct('服务商', 'Providers')}>
-          {groups.map(group => (
-            <button key={group.value} type="button"
-              className={group.value === previewGroup?.value ? 'active' : ''}
-              aria-pressed={group.value === previewGroup?.value}
-              aria-current={group.value === selectedProvider ? 'true' : undefined}
-              onMouseEnter={() => setPreviewProvider(group.value)}
-              onPointerDown={() => setPreviewProvider(group.value)}
-              onFocus={() => setPreviewProvider(group.value)}
-              onClick={() => setPreviewProvider(group.value)}>
-              <span>{group.label}</span><ChevronRight size={13} />
-            </button>
-          ))}
+        <div className="oa-cascade-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            aria-label={ct('\u641c\u7d22\u670d\u52a1\u5546\u6216\u6a21\u578b', 'Search providers or models')}
+            placeholder={ct('\u641c\u7d22\u670d\u52a1\u5546\u6216\u6a21\u578b', 'Search providers or models')}
+            autoFocus
+          />
+          {query && <button type="button" onClick={() => setQuery('')} aria-label={ct('\u6e05\u9664\u641c\u7d22', 'Clear search')}><X size={13} /></button>}
         </div>
-        <div className="oa-cascade-models" ref={modelListRef} aria-label={previewGroup ? `${previewGroup.label} ${ct('模型', 'models')}` : ct('模型', 'Models')}>
-          <div className="oa-cascade-heading">{previewGroup?.label || ct('模型', 'Model')}</div>
-          {previewGroup?.models.length ? previewGroup.models.map(model => {
-            const isCurrent = previewGroup.value === selectedProvider && String(model.value) === String(value)
-            return <button key={model.value} type="button"
-              className={isCurrent ? 'active' : ''}
-              aria-current={isCurrent ? 'true' : undefined}
-              onClick={() => chooseModel(model.value)}>
-              {isCurrent && <Check size={12} />}
-              <span>{model.label}</span>
-            </button>
-          }) : <div className="oa-cascade-empty">{ct('未发现模型', 'No models found')}</div>}
+        <div className="oa-cascade-catalog" ref={modelListRef} aria-label={ct('\u6309\u670d\u52a1\u5546\u5206\u7ec4\u7684\u6a21\u578b', 'Models grouped by provider')}>
+          {filteredGroups.length ? filteredGroups.map(group => (
+            <section className="oa-cascade-group" key={group.value} aria-label={group.label}>
+              <h3 className="oa-cascade-provider-heading" aria-label={group.label}>
+                <span>{group.label}</span>
+                <span>{group.models.length}</span>
+              </h3>
+              <div className="oa-cascade-group-models">
+                {group.models.map(model => {
+                  const isCurrent = group.value === selectedProvider && String(model.value) === String(value)
+                  return <button key={model.value} type="button"
+                    className={isCurrent ? 'active' : ''}
+                    aria-current={isCurrent ? 'true' : undefined}
+                    title={`${group.label} / ${model.label}`}
+                    onClick={() => chooseModel(model.value)}>
+                    <span>{model.label}</span>
+                    {isCurrent && <Check size={13} />}
+                  </button>
+                })}
+              </div>
+            </section>
+          )) : <div className="oa-cascade-empty">{ct('\u6ca1\u6709\u5339\u914d\u7684\u670d\u52a1\u5546\u6216\u6a21\u578b', 'No matching providers or models')}</div>}
         </div>
         <div className="oa-cascade-reasoning" aria-label={ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}>
           <div className="oa-cascade-heading">{ct('\u63a8\u7406\u5f3a\u5ea6', 'Reasoning effort')}</div>

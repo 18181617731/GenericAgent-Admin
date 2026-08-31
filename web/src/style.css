@@ -6695,6 +6695,162 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning { border-color: rgba(255,25
 html[data-color-scheme="dark"] .oa-cascade-providers button:hover,
 html[data-color-scheme="dark"] .oa-cascade-models button:hover,
 html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: rgba(255,255,255,.07); }
+
+/* Desktop model picker: searchable catalog grouped by full provider names. */
+.oa-cascade-menu {
+  width: 560px;
+  max-width: min(560px, calc(100vw - 24px));
+  height: clamp(300px, 44vh, 430px);
+  grid-template-columns: minmax(0, 1fr) 126px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  padding: 7px;
+}
+.oa-cascade-search {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 38px;
+  margin-bottom: 6px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 10px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+}
+.oa-cascade-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.oa-cascade-search > svg { flex: 0 0 auto; }
+.oa-cascade-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+}
+.oa-cascade-search input::placeholder { color: var(--muted); }
+.oa-cascade-search button {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.oa-cascade-search button:hover { color: var(--text); background: color-mix(in srgb, var(--muted) 10%, transparent); }
+.oa-cascade-catalog {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  padding: 2px 8px 4px 2px;
+}
+.oa-cascade-group + .oa-cascade-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.oa-cascade-provider-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 2px 7px 5px;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 720;
+  line-height: 1.35;
+}
+.oa-cascade-provider-heading > span:first-child {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.oa-cascade-provider-heading > span:last-child {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 9%, transparent);
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-align: center;
+}
+.oa-cascade-group-models {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+}
+.oa-composer .oa-cascade-group-models button {
+  width: 100%;
+  min-width: 0;
+  grid-column: auto !important;
+  justify-self: stretch !important;
+  flex: 0 1 auto !important;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.oa-cascade-group-models button:hover { background: color-mix(in srgb, var(--muted) 9%, transparent); }
+.oa-cascade-group-models button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: -2px;
+}
+.oa-cascade-group-models button.active {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  font-weight: 650;
+}
+.oa-cascade-group-models button span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.oa-cascade-group-models button svg { flex: 0 0 auto; color: var(--accent); }
+.oa-cascade-menu > .oa-cascade-reasoning {
+  min-width: 0;
+  align-self: stretch;
+  height: auto;
+  margin-left: 5px;
+  padding: 2px 4px 2px 9px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.oa-cascade-menu > .oa-cascade-reasoning .oa-cascade-heading {
+  padding-right: 4px;
+  padding-left: 4px;
+  white-space: normal;
+}
+html[data-color-scheme="dark"] .oa-cascade-group-models button:hover { background: rgba(255,255,255,.07); }
+
 @media (max-width: 680px) {
   .oa-composer .oa-composer-cascade {
     position: relative;
