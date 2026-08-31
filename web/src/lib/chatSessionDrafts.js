@@ -10,13 +10,33 @@ function availableStorage(storage) {
   }
 }
 
+const instanceKey = value => String(value || '').trim()
+
+function normalizeDraftEntry(value) {
+  if (typeof value === 'string') {
+    return value ? { text: value, updated_at: 0, instance_id: '' } : null
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const text = typeof value.text === 'string' ? value.text : ''
+  if (!text) return null
+  const updatedAt = Number(value.updated_at)
+  return {
+    text,
+    updated_at: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
+    instance_id: instanceKey(value.instance_id),
+  }
+}
+
 function readDraftMap(storage) {
   const target = availableStorage(storage)
   if (!target) return {}
   try {
     const parsed = JSON.parse(target.getItem(STORAGE_KEY) || '{}')
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return Object.fromEntries(Object.entries(parsed).filter(([id, value]) => id && typeof value === 'string' && value))
+    return Object.fromEntries(Object.entries(parsed).flatMap(([id, value]) => {
+      const draft = id ? normalizeDraftEntry(value) : null
+      return draft ? [[id, draft]] : []
+    }))
   } catch {
     return {}
   }
@@ -33,24 +53,55 @@ function writeDraftMap(drafts, storage) {
   }
 }
 
-export function listChatSessionDraftIds(storage) {
-  return Object.keys(readDraftMap(storage))
+export function listChatSessionDraftIds(storage, instanceId) {
+  const requestedInstance = instanceId === undefined ? null : instanceKey(instanceId)
+  return Object.entries(readDraftMap(storage))
+    .filter(([, draft]) => requestedInstance === null || !draft.instance_id || draft.instance_id === requestedInstance)
+    .map(([id]) => id)
 }
 
-export function loadChatSessionDraft(sessionId, storage) {
+export function loadChatSessionDraft(sessionId, storage, instanceId) {
   const id = String(sessionId || '').trim()
   if (!id) return ''
-  return readDraftMap(storage)[id] || ''
+  const draft = readDraftMap(storage)[id]
+  if (!draft) return ''
+  const requestedInstance = instanceId === undefined ? null : instanceKey(instanceId)
+  if (requestedInstance !== null && draft.instance_id && draft.instance_id !== requestedInstance) return ''
+  return draft.text
 }
 
-export function saveChatSessionDraft(sessionId, value, storage) {
+export function saveChatSessionDraft(sessionId, value, storage, instanceId = '') {
   const id = String(sessionId || '').trim()
   if (!id) return
   const drafts = readDraftMap(storage)
-  const draft = typeof value === 'string' ? value : String(value || '')
-  if (draft) drafts[id] = draft
-  else delete drafts[id]
+  const text = typeof value === 'string' ? value : String(value || '')
+  if (text) {
+    const previous = drafts[id]
+    drafts[id] = {
+      text,
+      updated_at: previous?.text === text && previous.updated_at > 0 ? previous.updated_at : Date.now(),
+      instance_id: instanceKey(instanceId),
+    }
+  } else delete drafts[id]
   writeDraftMap(drafts, storage)
+}
+
+export function mergeChatSessionDraftSessions(sessions, instanceId, storage) {
+  const sourceSessions = Array.isArray(sessions) ? sessions : []
+  const serverSessions = sourceSessions.filter(session => !session?.local_draft)
+  const serverIDs = new Set(serverSessions.map(session => String(session?.id || '').trim()).filter(Boolean))
+  const requestedInstance = instanceKey(instanceId)
+  const draftSessions = Object.entries(readDraftMap(storage))
+    .filter(([id, draft]) => id && !serverIDs.has(id) && (!draft.instance_id || draft.instance_id === requestedInstance))
+    .sort((a, b) => b[1].updated_at - a[1].updated_at)
+    .map(([id, draft]) => ({
+      id,
+      title: '',
+      count: 0,
+      updated_at: draft.updated_at > 0 ? new Date(draft.updated_at).toISOString() : '',
+      local_draft: true,
+    }))
+  return draftSessions.concat(serverSessions)
 }
 
 export function clearChatSessionDrafts(sessionIds, storage) {

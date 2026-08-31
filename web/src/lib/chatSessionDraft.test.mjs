@@ -6,6 +6,7 @@ import {
   clearChatSessionDrafts,
   listChatSessionDraftIds,
   loadChatSessionDraft,
+  mergeChatSessionDraftSessions,
   saveChatSessionDraft,
 } from './chatSessionDrafts.js'
 
@@ -60,6 +61,30 @@ test('chat session drafts persist independently and clear selectively', () => {
   assert.equal(storage.getItem(CHAT_SESSION_DRAFTS_STORAGE_KEY), null)
 })
 
+test('draft-backed blank sessions merge into one instance without duplicating server sessions', () => {
+  const storage = memoryStorage({
+    [CHAT_SESSION_DRAFTS_STORAGE_KEY]: JSON.stringify({
+      legacy: 'legacy draft',
+    }),
+  })
+  saveChatSessionDraft('local-a', 'draft A', storage, 'instance-a')
+  saveChatSessionDraft('local-b', 'draft B', storage, 'instance-b')
+
+  assert.deepEqual(listChatSessionDraftIds(storage, 'instance-a').sort(), ['legacy', 'local-a'])
+  assert.equal(loadChatSessionDraft('local-a', storage, 'instance-a'), 'draft A')
+  assert.equal(loadChatSessionDraft('local-a', storage, 'instance-b'), '')
+
+  const server = [{ id: 'legacy', title: 'Saved', updated_at: '2026-01-01T00:00:00Z' }]
+  const merged = mergeChatSessionDraftSessions(server, 'instance-a', storage)
+  assert.deepEqual(merged.map(session => session.id), ['local-a', 'legacy'])
+  assert.equal(merged[0].local_draft, true)
+  assert.equal(merged[1], server[0])
+  assert.ok(Number.isFinite(Date.parse(merged[0].updated_at)))
+
+  saveChatSessionDraft('local-a', '', storage, 'instance-a')
+  assert.deepEqual(mergeChatSessionDraftSessions(merged, 'instance-a', storage), server)
+})
+
 test('chat session draft storage failures do not break the composer', () => {
   const corrupt = memoryStorage({ [CHAT_SESSION_DRAFTS_STORAGE_KEY]: '{not-json' })
   assert.equal(loadChatSessionDraft('session-a', corrupt), '')
@@ -83,13 +108,17 @@ test('main chat wires reactive draft badges into persistence, sending, and delet
   assert.match(main, /loadChatSessionDraft/)
   assert.match(main, /saveChatSessionDraft/)
   assert.match(main, /clearChatSessionDrafts/)
+  assert.match(main, /mergeChatSessionDraftSessions/)
   assert.match(main, /const \[draftSessionIds, setDraftSessionIds\]/)
   assert.equal(main.match(/className="oa-session-draft-badge"/g)?.length, 2)
   assert.match(style, /\.oa-session-title \.oa-session-draft-badge/)
   assert.match(style, /html\[data-color-scheme="dark"\] \.oa-session-title \.oa-session-draft-badge/)
 
   const openSession = functionBlock(main, '  const openSession = async', '  const loadSessions = async')
-  assert.match(openSession, /loadChatSessionDraft\(id\)/)
+  assert.match(openSession, /loadChatSessionDraft\(id, undefined, chatInstanceRef\.current\)/)
+
+  const loadSessions = functionBlock(main, '  const loadSessions = async', '  const createSession = async')
+  assert.match(loadSessions, /mergeChatSessionDraftSessions\(d\.sessions, chatInstanceRef\.current\)/)
 
   const promptSetter = functionBlock(main, '  const setSessionPrompt =', '  useEffect(() => { activeSidRef.current = sid }, [sid])')
   assert.match(promptSetter, /persistSessionDraft\(sessionId, next\)/)

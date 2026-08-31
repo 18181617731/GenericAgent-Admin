@@ -32,7 +32,7 @@ import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds } from './lib/chatSessionManagement'
-import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
+import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, mergeChatSessionDraftSessions, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
 import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
@@ -3787,7 +3787,7 @@ export default function ChatApp() {
   const [projectDraftOpen, setProjectDraftOpen] = useState(false)
   const [projectDraftName, setProjectDraftName] = useState('')
   const [projectCreating, setProjectCreating] = useState(false)
-  const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds()))
+  const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds(undefined, chatInstanceID)))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
   const [rawHistory, setRawHistory] = useState([])
@@ -3950,8 +3950,9 @@ export default function ChatApp() {
   const persistSessionDraft = useCallback((sessionId, value) => {
     const id = String(sessionId || '').trim()
     const draft = typeof value === 'string' ? value : String(value || '')
-    saveChatSessionDraft(id, draft)
+    saveChatSessionDraft(id, draft, undefined, chatInstanceRef.current)
     if (!id) return
+    setSessions(current => mergeChatSessionDraftSessions(current, chatInstanceRef.current))
     setDraftSessionIds(current => {
       const hasDraft = Boolean(draft)
       if (current.has(id) === hasDraft) return current
@@ -3966,6 +3967,7 @@ export default function ChatApp() {
     const ids = values.map(value => String(value || '').trim()).filter(Boolean)
     clearChatSessionDrafts(ids)
     if (!ids.length) return
+    setSessions(current => mergeChatSessionDraftSessions(current, chatInstanceRef.current))
     setDraftSessionIds(current => {
       const next = new Set(current)
       let changed = false
@@ -4629,7 +4631,7 @@ export default function ChatApp() {
     streamAbortRef.current = null
     scrollModeRef.current = 'auto'
     setSid(id)
-    setSessionPrompt(loadChatSessionDraft(id), id)
+    setSessionPrompt(loadChatSessionDraft(id, undefined, chatInstanceRef.current), id)
     setBusy(false)
     setStreamingSid('')
     const d = await chatApi(`/api/chat/session/${id}`)
@@ -4724,7 +4726,7 @@ export default function ChatApp() {
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
     const d = await chatApi('/api/chat/sessions')
-    const list = d.sessions || []
+    const list = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
     setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
@@ -5774,6 +5776,7 @@ export default function ChatApp() {
         const defaultID = String(payload.default_id).trim()
         chatInstanceRef.current = defaultID
         setChatInstanceID(defaultID)
+        setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, defaultID)))
         persistChatInstanceID(defaultID)
       }
     }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
@@ -5815,7 +5818,7 @@ export default function ChatApp() {
         const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
           const previous = sessionsRef.current
-          const next = Array.isArray(d.sessions) ? d.sessions : []
+          const next = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
           sessionsRef.current = next
           setSessions(next)
           setProjects(Array.isArray(d.projects) ? d.projects : [])
@@ -5930,6 +5933,7 @@ export default function ChatApp() {
     chatInstanceRef.current = nextID
     persistChatInstanceID(nextID)
     setChatInstanceID(nextID)
+    setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, nextID)))
     setSid('')
     setSessions([])
     setProjects([])
