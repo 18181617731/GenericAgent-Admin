@@ -4,6 +4,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 SOURCE = Path(__file__).with_name("bootstrap.py")
@@ -57,6 +59,21 @@ class BootstrapConfigTest(unittest.TestCase):
         module = load_bootstrap(SOURCE)
         for name in ("rich", "qrcode", "websockets", "fastapi", "uvicorn", "psutil", "lark_oapi", "telegram", "botpy", "Crypto", "wecom_aibot_sdk", "dingtalk_stream"):
             self.assertIn(name, module.REQUIRED_IMPORTS)
+
+    def test_verify_checks_module_specs_without_importing_sdk_packages(self):
+        module = load_bootstrap(SOURCE)
+        completed = SimpleNamespace(returncode=0, stdout="3.12.7\n", stderr="")
+        with mock.patch.object(module, "usable", return_value=True), mock.patch(
+            "subprocess.run", return_value=completed
+        ) as run:
+            self.assertTrue(module.verify())
+
+        command = run.call_args.args[0]
+        probe = command[2]
+        self.assertIn("importlib.util.find_spec", probe)
+        self.assertNotIn("import lark_oapi", probe)
+        self.assertEqual(run.call_args.kwargs["timeout"], 10)
+        self.assertIn("creationflags", run.call_args.kwargs)
 
     def test_writes_bundle_config_for_legacy_nested_layout(self):
         self.assert_layout(nested=True)

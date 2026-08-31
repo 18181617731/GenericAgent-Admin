@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -377,6 +376,19 @@ func resolvePortableBootstrap(cwd string) (bootstrapPy, pythonExe string, ok boo
 	return "", "", false
 }
 
+func runPortableBootstrap(cwd, pythonExe, bootstrapPy string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cmd := newPortableBootstrapCommand(ctx, pythonExe, bootstrapPy)
+	cmd.Dir = cwd
+	output, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return output, fmt.Errorf("bootstrap.py timed out after 15 seconds")
+	}
+	return output, err
+}
+
 // tryPortableAutoInit detects portable bundle environment and runs bootstrap.py
 // to populate config with correct paths. Returns nil if not portable or on success.
 func tryPortableAutoInit(cwd string, store *config.Store) error {
@@ -401,10 +413,10 @@ func tryPortableAutoInit(cwd string, store *config.Store) error {
 		return fmt.Errorf("bundled python path is a directory: %s", pythonExe)
 	}
 
-	// Run bootstrap.py with bundled Python
-	cmd := exec.Command(pythonExe, bootstrapPy)
-	cmd.Dir = cwd
-	output, err := cmd.CombinedOutput()
+	// Run bootstrap.py with bundled Python. The command is hidden on Windows and
+	// bounded independently of bootstrap.py's own venv probe timeout so a broken
+	// portable interpreter cannot block the desktop window indefinitely.
+	output, err := runPortableBootstrap(cwd, pythonExe, bootstrapPy)
 	if err != nil {
 		log.Printf("bootstrap.py output:\n%s", string(output))
 		return fmt.Errorf("bootstrap.py failed: %w", err)
