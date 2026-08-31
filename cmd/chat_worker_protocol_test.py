@@ -358,8 +358,8 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             restore()
 
         self.assertEqual(chat_worker._snapshot_turn_usages(), [
-            {"input_tokens": 100, "cache_creation_tokens": 20, "cache_read_tokens": 80, "output_tokens": 0, "cached_tokens": 0},
-            {"input_tokens": 200, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30, "cached_tokens": 0, "generation_ms": 500},
+            {"input_tokens": 100, "cache_creation_tokens": 20, "cache_read_tokens": 80, "output_tokens": 0, "cached_tokens": 0, "input_tokens_include_cache_read": 0},
+            {"input_tokens": 200, "cache_creation_tokens": 40, "cache_read_tokens": 160, "output_tokens": 30, "cached_tokens": 0, "input_tokens_include_cache_read": 0, "generation_ms": 500},
         ])
         usage_events = [event for event in self.events if event.get("type") == "turn_usage"]
         self.assertEqual(usage_events[-2]["index"], 1)

@@ -138,7 +138,6 @@ export default function ThemePicker({ value, onChange, lang = 'en', variant = 'd
       ref={triggerRef}
       type="button"
       className="theme-picker-trigger"
-      aria-label={`${text.trigger}: ${activeTheme.label[lang] || activeTheme.label.en}`}
       aria-haspopup="dialog"
       aria-expanded={open}
       aria-label={`${text.title}: ${activeTheme.label[lang] || activeTheme.label.en}`}
