@@ -12,8 +12,10 @@ import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, FolderPlus, GitBranch, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, FolderPlus, GitBranch, KeyRound, Lock, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X } from 'lucide-react'
 import { api, apiStream } from './lib/api'
+import { SETTINGS_TEXT } from './lib/i18n'
+import { KeychainPage } from './pages/KeychainPage'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
 import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
@@ -3506,9 +3508,11 @@ export function ProviderModelCascade({
   )
 }
 
-function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, systemPromptActive, systemPromptLabel }) {
+export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, triggerRef }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
+  const fallbackTriggerRef = useRef(null)
+  const actionTriggerRef = triggerRef || fallbackTriggerRef
   const triggerId = React.useId()
 
   useEffect(() => {
@@ -3524,17 +3528,19 @@ function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, s
     { icon: Paperclip, label: ct('附件', 'Attachments'), onClick: onAttach, active: false },
     { icon: Sparkles, label: ct('命令', 'Commands'), onClick: onCommands, active: commandsOpen },
     { icon: Bot, label: systemPromptActive ? `${ct('系统提示', 'System prompt')} · ${systemPromptLabel}` : ct('系统提示', 'System prompt'), onClick: onSystemPrompt, active: systemPromptActive },
+    { icon: KeyRound, label: ct('密钥管理', 'Keychain'), onClick: onKeychain, active: keychainOpen },
   ]
 
   return (
     <div className="oa-composer-actions" ref={ref}>
       <button
+        ref={actionTriggerRef}
         id={triggerId}
         type="button"
         className={`oa-composer-actions-trigger ${open ? 'is-open' : ''}`}
         onClick={() => setOpen(!open)}
-        title={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
-        aria-label={ct('附件、命令与系统提示', 'Attachments, commands, and system prompt')}
+        title={ct('附件、命令、系统提示与密钥管理', 'Attachments, commands, system prompt, and keychain')}
+        aria-label={ct('附件、命令、系统提示与密钥管理', 'Attachments, commands, system prompt, and keychain')}
         aria-haspopup="menu"
         aria-expanded={open}
       >
@@ -3550,7 +3556,7 @@ function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, s
                 type="button"
                 className={action.active ? 'is-active' : ''}
                 onClick={() => {
-                  action.onClick()
+                  action.onClick?.()
                   setOpen(false)
                 }}
                 role="menuitem"
@@ -3563,6 +3569,60 @@ function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, s
         </div>
       )}
     </div>
+  )
+}
+
+export function ChatKeychainDialog({ open, onClose, returnFocusRef }) {
+  const closeButtonRef = useRef(null)
+  const previousFocusRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  const titleId = React.useId()
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    previousFocusRef.current = document.activeElement
+    const focusFrame = requestAnimationFrame(() => closeButtonRef.current?.focus())
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onCloseRef.current?.()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('keydown', handleKeyDown)
+      const returnFocus = returnFocusRef?.current || previousFocusRef.current
+      requestAnimationFrame(() => returnFocus?.focus?.())
+    }
+  }, [open, returnFocusRef])
+
+  if (!open || typeof document === 'undefined') return null
+  const text = SETTINGS_TEXT[chatLanguage()] || SETTINGS_TEXT.zh
+  return createPortal(
+    <div className="oa-keychain-dialog-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <section className="oa-keychain-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header className="oa-keychain-dialog-head">
+          <div>
+            <span className="oa-keychain-dialog-eyebrow">{ct('安全凭据', 'Secure credentials')}</span>
+            <h2 id={titleId}>{ct('密钥管理', 'Keychain')}</h2>
+            <p>{ct('配置会立即用于当前及后续聊天；密钥值始终隐藏。', 'Changes apply to this and future chats; secret values remain hidden.')}</p>
+          </div>
+          <button ref={closeButtonRef} type="button" className="oa-keychain-dialog-close" onClick={onClose} title={ct('关闭', 'Close')} aria-label={ct('关闭密钥管理', 'Close keychain')}>
+            <X size={17}/>
+          </button>
+        </header>
+        <div className="oa-keychain-dialog-body">
+          <KeychainPage text={text}/>
+        </div>
+      </section>
+    </div>,
+    document.body,
   )
 }
 
@@ -3808,6 +3868,7 @@ export default function ChatApp() {
   const [showJumpSent, setShowJumpSent] = useState(false)
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
+  const [keychainOpen, setKeychainOpen] = useState(false)
   const [worldlineRestorePicker, setWorldlineRestorePicker] = useState(null)
   const [slashCommands, setSlashCommands] = useState(BUILTIN_SLASH_COMMANDS)
   const [cfg, setCfg] = useState(null)
@@ -3820,6 +3881,7 @@ export default function ChatApp() {
   const threadRef = useRef(null)
   const composerWrapRef = useRef(null)
   const fileRef = useRef(null)
+  const composerActionsTriggerRef = useRef(null)
   const promptRef = useRef(null)
   const cmdDrawerRef = useRef(null)
   const selectedCmdRef = useRef(null)
@@ -6536,6 +6598,7 @@ export default function ChatApp() {
             )
           })}
         </div>}
+        <ChatKeychainDialog open={keychainOpen} onClose={() => setKeychainOpen(false)} returnFocusRef={composerActionsTriggerRef}/>
         {cmdManagerOpen && <div className="oa-cmd-manager-backdrop" onMouseDown={()=>setCmdManagerOpen(false)}>
           <div className="oa-cmd-manager" role="dialog" aria-modal="true" aria-label={ct('自定义斜杠命令', 'Custom slash commands')} onMouseDown={e=>e.stopPropagation()}>
             <div className="oa-cmd-manager-head">
@@ -6661,9 +6724,12 @@ export default function ChatApp() {
               onAttach={() => fileRef.current?.click()}
               onCommands={() => setCmdManagerOpen(true)}
               onSystemPrompt={openExtraPromptEditor}
+              onKeychain={() => setKeychainOpen(true)}
               commandsOpen={cmdManagerOpen}
+              keychainOpen={keychainOpen}
               systemPromptActive={extraPromptOpen || extraSysPromptPresetID}
               systemPromptLabel={extraSysPromptPresetID ? activePromptPreset.name : ''}
+              triggerRef={composerActionsTriggerRef}
             />
             <div className="oa-composer-primary-actions">
               <ProviderModelCascade groups={providerGroups} selectedProvider={selectedProvider}
