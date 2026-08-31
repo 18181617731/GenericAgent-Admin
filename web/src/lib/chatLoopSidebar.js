@@ -5,10 +5,8 @@ export function loopSidebarView(loop) {
   const status = String(loop.status || '').trim().toLowerCase()
   if (!ACTIVE_LOOP_STATUSES.has(status)) return null
   const roundValue = Number(loop.round)
-  const maxRoundsValue = Number(loop.max_rounds)
   const round = Number.isFinite(roundValue) ? Math.max(0, Math.floor(roundValue)) : 0
-  const maxRounds = Number.isFinite(maxRoundsValue) ? Math.max(1, Math.floor(maxRoundsValue)) : 1
-  return { status, round, maxRounds }
+  return { status, round }
 }
 
 export function updateSessionLoop(sessions, sessionID, loop) {

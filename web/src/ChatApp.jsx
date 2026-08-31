@@ -56,7 +56,6 @@ const loopStopReasonText = reason => {
   const detail = separator >= 0 ? raw.slice(separator + 1).trim() : ''
   const labels = {
     user: ct('\u5df2\u624b\u52a8\u505c\u6b62', 'Stopped manually'),
-    max_rounds: ct('\u5df2\u8fbe\u5230\u6700\u5927\u8f6e\u6b21', 'Maximum rounds reached'),
     controller_complete: ct('\u63a7\u5236\u6a21\u578b\u5224\u5b9a\u76ee\u6807\u5df2\u5b8c\u6210', 'Controller marked the objective complete'),
     controller_no_action: ct('\u63a7\u5236\u6a21\u578b\u672a\u7ed9\u51fa\u53ef\u6267\u884c\u7684\u4e0b\u4e00\u6b65', 'Controller returned no actionable next step'),
     server_restart: ct('\u670d\u52a1\u91cd\u542f\u540e\u5df2\u6682\u505c', 'Paused after a server restart'),
@@ -3754,7 +3753,6 @@ export default function ChatApp() {
   const [loopState, setLoopState] = useState(null)
   const [loopConfigOpen, setLoopConfigOpen] = useState(false)
   const [loopObjective, setLoopObjective] = useState('')
-  const [loopMaxRounds, setLoopMaxRounds] = useState(10)
   const [loopUpdating, setLoopUpdating] = useState(false)
   const loopRecords = useMemo(() => normalizeLoopRecords(loopState), [loopState])
   const [busy, setBusy] = useState(false)
@@ -4391,16 +4389,14 @@ export default function ChatApp() {
     const objective = (loopObjective || prompt).trim()
     if (!id) { setErr(ct('请先创建或打开一个会话。', 'Create or open a chat first.')); return }
     if (!objective) { setErr(ct('请填写 Loop 目标。', 'Enter a Loop objective.')); setLoopConfigOpen(true); return }
-    const maxRounds = Math.min(100, Math.max(1, Number(loopMaxRounds) || 10))
     const controllerLlmNo = llms.some(model => model.index === loopControllerLlmNo) ? loopControllerLlmNo : llmNo
     setLoopUpdating(true)
     setErr('')
     try {
-      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, max_rounds:maxRounds, controller_llm_no:controllerLlmNo }) })
+      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, controller_llm_no:controllerLlmNo }) })
       setLoopObjective(objective)
-      setLoopMaxRounds(maxRounds)
       setLoopControllerLlmNo(controllerLlmNo)
-      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, max_rounds:maxRounds, controller_prompt:objective, controller_llm_no:controllerLlmNo }
+      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, controller_prompt:objective, controller_llm_no:controllerLlmNo }
       setLoopState(nextLoopState)
       setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
       setLoopConfigOpen(false)
@@ -4520,7 +4516,6 @@ export default function ChatApp() {
     const savedControllerLlmNo = Number(nextLoopState?.controller_llm_no)
     setLoopControllerLlmNo(Number(nextLoopState?.epoch) > 0 && nextLlms.some(model => model.index === savedControllerLlmNo) ? savedControllerLlmNo : null)
     if (st.loop?.controller_prompt) setLoopObjective(st.loop.controller_prompt)
-    if (Number.isFinite(Number(st.loop?.max_rounds))) setLoopMaxRounds(Math.min(100, Math.max(1, Number(st.loop.max_rounds))))
     if (id && st.running) {
       attachRunningStream(id)
     } else if (id && streamingSid && streamingSid !== id) {
@@ -4681,7 +4676,7 @@ export default function ChatApp() {
     activeSidRef.current = d.id
     scrollModeRef.current = 'auto'
     clearSessionDrafts(d.id)
-    setSid(d.id); setMessages([]); applyQueueSnapshot([]); setQueueEditingId(''); setQueueDraft(''); guidingQueueRef.current = ''; setGuidingQueueId(''); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopMaxRounds(10); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
+    setSid(d.id); setMessages([]); applyQueueSnapshot([]); setQueueEditingId(''); setQueueDraft(''); guidingQueueRef.current = ''; setGuidingQueueId(''); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setLoopState(null); setLoopObjective(''); setLoopConfigOpen(false); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? llmNo)
     await loadChatState(d.id, openToken)
     if (selectedProject) await loadSessions(d.id)
     return d.id
@@ -6059,7 +6054,7 @@ export default function ChatApp() {
         <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') saveRename(session.id); if(event.key==='Escape') setEditing('') }}/>
         <button onClick={()=>saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>setEditing('')} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
       </div> : <button className="oa-session" onClick={()=>openSession(session.id)} title={shortTitle(session)}>
-        <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}{session.pinned && <Pin className="oa-session-pin" size={12} aria-label={ct('\u5df2\u7f6e\u9876', 'Pinned')}/>}<b>{shortTitle(session)}</b>{sidebarLoop && <em className="oa-session-loop-badge" title={ct(`Loop 进行中 · 第 ${sidebarLoop.round}/${sidebarLoop.maxRounds} 轮`, `Loop active · round ${sidebarLoop.round}/${sidebarLoop.maxRounds}`)}>Loop {sidebarLoop.round}/{sidebarLoop.maxRounds}</em>}{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
+        <span className="oa-session-title" title={shortTitle(session)}>{session.running && <i className="oa-session-running-dot" aria-hidden="true"/>}{session.pinned && <Pin className="oa-session-pin" size={12} aria-label={ct('\u5df2\u7f6e\u9876', 'Pinned')}/>}<b>{shortTitle(session)}</b>{sidebarLoop && <em className="oa-session-loop-badge" title={ct(`Loop 进行中 · 第 ${sidebarLoop.round} 轮`, `Loop active · round ${sidebarLoop.round}`)}>Loop {sidebarLoop.round}</em>}{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{draftSessionIds.has(session.id) && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
         <small title={fmtTime(session.updated_at)}>{session.running ? <em className="oa-session-running-label">{ct('运行中', 'Running')}</em> : sessionAgeText(session.updated_at)}</small>
       </button>}
       {editing !== session.id && <button className={`oa-session-more ${menuOpen === session.id ? 'is-open' : ''}`} onClick={(event)=>{
@@ -6312,7 +6307,7 @@ export default function ChatApp() {
             <div className="oa-btw-title">
               <span>LOOP</span>
               <b>{loopState?.enabled ? ct('自动推进中', 'Auto advancing') : ct('自动推进', 'Auto advance')}</b>
-              {loopState?.enabled && <em>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</em>}
+              {loopState?.enabled && <em>{ct(`第 ${Number(loopState.round) || 0} 轮`, `Round ${Number(loopState.round) || 0}`)}</em>}
             </div>
             <button type="button" className="oa-btw-toggle" onClick={()=>setLoopRailOpen(false)} aria-expanded="true" aria-controls="oa-loop-rail" title={ct('收起 Loop 栏', 'Collapse Loop rail')}><ChevronRight size={15}/><span>{ct('收起', 'Collapse')}</span></button>
           </header>
@@ -6321,7 +6316,7 @@ export default function ChatApp() {
               <span className="oa-loop-orbit"><Orbit size={17} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/></span>
               <div>
                 <b>{loopState?.enabled ? ct('正在持续完成目标', 'Continuing toward the objective') : ct('由监督模型推进下一轮', 'Let a controller advance the next turn')}</b>
-                <span>{loopState?.enabled ? ct(`第 ${Number(loopState.round) || 0} 轮，最多 ${Number(loopState.max_rounds) || loopMaxRounds} 轮`, `Round ${Number(loopState.round) || 0} of ${Number(loopState.max_rounds) || loopMaxRounds}`) : ct('设定目标和最多轮次后启动', 'Set an objective and round limit to begin')}</span>
+                <span>{loopState?.enabled ? ct(`已完成 ${Number(loopState.round) || 0} 轮，将持续推进直至目标完成`, `${Number(loopState.round) || 0} rounds completed; continuing until the objective is done`) : ct('设定目标后启动', 'Set an objective to begin')}</span>
                 <small className="oa-loop-model">{ct('控制模型：', 'Controller: ')}{loopControllerModelLabel}</small>
               </div>
             </div>
@@ -6378,10 +6373,6 @@ export default function ChatApp() {
                   options={llms.map(model => ({ value:model.index, label:`${runtimeModelGroup(model).label} / ${runtimeModelLabel(model)}` }))}
                 />
               </label>
-              <label className="oa-loop-rounds">
-                <span>{ct('最多轮次', 'Maximum rounds')}</span>
-                <input type="number" min="1" max="100" value={loopMaxRounds} onChange={e => setLoopMaxRounds(e.target.value)}/>
-              </label>
               <div className="oa-loop-config-actions">
                 <small>{ct('留空目标时使用当前输入内容', 'Uses the current message when objective is empty')}</small>
                 <button type="button" onClick={startLoop} disabled={loopUpdating || !(loopObjective.trim() || prompt.trim())}>{loopUpdating ? ct('启动中…', 'Starting…') : ct('启动 Loop', 'Start Loop')}</button>
@@ -6407,7 +6398,7 @@ export default function ChatApp() {
         {(!loopRailOpen || (btwMessages.length > 0 && !btwRailOpen)) && <div className="oa-rail-launchers" aria-label={ct('已收起的右侧栏', 'Collapsed right rails')}>
           {!loopRailOpen && <button type="button" className="oa-btw-collapsed oa-loop-collapsed" onClick={()=>setLoopRailOpen(true)} aria-expanded="false" aria-controls="oa-loop-rail" title={ct('展开 Loop 栏', 'Expand Loop rail')}>
             <Orbit size={15} className={loopState?.enabled && loopState?.status !== 'waiting' ? 'is-spinning' : ''}/><span>LOOP</span>
-            {loopState?.enabled && <b>{Number(loopState.round) || 0}/{Number(loopState.max_rounds) || loopMaxRounds}</b>}
+            {loopState?.enabled && <b>{Number(loopState.round) || 0}</b>}
           </button>}
           {btwMessages.length > 0 && !btwRailOpen && <button type="button" className="oa-btw-collapsed oa-btw-only-collapsed" onClick={()=>setBtwRailOpen(true)} aria-expanded="false" aria-controls="oa-btw-rail" title={ct('展开侧问栏', 'Expand side-question rail')}>
             <MessageSquarePlus size={15}/><span>BTW</span><b>{btwMessages.length}</b>

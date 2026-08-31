@@ -173,7 +173,6 @@ type chatLoopState struct {
 	Status                string           `json:"status"`
 	Epoch                 int64            `json:"epoch"`
 	Round                 int              `json:"round"`
-	MaxRounds             int              `json:"max_rounds"`
 	StopReason            string           `json:"stop_reason,omitempty"`
 	ControllerPrompt      string           `json:"controller_prompt,omitempty"`
 	ControllerLLMNo       int              `json:"controller_llm_no"`
@@ -295,20 +294,43 @@ type chatWorker struct {
 	Mu     sync.Mutex
 }
 
+type oneShotBTWWorkerObserver struct {
+	Started  func(*chatWorker) bool
+	Finished func(*chatWorker)
+}
+
+const oneShotBTWWorkerObserverKey = "_ga_one_shot_worker_observer"
+
 func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interface{}) (chatMessage, error) {
+	observer, _ := req[oneShotBTWWorkerObserverKey].(*oneShotBTWWorkerObserver)
+	workerReq := req
+	if observer != nil {
+		workerReq = make(map[string]interface{}, len(req)-1)
+		for key, value := range req {
+			if key != oneShotBTWWorkerObserverKey {
+				workerReq[key] = value
+			}
+		}
+	}
 	worker, err := startChatWorker(cfg, sid+"-btw")
 	if err != nil {
 		return chatMessage{}, err
 	}
 	waited := false
 	defer func() {
+		if observer != nil && observer.Finished != nil {
+			observer.Finished(worker)
+		}
 		_ = worker.Stdin.Close()
 		if !waited && worker.Cmd != nil && worker.Cmd.Process != nil {
 			_ = worker.Cmd.Process.Kill()
 			_, _ = worker.Cmd.Process.Wait()
 		}
 	}()
-	if err := json.NewEncoder(worker.Stdin).Encode(req); err != nil {
+	if observer != nil && observer.Started != nil && !observer.Started(worker) {
+		return chatMessage{}, errChatLoopStale
+	}
+	if err := json.NewEncoder(worker.Stdin).Encode(workerReq); err != nil {
 		return chatMessage{}, err
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)

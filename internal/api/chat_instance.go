@@ -22,6 +22,12 @@ func (e *chatInstanceNotFoundError) Error() string {
 // chatRuntime owns all mutable in-memory chat state for one GA instance.
 // Keeping the mutexes with the maps prevents request-scoped Server copies from
 // accidentally copying a live mutex.
+type chatLoopControllerRun struct {
+	Epoch    int64
+	Worker   *chatWorker
+	Canceled bool
+}
+
 type chatRuntime struct {
 	chatMu              sync.Mutex
 	sessionMu           sync.Mutex
@@ -31,6 +37,7 @@ type chatRuntime struct {
 	queueEventSubs      map[string]map[chan uint64]struct{}
 	runs                map[string]*chatRun
 	workers             map[string]*chatWorker
+	loopControllers     map[string]*chatLoopControllerRun
 	titleJobs           map[string]bool
 	loopRecoveryOnce    sync.Once
 	loopRecoveryErr     error
@@ -58,11 +65,12 @@ func (r *chatRuntimeRegistry) runtime(instanceID string) *chatRuntime {
 		return runtime
 	}
 	runtime := &chatRuntime{
-		queueEventRev:  make(map[string]uint64),
-		queueEventSubs: make(map[string]map[chan uint64]struct{}),
-		runs:           make(map[string]*chatRun),
-		workers:        make(map[string]*chatWorker),
-		titleJobs:      make(map[string]bool),
+		queueEventRev:   make(map[string]uint64),
+		queueEventSubs:  make(map[string]map[chan uint64]struct{}),
+		runs:            make(map[string]*chatRun),
+		workers:         make(map[string]*chatWorker),
+		loopControllers: make(map[string]*chatLoopControllerRun),
+		titleJobs:       make(map[string]bool),
 	}
 	r.entries[instanceID] = runtime
 	return runtime
@@ -90,6 +98,7 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		ConfigMu:                s.ConfigMu,
 		ChatRuns:                s.ChatRuns,
 		ChatWorkers:             s.ChatWorkers,
+		ChatLoopControllers:     s.ChatLoopControllers,
 		ChatTitleJobs:           s.ChatTitleJobs,
 		ChatRuntimes:            s.ChatRuntimes,
 		ChatRuntime:             s.ChatRuntime,
@@ -105,6 +114,7 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		clone.UsageMu = &runtime.usageMu
 		clone.ChatRuns = runtime.runs
 		clone.ChatWorkers = runtime.workers
+		clone.ChatLoopControllers = runtime.loopControllers
 		clone.ChatTitleJobs = runtime.titleJobs
 		clone.ChatRuntime = runtime
 	}

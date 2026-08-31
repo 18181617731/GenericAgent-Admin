@@ -32,23 +32,24 @@ import (
 )
 
 type Server struct {
-	CfgStore         *config.Store
-	Svc              *service.Manager
-	InstanceManagers *instanceManagerRegistry
-	Models           *modelconfig.Store
-	Static           fs.FS
-	staticGzip       sync.Map
-	ReactApp         *reactAppBridge
-	ChatMu           *sync.Mutex
-	SessionMu        *sync.Mutex
-	UsageMu          *sync.Mutex
-	ConfigMu         *sync.Mutex
-	ChatRuns         map[string]*chatRun
-	ChatWorkers      map[string]*chatWorker
-	ChatTitleJobs    map[string]bool
-	ChatRuntimes     *chatRuntimeRegistry
-	ChatRuntime      *chatRuntime
-	BaseCfgStore     *config.Store
+	CfgStore            *config.Store
+	Svc                 *service.Manager
+	InstanceManagers    *instanceManagerRegistry
+	Models              *modelconfig.Store
+	Static              fs.FS
+	staticGzip          sync.Map
+	ReactApp            *reactAppBridge
+	ChatMu              *sync.Mutex
+	SessionMu           *sync.Mutex
+	UsageMu             *sync.Mutex
+	ConfigMu            *sync.Mutex
+	ChatRuns            map[string]*chatRun
+	ChatWorkers         map[string]*chatWorker
+	ChatLoopControllers map[string]*chatLoopControllerRun
+	ChatTitleJobs       map[string]bool
+	ChatRuntimes        *chatRuntimeRegistry
+	ChatRuntime         *chatRuntime
+	BaseCfgStore        *config.Store
 	// PasswordConfigured reports whether an admin password exists. The
 	// credential itself lives outside this package, so remote-access settings
 	// ask through this hook before they can be saved.
@@ -83,7 +84,8 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 		ChatMu: &defaultRuntime.chatMu, SessionMu: &defaultRuntime.sessionMu,
 		UsageMu: &defaultRuntime.usageMu, ConfigMu: &sync.Mutex{},
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
-		ChatTitleJobs: defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes, ChatRuntime: defaultRuntime,
+		ChatLoopControllers: defaultRuntime.loopControllers,
+		ChatTitleJobs:       defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes, ChatRuntime: defaultRuntime,
 		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
 	s.resumeInstanceInstalls()
