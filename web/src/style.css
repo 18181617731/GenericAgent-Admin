@@ -3802,7 +3802,7 @@ pre, code { font-variant-ligatures: none; }
 .update-progress{border:1px solid var(--border);background:rgba(148,163,184,.08);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:7px}.update-progress-head{display:flex;justify-content:space-between;align-items:center;font-size:13px}.progress-bar{height:8px;border-radius:999px;background:rgba(148,163,184,.25);overflow:hidden}.progress-bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#38bdf8,#22c55e);transition:width .25s ease}.update-progress p{margin:0}.update-progress code{font-size:12px}
 
 
-/* Chat follow + composer polish: keep follow inside thread and away from input */
+/* Chat follow + composer polish: float navigation without reserving a message row */
 .oa-follow-row{
   position:sticky;
   bottom:10px;
@@ -3810,7 +3810,11 @@ pre, code { font-variant-ligatures: none; }
   display:flex;
   justify-content:center;
   width:min(100% - 48px, 768px);
-  margin:0 auto 8px;
+  height:0;
+  min-height:0;
+  margin:0 auto;
+  transform:translateY(-32px);
+  overflow:visible;
   pointer-events:none;
 }
 .oa-follow-row .oa-follow-btn,
@@ -3836,6 +3840,10 @@ pre, code { font-variant-ligatures: none; }
   background:var(--surface-strong);
   border-color:rgba(0,0,0,.16);
   transform:none !important;
+}
+.oa-follow-row .oa-follow-btn:focus-visible{
+  outline:2px solid color-mix(in srgb, var(--accent, #10a37f) 72%, transparent);
+  outline-offset:2px;
 }
 
 /* Composer polish: calmer card, textarea-first, compact action bar */
@@ -15918,15 +15926,14 @@ html[data-color-scheme="dark"] .logs-page {
 .oa-timeline,
 .oa-follow-row { width: min(var(--oa-chat-measure), calc(100% - 48px)); }
 
-/* The buttons hold the right edge of that column rather than its middle,
-   where they would sit on top of the lines being read, and they stack the way
-   they move: back through the conversation above, forward to the newest
-   output below. */
+/* The compact controls share one horizontal corner cluster. The zero-height
+   sticky anchor keeps them out of document flow, so showing either control
+   never inserts a blank row between the conversation and composer. */
 .oa-follow-row {
-  flex-direction: column;
-  align-items: flex-end;
+  flex-direction: row;
+  align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 @media (min-width: 901px) {
