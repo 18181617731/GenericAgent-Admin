@@ -7,7 +7,7 @@ import { ChannelServiceTable } from './components/common.jsx'
 import App from './App.jsx'
 import { ChannelsPage } from './pages/ChannelsPage.jsx'
 import { I18N } from './lib/i18n.js'
-import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, groupRuntimeModels } from './ChatApp.jsx'
+import { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, SessionAutorunBadge, groupRuntimeModels } from './ChatApp.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { draftChangeSummary } from './lib/modelsEditor.js'
 import { FilesPage } from './pages/FilesPage.jsx'
@@ -137,6 +137,22 @@ afterEach(() => {
   mermaidMocks.render.mockReset()
   window.localStorage.clear()
   vi.restoreAllMocks()
+})
+
+describe('chat session badges', () => {
+  test('shows Autorun only on the enabled target session', () => {
+    const { rerender } = render(<SessionAutorunBadge enabled sessionId="session-a" targetSessionId="session-a" />)
+
+    const badge = screen.getByLabelText(/Autorun/)
+    expect(badge.textContent).toBe('Autorun')
+    expect(badge.classList.contains('oa-session-autorun-badge')).toBe(true)
+
+    rerender(<SessionAutorunBadge enabled sessionId="session-b" targetSessionId="session-a" />)
+    expect(screen.queryByText('Autorun')).toBeNull()
+
+    rerender(<SessionAutorunBadge enabled={false} sessionId="session-a" targetSessionId="session-a" />)
+    expect(screen.queryByText('Autorun')).toBeNull()
+  })
 })
 
 describe('channel frontend gates', () => {
