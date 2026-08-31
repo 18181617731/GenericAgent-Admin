@@ -4,6 +4,7 @@ import {
   AUTORUN_FIRST_WAIT_MS,
   AUTORUN_IDLE_MS,
   autorunInitialReplyAt,
+  isAutorunTargetRunning,
   shouldTriggerAutorun,
 } from './chatAutorun.js'
 
@@ -25,6 +26,17 @@ test('disabled or blocked autorun never triggers', () => {
   const due = { nowMs:AUTORUN_IDLE_MS + 2, lastReplyAtMs:1 }
   assert.equal(shouldTriggerAutorun({ ...due, enabled:false, blocked:false }), false)
   assert.equal(shouldTriggerAutorun({ ...due, enabled:true, blocked:true }), false)
+})
+
+test('only the autorun target session blocks on running state', () => {
+  const sessions = [
+    { id:'target', running:false },
+    { id:'other', running:true },
+  ]
+  assert.equal(isAutorunTargetRunning(sessions, 'target'), false)
+  assert.equal(isAutorunTargetRunning(sessions, 'other'), true)
+  assert.equal(isAutorunTargetRunning(sessions, 'missing'), false)
+  assert.equal(isAutorunTargetRunning(undefined, 'target'), false)
 })
 
 test('invalid clocks fail closed', () => {

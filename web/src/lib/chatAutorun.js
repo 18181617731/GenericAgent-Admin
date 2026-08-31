@@ -5,6 +5,11 @@ export function autorunInitialReplyAt(nowMs = Date.now()) {
   return nowMs - (AUTORUN_IDLE_MS - AUTORUN_FIRST_WAIT_MS)
 }
 
+export function isAutorunTargetRunning(sessions, sessionID) {
+  if (!Array.isArray(sessions) || !sessionID) return false
+  return sessions.some(entry => entry?.id === sessionID && Boolean(entry.running))
+}
+
 export function shouldTriggerAutorun({ enabled, nowMs, lastReplyAtMs, blocked }) {
   if (!enabled || blocked) return false
   const now = Number(nowMs)

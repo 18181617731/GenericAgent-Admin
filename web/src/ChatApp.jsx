@@ -5,7 +5,7 @@ import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
-import { autorunInitialReplyAt, shouldTriggerAutorun } from './lib/chatAutorun.js'
+import { autorunInitialReplyAt, isAutorunTargetRunning, shouldTriggerAutorun } from './lib/chatAutorun.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -5433,7 +5433,7 @@ export default function ChatApp() {
         || attachments.length > 0
         || busy
         || activeRunRef.current
-        || sessions.some(entry => Boolean(entry.running))
+        || isAutorunTargetRunning(sessions, sessionID)
         || Boolean(loopState?.enabled || loopState?.status === 'running')
         || queuedRef.current.length > 0
         || Boolean(guidingQueueRef.current)
