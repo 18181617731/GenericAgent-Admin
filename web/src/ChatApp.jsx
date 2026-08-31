@@ -5,6 +5,7 @@ import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
+import { autorunInitialReplyAt, shouldTriggerAutorun } from './lib/chatAutorun.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -3791,6 +3792,10 @@ export default function ChatApp() {
   const [queueEditingId, setQueueEditingId] = useState('')
   const [queueDraft, setQueueDraft] = useState('')
   const [guidingQueueId, setGuidingQueueId] = useState('')
+  const [autorunEnabled, setAutorunEnabled] = useState(false)
+  const autorunEnabledRef = useRef(false)
+  const autorunLastReplyAtRef = useRef(Date.now())
+  const autorunRunSendRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
@@ -3948,6 +3953,17 @@ export default function ChatApp() {
     el.style.height = next + 'px'
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
+
+  const toggleAutorun = useCallback(() => {
+    const next = !autorunEnabledRef.current
+    autorunEnabledRef.current = next
+    if (next) autorunLastReplyAtRef.current = autorunInitialReplyAt(Date.now())
+    setAutorunEnabled(next)
+    setNotice(next
+      ? ct('\u5df2\u5141\u8bb8\u81ea\u4e3b\u884c\u52a8\uff1a\u7ea6 1 \u5206\u949f\u540e\u542f\u52a8\uff0c\u4e4b\u540e\u6bcf\u6b21\u56de\u590d 30 \u5206\u949f\u540e\u518d\u542f\u52a8', 'Auto-action enabled: starts in about 1 minute, then 30 minutes after each reply')
+      : ct('\u5df2\u7981\u6b62\u81ea\u4e3b\u884c\u52a8', 'Auto-action disabled'))
+  }, [])
+
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
   const effectiveSlashCommands = slashCommands.length ? slashCommands : BUILTIN_SLASH_COMMANDS
@@ -5347,6 +5363,7 @@ export default function ChatApp() {
         return [...xs.slice(0, cutIdx), optimistic, pending]
       })
       commandPatch = await followChatStream(res, pending.id, clientUserID, id, ctrl.signal)
+      autorunLastReplyAtRef.current = Date.now()
     } catch (e) {
       if (runToken === runSeqRef.current && openToken === openSeqRef.current && e?.name !== 'AbortError' && isActiveSession(id)) setErr(e.message || String(e))
       if (item.propagateError) throw e
@@ -5402,6 +5419,48 @@ export default function ChatApp() {
       // Queue execution is now handled by backend automatically.
     }
   }
+
+  autorunRunSendRef.current = runSend
+
+  useEffect(() => {
+    if (!autorunEnabled) return undefined
+    const timer = window.setInterval(() => {
+      const sessionID = activeSidRef.current || sid
+      const session = sessions.find(entry => entry.id === sessionID)
+      const blocked = !sessionID
+        || !session
+        || Boolean(prompt.trim())
+        || attachments.length > 0
+        || busy
+        || activeRunRef.current
+        || sessions.some(entry => Boolean(entry.running))
+        || Boolean(loopState?.enabled || loopState?.status === 'running')
+        || queuedRef.current.length > 0
+        || Boolean(guidingQueueRef.current)
+      const nowMs = Date.now()
+      if (!shouldTriggerAutorun({
+        enabled: autorunEnabledRef.current,
+        nowMs,
+        lastReplyAtMs: autorunLastReplyAtRef.current,
+        blocked,
+      })) return
+
+      // Claim the slot before sending so timer ticks cannot enqueue duplicates.
+      autorunLastReplyAtRef.current = nowMs
+      const text = ct(
+        '[AUTO]\u{1F916} \u7528\u6237\u5df2\u7ecf\u79bb\u5f00\u8d85\u8fc730\u5206\u949f\uff0c\u4f5c\u4e3a\u81ea\u4e3b\u667a\u80fd\u4f53\uff0c\u8bf7\u9605\u8bfb\u81ea\u52a8\u5316sop\uff0c\u6267\u884c\u81ea\u52a8\u4efb\u52a1\u3002',
+        '[AUTO]\u{1F916} User has been idle for over 30 minutes. As an autonomous agent, read the automation SOP and execute automatic tasks.',
+      )
+      Promise.resolve(autorunRunSendRef.current?.({
+        text,
+        files: [],
+        llmNo,
+        reasoningEffort,
+        sessionId: sessionID,
+      })).catch(error => setErr(error?.message || String(error)))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [autorunEnabled, attachments, busy, llmNo, loopState, prompt, reasoningEffort, sessions, sid])
 
   const selectWorldlineRestoreNode = useCallback((nodeID, mode, target) => {
     const command = worldlineRestoreCommand(nodeID, mode, target)
@@ -6213,6 +6272,18 @@ export default function ChatApp() {
               <GitBranch size={16}/>{ct('世界线', 'Timeline')}{(worldlineForView?.nodes?.length || 0) > 0 && <span>{worldlineForView.nodes.length}</span>}
             </button>
           </div>
+          <button
+            type="button"
+            className={`oa-autorun-toggle ${autorunEnabled ? 'is-active' : ''}`}
+            onClick={toggleAutorun}
+            aria-pressed={autorunEnabled}
+            title={autorunEnabled
+              ? ct('\u5df2\u5141\u8bb8\uff1a\u6bcf\u6b21\u56de\u590d 30 \u5206\u949f\u540e\u542f\u52a8', 'Enabled: starts 30 minutes after each reply')
+              : ct('\u5141\u8bb8\u81ea\u4e3b\u884c\u52a8', 'Enable auto-action')}
+          >
+            <span className="oa-autorun-dot" aria-hidden="true" />
+            <span>{ct('\u81ea\u4e3b', 'Auto')}</span>
+          </button>
           <ThemePicker className="oa-topbar-theme" value={theme} onChange={setTheme} lang={chatLanguage()} variant="compact" />
         </div>
         <button
@@ -6246,6 +6317,16 @@ export default function ChatApp() {
             onClick={()=>{ setMobileToolsOpen(false); toggleWorldline() }}
           >
             <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{(worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
+          </button>
+          <button
+            type="button"
+            className={`oa-mobile-tools-item oa-mobile-autorun ${autorunEnabled ? 'is-active' : ''}`}
+            onClick={()=>{ toggleAutorun(); setMobileToolsOpen(false) }}
+            aria-pressed={autorunEnabled}
+          >
+            <Bot size={17}/>
+            <span className="oa-mobile-tools-item-copy">{ct('\u81ea\u4e3b\u884c\u52a8', 'Auto-action')}</span>
+            <b className="oa-mobile-tools-item-badge">{autorunEnabled ? ct('\u5df2\u5141\u8bb8', 'On') : ct('\u5df2\u7981\u6b62', 'Off')}</b>
           </button>
           <ThemePicker
             className="oa-mobile-tools-theme"
