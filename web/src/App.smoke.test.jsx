@@ -618,6 +618,15 @@ describe('Models call list', () => {
 })
 
 
+describe('chat viewport containment styles', () => {
+  test('locks root scrolling only while the dedicated chat workspace is mounted', () => {
+    expect(appStyles).toMatch(
+      /html:has\(\.oa-chat\),\s*body:has\(\.oa-chat\),\s*#root:has\(> \.oa-chat\)\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*100%;[^}]*overflow:\s*hidden;/,
+    )
+  })
+})
+
+
 describe('plan todo card disclosure', () => {
   test('starts expanded and toggles the plan body with matching chevrons', () => {
     const { container } = render(

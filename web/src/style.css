@@ -3469,6 +3469,15 @@ html[data-color-scheme="dark"] .setup-console-step.is-done .setup-console-step-m
 }
 
 html, body, #root { min-height: 100%; }
+/* Chat owns the viewport and scrolls only inside its session/message panes.
+   Scope the root lock so narrow admin pages can keep their natural page scroll. */
+html:has(.oa-chat),
+body:has(.oa-chat),
+#root:has(> .oa-chat) {
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
 /* 不要在这里加 -webkit-font-smoothing:antialiased 或 text-rendering:optimizeLegibility。
    本应用跑在 Windows 的 Chrome 宿主里,前者会关掉 ClearType 次像素渲染退回灰度抗锯齿,
    暗色主题下亮字压深底会明显发虚发糊;后者会让 YaHei 的字距在小字号上变得不均。
