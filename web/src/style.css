@@ -320,6 +320,19 @@ button { user-select: none; }
 .lang-options button { min-width:36px; height:26px; padding:0 9px; border:0!important; border-radius:999px; background:transparent; color: var(--muted); box-shadow:none!important; font-size:12px; font-weight:650; line-height:1; }
 .lang-options button:hover { transform:none; background:rgba(23,23,23,.06); box-shadow:none!important; }
 .lang-options button.active { background:var(--d-171717)!important; color:var(--d-on); }
+.admin-instance-switcher {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-strong));
+}
+.admin-instance-switcher label { display: grid; gap: 6px; color: var(--text); font-size: 12px; font-weight: 700; }
+.admin-instance-switcher select { min-width: 0; width: 100%; padding: 8px 9px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-strong); color: var(--text); font: inherit; font-size: 12px; }
+.admin-instance-switcher select:focus { outline: 3px solid rgba(16, 163, 127, .14); outline-offset: 1px; border-color: var(--accent); }
+.admin-instance-switcher small { color: var(--muted); font-size: 10px; line-height: 1.4; }
 .root-box {
   background: var(--g-ffffffa54);
   border-radius: 18px;
@@ -16575,6 +16588,7 @@ html[data-theme="dark"] .ga-message-banner.is-error { color:var(--ink-err); back
 .app:not(.app-tab-chat) .admin-page-copy h2 { margin:0 0 5px; color:var(--text); font-size:clamp(24px,2.2vw,31px); font-weight:650; line-height:1.08; letter-spacing:-.035em; }
 .app:not(.app-tab-chat) .admin-page-copy p { max-width:720px; margin:0; color:var(--quiet-muted); font-size:13.5px; line-height:1.5; }
 .admin-page-meta { display:flex; flex:0 0 auto; align-items:center; gap:14px; min-height:34px; padding-left:18px; border-left:1px solid var(--quiet-line); color:var(--quiet-muted); font-size:12px; font-weight:560; }
+.admin-instance-context { max-width:180px; overflow:hidden; color:var(--text); text-overflow:ellipsis; white-space:nowrap; }
 .admin-page-endpoint,.admin-page-health { display:inline-flex; align-items:center; gap:7px; white-space:nowrap; }
 .admin-page-health-dot { width:7px; height:7px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,currentColor 12%,transparent); }
 .admin-page-health.is-ready { color:var(--green); }
@@ -17660,6 +17674,7 @@ html[data-color-scheme="dark"] .oa-search-result.is-current { border-color:rgba(
   transform: translateY(-1px);
 }
 .instance-card.is-default { border-top: 3px solid var(--instances-accent); }
+.instance-card.is-active { box-shadow: 0 0 0 2px color-mix(in srgb, var(--instances-accent) 18%, transparent), var(--shadow-tiny, 0 1px 2px rgba(0, 0, 0, .04)); }
 .instance-card > header {
   min-height: 72px;
   padding: 15px 16px;
@@ -17696,7 +17711,8 @@ html[data-color-scheme="dark"] .oa-search-result.is-current { border-color:rgba(
   gap: 6px;
 }
 .instance-default-badge,
-.instance-status-badge {
+.instance-status-badge,
+.instance-active-badge {
   border: 1px solid color-mix(in srgb, var(--instances-accent) 28%, var(--instances-line));
   border-radius: var(--radius-card, 8px);
   background: var(--instances-accent-soft);
@@ -17709,6 +17725,7 @@ html[data-color-scheme="dark"] .oa-search-result.is-current { border-color:rgba(
   font-weight: 750;
   white-space: nowrap;
 }
+.instance-active-badge { border-color: color-mix(in srgb, #2563eb 30%, var(--instances-line)); background: color-mix(in srgb, #2563eb 9%, transparent); color: #2563eb; }
 .instance-status-badge.is-initializing {
   border-color: color-mix(in srgb, #d28b21 35%, var(--instances-line));
   background: color-mix(in srgb, #d28b21 11%, transparent);
@@ -17804,6 +17821,12 @@ html[data-color-scheme="dark"] .oa-search-result.is-current { border-color:rgba(
   background: color-mix(in srgb, var(--surface-muted, #f5f5f5) 52%, transparent);
 }
 .instance-card > footer button { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.instance-card > footer button.active-instance-action { border-color: color-mix(in srgb, var(--instances-accent) 30%, var(--instances-line)); background: var(--instances-accent-soft); color: var(--instances-accent); }
+.instance-copy-options { display: grid; gap: 10px; align-content: start; }
+.instance-copy-options > label { display: grid; gap: 5px; }
+.instance-copy-options > label > span { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; font-weight: 700; }
+.instance-copy-options input { width: 15px; height: 15px; accent-color: var(--instances-accent); }
+.instance-copy-options small { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .instance-delete-backdrop {
   position: fixed;
   inset: 0;

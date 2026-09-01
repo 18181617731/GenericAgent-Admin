@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { clampTailLines } from '../lib/filesSafety'
+import { addInstanceToURL } from '../lib/instanceScope'
 
 // Server-sent log stream for one selected service. The stream is only open while
 // the logs page is active; `nonce` lets a retry reopen the same subscription.
-export function useLogStream({ active }) {
+export function useLogStream({ active, instanceID = '' }) {
   const [selected, setSelected] = useState('')
   const [lines, setLines] = useState([])
   const [tailLines, setTailLinesRaw] = useState(200)
@@ -29,7 +30,7 @@ export function useLogStream({ active }) {
       return undefined
     }
     const maxLines = clampTailLines(tailLines, 20, 2000)
-    const source = new EventSource(`/api/logs/${encodeURIComponent(selected)}/stream?lines=${maxLines}`)
+    const source = new EventSource(addInstanceToURL(`/api/logs/${encodeURIComponent(selected)}/stream?lines=${maxLines}`, instanceID))
     const readPayload = (event) => {
       try { return JSON.parse(event.data) } catch { return null }
     }
@@ -52,7 +53,7 @@ export function useLogStream({ active }) {
       source.close()
       setStreamState('idle')
     }
-  }, [active, selected, tailLines, nonce])
+  }, [active, selected, tailLines, nonce, instanceID])
 
   useEffect(() => {
     if (!follow || !active) return undefined

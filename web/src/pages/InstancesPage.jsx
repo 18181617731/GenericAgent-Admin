@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, CircleHelp, Cpu, Download, Pencil, Plus, R
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 
-const EMPTY_FORM = { id: '', name: '', ga_root: '', python_path: '' }
+const EMPTY_FORM = { id: '', name: '', ga_root: '', python_path: '', source_instance_id: '', copy_memory: false, copy_mykey: false }
 
 const TEXT = {
   zh: {
@@ -19,7 +19,7 @@ const TEXT = {
     stages: { queued: '\u7b49\u5f85\u5f00\u59cb', preparing: '\u51c6\u5907\u5b89\u88c5\u76ee\u5f55', downloading: '\u4e0b\u8f7d\u5e76\u89e3\u538b GenericAgent', extracting: '\u89e3\u538b\u4e0a\u4f20\u7684\u6a21\u677f', verifying: '\u6821\u9a8c\u5b89\u88c5\u6587\u4ef6', finalizing: '\u4fdd\u5b58\u5b9e\u4f8b\u914d\u7f6e', complete: '\u521d\u59cb\u5316\u5b8c\u6210' },
     createTitle: '\u65b0\u5efa GA \u5b9e\u4f8b', editTitle: '\u7f16\u8f91 GA \u5b9e\u4f8b', installTitle: '填写新实例 ID', create: '\u521b\u5efa\u5b9e\u4f8b', save: '\u4fdd\u5b58\u4fee\u6539', startInstall: '开始创建',
     createSummary: '设置实例标识与本地运行环境。', editSummary: '更新显示名称或运行时路径。', installSummary: '选择稳定的标识，创建任务将在后台运行。',
-    identityGroup: '实例标识', runtimeGroup: '运行环境', sourceGroup: '初始化来源', requiredField: '必填',
+    identityGroup: '实例标识', runtimeGroup: '运行环境', sourceGroup: '初始化来源', requiredField: '必填', optionalField: '可选', manualSource: '手动指定新的根目录', sourceHint: '复制已有实例的程序、任务和自主进化记录；根目录留空时由系统自动分配隔离目录。', copyMemory: '复制已有记忆', copyMemoryHint: '记忆可能包含个性化上下文，仅在确认需要继承时勾选。', copyMyKey: '复制 mykey.py', copyMyKeyHint: '包含 API Key / Token 等敏感配置，请谨慎勾选。', active: '当前使用中', switchTo: '切换到此实例', switchHint: '切换后文件、任务、记忆、模型和用量会重新加载。',
     template: 'GA.zip \u6a21\u677f\u5305\uff08\u53ef\u9009\uff09', templateHint: '\u4e0a\u4f20\u7684 .zip \u4f1a\u6301\u4e45\u4fdd\u5b58\u5e76\u66ff\u6362\u5f53\u524d\u6a21\u677f\uff0c\u540c\u65f6\u7528\u4e8e\u672c\u6b21\u521d\u59cb\u5316\u3002',
     reuseTemplate: '\u4f7f\u7528\u5df2\u4fdd\u5b58\u7684 GA.zip \u6a21\u677f', templateReady: '\u6a21\u677f\u5df2\u4fdd\u5b58\uff0c\u53ef\u76f4\u63a5\u590d\u7528\u3002', templateMissing: '\u5c1a\u65e0\u5df2\u4fdd\u5b58\u7684\u6a21\u677f\uff0c\u7559\u7a7a\u5c06\u4ece main \u5206\u652f\u4e0b\u8f7d\u3002',
     id: '\u5b9e\u4f8b ID', name: '\u663e\u793a\u540d\u79f0', root: 'GenericAgent \u6839\u76ee\u5f55', python: 'Python \u8def\u5f84', effectivePython: '\u5b9e\u9645 Python', auto: '\u81ea\u52a8\u68c0\u6d4b',
@@ -46,7 +46,7 @@ const TEXT = {
     stages: { queued: 'Waiting to start', preparing: 'Preparing install directory', downloading: 'Downloading and extracting GenericAgent', extracting: 'Extracting uploaded template', verifying: 'Verifying installed files', finalizing: 'Saving instance configuration', complete: 'Initialization complete' },
     createTitle: 'Create GA instance', editTitle: 'Edit GA instance', installTitle: 'Choose the new instance ID', create: 'Create instance', save: 'Save changes', startInstall: 'Start creating',
     createSummary: 'Set the instance identity and local runtime.', editSummary: 'Update the display name or runtime paths.', installSummary: 'Choose a stable ID. Creation continues in the background.',
-    identityGroup: 'Instance identity', runtimeGroup: 'Runtime environment', sourceGroup: 'Initialization source', requiredField: 'Required',
+    identityGroup: 'Instance identity', runtimeGroup: 'Runtime environment', sourceGroup: 'Initialization source', requiredField: 'Required', optionalField: 'Optional', manualSource: 'Choose a new root directory', sourceHint: 'Copies the selected instance program, tasks, and autonomous records. Leave the root blank to allocate an isolated directory automatically.', copyMemory: 'Copy existing memory', copyMemoryHint: 'Memory may contain personalized context; enable this only when inheritance is intended.', copyMyKey: 'Copy mykey.py', copyMyKeyHint: 'Contains API keys or tokens. Enable only when you accept copying secrets.', active: 'In use', switchTo: 'Switch to this instance', switchHint: 'Switching reloads files, tasks, memory, models, and usage.',
     template: 'GA.zip template (optional)', templateHint: 'An uploaded .zip is saved persistently, replaces the current template, and initializes this instance.',
     reuseTemplate: 'Use the saved GA.zip template', templateReady: 'A saved template is ready to reuse.', templateMissing: 'No saved template yet. Leave empty to download the main branch.',
     id: 'Instance ID', name: 'Display name', root: 'GenericAgent root', python: 'Python path', effectivePython: 'Effective Python', auto: 'Auto-detected',
@@ -68,7 +68,7 @@ const isInitializingInstance = (instance) => normalizedInitStatus(instance) === 
 const PROTECTED_DEFAULT_INSTANCE_ID = 'default'
 const INSTANCE_POLL_MS = 1200
 
-export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
+export default function InstancesPage({ lang = 'zh', onConfigureModels, activeInstanceID = '', onSelectInstance, onInstancesChange }) {
   const copy = TEXT[lang] || TEXT.en
   const [items, setItems] = useState([])
   const [defaultID, setDefaultID] = useState('')
@@ -91,6 +91,11 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
     setDefaultID(String(payload?.default_instance_id || ''))
     setTemplateAvailable(Boolean(payload?.template_available))
   }, [])
+
+  const notifyInstancesChanged = () => {
+    onInstancesChange?.()
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ga-admin-instances-change'))
+  }
 
   const loadInstances = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -148,6 +153,9 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
       name: String(instance.name || ''),
       ga_root: String(instance.ga_root || ''),
       python_path: String(instance.python_path || ''),
+      source_instance_id: '',
+      copy_memory: false,
+      copy_mykey: false,
     })
     setEditor(instance.id)
     setError('')
@@ -158,13 +166,19 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
 
   const submit = async (event) => {
     event.preventDefault()
-    const payload = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, String(value || '').trim()]))
+    const payload = {
+      id: String(form.id || '').trim(),
+      name: String(form.name || '').trim(),
+      ga_root: String(form.ga_root || '').trim(),
+      python_path: String(form.python_path || '').trim(),
+    }
     const installing = editor === 'install'
-    if (!payload.id || (!installing && (!payload.name || !payload.ga_root))) {
+    const creating = editor === 'create'
+    const sourceInstanceID = creating ? String(form.source_instance_id || '').trim() : ''
+    if (!payload.id || (!installing && (!payload.name || (!sourceInstanceID && !payload.ga_root)))) {
       setError(copy.required)
       return
     }
-    const creating = editor === 'create'
     const action = installing ? 'install_instance' : creating ? 'create_instance' : 'update_instance'
     const prompt = installing ? copy.confirmInstall : creating ? copy.confirmCreate : copy.confirmUpdate
     if (!await confirmDanger(action, prompt)) return
@@ -179,7 +193,10 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         body.append('use_template', 'true')
         body.append('template', templateFile)
       } else {
-        body = JSON.stringify(installing ? { id: payload.id, use_template: useTemplate } : payload)
+        const createPayload = sourceInstanceID
+          ? { ...payload, source_instance_id: sourceInstanceID, copy_memory: Boolean(form.copy_memory), copy_mykey: Boolean(form.copy_mykey) }
+          : payload
+        body = JSON.stringify(installing ? { id: payload.id, use_template: useTemplate } : createPayload)
       }
       const result = await api(installing ? '/api/instances/install' : creating ? '/api/instances/create' : '/api/instances/update', {
         method: installing || creating ? 'POST' : 'PUT',
@@ -187,6 +204,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         body,
       })
       applyPayload(result)
+      notifyInstancesChanged()
       setEditor(null)
       setNotice(installing ? copy.installed : copy.saved)
     } catch (saveError) {
@@ -208,6 +226,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         body: JSON.stringify({ id: instance.id }),
       })
       applyPayload(result)
+      notifyInstancesChanged()
       setNotice(copy.defaultSaved)
     } catch (defaultError) {
       setError(defaultError.message)
@@ -248,6 +267,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         body: JSON.stringify({ id: instance.id }),
       })
       applyPayload(result)
+      notifyInstancesChanged()
       if (editor === instance.id) setEditor(null)
       setNotice(copy.removed)
     } catch (deleteError) {
@@ -258,6 +278,8 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
   }
 
   const anyBusy = Boolean(busy)
+  const sourceInstanceID = String(form.source_instance_id || '').trim()
+  const sourceInstance = items.find(instance => String(instance.id || '') === sourceInstanceID)
 
   return <section className="instances-page" aria-busy={anyBusy || loading}>
     <div className="instances-hero">
@@ -316,10 +338,20 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
             {editor !== 'install' && <label htmlFor="instance-name"><span>{copy.name}<em>{copy.requiredField}</em></span><input id="instance-name" aria-label={copy.name} value={form.name} disabled={anyBusy} onChange={event => patchForm('name', event.target.value)} required/></label>}
           </div>
         </fieldset>
-        {editor !== 'install' && <fieldset className="instance-editor-section">
-          <legend><span aria-hidden="true">02</span>{copy.runtimeGroup}</legend>
+        {editor === 'create' && <fieldset className="instance-editor-section instance-clone-section">
+          <legend><span aria-hidden="true">02</span>{copy.sourceGroup}</legend>
           <div className="instance-editor-grid">
-            <label htmlFor="instance-root"><span>{copy.root}<em>{copy.requiredField}</em></span><input id="instance-root" aria-label={copy.root} value={form.ga_root} disabled={anyBusy} onChange={event => patchForm('ga_root', event.target.value)} required/><small>{copy.rootHint}</small></label>
+            <label htmlFor="instance-source"><span>{copy.sourceGroup}<em>{copy.optionalField}</em></span><select id="instance-source" aria-label={copy.sourceGroup} value={sourceInstanceID} disabled={anyBusy} onChange={event => patchForm('source_instance_id', event.target.value)}><option value="">{copy.manualSource}</option>{items.filter(instance => String(instance.id || '') !== String(form.id || '') && !isInitializingInstance(instance)).map(instance => <option key={instance.id} value={instance.id}>{instance.name || instance.id}</option>)}</select><small>{sourceInstance ? `${copy.sourceHint} ${sourceInstance.name || sourceInstance.id}` : copy.sourceHint}</small></label>
+            <div className="instance-copy-options" aria-label={copy.sourceGroup}>
+              <label><span><input type="checkbox" checked={Boolean(form.copy_memory)} disabled={anyBusy || !sourceInstanceID} onChange={event => patchForm('copy_memory', event.target.checked)}/>{copy.copyMemory}</span><small>{copy.copyMemoryHint}</small></label>
+              <label><span><input type="checkbox" checked={Boolean(form.copy_mykey)} disabled={anyBusy || !sourceInstanceID} onChange={event => patchForm('copy_mykey', event.target.checked)}/>{copy.copyMyKey}</span><small>{copy.copyMyKeyHint}</small></label>
+            </div>
+          </div>
+        </fieldset>}
+        {editor !== 'install' && <fieldset className="instance-editor-section">
+          <legend><span aria-hidden="true">{editor === 'create' ? '03' : '02'}</span>{copy.runtimeGroup}</legend>
+          <div className="instance-editor-grid">
+            <label htmlFor="instance-root"><span>{copy.root}<em>{sourceInstanceID ? copy.optionalField : copy.requiredField}</em></span><input id="instance-root" aria-label={copy.root} value={form.ga_root} disabled={anyBusy} onChange={event => patchForm('ga_root', event.target.value)} required={!sourceInstanceID}/><small>{sourceInstanceID ? copy.sourceHint : copy.rootHint}</small></label>
             <label htmlFor="instance-python"><span>{copy.python}</span><input id="instance-python" aria-label={copy.python} value={form.python_path} disabled={anyBusy} onChange={event => patchForm('python_path', event.target.value)}/><small>{copy.pythonHint}</small></label>
           </div>
         </fieldset>}
@@ -349,12 +381,14 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         const showInitProgress = (isInitializing || hasInitFailed) && Boolean(initStage || initProgress > 0)
         const isProtectedDefault = instance.id === PROTECTED_DEFAULT_INSTANCE_ID
         const blocksDefaultDelete = isProtectedDefault || isDefault && items.length > 1
-        return <article className={`instance-card${isDefault ? ' is-default' : ''}${isInitializing ? ' is-initializing' : ''}${hasInitFailed ? ' has-init-failed' : ''}`} key={instance.id}>
+        const isActive = String(activeInstanceID || '') === String(instance.id || '')
+        return <article className={`instance-card${isDefault ? ' is-default' : ''}${isActive ? ' is-active' : ''}${isInitializing ? ' is-initializing' : ''}${hasInitFailed ? ' has-init-failed' : ''}`} key={instance.id}>
           <header>
             <span className="instance-card-icon"><Cpu size={19}/></span>
             <div><h3>{instance.name || instance.id}</h3><code>{instance.id}</code></div>
             <div className="instance-card-badges">
               {isDefault && <span className="instance-default-badge"><Star size={13}/>{copy.default}</span>}
+              {isActive && <span className="instance-active-badge"><CheckCircle2 size={13}/>{copy.active}</span>}
               {initLabel && <span className={`instance-status-badge is-${initStatus}`}>
                 {isInitializing ? <RefreshCw className="instances-spin" size={13}/> : hasInitFailed ? <X size={13}/> : <CheckCircle2 size={13}/>}
                 {initLabel}
@@ -372,6 +406,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
           </div>}
           {hasInitFailed && instance.init_error && <div className="instance-init-error" role="alert"><strong>{copy.initError}</strong><span>{instance.init_error}</span></div>}
           <footer>
+            {onSelectInstance && <button type="button" className={isActive ? 'active-instance-action' : ''} onClick={() => onSelectInstance(instance.id)} disabled={anyBusy || isActive || isInitializing} title={copy.switchHint}><RefreshCw size={14}/>{isActive ? copy.active : copy.switchTo}</button>}
             <button type="button" onClick={() => onConfigureModels?.(instance)} disabled={anyBusy || isInitializing}><Settings2 size={14}/>{copy.configureModels}</button>
             <button type="button" onClick={() => beginEdit(instance)} disabled={anyBusy || isInitializing}><Pencil size={14}/>{copy.edit}</button>
             <button type="button" onClick={() => setDefault(instance)} disabled={anyBusy || isDefault || isInitializing}><Star size={14}/>{copy.setDefault}</button>

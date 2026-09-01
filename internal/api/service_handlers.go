@@ -154,8 +154,8 @@ func (s *Server) startServiceWithManager(manager *service.Manager, name string, 
 			}
 		}
 	}
-	if _, statErr := os.Stat(filepath.Join(s.CfgStore.Snapshot().GARoot, "llmcore.py")); statErr == nil {
-		if _, err := ga.EnsureUsageTelemetry(s.CfgStore.Snapshot().GARoot); err != nil {
+	if _, statErr := os.Stat(filepath.Join(manager.GARoot, "llmcore.py")); statErr == nil {
+		if _, err := ga.EnsureUsageTelemetry(manager.GARoot); err != nil {
 			return svc, err
 		}
 	}
@@ -285,7 +285,7 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
-	svc, ok := s.Svc.Find(q.Name)
+	svc, ok := manager.Find(q.Name)
 	if !ok {
 		bad(w, 404, "service not found")
 		return

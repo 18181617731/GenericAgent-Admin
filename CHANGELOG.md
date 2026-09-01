@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.106 - 2026-09-01
+
+### 全局 GA 实例隔离
+- 将文件、定时任务、自主进化、Goal、模型、通道、日志、用量和 Chat 等管理数据统一绑定到当前 GA 实例，切换实例后页面和请求同步切换作用域。
+- 创建实例支持从已有实例复制，并可分别选择是否继承 memory 文件和 `mykey.py`；复制过程跳过缓存、虚拟环境和临时运行态，降低串数据和带入旧进程状态的风险。
+- 在全局实例切换器、实例管理页和配置/初始化流程中明确当前实例与复制选项，补充实例状态、未保存更改和敏感配置的必要提示。
+
 ## v1.0.105 - 2026-09-01
 
 ### Autonomous review and task clarity

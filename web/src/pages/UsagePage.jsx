@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, BarChart3, RefreshCw } from 'lucide-react'
 import { UsageRecords } from '../components/UsageRecords'
-import { api } from '../lib/api'
+import { api, apiHeaders, parseApiResponse } from '../lib/api'
+import { addInstanceToURL } from '../lib/instanceScope'
 import { formatNumber, formatTokens, usageQueryString } from '../lib/usage'
 
 const COPY = {
@@ -101,11 +102,9 @@ export function UsagePage({ lang = 'zh' }) {
     setExporting(true)
     setExportError('')
     try {
-      const response = await fetch(`/api/usage/export?${usageQueryString(filters, 1, 100)}`)
-      if (!response.ok) {
-        const message = await response.text()
-        throw new Error(message || `${response.status} ${response.statusText}`)
-      }
+      const exportURL = addInstanceToURL(`/api/usage/export?${usageQueryString(filters, 1, 100)}`)
+      const response = await fetch(exportURL, { headers: apiHeaders() })
+      if (!response.ok) await parseApiResponse(response, exportURL)
       const blob = await response.blob()
       const objectUrl = window.URL.createObjectURL(blob)
       const anchor = document.createElement('a')

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
 import { clampTailLines, dirnameForPath, fileEditorDirty } from '../lib/filesSafety'
+import { addInstanceToURL } from '../lib/instanceScope'
 
 // GA-root file browser state. Every action reports through fileStatus so the
 // page can show a pending/success/error line with a retry for the exact action.
@@ -137,7 +138,7 @@ export function useFiles({ t, setMsg, setBusy, onOpen }) {
 
   const downloadFile = (target = path) => {
     if (!target) return
-    window.open(`/api/files/download?path=${encodeURIComponent(target)}`, '_blank', 'noopener,noreferrer')
+    window.open(addInstanceToURL(`/api/files/download?path=${encodeURIComponent(target)}`), '_blank', 'noopener,noreferrer')
   }
 
   const runSearch = async () => {

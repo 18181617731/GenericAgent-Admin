@@ -3,6 +3,7 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Copy, Eye, FileCode2, FolderCog, Globe2, GitPullRequest, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Save, Server, ShieldAlert, Power, SlidersHorizontal, Square, Target, Terminal, Trash2, UploadCloud, X, Download } from 'lucide-react'
 import { api } from './lib/api'
+import { getSelectedInstanceID, normalizeInstanceID, setSelectedInstanceID } from './lib/instanceScope'
 import './admin-mobile.css'
 import { applyThemeToDocument, getInitialTheme } from './themes'
 import ThemePicker from './ThemePicker'
@@ -260,8 +261,14 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       : (/^(?:正在|加载|保存中|启动中)/.test(value) ? 'pending' : 'success')
     setNotice(value ? { message: value, kind: kind || inferredKind } : null)
   }
+  const [instanceItems, setInstanceItems] = useState([])
+  const [activeInstanceID, setActiveInstanceID] = useState(() => getSelectedInstanceID())
+  const [instanceScopeReady, setInstanceScopeReady] = useState(false)
+  const [instanceScopeError, setInstanceScopeError] = useState('')
+  const activeInstanceRef = useRef(activeInstanceID)
+  activeInstanceRef.current = activeInstanceID
   const [serviceActionStates, setServiceActionStates] = useState({})
-  const logStream = useLogStream({ active: tab === 'logs' })
+  const logStream = useLogStream({ active: tab === 'logs', instanceID: activeInstanceID })
   const [setupEnv, setSetupEnv] = useState(null)
   const [autostart, setAutostart] = useState(null)
   const [versionInfo, setVersionInfo] = useState(null), [versionCheck, setVersionCheck] = useState(null), [versionStatus, setVersionStatus] = useState(null), [versionBusy, setVersionBusy] = useState(false), [gitBusy, setGitBusy] = useState(false), [gitResult, setGitResult] = useState(null), [gitStatus, setGitStatus] = useState(null)
@@ -308,6 +315,33 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   activeTabRef.current = tab
   const dismissMessage = useCallback(() => setNotice(null), [])
 
+  const loadInstanceRegistry = useCallback(async () => {
+    try {
+      const payload = await api('/api/instances')
+      const items = Array.isArray(payload?.items) ? payload.items : []
+      const storedID = normalizeInstanceID(getSelectedInstanceID())
+      const readyItems = items.filter(item => String(item?.init_status || '').trim().toLowerCase() !== 'initializing')
+      const availableIDs = new Set(items.map(item => normalizeInstanceID(item?.id)).filter(Boolean))
+      const fallbackID = normalizeInstanceID(payload?.default_instance_id || readyItems[0]?.id || items[0]?.id)
+      const selectedID = availableIDs.has(storedID) ? storedID : (availableIDs.has(fallbackID) ? fallbackID : '')
+      setInstanceItems(items)
+      setInstanceScopeError('')
+      if (selectedID !== activeInstanceRef.current) setActiveInstanceID(selectedID)
+      setSelectedInstanceID(selectedID, { dispatch: false })
+    } catch (error) {
+      setInstanceScopeError(error.message)
+    } finally {
+      setInstanceScopeReady(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadInstanceRegistry()
+    const onInstancesChange = () => { loadInstanceRegistry().catch(() => {}) }
+    window.addEventListener('ga-admin-instances-change', onInstancesChange)
+    return () => window.removeEventListener('ga-admin-instances-change', onInstancesChange)
+  }, [loadInstanceRegistry])
+
   useEffect(() => () => {
     scheduleRunTimers.current.forEach(timer => clearTimeout(timer))
     scheduleRunTimers.current.clear()
@@ -346,6 +380,32 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const taskDirty = fileEditorDirty(taskEditor, loadedTaskEditor)
   const settingsDirty = configDraftDirty(root, cfg, persistedCfg)
   const hasUnsavedChanges = fileDirty || taskDirty || settingsDirty
+  const resetInstanceViewState = () => {
+    setCfg(null); setPersistedCfg(null); setHealth(null); setControl(null); setServices([]); setRoot('')
+    setSetupEnv(null); setTmwdStatus(null); setObservability(null); setObservabilityError('')
+    setGitStatus(null); setGitResult(null); setProfiles([]); setPersistedModelProfiles([]); setFailoverGroups([]); setModelPreview(''); setModelInstance(null); setModelSaveStatus({}); setModelRevealedKeys({})
+    setFileList([]); setFileContent(''); setLoadedFileContent(''); setFilePath(''); setLoadedFilePath(''); setFileStatus({}); setSearchHits([])
+    setScheduleData(null); setScheduleError(''); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}'); setScheduleArtifactTitle(''); setScheduleArtifact(''); setTaskRunStates({}); setScheduleReportTaskId('')
+    setGoals([]); setSelectedGoal(''); setGoalOutput(''); setGoalOutputMeta(null); setLLMs([]); setServiceActionStates({})
+    scheduleInitialLoad.current = false
+    scheduleRunTimers.current.forEach(timer => clearTimeout(timer))
+    scheduleRunTimers.current.clear()
+    notificationMonitorRef.current = { snapshot: null, busy: false }
+    modelImportAttempted.current = false
+  }
+  const selectInstance = nextID => {
+    const id = normalizeInstanceID(nextID)
+    const instance = instanceItems.find(item => normalizeInstanceID(item?.id) === id)
+    if (!instance || String(instance?.init_status || '').trim().toLowerCase() === 'initializing') return false
+    if (id === activeInstanceID) return true
+    if (busy) { setMsg(lang === 'zh' ? '当前操作完成后才能切换实例' : 'Finish the current operation before switching instances', 'error'); return false }
+    if (hasUnsavedChanges && !window.confirm(lang === 'zh' ? '当前实例有未保存更改。切换实例会放弃这些更改，是否继续？' : 'This instance has unsaved changes. Switching will discard them. Continue?')) return false
+    resetInstanceViewState()
+    setSelectedInstanceID(id)
+    setActiveInstanceID(id)
+    setNotice({ kind: 'pending', message: lang === 'zh' ? `正在切换到“${instance.name || id}”…` : `Switching to “${instance.name || id}”…` })
+    return true
+  }
   const gitSyncView = gitSyncPresentation(gitStatus)
   const scheduleSvcs = useMemo(() => scheduleServices(services), [services])
   const schedulerModelNo = useMemo(() => {
@@ -425,6 +485,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const load = async () => {
+    const scopeID = activeInstanceID
     setBooting(true)
     setNotice({ kind: 'pending', message: t.overview.refreshing })
     try {
@@ -435,14 +496,17 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         api('/api/version/info').catch(e => ({ error:e.message })),
         api('/api/version/status').catch(() => null)
       ])
+      if (scopeID !== activeInstanceRef.current) return
       const visibleVersionStatus = (vstat?.id || vstat?.stage) && !shouldHideCompletedVersionProgress(vstat, ver?.version) ? vstat : null
       setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setVersionStatus(visibleVersionStatus)
       await readObservability(h).catch(e => { setObservability(null); setObservabilityError(e.message) })
+      if (scopeID !== activeInstanceRef.current) return
       if (!h?.ok && !h?.root) {
         setServices([]); setFileList([])
         return
       }
       const svc = await api('/api/services')
+      if (scopeID !== activeInstanceRef.current) return
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
       setServices(serviceList)
       const source = await api('/api/ga/git-status').catch(error => ({ ok: false, available: false, reason: error.message }))
@@ -459,10 +523,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (tab === 'setup') refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
       setNotice({ kind: 'success', message: t.overview.refreshed })
     } catch (e) {
-      setNotice({ kind: 'error', message: t.overview.refreshFailed(e.message) })
-    } finally { setBooting(false) }
+      if (scopeID === activeInstanceRef.current) setNotice({ kind: 'error', message: t.overview.refreshFailed(e.message) })
+    } finally { if (scopeID === activeInstanceRef.current) setBooting(false) }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (instanceScopeReady) load() }, [instanceScopeReady, activeInstanceID])
   useEffect(() => {
     if (!health?.root) return undefined
     notificationMonitorRef.current = { snapshot: null, busy: false }
@@ -1330,6 +1394,17 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     <span className="admin-service-endpoint"><Server size={13} aria-hidden="true"/><span>{cfg?.host && cfg?.port ? `${cfg.host}:${cfg.port}` : (lang === 'zh' ? '本机' : 'local')}</span></span>
     <span role="status" aria-live="polite" className={`admin-service-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-service-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span>
   </div>
+  const activeInstance = instanceItems.find(item => normalizeInstanceID(item?.id) === activeInstanceID)
+  const instanceSwitcher = instanceItems.length > 0 && <div className="admin-instance-switcher">
+    <label htmlFor="admin-instance-select"><span>{lang === 'zh' ? '当前实例' : 'Current instance'}</span><select id="admin-instance-select" value={activeInstanceID} onChange={event => selectInstance(event.target.value)} aria-describedby="admin-instance-switcher-hint">
+      {instanceItems.map(instance => {
+        const id = normalizeInstanceID(instance?.id)
+        const initializing = String(instance?.init_status || '').trim().toLowerCase() === 'initializing'
+        return <option key={id} value={id} disabled={initializing}>{instance?.name || id}{initializing ? (lang === 'zh' ? '（初始化中）' : ' (initializing)') : ''}</option>
+      })}
+    </select></label>
+    <small id="admin-instance-switcher-hint">{instanceScopeError || (lang === 'zh' ? '切换后文件、任务、记忆、模型和用量都会重新加载。' : 'Switching reloads files, tasks, memory, models, and usage.')}</small>
+  </div>
 
   const overviewPage = <OverviewPage
     t={t}
@@ -1393,6 +1468,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     <aside id="admin-sidebar" className="sidebar">
       <div className="admin-sidebar-heading"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><button type="button" className="admin-sidebar-close" aria-label={lang === 'zh' ? '收起管理导航' : 'Collapse admin navigation'} onClick={() => setAdminSidebarOpen(false)}><PanelLeftClose size={20} aria-hidden="true"/></button></div>
       <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} aria-label={lang === 'zh' ? '中文' : 'Chinese'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} aria-label={lang === 'en' ? 'English' : 'English'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang} variant="compact"/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
+      {instanceSwitcher}
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{navLabel(tab)}</span><ChevronDown size={17}/></button>
       <nav aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
@@ -1400,13 +1476,14 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     </aside>
     <main className="main"><div className="admin-mobile-bar"><button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={() => setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button><span>{t.appName}</span>{serviceStatus}</div>{tab === 'chat' ? <header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header> : <header className="admin-page-header">
       <div className="admin-page-heading"><span className="admin-page-icon" aria-hidden="true">{icon(tab)}</span><div className="admin-page-copy"><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div></div>
-      <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}><span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span><span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div>
+      <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}><span className="admin-instance-context" title={activeInstance?.ga_root || ''}>{lang === 'zh' ? '实例' : 'Instance'}：{activeInstance?.name || activeInstanceID || (lang === 'zh' ? '默认' : 'Default')}</span><span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span><span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div>
     </header>}
       <GlobalFeedback message={msg} tone={notice?.kind === 'pending' ? 'progress' : notice?.kind} onDismiss={dismissMessage} onRetry={notice?.kind === 'error' ? refreshApp : undefined} retryLabel={t.retry} placement={tab === 'chat' ? 'top' : 'bottom'}/>
       <ErrorBoundary resetKey={tab}>
         <Suspense fallback={<RouteFallback label={t.loading} />}>
+          <React.Fragment key={`${tab}:${activeInstanceID}`}>
       {tab==='overview' && <>{overviewPage}{moduleTodo('overview')}</>}
-      {tab==='instances' && <InstancesPage lang={lang}/>}
+      {tab==='instances' && <InstancesPage lang={lang} activeInstanceID={activeInstanceID} onSelectInstance={selectInstance}/>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands} llms={llms}/>}
       {tab==='notifications' && <><NotificationsPage lang={lang} onOpen={openNotification}/>{moduleTodo('notifications')}</>}
       {tab==='control' && <section>
@@ -1523,7 +1600,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
       {tab==='settings' && <><SettingsPage t={t} lang={lang} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft} uiScale={uiScale} onUiScaleChange={onUiScaleChange}/>{moduleTodo('settings')}</>}
       {tab==='models' && <><Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>{moduleTodo('models')}</>}
-       {tab==='logs' && <><LogsPage t={t} services={services} stream={logStream} onStart={name=>serviceAction(name, 'start')} onStop={name=>serviceAction(name, 'stop')}/>{moduleTodo('logs')}</>}        </Suspense>
+       {tab==='logs' && <><LogsPage t={t} services={services} stream={logStream} onStart={name=>serviceAction(name, 'start')} onStop={name=>serviceAction(name, 'stop')}/>{moduleTodo('logs')}</>}        </React.Fragment>
+        </Suspense>
   </ErrorBoundary>
     </main>
   </div>

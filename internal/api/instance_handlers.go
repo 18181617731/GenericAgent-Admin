@@ -21,6 +21,16 @@ type instanceInstallRequest struct {
 	UseTemplate *bool  `json:"use_template,omitempty"`
 }
 
+type instanceCreateRequest struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	GARoot           string `json:"ga_root"`
+	PythonPath       string `json:"python_path,omitempty"`
+	SourceInstanceID string `json:"source_instance_id,omitempty"`
+	CopyMemory       bool   `json:"copy_memory,omitempty"`
+	CopyMyKey        bool   `json:"copy_mykey,omitempty"`
+}
+
 const automaticInstanceBaseID = "genericagent"
 const protectedDefaultInstanceID = "default"
 const instanceTemplateMaxBytes int64 = 512 << 20
@@ -238,12 +248,25 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	var instance config.InstanceConfig
-	if err := decode(r, &instance); err != nil {
+	var req instanceCreateRequest
+	if err := decode(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	instance.ID = strings.TrimSpace(instance.ID)
+	instance := config.InstanceConfig{
+		ID:         strings.TrimSpace(req.ID),
+		Name:       strings.TrimSpace(req.Name),
+		GARoot:     strings.TrimSpace(req.GARoot),
+		PythonPath: strings.TrimSpace(req.PythonPath),
+	}
+	if instance.Name == "" {
+		instance.Name = instance.ID
+	}
+	sourceID := strings.TrimSpace(req.SourceInstanceID)
+	if sourceID == "" && (req.CopyMemory || req.CopyMyKey) {
+		bad(w, http.StatusBadRequest, "copy options require source_instance_id")
+		return
+	}
 	// Initialization state is owned by the server. Manual instance creation
 	// cannot impersonate or enqueue an automatic installation.
 	instance.InitStatus = ""
@@ -264,12 +287,64 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if sourceID != "" {
+		source, ok := cfg.Instance(sourceID)
+		if !ok {
+			bad(w, http.StatusNotFound, "source instance not found")
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(source.InitStatus), config.InstanceInitStatusInitializing) {
+			bad(w, http.StatusConflict, "source instance is initializing")
+			return
+		}
+		if strings.TrimSpace(source.GARoot) == "" {
+			bad(w, http.StatusBadRequest, "source instance has no GA root")
+			return
+		}
+		if instance.GARoot == "" {
+			if !isAutomaticInstanceID(instance.ID) {
+				bad(w, http.StatusBadRequest, "an automatic instance id is required when destination ga_root is empty")
+				return
+			}
+			instance.GARoot = filepath.Join(s.CfgStore.Root, automaticInstanceBaseID, "instances", instance.ID)
+		}
+		if err := cloneGenericAgentProject(source.GARoot, instance.GARoot, req.CopyMemory, req.CopyMyKey); err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		instance.InitStatus = config.InstanceInitStatusReady
+		instance.InitStage = "complete"
+		instance.InitProgress = 100
+		if instance.PythonPath == "" {
+			instance.PythonPath = strings.TrimSpace(source.PythonPath)
+		}
+		if instance.EffectivePython == "" {
+			instance.EffectivePython = strings.TrimSpace(source.EffectivePython)
+		}
+	}
 	cfg.Instances = append(cfg.Instances, instance)
 	if len(cfg.Instances) == 1 {
 		cfg.DefaultInstanceID = instance.ID
 	}
 	if err := s.saveConfigAndReconcile(cfg); err != nil {
+		if sourceID != "" {
+			_ = os.RemoveAll(instance.GARoot)
+		}
 		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if sourceID != "" {
+		saved := s.CfgStore.Snapshot()
+		created, _ := saved.Instance(instance.ID)
+		writeJSON(w, map[string]interface{}{
+			"ok":                      true,
+			"items":                   saved.Instances,
+			"default_instance_id":     saved.DefaultInstanceID,
+			"instance":                created,
+			"copied_from_instance_id": sourceID,
+			"copy_memory":             req.CopyMemory,
+			"copy_mykey":              req.CopyMyKey,
+		})
 		return
 	}
 	writeInstanceMutationResult(w, s.CfgStore.Snapshot())

@@ -112,12 +112,25 @@ func (s *Server) StartAutonomousMaintenance() {
 
 func (s *Server) autonomousReportCleanupLoop() {
 	cleanup := func() {
-		root := strings.TrimSpace(s.CfgStore.Snapshot().GARoot)
-		if root == "" {
-			return
+		cfg := s.CfgStore.Snapshot()
+		roots := make([]string, 0, len(cfg.Instances)+1)
+		if len(cfg.Instances) == 0 {
+			roots = append(roots, cfg.GARoot)
+		} else {
+			for _, instance := range cfg.Instances {
+				roots = append(roots, instance.GARoot)
+			}
 		}
-		if _, err := ga.CleanupAutonomousReports(root, ga.DefaultAutonomousReportRetention); err != nil {
-			log.Printf("autonomous report cleanup: %v", err)
+		seen := map[string]bool{}
+		for _, root := range roots {
+			root = strings.TrimSpace(root)
+			if root == "" || seen[strings.ToLower(filepath.Clean(root))] {
+				continue
+			}
+			seen[strings.ToLower(filepath.Clean(root))] = true
+			if _, err := ga.CleanupAutonomousReports(root, ga.DefaultAutonomousReportRetention); err != nil {
+				log.Printf("autonomous report cleanup for %s: %v", root, err)
+			}
 		}
 	}
 	cleanup()
@@ -169,7 +182,7 @@ func (s *Server) localCmdRegistry() *localCmdRegistry {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", s.health)
+	mux.HandleFunc("/api/health", s.withInstance((*Server).health))
 	mux.HandleFunc("/api/version", s.versionInfo)
 	mux.HandleFunc("/api/version/info", s.versionInfo)
 	mux.HandleFunc("/api/version/check", s.versionCheck)
@@ -177,38 +190,41 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/risk/catalog", s.riskCatalog)
 	mux.HandleFunc("/api/keychain", s.requireDangerousConfirm(s.keychainHandler))
 	mux.HandleFunc("/api/version/update", s.requireDangerousConfirm(s.versionUpdate))
-	mux.HandleFunc("/api/ga/inventory", s.gaInventory)
-	mux.HandleFunc("/api/ga/health", s.gaHealth)
+	mux.HandleFunc("/api/ga/inventory", s.withInstance((*Server).gaInventory))
+	mux.HandleFunc("/api/ga/health", s.withInstance((*Server).gaHealth))
+	// Runtime repair persists the discovered interpreter back into the base
+	// instance registry, so it keeps its dedicated handler instead of using a
+	// disposable request-scoped config store.
 	mux.HandleFunc("/api/ga/runtime/repair", s.requireDangerousConfirm(s.gaRuntimeRepair))
-	mux.HandleFunc("/api/ga/git-update", s.requireDangerousConfirm(s.gaGitUpdate))
-	mux.HandleFunc("/api/ga/git-status", s.gaGitStatus)
+	mux.HandleFunc("/api/ga/git-update", s.requireDangerousConfirm(s.withInstance((*Server).gaGitUpdate)))
+	mux.HandleFunc("/api/ga/git-status", s.withInstance((*Server).gaGitStatus))
 	mux.HandleFunc("/api/ga/git-mirror", s.requireDangerousConfirm(s.gitMirrorConfig))
-	mux.HandleFunc("/api/tmwebdriver/status", s.tmwebdriverStatus)
-	mux.HandleFunc("/api/tmwebdriver/repair", s.requireDangerousConfirm(s.tmwebdriverRepair))
-	mux.HandleFunc("/api/tmwebdriver/install-deps", s.requireDangerousConfirm(s.tmwebdriverInstallDeps))
-	mux.HandleFunc("/api/files/list", s.filesList)
-	mux.HandleFunc("/api/files/read", s.filesRead)
-	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.filesWrite))
-	mux.HandleFunc("/api/files/delete", s.requireDangerousConfirm(s.filesDelete))
-	mux.HandleFunc("/api/files/download", s.filesDownload)
-	mux.HandleFunc("/api/files/tail", s.filesTail)
-	mux.HandleFunc("/api/files/search", s.filesSearch)
-	mux.HandleFunc("/api/files/open", s.requireDangerousConfirm(s.filesOpen))
-	mux.HandleFunc("/api/files/image", s.filesImage)
-	mux.HandleFunc("/api/todos", s.projectTodos)
-	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
-	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.scheduleTask))
-	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.scheduleCreate))
-	mux.HandleFunc("/api/schedule/delete", s.requireDangerousConfirm(s.scheduleDelete))
-	mux.HandleFunc("/api/schedule/toggle", s.requireDangerousConfirm(s.scheduleToggle))
-	mux.HandleFunc("/api/schedule/run", s.requireDangerousConfirm(s.scheduleRun))
-	mux.HandleFunc("/api/schedule/run/status", s.scheduleRunStatus)
-	mux.HandleFunc("/api/schedule/artifact", s.scheduleArtifact)
-	mux.HandleFunc("/api/goals/start", s.requireDangerousConfirm(s.goalsStart))
-	mux.HandleFunc("/api/goals/list", s.goalsList)
-	mux.HandleFunc("/api/goals/stop", s.requireDangerousConfirm(s.goalsStop))
-	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.goalsDelete))
-	mux.HandleFunc("/api/goals/output", s.goalsOutput)
+	mux.HandleFunc("/api/tmwebdriver/status", s.withInstance((*Server).tmwebdriverStatus))
+	mux.HandleFunc("/api/tmwebdriver/repair", s.requireDangerousConfirm(s.withInstance((*Server).tmwebdriverRepair)))
+	mux.HandleFunc("/api/tmwebdriver/install-deps", s.requireDangerousConfirm(s.withInstance((*Server).tmwebdriverInstallDeps)))
+	mux.HandleFunc("/api/files/list", s.withInstance((*Server).filesList))
+	mux.HandleFunc("/api/files/read", s.withInstance((*Server).filesRead))
+	mux.HandleFunc("/api/files/write", s.requireDangerousConfirm(s.withInstance((*Server).filesWrite)))
+	mux.HandleFunc("/api/files/delete", s.requireDangerousConfirm(s.withInstance((*Server).filesDelete)))
+	mux.HandleFunc("/api/files/download", s.withInstance((*Server).filesDownload))
+	mux.HandleFunc("/api/files/tail", s.withInstance((*Server).filesTail))
+	mux.HandleFunc("/api/files/search", s.withInstance((*Server).filesSearch))
+	mux.HandleFunc("/api/files/open", s.requireDangerousConfirm(s.withInstance((*Server).filesOpen)))
+	mux.HandleFunc("/api/files/image", s.withInstance((*Server).filesImage))
+	mux.HandleFunc("/api/todos", s.withInstance((*Server).projectTodos))
+	mux.HandleFunc("/api/schedule/tasks", s.withInstance((*Server).scheduleTasks))
+	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.withInstance((*Server).scheduleTask)))
+	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.withInstance((*Server).scheduleCreate)))
+	mux.HandleFunc("/api/schedule/delete", s.requireDangerousConfirm(s.withInstance((*Server).scheduleDelete)))
+	mux.HandleFunc("/api/schedule/toggle", s.requireDangerousConfirm(s.withInstance((*Server).scheduleToggle)))
+	mux.HandleFunc("/api/schedule/run", s.requireDangerousConfirm(s.withInstance((*Server).scheduleRun)))
+	mux.HandleFunc("/api/schedule/run/status", s.withInstance((*Server).scheduleRunStatus))
+	mux.HandleFunc("/api/schedule/artifact", s.withInstance((*Server).scheduleArtifact))
+	mux.HandleFunc("/api/goals/start", s.requireDangerousConfirm(s.withInstance((*Server).goalsStart)))
+	mux.HandleFunc("/api/goals/list", s.withInstance((*Server).goalsList))
+	mux.HandleFunc("/api/goals/stop", s.requireDangerousConfirm(s.withInstance((*Server).goalsStop)))
+	mux.HandleFunc("/api/goals/delete", s.requireDangerousConfirm(s.withInstance((*Server).goalsDelete)))
+	mux.HandleFunc("/api/goals/output", s.withInstance((*Server).goalsOutput))
 	mux.HandleFunc("/api/config", s.requireDangerousConfirm(s.configHandler))
 	mux.HandleFunc("/api/instances", s.instancesList)
 	mux.HandleFunc("/api/instances/install", s.requireDangerousConfirm(s.instanceInstall))
@@ -216,7 +232,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/instances/update", s.requireDangerousConfirm(s.instanceUpdate))
 	mux.HandleFunc("/api/instances/delete", s.requireDangerousConfirm(s.instanceDelete))
 	mux.HandleFunc("/api/instances/default", s.requireDangerousConfirm(s.instanceSetDefault))
-	mux.HandleFunc("/api/slash-commands", s.slashCommands)
+	mux.HandleFunc("/api/slash-commands", s.withInstance((*Server).slashCommands))
 	mux.HandleFunc("/api/extra-system-prompt-presets", s.requireDangerousConfirm(s.extraSystemPromptPresets))
 	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
@@ -243,27 +259,29 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/services/stop-all", s.requireDangerousConfirm(s.stopAll))
 	mux.HandleFunc("/api/services/autostart", s.requireDangerousConfirm(s.serviceAutostart))
 	mux.HandleFunc("/api/services/model", s.requireDangerousConfirm(s.serviceModel))
-	mux.HandleFunc("/api/autonomous/approvals", s.requireDangerousConfirm(s.autonomousApprovals))
-	mux.HandleFunc("/api/autonomous/approvals/review", s.requireDangerousConfirm(s.autonomousApprovalReview))
-	mux.HandleFunc("/api/autonomous/tasks", s.requireDangerousConfirm(s.autonomousTasks))
-	mux.HandleFunc("/api/autonomous/tasks/", s.requireDangerousConfirm(s.autonomousTasks))
-	mux.HandleFunc("/api/autonomous/runs/", s.requireDangerousConfirm(s.autonomousRuns))
-	mux.HandleFunc("/api/logs/", s.logs)
-	mux.HandleFunc("/api/ga/processes", s.gaProcesses)
-	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.killGAProcess))
-	mux.HandleFunc("/api/ga/processes/adopt", s.requireDangerousConfirm(s.adoptGAProcess))
+	mux.HandleFunc("/api/autonomous/approvals", s.requireDangerousConfirm(s.withInstance((*Server).autonomousApprovals)))
+	mux.HandleFunc("/api/autonomous/approvals/review", s.requireDangerousConfirm(s.withInstance((*Server).autonomousApprovalReview)))
+	mux.HandleFunc("/api/autonomous/tasks", s.requireDangerousConfirm(s.withInstance((*Server).autonomousTasks)))
+	mux.HandleFunc("/api/autonomous/tasks/", s.requireDangerousConfirm(s.withInstance((*Server).autonomousTasks)))
+	mux.HandleFunc("/api/autonomous/runs/", s.requireDangerousConfirm(s.withInstance((*Server).autonomousRuns)))
+	mux.HandleFunc("/api/logs/", s.withInstance((*Server).logs))
+	mux.HandleFunc("/api/ga/processes", s.withInstance((*Server).gaProcesses))
+	mux.HandleFunc("/api/ga/processes/kill", s.requireDangerousConfirm(s.withInstance((*Server).killGAProcess)))
+	mux.HandleFunc("/api/ga/processes/adopt", s.requireDangerousConfirm(s.withInstance((*Server).adoptGAProcess)))
 	mux.HandleFunc("/api/models", s.withModelInstance((*Server).models))
 	mux.HandleFunc("/api/models/raw", s.withModelInstance((*Server).modelsRaw))
-	mux.HandleFunc("/api/models/preview", s.modelsPreview)
-	mux.HandleFunc("/api/models/discover", s.modelsDiscover)
-	mux.HandleFunc("/api/models/probe", s.modelsProbe)
-	mux.HandleFunc("/api/models/import-mykey", s.modelsImportMyKey)
-	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.modelsExport))
+	mux.HandleFunc("/api/models/preview", s.withInstance((*Server).modelsPreview))
+	mux.HandleFunc("/api/models/discover", s.withInstance((*Server).modelsDiscover))
+	mux.HandleFunc("/api/models/probe", s.withInstance((*Server).modelsProbe))
+	mux.HandleFunc("/api/models/import-mykey", s.withInstance((*Server).modelsImportMyKey))
+	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.withInstance((*Server).modelsExport)))
+	// The title-model preference is Admin-wide (not a GA project file); keep
+	// its persistence on the base config store while model files remain scoped.
 	mux.HandleFunc("/api/models/title-model", s.requireDangerousConfirm(s.modelsTitleModel))
-	mux.HandleFunc("/api/channels/test", s.channelTest)
-	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
-	mux.HandleFunc("/api/usage/overview", s.usageOverview)
-	mux.HandleFunc("/api/usage/export", s.usageExport)
+	mux.HandleFunc("/api/channels/test", s.withInstance((*Server).channelTest))
+	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.withInstance((*Server).channels)))
+	mux.HandleFunc("/api/usage/overview", s.withInstance((*Server).usageOverview))
+	mux.HandleFunc("/api/usage/export", s.withInstance((*Server).usageExport))
 	mux.HandleFunc("/api/chat/search", s.withChatInstance((*Server).chatSearch))
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
 	mux.HandleFunc("/api/chat/python/install-deps", s.requireDangerousConfirm(s.withChatInstance((*Server).chatPythonInstallDeps)))

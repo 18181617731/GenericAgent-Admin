@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -167,29 +166,20 @@ func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) 
 	}
 	instanceID = instance.ID
 
-	cfg := baseStore.Snapshot()
-	cfg.GARoot = instance.GARoot
-	cfg.PythonPath = instance.PythonPath
-	cfg.EffectivePython = instance.EffectivePython
+	base := baseStore.Snapshot()
+	cfg := scopedAppConfig(base, instance)
 	// A freshly created instance is a bare GA checkout: no .venv of its own, so
 	// the only interpreter that can import GA's dependencies usually belongs to
 	// another instance. Carry those roots so interpreter resolution can borrow
 	// one instead of falling back to a bare launcher that lacks requests.
-	cfg.PythonFallbackRoots = pythonFallbackRoots(baseStore.Snapshot(), instance.ID)
-	// NewRuntimeStore normalizes the legacy GARoot/Python compatibility fields
-	// from DefaultInstanceID. Scope the derived request configuration to the
-	// selected instance so normalization cannot restore the global default.
-	cfg.DefaultInstanceID = instanceID
-	cfg.Instances = []config.InstanceConfig{instance}
+	cfg.PythonFallbackRoots = pythonFallbackRoots(base, instance.ID)
 	runtimeID := instanceID
 	if instanceID == "default" {
 		// The migrated legacy instance keeps both the legacy data directory and
 		// in-memory runtime. This prevents a first config save from moving an
 		// active legacy chat into instances/default halfway through its lifetime.
-		cfg.ChatDataDir = baseStore.Snapshot().ChatDataDir
+		cfg.ChatDataDir = base.ChatDataDir
 		runtimeID = ""
-	} else {
-		cfg.ChatDataDir = filepath.Join(baseStore.Snapshot().ChatDataDir, "instances", instanceID)
 	}
 	instanceStore, err := config.NewRuntimeStore(baseStore.Root, cfg)
 	if err != nil {

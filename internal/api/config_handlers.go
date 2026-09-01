@@ -27,7 +27,12 @@ import (
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
-		writeJSON(w, s.CfgStore.Snapshot())
+		cfg, err := s.configViewForRequest(r)
+		if err != nil {
+			bad(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, cfg)
 		return
 	}
 	if r.Method == "PUT" {
@@ -36,6 +41,11 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		var c config.AppConfig
 		if err := decode(r, &c); err != nil {
 			bad(w, 400, err.Error())
+			return
+		}
+		c, err := s.configForSaveRequest(r, c)
+		if err != nil {
+			bad(w, http.StatusNotFound, err.Error())
 			return
 		}
 		if err := s.validateRemoteAccess(c); err != nil {
@@ -54,6 +64,76 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bad(w, 405, "method not allowed")
+}
+
+// configViewForRequest keeps Admin-wide settings and the complete instance
+// registry visible, while projecting the selected instance's runtime fields
+// into the legacy top-level slots consumed by the existing settings page.
+func (s *Server) configViewForRequest(r *http.Request) (config.AppConfig, error) {
+	cfg := s.CfgStore.Snapshot()
+	requested := requestedInstanceID(r)
+	if requested == "" {
+		return cfg, nil
+	}
+	instance, ok := cfg.Instance(requested)
+	if !ok {
+		return config.AppConfig{}, fmt.Errorf("instance %q not found", requested)
+	}
+	cfg.GARoot = instance.GARoot
+	cfg.PythonPath = instance.PythonPath
+	cfg.EffectivePython = instance.EffectivePython
+	return cfg, nil
+}
+
+// configForSaveRequest translates the settings page's projected runtime fields
+// back to the selected instance without allowing a per-instance save to move
+// the Admin-wide default, chat data root, or instance registry accidentally.
+func (s *Server) configForSaveRequest(r *http.Request, incoming config.AppConfig) (config.AppConfig, error) {
+	requested := requestedInstanceID(r)
+	if requested == "" {
+		return incoming, nil
+	}
+	base := s.CfgStore.Snapshot()
+	selected, ok := base.Instance(requested)
+	if !ok {
+		return config.AppConfig{}, fmt.Errorf("instance %q not found", requested)
+	}
+	instances := cloneConfigWithInstances(base).Instances
+	for index := range instances {
+		if instances[index].ID != selected.ID {
+			continue
+		}
+		instances[index].GARoot = strings.TrimSpace(incoming.GARoot)
+		instances[index].PythonPath = strings.TrimSpace(incoming.PythonPath)
+		instances[index].EffectivePython = strings.TrimSpace(incoming.EffectivePython)
+		break
+	}
+	incoming.Instances = instances
+	incoming.DefaultInstanceID = base.DefaultInstanceID
+	incoming.GARoot = base.GARoot
+	incoming.PythonPath = base.PythonPath
+	incoming.EffectivePython = base.EffectivePython
+	incoming.ChatDataDir = base.ChatDataDir
+	return incoming, nil
+}
+
+// saveSetupConfig persists setup changes to the selected instance while
+// keeping the Admin-wide registry and legacy default fields intact. Setup is
+// intentionally not wrapped with withInstance because these handlers must
+// write back to the real registry, not to a disposable runtime store.
+func (s *Server) saveSetupConfig(r *http.Request, incoming config.AppConfig) (config.AppConfig, error) {
+	if s.ConfigMu != nil {
+		s.ConfigMu.Lock()
+		defer s.ConfigMu.Unlock()
+	}
+	next, err := s.configForSaveRequest(r, incoming)
+	if err != nil {
+		return config.AppConfig{}, err
+	}
+	if err := s.saveConfigAndReconcile(next); err != nil {
+		return config.AppConfig{}, err
+	}
+	return s.configViewForRequest(r)
 }
 
 // validateRemoteAccess refuses a remote-access configuration that nobody could
@@ -110,16 +190,21 @@ func (s *Server) setupEnv(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
 	gitStatus := checkTool("git", "--version")
-	pythonStatus := checkPythonForSetup(s.CfgStore.Snapshot())
+	pythonStatus := checkPythonForSetup(cfg)
 	writeJSON(w, map[string]interface{}{
 		"ok":                pythonStatus.OK,
 		"tools":             []setupToolStatus{gitStatus, pythonStatus, checkTool("uv", "--version"), checkTool("npm", "--version")},
 		"git_required":      false,
 		"archive_fallback":  true,
 		"python_installer":  runtime.GOOS == "windows",
-		"configured_python": strings.TrimSpace(s.CfgStore.Snapshot().PythonPath),
-		"effective_python":  strings.TrimSpace(s.CfgStore.Snapshot().EffectivePython),
+		"configured_python": strings.TrimSpace(cfg.PythonPath),
+		"effective_python":  strings.TrimSpace(cfg.EffectivePython),
 		"checked":           time.Now().Format(time.RFC3339),
 	})
 }
@@ -637,7 +722,11 @@ func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	cfg := s.CfgStore.Snapshot()
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
 	root := strings.TrimSpace(cfg.GARoot)
 	state := map[string]interface{}{
 		"ok":             true,
@@ -651,6 +740,17 @@ func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
 		state["venv"] = setupVenvStatus(root)
 	}
 	writeJSON(w, state)
+}
+
+func (s *Server) setupRequestRootForRequest(r *http.Request, fallback string) (string, error) {
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(cfg.GARoot) != "" {
+		fallback = cfg.GARoot
+	}
+	return setupRequestRoot(r, fallback)
 }
 
 func setupRequestRoot(r *http.Request, fallback string) (string, error) {
@@ -713,7 +813,12 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
+	root, err := s.setupRequestRootForRequest(r, cfg.GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -724,7 +829,7 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), setupCommandTimeout)
 	defer cancel()
-	out, err := runSetupCommandOutputFunc(ctx, root, pythonForSetup(root, s.CfgStore.Snapshot()), "-m", "venv", setupVenvDir(root))
+	out, err := runSetupCommandOutputFunc(ctx, root, pythonForSetup(root, cfg), "-m", "venv", setupVenvDir(root))
 	if err != nil {
 		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
 		return
@@ -732,16 +837,15 @@ func (s *Server) setupVenvCreate(w http.ResponseWriter, r *http.Request) {
 	// A new virtualenv is a new interpreter path; drop memoized probe answers so
 	// it is judged on its own merits.
 	pyfind.ResetProbeCache()
-	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	cfg.PythonPath = setupVenvPython(root)
-	cfg.SyncDefaultInstanceFromLegacy()
-	if err := s.CfgStore.Save(cfg); err != nil {
+	cfg.EffectivePython = cfg.PythonPath
+	saved, err := s.saveSetupConfig(r, cfg)
+	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.Svc.SetRoot(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython, s.CfgStore.Snapshot().BufferLines)
-	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "venv": setupVenvStatus(root), "output": strings.TrimSpace(out), "config": s.CfgStore.Snapshot()})
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "venv": setupVenvStatus(root), "output": strings.TrimSpace(out), "config": saved})
 }
 
 func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
@@ -749,7 +853,12 @@ func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
+	root, err := s.setupRequestRootForRequest(r, cfg.GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -770,7 +879,7 @@ func (s *Server) setupDepsInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), setupCommandTimeout)
 	defer cancel()
-	python := pythonForSetup(root, s.CfgStore.Snapshot())
+	python := pythonForSetup(root, cfg)
 	emit(setupStreamEvent{Type: "start", Line: fmt.Sprintf("%s -m pip install -e .", python)})
 	code, err := runSetupCommandStreamFunc(ctx, root, emit, python, "-m", "pip", "install", "-e", ".")
 	// Interpreter usability is memoized for the life of the process. Without
@@ -790,7 +899,12 @@ func (s *Server) setupSmoke(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
+	root, err := s.setupRequestRootForRequest(r, cfg.GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -802,7 +916,7 @@ func (s *Server) setupSmoke(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	python := pythonForSetup(root, s.CfgStore.Snapshot())
+	python := pythonForSetup(root, cfg)
 	out, err := runSetupCommandOutputFunc(ctx, root, python, "-c", "import sys; print(sys.executable)")
 	if err != nil {
 		bad(w, 500, strings.TrimSpace(out)+": "+err.Error())
@@ -816,7 +930,12 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	root, err := setupRequestRoot(r, s.CfgStore.Snapshot().GARoot)
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
+	root, err := s.setupRequestRootForRequest(r, cfg.GARoot)
 	if err != nil {
 		bad(w, 400, err.Error())
 		return
@@ -826,7 +945,6 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "GA root health check failed")
 		return
 	}
-	cfg := s.CfgStore.Snapshot()
 	cfg.GARoot = root
 	if py := setupVenvPython(root); strings.TrimSpace(cfg.PythonPath) == "" {
 		if _, err := os.Stat(py); err == nil {
@@ -834,13 +952,12 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg.BootstrapDone = true
-	cfg.SyncDefaultInstanceFromLegacy()
-	if err := s.CfgStore.Save(cfg); err != nil {
+	saved, err := s.saveSetupConfig(r, cfg)
+	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.Svc.SetRoot(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython, s.CfgStore.Snapshot().BufferLines)
-	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "health": h, "config": s.CfgStore.Snapshot()})
+	writeJSON(w, map[string]interface{}{"ok": true, "root": root, "health": h, "config": saved})
 }
 
 func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
@@ -865,10 +982,13 @@ func (s *Server) setupValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	h := ga.BuildHealth(abs)
 	if h.OK {
-		cfg := s.CfgStore.Snapshot()
+		cfg, err := s.configViewForRequest(r)
+		if err != nil {
+			bad(w, http.StatusNotFound, err.Error())
+			return
+		}
 		cfg.GARoot = abs
-		cfg.SyncDefaultInstanceFromLegacy()
-		if err := s.CfgStore.Save(cfg); err != nil {
+		if _, err := s.saveSetupConfig(r, cfg); err != nil {
 			bad(w, 500, err.Error())
 			return
 		}
@@ -919,14 +1039,17 @@ func (s *Server) setupPythonValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pyfind.ResetProbeCache()
-	cfg := s.CfgStore.Snapshot()
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
 	cfg.PythonPath = resolved
-	cfg.SyncDefaultInstanceFromLegacy()
-	if err := s.CfgStore.Save(cfg); err != nil {
+	saved, err := s.saveSetupConfig(r, cfg)
+	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	saved := s.CfgStore.Snapshot()
 	writeJSON(w, map[string]interface{}{
 		"ok":      true,
 		"python":  saved.EffectivePython,
@@ -955,15 +1078,18 @@ func (s *Server) setupPythonInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, "Python installer completed but python.exe was not found")
 		return
 	}
-	cfg := s.CfgStore.Snapshot()
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
 	cfg.PythonPath = strings.TrimSpace(pythonPath)
-	cfg.SyncDefaultInstanceFromLegacy()
-	if err := s.CfgStore.Save(cfg); err != nil {
+	saved, err := s.saveSetupConfig(r, cfg)
+	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	s.Svc.SetRoot(s.CfgStore.Snapshot().GARoot, s.CfgStore.Snapshot().EffectivePython, s.CfgStore.Snapshot().BufferLines)
-	writeJSON(w, map[string]interface{}{"ok": true, "python": s.CfgStore.Snapshot().EffectivePython, "output": strings.TrimSpace(out), "config": s.CfgStore.Snapshot()})
+	writeJSON(w, map[string]interface{}{"ok": true, "python": saved.EffectivePython, "output": strings.TrimSpace(out), "config": saved})
 }
 
 func runWindowsPythonInstaller(ctx context.Context) (string, string, error) {
@@ -1078,13 +1204,18 @@ func (s *Server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, "clone completed but GenericAgent health check failed")
 		return
 	}
-	cfg := s.CfgStore.Snapshot()
+	cfg, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
 	cfg.GARoot = targetAbs
-	if err := s.CfgStore.Save(cfg); err != nil {
+	saved, err := s.saveSetupConfig(r, cfg)
+	if err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "root": targetAbs, "install_dir": parentAbs, "health": h, "method": method, "output": strings.TrimSpace(out)})
+	writeJSON(w, map[string]interface{}{"ok": true, "root": targetAbs, "install_dir": parentAbs, "health": h, "method": method, "output": strings.TrimSpace(out), "config": saved})
 }
 
 func (s *Server) autostartStatus(w http.ResponseWriter, r *http.Request) {
