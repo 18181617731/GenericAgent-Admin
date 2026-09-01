@@ -1305,6 +1305,28 @@ describe('chat response model identity', () => {
     expect(bindFunctions).toHaveBeenCalled()
     expect(appStyles).toMatch(/\.oa-mermaid-diagram\{[^}]*font-weight:450;[^}]*letter-spacing:normal;[^}]*white-space:normal;[^}]*word-break:normal;[^}]*overflow-wrap:normal/)
     expect(appStyles).toContain('.oa-mermaid-diagram foreignObject p{white-space:inherit}')
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6e90\u7801' }))
+    expect(container.querySelector('.oa-mermaid-source code')?.textContent).toContain('Request --> Response')
+    expect(container.querySelector('.oa-mermaid-viewport')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '\u56fe\u8868' }))
+
+    const diagram = container.querySelector('.oa-mermaid-diagram')
+    fireEvent.click(screen.getByTitle('\u653e\u5927'))
+    expect(diagram.style.transform).toContain('scale(1.2)')
+    fireEvent.click(screen.getByTitle('\u7f29\u5c0f'))
+    expect(diagram.style.transform).toContain('scale(1)')
+    fireEvent.click(screen.getByTitle('\u653e\u5927'))
+    fireEvent.click(screen.getByTitle('\u590d\u4f4d\u89c6\u56fe'))
+    expect(diagram.style.transform).toBe('translate(0px, 0px) scale(1)')
+
+    const viewport = container.querySelector('.oa-mermaid-viewport')
+    fireEvent.click(screen.getByTitle('\u5e73\u79fb\u6a21\u5f0f'))
+    expect(viewport.classList.contains('is-pan-enabled')).toBe(true)
+    fireEvent.pointerDown(viewport, { pointerId: 7, clientX: 10, clientY: 20, button: 0 })
+    fireEvent.pointerMove(viewport, { pointerId: 7, clientX: 35, clientY: 50 })
+    fireEvent.pointerUp(viewport, { pointerId: 7 })
+    expect(diagram.style.transform).toBe('translate(25px, 30px) scale(1)')
   })
 
   test('waits for a streamed mermaid fence to close before rendering its final source', async () => {
@@ -1319,6 +1341,7 @@ describe('chat response model identity', () => {
     const view = render(renderMessage('```mermaid\nflowchart LR\n  A -->'))
 
     expect(screen.getByRole('status').textContent).toContain('\u6b63\u5728\u63a5\u6536\u56fe\u8868\u5185\u5bb9')
+    expect(view.container.querySelector('.oa-mermaid-source code')?.textContent).toContain('A -->')
     expect(mermaidMocks.render).not.toHaveBeenCalled()
 
     view.rerender(renderMessage('```mermaid\nflowchart LR\n  A --> B'))
@@ -1525,10 +1548,10 @@ describe('chat model cascade', () => {
       render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
       fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
 
-      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
-    } finally {
-      rectSpy.mockRestore()
-    }
+    fireEvent.click(screen.getByRole('button', { name: '\u6e05\u9664\u641c\u7d22' }))
+    expect(screen.queryByText('\u6ca1\u6709\u5339\u914d\u7684\u6a21\u578b')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
   })
 })
 

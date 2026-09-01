@@ -1896,15 +1896,31 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover,html[data-color-scheme=
 .oa-math .katex-error{color:var(--danger,#b42318);font-family:"SFMono-Regular",Consolas,monospace;font-size:.9em}
 .oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--code-bg);border:1px solid var(--border);box-shadow:none}
 .oa-mermaid-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--border);box-shadow:none}
+.oa-mermaid-head{height:auto;min-height:38px;gap:8px;flex-wrap:wrap;padding-block:5px}
+.oa-mermaid-modes,.oa-mermaid-tools{display:flex;align-items:center;gap:3px}
+.oa-mermaid-tools{margin-left:auto}
+.oa-mermaid-modes button,.oa-mermaid-tool{min-height:26px!important;height:26px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);box-shadow:none!important;font-size:11.5px;line-height:1;display:inline-flex;align-items:center;justify-content:center;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.oa-mermaid-modes button{padding:0 8px}
+.oa-mermaid-tool{width:26px;padding:0}
+.oa-mermaid-modes button:hover:not(:disabled),.oa-mermaid-tool:hover:not(:disabled){background:var(--surface-strong);border-color:var(--border);color:var(--text)}
+.oa-mermaid-modes button:focus-visible,.oa-mermaid-tool:focus-visible{outline:2px solid var(--accent,#08785f);outline-offset:1px}
+.oa-mermaid-modes button.is-active,.oa-mermaid-tool.is-active{background:color-mix(in srgb,var(--accent,#08785f) 12%,var(--surface));border-color:color-mix(in srgb,var(--accent,#08785f) 35%,var(--border));color:var(--accent,#08785f)}
+.oa-mermaid-modes button:disabled,.oa-mermaid-tool:disabled{cursor:not-allowed;opacity:.4}
+.oa-mermaid-scale{width:36px;color:var(--muted);font-variant-numeric:tabular-nums;text-align:center;font-size:10.5px}
 /* Mermaid measures foreignObject labels outside the markdown tree. Keep the
    mounted diagram on that same typography baseline so its fixed boxes do not
    wrap or clip after inheriting chat prose styles. */
-.oa-mermaid-diagram{min-height:120px;padding:18px;overflow:auto;background:var(--surface);display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal}
+.oa-mermaid-viewport{min-height:120px;overflow:hidden;background:var(--surface);touch-action:auto;user-select:auto}
+.oa-mermaid-viewport.is-pan-enabled{cursor:grab;touch-action:pan-y;user-select:none}
+.oa-mermaid-viewport.is-dragging{cursor:grabbing}
+.oa-mermaid-diagram{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal;transform-origin:center center;will-change:transform}
 .oa-mermaid-diagram foreignObject p{white-space:inherit}
 .oa-mermaid-diagram svg{display:block;max-width:100%;height:auto;margin:auto}
 .oa-mermaid-status{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--surface)}
 .oa-mermaid-error{padding:10px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--danger,#b42318) 8%,var(--surface));color:var(--danger,#b42318);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .oa-mermaid-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:var(--code-bg);color:var(--code-text);font-size:13px;line-height:20px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
+.oa-mermaid-stream-note{min-height:auto;justify-content:flex-start;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px}
+@media(max-width:620px){.oa-mermaid-head{align-items:flex-start}.oa-mermaid-tools{width:100%;margin-left:0}.oa-mermaid-tools .oa-mini-copy{margin-left:auto}}
 .oa-code-head{height:38px;background:var(--surface-muted);color: var(--text);display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;text-transform:none;border-bottom:1px solid var(--border)}
 .oa-code-head span{color: var(--text);font-weight:500}
 .oa-code-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:var(--code-bg);color: var(--code-text);font-size:13px;line-height:20px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
@@ -7270,28 +7286,29 @@ html[data-color-scheme="dark"] .oa-chat-help::after { box-shadow:0 16px 38px rgb
 .oa-reasoning-options {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
 }
 .oa-reasoning-options button {
-  flex: 0 0 18px !important;
+  flex: 0 0 27px !important;
   min-width: 0;
   min-height: 0;
-  height: 18px;
-  display: flex;
+  height: 27px !important;
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  border: 0;
-  border-radius: 4px;
-  padding: 0 6px;
+  justify-content: start;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 7px;
   color: var(--muted);
   background: transparent;
   font: inherit;
   font-size: 10.5px;
-  line-height: 18px;
-  text-align: center;
+  line-height: 1;
+  text-align: left;
   cursor: pointer;
-  transition: color .14s ease, background .14s ease;
+  transition: color .14s ease, border-color .14s ease, background .14s ease;
   white-space: nowrap;
 }
 .oa-reasoning-options button:hover {
@@ -7300,12 +7317,58 @@ html[data-color-scheme="dark"] .oa-chat-help::after { box-shadow:0 16px 38px rgb
 }
 .oa-reasoning-options button:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline-offset: -2px;
 }
 .oa-reasoning-options button.active {
   color: var(--accent-text);
-  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   font-weight: 650;
+}
+.oa-reasoning-options button.oa-reasoning-default {
+  flex-basis: 39px !important;
+  height: 39px !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 3px;
+  margin-bottom: 3px;
+}
+.oa-reasoning-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oa-reasoning-hint {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+}
+.oa-reasoning-meter {
+  position: relative;
+  display: block;
+  width: 31px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+.oa-reasoning-meter > span {
+  display: block;
+  width: var(--oa-reasoning-fill);
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--muted) 58%, transparent);
+  transition: width .16s ease, background .14s ease;
+}
+.oa-reasoning-options button:hover .oa-reasoning-meter > span {
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+}
+.oa-reasoning-options button.active .oa-reasoning-meter > span {
+  background: var(--accent);
 }
 /* composer cascade layout revision: combined reasoning grid */
 .oa-cascade-providers button,
@@ -7362,6 +7425,210 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning { border-color: rgba(255,25
 html[data-color-scheme="dark"] .oa-cascade-providers button:hover,
 html[data-color-scheme="dark"] .oa-cascade-models button:hover,
 html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: rgba(255,255,255,.07); }
+
+/* Desktop model picker: searchable catalog grouped by full provider names. */
+.oa-cascade-menu {
+  width: 560px;
+  max-width: min(560px, calc(100vw - 24px));
+  height: clamp(300px, 44vh, 430px);
+  grid-template-columns: minmax(0, 1fr) 126px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  padding: 7px;
+}
+.oa-cascade-search {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 40px;
+  margin-bottom: 7px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 11px;
+  color: color-mix(in srgb, var(--muted) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-soft) 58%, transparent);
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+.oa-cascade-search:hover {
+  border-color: color-mix(in srgb, var(--muted) 34%, var(--border));
+  background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+}
+.oa-cascade-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+  background: var(--surface-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.oa-cascade-search > svg {
+  flex: 0 0 auto;
+  transition: color 140ms ease;
+}
+.oa-cascade-search:focus-within > svg { color: var(--accent); }
+.oa-cascade-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  color: var(--text);
+  caret-color: var(--accent);
+  background: transparent;
+  box-shadow: none !important;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  appearance: none;
+}
+.oa-cascade-search input::-webkit-search-decoration,
+.oa-cascade-search input::-webkit-search-cancel-button { appearance: none; }
+.oa-cascade-search input::placeholder {
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
+  opacity: 1;
+}
+.oa-composer .oa-cascade-search button {
+  flex: 0 0 25px !important;
+  grid-column: auto !important;
+  justify-self: auto !important;
+  width: 25px;
+  min-width: 25px;
+  max-width: 25px;
+  height: 25px;
+  min-height: 25px;
+  max-height: 25px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.oa-cascade-search button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 11%, transparent);
+}
+.oa-cascade-search button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 66%, transparent);
+  outline-offset: 1px;
+}
+.oa-cascade-catalog {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-color: color-mix(in srgb, var(--muted) 34%, transparent) transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  padding: 2px 8px 4px 2px;
+}
+.oa-cascade-catalog::-webkit-scrollbar { width: 8px; }
+.oa-cascade-catalog::-webkit-scrollbar-track { background: transparent; }
+.oa-cascade-catalog::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 32%, transparent);
+  background-clip: padding-box;
+}
+.oa-cascade-catalog::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 50%, transparent);
+  background-clip: padding-box;
+}
+.oa-cascade-group + .oa-cascade-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.oa-cascade-provider-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 2px 7px 5px;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 720;
+  line-height: 1.35;
+}
+.oa-cascade-provider-heading > span:first-child {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.oa-cascade-provider-heading > span:last-child {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 9%, transparent);
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-align: center;
+}
+.oa-cascade-group-models {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+}
+.oa-composer .oa-cascade-group-models button {
+  width: 100%;
+  min-width: 0;
+  grid-column: auto !important;
+  justify-self: stretch !important;
+  flex: 0 1 auto !important;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.oa-cascade-group-models button:hover { background: color-mix(in srgb, var(--muted) 9%, transparent); }
+.oa-cascade-group-models button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: -2px;
+}
+.oa-cascade-group-models button.active {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  font-weight: 650;
+}
+.oa-cascade-group-models button span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.oa-cascade-group-models button svg { flex: 0 0 auto; color: var(--accent); }
+.oa-cascade-menu > .oa-cascade-reasoning {
+  min-width: 0;
+  align-self: stretch;
+  height: auto;
+  margin-left: 5px;
+  padding: 2px 4px 2px 9px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.oa-cascade-menu > .oa-cascade-reasoning .oa-cascade-heading {
+  padding-right: 4px;
+  padding-left: 4px;
+  white-space: normal;
+}
+html[data-color-scheme="dark"] .oa-cascade-group-models button:hover { background: rgba(255,255,255,.07); }
+
 @media (max-width: 680px) {
   .oa-composer .oa-composer-cascade {
     position: relative;
@@ -7583,6 +7850,37 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: 
   padding: 0 16px 14px;
   border-top: 1px solid var(--border);
   background: var(--surface-strong);
+}
+.oa-model-picker-reasoning .oa-reasoning-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.oa-model-picker-reasoning .oa-reasoning-options button {
+  flex-basis: 38px !important;
+  width: 100%;
+  height: 38px !important;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 5px;
+  padding: 0 6px;
+  border-color: var(--border);
+  border-radius: 9px;
+  background: var(--surface-soft);
+  font-size: 10px;
+}
+.oa-model-picker-reasoning .oa-reasoning-options button.oa-reasoning-default {
+  grid-column: 1 / -1;
+  height: 40px !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  gap: 10px;
+  margin-bottom: 0;
+}
+.oa-model-picker-reasoning .oa-reasoning-hint {
+  text-align: right;
+}
+.oa-model-picker-reasoning .oa-reasoning-meter {
+  width: 18px;
 }
 .oa-model-picker-empty {
   min-height: 120px;

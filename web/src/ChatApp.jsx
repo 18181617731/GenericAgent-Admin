@@ -587,9 +587,27 @@ const renderMermaidSvg = (source, colorScheme) => {
 
 function MermaidDiagram({ source = '' }) {
   const hostRef = useRef(null)
+  const dragRef = useRef(null)
   const bindFunctionsRef = useRef(null)
   const [colorScheme, setColorScheme] = useState(() => globalThis.document?.documentElement?.dataset?.colorScheme || 'light')
   const [state, setState] = useState({ status: 'loading', svg: '', error: '' })
+  const [mode, setMode] = useState('diagram')
+  const [panEnabled, setPanEnabled] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
+
+  const resetView = useCallback(() => {
+    dragRef.current = null
+    setDragging(false)
+    setView({ scale: 1, x: 0, y: 0 })
+  }, [])
+
+  const changeZoom = useCallback((step) => {
+    setView(current => ({
+      ...current,
+      scale: Math.min(3, Math.max(.5, Number((current.scale + step).toFixed(2)))),
+    }))
+  }, [])
 
   useEffect(() => {
     const root = globalThis.document?.documentElement
@@ -604,6 +622,7 @@ function MermaidDiagram({ source = '' }) {
   useEffect(() => {
     let active = true
     bindFunctionsRef.current = null
+    resetView()
     setState({ status: 'loading', svg: '', error: '' })
     renderMermaidSvg(source, colorScheme).then(({ svg, bindFunctions }) => {
       if (!active) return
@@ -614,31 +633,79 @@ function MermaidDiagram({ source = '' }) {
       setState({ status: 'error', svg: '', error: String(error?.message || error || ct('未知错误', 'Unknown error')) })
     })
     return () => { active = false }
-  }, [source, colorScheme])
+  }, [source, colorScheme, resetView])
+
+  const showingSource = mode === 'source' || state.status === 'error'
 
   useLayoutEffect(() => {
-    if (state.status === 'ready' && hostRef.current && bindFunctionsRef.current) {
+    if (!showingSource && state.status === 'ready' && hostRef.current && bindFunctionsRef.current) {
       bindFunctionsRef.current(hostRef.current)
     }
-  }, [state.status, state.svg])
+  }, [showingSource, state.status, state.svg])
+
+  const finishDrag = useCallback((event) => {
+    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
+    dragRef.current = null
+    setDragging(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }, [])
+
+  const handlePointerDown = useCallback((event) => {
+    if (!panEnabled || state.status !== 'ready' || event.button !== 0) return
+    dragRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, x: view.x, y: view.y }
+    setDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+  }, [panEnabled, state.status, view.x, view.y])
+
+  const handlePointerMove = useCallback((event) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    setView(current => ({
+      ...current,
+      x: drag.x + event.clientX - drag.clientX,
+      y: drag.y + event.clientY - drag.clientY,
+    }))
+    event.preventDefault()
+  }, [])
+
+  const controlsDisabled = state.status !== 'ready' || showingSource
 
   return <div className={`oa-mermaid-card ${state.status === 'error' ? 'is-error' : ''}`}>
-    <div className="oa-code-head">
-      <span>Mermaid</span>
-      <CopyButton text={source} compact />
+    <div className="oa-code-head oa-mermaid-head">
+      <div className="oa-mermaid-modes" role="group" aria-label={ct('Mermaid 显示模式', 'Mermaid display mode')}>
+        <button type="button" className={showingSource ? '' : 'is-active'} aria-pressed={!showingSource} onClick={() => setMode('diagram')} disabled={state.status === 'error'}>{ct('图表', 'Diagram')}</button>
+        <button type="button" className={showingSource ? 'is-active' : ''} aria-pressed={showingSource} onClick={() => setMode('source')}>{ct('源码', 'Source')}</button>
+      </div>
+      <div className="oa-mermaid-tools">
+        <button type="button" className={`oa-mermaid-tool ${panEnabled ? 'is-active' : ''}`} aria-label={ct('平移模式', 'Pan mode')} aria-pressed={panEnabled} title={ct('平移模式', 'Pan mode')} disabled={controlsDisabled} onClick={() => setPanEnabled(value => !value)}><Hand size={14} /></button>
+        <button type="button" className="oa-mermaid-tool" aria-label={ct('缩小', 'Zoom out')} title={ct('缩小', 'Zoom out')} disabled={controlsDisabled || view.scale <= .5} onClick={() => changeZoom(-.2)}><ZoomOut size={14} /></button>
+        <span className="oa-mermaid-scale" aria-label={ct('当前缩放比例', 'Current zoom')}>{Math.round(view.scale * 100)}%</span>
+        <button type="button" className="oa-mermaid-tool" aria-label={ct('放大', 'Zoom in')} title={ct('放大', 'Zoom in')} disabled={controlsDisabled || view.scale >= 3} onClick={() => changeZoom(.2)}><ZoomIn size={14} /></button>
+        <button type="button" className="oa-mermaid-tool" aria-label={ct('复位视图', 'Reset view')} title={ct('复位视图', 'Reset view')} disabled={controlsDisabled} onClick={resetView}><Maximize2 size={14} /></button>
+        <CopyButton text={source} compact />
+      </div>
     </div>
-    {state.status === 'loading' && <div className="oa-mermaid-status" role="status">{ct('正在绘制图表…', 'Rendering diagram…')}</div>}
-    {state.status === 'ready' && <div
-      ref={hostRef}
-      className="oa-mermaid-diagram"
-      role="img"
-      aria-label={ct('Mermaid 图表', 'Mermaid diagram')}
-      dangerouslySetInnerHTML={{ __html: state.svg }}
-    />}
-    {state.status === 'error' && <>
-      <div className="oa-mermaid-error" role="alert">{ct('图表语法无效，已显示源码：', 'Invalid diagram syntax; showing source:')} {state.error}</div>
-      <pre><code>{source}</code></pre>
-    </>}
+    {!showingSource && state.status === 'loading' && <div className="oa-mermaid-status" role="status">{ct('正在绘制图表…', 'Rendering diagram…')}</div>}
+    {!showingSource && state.status === 'ready' && <div
+      className={`oa-mermaid-viewport ${panEnabled ? 'is-pan-enabled' : ''} ${dragging ? 'is-dragging' : ''}`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+      onLostPointerCapture={() => { dragRef.current = null; setDragging(false) }}
+    >
+      <div
+        ref={hostRef}
+        className="oa-mermaid-diagram"
+        role="img"
+        aria-label={ct('Mermaid 图表', 'Mermaid diagram')}
+        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+        dangerouslySetInnerHTML={{ __html: state.svg }}
+      />
+    </div>}
+    {state.status === 'error' && <div className="oa-mermaid-error" role="alert">{ct('图表语法无效，已显示源码：', 'Invalid diagram syntax; showing source:')} {state.error}</div>}
+    {showingSource && <pre className="oa-mermaid-source"><code>{source}</code></pre>}
   </div>
 }
 
@@ -653,7 +720,8 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply, onQui
           ? <MermaidDiagram key={idx} source={p.text} />
           : <div className="oa-mermaid-card" key={idx}>
             <div className="oa-code-head"><span>Mermaid</span><CopyButton text={p.text} compact /></div>
-            <div className="oa-mermaid-status" role="status">{ct('正在接收图表内容…', 'Receiving diagram…')}</div>
+            <div className="oa-mermaid-status oa-mermaid-stream-note" role="status">{ct('正在接收图表内容，完成后将自动渲染', 'Receiving diagram source; it will render when complete')}</div>
+            <pre className="oa-mermaid-source"><code>{p.text}</code></pre>
           </div>
         : <div className="oa-code-card" key={idx}>
           <div className="oa-code-head"><span>{p.lang || ct('代码', 'Code')}</span><CopyButton text={p.text} compact /></div>
@@ -3818,6 +3886,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const draft = typeof value === 'string' ? value : String(value || '')
     saveChatSessionDraft(chatInstanceRef.current, id, draft)
     if (!id) return
+    setSessions(current => mergeChatSessionDraftSessions(current, chatInstanceRef.current))
     setDraftSessionIds(current => {
       const hasDraft = Boolean(draft)
       if (current.has(id) === hasDraft) return current
@@ -3832,6 +3901,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const ids = values.map(value => String(value || '').trim()).filter(Boolean)
     clearChatSessionDrafts(chatInstanceRef.current, ids)
     if (!ids.length) return
+    setSessions(current => mergeChatSessionDraftSessions(current, chatInstanceRef.current))
     setDraftSessionIds(current => {
       const next = new Set(current)
       let changed = false
@@ -4750,7 +4820,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
     const d = await chatApi('/api/chat/sessions')
-    const list = d.sessions || []
+    const list = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
     setSessions(list)
     setProjects(Array.isArray(d.projects) ? d.projects : [])
     setPinnedProjects(Array.isArray(d.pinned_projects) ? d.pinned_projects : [])
@@ -5971,6 +6041,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         const defaultID = String(serverDefaultID).trim()
         chatInstanceRef.current = defaultID
         setChatInstanceID(defaultID)
+        setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, defaultID)))
         persistChatInstanceID(defaultID)
       }
     }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
@@ -6021,7 +6092,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
           const previous = sessionsRef.current
-          const next = Array.isArray(d.sessions) ? d.sessions : []
+          const next = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
           sessionsRef.current = next
           setSessions(next)
           setProjects(Array.isArray(d.projects) ? d.projects : [])
@@ -6136,6 +6207,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     chatInstanceRef.current = nextID
     persistChatInstanceID(nextID)
     setChatInstanceID(nextID)
+    setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, nextID)))
     setSid('')
     setSessions([])
     setArchivedSessions([])
