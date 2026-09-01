@@ -6757,21 +6757,31 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: 
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
-  min-height: 38px;
-  margin-bottom: 6px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
-  border-radius: 10px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+  min-height: 40px;
+  margin-bottom: 7px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 11px;
+  color: color-mix(in srgb, var(--muted) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-soft) 58%, transparent);
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+.oa-cascade-search:hover {
+  border-color: color-mix(in srgb, var(--muted) 34%, var(--border));
+  background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
 }
 .oa-cascade-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+  background: var(--surface-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
 }
-.oa-cascade-search > svg { flex: 0 0 auto; }
+.oa-cascade-search > svg {
+  flex: 0 0 auto;
+  transition: color 140ms ease;
+}
+.oa-cascade-search:focus-within > svg { color: var(--accent); }
 .oa-cascade-search input {
   min-width: 0;
   flex: 1 1 auto;
@@ -6779,15 +6789,30 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: 
   outline: 0;
   padding: 0;
   color: var(--text);
+  caret-color: var(--accent);
   background: transparent;
+  box-shadow: none !important;
   font: inherit;
   font-size: 12.5px;
+  line-height: 1.4;
+  appearance: none;
 }
-.oa-cascade-search input::placeholder { color: var(--muted); }
-.oa-cascade-search button {
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
+.oa-cascade-search input::-webkit-search-decoration,
+.oa-cascade-search input::-webkit-search-cancel-button { appearance: none; }
+.oa-cascade-search input::placeholder {
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
+  opacity: 1;
+}
+.oa-composer .oa-cascade-search button {
+  flex: 0 0 25px !important;
+  grid-column: auto !important;
+  justify-self: auto !important;
+  width: 25px;
+  min-width: 25px;
+  max-width: 25px;
+  height: 25px;
+  min-height: 25px;
+  max-height: 25px;
   display: grid;
   place-items: center;
   border: 0;
@@ -6796,15 +6821,38 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: 
   color: var(--muted);
   background: transparent;
   cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
 }
-.oa-cascade-search button:hover { color: var(--text); background: color-mix(in srgb, var(--muted) 10%, transparent); }
+.oa-cascade-search button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 11%, transparent);
+}
+.oa-cascade-search button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 66%, transparent);
+  outline-offset: 1px;
+}
 .oa-cascade-catalog {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
+  scrollbar-color: color-mix(in srgb, var(--muted) 34%, transparent) transparent;
+  scrollbar-width: thin;
   scrollbar-gutter: stable;
   padding: 2px 8px 4px 2px;
+}
+.oa-cascade-catalog::-webkit-scrollbar { width: 8px; }
+.oa-cascade-catalog::-webkit-scrollbar-track { background: transparent; }
+.oa-cascade-catalog::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 32%, transparent);
+  background-clip: padding-box;
+}
+.oa-cascade-catalog::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 50%, transparent);
+  background-clip: padding-box;
 }
 .oa-cascade-group + .oa-cascade-group {
   margin-top: 8px;
