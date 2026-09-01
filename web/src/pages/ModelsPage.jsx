@@ -567,8 +567,7 @@ function ProviderModal({
                           onClick={() => setExpandedModel(current => current === configIndex ? null : configIndex)}
                         >
                           <span className="model-provider-model-summary">
-                            <strong>{config.display_name || config.model || text.model}</strong>
-                            {config.display_name && config.model && <em>{config.model}</em>}
+                            <strong>{config.model || text.model}</strong>
                           </span>
                           <span className="model-provider-model-action">
                             {expanded ? text.collapse : text.configure}
