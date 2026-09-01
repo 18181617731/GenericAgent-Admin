@@ -145,6 +145,92 @@ func TestChatInstanceDataAndRuntimeOwnershipAreStableAcrossDefaultSwitch(t *test
 	}
 }
 
+func TestDeletingInstanceGuardsActiveChatAndDropsProcessLocalNamespaces(t *testing.T) {
+	appRoot := t.TempDir()
+	defaultRoot := filepath.Join(t.TempDir(), "ga-default")
+	betaRoot := filepath.Join(t.TempDir(), "ga-beta")
+	for _, root := range []string{defaultRoot, betaRoot} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = defaultRoot
+	cfg.DefaultInstanceID = "default"
+	cfg.Instances = []config.InstanceConfig{
+		{ID: "default", Name: "Default", GARoot: defaultRoot},
+		{ID: "beta", Name: "Beta", GARoot: betaRoot},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	server := New(store, service.NewManager(defaultRoot, cfg.BufferLines), nil, nil)
+
+	betaServer, _ := mustChatServerForRequest(t, server, "/api/chat/sessions?instance_id=beta")
+	oldRuntime := betaServer.ChatRuntime
+	oldRuntime.chatMu.Lock()
+	oldRuntime.runs["finished"] = &chatRun{Done: true}
+	oldRuntime.chatMu.Unlock()
+	if _, _, err := server.localCmdRegistryForRequest(httptest.NewRequest(http.MethodGet, "/api/local-cmd/directories?instance_id=beta", nil)); err != nil {
+		t.Fatalf("create beta local CMD namespace: %v", err)
+	}
+
+	oldRuntime.chatMu.Lock()
+	oldRuntime.runs["active"] = &chatRun{Done: false}
+	oldRuntime.chatMu.Unlock()
+	deleteRequest := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodDelete, "/api/instances/delete", strings.NewReader(`{"id":"beta"}`))
+		markDangerous(req)
+		rec := httptest.NewRecorder()
+		server.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := deleteRequest(); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "active chat work") {
+		t.Fatalf("active chat delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := store.Snapshot().Instance("beta"); !ok {
+		t.Fatal("active chat delete removed the instance")
+	}
+
+	oldRuntime.chatMu.Lock()
+	delete(oldRuntime.runs, "active")
+	oldRuntime.chatMu.Unlock()
+	if rec := deleteRequest(); rec.Code != http.StatusOK {
+		t.Fatalf("idle chat delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	server.ChatRuntimes.mu.Lock()
+	_, runtimeStillRegistered := server.ChatRuntimes.entries["beta"]
+	server.ChatRuntimes.mu.Unlock()
+	if runtimeStillRegistered {
+		t.Fatal("deleted instance chat runtime remained registered")
+	}
+	server.localCmdMu.Lock()
+	_, localCmdStillRegistered := server.localCmdSessionsByInstance["beta"]
+	server.localCmdMu.Unlock()
+	if localCmdStillRegistered {
+		t.Fatal("deleted instance local CMD namespace remained registered")
+	}
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/instances/create", strings.NewReader(`{"id":"beta","name":"Beta Recreated","ga_root":"`+strings.ReplaceAll(betaRoot, `\`, `\\`)+`"}`))
+	markDangerous(createRequest)
+	createResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusOK {
+		t.Fatalf("recreate instance status=%d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+	newBetaServer, _ := mustChatServerForRequest(t, server, "/api/chat/sessions?instance_id=beta")
+	if newBetaServer.ChatRuntime == oldRuntime {
+		t.Fatal("recreated instance reused deleted chat runtime")
+	}
+	newBetaServer.ChatRuntime.chatMu.Lock()
+	defer newBetaServer.ChatRuntime.chatMu.Unlock()
+	if len(newBetaServer.ChatRuntime.runs) != 0 || len(newBetaServer.ChatRuntime.workers) != 0 || len(newBetaServer.ChatRuntime.titleJobs) != 0 {
+		t.Fatalf("recreated instance inherited process-local chat state: runs=%v workers=%v titles=%v", newBetaServer.ChatRuntime.runs, newBetaServer.ChatRuntime.workers, newBetaServer.ChatRuntime.titleJobs)
+	}
+}
+
 func TestChatInstanceProjectsFollowSelectedInstance(t *testing.T) {
 	appRoot := t.TempDir()
 	defaultRoot := filepath.Join(t.TempDir(), "ga-default")
@@ -231,7 +317,6 @@ func TestInstanceManagerRegistryClearsFallbackRootWhenLastInstanceIsRemoved(t *t
 		t.Fatalf("legacy fallback resolution = (%p, %q, %v), want (%p, empty, true)", resolved, instanceID, ok, fallback)
 	}
 }
-
 
 func TestPythonFallbackRootsBorrowsSiblingsAndSkipsSelf(t *testing.T) {
 	base := config.AppConfig{

@@ -51,11 +51,11 @@ describe('InstancesPage', () => {
     await screen.findByRole('heading', { name: 'Primary' })
     const helpButton = screen.getByRole('button', { name: 'Learn how GA instances work' })
     expect(helpButton.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.getByRole('tooltip').textContent).toContain('Each instance maps to an isolated GenericAgent directory and Python environment.')
+    expect(screen.getByRole('tooltip').textContent).toContain('Each instance is an independent GA project copy')
 
     await user.click(helpButton)
     expect(helpButton.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('tooltip').textContent).toContain('Set as default')
+    expect(screen.getByRole('tooltip').textContent).toContain('Switch:')
 
     await user.keyboard('{Escape}')
     expect(helpButton.getAttribute('aria-expanded')).toBe('false')
@@ -256,6 +256,42 @@ describe('InstancesPage', () => {
     expect(options.headers['X-GA-Confirm']).toBe('dangerous')
     expect(JSON.parse(options.body)).toMatchObject({ id: 'secondary', name: 'Secondary', ga_root: 'D:/ga' })
     expect(await screen.findByRole('heading', { name: 'Secondary' })).not.toBeNull()
+  })
+
+  it('clones an instance and sends explicit memory and mykey choices', async () => {
+    const source = { id: 'source', name: 'Source', ga_root: 'D:/ga-source', python_path: '', effective_python: 'python' }
+    const cloneSourcePayload = { ...initialPayload, items: [...initialPayload.items, source] }
+    const created = {
+      default_instance_id: 'primary',
+      items: [...cloneSourcePayload.items, { id: 'cloned', name: 'Cloned', ga_root: 'D:/ga-cloned', effective_python: 'python' }],
+    }
+    globalThis.fetch = vi.fn((url) => url === '/api/instances' ? reply(cloneSourcePayload) : reply(created))
+    mockDialog()
+    const user = userEvent.setup()
+    render(<InstancesPage lang="en" />)
+
+    await screen.findByRole('heading', { name: 'Source' })
+    await user.click(screen.getByRole('button', { name: 'Add instance' }))
+    const editor = screen.getByRole('form', { name: 'Create GA instance' })
+    await user.type(within(editor).getByLabelText('Instance ID'), 'cloned')
+    await user.type(within(editor).getByLabelText('Display name'), 'Cloned')
+    await user.selectOptions(within(editor).getByRole('combobox', { name: 'Initialization source' }), 'source')
+    await user.click(within(editor).getByRole('checkbox', { name: 'Copy existing memory' }))
+    await user.click(within(editor).getByRole('checkbox', { name: 'Copy mykey.py' }))
+    await user.click(within(editor).getByRole('button', { name: 'Create instance' }))
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+    const [url, options] = globalThis.fetch.mock.calls[1]
+    expect(url).toBe('/api/instances/create')
+    expect(JSON.parse(options.body)).toEqual({
+      id: 'cloned',
+      name: 'Cloned',
+      ga_root: '',
+      python_path: '',
+      source_instance_id: 'source',
+      copy_memory: true,
+      copy_mykey: true,
+    })
   })
 
   it('updates an instance without allowing its ID to change', async () => {

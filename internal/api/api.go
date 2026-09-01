@@ -243,6 +243,27 @@ func (s *Server) closeLocalCmdRegistries() {
 	}
 }
 
+// removeLocalCmdRegistry closes and forgets the terminal namespace owned by a
+// deleted instance. The GA directory itself is intentionally preserved, but a
+// live Admin terminal must not survive as an orphan or be returned if the same
+// instance ID is later registered again.
+func (s *Server) removeLocalCmdRegistry(instanceID string) {
+	if s == nil {
+		return
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" || instanceID == protectedDefaultInstanceID {
+		return
+	}
+	s.localCmdMu.Lock()
+	registry := s.localCmdSessionsByInstance[instanceID]
+	delete(s.localCmdSessionsByInstance, instanceID)
+	s.localCmdMu.Unlock()
+	if registry != nil {
+		registry.close()
+	}
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.withInstance((*Server).health))

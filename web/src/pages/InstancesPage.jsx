@@ -12,7 +12,7 @@ const TEXT = {
     helpLabel: '\u4e86\u89e3 GA \u5b9e\u4f8b\u4f7f\u7528\u8bf4\u660e', helpTitle: 'GA \u5b9e\u4f8b\u662f\u4ec0\u4e48\uff1f',
     helpText: '每个实例是一份独立的 GA 项目副本，不只隔离运行目录，还隔离聊天、定时任务、自主进化、记忆、模型和用量数据。',
     helpSteps: ['新建：填写 ID、名称和根目录；Python 路径可留空自动检测。', '克隆：选择已有实例会复制程序、任务和项目设置；定时服务自启动默认关闭，避免多个实例抢占端口。', '切换：顶部实例选择器会让文件、聊天、任务、自主进化、记忆、模型和用量一起切换；未指定实例的请求使用默认实例。'],
-    helpNote: '删除只移除管理台记录，不会删除磁盘上的 GenericAgent 目录；复制记忆和 mykey.py 都必须显式勾选。',
+    helpNote: '删除只移除管理台记录，不会删除磁盘上的 GenericAgent 目录；如有正在运行的聊天、循环或标题生成，请先停止；本地 CMD 会随实例删除而关闭；复制记忆和 mykey.py 都必须显式勾选。',
     add: '\u65b0\u5efa\u5b9e\u4f8b', install: '\u4e00\u952e\u65b0\u589e', installing: '\u6b63\u5728\u4e0b\u8f7d\u5e76\u65b0\u589e\u2026', refresh: '\u5237\u65b0', loading: '\u6b63\u5728\u8bfb\u53d6\u5b9e\u4f8b\u2026', empty: '\u6682\u65e0 GA \u5b9e\u4f8b',
     default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', configureModels: '\u914d\u7f6e\u6a21\u578b', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
     initializing: '\u521d\u59cb\u5316\u4e2d', ready: '\u5df2\u5c31\u7eea', failed: '\u521d\u59cb\u5316\u5931\u8d25', initError: '\u9519\u8bef\u8be6\u60c5',
@@ -39,7 +39,7 @@ const TEXT = {
     helpLabel: 'Learn how GA instances work', helpTitle: 'What is a GA instance?',
     helpText: 'Each instance is an independent GA project copy: not only the runtime directory, but also chat, schedules, autonomous records, memory, models, and usage data are isolated.',
     helpSteps: ['Create: enter an ID, display name, and root directory; Python can be left blank for auto-detection.', 'Clone: selecting an existing instance copies its program, tasks, and project preferences; service autostart stays off to avoid port collisions.', 'Switch: the instance selector reloads files, chat, tasks, autonomous work, memory, models, and usage together; unscoped requests use the default instance.'],
-    helpNote: 'Deleting an instance removes only its admin registry entry; its GenericAgent directory stays on disk. Memory and mykey.py are copied only when explicitly enabled.',
+    helpNote: 'Deleting an instance removes only its admin registry entry; its GenericAgent directory stays on disk. Stop active chat, loops, or title generation first; local CMD sessions close with the instance. Memory and mykey.py are copied only when explicitly enabled.',
     add: 'Add instance', install: 'One-click add', installing: 'Downloading and adding\u2026', refresh: 'Refresh', loading: 'Loading instances\u2026', empty: 'No GA instances configured',
     default: 'Default', setDefault: 'Set as default', configureModels: 'Configure models', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
     initializing: 'Initializing', ready: 'Ready', failed: 'Initialization failed', initError: 'Error details',
@@ -57,7 +57,7 @@ const TEXT = {
     confirmCreate: 'Create this GA instance?', confirmUpdate: 'Save changes to this GA instance?',
     confirmDefault: name => `Set "${name}" as the default instance?`,
     deleteTitle: 'Confirm instance deletion', deleteConfirm: 'Delete instance',
-    confirmDelete: name => `"${name}" will be removed from GenericAgent-Admin. This will not delete the GenericAgent directory from disk.`,
+    confirmDelete: name => `"${name}" will be removed from GenericAgent-Admin. This will not delete the GenericAgent directory from disk. Active chat, loops, or title generation must be stopped first.`,
     defaultDeleteHint: 'Set another instance as default before deleting this one.',
   },
 }
@@ -343,8 +343,8 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels, activeIn
           <div className="instance-editor-grid">
             <label htmlFor="instance-source"><span>{copy.sourceGroup}<em>{copy.optionalField}</em></span><select id="instance-source" aria-label={copy.sourceGroup} value={sourceInstanceID} disabled={anyBusy} onChange={event => patchForm('source_instance_id', event.target.value)}><option value="">{copy.manualSource}</option>{items.filter(instance => String(instance.id || '') !== String(form.id || '') && !isInitializingInstance(instance)).map(instance => <option key={instance.id} value={instance.id}>{instance.name || instance.id}</option>)}</select><small>{sourceInstance ? `${copy.sourceHint} ${sourceInstance.name || sourceInstance.id}` : copy.sourceHint}</small></label>
             <div className="instance-copy-options" aria-label={copy.sourceGroup}>
-              <label><span><input type="checkbox" checked={Boolean(form.copy_memory)} disabled={anyBusy || !sourceInstanceID} onChange={event => patchForm('copy_memory', event.target.checked)}/>{copy.copyMemory}</span><small>{copy.copyMemoryHint}</small></label>
-              <label><span><input type="checkbox" checked={Boolean(form.copy_mykey)} disabled={anyBusy || !sourceInstanceID} onChange={event => patchForm('copy_mykey', event.target.checked)}/>{copy.copyMyKey}</span><small>{copy.copyMyKeyHint}</small></label>
+              <label><span><input type="checkbox" aria-label={copy.copyMemory} checked={Boolean(form.copy_memory)} disabled={anyBusy || !sourceInstanceID} onChange={event => patchForm('copy_memory', event.target.checked)}/>{copy.copyMemory}</span><small>{copy.copyMemoryHint}</small></label>
+              <label><span><input type="checkbox" aria-label={copy.copyMyKey} checked={Boolean(form.copy_mykey)} disabled={anyBusy || !sourceInstanceID} onChange={event => patchForm('copy_mykey', event.target.checked)}/>{copy.copyMyKey}</span><small>{copy.copyMyKeyHint}</small></label>
             </div>
           </div>
         </fieldset>}

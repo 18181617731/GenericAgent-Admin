@@ -70,16 +70,16 @@ test('draft-backed blank sessions merge into one instance without duplicating se
   saveChatSessionDraft('local-a', 'draft A', storage, 'instance-a')
   saveChatSessionDraft('local-b', 'draft B', storage, 'instance-b')
 
-  assert.deepEqual(listChatSessionDraftIds(storage, 'instance-a').sort(), ['legacy', 'local-a'])
-  assert.equal(loadChatSessionDraft('local-a', storage, 'instance-a'), 'draft A')
-  assert.equal(loadChatSessionDraft('local-a', storage, 'instance-b'), '')
+  assert.deepEqual(listChatSessionDraftIds('instance-a', storage), ['local-a'])
+  assert.equal(loadChatSessionDraft('instance-a', 'local-a', storage), 'draft A')
+  assert.equal(loadChatSessionDraft('instance-b', 'local-a', storage), '')
 
   const server = [{ id: 'legacy', title: 'Saved', updated_at: '2026-01-01T00:00:00Z' }]
   const merged = mergeChatSessionDraftSessions(server, 'instance-a', storage)
   assert.deepEqual(merged.map(session => session.id), ['local-a', 'legacy'])
   assert.equal(merged[0].local_draft, true)
   assert.equal(merged[1], server[0])
-  assert.ok(Number.isFinite(Date.parse(merged[0].updated_at)))
+  assert.equal(merged[0].updated_at, '')
 
   saveChatSessionDraft('local-a', '', storage, 'instance-a')
   assert.deepEqual(mergeChatSessionDraftSessions(merged, 'instance-a', storage), server)

@@ -208,6 +208,21 @@ func (s *Server) saveConfigAndReconcile(next config.AppConfig) error {
 	return nil
 }
 
+// removeInstanceRuntimeState releases process-local state after the persisted
+// instance registry no longer contains the instance. Project files and chat
+// data stay on disk so deleting an Admin entry remains recoverable by adding
+// the same root again.
+func (s *Server) removeInstanceRuntimeState(instanceID string) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" || instanceID == protectedDefaultInstanceID {
+		return
+	}
+	if s.ChatRuntimes != nil {
+		s.ChatRuntimes.remove(instanceID)
+	}
+	s.removeLocalCmdRegistry(instanceID)
+}
+
 // saveScopedInstanceProjectConfig persists a projected request config back to
 // the selected instance in the base registry. Request-local stores are useful
 // for reads, but saving into one would discard the change as soon as the HTTP

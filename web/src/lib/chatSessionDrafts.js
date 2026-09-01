@@ -93,6 +93,15 @@ export function saveChatSessionDraft(...args) {
   writeDraftMap(drafts, storage, instanceID)
 }
 
+export function mergeChatSessionDraftSessions(sessions, instanceID, storage) {
+  const serverSessions = (Array.isArray(sessions) ? sessions : []).filter(session => !session?.local_draft)
+  const serverIDs = new Set(serverSessions.map(session => String(session?.id || '').trim()).filter(Boolean))
+  const draftSessions = listChatSessionDraftIds(instanceID, storage)
+    .filter(id => !serverIDs.has(id))
+    .map(id => ({ id, title: '', count: 0, updated_at: '', local_draft: true }))
+  return draftSessions.concat(serverSessions)
+}
+
 export function clearChatSessionDrafts(instanceOrSessionIds, sessionIdsOrStorage, maybeStorage) {
   const scoped = isStorage(sessionIdsOrStorage) || sessionIdsOrStorage == null
     ? { ids: instanceOrSessionIds, storage: sessionIdsOrStorage, instanceID: maybeStorage }

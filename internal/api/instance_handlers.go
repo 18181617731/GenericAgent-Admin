@@ -441,6 +441,10 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, "instance id is required")
 		return
 	}
+	if s.ChatRuntimes != nil && s.ChatRuntimes.hasActiveWork(req.ID) {
+		bad(w, http.StatusConflict, "instance has active chat work; stop the chat, loop, or title generation before deleting it")
+		return
+	}
 
 	s.ConfigMu.Lock()
 	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
@@ -488,6 +492,7 @@ func (s *Server) instanceDelete(w http.ResponseWriter, r *http.Request) {
 	if done := s.cancelInstanceInstall(req.ID); done != nil {
 		<-done
 	}
+	s.removeInstanceRuntimeState(req.ID)
 	if err := os.Remove(s.instanceTemplateArchivePath(req.ID)); err != nil && !os.IsNotExist(err) {
 		bad(w, http.StatusInternalServerError, "remove instance template: "+err.Error())
 		return

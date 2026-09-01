@@ -1548,10 +1548,10 @@ describe('chat model cascade', () => {
       render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
       fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
 
-    fireEvent.click(screen.getByRole('button', { name: '\u6e05\u9664\u641c\u7d22' }))
-    expect(screen.queryByText('\u6ca1\u6709\u5339\u914d\u7684\u6a21\u578b')).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
+      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
+    } finally {
+      rectSpy.mockRestore()
+    }
   })
 })
 

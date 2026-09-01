@@ -75,6 +75,63 @@ func (r *chatRuntimeRegistry) runtime(instanceID string) *chatRuntime {
 	return runtime
 }
 
+// hasActiveWork reports whether deleting an instance would strand a live chat
+// operation. Completed runs are retained briefly for stream replay, but they
+// do not prevent the runtime from being discarded with the instance registry
+// entry.
+func (r *chatRuntimeRegistry) hasActiveWork(instanceID string) bool {
+	if r == nil {
+		return false
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	r.mu.Lock()
+	runtime := r.entries[instanceID]
+	r.mu.Unlock()
+	if runtime == nil {
+		return false
+	}
+
+	runtime.chatMu.Lock()
+	defer runtime.chatMu.Unlock()
+	for _, run := range runtime.runs {
+		if run != nil && !run.Done {
+			return true
+		}
+	}
+	for _, worker := range runtime.workers {
+		if worker != nil && !worker.Dead {
+			return true
+		}
+	}
+	for _, controller := range runtime.loopControllers {
+		if controller != nil && !controller.Canceled && controller.Worker != nil {
+			return true
+		}
+	}
+	for _, running := range runtime.titleJobs {
+		if running {
+			return true
+		}
+	}
+	return false
+}
+
+// remove drops the in-memory namespace after an instance has been removed
+// from the persisted registry. The protected legacy/default runtime is keyed
+// by an empty string and is never passed here.
+func (r *chatRuntimeRegistry) remove(instanceID string) {
+	if r == nil {
+		return
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" || instanceID == protectedDefaultInstanceID {
+		return
+	}
+	r.mu.Lock()
+	delete(r.entries, instanceID)
+	r.mu.Unlock()
+}
+
 func requestedInstanceID(r *http.Request) string {
 	instanceID := strings.TrimSpace(r.URL.Query().Get("instance_id"))
 	if instanceID == "" {

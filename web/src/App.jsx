@@ -267,6 +267,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [instanceScopeError, setInstanceScopeError] = useState('')
   const activeInstanceRef = useRef(activeInstanceID)
   activeInstanceRef.current = activeInstanceID
+  const isCurrentInstance = instanceID => normalizeInstanceID(instanceID) === activeInstanceRef.current
   const [serviceActionStates, setServiceActionStates] = useState({})
   const logStream = useLogStream({ active: tab === 'logs', instanceID: activeInstanceID })
   const [setupEnv, setSetupEnv] = useState(null)
@@ -277,6 +278,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [runtimeRepairing, setRuntimeRepairing] = useState(false), [runtimeRepairResult, setRuntimeRepairResult] = useState(null)
   const [profiles, setProfiles] = useState([]), [modelPreview, setModelPreview] = useState('')
   const [modelInstance, setModelInstance] = useState(null)
+  const modelInstanceRef = useRef(modelInstance)
+  modelInstanceRef.current = modelInstance
+  const currentModelScopeID = () => normalizeInstanceID(modelInstanceRef.current?.id || activeInstanceRef.current)
+  const isCurrentModelScope = instanceID => normalizeInstanceID(instanceID) === currentModelScopeID()
   const [persistedModelProfiles, setPersistedModelProfiles] = useState([])
   const [failoverGroups, setFailoverGroups] = useState([])
   const [modelSaveStatus, setModelSaveStatus] = useState({})
@@ -381,12 +386,15 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const settingsDirty = configDraftDirty(root, cfg, persistedCfg)
   const hasUnsavedChanges = fileDirty || taskDirty || settingsDirty
   const resetInstanceViewState = () => {
+    modelInstanceRef.current = null
     setCfg(null); setPersistedCfg(null); setHealth(null); setControl(null); setServices([]); setRoot('')
     setSetupEnv(null); setTmwdStatus(null); setObservability(null); setObservabilityError('')
     setGitStatus(null); setGitResult(null); setProfiles([]); setPersistedModelProfiles([]); setFailoverGroups([]); setModelPreview(''); setModelInstance(null); setModelSaveStatus({}); setModelRevealedKeys({})
     setFileList([]); setFileContent(''); setLoadedFileContent(''); setFilePath(''); setLoadedFilePath(''); setFileStatus({}); setSearchHits([])
     setScheduleData(null); setScheduleError(''); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}'); setScheduleArtifactTitle(''); setScheduleArtifact(''); setTaskRunStates({}); setScheduleReportTaskId('')
+    setScheduleLoading(false)
     setGoals([]); setSelectedGoal(''); setGoalOutput(''); setGoalOutputMeta(null); setLLMs([]); setServiceActionStates({})
+    setMemoryRefreshing(false); setModelImportLoading(false)
     scheduleInitialLoad.current = false
     scheduleRunTimers.current.forEach(timer => clearTimeout(timer))
     scheduleRunTimers.current.clear()
@@ -401,6 +409,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (busy) { setMsg(lang === 'zh' ? '当前操作完成后才能切换实例' : 'Finish the current operation before switching instances', 'error'); return false }
     if (hasUnsavedChanges && !window.confirm(lang === 'zh' ? '当前实例有未保存更改。切换实例会放弃这些更改，是否继续？' : 'This instance has unsaved changes. Switching will discard them. Continue?')) return false
     activeInstanceRef.current = id
+    modelInstanceRef.current = null
     resetInstanceViewState()
     setSelectedInstanceID(id)
     setActiveInstanceID(id)
@@ -419,26 +428,37 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const guardianSvcs = useMemo(() => guardianServices(services), [services])
 
   const loadScheduleTasks = async ({ quiet = false } = {}) => {
+    const scopeID = activeInstanceRef.current
     if (!quiet) setScheduleLoading(true)
     setScheduleError('')
     try {
       const d = await api('/api/schedule/tasks')
       const normalized = normalizeScheduleTasksPayload(d)
+      if (!isCurrentInstance(scopeID)) return normalized
       setScheduleData(normalized)
       return normalized
     } catch (e) {
+      if (!isCurrentInstance(scopeID)) return null
       setScheduleData({ enabled: false, version: 'unknown', tasks: [] })
       setScheduleError(e.message)
       if (!quiet) setMsg(e.message)
       throw e
     } finally {
-      if (!quiet) setScheduleLoading(false)
+      if (!quiet && isCurrentInstance(scopeID)) setScheduleLoading(false)
     }
   }
 
-  const loadLLMs = async () => { try { const d = await api('/api/chat/state'); setLLMs(d.llms || []) } catch(e){ console.error('加载模型列表失败:', e) } }
+  const loadLLMs = async () => {
+    const scopeID = activeInstanceRef.current
+    try {
+      const d = await api('/api/chat/state')
+      if (isCurrentInstance(scopeID)) setLLMs(d.llms || [])
+    } catch(e){ console.error('加载模型列表失败:', e) }
+  }
   const refreshTMWebDriverStatus = async () => {
+    const scopeID = activeInstanceRef.current
     const d = await api('/api/tmwebdriver/status')
+    if (!isCurrentInstance(scopeID)) return d
     setTmwdStatus(d)
     return d
   }
@@ -453,6 +473,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const readObservability = async (healthOverride = null) => {
+    const scopeID = activeInstanceRef.current
     const request = (endpoint) => {
       const req = observabilityRequest(endpoint)
       return api(req.url, req.options)
@@ -463,6 +484,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       request('/api/risk/catalog')
     ])
     const snapshot = buildObservabilitySnapshot({ health: apiHealth, inventory, risks })
+    if (!isCurrentInstance(scopeID)) return null
     setObservability(snapshot)
     setObservabilityError('')
     return snapshot
@@ -470,19 +492,23 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const repairGARuntime = async () => {
     if (!confirmDanger('ga-runtime-repair', '检测到 GenericAgent 运行异常。将仅安装缺失核心依赖、迁移旧 UltraPlan 生成脚本，并在完成后自动复检，是否继续？')) return
+    const scopeID = activeInstanceRef.current
     setRuntimeRepairing(true)
     setRuntimeRepairResult(null)
     setMsg('正在修复 GenericAgent 运行环境并复检…')
     try {
       const result = await api('/api/ga/runtime/repair', { dangerous: true, method: 'POST', body: '{}' })
+      if (!isCurrentInstance(scopeID)) return
       setRuntimeRepairResult(result)
       if (result?.after) setHealth(result.after)
       await readObservability(result?.after || null)
+      if (!isCurrentInstance(scopeID)) return
       setMsg(result?.ok ? 'GenericAgent 已修复并通过复检' : '修复已执行，但复检仍发现问题')
     } catch (e) {
+      if (!isCurrentInstance(scopeID)) return
       setRuntimeRepairResult({ ok: false, errors: [e.message] })
       setMsg(`运行环境修复失败：${e.message}`)
-    } finally { setRuntimeRepairing(false) }
+    } finally { if (isCurrentInstance(scopeID)) setRuntimeRepairing(false) }
   }
 
   const load = async () => {
@@ -500,7 +526,12 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (scopeID !== activeInstanceRef.current) return
       const visibleVersionStatus = (vstat?.id || vstat?.stage) && !shouldHideCompletedVersionProgress(vstat, ver?.version) ? vstat : null
       setCfg(c); setPersistedCfg(c); setRoot(c.ga_root || ''); setHealth(h); setAutostart(auto); setVersionInfo(ver); setVersionStatus(visibleVersionStatus)
-      await readObservability(h).catch(e => { setObservability(null); setObservabilityError(e.message) })
+      await readObservability(h).catch(e => {
+        if (scopeID === activeInstanceRef.current) {
+          setObservability(null)
+          setObservabilityError(e.message)
+        }
+      })
       if (scopeID !== activeInstanceRef.current) return
       if (!h?.ok && !h?.root) {
         setServices([]); setFileList([])
@@ -511,10 +542,12 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       const serviceList = Array.isArray(svc) ? svc : (svc.services || [])
       setServices(serviceList)
       const source = await api('/api/ga/git-status').catch(error => ({ ok: false, available: false, reason: error.message }))
+      if (scopeID !== activeInstanceRef.current) return
       setGitStatus(source)
        if (tab === 'goals') {
-        const goalData = await api('/api/goals/list').catch(() => ({ goals: [] }))
-        const goalItems = goalData.goals || []
+         const goalData = await api('/api/goals/list').catch(() => ({ goals: [] }))
+         if (scopeID !== activeInstanceRef.current) return
+         const goalItems = goalData.goals || []
         setGoals(goalItems)
         const firstGoal = pickGoalId(goalItems, selectedGoal)
         if (!selectedGoal && firstGoal) setSelectedGoal(firstGoal)
@@ -530,10 +563,11 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   useEffect(() => { if (instanceScopeReady) load() }, [instanceScopeReady, activeInstanceID])
   useEffect(() => {
     if (!health?.root) return undefined
+    const scopeID = activeInstanceRef.current
     notificationMonitorRef.current = { snapshot: null, busy: false }
     let active = true
     const poll = async () => {
-      if (!active || notificationMonitorRef.current.busy) return
+      if (!active || !isCurrentInstance(scopeID) || notificationMonitorRef.current.busy) return
       notificationMonitorRef.current.busy = true
       try {
         const [schedule, goals, approvals, inventory] = await Promise.all([
@@ -542,7 +576,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
           api('/api/autonomous/approvals'),
           api('/api/ga/inventory'),
         ])
-        if (!active) return
+        if (!active || !isCurrentInstance(scopeID)) return
         const normalizedSchedule = normalizeScheduleTasksPayload(schedule)
         setScheduleData(normalizedSchedule)
         setScheduleError('')
@@ -553,13 +587,13 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       } catch {
         // A transient polling failure must not create a false execution alert.
       } finally {
-        notificationMonitorRef.current.busy = false
+        if (isCurrentInstance(scopeID)) notificationMonitorRef.current.busy = false
       }
     }
     poll()
     const timer = window.setInterval(poll, 15000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [health?.root])
+  }, [health?.root, activeInstanceID])
   useEffect(() => {
     if (tab === 'goals' && health?.ok) { loadGoals().catch(e => setMsg(e.message)); loadLLMs() }
     if (tab === 'chat' && health?.ok && !llms.length) loadLLMs()
@@ -573,7 +607,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (tab === 'setup' && health?.ok && !tmwdStatus) refreshTMWebDriverStatus().catch(e => setTmwdStatus({ ok:false, error:e.message }))
     // The auto-title card lives on the settings page and needs its own option list.
     if (tab === 'settings' && health?.ok && !titleModelChoices.length) loadTitleModel().catch(() => {})
-  }, [tab, health?.ok])
+  }, [tab, health?.ok, activeInstanceID])
   const toggleAutostart = async () => { const next = !autostart?.enabled; if (!confirmDanger('admin-autostart', next ? '启用 GA Admin 开机自启动？' : '禁用 GA Admin 开机自启动？')) return; setBusy(true); setMsg(''); try { const d = await api(next ? '/api/autostart/enable' : '/api/autostart/disable', { dangerous:true, method:'POST' }); setAutostart(d); setMsg(t.hints.autostartChanged) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const checkGASource = async () => { setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-status?remote=1'); setGitStatus(d); setMsg(gitSyncPresentation(d).summary) } catch(e){ setGitStatus({ ok:false, error:e.message }); setMsg(e.message) } finally{ setGitBusy(false) } }
   const updateGASource = async () => { if (!confirmDanger('ga-git-update', '按 daily_git_pull_merge_push 策略同步 GA 仓库？将 fetch origin、合并远端、提交全部本地变更（包括 memory 和 mykey.py）并 push；不会合并 upstream，也不会 force。')) return; setGitBusy(true); setMsg(''); try { const d = await api('/api/ga/git-update', { dangerous:true, method:'POST', body: '{}' }); setGitResult(d); setGitStatus(d); setMsg(gitSyncPresentation(d).summary); await load() } catch(e){ setMsg(e.message) } finally{ setGitBusy(false) } }
@@ -585,17 +619,17 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     load()
   }
   const refreshMemoryInventory = async ({ quiet = false } = {}) => {
+    const scopeID = activeInstanceRef.current
     setMemoryRefreshing(true)
     try {
       const inventory = await api('/api/ga/inventory')
+      if (!isCurrentInstance(scopeID)) return inventory
       setHealth(current => current ? { ...current, inventory } : current)
       if (!quiet) setMsg(t.memoryWorkspace.refreshed)
     } catch (error) {
-      if (!quiet) setMsg(t.memoryWorkspace.refreshFailed(error.message))
+      if (!quiet && isCurrentInstance(scopeID)) setMsg(t.memoryWorkspace.refreshFailed(error.message))
       throw error
-    } finally {
-      setMemoryRefreshing(false)
-    }
+    } finally { if (isCurrentInstance(scopeID)) setMemoryRefreshing(false) }
   }
   const checkSetupEnv = async () => { setBusy(true); try { const d = await api('/api/setup/env'); setSetupEnv(d); setMsg(d.ok ? t.envReady : t.envMissing) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const browseSetupDir = async (target = 'root') => { setBusy(true); try { const base = target === 'install' ? installRoot : root; const d = await api('/api/setup/browse', { method:'POST', body: JSON.stringify({ path: base }) }); if (d.path) { target === 'install' ? setInstallRoot(d.path) : setRoot(d.path) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
@@ -620,16 +654,18 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const serviceAction = async (name, action, params = null) => {
     if (!confirmDanger(`service-${action}`, t.service.confirmAction(action, name))) return
+    const scopeID = activeInstanceRef.current
     const pendingMessage = t.service.pending(action, name)
     setServiceActionStates(current => ({ ...current, [name]: { status: 'pending', action, message: pendingMessage } }))
     try {
-      const body = { name }
-      if (params) body.params = params
+      const body = params ? { name, params } : { name }
       await api(`/api/services/${action}`, { dangerous:true, method:'POST', body: JSON.stringify(body) })
       await load()
+      if (!isCurrentInstance(scopeID)) return
       setServiceActionStates(current => ({ ...current, [name]: { status: 'success', action, message: t.service.success(action, name) } }))
       if (logStream.selected === name) logStream.retry()
     } catch (e) {
+      if (!isCurrentInstance(scopeID)) return
       setServiceActionStates(current => ({ ...current, [name]: { status: 'error', action, message: t.service.failed(action, name, e.message) } }))
     }
   }
@@ -642,7 +678,19 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (preferred && items.some(g => g.id === preferred)) return preferred
     return items.find(g => g.running)?.id || items[0]?.id || ''
   }
-  const loadGoals = async () => { const d = await api('/api/goals/list'); const items = d.goals || []; setGoals(items); return items }
+  const loadGoals = async () => {
+    const scopeID = activeInstanceRef.current
+    try {
+      const d = await api('/api/goals/list')
+      const items = d.goals || []
+      if (!isCurrentInstance(scopeID)) return []
+      setGoals(items)
+      return items
+    } catch (error) {
+      if (!isCurrentInstance(scopeID)) return []
+      throw error
+    }
+  }
   const startGoal = async () => {
     setBusy(true); setMsg('')
     try {
@@ -684,6 +732,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const deleteGoal = async (g) => { if (!g) return; const confirmText = t.hints.goalDeleteConfirm.replace('{id}', g.id || '-'); if (!confirmDanger('goals-delete', confirmText)) return; setBusy(true); setMsg(''); try { await api('/api/goals/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id: g.id }) }); setMsg(`${t.hints.goalDeleted}: ${g.id}`); const gs = await loadGoals(); if (selectedGoal === g.id) { const next = pickGoalId(gs, ''); setSelectedGoal(next); setGoalOutput(''); setGoalOutputMeta({}); if (next) await loadGoalOutput(next) } } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const loadGoalOutput = async (id = selectedGoal) => {
     if (!id) return
+    const scopeID = activeInstanceRef.current
     setSelectedGoal(id)
     const seq = ++goalOutputSeq.current
     try {
@@ -692,7 +741,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (maxBytes < 0) throw new Error(t.hints.goalOutputBytesNonNegative)
       if (maxBytes > 1048576) throw new Error(t.hints.goalOutputBytesTooLarge)
       const d = await api(`/api/goals/output?id=${encodeURIComponent(id)}&max_bytes=${encodeURIComponent(maxBytes)}`)
-      if (seq !== goalOutputSeq.current) return
+      if (seq !== goalOutputSeq.current || !isCurrentInstance(scopeID)) return
       setGoalOutput(d.output || '')
       setGoalOutputMeta({
         truncated: !!d.truncated,
@@ -710,7 +759,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       })
       if (d.goal) setGoals(gs => gs.map(g => g.id === d.goal.id ? d.goal : g))
     } catch (e) {
-      if (seq !== goalOutputSeq.current) return
+      if (seq !== goalOutputSeq.current || !isCurrentInstance(scopeID)) return
       setMsg(e.message)
       setGoalOutput(e.message)
       setGoalOutputMeta({
@@ -724,6 +773,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
   useEffect(() => {
     if (tab !== 'goals') return
+    const scopeID = activeInstanceRef.current
     const refreshGoals = async () => {
       if (goalRefreshBusy.current) return
       goalRefreshBusy.current = true
@@ -732,7 +782,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         const active = pickGoalId(gs, selectedGoal)
         if (active) await loadGoalOutput(active)
       } catch (e) {
-        setMsg(e.message)
+        if (isCurrentInstance(scopeID)) setMsg(e.message)
       } finally {
         goalRefreshBusy.current = false
       }
@@ -750,9 +800,14 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const setTaskRunState = (id, state) => setTaskRunStates(current => ({ ...current, [id]: state }))
   const pollScheduleRun = (id, runID) => {
+    const scopeID = activeInstanceRef.current
     const poll = async () => {
       try {
         const status = await api(`/api/schedule/run/status?run_id=${encodeURIComponent(runID)}`)
+        if (!isCurrentInstance(scopeID)) {
+          scheduleRunTimers.current.delete(runID)
+          return
+        }
         if (status.status === 'starting' || status.status === 'running') {
           const timer = setTimeout(poll, 1500)
           scheduleRunTimers.current.set(runID, timer)
@@ -767,25 +822,28 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         }
       } catch (error) {
         scheduleRunTimers.current.delete(runID)
-        setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, error.message) })
+        if (isCurrentInstance(scopeID)) setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, error.message) })
       }
     }
     poll()
   }
   const runTask = async id => {
     if (!id || !confirmDanger('schedule-run', t.tasks.runConfirm(id))) return
+    const scopeID = activeInstanceRef.current
     setTaskRunState(id, { status: 'pending', message: t.tasks.runPending })
     try {
       const d = await api('/api/schedule/run', { dangerous: true, method: 'POST', body: JSON.stringify({ id }) })
+      if (!isCurrentInstance(scopeID)) return
       setTaskRunState(id, { status: 'pending', runId: d.run_id, message: t.tasks.runStarted(id) })
       pollScheduleRun(id, d.run_id)
     } catch (error) {
-      setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, error.message) })
+      if (isCurrentInstance(scopeID)) setTaskRunState(id, { status: 'error', message: t.tasks.runFailed(id, error.message) })
     }
   }
 
   const setTailLines = (value) => setTailLinesRaw(clampTailLines(value))
   const loadFiles = async (path = '', { quiet = false } = {}) => {
+    const scopeID = activeInstanceRef.current
     const target = path || ''
     if (!quiet) {
       setBusy(true)
@@ -793,16 +851,18 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     try {
       const d = await api(`/api/files/list?path=${encodeURIComponent(path || '')}`)
+      if (!isCurrentInstance(scopeID)) return []
       setFileList(d.items || d.entries || [])
       setBrowsePath(path || '')
       if (!quiet) setFileStatus({})
     } catch (e) {
+      if (!isCurrentInstance(scopeID)) return []
       setFileList([])
       setMsg(e.message)
       if (!quiet) setFileStatus({ kind: 'error', action: 'browse', message: `Could not load files: ${e.message}`, onRetry: () => loadFiles(target) })
       throw e
     } finally {
-      if (!quiet) setBusy(false)
+      if (!quiet && isCurrentInstance(scopeID)) setBusy(false)
     }
   }
   const confirmFileReplacement = path => !fileDirty || window.confirm(`文件 ${loadedFilePath || filePath || '-'} 有未保存更改。读取 ${path} 将覆盖当前编辑内容，是否继续？`)
@@ -924,13 +984,14 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const loadTask = useCallback(async (id) => {
     if (taskDirty && !window.confirm(`定时任务 ${taskId || '-'} 有未保存更改。读取 ${id} 将覆盖当前编辑内容，是否继续？`)) return
+    const scopeID = activeInstanceRef.current
     const requestId = beginScheduleArtifactRequest()
     setScheduleReportTaskId('')
     setScheduleArtifactTitle('')
     setScheduleArtifact('')
     try {
       const d = await api(`/api/schedule/task?id=${encodeURIComponent(id)}`)
-      if (requestId !== scheduleArtifactRequest.current) return
+      if (requestId !== scheduleArtifactRequest.current || !isCurrentInstance(scopeID)) return
       const content = safeJson(d.raw)
       setTaskId(d.id || id)
       setTaskEditor(content)
@@ -938,7 +999,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       setTab('tasks')
       setTaskSubTab('scheduled')
     } catch(e){
-      if (requestId === scheduleArtifactRequest.current) {
+      if (requestId === scheduleArtifactRequest.current && isCurrentInstance(scopeID)) {
         setMsg(e.message)
       }
     } finally{ finishScheduleArtifactRequest(requestId) }
@@ -979,41 +1040,46 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
   const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { invalidateScheduleArtifact(true); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const readScheduleArtifact = async (path, targetTab = 'tasks', targetSubTab = 'reports') => {
+    const scopeID = activeInstanceRef.current
     const requestId = beginScheduleArtifactRequest()
     try {
       const d = await api(`/api/schedule/artifact?path=${encodeURIComponent(path)}`)
-      if (requestId !== scheduleArtifactRequest.current) return
+      if (requestId !== scheduleArtifactRequest.current || !isCurrentInstance(scopeID)) return
       setScheduleArtifactTitle(path)
       setScheduleArtifact(d.content || '')
       setTab(targetTab)
       setTaskSubTab(targetSubTab)
-    } catch(e){ if (requestId === scheduleArtifactRequest.current) setMsg(e.message) } finally{ finishScheduleArtifactRequest(requestId) }
+    } catch(e){ if (requestId === scheduleArtifactRequest.current && isCurrentInstance(scopeID)) setMsg(e.message) } finally{ finishScheduleArtifactRequest(requestId) }
   }
 
-  const loadTitleModel = async () => {
-    const data = await api('/api/models/title-model')
+  const loadTitleModel = async (requestedInstanceID = currentModelScopeID()) => {
+    const scopeID = normalizeInstanceID(requestedInstanceID)
+    const data = await api('/api/models/title-model', { instanceID: scopeID })
+    if (!isCurrentModelScope(scopeID)) return data
     setTitleModel(data?.model || null)
     setTitleModelChoices(Array.isArray(data?.options) ? data.options : [])
     return data
   }
   const saveTitleModel = async model => {
     if (!confirmDanger('models-title-model', lang === 'zh' ? '保存独立的对话标题模型设置？' : 'Save the independent chat title model setting?')) return false
+    const scopeID = currentModelScopeID()
     setTitleModelSaving(true)
     try {
       const data = await api('/api/models/title-model', {
         dangerous: true,
         method: 'PUT',
+        instanceID: scopeID,
         body: JSON.stringify({ model }),
       })
+      if (!isCurrentModelScope(scopeID)) return false
       setTitleModel(data?.model || null)
       setMsg(t.titleModelSaved)
       return true
     } catch (error) {
+      if (!isCurrentModelScope(scopeID)) return false
       setMsg(error.message)
       return false
-    } finally {
-      setTitleModelSaving(false)
-    }
+    } finally { if (isCurrentModelScope(scopeID)) setTitleModelSaving(false) }
   }
   // The settings page never loads the models editor, so prefer the option list
   // returned by /api/models/title-model and fall back to local model rows.
@@ -1070,13 +1136,15 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     await saveTitleModel(selected)
   }
   const importModels = async ({ quiet = false } = {}) => {
+    const scopeID = currentModelScopeID()
     if (!quiet) setBusy(true)
     setModelImportLoading(true)
     try {
       const [d] = await Promise.all([
-        api('/api/models/import-mykey', { method:'POST', headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {}, body: JSON.stringify({ reveal:false, save:false }) }),
-        loadTitleModel(),
+        api('/api/models/import-mykey', { method:'POST', instanceID: scopeID, body: JSON.stringify({ reveal:false, save:false }) }),
+        loadTitleModel(scopeID),
       ])
+      if (!isCurrentModelScope(scopeID)) return d
       const nextProfiles = orderedProviderProfiles(d.profiles || [])
       const nextGroups = normalizeFailoverGroups(d.failover_groups || [])
       setProfiles(nextProfiles)
@@ -1087,14 +1155,21 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       setModelKeyBusy({})
       setModelPreview(safeJson(d))
       setMsg(`已载入 ${nextProfiles.length} 个服务商配置`)
-    } catch(e) { setMsg(e.message) } finally { setModelImportLoading(false); if (!quiet) setBusy(false) }
+    } catch(e) { if (isCurrentModelScope(scopeID)) setMsg(e.message) } finally { if (isCurrentModelScope(scopeID)) { setModelImportLoading(false); if (!quiet) setBusy(false) } }
   }
   useEffect(() => {
     if (tab !== 'models' || modelImportAttempted.current || profiles.length) return
     modelImportAttempted.current = true
     importModels({ quiet: true })
   }, [tab, profiles.length])
-  const previewModels = async () => { setBusy(true); try { const d = await api('/api/models/preview', { method:'POST', body: JSON.stringify({ profiles, failover_groups: failoverGroups }) }); setModelPreview(d.python || safeJson(d)) } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const previewModels = async () => {
+    const scopeID = currentModelScopeID()
+    setBusy(true)
+    try {
+      const d = await api('/api/models/preview', { method:'POST', instanceID: scopeID, body: JSON.stringify({ profiles, failover_groups: failoverGroups }) })
+      if (isCurrentModelScope(scopeID)) setModelPreview(d.python || safeJson(d))
+    } catch(e){ if (isCurrentModelScope(scopeID)) setMsg(e.message) } finally{ if (isCurrentModelScope(scopeID)) setBusy(false) }
+  }
   const isMaskedModelSecret = (value) => String(value || '').trim() === '******'
   const getModelProfileKey = (idx, profile) => profile?.client_id || `${profile?.var_name || `profile_${idx + 1}`}:${profile?.type || 'native_oai'}:${profile?.apibase || ''}:${idx}`
   const clearRevealedModelKey = (idx, profile) => {
@@ -1118,7 +1193,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (baseUrl) params.set('base_url', baseUrl)
     if (apiKey) params.set('api_key', apiKey)
     if (varName) params.set('var_name', varName)
-    return api(`/api/models/discover?${params.toString()}`, { headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {} })
+    const scopeID = currentModelScopeID()
+    return api(`/api/models/discover?${params.toString()}`, { instanceID: scopeID })
   }
   const probeModels = async ({ protocol, baseUrl, apiKey, varName, models, modelOptions, signal } = {}) => api('/api/models/probe', {
     method: 'POST',
@@ -1129,16 +1205,20 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (!confirmDanger('model-probe-scope', '保存模型批量检测范围？该配置会写入 GA Admin 本地配置文件。')) {
       throw new Error('已取消保存检测范围')
     }
+    const scopeID = currentModelScopeID()
     const c = await api('/api/config', {
       dangerous: true,
       method: 'PUT',
+      instanceID: scopeID,
       body: JSON.stringify({ ...cfg, model_probe_providers: providerKeys }),
     })
+    if (!isCurrentModelScope(scopeID)) return c.model_probe_providers || []
     setCfg(c)
     setMsg('模型检测范围已保存')
     return c.model_probe_providers || []
   }
   const revealModelKey = async (idx, profile, refresh = false) => {
+    const scopeID = currentModelScopeID()
     const profileKey = getModelProfileKey(idx, profile || profiles[idx])
     if (!refresh && Object.prototype.hasOwnProperty.call(modelRevealedKeys, profileKey)) {
       clearRevealedModelKey(idx, profile)
@@ -1146,27 +1226,28 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     setModelKeyBusy(prev => ({ ...prev, [profileKey]: true }))
     try {
-      const d = await api('/api/models/raw', { dangerous: true, headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {} })
+      const d = await api('/api/models/raw', { dangerous: true, instanceID: scopeID })
       const rawProfiles = d?.profiles || []
       const varName = String(profile?.var_name || '').trim()
       const raw = (varName ? rawProfiles.find(p => String(p.var_name || '').trim() === varName) : null) || rawProfiles[idx]
       const key = String(raw?.apikey || profile?.apikey || '').trim()
-      setModelRevealedKeys(prev => ({ ...prev, [profileKey]: key }))
+      if (isCurrentModelScope(scopeID)) setModelRevealedKeys(prev => ({ ...prev, [profileKey]: key }))
     } catch (e) {
-      setMsg(`Failed to reveal model key: ${e.message}`)
+      if (isCurrentModelScope(scopeID)) setMsg(`Failed to reveal model key: ${e.message}`)
     } finally {
-      setModelKeyBusy(prev => ({ ...prev, [profileKey]: false }))
+      if (isCurrentModelScope(scopeID)) setModelKeyBusy(prev => ({ ...prev, [profileKey]: false }))
     }
   }
 
   const persistModelProfiles = async (nextProfiles, { confirm = true, statusKeys = [], nextFailoverGroups = failoverGroups } = {}) => {
     if (confirm && !confirmDanger('models-save', lang === 'zh' ? '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？' : 'Saving model configuration updates mykey.py and may overwrite the active configuration. Continue?')) return false
-    const saving = Object.fromEntries(statusKeys.map(k => [k, { status: 'saving', error: '', savedAt: null }]))
-    if (statusKeys.length) setModelSaveStatus(current => ({ ...current, ...saving }))
+    const scopeID = currentModelScopeID()
+    if (statusKeys.length) setModelSaveStatus(current => ({ ...current, ...Object.fromEntries(statusKeys.map(k => [k, { status: 'saving', error: '', savedAt: null }])) }))
     setBusy(true)
     try {
       const cleanGroups = normalizeFailoverGroups(nextFailoverGroups)
-      const d = await api('/api/models/export', { dangerous:true, method:'POST', headers: modelInstance?.id ? { 'X-GA-Instance-ID': modelInstance.id } : {}, body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
+      const d = await api('/api/models/export', { dangerous:true, method:'POST', instanceID: scopeID, body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
+      if (!isCurrentModelScope(scopeID)) return false
       const cleanProfiles = nextProfiles.map(({ previous_var_name: _previousVarName, ...profile }) => profile)
       setPersistedModelProfiles(cleanProfiles)
       setFailoverGroups(cleanGroups)
@@ -1176,16 +1257,17 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         setModelSaveStatus(current => ({ ...current, ...saved }))
       }
       setMsg(t.hints.modelsSaved)
-      loadTitleModel().catch(() => {})
+      loadTitleModel(scopeID).catch(() => {})
       return true
     } catch(e) {
+      if (!isCurrentModelScope(scopeID)) return false
       setMsg(e.message)
       if (statusKeys.length) {
         const failed = Object.fromEntries(statusKeys.map(k => [k, { status: 'error', error: e.message, savedAt: null }]))
         setModelSaveStatus(current => ({ ...current, ...failed }))
       }
       return false
-    } finally { setBusy(false) }
+    } finally { if (isCurrentModelScope(scopeID)) setBusy(false) }
   }
 
   const saveModelProfile = async (idx, profileKeyOverride, profileOverride) => {
@@ -1484,7 +1566,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         <Suspense fallback={<RouteFallback label={t.loading} />}>
           <React.Fragment key={`${tab}:${activeInstanceID}`}>
       {tab==='overview' && <>{overviewPage}{moduleTodo('overview')}</>}
-      {tab==='instances' && <InstancesPage lang={lang} activeInstanceID={activeInstanceID} onSelectInstance={selectInstance}/>}
+      {tab==='instances' && <InstancesPage lang={lang} activeInstanceID={activeInstanceID} onSelectInstance={selectInstance} onConfigureModels={openModels}/>}
       {tab==='chat' && <ChatPage t={t} slashCommands={cfg?.slash_commands} llms={llms}/>}
       {tab==='notifications' && <><NotificationsPage lang={lang} onOpen={openNotification}/>{moduleTodo('notifications')}</>}
       {tab==='control' && <section>
@@ -1600,7 +1682,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       {tab==='usage' && <><UsagePage lang={lang}/>{moduleTodo('usage')}</>}
       {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
       {tab==='settings' && <><SettingsPage t={t} lang={lang} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft} uiScale={uiScale} onUiScaleChange={onUiScaleChange}/>{moduleTodo('settings')}</>}
-      {tab==='models' && <><Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey}/>{moduleTodo('models')}</>}
+      {tab==='models' && <><Models t={t} profiles={profiles} persistedProfiles={persistedModelProfiles} setProfiles={setProfiles} patchProfile={patchProfile} addModelProfiles={addModelProfiles} importModels={importModels} previewModels={previewModels} saveModelProfile={saveModelProfile} onSaveModelProfiles={saveModelProfiles} onSaveModelOrder={saveModelOrder} onSaveFailoverGroups={saveFailoverGroups} failoverGroups={failoverGroups} deleteModelProfile={deleteModelProfile} discoverModels={discoverModels} probeModels={probeModels} modelProbeProviders={cfg?.model_probe_providers || []} onSaveModelProbeProviders={saveModelProbeProviders} modelPreview={modelPreview} modelSaveStatus={modelSaveStatus} importLoading={modelImportLoading} riskCatalog={observability?.riskItems || []} riskCatalogError={observabilityError} revealedKeys={modelRevealedKeys} revealBusy={modelKeyBusy} getProfileKey={getModelProfileKey} onRevealKey={revealModelKey} onClearRevealedKey={clearRevealedModelKey} modelInstance={modelInstance} modelInstanceLabel={lang === 'zh' ? '配置实例' : 'Configuring instance'}/>{moduleTodo('models')}</>}
        {tab==='logs' && <><LogsPage t={t} services={services} stream={logStream} onStart={name=>serviceAction(name, 'start')} onStop={name=>serviceAction(name, 'stop')}/>{moduleTodo('logs')}</>}        </React.Fragment>
         </Suspense>
   </ErrorBoundary>
