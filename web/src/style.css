@@ -12018,20 +12018,26 @@ html[data-theme="warm"] .models-page {
   font-size: 11px;
 }
 
-.model-provider-modal {
-  --model-ink: #17324d;
-  --model-ink-strong: #10283f;
-  --model-wash: #f2f6f8;
-  --model-wash-strong: #e8f0f3;
-  --model-paper: var(--g-ffffffa94);
-  --model-panel: var(--g-f8fafaa82);
-  --model-line: color-mix(in srgb, var(--text) 12%, transparent);
-  --model-line-strong: color-mix(in srgb, var(--text) 20%, transparent);
-  --model-focus: #3b7c98;
-  --model-error: #b5454a;
+.model-provider-modal .ant-modal-content {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: var(--shadow);
 }
 
-.model-provider-modal .ant-modal-content { overflow: hidden; }
+.model-provider-modal .ant-modal-header,
+.model-provider-modal .ant-modal-footer {
+  background: transparent;
+}
+
+.model-provider-modal .ant-modal-title { color: var(--text); }
+
+.model-provider-modal .ant-modal-close { color: var(--muted); }
+.model-provider-modal .ant-modal-close:hover {
+  color: var(--text);
+  background: var(--hover-bg);
+}
 
 .model-provider-modal .ant-modal-body {
   max-height: min(72vh, 720px);
@@ -12071,12 +12077,27 @@ html[data-theme="warm"] .models-page {
 .model-provider-modal .model-field .ant-select-selector,
 .model-provider-modal .model-field textarea {
   min-height: 35px;
-  border-color: var(--model-line-strong);
+  border-color: var(--border);
   border-radius: 7px;
   color: var(--text);
-  background: var(--model-paper);
+  background: var(--input-bg);
   box-shadow: none;
   font-size: 12px;
+}
+
+.model-provider-modal .model-field .ant-input:hover,
+.model-provider-modal .model-field .ant-input-affix-wrapper:hover,
+.model-provider-modal .model-field .ant-select-selector:hover,
+.model-provider-modal .model-field textarea:hover {
+  border-color: var(--border-strong);
+}
+
+.model-provider-modal .model-field .ant-input:focus,
+.model-provider-modal .model-field .ant-input-affix-wrapper-focused,
+.model-provider-modal .model-field .ant-select-focused .ant-select-selector,
+.model-provider-modal .model-field textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .model-provider-modal .model-drawer-footer {
@@ -12099,8 +12120,7 @@ html[data-theme="warm"] .models-page {
   min-width: 0;
 }
 
-.model-provider-modal .model-subsection-head,
-.model-provider-modal .model-provider-model-head {
+.model-provider-modal .model-subsection-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -12108,7 +12128,7 @@ html[data-theme="warm"] .models-page {
 }
 
 .model-provider-modal .model-subsection-head strong {
-  color: var(--model-ink-strong);
+  color: var(--text);
   font-size: 11.5px;
   font-weight: 660;
 }
@@ -12121,36 +12141,121 @@ html[data-theme="warm"] .models-page {
 
 .model-provider-modal .model-provider-models {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
 .model-provider-modal .model-provider-model-card {
-  display: grid;
-  gap: 12px;
   min-width: 0;
-  padding: 13px 14px 14px;
-  border: 1px solid var(--model-line);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--model-paper) 84%, var(--model-wash));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  transition: border-color .16s ease, background-color .16s ease;
 }
 
-.model-provider-modal .model-provider-model-head .model-field { flex: 1; }
+.model-provider-modal .model-provider-model-card:hover,
+.model-provider-modal .model-provider-model-card.is-expanded {
+  border-color: var(--border-strong);
+}
+
+.model-provider-modal .model-provider-model-summary-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.model-provider-modal .model-provider-model-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+  padding: 10px 12px;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-provider-modal .model-provider-model-toggle:hover {
+  background: var(--hover-bg);
+}
+
+.model-provider-modal .model-provider-model-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.model-provider-modal .model-provider-model-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-provider-modal .model-provider-model-summary strong,
+.model-provider-modal .model-provider-model-summary em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-provider-modal .model-provider-model-summary strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.model-provider-modal .model-provider-model-summary em {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-style: normal;
+}
+
+.model-provider-modal .model-provider-model-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.model-provider-modal .model-provider-model-action svg {
+  transition: transform .16s ease;
+}
+
+.model-provider-modal .model-provider-model-card.is-expanded .model-provider-model-action svg {
+  transform: rotate(180deg);
+}
+
+.model-provider-modal .model-provider-model-summary-row > .ant-btn {
+  align-self: center;
+  flex: 0 0 auto;
+  margin-right: 5px;
+}
+
+.model-provider-modal .model-provider-model-config {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-strong);
+}
 
 .model-provider-modal .model-hint-block {
   padding: 11px 12px;
-  border: 1px dashed var(--model-line-strong);
+  border: 1px dashed var(--border-strong);
   border-radius: 8px;
   color: var(--muted);
+  background: var(--surface-subtle);
   font-size: 11px;
   text-align: center;
-}
-
-[data-color-scheme="dark"] .model-provider-modal {
-  --model-ink: #c4d9e3;
-  --model-ink-strong: #e2edf2;
-  --model-wash: color-mix(in srgb, var(--surface-2) 82%, #24404d);
-  --model-wash-strong: color-mix(in srgb, var(--surface-2) 72%, #31515f);
-  --model-paper: var(--surface);
 }
 
 @media (max-width: 640px) {

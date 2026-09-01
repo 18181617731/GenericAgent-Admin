@@ -18,7 +18,7 @@ import {
   Trash2,
   UploadCloud,
 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Collapse, Drawer, Input, Modal, Select, Space, Tag } from 'antd'
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
@@ -463,8 +463,14 @@ function ProviderModal({
 }) {
   const text = t.models
   const creating = mode === 'create'
+  const [expandedModel, setExpandedModel] = useState(null)
   const revealed = !creating && revealedKey != null && String(revealedKey).trim() !== '' && !isMaskedSecret(revealedKey)
   const configs = creating ? [] : profileModelConfigs(profile || {})
+
+  useEffect(() => {
+    setExpandedModel(null)
+  }, [open, mode, index])
+
   const patchModel = (configIndex, patch) => {
     const next = updateModelConfig(profile || {}, configIndex, patch)
     onChange({ model: next.model, models: next.models, model_configs: next.model_configs })
@@ -544,32 +550,62 @@ function ProviderModal({
             </div>
             {configs.length ? (
               <div className="model-provider-models">
-                {configs.map((config, configIndex) => (
-                  <article key={`${config.model}-${configIndex}`} className="model-provider-model-card">
-                    <div className="model-provider-model-head">
-                      <label className="model-field model-field--wide">
-                        <span className="model-field-label">{text.model}</span>
-                        <Input
-                          value={config.model || ''}
-                          onChange={event => patchModel(configIndex, { model: event.target.value })}
+                {configs.map((config, configIndex) => {
+                  const expanded = expandedModel === configIndex
+                  const panelId = `provider-model-config-${index}-${configIndex}`
+                  return (
+                    <article
+                      key={config.instance_id || `provider-model-${configIndex}`}
+                      className={`model-provider-model-card${expanded ? ' is-expanded' : ''}`}
+                    >
+                      <div className="model-provider-model-summary-row">
+                        <button
+                          type="button"
+                          className="model-provider-model-toggle"
+                          aria-expanded={expanded}
+                          aria-controls={panelId}
+                          onClick={() => setExpandedModel(current => current === configIndex ? null : configIndex)}
+                        >
+                          <span className="model-provider-model-summary">
+                            <strong>{config.display_name || config.model || text.model}</strong>
+                            {config.display_name && config.model && <em>{config.model}</em>}
+                          </span>
+                          <span className="model-provider-model-action">
+                            {expanded ? text.collapse : text.configure}
+                            <ChevronDown size={15} aria-hidden="true" />
+                          </span>
+                        </button>
+                        <Button
+                          danger
+                          type="text"
+                          icon={<Trash2 size={14} />}
+                          aria-label={`${t.delete} ${config.model}`}
+                          onClick={() => {
+                            setExpandedModel(null)
+                            onRemoveModel?.(configIndex, config)
+                          }}
                         />
-                      </label>
-                      <Button
-                        danger
-                        type="text"
-                        icon={<Trash2 size={14} />}
-                        aria-label={`${t.delete} ${config.model}`}
-                        onClick={() => onRemoveModel?.(configIndex, config)}
-                      />
-                    </div>
-                    <ModelParams
-                      config={config}
-                      protocol={profile?.type || DEFAULT_PROTOCOL}
-                      onChange={patch => patchModel(configIndex, patch)}
-                      t={t}
-                    />
-                  </article>
-                ))}
+                      </div>
+                      {expanded && (
+                        <div id={panelId} className="model-provider-model-config">
+                          <label className="model-field model-field--wide">
+                            <span className="model-field-label">{text.model}</span>
+                            <Input
+                              value={config.model || ''}
+                              onChange={event => patchModel(configIndex, { model: event.target.value })}
+                            />
+                          </label>
+                          <ModelParams
+                            config={config}
+                            protocol={profile?.type || DEFAULT_PROTOCOL}
+                            onChange={patch => patchModel(configIndex, patch)}
+                            t={t}
+                          />
+                        </div>
+                      )}
+                    </article>
+                  )
+                })}
               </div>
             ) : <div className="model-hint-block">{text.providerNoModels}</div>}
           </div>

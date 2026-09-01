@@ -454,7 +454,7 @@ describe('Models call list', () => {
     expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
   })
 
-  test('opens provider settings as a modal and edits its model configuration inline', () => {
+  test('opens provider settings as a modal and expands model configuration on demand', () => {
     installBrowserPolyfills()
     render(<ModelsHarness />)
 
@@ -464,14 +464,26 @@ describe('Models call list', () => {
     expect(modal).toBeTruthy()
     expect(document.querySelector('.model-provider-drawer')).toBeNull()
     expect(modal.querySelectorAll('.model-provider-model-card')).toHaveLength(1)
+    expect(modal.querySelector('.model-params-grid')).toBeNull()
+
+    const toggle = modal.querySelector('.model-provider-model-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(modal.querySelector('.model-params-grid')).toBeTruthy()
 
-    const modelIdInput = modal.querySelector('.model-provider-model-head input')
+    const modelIdInput = modal.querySelector('.model-provider-model-config input')
     expect(modelIdInput.value).toBe('demo-model')
     fireEvent.change(modelIdInput, { target: { value: 'demo-model-v2' } })
 
     expect(document.querySelector('.model-call-title strong').textContent).toBe('demo-model-v2')
-    expect(document.querySelector('.model-provider-model-head input').value).toBe('demo-model-v2')
+    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model-v2')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(modal.querySelector('.model-params-grid')).toBeNull()
   })
 
   test('edits a model display name without changing its model ID', () => {
