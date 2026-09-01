@@ -647,7 +647,7 @@ native_oai_config_a_2 = {
 	}
 }
 
-func TestImportLegacyMyKeyGroupsProfilesByProviderIdentity(t *testing.T) {
+func TestImportLegacyMyKeyDoesNotGroupWithoutDisplayName(t *testing.T) {
 	root := t.TempDir()
 	mykey := `native_oai_config_gpt55 = {
     "apikey": "sk-shared-real-secret",
@@ -670,21 +670,72 @@ native_oai_config_gpt55_2 = {
 	if err != nil {
 		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
 	}
-	if len(draft.Profiles) != 1 {
-		t.Fatalf("profiles len = %d, want one provider: %#v", len(draft.Profiles), draft.Profiles)
+	if len(draft.Profiles) != 2 {
+		t.Fatalf("profiles len = %d, want providers without display_name kept separate: %#v", len(draft.Profiles), draft.Profiles)
 	}
-	got := draft.Profiles[0]
-	if got.VarName != "native_oai_config_gpt55" {
-		t.Fatalf("provider var_name = %q, want first legacy variable", got.VarName)
+	if draft.Profiles[0].VarName != "native_oai_config_gpt55" || draft.Profiles[1].VarName != "native_oai_config_gpt55_2" {
+		t.Fatalf("provider order changed: %#v", draft.Profiles)
 	}
-	if len(got.Models) != 2 || got.Models[0] != "gpt-5.5" || got.Models[1] != "gpt-5.4" {
-		t.Fatalf("provider models = %#v, want both legacy models", got.Models)
+	if len(draft.Profiles[0].ModelConfigs) != 1 || draft.Profiles[0].ModelConfigs[0].Model != "gpt-5.5" || draft.Profiles[0].ModelConfigs[0].ServiceTier != "priority" {
+		t.Fatalf("first provider config changed: %#v", draft.Profiles[0].ModelConfigs)
 	}
-	if len(got.ModelConfigs) != 2 || got.ModelConfigs[0].ServiceTier != "priority" || got.ModelConfigs[1].ServiceTier != "" {
-		t.Fatalf("legacy model service tiers = %#v, want priority and empty", got.ModelConfigs)
+	if len(draft.Profiles[1].ModelConfigs) != 1 || draft.Profiles[1].ModelConfigs[0].Model != "gpt-5.4" {
+		t.Fatalf("second provider config changed: %#v", draft.Profiles[1].ModelConfigs)
 	}
-	if got.APIKey != "sk-****cret" {
-		t.Fatalf("masked provider key = %q, want masked secret", got.APIKey)
+	if draft.Profiles[0].APIKey != "sk-****cret" || draft.Profiles[1].APIKey != "sk-****cret" {
+		t.Fatalf("masked provider keys = %q, %q", draft.Profiles[0].APIKey, draft.Profiles[1].APIKey)
+	}
+}
+
+func TestImportGroupsProfilesOnlyByDisplayName(t *testing.T) {
+	root := t.TempDir()
+	profiles := []Profile{
+		{
+			VarName:     "native_oai_config_shared_one",
+			DisplayName: "Shared Provider",
+			Type:        "native_oai",
+			APIBase:     "https://api.example/v1",
+			Model:       "model-one",
+			APIKey:      "sk-shared-secret",
+		},
+		{
+			VarName:     "native_oai_config_shared_two",
+			DisplayName: "Shared Provider",
+			Type:        "native_oai",
+			APIBase:     "https://api.example/v1",
+			Model:       "model-two",
+			APIKey:      "sk-shared-secret",
+		},
+		{
+			VarName:     "native_oai_config_distinct",
+			DisplayName: "Distinct Provider",
+			Type:        "native_oai",
+			APIBase:     "https://api.example/v1",
+			Model:       "model-three",
+			APIKey:      "sk-shared-secret",
+		},
+	}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	draft, err := ImportMyKeyWithPython(root, "", false)
+	if err != nil {
+		t.Fatalf("ImportMyKeyWithPython() error = %v", err)
+	}
+	if len(draft.Profiles) != 2 {
+		t.Fatalf("profiles len = %d, want same display_name grouped and different display_name separate: %#v", len(draft.Profiles), draft.Profiles)
+	}
+	grouped := draft.Profiles[0]
+	if grouped.DisplayName != "Shared Provider" || grouped.VarName != "native_oai_config_shared_one" {
+		t.Fatalf("grouped provider = %#v", grouped)
+	}
+	if len(grouped.Models) != 2 || grouped.Models[0] != "model-one" || grouped.Models[1] != "model-two" {
+		t.Fatalf("grouped models = %#v, want display_name peers", grouped.Models)
+	}
+	distinct := draft.Profiles[1]
+	if distinct.DisplayName != "Distinct Provider" || len(distinct.Models) != 1 || distinct.Models[0] != "model-three" {
+		t.Fatalf("distinct provider changed or merged by credentials: %#v", distinct)
 	}
 }
 

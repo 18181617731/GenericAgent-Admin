@@ -682,7 +682,7 @@ def mask(s):
 profiles_by_var={}
 profile_order=[]
 declaration_order_by_var={}
-identity_by_var={}
+aggregation_key_by_var={}
 model_instances=getattr(mod, '_ga_admin_model_instances', {})
 if not isinstance(model_instances, dict):
     model_instances={}
@@ -756,7 +756,6 @@ for var, value in vars(mod).items():
     if failover_order is not None:
         p['failover_order']=failover_order
         p.update(failover_values)
-    identity_by_var[var]=(typ, apibase.strip().rstrip('/'), apikey_text)
     for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('service_tier','service_tier'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
     instance_id=model_instances.get(var)
@@ -838,22 +837,20 @@ if isinstance(groups, dict):
         if children:
             base['source_var_name']=children[0].get('source_var_name', '')
         if meta:
-            base['display_name']=str(meta.get('display_name', '') or '').strip()
+            display_name=str(meta.get('display_name', '') or '').strip()
+            base['display_name']=display_name
             base['type']=str(meta.get('type', base.get('type', 'native_oai')) or 'native_oai')
             base['name']=str(meta.get('name', base.get('name', '')) or '')
             base['apibase']=str(meta.get('apibase', base.get('apibase', '')) or '')
             meta_apikey=str(meta.get('apikey', '') or '')
             base['apikey']=mask(meta_apikey)
-            identity_by_var[provider]=(base['type'], base['apibase'].strip().rstrip('/'), meta_apikey)
+            if display_name:
+                aggregation_key_by_var[provider]=display_name
         base['model']=models[0] if models else ''
         base['models']=models
         base['model_configs']=configs
         grouped[provider]=base
         grouped_order.append(provider)
-        if children and not meta:
-            first_child_var=next((child_var for child_var in child_vars if isinstance(child_var, str) and child_var in identity_by_var), None)
-            if first_child_var is not None:
-                identity_by_var[provider]=identity_by_var[first_child_var]
         for child_var in child_vars:
             if isinstance(child_var, str) and child_var in profiles_by_var:
                 child_to_provider[child_var]=provider
@@ -876,13 +873,13 @@ for provider in grouped_order:
 provider_index={}
 merged_profiles=[]
 for profile in profiles:
-    identity=identity_by_var.get(profile.get('var_name'))
-    if identity is None or identity not in provider_index:
-        if identity is not None:
-            provider_index[identity]=len(merged_profiles)
+    aggregation_key=aggregation_key_by_var.get(profile.get('var_name'))
+    if aggregation_key is None or aggregation_key not in provider_index:
+        if aggregation_key is not None:
+            provider_index[aggregation_key]=len(merged_profiles)
         merged_profiles.append(profile)
         continue
-    base=merged_profiles[provider_index[identity]]
+    base=merged_profiles[provider_index[aggregation_key]]
     configs=[]
     for source in (base, profile):
         for config in model_configs_of(source):
@@ -901,22 +898,20 @@ for profile in profiles:
     profile['models']=models
     profile['model_configs']=configs
 
-final_by_identity={}
+final_by_aggregation_key={}
 final_by_var={}
 for profile in profiles:
     var_name=profile.get('var_name')
     if isinstance(var_name, str) and var_name:
         final_by_var[var_name]=profile
-        identity=identity_by_var.get(var_name)
-        if identity is not None:
-            final_by_identity[identity]=profile
+        aggregation_key=aggregation_key_by_var.get(var_name)
+        if aggregation_key is not None:
+            final_by_aggregation_key[aggregation_key]=profile
 session_targets={}
 for source_var, source_profile in profiles_by_var.items():
     provider_var=child_to_provider.get(source_var, source_var)
-    identity=identity_by_var.get(provider_var)
-    if identity is None:
-        identity=identity_by_var.get(source_var)
-    final_profile=final_by_identity.get(identity) if identity is not None else None
+    aggregation_key=aggregation_key_by_var.get(provider_var)
+    final_profile=final_by_aggregation_key.get(aggregation_key) if aggregation_key is not None else None
     if final_profile is None:
         final_profile=final_by_var.get(provider_var) or final_by_var.get(source_var)
     model=str(source_profile.get('model', '') or '').strip()
