@@ -1714,15 +1714,31 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255
 .oa-math .katex-error{color:var(--danger,#b42318);font-family:"SFMono-Regular",Consolas,monospace;font-size:.9em}
 .oa-code-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--code-bg);border:1px solid var(--border);box-shadow:none}
 .oa-mermaid-card{margin:14px 0;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--border);box-shadow:none}
+.oa-mermaid-head{height:auto;min-height:38px;gap:8px;flex-wrap:wrap;padding-block:5px}
+.oa-mermaid-modes,.oa-mermaid-tools{display:flex;align-items:center;gap:3px}
+.oa-mermaid-tools{margin-left:auto}
+.oa-mermaid-modes button,.oa-mermaid-tool{min-height:26px!important;height:26px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);box-shadow:none!important;font-size:11.5px;line-height:1;display:inline-flex;align-items:center;justify-content:center;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.oa-mermaid-modes button{padding:0 8px}
+.oa-mermaid-tool{width:26px;padding:0}
+.oa-mermaid-modes button:hover:not(:disabled),.oa-mermaid-tool:hover:not(:disabled){background:var(--surface-strong);border-color:var(--border);color:var(--text)}
+.oa-mermaid-modes button:focus-visible,.oa-mermaid-tool:focus-visible{outline:2px solid var(--accent,#08785f);outline-offset:1px}
+.oa-mermaid-modes button.is-active,.oa-mermaid-tool.is-active{background:color-mix(in srgb,var(--accent,#08785f) 12%,var(--surface));border-color:color-mix(in srgb,var(--accent,#08785f) 35%,var(--border));color:var(--accent,#08785f)}
+.oa-mermaid-modes button:disabled,.oa-mermaid-tool:disabled{cursor:not-allowed;opacity:.4}
+.oa-mermaid-scale{width:36px;color:var(--muted);font-variant-numeric:tabular-nums;text-align:center;font-size:10.5px}
 /* Mermaid measures foreignObject labels outside the markdown tree. Keep the
    mounted diagram on that same typography baseline so its fixed boxes do not
    wrap or clip after inheriting chat prose styles. */
-.oa-mermaid-diagram{min-height:120px;padding:18px;overflow:auto;background:var(--surface);display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal}
+.oa-mermaid-viewport{min-height:120px;overflow:hidden;background:var(--surface);touch-action:auto;user-select:auto}
+.oa-mermaid-viewport.is-pan-enabled{cursor:grab;touch-action:pan-y;user-select:none}
+.oa-mermaid-viewport.is-dragging{cursor:grabbing}
+.oa-mermaid-diagram{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal;transform-origin:center center;will-change:transform}
 .oa-mermaid-diagram foreignObject p{white-space:inherit}
 .oa-mermaid-diagram svg{display:block;max-width:100%;height:auto;margin:auto}
 .oa-mermaid-status{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--surface)}
 .oa-mermaid-error{padding:10px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--danger,#b42318) 8%,var(--surface));color:var(--danger,#b42318);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .oa-mermaid-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:var(--code-bg);color:var(--code-text);font-size:13px;line-height:20px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
+.oa-mermaid-stream-note{min-height:auto;justify-content:flex-start;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px}
+@media(max-width:620px){.oa-mermaid-head{align-items:flex-start}.oa-mermaid-tools{width:100%;margin-left:0}.oa-mermaid-tools .oa-mini-copy{margin-left:auto}}
 .oa-code-head{height:38px;background:var(--surface-muted);color: var(--text);display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;text-transform:none;border-bottom:1px solid var(--border)}
 .oa-code-head span{color: var(--text);font-weight:500}
 .oa-code-card pre{margin:0;padding:14px 16px;overflow:auto;max-height:520px;background:var(--code-bg);color: var(--code-text);font-size:13px;line-height:20px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;white-space:pre}
