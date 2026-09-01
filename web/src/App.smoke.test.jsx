@@ -419,6 +419,18 @@ describe('Models call list', () => {
     expect(document.querySelector('.model-call-row .model-call-title strong').textContent).toBe('demo-model')
   })
 
+  test('keeps compact toolbar utilities icon-only with accessible labels', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    for (const label of ['重新读取', '配置预览', '放弃更改']) {
+      const button = screen.getByRole('button', { name: label })
+      expect(button.textContent).toBe('')
+      expect(button.title).toBe(label)
+      expect(button.querySelector('.ant-btn-icon')).toBeTruthy()
+    }
+  })
+
   test('switches workspaces without unmounting model or provider controls', () => {
     installBrowserPolyfills()
     render(<ModelsHarness />)

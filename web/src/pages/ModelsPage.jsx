@@ -1006,8 +1006,8 @@ export function Models({
           <span className={`model-draft-state${changes.total ? ' is-dirty' : ''}`}>
             {changes.total ? text.unsavedChanges(changes.total) : text.inSync}
           </span>
-          <Button className="model-utility-action" title={text.rereadConfig} aria-label={text.rereadConfig} icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}><span>{text.rereadConfig}</span></Button>
-          <Button className="model-utility-action" title={text.configPreview} aria-label={text.configPreview} icon={<FileCode2 size={14} />} onClick={async () => { setPreviewOpen(true); await previewModels() }}><span>{text.configPreview}</span></Button>
+          <Button className="model-utility-action" title={text.rereadConfig} aria-label={text.rereadConfig} icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading} />
+          <Button className="model-utility-action" title={text.configPreview} aria-label={text.configPreview} icon={<FileCode2 size={14} />} onClick={async () => { setPreviewOpen(true); await previewModels() }} />
           <Button
             className="model-utility-action"
             title={text.discard}
@@ -1015,9 +1015,7 @@ export function Models({
             icon={<RotateCcw size={14} />}
             disabled={!changes.total || saving}
             onClick={async () => { if (changes.total && await confirmDanger('models-discard', text.discardConfirm)) discardDraft() }}
-          >
-            <span>{text.discard}</span>
-          </Button>
+          />
           <Button
             className="model-save-action"
             type="primary"
