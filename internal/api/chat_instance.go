@@ -146,10 +146,7 @@ func pythonFallbackRoots(base config.AppConfig, skipID string) []string {
 }
 
 func (s *Server) chatServerForRequest(r *http.Request) (*Server, string, error) {
-	baseStore := s.BaseCfgStore
-	if baseStore == nil {
-		baseStore = s.CfgStore
-	}
+	baseStore := s.baseConfigStore()
 	if baseStore == nil {
 		return nil, "", fmt.Errorf("config store is not initialized")
 	}

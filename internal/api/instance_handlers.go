@@ -321,6 +321,21 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 		if instance.EffectivePython == "" {
 			instance.EffectivePython = strings.TrimSpace(source.EffectivePython)
 		}
+		// A project clone inherits its non-runtime Admin preferences, while
+		// service autostart stays off to avoid unexpectedly starting a second
+		// copy of a port-owning service after restart. Memory and mykey remain
+		// explicit opt-in file-copy choices above.
+		instance.ChatDataDir = filepath.Join(cfg.ChatDataDir, "instances", instance.ID)
+		instance.BootstrapDone = source.BootstrapDone
+		instance.ServiceModels = cloneIntMap(source.ServiceModels)
+		instance.ModelProbeProviders = append([]string(nil), source.ModelProbeProviders...)
+		if source.ChatTitleModel != nil {
+			model := *source.ChatTitleModel
+			instance.ChatTitleModel = &model
+		}
+		instance.ChatDefaultLLMNo = source.ChatDefaultLLMNo
+		instance.SlashCommands = append([]config.SlashCommandItem(nil), source.SlashCommands...)
+		instance.ExtraSystemPromptPresets = append([]config.ExtraSystemPromptPreset(nil), source.ExtraSystemPromptPresets...)
 	}
 	cfg.Instances = append(cfg.Instances, instance)
 	if len(cfg.Instances) == 1 {
@@ -379,6 +394,18 @@ func (s *Server) instanceUpdate(w http.ResponseWriter, r *http.Request) {
 			}
 			// Initialization state is server-owned and cannot be overwritten by
 			// an instance metadata update.
+			instance.ChatDataDir = current.ChatDataDir
+			instance.BootstrapDone = current.BootstrapDone
+			instance.ServiceAutostart = append([]string(nil), current.ServiceAutostart...)
+			instance.ServiceModels = cloneIntMap(current.ServiceModels)
+			instance.ModelProbeProviders = append([]string(nil), current.ModelProbeProviders...)
+			if current.ChatTitleModel != nil {
+				model := *current.ChatTitleModel
+				instance.ChatTitleModel = &model
+			}
+			instance.ChatDefaultLLMNo = current.ChatDefaultLLMNo
+			instance.SlashCommands = append([]config.SlashCommandItem(nil), current.SlashCommands...)
+			instance.ExtraSystemPromptPresets = append([]config.ExtraSystemPromptPreset(nil), current.ExtraSystemPromptPresets...)
 			instance.InitStatus = current.InitStatus
 			instance.InitError = current.InitError
 			instance.InitStage = current.InitStage
@@ -505,6 +532,17 @@ func (s *Server) instanceSetDefault(w http.ResponseWriter, r *http.Request) {
 func cloneConfigWithInstances(cfg config.AppConfig) config.AppConfig {
 	cfg.Instances = append([]config.InstanceConfig(nil), cfg.Instances...)
 	return cfg
+}
+
+func cloneIntMap(values map[string]int) map[string]int {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]int, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func writeInstanceMutationResult(w http.ResponseWriter, cfg config.AppConfig) {

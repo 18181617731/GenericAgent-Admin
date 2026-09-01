@@ -106,11 +106,6 @@ func resolveChatTitleModel(ref *config.ChatTitleModelRef, options []chatTitleMod
 }
 
 func (s *Server) reconcileChatTitleModel(profiles []modelconfig.Profile) error {
-	// Instance-scoped model requests use an in-memory derived config store.
-	// Chat title selection is Admin-wide, so model-file edits must not rewrite it.
-	if s.BaseCfgStore != nil && s.BaseCfgStore != s.CfgStore {
-		return nil
-	}
 	current := s.CfgStore.Snapshot().ChatTitleModel
 	if current == nil {
 		return nil
@@ -126,7 +121,7 @@ func (s *Server) reconcileChatTitleModel(profiles []modelconfig.Profile) error {
 	defer s.ConfigMu.Unlock()
 	cfg := s.CfgStore.Snapshot()
 	cfg.ChatTitleModel = resolved
-	return s.CfgStore.Save(cfg)
+	return s.saveScopedInstanceProjectConfig(cfg)
 }
 
 func (s *Server) modelsTitleModel(w http.ResponseWriter, r *http.Request) {
@@ -157,11 +152,13 @@ func (s *Server) modelsTitleModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, "selected title model is not present in the saved model configuration")
 		return
 	}
-	s.ConfigMu.Lock()
+	if s.ConfigMu != nil {
+		s.ConfigMu.Lock()
+		defer s.ConfigMu.Unlock()
+	}
 	cfg := s.CfgStore.Snapshot()
 	cfg.ChatTitleModel = resolved
-	err = s.CfgStore.Save(cfg)
-	s.ConfigMu.Unlock()
+	err = s.saveScopedInstanceProjectConfig(cfg)
 	if err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return

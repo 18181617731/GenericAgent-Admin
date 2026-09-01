@@ -40,6 +40,7 @@ func newInstanceManagerRegistry(cfg config.AppConfig, fallback *service.Manager)
 		} else {
 			manager = service.NewManagerWithPython(instance.GARoot, instance.EffectivePython, cfg.BufferLines)
 		}
+		manager.SetUsageDir(usageEventDir(scopedAppConfig(cfg, instance)))
 		r.entries[instance.ID] = &instanceRuntime{config: instance, manager: manager}
 	}
 	r.defaultID = cfg.DefaultInstanceID
@@ -90,13 +91,16 @@ func (r *instanceManagerRegistry) reconcile(next config.AppConfig) (*service.Man
 		id := strings.TrimSpace(instance.ID)
 		if current, ok := r.entries[id]; ok {
 			current.manager.SetRoot(instance.GARoot, instance.EffectivePython, next.BufferLines)
+			current.manager.SetUsageDir(usageEventDir(scopedAppConfig(next, instance)))
 			current.config = instance
 			nextEntries[id] = current
 			continue
 		}
+		manager := service.NewManagerWithPython(instance.GARoot, instance.EffectivePython, next.BufferLines)
+		manager.SetUsageDir(usageEventDir(scopedAppConfig(next, instance)))
 		nextEntries[id] = &instanceRuntime{
 			config:  instance,
-			manager: service.NewManagerWithPython(instance.GARoot, instance.EffectivePython, next.BufferLines),
+			manager: manager,
 		}
 	}
 	r.entries = nextEntries
@@ -107,6 +111,7 @@ func (r *instanceManagerRegistry) reconcile(next config.AppConfig) (*service.Man
 	if len(r.entries) == 0 {
 		if r.fallback != nil {
 			r.fallback.SetRoot(next.GARoot, next.EffectivePython, next.BufferLines)
+			r.fallback.SetUsageDir(usageEventDir(next))
 		}
 		return r.fallback, nil
 	}
@@ -174,21 +179,25 @@ func sameRuntimePath(a, b string) bool {
 }
 
 func (s *Server) saveConfigAndReconcile(next config.AppConfig) error {
+	store := s.baseConfigStore()
+	if store == nil {
+		return fmt.Errorf("config store is not initialized")
+	}
 	if s.InstanceManagers == nil {
-		s.InstanceManagers = newInstanceManagerRegistry(s.CfgStore.Snapshot(), s.Svc)
+		s.InstanceManagers = newInstanceManagerRegistry(store.Snapshot(), s.Svc)
 	}
 	if err := s.InstanceManagers.validateTransition(next); err != nil {
 		return err
 	}
-	previous := s.CfgStore.Snapshot()
-	if err := s.CfgStore.Save(next); err != nil {
+	previous := store.Snapshot()
+	if err := store.Save(next); err != nil {
 		return err
 	}
-	manager, err := s.InstanceManagers.reconcile(s.CfgStore.Snapshot())
+	manager, err := s.InstanceManagers.reconcile(store.Snapshot())
 	if err != nil {
-		rollbackErr := s.CfgStore.Save(previous)
+		rollbackErr := store.Save(previous)
 		if rollbackErr == nil {
-			_, _ = s.InstanceManagers.reconcile(s.CfgStore.Snapshot())
+			_, _ = s.InstanceManagers.reconcile(store.Snapshot())
 		}
 		if rollbackErr != nil {
 			return fmt.Errorf("apply instance runtime: %v (config rollback failed: %v)", err, rollbackErr)
@@ -197,6 +206,45 @@ func (s *Server) saveConfigAndReconcile(next config.AppConfig) error {
 	}
 	s.Svc = manager
 	return nil
+}
+
+// saveScopedInstanceProjectConfig persists a projected request config back to
+// the selected instance in the base registry. Request-local stores are useful
+// for reads, but saving into one would discard the change as soon as the HTTP
+// request ends.
+func (s *Server) saveScopedInstanceProjectConfig(projected config.AppConfig) error {
+	baseStore := s.baseConfigStore()
+	if baseStore == nil {
+		return fmt.Errorf("config store is not initialized")
+	}
+	if s.BaseCfgStore == nil || s.BaseCfgStore == s.CfgStore {
+		return s.saveConfigAndReconcile(projected)
+	}
+	base := baseStore.Snapshot()
+	if len(base.Instances) == 0 {
+		return s.saveConfigAndReconcile(projected)
+	}
+	instanceID := strings.TrimSpace(projected.DefaultInstanceID)
+	selected, ok := base.Instance(instanceID)
+	if !ok {
+		return fmt.Errorf("instance %q not found", instanceID)
+	}
+	next := cloneConfigWithInstances(base)
+	for i := range next.Instances {
+		if next.Instances[i].ID != selected.ID {
+			continue
+		}
+		applyProjectConfigToInstance(&next.Instances[i], projected)
+		if selected.ID == base.DefaultInstanceID {
+			// The compatibility mirror must follow a default-instance mutation;
+			// otherwise config.normalize would correctly treat the stale top-level
+			// value as a legacy edit and undo the nested change.
+			applyProjectConfigFromInstance(&next, next.Instances[i])
+		}
+		break
+	}
+	next.DefaultInstanceID = base.DefaultInstanceID
+	return s.saveConfigAndReconcile(next)
 }
 
 func (s *Server) serviceManagerForRequest(r *http.Request) (*service.Manager, string, error) {
@@ -215,6 +263,18 @@ func (s *Server) serviceManagerForRequest(r *http.Request) (*service.Manager, st
 		return nil, resolvedID, fmt.Errorf("instance %q not found", resolvedID)
 	}
 	return manager, resolvedID, nil
+}
+
+func (s *Server) projectInstanceSettings(instanceID string) (config.InstanceConfig, bool) {
+	store := s.baseConfigStore()
+	if store == nil {
+		return config.InstanceConfig{}, false
+	}
+	cfg := store.Snapshot()
+	if len(cfg.Instances) == 0 {
+		return config.InstanceConfig{}, false
+	}
+	return cfg.Instance(instanceID)
 }
 
 func (s *Server) serviceManagerForHTTP(w http.ResponseWriter, r *http.Request) (*service.Manager, string, bool) {

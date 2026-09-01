@@ -25,23 +25,33 @@ func (s *Server) services(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setResolvedInstanceHeader(w, instanceID)
-	writeJSON(w, s.servicesWithAutostart(manager))
+	writeJSON(w, s.servicesWithAutostart(manager, instanceID))
 }
 
-func (s *Server) servicesWithAutostart(manager *service.Manager) []service.ServiceInfo {
+func (s *Server) servicesWithAutostart(manager *service.Manager, instanceIDs ...string) []service.ServiceInfo {
 	items := manager.Discover()
+	instanceID := ""
+	if len(instanceIDs) > 0 {
+		instanceID = strings.TrimSpace(instanceIDs[0])
+	}
+	settings, scoped := s.projectInstanceSettings(instanceID)
+	serviceAutostart := s.CfgStore.Snapshot().ServiceAutostart
+	serviceModels := s.CfgStore.Snapshot().ServiceModels
+	if scoped {
+		serviceAutostart = settings.ServiceAutostart
+		serviceModels = settings.ServiceModels
+	}
 	auto := map[string]bool{}
-	for _, name := range s.CfgStore.Snapshot().ServiceAutostart {
+	for _, name := range serviceAutostart {
 		auto[name] = true
 	}
 	if manager == s.Svc {
 		items = append(items, s.adminFeishuServiceInfo())
 	}
-	models := s.CfgStore.Snapshot().ServiceModels
 	for i := range items {
 		items[i].Autostart = auto[items[i].Name]
-		if models != nil && service.SupportsModelConfiguration(items[i]) {
-			if no, ok := models[items[i].Name]; ok {
+		if serviceModels != nil && service.SupportsModelConfiguration(items[i]) {
+			if no, ok := serviceModels[items[i].Name]; ok {
 				n := no
 				items[i].ModelNo = &n
 			}
@@ -106,7 +116,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
-	svc, err := s.startServiceWithManager(manager, q.Name, q.Params)
+	svc, err := s.startServiceWithManager(manager, q.Name, q.Params, instanceID)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrServiceNotFound) {
@@ -120,10 +130,14 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startServiceByName(name string, params map[string]string) (service.ServiceInfo, error) {
-	return s.startServiceWithManager(s.Svc, name, params)
+	instanceID := ""
+	if s.CfgStore != nil {
+		instanceID = strings.TrimSpace(s.CfgStore.Snapshot().DefaultInstanceID)
+	}
+	return s.startServiceWithManager(s.Svc, name, params, instanceID)
 }
 
-func (s *Server) startServiceWithManager(manager *service.Manager, name string, params map[string]string) (service.ServiceInfo, error) {
+func (s *Server) startServiceWithManager(manager *service.Manager, name string, params map[string]string, instanceIDs ...string) (service.ServiceInfo, error) {
 	if manager == nil {
 		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
 	}
@@ -145,7 +159,15 @@ func (s *Server) startServiceWithManager(manager *service.Manager, name string, 
 		return svc, service.ErrWorkflowManaged
 	}
 	if service.SupportsModelConfiguration(svc) && (params == nil || strings.TrimSpace(params["llm_no"]) == "") {
-		if models := s.CfgStore.Snapshot().ServiceModels; models != nil {
+		instanceID := ""
+		if len(instanceIDs) > 0 {
+			instanceID = strings.TrimSpace(instanceIDs[0])
+		}
+		models := s.CfgStore.Snapshot().ServiceModels
+		if settings, scoped := s.projectInstanceSettings(instanceID); scoped {
+			models = settings.ServiceModels
+		}
+		if models != nil {
 			if no, ok := models[name]; ok {
 				if params == nil {
 					params = map[string]string{}
@@ -246,10 +268,24 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cfg := s.CfgStore.Snapshot()
+	if s.ConfigMu != nil {
+		s.ConfigMu.Lock()
+		defer s.ConfigMu.Unlock()
+	}
+	store := s.baseConfigStore()
+	if store == nil {
+		bad(w, http.StatusInternalServerError, "config store is not initialized")
+		return
+	}
+	cfg := store.Snapshot()
+	settings, scoped := s.projectInstanceSettings(instanceID)
+	currentAutostart := cfg.ServiceAutostart
+	if scoped {
+		currentAutostart = settings.ServiceAutostart
+	}
 	seen := map[string]bool{}
 	next := []string{}
-	for _, name := range cfg.ServiceAutostart {
+	for _, name := range currentAutostart {
 		if name == q.Name || seen[name] {
 			continue
 		}
@@ -259,13 +295,25 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 	if q.Enabled {
 		next = append(next, q.Name)
 	}
-	cfg.ServiceAutostart = next
-	if err := s.CfgStore.Save(cfg); err != nil {
+	if scoped {
+		for i := range cfg.Instances {
+			if cfg.Instances[i].ID == settings.ID {
+				cfg.Instances[i].ServiceAutostart = next
+				if settings.ID == cfg.DefaultInstanceID {
+					mirrorDefaultProjectConfig(&cfg)
+				}
+				break
+			}
+		}
+	} else {
+		cfg.ServiceAutostart = next
+	}
+	if err := s.saveConfigAndReconcile(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	setResolvedInstanceHeader(w, instanceID)
-	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart(manager)})
+	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart(manager, instanceID)})
 }
 
 func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +333,7 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
+	q.Name = strings.TrimSpace(q.Name)
 	svc, ok := manager.Find(q.Name)
 	if !ok {
 		bad(w, 404, "service not found")
@@ -294,9 +343,27 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "service does not support model configuration")
 		return
 	}
-	cfg := s.CfgStore.Snapshot()
+	if q.LLMNo != nil && *q.LLMNo < 0 {
+		bad(w, 400, "llm_no must be non-negative")
+		return
+	}
+	if s.ConfigMu != nil {
+		s.ConfigMu.Lock()
+		defer s.ConfigMu.Unlock()
+	}
+	store := s.baseConfigStore()
+	if store == nil {
+		bad(w, http.StatusInternalServerError, "config store is not initialized")
+		return
+	}
+	cfg := store.Snapshot()
+	settings, scoped := s.projectInstanceSettings(instanceID)
+	currentModels := cfg.ServiceModels
+	if scoped {
+		currentModels = settings.ServiceModels
+	}
 	models := map[string]int{}
-	for k, v := range cfg.ServiceModels {
+	for k, v := range currentModels {
 		models[k] = v
 	}
 	if q.LLMNo == nil {
@@ -304,13 +371,25 @@ func (s *Server) serviceModel(w http.ResponseWriter, r *http.Request) {
 	} else {
 		models[q.Name] = *q.LLMNo
 	}
-	cfg.ServiceModels = models
-	if err := s.CfgStore.Save(cfg); err != nil {
+	if scoped {
+		for i := range cfg.Instances {
+			if cfg.Instances[i].ID == settings.ID {
+				cfg.Instances[i].ServiceModels = models
+				if settings.ID == cfg.DefaultInstanceID {
+					mirrorDefaultProjectConfig(&cfg)
+				}
+				break
+			}
+		}
+	} else {
+		cfg.ServiceModels = models
+	}
+	if err := s.saveConfigAndReconcile(cfg); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
 	setResolvedInstanceHeader(w, instanceID)
-	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart(manager)})
+	writeJSON(w, map[string]interface{}{"ok": true, "services": s.servicesWithAutostart(manager, instanceID)})
 }
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {

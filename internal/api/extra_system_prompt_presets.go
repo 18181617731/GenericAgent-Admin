@@ -56,7 +56,13 @@ func findExtraSystemPromptPreset(items []config.ExtraSystemPromptPreset, id stri
 
 func (s *Server) extraSystemPromptPresets(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		writeJSON(w, map[string]interface{}{"presets": s.CfgStore.Snapshot().ExtraSystemPromptPresets})
+		cfg, err := s.configViewForRequest(r)
+		if err != nil {
+			bad(w, http.StatusNotFound, err.Error())
+			return
+		}
+		setResolvedInstanceHeader(w, resolvedInstanceIDForConfigRequest(r, cfg))
+		writeJSON(w, map[string]interface{}{"presets": cfg.ExtraSystemPromptPresets})
 		return
 	}
 	if r.Method != http.MethodPut {
@@ -77,11 +83,47 @@ func (s *Server) extraSystemPromptPresets(w http.ResponseWriter, r *http.Request
 	}
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
-	cfg := s.CfgStore.Snapshot()
-	cfg.ExtraSystemPromptPresets = presets
-	if err := s.CfgStore.Save(cfg); err != nil {
+	store := s.baseConfigStore()
+	if store == nil {
+		bad(w, http.StatusInternalServerError, "config store is not initialized")
+		return
+	}
+	cfg := store.Snapshot()
+	requested := requestedInstanceID(r)
+	if len(cfg.Instances) > 0 {
+		selected, ok := cfg.Instance(requested)
+		if !ok {
+			bad(w, http.StatusNotFound, "instance "+requested+" not found")
+			return
+		}
+		for i := range cfg.Instances {
+			if cfg.Instances[i].ID == selected.ID {
+				cfg.Instances[i].ExtraSystemPromptPresets = append([]config.ExtraSystemPromptPreset(nil), presets...)
+				if selected.ID == cfg.DefaultInstanceID {
+					mirrorDefaultProjectConfig(&cfg)
+				}
+				break
+			}
+		}
+	} else {
+		cfg.ExtraSystemPromptPresets = presets
+	}
+	if err := s.saveConfigAndReconcile(cfg); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"presets": s.CfgStore.Snapshot().ExtraSystemPromptPresets})
+	view, err := s.configViewForRequest(r)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
+	setResolvedInstanceHeader(w, resolvedInstanceIDForConfigRequest(r, view))
+	writeJSON(w, map[string]interface{}{"presets": view.ExtraSystemPromptPresets})
+}
+
+func resolvedInstanceIDForConfigRequest(r *http.Request, cfg config.AppConfig) string {
+	if requested := requestedInstanceID(r); requested != "" {
+		return requested
+	}
+	return cfg.DefaultInstanceID
 }

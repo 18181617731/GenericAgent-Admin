@@ -1273,7 +1273,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     ? (lang === 'zh' ? 'GA 实例' : 'GA Instances')
     : t.nav[key]
   const pageDescription = key => key === 'instances'
-    ? (lang === 'zh' ? '管理隔离的 GA 运行目录、Python 解释器和默认实例。' : 'Manage isolated GA runtime roots, Python interpreters, and the default instance.')
+    ? (lang === 'zh' ? '管理每个 GA 项目的独立运行目录、数据、服务和默认实例。' : 'Manage each GA project\'s isolated runtime, data, services, and default instance.')
     : t.desc[key]
   const pushRoute = (nextTab, nextTaskSubTab = taskSubTab) => {
     const route = buildRoute(nextTab, nextTaskSubTab)

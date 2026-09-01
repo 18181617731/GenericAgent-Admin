@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -40,12 +41,25 @@ type InstanceConfig struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	GARoot          string `json:"ga_root"`
+	ChatDataDir     string `json:"chat_data_dir,omitempty"`
 	PythonPath      string `json:"python_path,omitempty"`
 	EffectivePython string `json:"effective_python,omitempty"`
-	InitStatus      string `json:"init_status,omitempty"`
-	InitError       string `json:"init_error,omitempty"`
-	InitStage       string `json:"init_stage,omitempty"`
-	InitProgress    int    `json:"init_progress,omitempty"`
+	// These fields are the Admin-side state that belongs to this GA project.
+	// The top-level AppConfig copies remain as a compatibility mirror for the
+	// default instance and for older clients; instance-aware handlers must use
+	// these fields so switching instances cannot leak project preferences.
+	BootstrapDone            bool                      `json:"bootstrap_done,omitempty"`
+	ServiceAutostart         []string                  `json:"service_autostart,omitempty"`
+	ServiceModels            map[string]int            `json:"service_models,omitempty"`
+	ModelProbeProviders      []string                  `json:"model_probe_providers,omitempty"`
+	ChatTitleModel           *ChatTitleModelRef        `json:"chat_title_model,omitempty"`
+	ChatDefaultLLMNo         int                       `json:"chat_default_llm_no,omitempty"`
+	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
+	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
+	InitStatus               string                    `json:"init_status,omitempty"`
+	InitError                string                    `json:"init_error,omitempty"`
+	InitStage                string                    `json:"init_stage,omitempty"`
+	InitProgress             int                       `json:"init_progress,omitempty"`
 }
 
 const (
@@ -267,6 +281,26 @@ func Validate(cfg AppConfig) error {
 			if err := validateRuntimePath(prefix+".effective_python", instance.EffectivePython, false); err != nil {
 				return err
 			}
+			if chatDir := strings.TrimSpace(instance.ChatDataDir); chatDir != "" {
+				if st, err := os.Stat(chatDir); err == nil && !st.IsDir() {
+					return fmt.Errorf("%s.chat_data_dir is not a directory", prefix)
+				}
+			}
+			if instance.ChatDefaultLLMNo < 0 {
+				return fmt.Errorf("%s.chat_default_llm_no must be non-negative", prefix)
+			}
+			if instance.ChatTitleModel != nil {
+				if instance.ChatTitleModel.LLMNo < 0 {
+					return fmt.Errorf("%s.chat_title_model.llm_no must be non-negative", prefix)
+				}
+				if instance.ChatTitleModel.Enable {
+					provEmpty := strings.TrimSpace(instance.ChatTitleModel.ProviderVarName) == ""
+					modelEmpty := strings.TrimSpace(instance.ChatTitleModel.Model) == ""
+					if provEmpty != modelEmpty {
+						return fmt.Errorf("%s.chat_title_model: provider_var_name and model must both be set or both be empty", prefix)
+					}
+				}
+			}
 			if id == defaultID {
 				defaultFound = true
 			}
@@ -456,7 +490,9 @@ func (s *Store) UpdateRuntime(update func(*AppConfig)) error {
 func cloneAppConfig(cfg AppConfig) AppConfig {
 	if cfg.Instances != nil {
 		cloned := make([]InstanceConfig, len(cfg.Instances))
-		copy(cloned, cfg.Instances)
+		for i, instance := range cfg.Instances {
+			cloned[i] = cloneInstanceConfig(instance)
+		}
 		cfg.Instances = cloned
 	}
 	if cfg.ServiceAutostart != nil {
@@ -465,15 +501,13 @@ func cloneAppConfig(cfg AppConfig) AppConfig {
 		cfg.ServiceAutostart = cloned
 	}
 	if cfg.ServiceModels != nil {
-		cloned := make(map[string]int, len(cfg.ServiceModels))
-		for name, llmNo := range cfg.ServiceModels {
-			cloned[name] = llmNo
-		}
-		cfg.ServiceModels = cloned
+		cfg.ServiceModels = cloneStringIntMap(cfg.ServiceModels)
+	}
+	if cfg.ModelProbeProviders != nil {
+		cfg.ModelProbeProviders = append([]string(nil), cfg.ModelProbeProviders...)
 	}
 	if cfg.ChatTitleModel != nil {
-		cloned := *cfg.ChatTitleModel
-		cfg.ChatTitleModel = &cloned
+		cfg.ChatTitleModel = cloneChatTitleModel(cfg.ChatTitleModel)
 	}
 	if cfg.SlashCommands != nil {
 		cloned := make([]SlashCommandItem, len(cfg.SlashCommands))
@@ -491,6 +525,118 @@ func cloneAppConfig(cfg AppConfig) AppConfig {
 		cfg.PythonFallbackRoots = cloned
 	}
 	return cfg
+}
+
+func cloneInstanceConfig(instance InstanceConfig) InstanceConfig {
+	if instance.ServiceAutostart != nil {
+		instance.ServiceAutostart = append([]string(nil), instance.ServiceAutostart...)
+	}
+	if instance.ServiceModels != nil {
+		instance.ServiceModels = cloneStringIntMap(instance.ServiceModels)
+	}
+	if instance.ModelProbeProviders != nil {
+		instance.ModelProbeProviders = append([]string(nil), instance.ModelProbeProviders...)
+	}
+	if instance.ChatTitleModel != nil {
+		instance.ChatTitleModel = cloneChatTitleModel(instance.ChatTitleModel)
+	}
+	if instance.SlashCommands != nil {
+		instance.SlashCommands = append([]SlashCommandItem(nil), instance.SlashCommands...)
+	}
+	if instance.ExtraSystemPromptPresets != nil {
+		instance.ExtraSystemPromptPresets = append([]ExtraSystemPromptPreset(nil), instance.ExtraSystemPromptPresets...)
+	}
+	return instance
+}
+
+func cloneStringIntMap(values map[string]int) map[string]int {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]int, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
+}
+
+func cloneChatTitleModel(value *ChatTitleModelRef) *ChatTitleModelRef {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func normalizeInstanceConfig(instance InstanceConfig) InstanceConfig {
+	if instance.ServiceAutostart != nil {
+		instance.ServiceAutostart = normalizeUniqueStrings(instance.ServiceAutostart)
+	}
+	if instance.ServiceModels != nil {
+		instance.ServiceModels = cloneStringIntMap(instance.ServiceModels)
+	}
+	if instance.ModelProbeProviders != nil {
+		instance.ModelProbeProviders = normalizeUniqueStrings(instance.ModelProbeProviders)
+	}
+	instance.ChatTitleModel = cloneChatTitleModel(instance.ChatTitleModel)
+	if instance.ChatDefaultLLMNo < 0 {
+		// Keep normalization side-effect free for invalid values. Validate will
+		// reject this value with an instance-specific error below.
+		return instance
+	}
+	return instance
+}
+
+func migrateLegacyInstanceSettings(cfg *AppConfig) {
+	if cfg == nil || len(cfg.Instances) == 0 {
+		return
+	}
+
+	allAutostartEmpty := true
+	allModelsEmpty := true
+	allProbeProvidersEmpty := true
+	allTitleModelEmpty := true
+	allChatDefaultsEmpty := true
+	allSlashCommandsEmpty := true
+	allPresetsEmpty := true
+	allBootstrapEmpty := true
+	for _, instance := range cfg.Instances {
+		allAutostartEmpty = allAutostartEmpty && len(instance.ServiceAutostart) == 0
+		allModelsEmpty = allModelsEmpty && len(instance.ServiceModels) == 0
+		allProbeProvidersEmpty = allProbeProvidersEmpty && len(instance.ModelProbeProviders) == 0
+		allTitleModelEmpty = allTitleModelEmpty && instance.ChatTitleModel == nil
+		allChatDefaultsEmpty = allChatDefaultsEmpty && instance.ChatDefaultLLMNo == 0
+		allSlashCommandsEmpty = allSlashCommandsEmpty && len(instance.SlashCommands) == 0
+		allPresetsEmpty = allPresetsEmpty && len(instance.ExtraSystemPromptPresets) == 0
+		allBootstrapEmpty = allBootstrapEmpty && !instance.BootstrapDone
+	}
+
+	for i := range cfg.Instances {
+		if allAutostartEmpty && len(cfg.ServiceAutostart) > 0 {
+			cfg.Instances[i].ServiceAutostart = append([]string(nil), cfg.ServiceAutostart...)
+		}
+		if allModelsEmpty && len(cfg.ServiceModels) > 0 {
+			cfg.Instances[i].ServiceModels = cloneStringIntMap(cfg.ServiceModels)
+		}
+		if allProbeProvidersEmpty && len(cfg.ModelProbeProviders) > 0 {
+			cfg.Instances[i].ModelProbeProviders = append([]string(nil), cfg.ModelProbeProviders...)
+		}
+		if allTitleModelEmpty && cfg.ChatTitleModel != nil {
+			cfg.Instances[i].ChatTitleModel = cloneChatTitleModel(cfg.ChatTitleModel)
+		}
+		if allChatDefaultsEmpty && cfg.ChatDefaultLLMNo > 0 {
+			cfg.Instances[i].ChatDefaultLLMNo = cfg.ChatDefaultLLMNo
+		}
+		if allSlashCommandsEmpty && len(cfg.SlashCommands) > 0 {
+			cfg.Instances[i].SlashCommands = append([]SlashCommandItem(nil), cfg.SlashCommands...)
+		}
+		if allPresetsEmpty && len(cfg.ExtraSystemPromptPresets) > 0 {
+			cfg.Instances[i].ExtraSystemPromptPresets = append([]ExtraSystemPromptPreset(nil), cfg.ExtraSystemPromptPresets...)
+		}
+		if allBootstrapEmpty && cfg.BootstrapDone {
+			cfg.Instances[i].BootstrapDone = true
+		}
+	}
 }
 
 func (s *Store) path() string { return filepath.Join(s.Root, "config.local.json") }
@@ -537,9 +683,11 @@ func normalize(cfg AppConfig, root string) AppConfig {
 
 	instances := make([]InstanceConfig, 0, len(cfg.Instances)+1)
 	for _, instance := range cfg.Instances {
+		instance = normalizeInstanceConfig(instance)
 		instance.ID = strings.TrimSpace(instance.ID)
 		instance.Name = strings.TrimSpace(instance.Name)
 		instance.GARoot = strings.TrimSpace(instance.GARoot)
+		instance.ChatDataDir = strings.TrimSpace(instance.ChatDataDir)
 		instance.PythonPath = strings.TrimSpace(instance.PythonPath)
 		instance.EffectivePython = effectiveInstancePython(instance)
 		if pathMissing(instance.PythonPath) {
@@ -559,13 +707,22 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		instances = append(instances, instance)
 	}
 	if len(instances) == 0 && cfg.GARoot != "" {
-		instances = append(instances, InstanceConfig{
-			ID:              "default",
-			Name:            "Default",
-			GARoot:          cfg.GARoot,
-			PythonPath:      cfg.PythonPath,
-			EffectivePython: cfg.EffectivePython,
-		})
+		instances = append(instances, normalizeInstanceConfig(InstanceConfig{
+			ID:                       "default",
+			Name:                     "Default",
+			GARoot:                   cfg.GARoot,
+			ChatDataDir:              cfg.ChatDataDir,
+			PythonPath:               cfg.PythonPath,
+			EffectivePython:          cfg.EffectivePython,
+			BootstrapDone:            cfg.BootstrapDone,
+			ServiceAutostart:         cfg.ServiceAutostart,
+			ServiceModels:            cfg.ServiceModels,
+			ModelProbeProviders:      cfg.ModelProbeProviders,
+			ChatTitleModel:           cfg.ChatTitleModel,
+			ChatDefaultLLMNo:         cfg.ChatDefaultLLMNo,
+			SlashCommands:            cfg.SlashCommands,
+			ExtraSystemPromptPresets: cfg.ExtraSystemPromptPresets,
+		}))
 		cfg.DefaultInstanceID = "default"
 	}
 	cfg.Instances = instances
@@ -585,6 +742,27 @@ func normalize(cfg AppConfig, root string) AppConfig {
 			cfg.DefaultInstanceID = cfg.Instances[0].ID
 		}
 	}
+	// Configurations written before instance-aware Admin state existed stored
+	// these values only at the AppConfig level. Seed every pre-existing empty
+	// instance from that legacy state once, then mirror the default instance
+	// back to the legacy fields below. New instances remain independent unless
+	// the API explicitly clones their project settings.
+	migrateLegacyInstanceSettings(&cfg)
+	syncDefaultInstanceFromLegacyIfChanged(&cfg)
+	for i := range cfg.Instances {
+		if cfg.Instances[i].ID != cfg.DefaultInstanceID {
+			continue
+		}
+		cfg.BootstrapDone = cfg.Instances[i].BootstrapDone
+		cfg.ServiceAutostart = append([]string(nil), cfg.Instances[i].ServiceAutostart...)
+		cfg.ServiceModels = cloneStringIntMap(cfg.Instances[i].ServiceModels)
+		cfg.ModelProbeProviders = append([]string(nil), cfg.Instances[i].ModelProbeProviders...)
+		cfg.ChatTitleModel = cloneChatTitleModel(cfg.Instances[i].ChatTitleModel)
+		cfg.ChatDefaultLLMNo = cfg.Instances[i].ChatDefaultLLMNo
+		cfg.SlashCommands = append([]SlashCommandItem(nil), cfg.Instances[i].SlashCommands...)
+		cfg.ExtraSystemPromptPresets = append([]ExtraSystemPromptPreset(nil), cfg.Instances[i].ExtraSystemPromptPresets...)
+		break
+	}
 	for _, instance := range cfg.Instances {
 		if instance.ID != cfg.DefaultInstanceID {
 			continue
@@ -594,6 +772,9 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		// diverged from the mirror (set after the instance list was built) is
 		// kept so in-flight runtime overrides are not lost.
 		cfg.GARoot = instance.GARoot
+		if instance.ChatDataDir != "" {
+			cfg.ChatDataDir = instance.ChatDataDir
+		}
 		if cfg.PythonPath == "" {
 			cfg.PythonPath = instance.PythonPath
 		}
@@ -614,6 +795,67 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
+// syncDefaultInstanceFromLegacyIfChanged keeps older callers that mutate the
+// top-level AppConfig fields working after the instance registry was added.
+// Once the fields are equal, the nested default-instance value is authoritative
+// and later secondary-instance saves cannot overwrite it.
+func syncDefaultInstanceFromLegacyIfChanged(cfg *AppConfig) {
+	if cfg == nil || len(cfg.Instances) == 0 {
+		return
+	}
+	for i := range cfg.Instances {
+		if cfg.Instances[i].ID != cfg.DefaultInstanceID {
+			continue
+		}
+		instance := &cfg.Instances[i]
+		// The protected "default" entry is the compatibility bridge for
+		// pre-instance callers that still mutate AppConfig's legacy fields.
+		// For a user-selected default with another ID, the nested instance is
+		// already authoritative; stale legacy fields must not move its root or
+		// erase its project preferences.
+		if instance.ID != "default" {
+			return
+		}
+		if strings.TrimSpace(cfg.GARoot) != "" && strings.TrimSpace(cfg.GARoot) != strings.TrimSpace(instance.GARoot) {
+			instance.GARoot = strings.TrimSpace(cfg.GARoot)
+		}
+		if strings.TrimSpace(cfg.ChatDataDir) != strings.TrimSpace(instance.ChatDataDir) {
+			instance.ChatDataDir = strings.TrimSpace(cfg.ChatDataDir)
+		}
+		if strings.TrimSpace(cfg.PythonPath) != "" && strings.TrimSpace(cfg.PythonPath) != strings.TrimSpace(instance.PythonPath) {
+			instance.PythonPath = strings.TrimSpace(cfg.PythonPath)
+		}
+		if strings.TrimSpace(cfg.EffectivePython) != "" && strings.TrimSpace(cfg.EffectivePython) != strings.TrimSpace(instance.EffectivePython) {
+			instance.EffectivePython = strings.TrimSpace(cfg.EffectivePython)
+		}
+		if cfg.BootstrapDone != instance.BootstrapDone {
+			instance.BootstrapDone = cfg.BootstrapDone
+		}
+		if !reflect.DeepEqual(cfg.ServiceAutostart, instance.ServiceAutostart) {
+			instance.ServiceAutostart = append([]string(nil), cfg.ServiceAutostart...)
+		}
+		if !reflect.DeepEqual(cfg.ServiceModels, instance.ServiceModels) {
+			instance.ServiceModels = cloneStringIntMap(cfg.ServiceModels)
+		}
+		if !reflect.DeepEqual(cfg.ModelProbeProviders, instance.ModelProbeProviders) {
+			instance.ModelProbeProviders = append([]string(nil), cfg.ModelProbeProviders...)
+		}
+		if !reflect.DeepEqual(cfg.ChatTitleModel, instance.ChatTitleModel) {
+			instance.ChatTitleModel = cloneChatTitleModel(cfg.ChatTitleModel)
+		}
+		if cfg.ChatDefaultLLMNo != instance.ChatDefaultLLMNo {
+			instance.ChatDefaultLLMNo = cfg.ChatDefaultLLMNo
+		}
+		if !reflect.DeepEqual(cfg.SlashCommands, instance.SlashCommands) {
+			instance.SlashCommands = append([]SlashCommandItem(nil), cfg.SlashCommands...)
+		}
+		if !reflect.DeepEqual(cfg.ExtraSystemPromptPresets, instance.ExtraSystemPromptPresets) {
+			instance.ExtraSystemPromptPresets = append([]ExtraSystemPromptPreset(nil), cfg.ExtraSystemPromptPresets...)
+		}
+		return
+	}
+}
+
 func (cfg *AppConfig) SyncDefaultInstanceFromLegacy() bool {
 	if cfg == nil {
 		return false
@@ -624,8 +866,17 @@ func (cfg *AppConfig) SyncDefaultInstanceFromLegacy() bool {
 			continue
 		}
 		cfg.Instances[i].GARoot = strings.TrimSpace(cfg.GARoot)
+		cfg.Instances[i].ChatDataDir = strings.TrimSpace(cfg.ChatDataDir)
 		cfg.Instances[i].PythonPath = strings.TrimSpace(cfg.PythonPath)
 		cfg.Instances[i].EffectivePython = effectivePython(*cfg)
+		cfg.Instances[i].BootstrapDone = cfg.BootstrapDone
+		cfg.Instances[i].ServiceAutostart = append([]string(nil), cfg.ServiceAutostart...)
+		cfg.Instances[i].ServiceModels = cloneStringIntMap(cfg.ServiceModels)
+		cfg.Instances[i].ModelProbeProviders = append([]string(nil), cfg.ModelProbeProviders...)
+		cfg.Instances[i].ChatTitleModel = cloneChatTitleModel(cfg.ChatTitleModel)
+		cfg.Instances[i].ChatDefaultLLMNo = cfg.ChatDefaultLLMNo
+		cfg.Instances[i].SlashCommands = append([]SlashCommandItem(nil), cfg.SlashCommands...)
+		cfg.Instances[i].ExtraSystemPromptPresets = append([]ExtraSystemPromptPreset(nil), cfg.ExtraSystemPromptPresets...)
 		return true
 	}
 	return false

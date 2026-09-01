@@ -56,11 +56,14 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
-		c = s.CfgStore.Snapshot()
-		version.SetGitHubMirror(c.GitHubMirror)
-		s.Svc.SetRoot(c.GARoot, c.EffectivePython, c.BufferLines)
-		s.Svc.SetUsageDir(usageEventDir(c))
-		writeJSON(w, c)
+		base := s.baseConfigStore().Snapshot()
+		version.SetGitHubMirror(base.GitHubMirror)
+		view, err := s.configViewForRequest(r)
+		if err != nil {
+			bad(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, view)
 		return
 	}
 	bad(w, 405, "method not allowed")
@@ -70,18 +73,22 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 // registry visible, while projecting the selected instance's runtime fields
 // into the legacy top-level slots consumed by the existing settings page.
 func (s *Server) configViewForRequest(r *http.Request) (config.AppConfig, error) {
-	cfg := s.CfgStore.Snapshot()
-	requested := requestedInstanceID(r)
-	if requested == "" {
-		return cfg, nil
+	store := s.baseConfigStore()
+	if store == nil {
+		return config.AppConfig{}, errors.New("config store is not initialized")
 	}
-	instance, ok := cfg.Instance(requested)
+	base := store.Snapshot()
+	if len(base.Instances) == 0 {
+		return base, nil
+	}
+	requested := requestedInstanceID(r)
+	instance, ok := base.Instance(requested)
 	if !ok {
 		return config.AppConfig{}, fmt.Errorf("instance %q not found", requested)
 	}
-	cfg.GARoot = instance.GARoot
-	cfg.PythonPath = instance.PythonPath
-	cfg.EffectivePython = instance.EffectivePython
+	cfg := base
+	applyProjectConfigFromInstance(&cfg, instance)
+	cfg.ChatDataDir = instanceChatDataDir(base, instance)
 	return cfg, nil
 }
 
@@ -90,10 +97,14 @@ func (s *Server) configViewForRequest(r *http.Request) (config.AppConfig, error)
 // the Admin-wide default, chat data root, or instance registry accidentally.
 func (s *Server) configForSaveRequest(r *http.Request, incoming config.AppConfig) (config.AppConfig, error) {
 	requested := requestedInstanceID(r)
-	if requested == "" {
+	baseStore := s.baseConfigStore()
+	if baseStore == nil {
+		return config.AppConfig{}, errors.New("config store is not initialized")
+	}
+	base := baseStore.Snapshot()
+	if len(base.Instances) == 0 {
 		return incoming, nil
 	}
-	base := s.CfgStore.Snapshot()
 	selected, ok := base.Instance(requested)
 	if !ok {
 		return config.AppConfig{}, fmt.Errorf("instance %q not found", requested)
@@ -103,18 +114,43 @@ func (s *Server) configForSaveRequest(r *http.Request, incoming config.AppConfig
 		if instances[index].ID != selected.ID {
 			continue
 		}
-		instances[index].GARoot = strings.TrimSpace(incoming.GARoot)
-		instances[index].PythonPath = strings.TrimSpace(incoming.PythonPath)
-		instances[index].EffectivePython = strings.TrimSpace(incoming.EffectivePython)
+		applyProjectConfigToInstance(&instances[index], incoming)
 		break
 	}
-	incoming.Instances = instances
-	incoming.DefaultInstanceID = base.DefaultInstanceID
-	incoming.GARoot = base.GARoot
-	incoming.PythonPath = base.PythonPath
-	incoming.EffectivePython = base.EffectivePython
-	incoming.ChatDataDir = base.ChatDataDir
-	return incoming, nil
+
+	// Network, update, and runtime buffer settings are Admin-wide. Copy only
+	// those fields from the payload; the selected project's root, chat data,
+	// model preferences, and bootstrap state were written above.
+	next := cloneConfigWithInstances(base)
+	next.Host = incoming.Host
+	next.Port = incoming.Port
+	next.RemoteAccess = incoming.RemoteAccess
+	next.RemoteAllowAnonymous = incoming.RemoteAllowAnonymous
+	next.LogTailLines = incoming.LogTailLines
+	next.BufferLines = incoming.BufferLines
+	next.ProxyMode = incoming.ProxyMode
+	next.HTTPProxy = incoming.HTTPProxy
+	next.HTTPSProxy = incoming.HTTPSProxy
+	next.AllProxy = incoming.AllProxy
+	next.NoProxy = incoming.NoProxy
+	next.UpdateRepoURL = incoming.UpdateRepoURL
+	next.GitHubMirror = incoming.GitHubMirror
+	next.Instances = instances
+	next.DefaultInstanceID = base.DefaultInstanceID
+	if selected.ID == base.DefaultInstanceID {
+		// Keep the legacy mirror and the default instance aligned before the
+		// config store normalizes the payload.
+		next.GARoot = strings.TrimSpace(incoming.GARoot)
+		next.ChatDataDir = strings.TrimSpace(incoming.ChatDataDir)
+		next.PythonPath = strings.TrimSpace(incoming.PythonPath)
+		next.EffectivePython = strings.TrimSpace(incoming.EffectivePython)
+	} else {
+		next.GARoot = base.GARoot
+		next.ChatDataDir = base.ChatDataDir
+		next.PythonPath = base.PythonPath
+		next.EffectivePython = base.EffectivePython
+	}
+	return next, nil
 }
 
 // saveSetupConfig persists setup changes to the selected instance while
@@ -1258,13 +1294,51 @@ var startAutostartService = func(s *Server, name string) error {
 }
 
 func (s *Server) StartAutostartServices() {
-	for _, name := range s.CfgStore.Snapshot().ServiceAutostart {
-		name = strings.TrimSpace(name)
-		if name == "" {
+	store := s.baseConfigStore()
+	if store == nil {
+		return
+	}
+	cfg := store.Snapshot()
+	if len(cfg.Instances) == 0 {
+		for _, name := range cfg.ServiceAutostart {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if err := startAutostartService(s, name); err != nil {
+				log.Printf("service autostart %s failed: %v", name, err)
+			}
+		}
+		return
+	}
+	if s.InstanceManagers == nil {
+		s.InstanceManagers = newInstanceManagerRegistry(cfg, s.Svc)
+	}
+	for _, instance := range cfg.Instances {
+		manager, instanceID, ok := s.InstanceManagers.manager(instance.ID)
+		if !ok {
+			log.Printf("service autostart instance %s unavailable", instance.ID)
 			continue
 		}
-		if err := startAutostartService(s, name); err != nil {
-			log.Printf("service autostart %s failed: %v", name, err)
+		for _, name := range instance.ServiceAutostart {
+			name = strings.TrimSpace(name)
+			if name == "" || (name == adminFeishuServiceName && manager != s.Svc) {
+				continue
+			}
+			target := s
+			if instanceID != cfg.DefaultInstanceID {
+				projected := scopedAppConfig(cfg, instance)
+				projectedStore, err := config.NewRuntimeStore(store.Root, projected)
+				if err != nil {
+					log.Printf("service autostart %s (%s) config failed: %v", name, instanceID, err)
+					continue
+				}
+				target = s.chatRequestServer(projectedStore, store, nil)
+				target.Svc = manager
+			}
+			if err := startAutostartService(target, name); err != nil {
+				log.Printf("service autostart %s (%s) failed: %v", name, instanceID, err)
+			}
 		}
 	}
 }

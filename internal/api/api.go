@@ -275,9 +275,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/models/probe", s.withInstance((*Server).modelsProbe))
 	mux.HandleFunc("/api/models/import-mykey", s.withInstance((*Server).modelsImportMyKey))
 	mux.HandleFunc("/api/models/export", s.requireDangerousConfirm(s.withInstance((*Server).modelsExport)))
-	// The title-model preference is Admin-wide (not a GA project file); keep
-	// its persistence on the base config store while model files remain scoped.
-	mux.HandleFunc("/api/models/title-model", s.requireDangerousConfirm(s.modelsTitleModel))
+	// Title-model options and selection belong to the selected GA project, just
+	// like model profiles; route both reads and writes through the same scope.
+	mux.HandleFunc("/api/models/title-model", s.requireDangerousConfirm(s.withModelInstance((*Server).modelsTitleModel)))
 	mux.HandleFunc("/api/channels/test", s.withInstance((*Server).channelTest))
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.withInstance((*Server).channels)))
 	mux.HandleFunc("/api/usage/overview", s.withInstance((*Server).usageOverview))

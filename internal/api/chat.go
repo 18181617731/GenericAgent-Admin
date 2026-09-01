@@ -160,16 +160,39 @@ func (s *Server) rememberDefaultChatLLMNo(llmNo int) {
 	if s == nil || llmNo < 0 {
 		return
 	}
-	store := s.BaseCfgStore
-	if store == nil {
-		store = s.CfgStore
-	}
+	store := s.baseConfigStore()
 	if store == nil {
 		return
 	}
-	s.ConfigMu.Lock()
-	defer s.ConfigMu.Unlock()
+	if s.ConfigMu != nil {
+		s.ConfigMu.Lock()
+		defer s.ConfigMu.Unlock()
+	}
 	cfg := store.Snapshot()
+	if len(cfg.Instances) > 0 {
+		instanceID := ""
+		if s.CfgStore != nil {
+			instanceID = strings.TrimSpace(s.CfgStore.Snapshot().DefaultInstanceID)
+		}
+		selected, ok := cfg.Instance(instanceID)
+		if !ok {
+			return
+		}
+		if selected.ChatDefaultLLMNo == llmNo {
+			return
+		}
+		for i := range cfg.Instances {
+			if cfg.Instances[i].ID == selected.ID {
+				cfg.Instances[i].ChatDefaultLLMNo = llmNo
+				if selected.ID == cfg.DefaultInstanceID {
+					mirrorDefaultProjectConfig(&cfg)
+				}
+				break
+			}
+		}
+		_ = s.saveConfigAndReconcile(cfg)
+		return
+	}
 	if cfg.ChatDefaultLLMNo == llmNo {
 		return
 	}
