@@ -6,6 +6,8 @@ test('instance URLs preserve existing query and hash while adding scope', () => 
   assert.equal(addInstanceToURL('/api/files/list?path=memory#preview', 'beta'), '/api/files/list?path=memory&instance_id=beta#preview')
   assert.equal(addInstanceToURL('/assets/app.js', 'beta'), '/assets/app.js')
   assert.equal(addInstanceToURL('/api/config', ''), '/api/config')
+  assert.equal(addInstanceToURL('/api/chat/stream?instance_id=chat-instance#tail'), '/api/chat/stream?instance_id=chat-instance#tail')
+  assert.equal(addInstanceToURL('/api/chat/stream?instance_id=old', 'beta'), '/api/chat/stream?instance_id=beta')
 })
 test('selected instance storage is normalized and removable', () => {
   const values = new Map()

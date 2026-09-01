@@ -1,6 +1,7 @@
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { registerDialogAdapter } from '../lib/danger.js'
 
 let lastTerminalProps = null
 
@@ -32,6 +33,9 @@ const eventLines = events => `${events.map(event => JSON.stringify(event)).join(
 const session = { id: 'session-1', path: 'C:\\workspace', status: 'running', seq: 0 }
 const roots = ['C:\\']
 
+let unregisterDialogAdapter = () => {}
+let confirmResult = true
+
 const makeFetch = ({ streamEvents = [], createError = false, directoryError = false } = {}) => vi.fn(async (url, options = {}) => {
   const parsed = new URL(String(url), 'http://localhost')
   const method = options.method || 'GET'
@@ -60,11 +64,15 @@ const exitedEvents = [...runningEvents, { type: 'data', seq: 1, data: btoa('\x1b
 beforeEach(() => {
   lastTerminalProps = null
   window.localStorage.clear()
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  confirmResult = true
+  vi.spyOn(window, 'confirm').mockImplementation(() => confirmResult)
+  unregisterDialogAdapter = registerDialogAdapter(() => window.confirm())
 })
 
 afterEach(() => {
   cleanup()
+  unregisterDialogAdapter()
+  unregisterDialogAdapter = () => {}
   vi.restoreAllMocks()
   delete globalThis.fetch
 })
@@ -74,7 +82,7 @@ describe('Remote CMD page', () => {
     globalThis.fetch = makeFetch()
     render(<LocalCmdPage lang="zh" />)
 
-    expect(screen.getByText(/浏览器直接连接运行 GA Admin 的 Windows 主机终端/)).toBeTruthy()
+    expect(screen.getByText(/在当前 GA 实例下连接运行 GA Admin 的 Windows 主机终端/)).toBeTruthy()
     expect(screen.getByPlaceholderText('例如：C:\\Users\\你的用户名\\项目')).toBeTruthy()
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/local-cmd/directories', expect.anything()))
     const urls = globalThis.fetch.mock.calls.map(([url]) => String(url))
@@ -85,6 +93,22 @@ describe('Remote CMD page', () => {
     render(<LocalCmdPage lang="en" />)
 
     expect(screen.getByPlaceholderText('Example: C:\\Users\\your-name\\project')).toBeTruthy()
+  })
+
+  test('scopes remote CMD requests and session storage to the active instance', async () => {
+    globalThis.fetch = makeFetch()
+    render(<LocalCmdPage lang="en" activeInstanceID="beta" />)
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())
+    const directoryCall = globalThis.fetch.mock.calls.find(([url]) => String(url).includes('/api/local-cmd/directories'))
+    expect(new URL(String(directoryCall[0]), 'http://localhost').searchParams.get('instance_id')).toBe('beta')
+
+    fireEvent.change(screen.getByLabelText('Server working directory'), { target: { value: session.path } })
+    fireEvent.click(screen.getByRole('button', { name: 'New remote session' }))
+    await waitFor(() => expect(globalThis.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/local-cmd/sessions') && options.method === 'POST')).toBe(true))
+    const createCall = globalThis.fetch.mock.calls.find(([url, options]) => String(url).includes('/api/local-cmd/sessions') && options.method === 'POST')
+    expect(new URL(String(createCall[0]), 'http://localhost').searchParams.get('instance_id')).toBe('beta')
+    expect(window.localStorage.getItem('ga-admin.remote-cmd.session:beta')).toBe(session.id)
   })
 
   test('creates a session and writes streamed VT bytes without a React output buffer', async () => {
@@ -167,7 +191,7 @@ describe('Remote CMD page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New remote session' }))
     expect((await screen.findByRole('alert')).textContent).toContain('session creation failed')
 
-    window.confirm.mockReturnValueOnce(false)
+    confirmResult = false
     fireEvent.click(screen.getByRole('button', { name: 'New remote session' }))
     await waitFor(() => expect(screen.getByText('Remote CMD creation cancelled.')).toBeTruthy())
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === '/api/local-cmd/sessions').length).toBe(1)

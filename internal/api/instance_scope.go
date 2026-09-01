@@ -112,8 +112,8 @@ func scopedAppConfig(base config.AppConfig, instance config.InstanceConfig) conf
 	applyProjectConfigFromInstance(&cfg, instance)
 	// A deleted virtualenv should make scoped read endpoints report the GA
 	// root's current state instead of making the whole request fail validation.
-	// Runtime repair remains unscoped because it owns the persistence of a new
-	// interpreter path.
+	// Runtime repair uses the selected instance's projected config and persists
+	// the discovered interpreter through the same instance-aware setup store.
 	if !usableConfiguredPython(cfg.PythonPath) {
 		cfg.PythonPath = ""
 	}

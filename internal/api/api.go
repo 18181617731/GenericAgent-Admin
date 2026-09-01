@@ -76,7 +76,11 @@ type Server struct {
 	instanceInstallTasks      map[string]*instanceInstallTask
 	instanceInstallsClosing   bool
 	localCmdMu                sync.Mutex
-	localCmdSessions          *localCmdRegistry
+	// localCmdSessions is the legacy/default-instance registry. Additional GA
+	// instances get their own registry so a browser session cannot cross the
+	// selected project boundary.
+	localCmdSessions           *localCmdRegistry
+	localCmdSessionsByInstance map[string]*localCmdRegistry
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
@@ -178,6 +182,65 @@ func (s *Server) localCmdRegistry() *localCmdRegistry {
 		s.localCmdSessions = newLocalCmdRegistry()
 	}
 	return s.localCmdSessions
+}
+
+// localCmdRegistryForRequest resolves the remote CMD namespace with the same
+// instance precedence as the rest of the API. The protected legacy/default
+// instance keeps the old registry so an upgrade does not strand an existing
+// terminal, while every other configured instance has an isolated registry.
+func (s *Server) localCmdRegistryForRequest(r *http.Request) (*localCmdRegistry, string, error) {
+	store := s.baseConfigStore()
+	if store == nil {
+		// A few legacy tests and embedders construct a Server with only the
+		// session registry. Keep that setup working when no scope was requested.
+		if requestedInstanceID(r) == "" {
+			return s.localCmdRegistry(), "", nil
+		}
+		return nil, requestedInstanceID(r), &chatInstanceNotFoundError{instanceID: requestedInstanceID(r)}
+	}
+	_, instanceID, err := s.instanceForRequest(r)
+	if err != nil {
+		return nil, instanceID, err
+	}
+	if instanceID == "" || instanceID == protectedDefaultInstanceID {
+		return s.localCmdRegistry(), instanceID, nil
+	}
+
+	s.localCmdMu.Lock()
+	defer s.localCmdMu.Unlock()
+	if s.localCmdSessionsByInstance == nil {
+		s.localCmdSessionsByInstance = make(map[string]*localCmdRegistry)
+	}
+	if registry := s.localCmdSessionsByInstance[instanceID]; registry != nil {
+		return registry, instanceID, nil
+	}
+	registry := newLocalCmdRegistry()
+	s.localCmdSessionsByInstance[instanceID] = registry
+	return registry, instanceID, nil
+}
+
+func (s *Server) closeLocalCmdRegistries() {
+	s.localCmdMu.Lock()
+	registries := make([]*localCmdRegistry, 0, len(s.localCmdSessionsByInstance)+1)
+	seen := make(map[*localCmdRegistry]struct{}, len(s.localCmdSessionsByInstance)+1)
+	add := func(registry *localCmdRegistry) {
+		if registry == nil {
+			return
+		}
+		if _, ok := seen[registry]; ok {
+			return
+		}
+		seen[registry] = struct{}{}
+		registries = append(registries, registry)
+	}
+	add(s.localCmdSessions)
+	for _, registry := range s.localCmdSessionsByInstance {
+		add(registry)
+	}
+	s.localCmdMu.Unlock()
+	for _, registry := range registries {
+		registry.close()
+	}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -1384,5 +1447,5 @@ func (s *Server) ShutdownCleanup() {
 		_ = s.ReactApp.stop()
 	}
 	s.CloseChatWorkers()
-	s.localCmdRegistry().close()
+	s.closeLocalCmdRegistries()
 }

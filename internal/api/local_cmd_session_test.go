@@ -8,10 +8,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"genericagent-admin-go/internal/config"
+	"genericagent-admin-go/internal/service"
 )
 
 type fakeLocalCmdProcess struct {
@@ -198,5 +202,94 @@ func TestLocalCmdSessionExpiryHonorsActiveIdleTimeout(t *testing.T) {
 	session.connections = 0
 	if !session.expired(now) {
 		t.Fatal("detached session should expire after connection grace")
+	}
+}
+
+func TestLocalCmdSessionsAreIsolatedByInstance(t *testing.T) {
+	if !localCmdSupported() {
+		t.Skip("remote CMD sessions are only supported on Windows")
+	}
+
+	oldFactory := newLocalCmdProcessFunc
+	newLocalCmdProcessFunc = func(string, int, int) (localCmdProcess, error) {
+		return newFakeLocalCmdProcess(), nil
+	}
+	t.Cleanup(func() { newLocalCmdProcessFunc = oldFactory })
+
+	appRoot := t.TempDir()
+	defaultRoot := filepath.Join(t.TempDir(), "default")
+	betaRoot := filepath.Join(t.TempDir(), "beta")
+	if err := os.MkdirAll(defaultRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(betaRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = defaultRoot
+	cfg.DefaultInstanceID = "default"
+	cfg.Instances = []config.InstanceConfig{
+		{ID: "default", Name: "Default", GARoot: defaultRoot},
+		{ID: "beta", Name: "Beta", GARoot: betaRoot},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := New(store, service.NewManager(defaultRoot, cfg.BufferLines), nil, nil)
+	t.Cleanup(server.closeLocalCmdRegistries)
+	h := server.Routes()
+
+	create := func(instanceID string) string {
+		t.Helper()
+		body := `{"path":` + strconv.Quote(t.TempDir()) + `,"cols":80,"rows":24}`
+		req := httptest.NewRequest(http.MethodPost, "/api/local-cmd/sessions", strings.NewReader(body))
+		req.Header.Set("X-GA-Instance-ID", instanceID)
+		markDangerous(req)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("create %s status=%d body=%s", instanceID, rr.Code, rr.Body.String())
+		}
+		if got := rr.Header().Get("X-GA-Instance-ID"); got != instanceID {
+			t.Fatalf("create %s resolved instance header=%q", instanceID, got)
+		}
+		var response struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.ID == "" {
+			t.Fatalf("create %s returned empty session id: %s", instanceID, rr.Body.String())
+		}
+		return response.ID
+	}
+
+	defaultSession := create("default")
+	betaSession := create("beta")
+	if defaultSession == betaSession {
+		t.Fatal("different instance registries returned the same session id")
+	}
+
+	status := func(instanceID, sessionID string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/local-cmd/sessions/"+sessionID, nil)
+		req.Header.Set("X-GA-Instance-ID", instanceID)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	if got := status("default", defaultSession); got != http.StatusOK {
+		t.Fatalf("default session in default instance status=%d", got)
+	}
+	if got := status("beta", betaSession); got != http.StatusOK {
+		t.Fatalf("beta session in beta instance status=%d", got)
+	}
+	if got := status("beta", defaultSession); got != http.StatusNotFound {
+		t.Fatalf("default session leaked into beta instance, status=%d", got)
+	}
+	if got := status("default", betaSession); got != http.StatusNotFound {
+		t.Fatalf("beta session leaked into default instance, status=%d", got)
 	}
 }

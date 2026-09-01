@@ -48,6 +48,17 @@ func (s *Server) localCmdCreateSession(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	registry, instanceID, err := s.localCmdRegistryForRequest(r)
+	if err != nil {
+		status := http.StatusInternalServerError
+		var notFound *chatInstanceNotFoundError
+		if errors.As(err, &notFound) || strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		bad(w, status, err.Error())
+		return
+	}
+	setResolvedInstanceHeader(w, instanceID)
 	if !localCmdSupported() {
 		bad(w, http.StatusNotImplemented, errLocalCmdRemoteUnsupported.Error())
 		return
@@ -63,7 +74,7 @@ func (s *Server) localCmdCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cols, rows := normalizedLocalCmdSize(req.Cols, req.Rows)
-	session, err := s.localCmdRegistry().create(dir, cols, rows)
+	session, err := registry.create(dir, cols, rows)
 	if err != nil {
 		bad(w, localCmdErrorStatus(err), err.Error())
 		return
@@ -100,14 +111,25 @@ func (s *Server) localCmdSessionRoute(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusNotFound, "local CMD session path not found")
 		return
 	}
-	session, found := s.localCmdRegistry().get(id)
+	registry, instanceID, err := s.localCmdRegistryForRequest(r)
+	if err != nil {
+		status := http.StatusInternalServerError
+		var notFound *chatInstanceNotFoundError
+		if errors.As(err, &notFound) || strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		bad(w, status, err.Error())
+		return
+	}
+	setResolvedInstanceHeader(w, instanceID)
+	session, found := registry.get(id)
 	if !found {
 		bad(w, http.StatusNotFound, "local CMD session not found")
 		return
 	}
 	switch action {
 	case "":
-		s.localCmdSessionStatus(w, r, session)
+		s.localCmdSessionStatus(w, r, registry, session)
 	case "stream":
 		s.localCmdSessionStream(w, r, session)
 	case "input":
@@ -134,9 +156,9 @@ func parseLocalCmdSessionPath(path string) (string, string, bool) {
 	return "", "", false
 }
 
-func (s *Server) localCmdSessionStatus(w http.ResponseWriter, r *http.Request, session *localCmdSession) {
+func (s *Server) localCmdSessionStatus(w http.ResponseWriter, r *http.Request, registry *localCmdRegistry, session *localCmdSession) {
 	if r.Method == http.MethodDelete {
-		if s.localCmdRegistry().delete(session.id) {
+		if registry.delete(session.id) {
 			writeJSON(w, map[string]any{"ok": true, "id": session.id})
 			return
 		}

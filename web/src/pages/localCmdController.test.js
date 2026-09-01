@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { handleLocalCmdEvent } from './localCmdController.js'
+import { handleLocalCmdEvent, localCmdSessionStorageKey, LOCAL_CMD_SESSION_STORAGE_KEY } from './localCmdController.js'
 import { createTerminalBuffer } from './localCmdTerminal.js'
 
 const eventState = () => ({
@@ -32,5 +32,13 @@ describe('remote CMD stream cursor', () => {
     expect(Array.from(state.terminalBuffer.current.chunks[0])).toEqual(Array.from(raw))
     expect(state.setTerminalRevision).toHaveBeenCalledTimes(1)
     expect(state.setSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('remote CMD instance storage', () => {
+  test('keeps the default key backwards-compatible and scopes other instances', () => {
+    expect(localCmdSessionStorageKey('')).toBe(LOCAL_CMD_SESSION_STORAGE_KEY)
+    expect(localCmdSessionStorageKey('default')).toBe(LOCAL_CMD_SESSION_STORAGE_KEY)
+    expect(localCmdSessionStorageKey('beta')).toBe(`${LOCAL_CMD_SESSION_STORAGE_KEY}:beta`)
   })
 })

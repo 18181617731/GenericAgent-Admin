@@ -3,8 +3,8 @@ import { decodeTerminalBase64 } from './localCmdTerminal'
 
 const streamUrl = id => `/api/local-cmd/sessions/${encodeURIComponent(id)}/stream`
 
-export const readLocalCmdStream = async (id, from, onEvent, signal) => {
-  const response = await apiStream(`${streamUrl(id)}?from=${from}`, { signal })
+export const readLocalCmdStream = async (id, from, onEvent, signal, instanceID) => {
+  const response = await apiStream(`${streamUrl(id)}?from=${from}`, { signal, instanceID })
   if (!response.body?.getReader) throw new Error('The browser does not support terminal streaming.')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

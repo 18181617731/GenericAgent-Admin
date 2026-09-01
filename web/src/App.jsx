@@ -400,6 +400,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (id === activeInstanceID) return true
     if (busy) { setMsg(lang === 'zh' ? '当前操作完成后才能切换实例' : 'Finish the current operation before switching instances', 'error'); return false }
     if (hasUnsavedChanges && !window.confirm(lang === 'zh' ? '当前实例有未保存更改。切换实例会放弃这些更改，是否继续？' : 'This instance has unsaved changes. Switching will discard them. Continue?')) return false
+    activeInstanceRef.current = id
     resetInstanceViewState()
     setSelectedInstanceID(id)
     setActiveInstanceID(id)
@@ -1522,7 +1523,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>
       </section>}
       {tab==='files' && <><FilesPage t={t} browsePath={browsePath} setBrowsePath={setBrowsePath} filePath={filePath} setFilePath={setFilePath} fileList={fileList} fileContent={fileContent} loadedFileContent={loadedFileContent} loadedFilePath={loadedFilePath} setFileContent={setFileContent} fileSearch={fileSearch} setFileSearch={setFileSearch} searchHits={searchHits} tailLines={tailLines} setTailLines={setTailLines} loadFiles={loadFiles} readFile={readFile} tailFile={tailFile} saveFile={saveFile} deleteFile={deleteFile} downloadFile={downloadFile} revealFileInExplorer={revealFileInExplorer} runSearch={runSearch} clearSearch={()=>{ setFileSearch(''); setSearchHits([]) }} discardChanges={discardFileChanges} fileStatus={fileStatus} dismissFileStatus={() => setFileStatus({})} busy={busy}/>{moduleTodo('files')}</>}
-      {tab==='local-cmd' && <LocalCmdPage lang={lang}/>}
+      {tab==='local-cmd' && <LocalCmdPage lang={lang} activeInstanceID={activeInstanceID}/>}
 
       {tab==='tasks' && <><section className="tasks-page">
         <div className="subtabs task-subtabs">

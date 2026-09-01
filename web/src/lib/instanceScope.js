@@ -27,11 +27,11 @@ export const setSelectedInstanceID = (instanceID, { storage = browserStorage(), 
 // Add the selected instance only to backend API URLs. Static assets and
 // browser routes remain untouched, while legacy callers can keep using their
 // existing relative URL construction.
-export const addInstanceToURL = (url, instanceID = getSelectedInstanceID()) => {
+export const addInstanceToURL = (url, instanceID) => {
   const raw = String(url || '')
-  const id = normalizeInstanceID(instanceID)
+  const parsed = raw.startsWith('/api/') ? new URL(raw, 'http://ga-admin.local') : null
+  const id = normalizeInstanceID(instanceID) || normalizeInstanceID(parsed?.searchParams.get('instance_id')) || getSelectedInstanceID()
   if (!id || !raw.startsWith('/api/')) return url
-  const parsed = new URL(raw, 'http://ga-admin.local')
   parsed.searchParams.set('instance_id', id)
   return `${parsed.pathname}${parsed.search}${parsed.hash}`
 }
