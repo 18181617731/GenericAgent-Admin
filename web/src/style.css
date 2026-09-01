@@ -6603,28 +6603,29 @@ html[data-color-scheme="dark"] .oa-tools-act:hover:not(:disabled) { background: 
 .oa-reasoning-options {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
 }
 .oa-reasoning-options button {
-  flex: 0 0 18px !important;
+  flex: 0 0 27px !important;
   min-width: 0;
   min-height: 0;
-  height: 18px;
-  display: flex;
+  height: 27px !important;
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  border: 0;
-  border-radius: 4px;
-  padding: 0 6px;
+  justify-content: start;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 7px;
   color: var(--muted);
   background: transparent;
   font: inherit;
   font-size: 10.5px;
-  line-height: 18px;
-  text-align: center;
+  line-height: 1;
+  text-align: left;
   cursor: pointer;
-  transition: color .14s ease, background .14s ease;
+  transition: color .14s ease, border-color .14s ease, background .14s ease;
   white-space: nowrap;
 }
 .oa-reasoning-options button:hover {
@@ -6633,12 +6634,58 @@ html[data-color-scheme="dark"] .oa-tools-act:hover:not(:disabled) { background: 
 }
 .oa-reasoning-options button:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline-offset: -2px;
 }
 .oa-reasoning-options button.active {
   color: var(--accent-text);
-  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   font-weight: 650;
+}
+.oa-reasoning-options button.oa-reasoning-default {
+  flex-basis: 39px !important;
+  height: 39px !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 3px;
+  margin-bottom: 3px;
+}
+.oa-reasoning-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oa-reasoning-hint {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+}
+.oa-reasoning-meter {
+  position: relative;
+  display: block;
+  width: 31px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+.oa-reasoning-meter > span {
+  display: block;
+  width: var(--oa-reasoning-fill);
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--muted) 58%, transparent);
+  transition: width .16s ease, background .14s ease;
+}
+.oa-reasoning-options button:hover .oa-reasoning-meter > span {
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+}
+.oa-reasoning-options button.active .oa-reasoning-meter > span {
+  background: var(--accent);
 }
 /* composer cascade layout revision: combined reasoning grid */
 .oa-cascade-providers button,
@@ -7072,6 +7119,37 @@ html[data-color-scheme="dark"] .oa-cascade-group-models button:hover { backgroun
   padding: 0 16px 14px;
   border-top: 1px solid var(--border);
   background: var(--surface-strong);
+}
+.oa-model-picker-reasoning .oa-reasoning-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.oa-model-picker-reasoning .oa-reasoning-options button {
+  flex-basis: 38px !important;
+  width: 100%;
+  height: 38px !important;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 5px;
+  padding: 0 6px;
+  border-color: var(--border);
+  border-radius: 9px;
+  background: var(--surface-soft);
+  font-size: 10px;
+}
+.oa-model-picker-reasoning .oa-reasoning-options button.oa-reasoning-default {
+  grid-column: 1 / -1;
+  height: 40px !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  gap: 10px;
+  margin-bottom: 0;
+}
+.oa-model-picker-reasoning .oa-reasoning-hint {
+  text-align: right;
+}
+.oa-model-picker-reasoning .oa-reasoning-meter {
+  width: 18px;
 }
 .oa-model-picker-empty {
   min-height: 120px;

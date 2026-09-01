@@ -1314,8 +1314,13 @@ describe('chat model cascade', () => {
     const { rerender } = render(<ProviderModelCascade {...props} reasoningValue="off" />)
 
     fireEvent.click(screen.getByRole('button', { name: '\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6\uff1aAlpha One \u00b7 \u9ed8\u8ba4' }))
-    expect(screen.getByRole('button', { name: '\u9ed8\u8ba4' }).getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: 'Max' }))
+    const defaultEffortButton = screen.getByRole('button', { name: '\u9ed8\u8ba4' })
+    const maxEffortButton = screen.getByRole('button', { name: 'Max' })
+    expect(defaultEffortButton.getAttribute('aria-pressed')).toBe('true')
+    expect(defaultEffortButton.classList.contains('oa-reasoning-default')).toBe(true)
+    expect(defaultEffortButton.textContent).toContain('\u8ddf\u968f\u6a21\u578b\u914d\u7f6e')
+    expect(maxEffortButton.querySelector('.oa-reasoning-meter').style.getPropertyValue('--oa-reasoning-fill')).toBe('100%')
+    fireEvent.click(maxEffortButton)
 
     expect(onReasoningChange).toHaveBeenCalledWith('max')
     expect(screen.getByRole('dialog', { name: '\u670d\u52a1\u5546\u3001\u6a21\u578b\u4e0e\u63a8\u7406\u5f3a\u5ea6' })).toBeTruthy()

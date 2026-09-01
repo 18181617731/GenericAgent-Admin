@@ -3281,17 +3281,35 @@ const MessageList = memo(function MessageList({
 function ReasoningEffortOptions({ options = [], value = 'off', onChange }) {
   return (
     <div className="oa-reasoning-options">
-      {options.map(option => {
+      {options.map((option, optionIndex) => {
         const active = option.value === value
+        const followsModel = option.value === 'off'
+        const canonicalLevel = REASONING_EFFORT_LEVELS.indexOf(option.value)
+        const effortLevel = Math.max(1, canonicalLevel > 0 ? canonicalLevel : optionIndex)
         return (
           <button
             key={option.value}
             type="button"
-            className={active ? 'active' : ''}
+            className={`${active ? 'active ' : ''}${followsModel ? 'oa-reasoning-default' : ''}`.trim()}
+            aria-label={option.label}
             aria-pressed={active}
             onClick={() => onChange?.(option.value)}
           >
-            {option.label}
+            {followsModel ? (
+              <>
+                <span className="oa-reasoning-label">{option.label}</span>
+                <span className="oa-reasoning-hint" aria-hidden="true">跟随模型配置</span>
+              </>
+            ) : (
+              <>
+                <span
+                  className="oa-reasoning-meter"
+                  style={{ '--oa-reasoning-fill': `${(effortLevel / 7) * 100}%` }}
+                  aria-hidden="true"
+                ><span /></span>
+                <span className="oa-reasoning-label">{option.label}</span>
+              </>
+            )}
           </button>
         )
       })}
