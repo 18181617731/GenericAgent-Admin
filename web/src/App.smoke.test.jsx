@@ -486,19 +486,24 @@ describe('Models call list', () => {
     expect(modal.querySelector('.model-params-grid')).toBeNull()
   })
 
-  test('shows model names in the provider list instead of provider or display names', () => {
+  test('shows model display names in the provider list without confusing provider names or IDs', () => {
     installBrowserPolyfills()
     render(<ModelsHarness initialProfile={{
       ...validModelProfile,
       display_name: 'Provider Friendly',
-      model_configs: [{ model: 'demo-model', name: 'Demo Friendly' }],
+      model_configs: [
+        { model: 'demo-model', name: 'Demo Friendly' },
+        { model: 'same-model', name: 'same-model' },
+      ],
     }} />)
 
     openProviderDrawer()
 
-    const summary = document.querySelector('.model-provider-model-summary')
-    expect(summary.querySelector('strong').textContent).toBe('demo-model')
-    expect(summary.querySelector('em')).toBeNull()
+    const summaries = document.querySelectorAll('.model-provider-model-summary')
+    expect(summaries[0].querySelector('strong').textContent).toBe('Demo Friendly')
+    expect(summaries[0].querySelector('em')).toBeNull()
+    expect(summaries[1].querySelector('strong').textContent).toBe('same-model')
+    expect(summaries[1].querySelector('em')).toBeNull()
   })
 
   test('edits a model display name without changing its model ID', () => {
