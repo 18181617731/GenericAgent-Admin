@@ -4,6 +4,7 @@ import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { AutonomousTaskWorkspace } from './AutonomousTaskWorkspace.jsx'
+import { registerDialogAdapter } from '../lib/danger.js'
 
 const tasks = [
   { id: 'task-1', title: '等待批准', objective: '检查发布证据', status: 'pending_approval', risk: '高', priority: 'high', progress: 20, source_type: 'todo' },
@@ -12,7 +13,10 @@ const tasks = [
 
 const response = body => Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify(body)) })
 
+let unregisterDialogAdapter = () => {}
+
 afterEach(() => {
+  unregisterDialogAdapter()
   cleanup()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -34,6 +38,30 @@ describe('AutonomousTaskWorkspace', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/autonomous/tasks/task-1', expect.any(Object))
   })
 
+  test('keeps headline counts stable while filtering and renders completed work as 100%', async () => {
+    const allTasks = [
+      { id: 'completed', title: '已完成任务', objective: '已完成目标', status: 'completed', progress: 0 },
+      { id: 'pending', title: '待审批任务', objective: '待审批目标', status: 'pending_approval', progress: 20 },
+      { id: 'running', title: '执行中任务', objective: '执行中目标', status: 'queued', progress: 40 },
+    ]
+    const summary = { total: 3, pending: 1, running: 1, blocked: 0, failed: 0, overdue: 0, completed: 1, attention: 0 }
+    const fetchMock = vi.fn(url => String(url).includes('status=completed')
+      ? response({ tasks: [allTasks[0]], filtered_total: 1, summary })
+      : response({ tasks: allTasks, filtered_total: 3, summary }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<AutonomousTaskWorkspace />)
+
+    expect(await screen.findByText('已完成任务')).toBeTruthy()
+    expect(screen.getByText('显示 3 / 共 3 项')).toBeTruthy()
+    expect(screen.getByText('100%')).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: /已完成\s*1/ })[0])
+
+    await waitFor(() => expect(screen.getByText('显示 1 / 共 3 项')).toBeTruthy())
+    expect(screen.getByText('已完成任务')).toBeTruthy()
+    expect(screen.queryByText('待审批任务')).toBeNull()
+    expect(screen.getByRole('button', { name: /待审批\s*1/ })).toBeTruthy()
+  })
+
   test('creates a task with explicit confirmation and dangerous header', async () => {
     const created = { id: 'task-new', title: '新任务', status: 'draft' }
     const fetchMock = vi.fn((url, options = {}) => {
@@ -42,7 +70,8 @@ describe('AutonomousTaskWorkspace', () => {
       return response({ tasks: [] })
     })
     vi.stubGlobal('fetch', fetchMock)
-    vi.stubGlobal('confirm', vi.fn(() => true))
+    const dialog = vi.fn(() => true)
+    unregisterDialogAdapter = registerDialogAdapter(dialog)
     render(<AutonomousTaskWorkspace />)
 
     await screen.findByText(/暂无任务/)
@@ -51,6 +80,10 @@ describe('AutonomousTaskWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存任务' }))
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, options]) => url === '/api/autonomous/tasks' && options?.method === 'POST' && options.headers['X-GA-Confirm'] === 'dangerous')).toBe(true))
-    expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining('[autonomous-task-create]'))
+    expect(dialog).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'confirm',
+      operation: 'autonomous-task-create',
+      message: expect.stringContaining('创建任务“新任务”？'),
+    }))
   })
 })

@@ -55,6 +55,7 @@ type AutonomousApproval struct {
 	ExpectedOutcome string    `json:"expected_outcome,omitempty"`
 	State           string    `json:"state"`
 	Decision        string    `json:"decision,omitempty"`
+	DecisionSource  string    `json:"decision_source,omitempty"`
 	Note            string    `json:"note,omitempty"`
 	DecidedAt       time.Time `json:"decided_at,omitempty"`
 
@@ -66,6 +67,7 @@ type AutonomousApproval struct {
 
 	ReviewStatus      string                   `json:"review_status,omitempty"`
 	ReviewDecision    string                   `json:"review_decision,omitempty"`
+	ReviewRisk        string                   `json:"review_risk,omitempty"`
 	ReviewConfidence  string                   `json:"review_confidence,omitempty"`
 	ReviewReason      string                   `json:"review_reason,omitempty"`
 	ReviewModelNo     *int                     `json:"review_model_no,omitempty"`
@@ -106,6 +108,7 @@ type autonomousDecision struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Decision  string    `json:"decision"`
+	Source    string    `json:"source,omitempty"`
 	Note      string    `json:"note,omitempty"`
 	DecidedAt time.Time `json:"decided_at"`
 }
@@ -245,6 +248,9 @@ func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApprov
 	if base.ReviewDecision == "" {
 		base.ReviewDecision = addition.ReviewDecision
 	}
+	if base.ReviewRisk == "" {
+		base.ReviewRisk = addition.ReviewRisk
+	}
 	if base.ReviewConfidence == "" {
 		base.ReviewConfidence = addition.ReviewConfidence
 	}
@@ -268,7 +274,11 @@ func mergeAutonomousApproval(base, addition AutonomousApproval) AutonomousApprov
 	}
 	if base.Decision == "" && addition.Decision != "" {
 		base.Decision = addition.Decision
+		base.DecisionSource = addition.DecisionSource
 		base.State = addition.State
+	}
+	if base.DecisionSource == "" {
+		base.DecisionSource = addition.DecisionSource
 	}
 	return base
 }
@@ -354,7 +364,7 @@ func slicesWithoutEmptyStrings(values []string) []string {
 }
 
 func autonomousTodoState(body string) (string, string, string) {
-	if containsAny(body, "用户已批准", "已批准", "已审批") {
+	if containsAny(body, "用户已批准", "模型自动批准", "已批准", "已审批") {
 		return "approved", "approved", "已批准"
 	}
 	if containsAny(body, "用户已拒绝", "已拒绝", "已驳回") {
@@ -387,9 +397,18 @@ func autonomousTodoNextStep(parts []string) string {
 }
 
 func DecideAutonomousApproval(root, id, decision, note string) (AutonomousApprovalOverview, bool, error) {
+	return decideAutonomousApproval(root, id, decision, note, "user")
+}
+
+func DecideAutonomousApprovalWithSource(root, id, decision, note, source string) (AutonomousApprovalOverview, bool, error) {
+	return decideAutonomousApproval(root, id, decision, note, source)
+}
+
+func decideAutonomousApproval(root, id, decision, note, source string) (AutonomousApprovalOverview, bool, error) {
 	autonomousDecisionMu.Lock()
 	defer autonomousDecisionMu.Unlock()
 	decision = strings.ToLower(strings.TrimSpace(decision))
+	source = normalizeAutonomousDecisionSource(source)
 	if decision != "approved" && decision != "rejected" {
 		return AutonomousApprovalOverview{}, false, errors.New("decision must be approved or rejected")
 	}
@@ -409,19 +428,28 @@ func DecideAutonomousApproval(root, id, decision, note string) (AutonomousApprov
 	}
 	queued := false
 	if decision == "approved" {
-		queued, err = queueApprovedAutonomousTask(root, item, note)
+		queued, err = queueApprovedAutonomousTask(root, item, note, source)
 		if err != nil {
 			return overview, false, err
 		}
 	}
 	if item.Decision == "" {
-		err = appendAutonomousDecision(root, autonomousDecision{ID: item.ID, Title: item.Title, Decision: decision, Note: strings.TrimSpace(note), DecidedAt: autonomousApprovalNow()})
+		err = appendAutonomousDecision(root, autonomousDecision{ID: item.ID, Title: item.Title, Decision: decision, Source: source, Note: strings.TrimSpace(note), DecidedAt: autonomousApprovalNow()})
 		if err != nil {
 			return overview, queued, err
 		}
 	}
 	overview, err = BuildAutonomousApprovals(root)
 	return overview, queued, err
+}
+
+func normalizeAutonomousDecisionSource(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "model_auto", "model-auto", "model":
+		return "model_auto"
+	default:
+		return "user"
+	}
 }
 
 func parseAutonomousApprovals(content string) []AutonomousApproval {
@@ -561,6 +589,9 @@ func autonomousApprovalTextHasCompletion(values ...string) bool {
 }
 
 func autonomousApprovalNotRequiredForItem(item AutonomousApproval) bool {
+	if strings.TrimSpace(item.Decision) != "" || strings.EqualFold(strings.TrimSpace(item.ReviewDecision), "approved") {
+		return false
+	}
 	if autonomousApprovalReviewRequiresDecision(item) {
 		return false
 	}

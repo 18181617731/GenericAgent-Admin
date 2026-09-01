@@ -117,6 +117,24 @@ test('autonomous review view makes model-unavailable fallback explicit', () => {
   assert.match(summarizeAutonomousReviewNeed({ target: 'memory/autonomous_sop.md' }, review), /人工决定批准还是拒绝/)
 })
 
+test('autonomous review view explains model auto-approval and its boundary', () => {
+  const item = {
+    decision: 'approved',
+    decision_source: 'model_auto',
+    review_status: 'model',
+    review_decision: 'approved',
+    review_risk: 'low',
+    review_confidence: 'high',
+    review_reason: '证据充分且无需人工复核',
+  }
+  const review = autonomousReviewView(item, 'zh')
+  assert.equal(review.kind, 'model_auto')
+  assert.equal(review.badge, '模型自动批准')
+  assert.equal(review.risk, '低')
+  assert.match(review.summary, /已自动批准并加入自主任务队列/)
+  assert.match(summarizeAutonomousReviewNeed({ target: 'memory/read_only_check.md' }, review), /不会立即修改文件/)
+})
+
 test('autonomous labels provide friendly service names and safe date fallback', () => {
   const service = autonomousServiceView({ name: 'reflect/autonomous.py' }, 'zh')
   assert.equal(service.title, '主自主引擎')

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,7 +64,11 @@ func (s *Server) listAutonomousTasks(w http.ResponseWriter, r *http.Request, roo
 	status, source, project, risk, priority, search := strings.TrimSpace(q.Get("status")), strings.TrimSpace(q.Get("source")), strings.TrimSpace(q.Get("project")), strings.TrimSpace(q.Get("risk")), strings.TrimSpace(q.Get("priority")), strings.ToLower(strings.TrimSpace(q.Get("q")))
 	filtered := make([]ga.AutonomousTask, 0, len(board.Tasks))
 	for _, task := range board.Tasks {
-		if status != "" && task.Status != status || source != "" && task.SourceType != source || project != "" && task.Project != project || risk != "" && task.Risk != risk || priority != "" && task.Priority != priority {
+		statusMatches := status == "" || task.Status == status
+		if status == "active" {
+			statusMatches = task.Status == ga.TaskQueued || task.Status == ga.TaskRunning
+		}
+		if !statusMatches || source != "" && task.SourceType != source || project != "" && task.Project != project || risk != "" && task.Risk != risk || priority != "" && task.Priority != priority {
 			continue
 		}
 		if search != "" && !strings.Contains(strings.ToLower(task.Title+" "+task.Objective+" "+task.Project), search) {
@@ -71,7 +76,34 @@ func (s *Server) listAutonomousTasks(w http.ResponseWriter, r *http.Request, roo
 		}
 		filtered = append(filtered, task)
 	}
-	writeJSON(w, map[string]interface{}{"schema_version": board.SchemaVersion, "tasks": filtered, "runs": board.Runs, "events": board.Events, "total": len(filtered)})
+	summary := ga.SummarizeAutonomousTasks(board.Tasks, time.Now())
+	writeJSON(w, map[string]interface{}{"schema_version": board.SchemaVersion, "tasks": filtered, "runs": board.Runs, "events": board.Events, "total": len(filtered), "filtered_total": len(filtered), "summary": summary, "facets": autonomousTaskFacets(board.Tasks)})
+}
+
+func autonomousTaskFacets(tasks []ga.AutonomousTask) map[string][]string {
+	sets := map[string]map[string]struct{}{
+		"sources":  {},
+		"projects": {},
+		"risks":    {},
+	}
+	for _, task := range tasks {
+		values := map[string]string{"sources": task.SourceType, "projects": task.Project, "risks": task.Risk}
+		for key, value := range values {
+			if value != "" {
+				sets[key][value] = struct{}{}
+			}
+		}
+	}
+	result := make(map[string][]string, len(sets))
+	for key, values := range sets {
+		items := make([]string, 0, len(values))
+		for value := range values {
+			items = append(items, value)
+		}
+		sort.Strings(items)
+		result[key] = items
+	}
+	return result
 }
 
 func (s *Server) getAutonomousTask(w http.ResponseWriter, root, id string) {

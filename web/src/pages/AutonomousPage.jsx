@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AlertCircle, ArrowLeft, Check, CheckCircle2, ChevronDown, Download, RefreshCw, Search, X } from 'lucide-react'
@@ -84,6 +84,7 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
   const review = autonomousReviewView(item, lang)
   const execution = executionPresentation(item, copy)
   const showExecution = !pending && (item.decision === 'approved' || execution.state)
+  const autoApproved = item.decision === 'approved' && item.decision_source === 'model_auto'
   return <article className={`autonomous-approval is-${item.state}${selected ? ' is-selected' : ''}`}>
     <header>
       <div className="autonomous-approval-heading">
@@ -92,7 +93,7 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
         </label>}
         <div><b>{localizeAutonomousApprovalValue(item.title, lang, 'title')}</b><span>{localizeAutonomousApprovalValue(item.status, lang, 'status') || (pending ? copy.pending : copy.handled)}</span></div>
       </div>
-      <em>{pending ? copy.pending : item.state === 'approved' ? (lang === 'en' ? 'Approved' : '已批准') : item.state === 'rejected' ? (lang === 'en' ? 'Rejected' : '已拒绝') : (lang === 'en' ? 'Archived' : '已归档')}</em>
+      <em>{pending ? copy.pending : autoApproved ? copy.reviewModelAutoApproved : item.state === 'approved' ? (lang === 'en' ? 'Approved' : '已批准') : item.state === 'rejected' ? (lang === 'en' ? 'Rejected' : '已拒绝') : (lang === 'en' ? 'Archived' : '已归档')}</em>
     </header>
     {review.hasReviewData && <section className={`autonomous-approval-review is-${review.kind}`} aria-label={copy.reviewMethod}>
       <div className="autonomous-approval-review-head"><strong>{copy.reviewMethod}</strong><em>{review.badge}</em></div>
@@ -100,9 +101,10 @@ function ApprovalCard({ item, lang, busy, selected, reply, onReply, onSelect, on
         <p><span>{review.method}</span></p>
         <p>{review.summary}</p>
         {review.basis.length > 0 && <p className="autonomous-approval-review-basis"><b>{copy.reviewBasis}：</b>{review.basis.join('；')}</p>}
-        {(review.model || review.decision || review.confidence) && <div className="autonomous-approval-review-meta">
+        {(review.model || review.decision || review.risk || review.confidence) && <div className="autonomous-approval-review-meta">
           {review.model && <span><b>{copy.reviewModel}</b>{review.model}</span>}
           {review.decision && <span><b>{copy.reviewDecision}</b>{review.decision}</span>}
+          {review.risk && <span><b>{copy.reviewRisk}</b>{review.risk}</span>}
           {review.confidence && <span><b>{copy.reviewConfidence}</b>{review.confidence}</span>}
         </div>}
       </details>
@@ -224,7 +226,7 @@ function ApprovalPane({ overview, lang, busyIDs, reviewBusy, bulkProgress, onRev
     onOpenReport,
   }
   return <div className="autonomous-approvals-pane">
-    <details className="autonomous-callout"><summary><b>{lang === 'en' ? 'Approval boundary' : '审批边界'}</b></summary><span>{copy.approvalIntro}</span></details>
+    <details className="autonomous-callout" open><summary><b>{lang === 'en' ? 'Approval boundary' : '审批边界'}</b></summary><span>{copy.approvalIntro}</span></details>
     <div className="autonomous-filter-tabs" role="tablist" aria-label={copy.approvals}>
       <button type="button" role="tab" aria-selected={mode === 'pending'} className={mode === 'pending' ? 'active' : ''} onClick={() => setMode('pending')}>{copy.pending}<span>{groups.pending.length}</span></button>
       <button type="button" role="tab" aria-selected={mode === 'handled'} className={mode === 'handled' ? 'active' : ''} onClick={() => setMode('handled')}>{copy.handled}<span>{groups.handled.length}</span></button>
@@ -307,6 +309,8 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
   const [reportToOpen, setReportToOpen] = useState(null)
   const [rejecting, setRejecting] = useState(null)
   const [rejectNote, setRejectNote] = useState('')
+  const [tab, setTab] = useState('overview')
+  const automaticReviewAttempted = useRef(false)
   const loadApprovals = useCallback(async () => {
     setLoading(true)
     try { setApprovals(await api('/api/autonomous/approvals')) }
@@ -316,18 +320,24 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
   useEffect(() => { loadApprovals() }, [loadApprovals])
   const summary = autonomousSummary({ services, approvals, reports })
   const refresh = async () => { await Promise.all([loadApprovals(), onRefresh?.()]) }
-  const reviewPending = async () => {
-    if (!confirmDanger('autonomous-review', copy.reviewConfirm)) return
+  const reviewPending = useCallback(async ({ automatic = false } = {}) => {
+    if (!automatic && !(await confirmDanger('autonomous-review', copy.reviewConfirm))) return
     setReviewBusy(true)
     setMessage?.(copy.reviewStarted, 'pending')
     try {
-      const result = await api('/api/autonomous/approvals/review', { dangerous: true, method: 'POST', body: JSON.stringify({}) })
-      setApprovals(result.overview || approvals)
-      setMessage?.(copy.reviewCompleted(Number(result.reviewed) || 0), 'success')
+      const result = await api('/api/autonomous/approvals/review', { dangerous: true, method: 'POST', body: JSON.stringify({ automatic }) })
+      setApprovals(current => result.overview || current)
+      setMessage?.(copy.reviewCompleted(Number(result.reviewed) || 0, Number(result.auto_approved) || 0), 'success')
     } catch (error) {
       setMessage?.(`${copy.reviewFailed}：${error.message}`, 'error')
     } finally { setReviewBusy(false) }
-  }
+  }, [copy.reviewCompleted, copy.reviewConfirm, copy.reviewFailed, copy.reviewStarted, setMessage])
+  useEffect(() => {
+    if (tab !== 'approvals' || loading || reviewBusy || automaticReviewAttempted.current || !approvals?.source_exists) return
+    const pending = splitAutonomousApprovals(approvals.items || []).pending
+    automaticReviewAttempted.current = true
+    if (pending.length > 0) void reviewPending({ automatic: true })
+  }, [approvals, loading, reviewBusy, reviewPending, tab])
   const decideMany = async (entries, decision, sharedNote = '', options = {}) => {
     const normalizedEntries = entries.filter(entry => entry?.item?.id).map(entry => ({ ...entry, note: entry.note ?? sharedNote }))
     if (!normalizedEntries.length) return
@@ -336,7 +346,7 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
     const confirmText = normalizedEntries.length > 1
       ? (decision === 'approved' ? copy.approveManyConfirm(normalizedEntries.length) : copy.rejectManyConfirm(normalizedEntries.length))
       : (options.confirmText || `${action}“${normalizedEntries[0].item.title}”？`)
-    if (!confirmDanger('autonomous-approval', confirmText)) return
+    if (!(await confirmDanger('autonomous-approval', confirmText))) return
     setBusyIDs(new Set(normalizedEntries.map(entry => entry.item.id)))
     setBulkProgress(showProgress ? { running: true, decision, total: normalizedEntries.length, completed: 0, successCount: 0, failedCount: 0, currentTitle: normalizedEntries[0].item.title, results: [] } : null)
     let latestOverview = approvals
@@ -380,7 +390,6 @@ export function AutonomousPage({ lang = 'zh', services = [], llms = [], actionSt
     if (!entries.length || !bulkProgress) return
     decideMany(entries, bulkProgress.decision, '', { forceProgress: true, confirmText: copy.retryFailedConfirm(entries.length) })
   }
-  const [tab, setTab] = useState('overview')
   const tabs = [['overview', lang === 'en' ? 'Tasks overview' : '任务总览'], ['approvals', `${copy.approvals}${summary.pending ? ` (${summary.pending})` : ''}`], ['records', copy.records]]
   return <section className="autonomous-page">
     <div className="autonomous-toolbar"><div className="autonomous-tabs" role="tablist">{tabs.map(([id, label]) => <button type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} key={id} onClick={() => setTab(id)}>{label}</button>)}</div><button type="button" className="autonomous-refresh" disabled={loading || bulkProgress?.running} onClick={refresh}><RefreshCw className={loading || bulkProgress?.running ? 'spin' : ''} size={16}/>{copy.refresh}</button></div>

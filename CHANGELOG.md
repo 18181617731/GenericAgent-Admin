@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.105 - 2026-09-01
+
+### Autonomous review and task clarity
+- Let the model review pending autonomous proposals first and automatically approve only low- or medium-risk proposals with medium or high confidence, sufficient evidence, and no blocking signal; high-risk, unknown-risk, incomplete-evidence, and blocked proposals remain for human approval.
+- Record model-approved proposals separately from user-approved proposals, preserve the model's risk and reasoning, and explain the approval boundary in the UI without implying that approval edits files immediately.
+- Keep task headline metrics calculated from the complete board while search and filters affect only the list, show filtered-versus-total counts, include queued work in the in-progress view, and normalize completed task progress to 100%.
+
 ## v1.0.104 - 2026-08-31
 
 ### Scheduled task clarity

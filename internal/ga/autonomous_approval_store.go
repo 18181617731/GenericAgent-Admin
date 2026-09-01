@@ -22,6 +22,7 @@ type AutonomousReviewRecord struct {
 	Fingerprint      string    `json:"fingerprint,omitempty"`
 	ReviewStatus     string    `json:"review_status,omitempty"`
 	ReviewDecision   string    `json:"review_decision,omitempty"`
+	ReviewRisk       string    `json:"review_risk,omitempty"`
 	ReviewConfidence string    `json:"review_confidence,omitempty"`
 	ReviewReason     string    `json:"review_reason,omitempty"`
 	ReviewProblem    string    `json:"review_problem,omitempty"`
@@ -65,6 +66,7 @@ func applyAutonomousDecisions(overview *AutonomousApprovalOverview, decisions []
 	for i := range overview.Items {
 		if decision, ok := latest[overview.Items[i].ID]; ok {
 			overview.Items[i].Decision = decision.Decision
+			overview.Items[i].DecisionSource = decision.Source
 			overview.Items[i].Note = decision.Note
 			overview.Items[i].DecidedAt = decision.DecidedAt
 			overview.Items[i].State = decision.Decision
@@ -114,7 +116,10 @@ func appendAutonomousDecision(root string, decision autonomousDecision) error {
 }
 
 func AutonomousApprovalFingerprint(item AutonomousApproval) string {
-	value := strings.Join([]string{item.Title, item.Source, item.DraftPath, item.Target, item.Status, item.Risk, item.Evidence, item.NextStep, item.ExpectedOutcome}, "\n")
+	// Source paths can change when the same proposal is mirrored into
+	// TODO.txt after approval. Fingerprint the proposal itself so the review
+	// decision and explanation remain attached across that representation change.
+	value := strings.Join([]string{item.Title, item.Target, item.Problem, item.Status, item.Risk, item.Evidence, item.NextStep, item.ExpectedOutcome}, "\n")
 	sum := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("%x", sum[:])
 }
@@ -196,6 +201,7 @@ func applyAutonomousReviews(overview *AutonomousApprovalOverview, reviews []Auto
 		item := &overview.Items[index]
 		item.ReviewStatus = review.ReviewStatus
 		item.ReviewDecision = review.ReviewDecision
+		item.ReviewRisk = review.ReviewRisk
 		item.ReviewConfidence = review.ReviewConfidence
 		item.ReviewReason = review.ReviewReason
 		if strings.TrimSpace(review.ReviewProblem) != "" {
@@ -212,7 +218,7 @@ func applyAutonomousReviews(overview *AutonomousApprovalOverview, reviews []Auto
 	}
 }
 
-func queueApprovedAutonomousTask(root string, item AutonomousApproval, note string) (bool, error) {
+func queueApprovedAutonomousTask(root string, item AutonomousApproval, note, source string) (bool, error) {
 	path, _, err := SafeResolve(root, autonomousTodoPath)
 	if err != nil {
 		return false, err
@@ -225,7 +231,11 @@ func queueApprovedAutonomousTask(root string, item AutonomousApproval, note stri
 	if strings.Contains(string(b), marker) {
 		return false, nil
 	}
-	line := fmt.Sprintf("[ ] 用户已批准 | %s | 按 %s 中的下一步执行并生成报告", item.Title, filepath.ToSlash(autonomousApprovalSource))
+	approvalLabel := "用户已批准"
+	if normalizeAutonomousDecisionSource(source) == "model_auto" {
+		approvalLabel = "模型自动批准"
+	}
+	line := fmt.Sprintf("[ ] %s | %s | 按 %s 中的下一步执行并生成报告", approvalLabel, item.Title, filepath.ToSlash(autonomousApprovalSource))
 	if reply := autonomousApprovalReply(note); reply != "" {
 		line += " | 用户补充：" + reply
 	}

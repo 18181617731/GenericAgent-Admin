@@ -148,7 +148,7 @@ describe('autonomous operations page', () => {
       if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview())
       throw new Error(`unexpected url ${url}`)
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog(true)
     const setMessage = vi.fn()
     render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
 
@@ -157,11 +157,43 @@ describe('autonomous operations page', () => {
     fireEvent.click(screen.getByRole('button', { name: '批准并加入队列' }))
 
     await waitFor(() => expect(setMessage).toHaveBeenCalledWith('已批准并加入自主任务队列', 'success'))
-    const post = globalThis.fetch.mock.calls.find(([, options]) => options?.method === 'POST')
+    const post = globalThis.fetch.mock.calls.find(([url, options]) => String(url) === '/api/autonomous/approvals' && options?.method === 'POST')
     expect(post?.[1]?.headers?.['X-GA-Confirm']).toBe('dangerous')
     expect(JSON.parse(post?.[1]?.body)).toEqual({ id: 'draft-one', decision: 'approved', note: '先验证，再执行' })
     fireEvent.click(screen.getByRole('tab', { name: /已处理/ }))
     expect((await screen.findAllByText('已批准')).length).toBeGreaterThan(0)
+  })
+
+  test('should auto-approve a safe model-reviewed proposal without opening human confirmation', async () => {
+    installBrowserPolyfills()
+    const autoApproved = {
+      ...pendingApproval,
+      state: 'approved',
+      decision: 'approved',
+      decision_source: 'model_auto',
+      execution_state: 'queued',
+      review_status: 'model',
+      review_decision: 'approved',
+      review_risk: 'low',
+      review_confidence: 'high',
+      review_reason: '证据充分且无需人工复核',
+    }
+    const dialog = mockDialog(true)
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url) === '/api/autonomous/approvals/review' && options.method === 'POST') {
+        return jsonResponse({ automatic: true, reviewed: 1, auto_approved: 1, overview: approvalOverview([autoApproved]) })
+      }
+      if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview())
+      throw new Error(`unexpected url ${url}`)
+    })
+    render(<AutonomousPage lang="zh" reports={[]} />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
+    await waitFor(() => expect(globalThis.fetch.mock.calls.some(([url, options]) => String(url) === '/api/autonomous/approvals/review' && options?.method === 'POST' && JSON.parse(options.body).automatic === true)).toBe(true))
+    fireEvent.click(await screen.findByRole('tab', { name: /已处理/ }))
+    expect((await screen.findAllByText('模型自动批准')).length).toBeGreaterThan(0)
+    expect(screen.getByText(/系统已自动批准并加入自主任务队列/)).toBeTruthy()
+    expect(dialog).not.toHaveBeenCalled()
   })
 
   test('should group handled approvals and toggle individual status groups', async () => {
@@ -231,7 +263,7 @@ describe('autonomous operations page', () => {
       if (String(url) === '/api/autonomous/approvals') return jsonResponse(approvalOverview([first, second]))
       throw new Error(`unexpected url ${url}`)
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog(true)
     render(<AutonomousPage lang="zh" reports={[]} />)
 
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (2)' }))
@@ -302,7 +334,7 @@ describe('autonomous operations page', () => {
       if (String(url).startsWith('/api/files/read')) return jsonResponse({ content: '# 执行完成\n\n已完成并通过验证' })
       throw new Error(`unexpected url ${url}`)
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog(true)
     render(<AutonomousPage lang="zh" reports={[report]}/>)
 
     fireEvent.click(await screen.findByRole('tab', { name: '待审批 (1)' }))
@@ -320,7 +352,7 @@ describe('autonomous operations page', () => {
       if (String(url) === '/api/autonomous/approvals' && options.method === 'POST') return { ok: false, status: 500, statusText: 'Server Error', text: async () => JSON.stringify({ error: 'write failed' }) }
       return jsonResponse(approvalOverview())
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialog(true)
     const setMessage = vi.fn()
     render(<AutonomousPage lang="zh" reports={[]} setMessage={setMessage}/>)
 

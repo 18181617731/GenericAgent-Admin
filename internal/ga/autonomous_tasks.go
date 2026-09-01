@@ -161,6 +161,61 @@ type AutonomousTaskBoard struct {
 	Events           []AutonomousEvent `json:"events"`
 }
 
+// AutonomousTaskSummary is calculated from the complete task board. The API
+// keeps this summary separate from the filtered task list so changing a
+// filter never changes the meaning of the headline numbers.
+type AutonomousTaskSummary struct {
+	Total     int `json:"total"`
+	Pending   int `json:"pending"`
+	Running   int `json:"running"`
+	Blocked   int `json:"blocked"`
+	Failed    int `json:"failed"`
+	Overdue   int `json:"overdue"`
+	Completed int `json:"completed"`
+	Attention int `json:"attention"`
+}
+
+func IsAutonomousTaskOverdue(task AutonomousTask, now time.Time) bool {
+	if task.DueAt.IsZero() || task.DueAt.Year() <= 1 || task.DueAt.After(now) {
+		return false
+	}
+	return task.Status != TaskCompleted && task.Status != TaskCancelled
+}
+
+func SummarizeAutonomousTasks(tasks []AutonomousTask, now time.Time) AutonomousTaskSummary {
+	summary := AutonomousTaskSummary{Total: len(tasks)}
+	for _, task := range tasks {
+		overdue := IsAutonomousTaskOverdue(task, now)
+		switch task.Status {
+		case TaskPendingApproval:
+			summary.Pending++
+		case TaskQueued, TaskRunning:
+			summary.Running++
+		case TaskPaused, TaskBlocked:
+			summary.Blocked++
+		case TaskFailed:
+			summary.Failed++
+		case TaskCompleted:
+			summary.Completed++
+		}
+		if overdue || task.Status == TaskPaused || task.Status == TaskBlocked || task.Status == TaskFailed {
+			summary.Attention++
+		}
+		if overdue {
+			summary.Overdue++
+		}
+	}
+	return summary
+}
+
+func normalizeAutonomousTaskProgress(tasks []AutonomousTask) {
+	for index := range tasks {
+		if tasks[index].Status == TaskCompleted && tasks[index].Progress < 100 {
+			tasks[index].Progress = 100
+		}
+	}
+}
+
 func LoadAutonomousTaskBoard(root string) (AutonomousTaskBoard, error) {
 	autonomousTaskMu.Lock()
 	defer autonomousTaskMu.Unlock()
@@ -206,6 +261,7 @@ func loadAutonomousTaskBoardUnlocked(root string) (AutonomousTaskBoard, error) {
 			return board, err
 		}
 	}
+	normalizeAutonomousTaskProgress(board.Tasks)
 	sort.SliceStable(board.Tasks, func(i, j int) bool { return board.Tasks[i].UpdatedAt.After(board.Tasks[j].UpdatedAt) })
 	sort.SliceStable(board.Runs, func(i, j int) bool { return board.Runs[i].UpdatedAt.After(board.Runs[j].UpdatedAt) })
 	sort.SliceStable(board.Events, func(i, j int) bool { return board.Events[i].CreatedAt.After(board.Events[j].CreatedAt) })
@@ -225,6 +281,7 @@ func readJSONLedger(root, rel string, dst interface{}) error {
 }
 
 func saveAutonomousTaskBoardUnlocked(root string, board AutonomousTaskBoard) error {
+	normalizeAutonomousTaskProgress(board.Tasks)
 	if err := writeAutonomousLedger(root, autonomousTaskStorePath, autonomousTaskLedger{SchemaVersion: autonomousTaskSchemaVersion, MigrationVersion: autonomousTaskMigrationVersion, Tasks: board.Tasks}); err != nil {
 		return err
 	}

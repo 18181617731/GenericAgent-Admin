@@ -47,7 +47,7 @@ export const autonomousExecutionState = item => {
 }
 
 const autonomousApprovalText = item => String([
-  item?.title, item?.status, item?.next_step, item?.review_status, item?.review_decision, item?.review_reason,
+  item?.title, item?.status, item?.next_step, item?.review_status, item?.review_decision, item?.review_risk, item?.review_reason,
 ].filter(Boolean).join(' ')).toLowerCase().replaceAll('_', ' ')
 
 const approvalTextHasNoApproval = item => {
@@ -146,29 +146,33 @@ export const autonomousReviewView = (item = {}, lang = 'zh') => {
   const rulesOnly = status === 'rule_fallback' || unavailable
   const pending = !rulesOnly && status.includes('pending')
   const modelUsed = !rulesOnly && !pending && (status.includes('model') || item.review_model || item.review_decision || item.review_confidence)
-  const hasReviewData = Boolean(status || reason || item.review_model || item.review_decision || item.review_confidence)
-  const kind = unavailable ? 'unavailable' : rulesOnly ? 'rules' : pending ? 'pending' : modelUsed ? 'model' : 'manual'
+  const modelAutoApproved = modelUsed && item.decision === 'approved' && item.decision_source === 'model_auto'
+  const hasReviewData = Boolean(status || reason || item.review_model || item.review_decision || item.review_risk || item.review_confidence)
+  const kind = unavailable ? 'unavailable' : rulesOnly ? 'rules' : pending ? 'pending' : modelAutoApproved ? 'model_auto' : modelUsed ? 'model' : 'manual'
   const summary = kind === 'unavailable'
     ? copy.reviewModelUnavailableSummary
     : kind === 'rules'
       ? copy.reviewRuleFallbackSummary
-      : kind === 'pending'
+        : kind === 'pending'
         ? copy.reviewPendingSummary
-        : kind === 'model' ? copy.reviewModelUsedSummary : copy.reviewManualSummary
+        : kind === 'model_auto' ? copy.reviewAutoApprovedSummary
+          : kind === 'model' ? copy.reviewModelUsedSummary : copy.reviewManualSummary
   const badge = kind === 'unavailable'
     ? copy.reviewModelUnavailable
     : kind === 'rules' ? copy.reviewRuleFallback
-      : kind === 'pending' ? copy.reviewPending
-        : kind === 'model' ? copy.reviewModelUsed : copy.reviewManual
+        : kind === 'pending' ? copy.reviewPending
+          : kind === 'model_auto' ? copy.reviewModelAutoApproved
+            : kind === 'model' ? copy.reviewModelUsed : copy.reviewManual
   const decision = reviewReasonText(item.review_decision)
   return {
     kind,
     badge,
-    method: rulesOnly ? copy.reviewRuleFallback : kind === 'model' ? copy.reviewModelUsed : badge,
+    method: rulesOnly ? copy.reviewRuleFallback : kind === 'model_auto' ? copy.reviewModelAutoApproved : kind === 'model' ? copy.reviewModelUsed : badge,
     summary,
     basis: reviewReasonParts(reason, copy, lang),
     model: reviewModelText(item, lang),
     decision: decision === 'needs_approval' ? copy.reviewNoAutoApproval : localizeAutonomousApprovalValue(decision, lang, 'reviewDecision'),
+    risk: localizeAutonomousApprovalValue(reviewReasonText(item.review_risk), lang, 'risk'),
     confidence: localizeAutonomousApprovalValue(reviewReasonText(item.review_confidence), lang, 'reviewConfidence'),
     hasReviewData,
   }
@@ -187,13 +191,15 @@ export const summarizeAutonomousReviewNeed = (item = {}, review = autonomousRevi
     if (review.kind === 'unavailable') return `The review model is unavailable. The system only screened report approval markers, status, risk, and evidence with script rules; it did not make a model judgment. You must decide whether to approve it, and it must not be treated as model-approved.${target}`
     if (review.kind === 'rules') return `There is no usable model-review result. Conservative rules only kept this proposal pending, so the system cannot decide whether it should run. Review it yourself.${target}`
     if (review.kind === 'pending') return `The review model has not returned a result, so the system cannot decide whether this proposal should run. Review it yourself.${target}`
-    if (review.kind === 'model') return `This proposal still needs your confirmation. The model is reference only and does not approve execution for you.${target}`
+    if (review.kind === 'model_auto') return `The model rated this proposal low or medium risk with sufficient evidence and confidence, so it was auto-approved and queued. Approval only lets the autonomous service continue; it does not edit files immediately.${target}`
+    if (review.kind === 'model') return `The model participated in the judgment, but this proposal did not meet the auto-approval policy. It still needs your confirmation.${target}`
     return evidence ? `The report records this reason: ${evidence}. The proposal therefore needs your confirmation.${target}` : `The system marked this proposal for manual confirmation because no usable model conclusion is available.${target}`
   }
   if (review.kind === 'unavailable') return `用于审核的模型当前不可用。系统只根据报告中的审批标记、状态、风险和核查证据做脚本规则筛选，没有做模型判断；因此需要你人工决定批准还是拒绝，不能把这张卡片当成“模型已审核通过”。${target}`
   if (review.kind === 'rules') return `当前没有可用的模型审核结论。系统只按报告标记和保守规则把这项建议保留为待审批，不能判断它是否适合执行，需要你人工确认。${target}`
   if (review.kind === 'pending') return `审核模型还没有返回结果，系统暂时无法判断这项建议是否应该执行，需要你人工确认。${target}`
-  if (review.kind === 'model') return `这项建议仍需要你确认。模型结论只能作为参考，不会替你批准执行。${target}`
+  if (review.kind === 'model_auto') return `模型判断这项建议为低/中风险，证据充分且置信度足够，因此已自动批准并加入队列。批准只代表允许自主服务继续处理，不会立即修改文件。${target}`
+  if (review.kind === 'model') return `模型已经参与判断，但这项建议没有满足自动批准条件，仍需要你确认。${target}`
   return evidence ? `报告记录的原因是：${evidence}。因此这项建议需要你人工确认。${target}` : `系统把这项建议标记为需要人工确认，当前没有可用的模型审核结论。${target}`
 }
 

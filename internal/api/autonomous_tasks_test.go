@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"genericagent-admin-go/internal/ga"
 )
 
 func TestAutonomousTaskLifecycleAndSubresources(t *testing.T) {
@@ -55,6 +58,42 @@ func TestAutonomousTaskRejectsIllegalTransition(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("illegal transition status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutonomousTaskListKeepsSummaryStableWhenStatusFilterChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := ga.SaveAutonomousTaskBoard(root, ga.AutonomousTaskBoard{
+		SchemaVersion:    1,
+		MigrationVersion: 1,
+		Tasks: []ga.AutonomousTask{
+			{ID: "completed", Title: "已完成", Status: ga.TaskCompleted, Progress: 0},
+			{ID: "pending", Title: "待审批", Status: ga.TaskPendingApproval},
+			{ID: "running", Title: "执行中", Status: ga.TaskRunning, UpdatedAt: time.Now()},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/autonomous/tasks?status=completed", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Tasks         []ga.AutonomousTask      `json:"tasks"`
+		Total         int                      `json:"total"`
+		FilteredTotal int                      `json:"filtered_total"`
+		Summary       ga.AutonomousTaskSummary `json:"summary"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Tasks) != 1 || body.Total != 1 || body.FilteredTotal != 1 || body.Summary.Total != 3 || body.Summary.Pending != 1 || body.Summary.Running != 1 || body.Summary.Completed != 1 {
+		t.Fatalf("filtered response=%+v", body)
+	}
+	if body.Tasks[0].Progress != 100 {
+		t.Fatalf("completed task progress=%d, want 100", body.Tasks[0].Progress)
 	}
 }
 

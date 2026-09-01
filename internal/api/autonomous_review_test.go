@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -121,6 +123,130 @@ func TestSaveAutonomousReviewFailurePersistsRetryState(t *testing.T) {
 	stored, err := ga.LoadAutonomousReviews(root)
 	if err != nil || len(stored) != 1 || stored[0].ID != "approval-1" {
 		t.Fatalf("stored=%#v err=%v", stored, err)
+	}
+}
+
+func TestAutonomousApprovalReviewAutoApprovesEligibleModelResult(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	draft := "## 1. 补充只读检查说明\n" +
+		"- 来源：R-test\n" +
+		"- 要解决的问题：让后续执行有明确的只读检查说明\n" +
+		"- 落地目标：memory/read_only_check.md\n" +
+		"- 状态：待批未落地\n" +
+		"- 核查证据：目标文件不存在，检查范围已明确\n" +
+		"- 风险：低\n" +
+		"- 下一步：用户批准后写入文档\n"
+	if err := os.WriteFile(filepath.Join(root, "temp", "pending_drafts.md"), []byte(draft), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "temp", "TODO.txt"), []byte("# TODO\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("review endpoint=%q", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer review-secret" {
+			t.Errorf("authorization header=%q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"{\\\"decision\\\":\\\"approved\\\",\\\"risk\\\":\\\"low\\\",\\\"confidence\\\":\\\"high\\\",\\\"reason\\\":\\\"证据充分且无需人工复核\\\",\\\"problem\\\":\\\"补充只读检查说明以便后续执行有统一依据\\\"}\"}}]}"))
+	}))
+	defer modelServer.Close()
+
+	enabled, order := true, 0
+	if _, err := modelconfig.Export(root, []modelconfig.Profile{{
+		VarName: "native_oai_config_review",
+		Type:    "native_oai",
+		Name:    "审核模型",
+		APIBase: modelServer.URL + "/v1",
+		APIKey:  "review-secret",
+		ModelConfigs: []modelconfig.ModelConfig{{
+			Model:     "review-model",
+			Enabled:   &enabled,
+			SortOrder: &order,
+		}},
+	}}, true); err != nil {
+		t.Fatalf("export review model: %v", err)
+	}
+
+	s := newGoalTestServer(t, root)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/autonomous/approvals/review", strings.NewReader("{\"automatic\":false}"))
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("review status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var automatic bool
+	var reviewed, autoApproved int
+	var overview ga.AutonomousApprovalOverview
+	if err := json.Unmarshal(body["automatic"], &automatic); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body["reviewed"], &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body["auto_approved"], &autoApproved); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body["overview"], &overview); err != nil {
+		t.Fatal(err)
+	}
+	if automatic || reviewed != 1 || autoApproved != 1 || len(overview.Items) != 1 {
+		t.Fatalf("review response automatic=%v reviewed=%d auto_approved=%d overview=%+v", automatic, reviewed, autoApproved, overview)
+	}
+	item := overview.Items[0]
+	if item.State != "approved" || item.Decision != "approved" || item.DecisionSource != "model_auto" || item.ReviewStatus != "model" || item.ReviewRisk != "low" {
+		t.Fatalf("reviewed item=%+v", item)
+	}
+	todo, err := os.ReadFile(filepath.Join(root, "temp", "TODO.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(todo), "模型自动批准") || !strings.Contains(string(todo), "ga-admin-approval:") {
+		t.Fatalf("auto-approved TODO entry=%s", todo)
+	}
+	decisions, err := os.ReadFile(filepath.Join(root, "temp", "autonomous_approval_decisions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(decisions), "\"source\": \"model_auto\"") {
+		t.Fatalf("decision source missing=%s", decisions)
+	}
+}
+
+func TestShouldAutoApproveAutonomousReviewRequiresSafeEvidence(t *testing.T) {
+	baseItem := ga.AutonomousApproval{State: "pending", Evidence: "目标和范围已核验"}
+	baseRecord := ga.AutonomousReviewRecord{ReviewStatus: "model", ReviewDecision: "approved", ReviewRisk: "low", ReviewConfidence: "high", ReviewReason: "证据充分"}
+	cases := []struct {
+		name   string
+		item   ga.AutonomousApproval
+		record ga.AutonomousReviewRecord
+		want   bool
+	}{
+		{name: "eligible", item: baseItem, record: baseRecord, want: true},
+		{name: "high risk", item: baseItem, record: ga.AutonomousReviewRecord{ReviewStatus: "model", ReviewDecision: "approved", ReviewRisk: "high", ReviewConfidence: "high", ReviewReason: "证据充分"}},
+		{name: "unknown risk", item: baseItem, record: ga.AutonomousReviewRecord{ReviewStatus: "model", ReviewDecision: "approved", ReviewRisk: "unknown", ReviewConfidence: "high", ReviewReason: "证据充分"}},
+		{name: "low confidence", item: baseItem, record: ga.AutonomousReviewRecord{ReviewStatus: "model", ReviewDecision: "approved", ReviewRisk: "low", ReviewConfidence: "low", ReviewReason: "证据充分"}},
+		{name: "missing evidence", item: ga.AutonomousApproval{State: "pending"}, record: baseRecord},
+		{name: "explicit blocker", item: ga.AutonomousApproval{State: "pending", Evidence: "报告已阻塞，等待人工复核"}, record: baseRecord},
+		{name: "negated manual review", item: baseItem, record: ga.AutonomousReviewRecord{ReviewStatus: "model", ReviewDecision: "approved", ReviewRisk: "low", ReviewConfidence: "high", ReviewReason: "证据充分，无需人工复核"}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldAutoApproveAutonomousReview(tc.item, tc.record); got != tc.want {
+				t.Fatalf("should auto approve=%v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

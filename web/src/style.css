@@ -16049,6 +16049,11 @@ html[data-color-scheme="dark"] .progress-bar {
 .autonomous-task-toolbar label:focus-within { border-color:var(--green); }
 .autonomous-task-toolbar input { width:100%; min-width:0; height:30px; padding:0; border:0; outline:0; background:transparent; }
 .autonomous-task-toolbar select { min-width:125px; height:36px; }
+.autonomous-task-list-summary { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 12px; color:var(--muted); font-size:12px; }
+.autonomous-task-list-summary strong { color:var(--text); font-size:13px; }
+.autonomous-task-list-summary span:last-child { color:var(--muted); }
+.autonomous-task-empty-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; }
+.autonomous-task-empty-actions button { min-height:30px; }
 .autonomous-task-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr); min-width:0; border:1px solid var(--border); border-radius:7px; overflow:hidden; }
 .autonomous-task-list { display:flex; flex-direction:column; align-items:stretch; min-width:0; max-height:520px; overflow:auto; background:var(--surface-muted); }
 .autonomous-task-row { display:flex; flex:0 0 auto; align-items:center; gap:6px; width:100%; min-width:0; border-bottom:1px solid var(--border); background:transparent; }
@@ -16541,6 +16546,8 @@ html[data-theme="dark"] .ga-message-banner.is-error { color:var(--ink-err); back
 .autonomous-approval-review.is-unavailable,.autonomous-approval-review.is-rules { border-left-color:#d97706; background:color-mix(in srgb,#f59e0b 8%,var(--surface-strong)); }
 .autonomous-approval-review.is-unavailable { border-left-color:#dc2626; background:color-mix(in srgb,#ef4444 7%,var(--surface-strong)); }
 .autonomous-approval-review.is-model { border-left-color:var(--green); background:color-mix(in srgb,var(--green) 6%,var(--surface-strong)); }
+.autonomous-approval-review.is-model_auto { border-left-color:var(--green); background:color-mix(in srgb,var(--green) 10%,var(--surface-strong)); }
+.autonomous-approval.is-approved > header > em { background:color-mix(in srgb,var(--green) 12%,var(--surface-muted)); color:var(--green); }
 .autonomous-approval-review-head { display:flex; align-items:center; flex-wrap:wrap; gap:7px; min-width:0; }
 .autonomous-approval-review-head strong { color:var(--text); font-size:12px; }
 .autonomous-approval-review-head span { color:var(--muted); font-size:12px; }

@@ -6,6 +6,7 @@ test('localizes autonomous approval enum values in Chinese', () => {
   assert.equal(localizeAutonomousApprovalValue('needs_approval', 'zh', 'reviewDecision'), '需要审批')
   assert.equal(localizeAutonomousApprovalValue('high', 'zh', 'reviewConfidence'), '高')
   assert.equal(localizeAutonomousApprovalValue('human review required', 'zh', 'risk'), '需要人工复核')
+  assert.equal(localizeAutonomousApprovalValue('unknown', 'zh', 'risk'), '未知')
 })
 
 test('localizes generated review reasons while preserving separators', () => {
