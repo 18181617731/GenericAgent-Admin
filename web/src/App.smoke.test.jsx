@@ -1099,6 +1099,17 @@ describe('chat response identity and time', () => {
     fireEvent.pointerMove(viewport, { pointerId: 7, clientX: 35, clientY: 50 })
     fireEvent.pointerUp(viewport, { pointerId: 7 })
     expect(diagram.style.transform).toBe('translate(25px, 30px) scale(1)')
+
+    fireEvent.click(screen.getByRole('button', { name: '\u5168\u5c4f\u67e5\u770b' }))
+    expect(screen.getByRole('dialog', { name: 'Mermaid \u56fe\u8868\u5168\u5c4f\u67e5\u770b' })).toBeTruthy()
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(screen.getByRole('img', { name: 'Mermaid \u56fe\u8868' }).style.transform).toBe('translate(25px, 30px) scale(1)')
+    expect(appStyles).toContain('.oa-mermaid-fullscreen{position:fixed;inset:0;z-index:10020')
+    expect(appStyles).toContain('.oa-code-head.oa-mermaid-head{height:auto}')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Mermaid \u56fe\u8868\u5168\u5c4f\u67e5\u770b' })).toBeNull()
+    expect(document.body.style.overflow).toBe('')
   })
 
   test('waits for a streamed mermaid fence to close before rendering its final source', async () => {

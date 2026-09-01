@@ -12,7 +12,7 @@ import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, FolderPlus, GitBranch, Hand, KeyRound, Lock, Maximize2, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, FolderOpen, FolderPlus, GitBranch, Hand, KeyRound, Lock, Maximize, Maximize2, Menu, MessageSquarePlus, MoreHorizontal, Orbit, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { SETTINGS_TEXT } from './lib/i18n'
 import { KeychainPage } from './pages/KeychainPage'
@@ -592,14 +592,18 @@ const renderMermaidSvg = (source, colorScheme) => {
 }
 
 function MermaidDiagram({ source = '' }) {
+  const cardRef = useRef(null)
   const hostRef = useRef(null)
   const dragRef = useRef(null)
+  const fullscreenTriggerRef = useRef(null)
   const bindFunctionsRef = useRef(null)
   const [colorScheme, setColorScheme] = useState(() => globalThis.document?.documentElement?.dataset?.colorScheme || 'light')
   const [state, setState] = useState({ status: 'loading', svg: '', error: '' })
   const [mode, setMode] = useState('diagram')
   const [panEnabled, setPanEnabled] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenPlaceholderHeight, setFullscreenPlaceholderHeight] = useState(0)
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
 
   const resetView = useCallback(() => {
@@ -647,7 +651,34 @@ function MermaidDiagram({ source = '' }) {
     if (!showingSource && state.status === 'ready' && hostRef.current && bindFunctionsRef.current) {
       bindFunctionsRef.current(hostRef.current)
     }
-  }, [showingSource, state.status, state.svg])
+  }, [showingSource, state.status, state.svg, isFullscreen])
+
+  const closeFullscreen = useCallback(() => {
+    setIsFullscreen(false)
+    globalThis.requestAnimationFrame?.(() => fullscreenTriggerRef.current?.focus())
+  }, [])
+
+  const openFullscreen = useCallback(() => {
+    setFullscreenPlaceholderHeight(cardRef.current?.getBoundingClientRect?.().height || 0)
+    setIsFullscreen(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return undefined
+    globalThis.requestAnimationFrame?.(() => fullscreenTriggerRef.current?.focus())
+    const previousOverflow = globalThis.document?.body?.style?.overflow || ''
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeFullscreen()
+    }
+    globalThis.document?.addEventListener('keydown', closeOnEscape)
+    if (globalThis.document?.body) globalThis.document.body.style.overflow = 'hidden'
+    return () => {
+      globalThis.document?.removeEventListener('keydown', closeOnEscape)
+      if (globalThis.document?.body) globalThis.document.body.style.overflow = previousOverflow
+    }
+  }, [closeFullscreen, isFullscreen])
 
   const finishDrag = useCallback((event) => {
     if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
@@ -677,7 +708,7 @@ function MermaidDiagram({ source = '' }) {
 
   const controlsDisabled = state.status !== 'ready' || showingSource
 
-  return <div className={`oa-mermaid-card ${state.status === 'error' ? 'is-error' : ''}`}>
+  const card = <div ref={cardRef} className={`oa-mermaid-card ${state.status === 'error' ? 'is-error' : ''} ${isFullscreen ? 'is-fullscreen' : ''}`}>
     <div className="oa-code-head oa-mermaid-head">
       <div className="oa-mermaid-modes" role="group" aria-label={ct('Mermaid 显示模式', 'Mermaid display mode')}>
         <button type="button" className={showingSource ? '' : 'is-active'} aria-pressed={!showingSource} onClick={() => setMode('diagram')} disabled={state.status === 'error'}>{ct('图表', 'Diagram')}</button>
@@ -689,6 +720,7 @@ function MermaidDiagram({ source = '' }) {
         <span className="oa-mermaid-scale" aria-label={ct('当前缩放比例', 'Current zoom')}>{Math.round(view.scale * 100)}%</span>
         <button type="button" className="oa-mermaid-tool" aria-label={ct('放大', 'Zoom in')} title={ct('放大', 'Zoom in')} disabled={controlsDisabled || view.scale >= 3} onClick={() => changeZoom(.2)}><ZoomIn size={14} /></button>
         <button type="button" className="oa-mermaid-tool" aria-label={ct('复位视图', 'Reset view')} title={ct('复位视图', 'Reset view')} disabled={controlsDisabled} onClick={resetView}><Maximize2 size={14} /></button>
+        <button ref={fullscreenTriggerRef} type="button" className="oa-mermaid-tool" aria-label={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} title={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} disabled={state.status !== 'ready'} onClick={isFullscreen ? closeFullscreen : openFullscreen}>{isFullscreen ? <X size={14} /> : <Maximize size={14} />}</button>
         <CopyButton text={source} compact />
       </div>
     </div>
@@ -713,6 +745,14 @@ function MermaidDiagram({ source = '' }) {
     {state.status === 'error' && <div className="oa-mermaid-error" role="alert">{ct('图表语法无效，已显示源码：', 'Invalid diagram syntax; showing source:')} {state.error}</div>}
     {showingSource && <pre className="oa-mermaid-source"><code>{source}</code></pre>}
   </div>
+
+  if (!isFullscreen) return card
+  return <>
+    <div className="oa-mermaid-fullscreen-placeholder" aria-hidden="true" style={{ height: fullscreenPlaceholderHeight }} />
+    {createPortal(<div className="oa-mermaid-fullscreen" role="dialog" aria-modal="true" aria-label={ct('Mermaid 图表全屏查看', 'Mermaid diagram fullscreen view')}>
+      {card}
+    </div>, globalThis.document.body)}
+  </>
 }
 
 const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply }) {
