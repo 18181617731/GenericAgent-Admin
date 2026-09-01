@@ -723,6 +723,7 @@ export function Models({
 }) {
   const text = t.models
   const [expanded, setExpanded] = useState(() => new Set())
+  const [workspace, setWorkspace] = useState('models')
   const [previewOpen, setPreviewOpen] = useState(false)
   const [providerDrawer, setProviderDrawer] = useState(null)
   const [providerDraft, setProviderDraft] = useState(null)
@@ -893,6 +894,7 @@ export function Models({
     setProviderDraft(null)
   }
   const openNewProvider = () => {
+    setWorkspace('providers')
     setAddModelIndex(null)
     setProviderDraft({
       ...emptyProfile(profiles.length, DEFAULT_PROTOCOL),
@@ -914,6 +916,7 @@ export function Models({
     }
     addModelProfiles([{ ...providerDraft, apibase: providerDraft.apibase.trim() }])
     setProviderDrawer(null)
+    setWorkspace('models')
     // A provider only matters once it has models, so keep the flow going.
     setAddModelIndex(profiles.length)
   }
@@ -967,36 +970,64 @@ export function Models({
   return (
     <section className="models-page">
       <header className="model-save-bar">
-        <div className="model-save-summary" aria-label={text.configSummary}>
-          <span className={`model-summary-dot${blocked ? ' is-error' : changes.total ? ' is-dirty' : ''}`} />
-          <strong>{text.models(totalModels)}</strong>
-          <span>{text.providers(summary.total)}</span>
-          {summary.errors > 0 && <span className="is-error">{text.blockItems(summary.errors)}</span>}
-          {summary.warnings > 0 && <span className="is-warning">{text.reminders(summary.warnings)}</span>}
-          <span className="model-save-source"><FileCode2 size={13} /><code>mykey.py</code></span>
+        <div className="model-toolbar-main">
+          <nav className="model-workspace-tabs" aria-label={text.configSummary}>
+            <button
+              type="button"
+              className={workspace === 'models' ? 'is-active' : ''}
+              aria-pressed={workspace === 'models'}
+              onClick={() => setWorkspace('models')}
+            >
+              <Layers size={14} />
+              <span>{text.callListTitle}</span>
+              <b>{rows.length}</b>
+            </button>
+            <button
+              type="button"
+              className={workspace === 'providers' ? 'is-active' : ''}
+              aria-pressed={workspace === 'providers'}
+              onClick={() => setWorkspace('providers')}
+            >
+              <Network size={14} />
+              <span>{text.connections}</span>
+              <b className={summary.errors ? 'is-error' : ''}>{summary.total}</b>
+            </button>
+          </nav>
+          <div className="model-save-summary" aria-label={text.configSummary}>
+            <span className={`model-summary-dot${blocked ? ' is-error' : changes.total ? ' is-dirty' : ''}`} />
+            <strong>{text.models(totalModels)}</strong>
+            <span>{text.providers(summary.total)}</span>
+            {summary.errors > 0 && <span className="is-error">{text.blockItems(summary.errors)}</span>}
+            {summary.warnings > 0 && <span className="is-warning">{text.reminders(summary.warnings)}</span>}
+            <span className="model-save-source"><FileCode2 size={13} /><code>mykey.py</code></span>
+          </div>
         </div>
         <div className="model-save-actions">
           <span className={`model-draft-state${changes.total ? ' is-dirty' : ''}`}>
             {changes.total ? text.unsavedChanges(changes.total) : text.inSync}
           </span>
-          <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}>{text.rereadConfig}</Button>
-          <Button icon={<FileCode2 size={14} />} onClick={async () => { setPreviewOpen(true); await previewModels() }}>{text.configPreview}</Button>
+          <Button className="model-utility-action" title={text.rereadConfig} aria-label={text.rereadConfig} icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}><span>{text.rereadConfig}</span></Button>
+          <Button className="model-utility-action" title={text.configPreview} aria-label={text.configPreview} icon={<FileCode2 size={14} />} onClick={async () => { setPreviewOpen(true); await previewModels() }}><span>{text.configPreview}</span></Button>
           <Button
+            className="model-utility-action"
+            title={text.discard}
+            aria-label={text.discard}
             icon={<RotateCcw size={14} />}
             disabled={!changes.total || saving}
             onClick={async () => { if (changes.total && await confirmDanger('models-discard', text.discardConfirm)) discardDraft() }}
           >
-            {text.discard}
+            <span>{text.discard}</span>
           </Button>
           <Button
+            className="model-save-action"
             type="primary"
             icon={<Save size={14} />}
             loading={saving}
             disabled={blocked || !changes.total}
-            title={blocked ? text.saveBlocked : undefined}
+            title={blocked ? text.saveBlocked : text.saveAll}
             onClick={() => saveAll()}
           >
-            {text.saveAll}
+            <span>{text.saveAll}</span>
           </Button>
         </div>
       </header>
@@ -1011,7 +1042,11 @@ export function Models({
       {failoverError && <Alert type="error" showIcon message={failoverError} className="model-page-alert" />}
       {saveState.status === 'error' && <Alert type="error" showIcon message={text.saveFailed} description={saveState.error} className="model-page-alert" />}
 
-      <section className="model-call-list" aria-label={text.callListTitle}>
+      <section
+        className={`model-call-list${workspace !== 'models' ? ' is-workspace-hidden' : ''}`}
+        aria-label={text.callListTitle}
+        aria-hidden={workspace !== 'models'}
+      >
         <header className="model-call-head">
           <div>
             <strong>{text.callListTitle}</strong>
@@ -1088,7 +1123,11 @@ export function Models({
         )}
       </section>
 
-      <section className="model-connections" aria-label={text.connections}>
+      <section
+        className={`model-connections${workspace !== 'providers' ? ' is-workspace-hidden' : ''}`}
+        aria-label={text.connections}
+        aria-hidden={workspace !== 'providers'}
+      >
         <header className="model-connections-head">
           <div>
             <strong>{text.connections}</strong>

@@ -11391,8 +11391,9 @@ html[data-theme="warm"] .models-page {
 /* Models: the call list is the page. A row is one --llm-no slot; providers
    are connection settings that sit under it and open in a drawer. */
 .models-page {
+  container-type: inline-size;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   align-content: start;
 }
 
@@ -11400,31 +11401,96 @@ html[data-theme="warm"] .models-page {
   position: sticky;
   top: 0;
   z-index: 6;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding: 11px 15px;
+  gap: 12px;
+  min-height: 54px;
+  margin: 0;
+  padding: 7px 9px;
   border: 1px solid var(--model-line);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--model-paper) 94%, var(--model-wash));
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--model-paper) 96%, var(--model-wash));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--model-ink-strong) 7%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.models-page .model-toolbar-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.models-page .model-workspace-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid var(--model-line);
+  border-radius: 8px;
+  background: var(--model-wash);
+}
+
+.models-page .model-workspace-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 620;
+  cursor: pointer;
+  transition: background-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.models-page .model-workspace-tabs button:hover { color: var(--model-ink-strong); }
+
+.models-page .model-workspace-tabs button.is-active {
+  background: var(--model-paper);
+  color: var(--model-ink-strong);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--model-ink-strong) 10%, transparent);
+}
+
+.models-page .model-workspace-tabs button b {
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--model-ink) 9%, transparent);
+  color: var(--model-ink);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+}
+
+.models-page .model-workspace-tabs button b.is-error {
+  background: color-mix(in srgb, var(--model-error) 12%, transparent);
+  color: var(--model-error);
 }
 
 .models-page .model-save-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 10.5px;
+  white-space: nowrap;
 }
 
 .models-page .model-save-summary strong {
   color: var(--model-ink-strong);
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
 .models-page .model-save-summary .is-error { color: var(--model-error); }
@@ -11432,6 +11498,9 @@ html[data-theme="warm"] .models-page {
 
 .models-page .model-summary-dot {
   display: inline-block;
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--model-ok);
 }
@@ -11442,31 +11511,52 @@ html[data-theme="warm"] .models-page {
 .models-page .model-save-source {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding-left: 9px;
+  gap: 4px;
+  padding-left: 8px;
   border-left: 1px solid var(--model-line);
   color: var(--muted-2);
 }
 
-.models-page .model-save-source code { font-size: 11px; }
+.models-page .model-save-source code { font-size: 10px; }
 
 .models-page .model-save-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.models-page .model-save-actions .ant-btn {
+  height: 32px;
+  padding-inline: 9px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.models-page .model-save-actions .model-utility-action {
+  width: 32px;
+  padding-inline: 0;
 }
 
 .models-page .model-draft-state {
-  margin-right: 3px;
+  max-width: 110px;
+  margin-right: 2px;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .models-page .model-draft-state.is-dirty {
   color: var(--model-warn);
   font-weight: 620;
+}
+
+.models-page .model-call-list.is-workspace-hidden,
+.models-page .model-connections.is-workspace-hidden {
+  display: none;
 }
 
 .models-page .model-call-list,
@@ -12047,14 +12137,14 @@ html[data-theme="warm"] .models-page {
   border-top: 1px solid var(--border);
 }
 
-@media (max-width: 1040px) {
+@container (max-width: 1040px) {
   .models-page .model-params-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Narrow screens keep the identity on the first line and drop the provider
+/* Narrow containers keep the identity on the first line and drop the provider
    chip and the actions onto a second line that spans the full row, so the
    actions stay right-aligned instead of being auto-placed under the handle. */
-@media (max-width: 860px) {
+@container (max-width: 860px) {
   .models-page .model-call-main {
     grid-template-columns: 18px 40px minmax(0, 1fr);
     grid-template-areas:
@@ -12081,23 +12171,33 @@ html[data-theme="warm"] .models-page {
   .models-page .model-row-body { padding-left: 14px; }
 }
 
-@media (max-width: 420px) {
-  .models-page .model-call-provider { max-width: 120px; }
-}
-
-@media (max-width: 620px) {
+@container (max-width: 620px) {
   .models-page .model-params-grid { grid-template-columns: minmax(0, 1fr); }
   .models-page .model-field--wide { grid-column: auto; }
 }
 
-@media (max-width: 720px) {
-  .models-page .model-save-bar {
-    align-items: stretch;
-    flex-direction: column;
-  }
+@container (max-width: 420px) {
+  .models-page .model-call-provider { max-width: 120px; }
+}
 
-  .models-page .model-save-actions .ant-btn { flex: 1 1 auto; }
+@container (max-width: 720px) {
+  .models-page .model-save-summary { display: none; }
   .models-page .model-failover-candidates { grid-template-columns: 1fr; }
+}
+
+@container (max-width: 520px) {
+  .models-page .model-save-bar { gap: 7px; }
+  .models-page .model-toolbar-main { gap: 6px; }
+  .models-page .model-workspace-tabs button { padding-inline: 7px; }
+  .models-page .model-draft-state,
+  .models-page .model-save-actions > .ant-btn:not(.model-save-action):not(.model-utility-action) { display: none; }
+}
+
+@container (max-width: 400px) {
+  .models-page .model-workspace-tabs button { font-size: 0; }
+  .models-page .model-workspace-tabs button b { font-size: 9.5px; }
+  .models-page .model-save-action { width: 32px; padding-inline: 0; }
+  .models-page .model-save-action > span:not(.ant-btn-icon) { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

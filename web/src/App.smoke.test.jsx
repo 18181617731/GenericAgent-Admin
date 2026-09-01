@@ -419,6 +419,29 @@ describe('Models call list', () => {
     expect(document.querySelector('.model-call-row .model-call-title strong').textContent).toBe('demo-model')
   })
 
+  test('switches workspaces without unmounting model or provider controls', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    const [modelsTab, providersTab] = document.querySelectorAll('.model-workspace-tabs button')
+    const modelsWorkspace = document.querySelector('.model-call-list')
+    const providersWorkspace = document.querySelector('.model-connections')
+
+    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+
+    fireEvent.click(providersTab)
+    expect(providersTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    expect(providersWorkspace.querySelector('.model-connection-card')).toBeTruthy()
+
+    fireEvent.click(modelsTab)
+    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+  })
+
   test('edits a model display name without changing its model ID', () => {
     installBrowserPolyfills()
     render(<ModelsHarness initialProfile={{
