@@ -3076,8 +3076,14 @@ export const ChatMessage = memo(function ChatMessage({
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
-  const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
-  const pendingFiles   = savedFilePaths.length > 0 ? [] : messageFiles.filter(f => !isImageFile(f))
+  const nonImageFiles = messageFiles.filter(f => !isImageFile(f))
+  const metadataFilePaths = nonImageFiles
+    .map(file => String(file?.path || file?.Path || '').trim())
+    .filter(Boolean)
+  const savedFilePaths = m.role === 'user'
+    ? (metadataFilePaths.length > 0 ? metadataFilePaths : extractSavedFilePaths(m.content))
+    : []
+  const pendingFiles = savedFilePaths.length > 0 ? [] : nonImageFiles
   const [copied,  setCopied]  = useState(false)
   const [copyErr, setCopyErr] = useState('')
   const [editing, setEditing] = useState(false)
@@ -3197,6 +3203,19 @@ export const ChatMessage = memo(function ChatMessage({
                   })}
                 </div>
               )}
+              {(savedFilePaths.length > 0 || pendingFiles.length > 0) && (
+                <div className="oa-message-files">
+                  {savedFilePaths.map((savedPath, i) => (
+                    <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />
+                  ))}
+                  {pendingFiles.map((file, i) => {
+                    const name = uploadFileName(file)
+                    const visual = getFileVisual(name)
+                    const Icon = visual.Icon
+                    return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={ct(`附件：${name}`, `Attachment: ${name}`)}><Icon size={18}/><b>{name}</b></span>
+                  })}
+                </div>
+              )}
               {editing
                 ? (<div className="oa-message-editor">
                     <textarea ref={editRef} value={editDraft}
@@ -3218,18 +3237,6 @@ export const ChatMessage = memo(function ChatMessage({
                     {btwDisplay
                       ? <><span className="oa-user-btw-command"><i aria-hidden="true"/>/btw</span><span className="oa-user-btw-prompt">{btwDisplay.prompt || '侧问'}</span></>
                       : userText}
-                    {savedFilePaths.length > 0 && (
-                      <div className="oa-msg-saved-paths">
-                        {savedFilePaths.map((p, i) => (
-                          <span key={i} className="oa-msg-saved-path" title={p}>{p.split(/[/\\]/).pop()}</span>
-                        ))}
-                      </div>
-                    )}
-                    {pendingFiles.length > 0 && (
-                      <div className="oa-msg-files">
-                        {pendingFiles.map((f, i) => <span key={i} className="oa-msg-file">{f.name}</span>)}
-                      </div>
-                    )}
                   </div>)}
             </>)
         }

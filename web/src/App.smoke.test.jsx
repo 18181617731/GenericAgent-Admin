@@ -1152,6 +1152,46 @@ describe('chat response identity and time', () => {
     expect(container.querySelector('.oa-mermaid-diagram')).toBeNull()
   })
 
+  test('keeps non-image attachments visible before the server upload response', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'user-file-optimistic',
+          role: 'user',
+          content: 'summarize this',
+          files: [{ name:'notes.txt', type:'text/plain', dataURL:'data:text/plain;base64,aGVsbG8=' }],
+        }}
+        pending
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files .oa-pending-file')).toBeTruthy()
+    expect(container.querySelector('.oa-msg-text')?.textContent).toBe('summarize this')
+  })
+
+  test('keeps saved non-image attachments visible from metadata after reload', () => {
+    const savedPath = 'C:\\chat\\uploads\\123_cost]report.pdf'
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'user-file-saved',
+          role: 'user',
+          content: `review this\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n- [FILE:${savedPath}]`,
+          files: [{ path:savedPath, name:'123_cost]report.pdf', mime:'application/pdf', url:'/api/chat/file/123_cost%5Dreport.pdf' }],
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('123_cost]report.pdf')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files .oa-file-card')).toBeTruthy()
+    expect(container.querySelector('.oa-file-card')?.getAttribute('title')).toBe(savedPath)
+    expect(container.querySelector('.oa-msg-text')?.textContent).toBe('review this')
+  })
+
   test('renders an explicit empty result for a worldline command', () => {
     render(
       <ChatMessage
