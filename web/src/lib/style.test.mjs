@@ -277,20 +277,33 @@ test('mobile turn headers hide token metadata while keeping the current status r
   assert.ok(mobileHideIndex > inlineBaseIndex, 'mobile hide rule must follow inline usage base styles')
 })
 
-test('chat markdown tables use explicit warm, light, and dark palette tokens', () => {
+test('chat markdown tables stay readable, scannable, and horizontally usable', () => {
   for (const selector of ['html[data-theme="warm"]', 'html[data-theme="light"]', 'html[data-theme="dark"]']) {
     const themeRules = ruleBodies(selector).filter(rule => /--chat-table-border\s*:/i.test(rule))
     assert.ok(themeRules.length > 0, `missing chat table tokens for ${selector}`)
-    assert.match(themeRules.join('\n'), /--chat-table-header-bg\s*:/i)
+    const palette = themeRules.join('\n')
+    assert.match(palette, /--chat-table-header-bg\s*:/i)
+    assert.match(palette, /--chat-table-row-alt\s*:/i)
+    assert.match(palette, /--chat-table-row-hover\s*:/i)
   }
 
   const wrapRule = ruleBodies('.oa-table-wrap').join('\n')
+  const tableRule = ruleBodies('.oa-md-table').join('\n')
   const cellRule = ruleBodies('.oa-md-table th,.oa-md-table td').join('\n')
   const headerRule = ruleBodies('.oa-md-table th').join('\n')
+  const stripeRule = ruleBodies('.oa-md-table tbody tr:nth-child(even) td').join('\n')
+  const hoverRule = ruleBodies('.oa-md-table tbody tr:hover td').join('\n')
   assert.match(wrapRule, /border\s*:\s*1px\s+solid\s+var\(--chat-table-border\)/i)
-  assert.match(cellRule, /border-right\s*:\s*1px\s+solid\s+var\(--chat-table-border\)/i)
-  assert.match(cellRule, /border-bottom\s*:\s*1px\s+solid\s+var\(--chat-table-border\)/i)
+  assert.match(wrapRule, /overscroll-behavior-inline\s*:\s*contain/i)
+  assert.match(wrapRule, /scrollbar-width\s*:\s*thin/i)
+  assert.match(tableRule, /min-width\s*:\s*max\(100%,\s*520px\)/i)
+  assert.match(tableRule, /font-variant-numeric\s*:\s*tabular-nums/i)
+  assert.doesNotMatch(cellRule, /border-right\s*:/i)
+  assert.match(cellRule, /overflow-wrap\s*:\s*break-word/i)
   assert.match(headerRule, /background\s*:\s*var\(--chat-table-header-bg\)/i)
+  assert.match(stripeRule, /background\s*:\s*var\(--chat-table-row-alt\)/i)
+  assert.match(hoverRule, /background\s*:\s*var\(--chat-table-row-hover\)/i)
+  assert.match(css, /@media\s*\(max-width:\s*620px\)[\s\S]*?\.oa-md-table\s*\{[^}]*min-width\s*:\s*480px/i)
 })
 
 test('warm chat metadata clears AA contrast on translucent panels', () => {

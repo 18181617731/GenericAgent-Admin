@@ -109,6 +109,9 @@ html[data-theme="warm"] {
   --code-inline-bg: rgba(0, 0, 0, .06);
   --chat-table-border: #E0D8C8;
   --chat-table-header-bg: #F5F0E5;
+  --chat-table-row-alt: rgba(92, 83, 68, .035);
+  --chat-table-row-hover: rgba(201, 169, 97, .12);
+  --chat-table-scrollbar: rgba(92, 83, 68, .28);
   --pre-text: #1A1610;
   --sidebar: #FAF7F0;
   --topbar-bg: rgba(250, 247, 240, .98);
@@ -995,8 +998,11 @@ html[data-theme="light"] {
   --code-bg: #f7f7f8;
   --code-text: #0d0d0d;
   --code-inline-bg: #f2f2f2;
-  --chat-table-border: #ececec;
+  --chat-table-border: #e3e3e3;
   --chat-table-header-bg: #f7f7f8;
+  --chat-table-row-alt: rgba(13, 13, 13, .018);
+  --chat-table-row-hover: rgba(16, 163, 127, .07);
+  --chat-table-scrollbar: rgba(13, 13, 13, .24);
   --pre-text: #0d0d0d;
   /* Flat theme: no drop shadows, borders carry the elevation. */
   --shadow: none;
@@ -1682,12 +1688,34 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255
 .oa-md hr{height:1px;border:0;background:var(--oa-line);margin:18px 0}
 .oa-md code:not(pre code){background:var(--code-inline-bg);border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9em;color: var(--code-text)}
 .oa-md a{color:var(--i-0b57d0);text-decoration:none}.oa-md a:hover{text-decoration:underline}
-.oa-table-wrap{width:100%;overflow-x:auto;margin:10px 0 14px;border:1px solid var(--chat-table-border);border-radius:12px;background:var(--surface-strong)}
-.oa-md-table{width:100%;min-width:420px;border-collapse:separate;border-spacing:0;font-size:14px;line-height:22px}
-.oa-md-table th,.oa-md-table td{padding:9px 11px;border-right:1px solid var(--chat-table-border);border-bottom:1px solid var(--chat-table-border);vertical-align:top;white-space:normal}
-.oa-md-table th:last-child,.oa-md-table td:last-child{border-right:0}.oa-md-table tr:last-child td{border-bottom:0}
-.oa-md-table th{background:var(--chat-table-header-bg);color: var(--text);font-weight:650}.oa-md-table td{color: var(--text)}
+.oa-table-wrap{
+  width:100%;
+  overflow-x:auto;
+  margin:12px 0 16px;
+  border:1px solid var(--chat-table-border);
+  border-radius:10px;
+  background:var(--surface-strong);
+  scrollbar-width:thin;
+  scrollbar-color:var(--chat-table-scrollbar) transparent;
+  overscroll-behavior-inline:contain;
+}
+.oa-table-wrap::-webkit-scrollbar{height:8px}
+.oa-table-wrap::-webkit-scrollbar-track{background:transparent}
+.oa-table-wrap::-webkit-scrollbar-thumb{background:var(--chat-table-scrollbar);border:2px solid transparent;border-radius:999px;background-clip:padding-box}
+.oa-md-table{width:100%;min-width:max(100%,520px);border-collapse:separate;border-spacing:0;font-size:14px;line-height:1.55;font-variant-numeric:tabular-nums}
+.oa-md-table th,.oa-md-table td{padding:10px 14px;border-bottom:1px solid var(--chat-table-border);vertical-align:top;white-space:normal;overflow-wrap:break-word;text-align:left}
+.oa-md-table tr:last-child td{border-bottom:0}
+.oa-md-table th{background:var(--chat-table-header-bg);color:var(--text);font-size:12px;font-weight:700;line-height:1.4;letter-spacing:.035em}
+.oa-md-table td{color:var(--text);transition:background-color .14s ease}
+.oa-md-table tbody tr:nth-child(even) td{background:var(--chat-table-row-alt)}
+.oa-md-table tbody tr:hover td{background:var(--chat-table-row-hover)}
 .oa-md-table code{white-space:nowrap}.oa-md-table p{margin:0}
+@media(max-width:620px){
+  .oa-table-wrap{margin:10px 0 14px;border-radius:8px}
+  .oa-md-table{min-width:480px;font-size:13px;line-height:1.5}
+  .oa-md-table th,.oa-md-table td{padding:8px 10px}
+  .oa-md-table th{font-size:11px}
+}
 .oa-list{margin:4px 0 13px 1.35em;padding:0}.oa-list li{margin:3px 0;padding-left:4px}.oa-list-ordered{list-style:decimal}.oa-list-unordered{list-style:disc}
 /* Nested lists sit tighter than the outer one and cycle their markers so depth
    stays readable without indent guides. */
@@ -4720,6 +4748,9 @@ html[data-color-scheme="dark"] {
   --code-inline-bg: #24282e;
   --chat-table-border: rgba(255, 255, 255, .15);
   --chat-table-header-bg: #24282e;
+  --chat-table-row-alt: rgba(255, 255, 255, .025);
+  --chat-table-row-hover: rgba(25, 195, 156, .09);
+  --chat-table-scrollbar: rgba(255, 255, 255, .24);
   --pre-text: #ececec;
   --ga-accent: #19c39c;
   --ga-accent-2: #5b8cff;
@@ -4737,6 +4768,9 @@ html[data-color-scheme="dark"] {
 html[data-theme="dark"] {
   --chat-table-border: rgba(255, 255, 255, .15);
   --chat-table-header-bg: #24282e;
+  --chat-table-row-alt: rgba(255, 255, 255, .025);
+  --chat-table-row-hover: rgba(25, 195, 156, .09);
+  --chat-table-scrollbar: rgba(255, 255, 255, .24);
 }
 /* reset the hard !important flat-white backgrounds from the 2nd :root block */
 html[data-color-scheme="dark"],
