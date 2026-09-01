@@ -406,8 +406,8 @@ function CallRow({ row, index, total, expanded, onToggle, moveRow, onOpenProvide
   )
 }
 
-// The provider form is the same whether it is being created or edited; only
-// the footer differs, so both live behind one drawer.
+// The provider form is shared by create and edit modes; only the modal footer
+// differs.
 function ProviderForm({ draft, profiles, editingIndex, onChange, t }) {
   const text = t.models
   const meta = protocolMeta(draft.type || DEFAULT_PROTOCOL, t)
@@ -442,7 +442,7 @@ function ProviderForm({ draft, profiles, editingIndex, onChange, t }) {
   )
 }
 
-function ProviderDrawer({
+function ProviderModal({
   open,
   mode,
   profile,
@@ -454,6 +454,7 @@ function ProviderDrawer({
   onCreate,
   onRemove,
   onAddModels,
+  onRemoveModel,
   revealedKey,
   revealBusy,
   onRevealKey,
@@ -464,15 +465,19 @@ function ProviderDrawer({
   const creating = mode === 'create'
   const revealed = !creating && revealedKey != null && String(revealedKey).trim() !== '' && !isMaskedSecret(revealedKey)
   const configs = creating ? [] : profileModelConfigs(profile || {})
+  const patchModel = (configIndex, patch) => {
+    const next = updateModelConfig(profile || {}, configIndex, patch)
+    onChange({ model: next.model, models: next.models, model_configs: next.model_configs })
+  }
 
   return (
-    <Drawer
+    <Modal
       title={creating ? text.addProvider : (providerName(profile) || text.providerEditor)}
-      placement="right"
-      width={520}
+      width={920}
+      centered
       open={open}
-      onClose={onClose}
-      className="model-provider-drawer"
+      onCancel={onClose}
+      className="model-provider-modal"
       footer={creating ? (
         <div className="model-drawer-footer">
           <span>{text.addProviderFooter}</span>
@@ -538,16 +543,39 @@ function ProviderDrawer({
               <Button size="small" icon={<Plus size={13} />} onClick={onAddModels}>{text.addModel}</Button>
             </div>
             {configs.length ? (
-              <div className="model-tag-list">
+              <div className="model-provider-models">
                 {configs.map((config, configIndex) => (
-                  <span key={`${config.model}-${configIndex}`} className="model-tag">{config.model}</span>
+                  <article key={`${config.model}-${configIndex}`} className="model-provider-model-card">
+                    <div className="model-provider-model-head">
+                      <label className="model-field model-field--wide">
+                        <span className="model-field-label">{text.model}</span>
+                        <Input
+                          value={config.model || ''}
+                          onChange={event => patchModel(configIndex, { model: event.target.value })}
+                        />
+                      </label>
+                      <Button
+                        danger
+                        type="text"
+                        icon={<Trash2 size={14} />}
+                        aria-label={`${t.delete} ${config.model}`}
+                        onClick={() => onRemoveModel?.(configIndex, config)}
+                      />
+                    </div>
+                    <ModelParams
+                      config={config}
+                      protocol={profile?.type || DEFAULT_PROTOCOL}
+                      onChange={patch => patchModel(configIndex, patch)}
+                      t={t}
+                    />
+                  </article>
                 ))}
               </div>
             ) : <div className="model-hint-block">{text.providerNoModels}</div>}
           </div>
         )}
       </div>
-    </Drawer>
+    </Modal>
   )
 }
 
@@ -1161,7 +1189,7 @@ export function Models({
 
       <Collapse ghost items={riskItems} className="model-risk-collapse" />
 
-      <ProviderDrawer
+      <ProviderModal
         open={Boolean(providerDrawer)}
         mode={shownDrawer?.mode}
         profile={drawerProfile}
@@ -1175,6 +1203,11 @@ export function Models({
         onCreate={createProvider}
         onRemove={() => removeProvider(drawerIndex)}
         onAddModels={() => setAddModelIndex(drawerIndex)}
+        onRemoveModel={(configIndex, config) => removeModel({
+          profileIndex: drawerIndex,
+          configIndex,
+          variableName: config?.model,
+        })}
         revealedKey={revealedKeys[drawerKey]}
         revealBusy={!!revealBusy[drawerKey]}
         onRevealKey={onRevealKey}

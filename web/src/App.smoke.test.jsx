@@ -399,7 +399,7 @@ function ModelsHarness({
   )
 }
 
-// The provider drawer renders in a body portal, so its fields are read from
+// The provider modal renders in a body portal, so its fields are read from
 // the document rather than the render container.
 const openProviderDrawer = () => fireEvent.click(document.querySelector('.model-connection-card'))
 const providerNameInput = () => document.querySelector('.model-field--provider input')
@@ -452,6 +452,26 @@ describe('Models call list', () => {
     fireEvent.click(modelsTab)
     expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
     expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+  })
+
+  test('opens provider settings as a modal and edits its model configuration inline', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    openProviderDrawer()
+
+    const modal = document.querySelector('.model-provider-modal')
+    expect(modal).toBeTruthy()
+    expect(document.querySelector('.model-provider-drawer')).toBeNull()
+    expect(modal.querySelectorAll('.model-provider-model-card')).toHaveLength(1)
+    expect(modal.querySelector('.model-params-grid')).toBeTruthy()
+
+    const modelIdInput = modal.querySelector('.model-provider-model-head input')
+    expect(modelIdInput.value).toBe('demo-model')
+    fireEvent.change(modelIdInput, { target: { value: 'demo-model-v2' } })
+
+    expect(document.querySelector('.model-call-title strong').textContent).toBe('demo-model-v2')
+    expect(document.querySelector('.model-provider-model-head input').value).toBe('demo-model-v2')
   })
 
   test('edits a model display name without changing its model ID', () => {
