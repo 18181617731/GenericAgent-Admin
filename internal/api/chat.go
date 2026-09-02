@@ -2508,6 +2508,10 @@ func temporaryChatTitle(messages []chatMessage) string {
 }
 
 func updateChatTitle(cs *chatSession) {
+	// Never overwrite manually set or AI-generated titles
+	if cs.TitleSource == chatTitleSourceManual || cs.TitleSource == chatTitleSourceGenerated {
+		return
+	}
 	if cs.Title != "" && cs.Title != "新会话" {
 		return
 	}

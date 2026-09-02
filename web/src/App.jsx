@@ -230,8 +230,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
-    localStorage.setItem('ga-admin-theme', activeTheme.id)
-    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: activeTheme.id }))
+    persistTheme(activeTheme.id)
   }, [theme])
   useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
   const t = I18N[lang] || I18N.en

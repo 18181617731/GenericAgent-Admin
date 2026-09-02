@@ -82,6 +82,29 @@ export const applyThemeToDocument = (value, documentRef = globalThis.document) =
 
 export const getInitialTheme = () => {
   if (typeof window === 'undefined') return DEFAULT_THEME_ID
+  const injected = window.__GA_UI_THEME__
+  if (isThemeId(injected)) return injected
   const stored = window.localStorage.getItem('ga-admin-theme')
   return isThemeId(stored) ? stored : DEFAULT_THEME_ID
+}
+
+export const persistThemeLocal = (themeId) => {
+  const theme = getTheme(themeId)
+  if (typeof window === 'undefined') return theme
+  window.localStorage.setItem('ga-admin-theme', theme.id)
+  window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: theme.id }))
+  return theme
+}
+
+export const persistTheme = (themeId) => {
+  const theme = persistThemeLocal(themeId)
+  if (typeof window === 'undefined') return theme
+  if (window.__GA_UI_THEME__ === theme.id) return theme
+  window.__GA_UI_THEME__ = theme.id
+  void import('./lib/api.js').then(({ api }) => api('/api/ui/theme', {
+    method: 'PUT',
+    dangerous: true,
+    body: JSON.stringify({ theme: theme.id }),
+  })).catch(() => {})
+  return theme
 }

@@ -318,6 +318,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/instances/default", s.requireDangerousConfirm(s.instanceSetDefault))
 	mux.HandleFunc("/api/slash-commands", s.withInstance((*Server).slashCommands))
 	mux.HandleFunc("/api/extra-system-prompt-presets", s.requireDangerousConfirm(s.extraSystemPromptPresets))
+	mux.HandleFunc("/api/ui/theme", s.uiTheme)
 	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
@@ -437,6 +438,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/local-cmd/sessions", Level: "dangerous", Action: "create_remote_cmd_session", Reason: "starts a Windows ConPTY cmd.exe session reachable through the authenticated Admin browser"},
 	{Path: "/api/local-cmd/sessions/", Level: "dangerous", Action: "control_remote_cmd_session", Reason: "writes input, resizes, or terminates a remote Windows ConPTY session"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/ui/theme", Level: "reversible", Action: "save_ui_theme", Reason: "updates the persisted Admin-Go appearance theme without a confirm dialog"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
 	{Path: "/api/instances/delete", Level: "dangerous", Action: "delete_instance", Reason: "removes a configured GA runtime instance when its manager is idle"},

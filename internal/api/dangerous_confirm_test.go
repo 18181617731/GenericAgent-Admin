@@ -1143,6 +1143,7 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 func dangerousHeaderRouteCases() []dangerousConfirmRouteCase {
 	return []dangerousConfirmRouteCase{
 		{http.MethodPost, "/api/models/import-mykey", `{"reveal":false,"save":true}`},
+		{http.MethodPut, "/api/ui/theme", `{"theme":"not-a-theme"}`},
 	}
 }
 
