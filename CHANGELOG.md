@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.118 - 2026-09-02
+
+### 移动端模型列表可读性
+- 在手机宽度下将模型卡片操作移到独立行，释放模型名称、模型 ID 和参数摘要的可读空间，避免内容被挤成不可辨识的省略号。
+
 ## v1.0.117 - 2026-09-02
 
 ### 移动端页面可用性

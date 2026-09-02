@@ -5,7 +5,7 @@ import { Activity, BarChart3, Bell, Bot, Brain, CalendarClock, ChevronDown, Copy
 import { api } from './lib/api'
 import { getSelectedInstanceID, normalizeInstanceID, setSelectedInstanceID } from './lib/instanceScope'
 import './admin-mobile.css'
-import { applyThemeToDocument, getInitialTheme } from './themes'
+import { applyThemeToDocument, getInitialTheme, persistTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'

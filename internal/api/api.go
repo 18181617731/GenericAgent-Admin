@@ -1070,6 +1070,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := data
+	if p == "index.html" {
+		body = injectUITheme(data, s.storedUITheme())
+	}
 	if staticGzipEligible(p) {
 		w.Header().Set("Vary", "Accept-Encoding")
 		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
@@ -1078,7 +1081,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 			} else {
 				var compressed bytes.Buffer
 				zw := gzip.NewWriter(&compressed)
-				_, _ = zw.Write(data)
+				_, _ = zw.Write(body)
 				_ = zw.Close()
 				body = compressed.Bytes()
 				s.staticGzip.Store(p, body)

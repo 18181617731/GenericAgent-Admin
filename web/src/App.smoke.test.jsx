@@ -1911,6 +1911,7 @@ describe('operator shell feedback', () => {
     expect(appStyles).toMatch(/\.app:not\(\.app-tab-chat\) \.main > \.admin-page-header\s*\{[\s\S]*?position:\s*relative;/)
     expect(appStyles).toMatch(/@media \(max-width:640px\)\s*\{[\s\S]*?\.task-run-detail\s*\{[\s\S]*?white-space:\s*normal;/)
     expect(appStyles).toMatch(/\.goal-stats \.stat,\s*\.goal-stats \.stat span\s*\{[\s\S]*?min-width:\s*0;/)
+    expect(appStyles).toMatch(/\.models-page \.model-config-main\s*\{[\s\S]*?grid-template-areas:\s*[\s\S]*?identity identity identity/)
   })
 
   test('navigation exposes the selected route with native keyboard semantics', async () => {

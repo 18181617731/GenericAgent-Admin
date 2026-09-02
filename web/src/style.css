@@ -10213,14 +10213,23 @@ html[data-color-scheme="dark"] .oa-cascade-group-models button:hover { backgroun
   }
 
   .models-page .model-config-main {
-    grid-template-columns: minmax(0, 1fr) 66px 66px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "identity identity identity"
+      ". toggle delete";
+    row-gap: 7px;
+    column-gap: 8px;
     padding-right: 7px;
     padding-left: 7px;
   }
 
   .models-page .model-config-identity {
+    grid-area: identity;
     gap: 7px;
   }
+
+  .models-page .model-config-toggle { grid-area: toggle; }
+  .models-page .model-config-delete { grid-area: delete; }
 
   .models-page .model-config-index {
     width: 24px;

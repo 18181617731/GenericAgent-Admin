@@ -103,6 +103,9 @@ func (s *Server) configForSaveRequest(r *http.Request, incoming config.AppConfig
 	}
 	base := baseStore.Snapshot()
 	if len(base.Instances) == 0 {
+		if strings.TrimSpace(incoming.UITheme) == "" {
+			incoming.UITheme = base.UITheme
+		}
 		return incoming, nil
 	}
 	selected, ok := base.Instance(requested)

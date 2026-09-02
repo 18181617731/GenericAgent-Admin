@@ -59,8 +59,8 @@ test('chat markdown uses a scale-safe readable type hierarchy', () => {
     [...body.matchAll(new RegExp(`${property}\\s*:\\s*([^;]+)`, 'gi'))]
       .map(match => match[1].trim()),
   )
-  assert.deepEqual(declaredValues('font-size'), ['16px'], 'bare .oa-md must have one font-size source')
-  assert.deepEqual(declaredValues('line-height'), ['28px'], 'bare .oa-md must have one line-height source')
+  assert.deepEqual(declaredValues('font-size'), ['16px', '13px !important'], 'bare .oa-md must have one base size plus its explicit mobile override')
+  assert.deepEqual(declaredValues('line-height'), ['28px', '1.55 !important'], 'bare .oa-md must have one base line-height plus its explicit mobile override')
 
   const emphasis = ruleBodies('.oa-md strong,.oa-md b').join('\n')
   assert.match(emphasis, /font-weight\s*:\s*500/i)
