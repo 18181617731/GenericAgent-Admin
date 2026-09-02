@@ -837,7 +837,7 @@ function ModelsHarness({
   )
 }
 
-// The provider drawer renders in a body portal, so its fields are read from
+// The provider modal renders in a body portal, so its fields are read from
 // the document rather than the render container.
 const openProviderDrawer = () => fireEvent.click(document.querySelector('.model-connection-card'))
 const providerNameInput = () => document.querySelector('.model-field--provider input')
@@ -855,6 +855,102 @@ describe('Models call list', () => {
     const slots = [...document.querySelectorAll('.model-call-slot strong')]
     expect(slots.map(slot => slot.textContent)).toEqual(['0', '1'])
     expect(document.querySelector('.model-call-row .model-call-title strong').textContent).toBe('demo-model')
+  })
+
+  test('keeps compact toolbar utilities icon-only with accessible labels', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    for (const label of ['重新读取', '配置预览', '放弃更改']) {
+      const button = screen.getByRole('button', { name: label })
+      expect(button.textContent).toBe('')
+      expect(button.title).toBe(label)
+      expect(button.querySelector('.ant-btn-icon')).toBeTruthy()
+    }
+  })
+
+  test('switches workspaces without unmounting model or provider controls', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    const [modelsTab, providersTab] = document.querySelectorAll('.model-workspace-tabs button')
+    const modelsWorkspace = document.querySelector('.model-call-list')
+    const providersWorkspace = document.querySelector('.model-connections')
+
+    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+
+    fireEvent.click(providersTab)
+    expect(providersTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    expect(providersWorkspace.querySelector('.model-connection-card')).toBeTruthy()
+
+    fireEvent.click(modelsTab)
+    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+  })
+
+  test('opens provider settings as a modal and expands model configuration on demand', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    openProviderDrawer()
+
+    const modal = document.querySelector('.model-provider-modal')
+    expect(modal).toBeTruthy()
+    expect(document.querySelector('.model-provider-drawer')).toBeNull()
+    expect(modal.querySelectorAll('.model-provider-model-card')).toHaveLength(1)
+    expect(modal.querySelector('.model-params-grid')).toBeNull()
+
+    const toggle = modal.querySelector('.model-provider-model-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(modal.querySelector('.model-params-grid')).toBeTruthy()
+
+    const modelIdInput = modal.querySelector('.model-provider-model-config input')
+    expect(modelIdInput.value).toBe('demo-model')
+    fireEvent.change(modelIdInput, { target: { value: 'demo-model-v2' } })
+
+    expect(document.querySelector('.model-call-title strong').textContent).toBe('demo-model-v2')
+    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model-v2')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(modal.querySelector('.model-params-grid')).toBeNull()
+  })
+
+  test('shows model display names in the provider list without confusing provider names or IDs', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness initialProfile={{
+      ...validModelProfile,
+      display_name: 'Provider Friendly',
+      model_configs: [
+        { model: 'demo-model', name: 'Demo Friendly' },
+        { model: 'same-model', name: 'same-model' },
+      ],
+    }} />)
+
+    openProviderDrawer()
+
+    const summaries = document.querySelectorAll('.model-provider-model-summary')
+    expect(summaries[0].querySelector('strong').textContent).toBe('Demo Friendly')
+    expect(summaries[0].querySelector('em')).toBeNull()
+    expect(summaries[1].querySelector('strong').textContent).toBe('same-model')
+    expect(summaries[1].querySelector('em')).toBeNull()
+
+    fireEvent.click(summaries[0])
+    const expandedConfig = document.querySelector('.model-provider-model-config')
+    const modelIdField = expandedConfig.querySelector('.model-field--wide')
+    const modelIdInput = modelIdField.querySelector('input')
+    expect(modelIdField.querySelector('.model-field-label').textContent).toBe('模型 ID')
+    expect(modelIdInput.getAttribute('placeholder')).toContain('gpt-5.2')
+    expect(modelIdField.querySelector('small').textContent).toContain('服务商 API')
+    expect(modelIdField.querySelector('small').textContent).toContain('不是上方的自定义显示名称')
   })
 
   test('edits a model display name without changing its model ID', () => {
@@ -1304,6 +1400,7 @@ describe('chat response model identity', () => {
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('Request --> Response'))
     expect(bindFunctions).toHaveBeenCalled()
     expect(appStyles).toMatch(/\.oa-mermaid-diagram\{[^}]*font-weight:450;[^}]*letter-spacing:normal;[^}]*white-space:normal;[^}]*word-break:normal;[^}]*overflow-wrap:normal/)
+    expect(appStyles).not.toMatch(/\.oa-mermaid-diagram\{[^}]*will-change:transform/)
     expect(appStyles).toContain('.oa-mermaid-diagram foreignObject p{white-space:inherit}')
 
     fireEvent.click(screen.getByRole('button', { name: '\u6e90\u7801' }))
@@ -1327,6 +1424,17 @@ describe('chat response model identity', () => {
     fireEvent.pointerMove(viewport, { pointerId: 7, clientX: 35, clientY: 50 })
     fireEvent.pointerUp(viewport, { pointerId: 7 })
     expect(diagram.style.transform).toBe('translate(25px, 30px) scale(1)')
+
+    fireEvent.click(screen.getByRole('button', { name: '\u5168\u5c4f\u67e5\u770b' }))
+    expect(screen.getByRole('dialog', { name: 'Mermaid \u56fe\u8868\u5168\u5c4f\u67e5\u770b' })).toBeTruthy()
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(screen.getByRole('img', { name: 'Mermaid \u56fe\u8868' }).style.transform).toBe('translate(25px, 30px) scale(1)')
+    expect(appStyles).toContain('.oa-mermaid-fullscreen{position:fixed;inset:0;z-index:10020')
+    expect(appStyles).toContain('.oa-code-head.oa-mermaid-head{height:auto}')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Mermaid \u56fe\u8868\u5168\u5c4f\u67e5\u770b' })).toBeNull()
+    expect(document.body.style.overflow).toBe('')
   })
 
   test('waits for a streamed mermaid fence to close before rendering its final source', async () => {
@@ -1367,6 +1475,46 @@ describe('chat response model identity', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Parse error on line 2')
     expect(container.querySelector('.oa-mermaid-card.is-error pre code')?.textContent).toBe(`${source}\n`)
     expect(container.querySelector('.oa-mermaid-diagram')).toBeNull()
+  })
+
+  test('keeps non-image attachments visible before the server upload response', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'user-file-optimistic',
+          role: 'user',
+          content: 'summarize this',
+          files: [{ name:'notes.txt', type:'text/plain', dataURL:'data:text/plain;base64,aGVsbG8=' }],
+        }}
+        pending
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files .oa-pending-file')).toBeTruthy()
+    expect(container.querySelector('.oa-msg-text')?.textContent).toBe('summarize this')
+  })
+
+  test('keeps saved non-image attachments visible from metadata after reload', () => {
+    const savedPath = 'C:\\chat\\uploads\\123_cost]report.pdf'
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'user-file-saved',
+          role: 'user',
+          content: `review this\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n- [FILE:${savedPath}]`,
+          files: [{ path:savedPath, name:'123_cost]report.pdf', mime:'application/pdf', url:'/api/chat/file/123_cost%5Dreport.pdf' }],
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('123_cost]report.pdf')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files .oa-file-card')).toBeTruthy()
+    expect(container.querySelector('.oa-file-card')?.getAttribute('title')).toBe(savedPath)
+    expect(container.querySelector('.oa-msg-text')?.textContent).toBe('review this')
   })
 
   test('renders an explicit empty result for a worldline command', () => {
