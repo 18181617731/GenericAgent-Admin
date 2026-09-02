@@ -791,13 +791,17 @@ const validModelProfile = {
 
 function ModelsHarness({
   initialProfile = validModelProfile,
+  initialProfiles,
   discoverModels = vi.fn(async () => ({ models: [] })),
   initialFailoverGroups = [],
   saveState = {},
   saveAll = vi.fn(async () => true),
   discardDraft = vi.fn(),
 }) {
-  const persisted = React.useRef([{ ...initialProfile, client_id: 'profile-key' }])
+  const persisted = React.useRef((initialProfiles || [initialProfile]).map((profile, index) => ({
+    ...profile,
+    client_id: profile.client_id || `profile-key-${index}`,
+  })))
   const persistedGroups = React.useRef(initialFailoverGroups)
   const [profiles, setProfiles] = React.useState(persisted.current)
   const [failoverGroups, setFailoverGroups] = React.useState(initialFailoverGroups)
@@ -837,9 +841,10 @@ function ModelsHarness({
   )
 }
 
-// The provider modal renders in a body portal, so its fields are read from
-// the document rather than the render container.
-const openProviderDrawer = () => fireEvent.click(document.querySelector('.model-connection-card'))
+// Provider settings are rendered in the active workbench slot. Keep queries
+// scoped to the document because Ant Design controls may still use portals.
+const activeProviderCard = () => document.querySelector('.model-editor-slot:not([hidden]) .model-connection-card')
+const openProviderDrawer = () => activeProviderCard()
 const providerNameInput = () => document.querySelector('.model-field--provider input')
 const openAddModel = () => fireEvent.click(screen.getByRole('button', { name: /添加模型$/ }))
 
@@ -869,88 +874,86 @@ describe('Models call list', () => {
     }
   })
 
-  test('switches workspaces without unmounting model or provider controls', () => {
+  test('switches providers without unmounting model or provider controls', () => {
     installBrowserPolyfills()
-    render(<ModelsHarness />)
+    render(<ModelsHarness initialProfiles={[
+      { ...validModelProfile, client_id: 'profile-one' },
+      { ...validModelProfile, client_id: 'profile-two', var_name: 'native_oai_config_demo_two', model: 'demo-model-2', models: ['demo-model-2'], model_configs: [{ model: 'demo-model-2' }] },
+    ]} />)
 
-    const [modelsTab, providersTab] = document.querySelectorAll('.model-workspace-tabs button')
-    const modelsWorkspace = document.querySelector('.model-call-list')
-    const providersWorkspace = document.querySelector('.model-connections')
+    const providerItems = document.querySelectorAll('.model-provider-item')
+    const editorSlots = document.querySelectorAll('.model-editor-slot')
 
-    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
-    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
-    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+    expect(providerItems).toHaveLength(2)
+    expect(editorSlots).toHaveLength(2)
+    expect(editorSlots[0].hidden).toBe(false)
+    expect(editorSlots[1].hidden).toBe(true)
+    expect(editorSlots[0].querySelector('.model-call-row')).toBeTruthy()
 
-    fireEvent.click(providersTab)
-    expect(providersTab.getAttribute('aria-pressed')).toBe('true')
-    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
-    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
-    expect(providersWorkspace.querySelector('.model-connection-card')).toBeTruthy()
+    fireEvent.click(providerItems[1])
+    expect(editorSlots[0].hidden).toBe(true)
+    expect(editorSlots[1].hidden).toBe(false)
+    expect(editorSlots[1].querySelector('.model-call-title strong').textContent).toBe('demo-model-2')
 
-    fireEvent.click(modelsTab)
-    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
-    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    fireEvent.click(providerItems[0])
+    expect(editorSlots[0].hidden).toBe(false)
+    expect(editorSlots[1].hidden).toBe(true)
   })
 
-  test('opens provider settings as a modal and expands model configuration on demand', () => {
+  test('expands inline provider model configuration on demand', () => {
     installBrowserPolyfills()
     render(<ModelsHarness />)
 
-    openProviderDrawer()
+    const card = activeProviderCard()
+    expect(card).toBeTruthy()
+    expect(card.querySelectorAll('.model-config-row')).toHaveLength(1)
+    expect(card.querySelector('.model-row-advanced')).toBeNull()
 
-    const modal = document.querySelector('.model-provider-modal')
-    expect(modal).toBeTruthy()
-    expect(document.querySelector('.model-provider-drawer')).toBeNull()
-    expect(modal.querySelectorAll('.model-provider-model-card')).toHaveLength(1)
-    expect(modal.querySelector('.model-params-grid')).toBeNull()
-
-    const toggle = modal.querySelector('.model-provider-model-toggle')
+    const toggle = card.querySelector('.model-config-toggle')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model')
+    expect(card.querySelector('.model-call-title strong').textContent).toBe('demo-model')
 
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(modal.querySelector('.model-params-grid')).toBeTruthy()
+    expect(card.querySelector('.model-row-advanced')).toBeTruthy()
 
-    const modelIdInput = modal.querySelector('.model-provider-model-config input')
-    expect(modelIdInput.value).toBe('demo-model')
-    fireEvent.change(modelIdInput, { target: { value: 'demo-model-v2' } })
+    const displayNameInput = card.querySelector('.model-row-advanced input')
+    expect(displayNameInput.value).toBe('')
+    fireEvent.change(displayNameInput, { target: { value: 'demo-model-v2' } })
 
     expect(document.querySelector('.model-call-title strong').textContent).toBe('demo-model-v2')
-    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model-v2')
+    expect(card.querySelector('.model-config-display-name').textContent).toBe('demo-model-v2')
 
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(modal.querySelector('.model-params-grid')).toBeNull()
+    expect(card.querySelector('.model-row-advanced')).toBeNull()
   })
 
-  test('shows model display names in the provider list without confusing provider names or IDs', () => {
+  test('shows model display names without confusing provider names or IDs', () => {
     installBrowserPolyfills()
     render(<ModelsHarness initialProfile={{
       ...validModelProfile,
-      display_name: 'Provider Friendly',
+      name: 'Provider Friendly',
       model_configs: [
         { model: 'demo-model', name: 'Demo Friendly' },
         { model: 'same-model', name: 'same-model' },
       ],
     }} />)
 
-    openProviderDrawer()
+    const card = activeProviderCard()
+    expect(document.querySelector('.model-provider-item strong').textContent).toBe('Provider Friendly')
+    const rows = card.querySelectorAll('.model-config-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].querySelector('.model-config-display-name').textContent).toBe('Demo Friendly')
+    expect(rows[0].querySelector('.model-config-id').textContent).toBe('demo-model')
+    expect(rows[1].querySelector('.model-config-display-name')).toBeNull()
+    expect(rows[1].querySelector('.model-call-title strong').textContent).toBe('same-model')
+    expect(rows[1].querySelector('.model-config-id').textContent).toBe('same-model')
 
-    const summaries = document.querySelectorAll('.model-provider-model-summary')
-    expect(summaries[0].querySelector('strong').textContent).toBe('Demo Friendly')
-    expect(summaries[0].querySelector('em')).toBeNull()
-    expect(summaries[1].querySelector('strong').textContent).toBe('same-model')
-    expect(summaries[1].querySelector('em')).toBeNull()
-
-    fireEvent.click(summaries[0])
-    const expandedConfig = document.querySelector('.model-provider-model-config')
-    const modelIdField = expandedConfig.querySelector('.model-field--wide')
-    const modelIdInput = modelIdField.querySelector('input')
-    expect(modelIdField.querySelector('.model-field-label').textContent).toBe('模型 ID')
-    expect(modelIdInput.getAttribute('placeholder')).toContain('gpt-5.2')
-    expect(modelIdField.querySelector('small').textContent).toContain('服务商 API')
-    expect(modelIdField.querySelector('small').textContent).toContain('不是上方的自定义显示名称')
+    fireEvent.click(rows[0].querySelector('.model-config-toggle'))
+    const displayNameField = rows[0].querySelector('.model-row-advanced .model-field')
+    expect(displayNameField.querySelector('.model-field-label').textContent).toBe('显示名称')
+    expect(displayNameField.querySelector('input').value).toBe('Demo Friendly')
   })
 
   test('edits a model display name without changing its model ID', () => {

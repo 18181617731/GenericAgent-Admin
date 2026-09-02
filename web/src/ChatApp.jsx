@@ -714,7 +714,7 @@ function MermaidDiagram({ source = '' }) {
         <span className="oa-mermaid-scale" aria-label={ct('当前缩放比例', 'Current zoom')}>{Math.round(view.scale * 100)}%</span>
         <button type="button" className="oa-mermaid-tool" aria-label={ct('放大', 'Zoom in')} title={ct('放大', 'Zoom in')} disabled={controlsDisabled || view.scale >= 3} onClick={() => changeZoom(.2)}><ZoomIn size={14} /></button>
         <button type="button" className="oa-mermaid-tool" aria-label={ct('复位视图', 'Reset view')} title={ct('复位视图', 'Reset view')} disabled={controlsDisabled} onClick={resetView}><Maximize2 size={14} /></button>
-        <button ref={fullscreenTriggerRef} type="button" className="oa-mermaid-tool" aria-label={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} title={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} disabled={state.status !== 'ready'} onClick={isFullscreen ? closeFullscreen : openFullscreen}>{isFullscreen ? <X size={14} /> : <Maximize size={14} />}</button>
+        <button ref={fullscreenTriggerRef} type="button" className="oa-mermaid-tool" aria-label={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} title={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} disabled={state.status !== 'ready'} onClick={isFullscreen ? closeFullscreen : openFullscreen}>{isFullscreen ? <X size={14} /> : <Maximize2 size={14} />}</button>
         <CopyButton text={source} compact />
       </div>
     </div>
@@ -3293,8 +3293,15 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
+  const nonImageFiles = messageFiles.filter(file => !isImageFile(file))
+  const metadataFilePaths = nonImageFiles
+    .map(file => String(file?.path || file?.Path || '').trim())
+    .filter(Boolean)
   const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
-  const pendingFiles = savedFilePaths.length > 0 ? [] : messageFiles.filter((file) => !isImageFile(file))
+  const resolvedSavedFilePaths = m.role === 'user'
+    ? (metadataFilePaths.length > 0 ? metadataFilePaths : savedFilePaths)
+    : []
+  const pendingFiles = resolvedSavedFilePaths.length > 0 ? [] : nonImageFiles
   const modelIdentity = messageModelIdentity(m, models)
   const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
   const hasUsage = !turnUsages && m.role === 'assistant' && m.usage && (m.usage.input_tokens > 0 || m.usage.output_tokens > 0)
@@ -3347,8 +3354,8 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
         </button>
       })}</div>}
       <ImagePreviewDialog images={previewImages} activeIndex={previewImageIndex} onClose={() => setPreviewImageIndex(-1)} onChange={setPreviewImageIndex} />
-      {m.role === 'user' && (savedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
-        {savedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
+      {m.role === 'user' && (resolvedSavedFilePaths.length > 0 || pendingFiles.length > 0) && <div className="oa-message-files">
+        {resolvedSavedFilePaths.map((savedPath, i) => <FileAttachment key={`${savedPath}-${i}`} path={savedPath} />)}
         {pendingFiles.map((file, i) => {
           const name = uploadFileName(file)
           const visual = getFileVisual(name)
@@ -3356,7 +3363,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <div className="oa-msg-text"><MarkdownBlock text={userText} /></div>)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
       </div>

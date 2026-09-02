@@ -543,15 +543,6 @@ function ProfileCard({
 
   const cancelAvailability = () => availabilityAbortRef.current?.abort()
 
-  useEffect(() => {
-    setExpandedModel(null)
-  }, [open, mode, index])
-
-  const patchModel = (configIndex, patch) => {
-    const next = updateModelConfig(profile || {}, configIndex, patch)
-    onChange({ model: next.model, models: next.models, model_configs: next.model_configs })
-  }
-
   return (
     <article className={`model-source-card model-connection-card${dirty ? ' is-dirty' : ''}${result?.errors?.length ? ' has-error' : ''}`}>
       <header className="model-source-head">
@@ -1798,7 +1789,7 @@ export function Models({
           <Button icon={<Settings2 size={14} />} onClick={openProbeScope} disabled={batchProbeBusy || !profiles.length} title="配置一键检测涉及的服务商">
             检测范围：{probeScopeLabel}
           </Button>
-          <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}>重新读取</Button>
+          <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading} title="重新读取" aria-label="重新读取" />
           <Button
             icon={<ListOrdered size={14} />}
             onClick={openModelOrder}
@@ -1815,7 +1806,7 @@ export function Models({
           >
             {text.failover}
           </Button>
-          <Button icon={<FileCode2 size={14} />} onClick={openPreview}>配置预览</Button>
+          <Button icon={<FileCode2 size={14} />} onClick={openPreview} title="配置预览" aria-label="配置预览" />
           <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
         </div>
       </header>
@@ -1846,7 +1837,7 @@ export function Models({
             >
               保存到 mykey.py
             </Button>
-            {changes.total > 0 && discardDraft && <Button onClick={discardDraft}>放弃修改</Button>}
+            {discardDraft && <Button icon={<X size={14} />} onClick={discardDraft} disabled={!changes?.total} title="放弃更改" aria-label="放弃更改" />}
           </div>
         </div>
       )}
