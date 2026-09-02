@@ -1172,6 +1172,7 @@ describe('chat response identity and time', () => {
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('Request --> Response'))
     expect(bindFunctions).toHaveBeenCalled()
     expect(appStyles).toMatch(/\.oa-mermaid-diagram\{[^}]*font-weight:450;[^}]*letter-spacing:normal;[^}]*white-space:normal;[^}]*word-break:normal;[^}]*overflow-wrap:normal/)
+    expect(appStyles).not.toMatch(/\.oa-mermaid-diagram\{[^}]*will-change:transform/)
     expect(appStyles).toContain('.oa-mermaid-diagram foreignObject p{white-space:inherit}')
 
     fireEvent.click(screen.getByRole('button', { name: '\u6e90\u7801' }))

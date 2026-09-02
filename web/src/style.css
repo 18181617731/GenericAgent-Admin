@@ -1759,7 +1759,7 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover{background:rgba(255,255
 .oa-mermaid-viewport{min-height:120px;overflow:hidden;background:var(--surface);touch-action:auto;user-select:auto}
 .oa-mermaid-viewport.is-pan-enabled{cursor:grab;touch-action:pan-y;user-select:none}
 .oa-mermaid-viewport.is-dragging{cursor:grabbing}
-.oa-mermaid-diagram{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal;transform-origin:center center;will-change:transform}
+.oa-mermaid-diagram{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;font-weight:450;line-height:normal;letter-spacing:normal;white-space:normal;word-break:normal;overflow-wrap:normal;transform-origin:center center}
 .oa-mermaid-diagram foreignObject p{white-space:inherit}
 .oa-mermaid-diagram svg{display:block;max-width:100%;height:auto;margin:auto}
 .oa-mermaid-status{min-height:120px;padding:18px;display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--surface)}
