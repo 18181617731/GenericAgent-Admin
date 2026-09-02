@@ -190,7 +190,6 @@ type chatLoopState struct {
 	Status                string           `json:"status"`
 	Epoch                 int64            `json:"epoch"`
 	Round                 int              `json:"round"`
-	MaxRounds             int              `json:"max_rounds"`
 	StopReason            string           `json:"stop_reason,omitempty"`
 	ControllerPrompt      string           `json:"controller_prompt,omitempty"`
 	ControllerLLMNo       int              `json:"controller_llm_no"`
@@ -288,6 +287,7 @@ var (
 )
 
 type chatRun struct {
+	ID                 string
 	SID                string
 	QueueID            string
 	Events             [][]byte
@@ -312,7 +312,24 @@ type chatWorker struct {
 	Mu     sync.Mutex
 }
 
+type oneShotBTWWorkerObserver struct {
+	Started  func(*chatWorker) bool
+	Finished func(*chatWorker)
+}
+
+const oneShotBTWWorkerObserverKey = "_ga_one_shot_worker_observer"
+
 func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interface{}) (chatMessage, error) {
+	observer, _ := req[oneShotBTWWorkerObserverKey].(*oneShotBTWWorkerObserver)
+	workerReq := req
+	if observer != nil {
+		workerReq = make(map[string]interface{}, len(req)-1)
+		for key, value := range req {
+			if key != oneShotBTWWorkerObserverKey {
+				workerReq[key] = value
+			}
+		}
+	}
 	worker, err := startChatWorker(cfg, sid+"-btw")
 	if err != nil {
 		return chatMessage{}, err
@@ -333,13 +350,19 @@ func runOneShotBTWWorker(cfg config.AppConfig, sid string, req map[string]interf
 	})
 	defer timer.Stop()
 	defer func() {
+		if observer != nil && observer.Finished != nil {
+			observer.Finished(worker)
+		}
 		_ = worker.Stdin.Close()
 		if !waited && worker.Cmd != nil && worker.Cmd.Process != nil {
 			_ = worker.Cmd.Process.Kill()
 			_, _ = worker.Cmd.Process.Wait()
 		}
 	}()
-	if err := json.NewEncoder(worker.Stdin).Encode(req); err != nil {
+	if observer != nil && observer.Started != nil && !observer.Started(worker) {
+		return chatMessage{}, errChatLoopStale
+	}
+	if err := json.NewEncoder(worker.Stdin).Encode(workerReq); err != nil {
 		return chatMessage{}, err
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)
@@ -1160,7 +1183,7 @@ func (s *Server) beginChatRun(sid string) *chatRun {
 	if r := s.ChatRuns[sid]; r != nil && !r.Done {
 		return nil
 	}
-	token := &chatRun{SID: sid, Subscribers: map[chan []byte]bool{}}
+	token := &chatRun{ID: newChatID(), SID: sid, Subscribers: map[chan []byte]bool{}}
 	s.ChatRuns[sid] = token
 	return token
 }
@@ -1411,6 +1434,29 @@ func (s *Server) persistCanceledChatRun(sid, pendingID string, startedAtMS int64
 	cs.RawHistory = appendChatRawHistoryFallback(cs.RawHistory, fallback...)
 	cs.UpdatedAt = now.Unix()
 	return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+}
+
+func (s *Server) chatRunStructuredSnapshot(sid string) (string, []map[string]interface{}) {
+	s.ChatMu.Lock()
+	var runID string
+	var events [][]byte
+	if run := s.ChatRuns[sid]; run != nil {
+		runID = run.ID
+		events = make([][]byte, len(run.Events))
+		for i, event := range run.Events {
+			events[i] = append([]byte(nil), event...)
+		}
+	}
+	s.ChatMu.Unlock()
+
+	turns := make([]map[string]interface{}, 0)
+	for _, event := range events {
+		var value map[string]interface{}
+		if json.Unmarshal(event, &value) == nil && value["type"] == "turn" {
+			turns = append(turns, value)
+		}
+	}
+	return runID, turns
 }
 
 func (s *Server) publishChatRun(sid string, ev map[string]interface{}) {

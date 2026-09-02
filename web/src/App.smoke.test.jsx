@@ -26,6 +26,17 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() {}
 }
 
+const mermaidMocks = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(),
+}))
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: mermaidMocks.initialize,
+    render: mermaidMocks.render,
+  },
+}))
+
 const appStyles = readFileSync('src/style.css', 'utf8')
 const adminMobileStyles = readFileSync('src/admin-mobile.css', 'utf8')
 
@@ -126,6 +137,8 @@ afterEach(() => {
   unregisterDialogAdapter()
   unregisterDialogAdapter = () => {}
   cleanup()
+  mermaidMocks.initialize.mockReset()
+  mermaidMocks.render.mockReset()
   window.localStorage.clear()
   window.history.replaceState({}, '', '/')
   vi.restoreAllMocks()
@@ -810,7 +823,7 @@ function ModelsHarness({
   )
 }
 
-// The provider drawer renders in a body portal, so its fields are read from
+// The provider modal renders in a body portal, so its fields are read from
 // the document rather than the render container.
 const openProviderDrawer = () => fireEvent.click(document.querySelector('.model-connection-card'))
 const providerNameInput = () => document.querySelector('.model-field--provider input')
@@ -828,6 +841,102 @@ describe('Models call list', () => {
     const slots = [...document.querySelectorAll('.model-call-slot strong')]
     expect(slots.map(slot => slot.textContent)).toEqual(['0', '1'])
     expect(document.querySelector('.model-call-row .model-call-title strong').textContent).toBe('demo-model')
+  })
+
+  test('keeps compact toolbar utilities icon-only with accessible labels', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    for (const label of ['重新读取', '配置预览', '放弃更改']) {
+      const button = screen.getByRole('button', { name: label })
+      expect(button.textContent).toBe('')
+      expect(button.title).toBe(label)
+      expect(button.querySelector('.ant-btn-icon')).toBeTruthy()
+    }
+  })
+
+  test('switches workspaces without unmounting model or provider controls', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    const [modelsTab, providersTab] = document.querySelectorAll('.model-workspace-tabs button')
+    const modelsWorkspace = document.querySelector('.model-call-list')
+    const providersWorkspace = document.querySelector('.model-connections')
+
+    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+
+    fireEvent.click(providersTab)
+    expect(providersTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(true)
+    expect(providersWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+    expect(providersWorkspace.querySelector('.model-connection-card')).toBeTruthy()
+
+    fireEvent.click(modelsTab)
+    expect(modelsTab.getAttribute('aria-pressed')).toBe('true')
+    expect(modelsWorkspace.classList.contains('is-workspace-hidden')).toBe(false)
+  })
+
+  test('opens provider settings as a modal and expands model configuration on demand', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness />)
+
+    openProviderDrawer()
+
+    const modal = document.querySelector('.model-provider-modal')
+    expect(modal).toBeTruthy()
+    expect(document.querySelector('.model-provider-drawer')).toBeNull()
+    expect(modal.querySelectorAll('.model-provider-model-card')).toHaveLength(1)
+    expect(modal.querySelector('.model-params-grid')).toBeNull()
+
+    const toggle = modal.querySelector('.model-provider-model-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(modal.querySelector('.model-params-grid')).toBeTruthy()
+
+    const modelIdInput = modal.querySelector('.model-provider-model-config input')
+    expect(modelIdInput.value).toBe('demo-model')
+    fireEvent.change(modelIdInput, { target: { value: 'demo-model-v2' } })
+
+    expect(document.querySelector('.model-call-title strong').textContent).toBe('demo-model-v2')
+    expect(modal.querySelector('.model-provider-model-summary strong').textContent).toBe('demo-model-v2')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(modal.querySelector('.model-params-grid')).toBeNull()
+  })
+
+  test('shows model display names in the provider list without confusing provider names or IDs', () => {
+    installBrowserPolyfills()
+    render(<ModelsHarness initialProfile={{
+      ...validModelProfile,
+      display_name: 'Provider Friendly',
+      model_configs: [
+        { model: 'demo-model', name: 'Demo Friendly' },
+        { model: 'same-model', name: 'same-model' },
+      ],
+    }} />)
+
+    openProviderDrawer()
+
+    const summaries = document.querySelectorAll('.model-provider-model-summary')
+    expect(summaries[0].querySelector('strong').textContent).toBe('Demo Friendly')
+    expect(summaries[0].querySelector('em')).toBeNull()
+    expect(summaries[1].querySelector('strong').textContent).toBe('same-model')
+    expect(summaries[1].querySelector('em')).toBeNull()
+
+    fireEvent.click(summaries[0])
+    const expandedConfig = document.querySelector('.model-provider-model-config')
+    const modelIdField = expandedConfig.querySelector('.model-field--wide')
+    const modelIdInput = modelIdField.querySelector('input')
+    expect(modelIdField.querySelector('.model-field-label').textContent).toBe('模型 ID')
+    expect(modelIdInput.getAttribute('placeholder')).toContain('gpt-5.2')
+    expect(modelIdField.querySelector('small').textContent).toContain('服务商 API')
+    expect(modelIdField.querySelector('small').textContent).toContain('不是上方的自定义显示名称')
   })
 
   test('edits a model display name without changing its model ID', () => {
@@ -1250,6 +1359,150 @@ describe('chat response model identity', () => {
     expect(container.querySelector('.oa-md')?.textContent).not.toContain('<br>')
   })
 
+  test('renders mermaid fences as safe diagrams and keeps the source copyable', async () => {
+    const bindFunctions = vi.fn()
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg viewBox="0 0 120 60"><title>Request flow</title><path d="M0 0L10 10" /></svg>',
+      bindFunctions,
+    })
+    const content = ['```mermaid', 'flowchart LR', '  Request --> Response', '```'].join('\n')
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'mermaid-success', role: 'assistant', content }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByRole('img', { name: 'Mermaid \u56fe\u8868' })).toBeTruthy()
+    expect(container.querySelector('.oa-mermaid-diagram svg title')?.textContent).toBe('Request flow')
+    expect(container.querySelector('.oa-code-card')).toBeNull()
+    expect(mermaidMocks.initialize).toHaveBeenCalledWith(expect.objectContaining({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: 'neutral',
+    }))
+    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('Request --> Response'))
+    expect(bindFunctions).toHaveBeenCalled()
+    expect(appStyles).toMatch(/\.oa-mermaid-diagram\{[^}]*font-weight:450;[^}]*letter-spacing:normal;[^}]*white-space:normal;[^}]*word-break:normal;[^}]*overflow-wrap:normal/)
+    expect(appStyles).not.toMatch(/\.oa-mermaid-diagram\{[^}]*will-change:transform/)
+    expect(appStyles).toContain('.oa-mermaid-diagram foreignObject p{white-space:inherit}')
+
+    fireEvent.click(screen.getByRole('button', { name: '\u6e90\u7801' }))
+    expect(container.querySelector('.oa-mermaid-source code')?.textContent).toContain('Request --> Response')
+    expect(container.querySelector('.oa-mermaid-viewport')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '\u56fe\u8868' }))
+
+    const diagram = container.querySelector('.oa-mermaid-diagram')
+    fireEvent.click(screen.getByTitle('\u653e\u5927'))
+    expect(diagram.style.transform).toContain('scale(1.2)')
+    fireEvent.click(screen.getByTitle('\u7f29\u5c0f'))
+    expect(diagram.style.transform).toContain('scale(1)')
+    fireEvent.click(screen.getByTitle('\u653e\u5927'))
+    fireEvent.click(screen.getByTitle('\u590d\u4f4d\u89c6\u56fe'))
+    expect(diagram.style.transform).toBe('translate(0px, 0px) scale(1)')
+
+    const viewport = container.querySelector('.oa-mermaid-viewport')
+    fireEvent.click(screen.getByTitle('\u5e73\u79fb\u6a21\u5f0f'))
+    expect(viewport.classList.contains('is-pan-enabled')).toBe(true)
+    fireEvent.pointerDown(viewport, { pointerId: 7, clientX: 10, clientY: 20, button: 0 })
+    fireEvent.pointerMove(viewport, { pointerId: 7, clientX: 35, clientY: 50 })
+    fireEvent.pointerUp(viewport, { pointerId: 7 })
+    expect(diagram.style.transform).toBe('translate(25px, 30px) scale(1)')
+
+    fireEvent.click(screen.getByRole('button', { name: '\u5168\u5c4f\u67e5\u770b' }))
+    expect(screen.getByRole('dialog', { name: 'Mermaid \u56fe\u8868\u5168\u5c4f\u67e5\u770b' })).toBeTruthy()
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(screen.getByRole('img', { name: 'Mermaid \u56fe\u8868' }).style.transform).toBe('translate(25px, 30px) scale(1)')
+    expect(appStyles).toContain('.oa-mermaid-fullscreen{position:fixed;inset:0;z-index:10020')
+    expect(appStyles).toContain('.oa-code-head.oa-mermaid-head{height:auto}')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Mermaid \u56fe\u8868\u5168\u5c4f\u67e5\u770b' })).toBeNull()
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  test('waits for a streamed mermaid fence to close before rendering its final source', async () => {
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg viewBox="0 0 120 60"><title>Final stream</title></svg>',
+    })
+    const renderMessage = content => <ChatMessage
+      message={{ id: 'mermaid-stream', role: 'assistant', content }}
+      pending={true}
+      onAskReply={vi.fn()}
+    />
+    const view = render(renderMessage('```mermaid\nflowchart LR\n  A -->'))
+
+    expect(screen.getByRole('status').textContent).toContain('\u6b63\u5728\u63a5\u6536\u56fe\u8868\u5185\u5bb9')
+    expect(view.container.querySelector('.oa-mermaid-source code')?.textContent).toContain('A -->')
+    expect(mermaidMocks.render).not.toHaveBeenCalled()
+
+    view.rerender(renderMessage('```mermaid\nflowchart LR\n  A --> B'))
+    expect(mermaidMocks.render).not.toHaveBeenCalled()
+
+    view.rerender(renderMessage('```mermaid\nflowchart LR\n  A --> B\n```'))
+    expect(await screen.findByRole('img', { name: 'Mermaid \u56fe\u8868' })).toBeTruthy()
+    expect(mermaidMocks.render).toHaveBeenCalledTimes(1)
+    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^oa-mermaid-/), expect.stringContaining('A --> B'))
+  })
+
+  test('falls back to mermaid source when the diagram syntax is invalid', async () => {
+    mermaidMocks.render.mockRejectedValue(new Error('Parse error on line 2'))
+    const source = 'flowchart LR\n  A -- broken'
+    const { container } = render(
+      <ChatMessage
+        message={{ id: 'mermaid-invalid', role: 'assistant', content: `\`\`\`MERMAID\n${source}\n\`\`\`` }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Parse error on line 2')
+    expect(container.querySelector('.oa-mermaid-card.is-error pre code')?.textContent).toBe(`${source}\n`)
+    expect(container.querySelector('.oa-mermaid-diagram')).toBeNull()
+  })
+
+  test('keeps non-image attachments visible before the server upload response', () => {
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'user-file-optimistic',
+          role: 'user',
+          content: 'summarize this',
+          files: [{ name:'notes.txt', type:'text/plain', dataURL:'data:text/plain;base64,aGVsbG8=' }],
+        }}
+        pending
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files .oa-pending-file')).toBeTruthy()
+    expect(container.querySelector('.oa-msg-text')?.textContent).toBe('summarize this')
+  })
+
+  test('keeps saved non-image attachments visible from metadata after reload', () => {
+    const savedPath = 'C:\\chat\\uploads\\123_cost]report.pdf'
+    const { container } = render(
+      <ChatMessage
+        message={{
+          id: 'user-file-saved',
+          role: 'user',
+          content: `review this\n[\u9644\u4ef6\u5df2\u4fdd\u5b58]\n- [FILE:${savedPath}]`,
+          files: [{ path:savedPath, name:'123_cost]report.pdf', mime:'application/pdf', url:'/api/chat/file/123_cost%5Dreport.pdf' }],
+        }}
+        pending={false}
+        onAskReply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('123_cost]report.pdf')).toBeTruthy()
+    expect(container.querySelector('.oa-message-files .oa-file-card')).toBeTruthy()
+    expect(container.querySelector('.oa-file-card')?.getAttribute('title')).toBe(savedPath)
+    expect(container.querySelector('.oa-msg-text')?.textContent).toBe('review this')
+  })
+
   test('renders an explicit empty result for a worldline command', () => {
     render(
       <ChatMessage
@@ -1429,10 +1682,10 @@ describe('chat model cascade', () => {
       render(<ProviderModelCascade groups={groups} selectedProvider="alpha" value="a-1" onChange={vi.fn()} />)
       fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Alpha · Alpha One' }))
 
-      expect(document.querySelector('.oa-cascade-models').scrollTop).toBe(82)
-    } finally {
-      rectSpy.mockRestore()
-    }
+    fireEvent.click(screen.getByRole('button', { name: '\u6e05\u9664\u641c\u7d22' }))
+    expect(screen.queryByText('\u6ca1\u6709\u5339\u914d\u7684\u6a21\u578b')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy()
   })
 })
 

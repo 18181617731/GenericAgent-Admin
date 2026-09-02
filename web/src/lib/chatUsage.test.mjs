@@ -23,29 +23,45 @@ test('cacheReadTokens handles legacy-only and empty usage objects', () => {
   assert.equal(cacheReadTokens(null), 0)
 })
 
-test('cacheHitPercent calculates cache_read / (output + cache_read)', () => {
-  // cache_read=160, output=100 → 160 / (100 + 160) = 160 / 260 ≈ 62%
-  assert.equal(cacheHitPercent([
-    { cache_read_tokens: 160, output_tokens: 100 },
-  ]), 62)
+test('cacheHitPercent reproduces the real OpenAI session with prompt input as denominator', () => {
+  const usages = [
+    { input_tokens: 28347, cache_read_tokens: 28800, output_tokens: 500, input_tokens_include_cache_read: 1 },
+    { input_tokens: 30000, cache_read_tokens: 28800, output_tokens: 500, input_tokens_include_cache_read: 1 },
+    { input_tokens: 30000, cache_read_tokens: 28800, output_tokens: 500, input_tokens_include_cache_read: 1 },
+    { input_tokens: 30000, cache_read_tokens: 28800, output_tokens: 500, input_tokens_include_cache_read: 1 },
+    { input_tokens: 24999, cache_read_tokens: 0, output_tokens: 523, input_tokens_include_cache_read: 1 },
+  ]
+  // input=143346, cache read=115200, output=2523. Output is not part of the rate.
+  assert.equal(cacheHitPercent(usages), 80)
 })
 
-test('cacheHitPercent uses legacy cached_tokens with output denominator', () => {
-  // For legacy APIs: cached / output
-  // cached=80, output=20 → 80 / 20 = 400%
+test('cacheHitPercent adds disjoint Claude input, creation, and read buckets', () => {
   assert.equal(cacheHitPercent([
-    { cached_tokens: 80, output_tokens: 20 },
-  ]), 400)
+    { input_tokens: 100, cache_creation_tokens: 40, cache_read_tokens: 160, input_tokens_include_cache_read: 0 },
+  ]), 53)
 })
 
-test('cacheHitPercent supports mixed legacy and modern usage', () => {
-  // Modern: cache_read=100, output=50 → rate=100/(50+100)=0.667, weight=150
-  // Legacy: cached=80, output=20 → rate=80/20=4.0, weight=20
-  // Weighted: (0.667×150 + 4.0×20) / (150+20) = (100 + 80) / 170 = 180/170 ≈ 106%
+test('cacheHitPercent includes zero-hit turns in the prompt denominator', () => {
   assert.equal(cacheHitPercent([
-    { cached_tokens: 80, output_tokens: 20 },
-    { cache_read_tokens: 100, output_tokens: 50 },
-  ]), 106)
+    { input_tokens: 100, cache_read_tokens: 80, input_tokens_include_cache_read: 1 },
+    { input_tokens: 100, cache_read_tokens: 0, input_tokens_include_cache_read: 1 },
+  ]), 40)
+})
+
+test('cacheHitPercent recovers old OpenAI sessions and legacy aliases', () => {
+  assert.equal(cacheHitPercent([
+    { input_tokens: 143346, cache_read_tokens: 115200, output_tokens: 2523 },
+  ]), 80)
+  assert.equal(cacheHitPercent([
+    { input_tokens: 100, cached_tokens: 80, output_tokens: 20 },
+  ]), 80)
+})
+
+test('cacheHitPercent aggregates mixed provider turns using total prompt input', () => {
+  assert.equal(cacheHitPercent([
+    { input_tokens: 100, cache_read_tokens: 80, input_tokens_include_cache_read: 1 },
+    { input_tokens: 20, cache_read_tokens: 80, input_tokens_include_cache_read: 0 },
+  ]), 80)
 })
 
 test('measuredOutputRate divides only measured outputs by measured generation time', () => {

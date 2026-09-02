@@ -251,6 +251,79 @@ func TestChannelsDocStyleMyKeyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestChannelsPutWritesTelegramAllowedUsersAsIntegers(t *testing.T) {
+	root := t.TempDir()
+	writeTestChannelsMyKey(t, root, "old-secret")
+	h := newGoalTestServer(t, root).Routes()
+	body := []byte(`{"profiles":[{"id":"telegram","fields":[
+		{"name":"tg_bot_token","value":""},
+		{"name":"tg_allowed_users","value":"7896990937, 123456789"}
+	]}]}`)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channels", bytes.NewReader(body))
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT /api/channels status=%d want=%d body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	updatedBytes, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read temp mykey.py: %v", err)
+	}
+	updated := string(updatedBytes)
+	if want := `tg_allowed_users = [123456789,7896990937]`; !strings.Contains(updated, want) {
+		t.Fatalf("updated mykey.py missing %q:\n%s", want, updated)
+	}
+	if strings.Contains(updated, `tg_allowed_users = ["123456789","7896990937"]`) {
+		t.Fatalf("Telegram user IDs must not be quoted:\n%s", updated)
+	}
+
+	getRR := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
+	h.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET /api/channels after PUT status=%d want=%d body=%s", getRR.Code, http.StatusOK, getRR.Body.String())
+	}
+	var resp channelsResponse
+	if err := json.Unmarshal(getRR.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode channels response after PUT: %v", err)
+	}
+	allowedUsers := findChannelField(t, resp.Profiles, "tg_allowed_users")
+	if allowedUsers.Type != "list" || allowedUsers.Value != "123456789,7896990937" {
+		t.Fatalf("tg_allowed_users type=%q value=%q; want public list type and canonical integer IDs", allowedUsers.Type, allowedUsers.Value)
+	}
+}
+
+func TestChannelsPutRejectsNonIntegerTelegramAllowedUser(t *testing.T) {
+	root := t.TempDir()
+	writeTestChannelsMyKey(t, root, "old-secret")
+	h := newGoalTestServer(t, root).Routes()
+	body := []byte(`{"profiles":[{"id":"telegram","fields":[
+		{"name":"tg_allowed_users","value":"7896990937, alice"}
+	]}]}`)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channels", bytes.NewReader(body))
+	markDangerous(req)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT malformed Telegram allowlist status=%d want=%d body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "tg_allowed_users") || !strings.Contains(rr.Body.String(), "integer user ID") {
+		t.Fatalf("response should identify the malformed Telegram allowlist: %s", rr.Body.String())
+	}
+
+	updated, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), "alice") {
+		t.Fatalf("invalid allowlist partially mutated mykey.py:\n%s", string(updated))
+	}
+}
+
 func TestChannelsPutRejectsMalformedBoolean(t *testing.T) {
 	root := t.TempDir()
 	writeTestChannelsMyKey(t, root, "old-secret")
@@ -341,7 +414,7 @@ func TestChannelProfilesMatchOfficialFrontends(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	wantIDs := []string{"feishu", "wecom", "dingtalk", "discord", "qq", "telegram", "wechat"}
+	wantIDs := []string{"feishu", "feishu_admin", "wecom", "dingtalk", "discord", "qq", "telegram", "wechat"}
 	if len(resp.Profiles) != len(wantIDs) {
 		t.Fatalf("profile count=%d want=%d: %+v", len(resp.Profiles), len(wantIDs), resp.Profiles)
 	}

@@ -434,6 +434,29 @@ func TestNormalizedMessageUsageIncludesModernCacheCategoriesInInput(t *testing.T
 	}
 }
 
+func TestNormalizedMessageUsageUsesPerTurnCacheInputSemantics(t *testing.T) {
+	message := chatMessage{
+		Role: "assistant",
+		Usages: []map[string]int{
+			{"input_tokens": 100, "cache_read_tokens": 80, "output_tokens": 10, "input_tokens_include_cache_read": 1},
+			{"input_tokens": 20, "cache_read_tokens": 80, "output_tokens": 10, "input_tokens_include_cache_read": 0},
+		},
+	}
+	totals, ok := normalizedMessageUsage(message)
+	if !ok {
+		t.Fatal("expected usage to be reported")
+	}
+	if totals.InputTokens != 200 || totals.OutputTokens != 20 || totals.TotalTokens != 220 {
+		t.Fatalf("totals=%+v want input=200 output=20 total=220", totals)
+	}
+	if totals.Other["cache_read_tokens"] != 160 {
+		t.Fatalf("other=%+v want cache read=160", totals.Other)
+	}
+	if _, exists := totals.Other["input_tokens_include_cache_read"]; exists {
+		t.Fatalf("protocol metadata leaked into usage totals: %+v", totals.Other)
+	}
+}
+
 func TestNormalizedMessageUsageDoesNotDoubleCountLegacyCachedTokens(t *testing.T) {
 	message := chatMessage{
 		Role:  "assistant",

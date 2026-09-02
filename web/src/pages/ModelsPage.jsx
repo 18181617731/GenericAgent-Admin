@@ -543,6 +543,15 @@ function ProfileCard({
 
   const cancelAvailability = () => availabilityAbortRef.current?.abort()
 
+  useEffect(() => {
+    setExpandedModel(null)
+  }, [open, mode, index])
+
+  const patchModel = (configIndex, patch) => {
+    const next = updateModelConfig(profile || {}, configIndex, patch)
+    onChange({ model: next.model, models: next.models, model_configs: next.model_configs })
+  }
+
   return (
     <article className={`model-source-card model-connection-card${dirty ? ' is-dirty' : ''}${result?.errors?.length ? ' has-error' : ''}`}>
       <header className="model-source-head">

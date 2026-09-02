@@ -112,7 +112,7 @@ class ToolTimerTests(unittest.TestCase):
 
         with mock.patch.object(
             chat_worker.time, "perf_counter",
-            side_effect=[10.0, 10.125, 10.125, 10.125],
+            side_effect=[10.0, 10.0, 10.125, 10.125, 10.125, 10.125],
         ):
             hooks.trigger("tool_before", {"tool_name": "file_read"})
             hooks.trigger("tool_after", {"tool_name": "file_read"})
@@ -129,7 +129,7 @@ class ToolTimerTests(unittest.TestCase):
 
         with mock.patch.object(
             chat_worker.time, "perf_counter",
-            side_effect=[20.0, 20.4, 20.4],
+            side_effect=[20.0, 20.0, 20.4, 20.4],
         ):
             worker = threading.Thread(target=begin_tool)
             worker.start()
@@ -158,6 +158,22 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.old_emit = chat_worker.emit
         self.old_cwd = os.getcwd()
         chat_worker.emit = self.events.append
+        self.worldline_store = object()
+
+        def activate_worldline(agent, ga_root, workspace):
+            agent._admin_worldline_store = self.worldline_store
+            return self.worldline_store
+
+        ensure_patcher = mock.patch.object(
+            chat_worker, "_ensure_worldline_store", side_effect=activate_worldline,
+        )
+        commit_patcher = mock.patch.object(
+            chat_worker, "_commit_worldline", return_value="node-1",
+        )
+        self.ensure_worldline = ensure_patcher.start()
+        self.commit_worldline = commit_patcher.start()
+        self.addCleanup(commit_patcher.stop)
+        self.addCleanup(ensure_patcher.stop)
 
     def tearDown(self):
         chat_worker.emit = self.old_emit
@@ -213,6 +229,43 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertIn("usage", done)
         self.assertIn("usages", done)
 
+    def test_structured_turn_hook_publishes_official_turn_and_is_removed(self):
+        class TurnAgent(FakeAgent):
+            def put_task(self, prompt, source=None):
+                hooks = list(self._turn_end_hooks.values())
+                self.assert_hook_count = len(hooks)
+                hooks[0]({
+                    "summary": "checked files",
+                    "response": SimpleNamespace(
+                        thinking="inspect repository",
+                        content="implemented fix",
+                    ),
+                    "tool_calls": [{"name": "file_read", "arguments": {"path": "a.py"}}],
+                })
+                return super().put_task(prompt, source=source)
+
+        agent = TurnAgent()
+        chat_worker.handle_request(agent, FakeWorker(), self.request())
+
+        self.assertEqual(agent.assert_hook_count, 1)
+        turn = next(event for event in self.events if event.get("type") == "turn")
+        self.assertEqual(turn, {
+            "type": "turn",
+            "summary": "checked files",
+            "thinking": "inspect repository",
+            "content": "implemented fix",
+            "tool_calls": [{"name": "file_read", "arguments": {"path": "a.py"}}],
+        })
+        self.assertEqual(agent._turn_end_hooks, {})
+
+    def test_structured_turn_hook_is_removed_after_request_error(self):
+        agent = FakeAgent(fail=True)
+
+        chat_worker.handle_request(agent, FakeWorker(), self.request())
+
+        self.assertEqual(agent._turn_end_hooks, {})
+        self.assertTrue(any(event.get("type") == "error" for event in self.events))
+
     def test_usage_is_published_on_cache_then_completed_at_the_same_index(self):
         chat_worker._reset_usage()
         capture = chat_worker._UsageCapturingStderr(mock.Mock())
@@ -227,6 +280,7 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "cache_read_tokens": 821500,
             "output_tokens": 0,
             "cached_tokens": 0,
+            "input_tokens_include_cache_read": 1,
         })
 
         capture.write("[Output] tokens=22100\n")
@@ -239,6 +293,7 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "cache_read_tokens": 821500,
             "output_tokens": 22100,
             "cached_tokens": 0,
+            "input_tokens_include_cache_read": 1,
         })
         self.assertEqual(chat_worker._snapshot_turn_usages(), [completed["usage"]])
 
@@ -256,6 +311,7 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "cache_read_tokens": 821500,
             "output_tokens": 0,
             "cached_tokens": 0,
+            "input_tokens_include_cache_read": 0,
         })
 
     def test_transport_error_attempt_seals_usage_before_fallback(self):
@@ -345,11 +401,20 @@ class ChatWorkerProtocolTest(unittest.TestCase):
         self.assertNotIn("raw_ask", first.__dict__)
         self.assertNotIn("raw_ask", second.__dict__)
 
-    def test_ordinary_request_does_not_initialize_worldline(self):
-        agent = FakeAgent()
-        with mock.patch.object(chat_worker, "_ensure_worldline_store") as ensure:
-            chat_worker.handle_request(agent, FakeWorker(), self.request("ordinary prompt"))
-        ensure.assert_not_called()
+    def test_ordinary_request_activates_worldline_before_agent_turn(self):
+        class ActivationAwareAgent(FakeAgent):
+            def put_task(self, prompt, source=None):
+                self.worldline_active_during_turn = hasattr(self, "_admin_worldline_store")
+                return super().put_task(prompt, source=source)
+
+        agent = ActivationAwareAgent()
+        req = self.request("ordinary prompt")
+
+        chat_worker.handle_request(agent, FakeWorker(), req)
+
+        self.ensure_worldline.assert_called_once_with(agent, Path(req["ga_root"]).resolve(), "")
+        self.assertTrue(agent.worldline_active_during_turn)
+        self.commit_worldline.assert_called_once_with(agent, "ordinary prompt")
 
     def test_extra_system_prompts_are_replaced_and_cleared_each_turn(self):
         agent = FakeAgent()

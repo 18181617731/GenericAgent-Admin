@@ -134,6 +134,46 @@ class WorldlineSidecarTests(unittest.TestCase):
             'Readable node title',
         )
 
+    def test_worldline_title_skips_tool_result_messages_masquerading_as_user(self):
+        store = SimpleNamespace(
+            root_id='root',
+            head='root',
+            nodes={'root': {'parent': None, 'children': []}},
+            rebuild_history=lambda _node_id: [],
+        )
+        history = [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'tool_result', 'content': {'result': '{"status":"success"}'}},
+                    {'type': 'text', 'text': '### [WORKING MEMORY]\ninternal state'},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'text', 'text': 'Actual human request'}],
+            },
+        ]
+
+        self.assertEqual(
+            worker._worldline_title(store, history, 'fallback'),
+            'Actual human request',
+        )
+
+    def test_worldline_title_falls_back_when_only_new_user_entry_is_a_tool_result(self):
+        store = SimpleNamespace(
+            root_id='root',
+            head='root',
+            nodes={'root': {'parent': None, 'children': []}},
+            rebuild_history=lambda _node_id: [],
+        )
+        history = [{
+            'role': 'user',
+            'content': [{'type': 'tool_result', 'content': {'result': 'not a title'}}],
+        }]
+
+        self.assertEqual(worker._worldline_title(store, history, 'fallback prompt'), 'fallback prompt')
+
     def test_worldline_content_text_handles_nested_result(self):
         content = [{'type': 'tool_result', 'content': {'result': 'Useful result'}}]
         self.assertEqual(worker._worldline_content_text(content), 'Useful result')

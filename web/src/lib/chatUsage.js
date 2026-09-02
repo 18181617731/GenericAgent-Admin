@@ -10,12 +10,16 @@ export const cacheReadTokens = (usage) => {
   return canonical > 0 ? canonical : tokenCount(usage?.cached_tokens)
 }
 
-// Cache hit rate differs by API:
-// - Modern (Claude): cache_read / (output + cache_read) — portion of generation from cache
-// - Legacy: cached / output — cache as a ratio to output (different semantic)
+// Cache hit rate is the share of prompt input served from cache. Providers
+// expose incompatible input counters: OpenAI includes cache reads in
+// input_tokens, while Claude reports input/creation/read as disjoint buckets.
+// New workers persist an explicit integer flag. Old normalized sessions can
+// only be recovered heuristically from their counters.
 export const cacheHitPercent = (usages) => {
   if (!Array.isArray(usages)) return 0
   const totals = usages.reduce((acc, usage) => {
+    const input = tokenCount(usage?.input_tokens)
+    const creation = tokenCount(usage?.cache_creation_tokens)
     const canonicalRead = tokenCount(usage?.cache_read_tokens)
     const legacyCached = tokenCount(usage?.cached_tokens)
     const output = tokenCount(usage?.output_tokens)
