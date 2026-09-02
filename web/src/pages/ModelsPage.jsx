@@ -588,11 +588,13 @@ function ProviderModal({
                       {expanded && (
                         <div id={panelId} className="model-provider-model-config">
                           <label className="model-field model-field--wide">
-                            <span className="model-field-label">{text.model}</span>
+                            <span className="model-field-label">{text.modelId}</span>
                             <Input
                               value={config.model || ''}
                               onChange={event => patchModel(configIndex, { model: event.target.value })}
+                              placeholder={text.modelIdPlaceholder}
                             />
+                            <small>{text.modelIdHelp}</small>
                           </label>
                           <ModelParams
                             config={config}

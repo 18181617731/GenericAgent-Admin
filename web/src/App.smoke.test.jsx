@@ -504,6 +504,15 @@ describe('Models call list', () => {
     expect(summaries[0].querySelector('em')).toBeNull()
     expect(summaries[1].querySelector('strong').textContent).toBe('same-model')
     expect(summaries[1].querySelector('em')).toBeNull()
+
+    fireEvent.click(summaries[0])
+    const expandedConfig = document.querySelector('.model-provider-model-config')
+    const modelIdField = expandedConfig.querySelector('.model-field--wide')
+    const modelIdInput = modelIdField.querySelector('input')
+    expect(modelIdField.querySelector('.model-field-label').textContent).toBe('模型 ID')
+    expect(modelIdInput.getAttribute('placeholder')).toContain('gpt-5.2')
+    expect(modelIdField.querySelector('small').textContent).toContain('服务商 API')
+    expect(modelIdField.querySelector('small').textContent).toContain('不是上方的自定义显示名称')
   })
 
   test('edits a model display name without changing its model ID', () => {
