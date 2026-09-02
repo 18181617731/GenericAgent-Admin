@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.111 - 2026-09-02
+
+### GA 实例克隆稳定性
+- 复制正在运行的实例时，以打开文件句柄获取有界快照；对日志轮转或文件短暂收缩自动重试，避免调度器写日志导致克隆误报失败。
+
 ## v1.0.110 - 2026-09-02
 
 ### GA 实例创建体验

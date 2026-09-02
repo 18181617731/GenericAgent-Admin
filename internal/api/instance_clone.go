@@ -13,9 +13,10 @@ import (
 // virtual environment, caches, or accidentally mounted data; none of those
 // should make an Admin request unbounded or copy files outside the project.
 const (
-	instanceCloneMaxBytes        = int64(2 << 30)
-	instanceCloneMaxEntries      = 100000
-	instanceCloneReservationFile = ".ga-admin-clone-in-progress"
+	instanceCloneMaxBytes         = int64(2 << 30)
+	instanceCloneMaxEntries       = 100000
+	instanceCloneFileCopyAttempts = 3
+	instanceCloneReservationFile  = ".ga-admin-clone-in-progress"
 )
 
 type cloneProgressFunc func(copiedBytes, totalBytes int64, copiedEntries, totalEntries int)
@@ -206,37 +207,17 @@ func cloneGenericAgentProjectWithContext(ctx context.Context, src, dest string, 
 		if entries > instanceCloneMaxEntries {
 			return fmt.Errorf("source instance has too many files")
 		}
-		if info.Size() < 0 || info.Size() > instanceCloneMaxBytes-total {
-			return fmt.Errorf("source instance exceeds 2 GiB")
-		}
 
 		target := filepath.Join(dest, rel)
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_EXCL, info.Mode().Perm())
-		if err != nil {
-			_ = in.Close()
-			return err
-		}
-		written, copyErr := io.Copy(out, io.LimitReader(contextReader{ctx: ctx, reader: in}, info.Size()+1))
-		closeOutErr := out.Close()
-		closeInErr := in.Close()
+		// WalkDir's entry metadata can be stale by the time a live scheduler
+		// log is opened. Copy a bounded snapshot from the open handle and retry
+		// only when the file shrinks or is rotated during the read.
+		written, copyErr := copyCloneFile(ctx, path, target, instanceCloneMaxBytes-total, rel)
 		if copyErr != nil {
 			return copyErr
-		}
-		if closeOutErr != nil {
-			return closeOutErr
-		}
-		if closeInErr != nil {
-			return closeInErr
-		}
-		if written != info.Size() {
-			return fmt.Errorf("source file changed while copying: %s", rel)
 		}
 		total += written
 		if onProgress != nil {
@@ -261,6 +242,76 @@ func (r contextReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return r.reader.Read(p)
+}
+
+func copyCloneFile(ctx context.Context, sourcePath, targetPath string, remainingBytes int64, rel string) (int64, error) {
+	var lastErr error
+	for attempt := 0; attempt < instanceCloneFileCopyAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		in, err := os.Open(sourcePath)
+		if err != nil {
+			lastErr = err
+			if os.IsNotExist(err) && attempt+1 < instanceCloneFileCopyAttempts {
+				continue
+			}
+			return 0, err
+		}
+		info, err := in.Stat()
+		if err != nil {
+			_ = in.Close()
+			return 0, err
+		}
+		if !info.Mode().IsRegular() {
+			_ = in.Close()
+			return 0, fmt.Errorf("unsupported source entry: %s", rel)
+		}
+		if info.Size() < 0 || info.Size() > remainingBytes {
+			_ = in.Close()
+			return 0, fmt.Errorf("source instance exceeds 2 GiB")
+		}
+
+		temporaryPath := targetPath + ".ga-admin-copying"
+		_ = os.Remove(temporaryPath)
+		out, err := os.OpenFile(temporaryPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		if err != nil {
+			_ = in.Close()
+			return 0, err
+		}
+		written, copyErr := io.Copy(out, io.LimitReader(contextReader{ctx: ctx, reader: in}, info.Size()))
+		closeOutErr := out.Close()
+		closeInErr := in.Close()
+		if copyErr != nil {
+			_ = os.Remove(temporaryPath)
+			return 0, copyErr
+		}
+		if closeOutErr != nil {
+			_ = os.Remove(temporaryPath)
+			return 0, closeOutErr
+		}
+		if closeInErr != nil {
+			_ = os.Remove(temporaryPath)
+			return 0, closeInErr
+		}
+		if written != info.Size() {
+			lastErr = fmt.Errorf("source file changed while copying: %s", rel)
+			_ = os.Remove(temporaryPath)
+			if attempt+1 < instanceCloneFileCopyAttempts {
+				continue
+			}
+			return 0, lastErr
+		}
+		if err := os.Rename(temporaryPath, targetPath); err != nil {
+			_ = os.Remove(temporaryPath)
+			return 0, err
+		}
+		return written, nil
+	}
+	if lastErr != nil {
+		return 0, lastErr
+	}
+	return 0, fmt.Errorf("copy source file failed: %s", rel)
 }
 
 func scanCloneSource(ctx context.Context, src string, copyMemory, copyMyKey bool) (stats cloneSourceStats, err error) {
