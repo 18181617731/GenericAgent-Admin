@@ -171,6 +171,249 @@ func TestCreateProjectRejectsNonPostMethods(t *testing.T) {
 	}
 }
 
+func renameProject(t *testing.T, h http.Handler, name, newName string, confirmed bool) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"name": name, "new_name": newName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/chat/projects/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if confirmed {
+		req.Header.Set("X-GA-Confirm", "dangerous")
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func deleteProject(t *testing.T, h http.Handler, name string, confirmed bool) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/chat/projects/delete", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if confirmed {
+		req.Header.Set("X-GA-Confirm", "dangerous")
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func newProjectSession(t *testing.T, h http.Handler, name string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/session/new", strings.NewReader(`{"project_mode":"`+name+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("new session status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ID == "" {
+		t.Fatal("new project session did not return an id")
+	}
+	return payload.ID
+}
+
+func TestRenameProjectPreservesWorkspaceAndMigratesSessionAndPin(t *testing.T) {
+	s, root, h := newProjectTestServer(t)
+	if rr := createProject(t, h, "alpha"); rr.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	oldDir := filepath.Join(root, "temp", "projects", "alpha")
+	const memory = "# keep this memory\n"
+	if err := os.WriteFile(filepath.Join(oldDir, "project_memory.md"), []byte(memory), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "notes.txt"), []byte("keep files"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sid := newProjectSession(t, h, "alpha")
+	if rr := pinProject(t, h, "alpha", true); rr.Code != http.StatusOK {
+		t.Fatalf("pin status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr := renameProject(t, h, "alpha", "beta", true)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("rename status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		OldName         string   `json:"old_name"`
+		Name            string   `json:"name"`
+		UpdatedSessions int      `json:"updated_sessions"`
+		Projects        []string `json:"projects"`
+		Pinned          []string `json:"pinned_projects"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.OldName != "alpha" || payload.Name != "beta" || payload.UpdatedSessions != 1 {
+		t.Fatalf("payload=%#v want rename and one session update", payload)
+	}
+	if strings.Join(payload.Projects, ",") != "beta" || strings.Join(payload.Pinned, ",") != "beta" {
+		t.Fatalf("payload projects=%v pinned=%v want beta", payload.Projects, payload.Pinned)
+	}
+	newDir := filepath.Join(root, "temp", "projects", "beta")
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("old project path still exists: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(newDir, "project_memory.md"))
+	if err != nil || string(got) != memory {
+		t.Fatalf("memory after rename=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(newDir, "notes.txt")); err != nil || string(got) != "keep files" {
+		t.Fatalf("other file after rename=%q err=%v", got, err)
+	}
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.ProjectMode != "beta" {
+		t.Fatalf("session project_mode=%q want beta", cs.ProjectMode)
+	}
+}
+
+func TestProjectMutationsRequireDangerousConfirmation(t *testing.T) {
+	_, _, h := newProjectTestServer(t)
+	if rr := renameProject(t, h, "alpha", "beta", false); rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("rename status=%d body=%s want 428", rr.Code, rr.Body.String())
+	}
+	if rr := deleteProject(t, h, "alpha", false); rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("delete status=%d body=%s want 428", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProjectMutationRoutesRejectWrongMethodsBeforeConfirmation(t *testing.T) {
+	_, _, h := newProjectTestServer(t)
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/chat/projects/rename"},
+		{http.MethodPost, "/api/chat/projects/rename"},
+		{http.MethodGet, "/api/chat/projects/delete"},
+		{http.MethodPost, "/api/chat/projects/delete"},
+	} {
+		for _, confirmed := range []bool{false, true} {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+			if confirmed {
+				req.Header.Set("X-GA-Confirm", "dangerous")
+			}
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("%s %s confirmed=%t status=%d body=%s want=405", tc.method, tc.path, confirmed, rr.Code, rr.Body.String())
+			}
+		}
+	}
+}
+
+func TestRenameProjectRejectsInvalidConflictsAndRunningSessions(t *testing.T) {
+	s, root, h := newProjectTestServer(t)
+	for _, name := range []string{"alpha", "beta"} {
+		if rr := createProject(t, h, name); rr.Code != http.StatusOK {
+			t.Fatalf("create %s status=%d body=%s", name, rr.Code, rr.Body.String())
+		}
+	}
+	for _, tc := range []struct {
+		name, newName string
+		status        int
+	}{
+		{"alpha", "beta", http.StatusConflict},
+		{"missing", "gamma", http.StatusNotFound},
+		{"alpha", "../escape", http.StatusBadRequest},
+		{"alpha", "alpha", http.StatusConflict},
+	} {
+		if rr := renameProject(t, h, tc.name, tc.newName, true); rr.Code != tc.status {
+			t.Fatalf("rename %q -> %q status=%d body=%s want=%d", tc.name, tc.newName, rr.Code, rr.Body.String(), tc.status)
+		}
+	}
+	filePath := filepath.Join(root, "temp", "projects", "not-a-directory")
+	if err := os.WriteFile(filePath, []byte("file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rr := renameProject(t, h, "not-a-directory", "gamma", true); rr.Code != http.StatusConflict {
+		t.Fatalf("non-directory status=%d body=%s want=409", rr.Code, rr.Body.String())
+	}
+	sid := newProjectSession(t, h, "alpha")
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = &chatRun{SID: sid}
+	s.ChatMu.Unlock()
+	if rr := renameProject(t, h, "alpha", "gamma", true); rr.Code != http.StatusConflict {
+		t.Fatalf("running rename status=%d body=%s want=409", rr.Code, rr.Body.String())
+	}
+	s.ChatMu.Lock()
+	delete(s.ChatRuns, sid)
+	s.ChatMu.Unlock()
+}
+
+func TestDeleteProjectRemovesWorkspaceButPreservesAndDetachesSessions(t *testing.T) {
+	s, root, h := newProjectTestServer(t)
+	if rr := createProject(t, h, "alpha"); rr.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	dir := filepath.Join(root, "temp", "projects", "alpha")
+	if err := os.WriteFile(filepath.Join(dir, "project_memory.md"), []byte("memory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sid := newProjectSession(t, h, "alpha")
+	if rr := pinProject(t, h, "alpha", true); rr.Code != http.StatusOK {
+		t.Fatalf("pin status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	rr := deleteProject(t, h, "alpha", true)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Detached  int      `json:"detached_sessions"`
+		Preserved bool     `json:"sessions_preserved"`
+		Projects  []string `json:"projects"`
+		Pinned    []string `json:"pinned_projects"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Detached != 1 || !payload.Preserved || len(payload.Projects) != 0 || len(payload.Pinned) != 0 {
+		t.Fatalf("payload=%#v want one detached session and no project/pin", payload)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("project directory still exists: %v", err)
+	}
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.ProjectMode != "" || cs.ID != sid {
+		t.Fatalf("preserved session=%#v want same id with empty project mode", cs)
+	}
+}
+
+func TestDeleteProjectRejectsRunningSessions(t *testing.T) {
+	s, _, h := newProjectTestServer(t)
+	if rr := createProject(t, h, "alpha"); rr.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	sid := newProjectSession(t, h, "alpha")
+	s.ChatMu.Lock()
+	s.ChatRuns[sid] = &chatRun{SID: sid}
+	s.ChatMu.Unlock()
+	if rr := deleteProject(t, h, "alpha", true); rr.Code != http.StatusConflict {
+		t.Fatalf("running delete status=%d body=%s want=409", rr.Code, rr.Body.String())
+	}
+	s.ChatMu.Lock()
+	delete(s.ChatRuns, sid)
+	s.ChatMu.Unlock()
+}
+
 func pinProject(t *testing.T, h http.Handler, name string, pinned bool) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]interface{}{"name": name, "pinned": pinned})

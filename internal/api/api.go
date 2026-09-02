@@ -258,6 +258,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/chat/search", s.withChatInstance((*Server).chatSearch))
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
 	mux.HandleFunc("/api/chat/python/install-deps", s.requireDangerousConfirm(s.withChatInstance((*Server).chatPythonInstallDeps)))
+	mux.HandleFunc("/api/chat/projects/rename", projectMutationMethod(http.MethodPatch, s.requireDangerousConfirm(s.withChatInstance((*Server).chatRenameProject))))
+	mux.HandleFunc("/api/chat/projects/delete", projectMutationMethod(http.MethodDelete, s.requireDangerousConfirm(s.withChatInstance((*Server).chatDeleteProject))))
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
 	// Legacy reactapp bridge is intentionally not routed; Chat is now native Admin API.
 	mux.HandleFunc("/", s.static)
@@ -379,6 +381,8 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/channels", Level: "dangerous", Action: "edit_channel_secrets", Reason: "writes GA Admin channel credentials to GA root mykey.py"},
 	{Path: "/api/keychain", Level: "dangerous", Action: "edit_keychain", Reason: "writes or deletes encrypted local keychain credentials"},
 	{Path: "/api/chat/python/install-deps", Level: "dangerous", Action: "install_chat_python_deps", Reason: "runs pip install with Tsinghua PyPI mirror for the GA runtime imports the chat interpreter reports missing"},
+	{Path: "/api/chat/projects/rename", Level: "dangerous", Action: "rename_chat_project", Reason: "renames a project workspace and rewrites chat session project references"},
+	{Path: "/api/chat/projects/delete", Level: "dangerous", Action: "delete_chat_project", Reason: "deletes a project workspace while preserving chat history and detaching project references"},
 }
 
 func (s *Server) riskCatalog(w http.ResponseWriter, r *http.Request) {

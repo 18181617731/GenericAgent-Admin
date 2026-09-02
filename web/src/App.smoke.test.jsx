@@ -75,6 +75,24 @@ const installBrowserPolyfills = () => {
   })
 }
 
+const installStableChatPolyfills = () => {
+  installBrowserPolyfills()
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: vi.fn().mockImplementation(query => ({
+      matches: /prefers-reduced-motion/.test(query),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
+}
+
 const setupFetch = vi.fn(async (url) => {
   const path = String(url)
   if (path.includes('/api/config')) return jsonResponse({ ga_root: '' })
@@ -2689,6 +2707,164 @@ describe('mobile chat session navigation', () => {
     expect(document.querySelector('.oa-sidebar')?.classList.contains('collapsed')).toBe(true)
     expect(screen.queryByRole('button', { name:'关闭侧栏' })).toBeNull()
     expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === '/api/chat/session/two')).toHaveLength(1)
+  }, 30000)
+})
+
+describe('chat project management', () => {
+  test('clears the rename disclosure after a successful project rename', async () => {
+    installStableChatPolyfills()
+    let currentProject = 'Alpha'
+    const sessions = [{ id:'project-session', title:'Project chat', project_mode:'Alpha', workspace:'temp/projects/Alpha', count:1, updated_at:'2026-08-18T10:00:00Z' }]
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
+      if (path === '/api/instances') return jsonResponse({ instances:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions: sessions.map(session => ({ ...session, project_mode:currentProject })), projects:[currentProject], pinned_projects:[currentProject] })
+      if (path === '/api/chat/session/project-session') return jsonResponse({ ...sessions[0], project_mode:currentProject, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
+      if (path === '/api/chat/projects/rename' && options.method === 'PATCH') {
+        expect(options.headers?.['X-GA-Confirm']).toBe('dangerous')
+        currentProject = JSON.parse(options.body).new_name
+        return jsonResponse({ ok:true, old_name:'Alpha', name:currentProject, projects:[currentProject], pinned_projects:[currentProject] })
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+    mockDialog(true)
+    render(<ChatApp />)
+
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Project chat'))
+    fireEvent.click(await screen.findByRole('tab', { name:'项目' }))
+    fireEvent.click(await screen.findByRole('button', { name:'管理' }))
+    const dialog = await screen.findByRole('dialog', { name:'管理项目' })
+    fireEvent.click(within(dialog).getByRole('button', { name:'编辑项目 Alpha' }))
+    const input = within(dialog).getByRole('textbox', { name:'重命名项目 Alpha' })
+    fireEvent.change(input, { target:{ value:'Beta' } })
+    fireEvent.click(within(dialog).getByRole('button', { name:'保存' }))
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('项目已重命名为 Beta'))
+    expect(screen.queryByRole('textbox', { name:'重命名项目 Alpha' })).toBeNull()
+    expect(within(screen.getByRole('dialog', { name:'管理项目' })).getByRole('button', { name:'编辑项目 Beta' })).toBeTruthy()
+    expect(within(screen.getByRole('dialog', { name:'管理项目' })).getByText(/已置顶/)).toBeTruthy()
+    expect(within(screen.getByRole('dialog', { name:'管理项目' })).queryByRole('alert')).toBeNull()
+  }, 30000)
+
+  test('shows project validation errors inside the manager and clears them on cancel', async () => {
+    installStableChatPolyfills()
+    const session = { id:'project-session', title:'Project chat', project_mode:'Alpha', workspace:'temp/projects/Alpha', count:1, updated_at:'2026-08-18T10:00:00Z' }
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
+      if (path === '/api/instances') return jsonResponse({ instances:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[session], projects:['Alpha','Beta'], pinned_projects:[] })
+      if (path === '/api/chat/session/project-session') return jsonResponse({ ...session, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
+      if (path === '/api/chat/worldline/project-session') return jsonResponse({ schema_version:1, nodes:[], current_path:[] })
+      if (path === '/api/chat/projects/rename' && options.method === 'PATCH') throw new Error('unexpected validation request')
+      throw new Error(`unexpected url ${url}`)
+    })
+    mockDialog(true)
+    render(<ChatApp />)
+
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Project chat'))
+    fireEvent.click(await screen.findByRole('tab', { name:'项目' }))
+    fireEvent.click(await screen.findByRole('button', { name:'管理' }))
+    const dialog = await screen.findByRole('dialog', { name:'管理项目' })
+    fireEvent.click(within(dialog).getByRole('button', { name:'编辑项目 Alpha' }))
+    const input = within(dialog).getByRole('textbox', { name:'重命名项目 Alpha' })
+
+    fireEvent.change(input, { target:{ value:'bad/name' } })
+    fireEvent.click(within(dialog).getByRole('button', { name:'保存' }))
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('项目名不能包含'))
+    fireEvent.change(input, { target:{ value:'Alpha' } })
+    fireEvent.click(within(dialog).getByRole('button', { name:'保存' }))
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('项目名称没有变化'))
+    fireEvent.change(input, { target:{ value:'Beta' } })
+    fireEvent.click(within(dialog).getByRole('button', { name:'保存' }))
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('项目 Beta 已存在'))
+
+    fireEvent.click(within(dialog).getByRole('button', { name:'取消' }))
+    await waitFor(() => expect(within(dialog).queryByRole('alert')).toBeNull())
+    expect(within(dialog).queryByRole('textbox', { name:'重命名项目 Alpha' })).toBeNull()
+  }, 30000)
+
+  test('keeps a project API failure visible in the manager until canceled', async () => {
+    installStableChatPolyfills()
+    const session = { id:'project-session', title:'Project chat', project_mode:'Alpha', workspace:'temp/projects/Alpha', count:1, updated_at:'2026-08-18T10:00:00Z' }
+    const apiError = '项目正在运行，暂时无法重命名。'
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
+      if (path === '/api/instances') return jsonResponse({ instances:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[session], projects:['Alpha'], pinned_projects:[] })
+      if (path === '/api/chat/session/project-session') return jsonResponse({ ...session, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
+      if (path === '/api/chat/worldline/project-session') return jsonResponse({ schema_version:1, nodes:[], current_path:[] })
+      if (path === '/api/chat/projects/rename' && options.method === 'PATCH') {
+        expect(options.headers?.['X-GA-Confirm']).toBe('dangerous')
+        return { ...jsonResponse({ error:apiError }), ok:false, status:409, statusText:'Conflict' }
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+    mockDialog(true)
+    render(<ChatApp />)
+
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Project chat'))
+    fireEvent.click(await screen.findByRole('tab', { name:'项目' }))
+    fireEvent.click(await screen.findByRole('button', { name:'管理' }))
+    const dialog = await screen.findByRole('dialog', { name:'管理项目' })
+    fireEvent.click(within(dialog).getByRole('button', { name:'编辑项目 Alpha' }))
+    const input = within(dialog).getByRole('textbox', { name:'重命名项目 Alpha' })
+    fireEvent.change(input, { target:{ value:'Beta' } })
+    fireEvent.click(within(dialog).getByRole('button', { name:'保存' }))
+
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert.textContent).toBe(apiError)
+    expect(alert.closest('.oa-project-manager-modal')).toBe(dialog)
+    expect(document.querySelector('.oa-chat-feedback')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name:'取消' }))
+    await waitFor(() => expect(within(dialog).queryByRole('alert')).toBeNull())
+    expect(within(dialog).queryByRole('textbox', { name:'重命名项目 Alpha' })).toBeNull()
+  }, 30000)
+
+  test('deletes a project workspace while keeping the active chat history', async () => {
+    installStableChatPolyfills()
+    let deleted = false
+    const session = { id:'project-session', title:'Project chat', project_mode:'Alpha', workspace:'temp/projects/Alpha', count:1, updated_at:'2026-08-18T10:00:00Z' }
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
+      if (path === '/api/instances') return jsonResponse({ instances:[] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[{ ...session, project_mode:deleted ? '' : 'Alpha', workspace:deleted ? '' : session.workspace }], projects:deleted ? [] : ['Alpha'], pinned_projects:[] })
+      if (path === '/api/chat/session/project-session') return jsonResponse({ ...session, messages:[{ id:'message-1', role:'assistant', content:'历史仍在' }], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
+      if (path === '/api/chat/projects/delete' && options.method === 'DELETE') {
+        expect(options.headers?.['X-GA-Confirm']).toBe('dangerous')
+        deleted = true
+        return jsonResponse({ ok:true, name:'Alpha', detached_sessions:1, sessions_preserved:true, projects:[], pinned_projects:[] })
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+    mockDialog(true)
+    render(<ChatApp />)
+
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Project chat'))
+    fireEvent.click(await screen.findByRole('tab', { name:'项目' }))
+    fireEvent.click(await screen.findByRole('button', { name:'管理' }))
+    const dialog = await screen.findByRole('dialog', { name:'管理项目' })
+    fireEvent.click(within(dialog).getByRole('button', { name:'删除项目 Alpha' }))
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('项目 Alpha 已删除'))
+    expect(within(screen.getByRole('dialog', { name:'管理项目' })).getByText('暂无项目，请先新建一个项目。')).toBeTruthy()
+    expect(document.querySelector('.oa-title b')?.textContent).toBe('Project chat')
+    expect(document.body.textContent).toContain('历史仍在')
   }, 30000)
 })
 

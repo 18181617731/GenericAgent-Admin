@@ -93,7 +93,7 @@ func TestDangerousConfirmCasesCoverRegisteredRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`mux\.HandleFunc\("([^"]+)",\s*s\.requireDangerousConfirm\(`)
+	re := regexp.MustCompile(`mux\.HandleFunc\("([^"]+)",\s*(?:projectMutationMethod\([^,]+,\s*)?s\.requireDangerousConfirm\(`)
 	matches := re.FindAllSubmatch(apiSource, -1)
 	if len(matches) < 20 {
 		t.Fatalf("expected many dangerous-confirm routes in api.go, got %d", len(matches))
@@ -1115,6 +1115,8 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPut, "/api/keychain", `{}`},
 		{http.MethodPut, "/api/extra-system-prompt-presets", `{}`},
 		{http.MethodPost, "/api/chat/python/install-deps", `{}`},
+		{http.MethodPatch, "/api/chat/projects/rename", `{}`},
+		{http.MethodDelete, "/api/chat/projects/delete", `{}`},
 	}
 }
 

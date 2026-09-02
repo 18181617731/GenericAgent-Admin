@@ -146,6 +146,14 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			s.chatSetProjectPinned(w, r)
 			return
 		}
+		if len(parts) == 2 && parts[1] == "rename" && r.Method == http.MethodPatch {
+			s.chatRenameProject(w, r)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "delete" && r.Method == http.MethodDelete {
+			s.chatDeleteProject(w, r)
+			return
+		}
 	case "btw":
 		if len(parts) == 2 && r.Method == http.MethodPost {
 			s.chatBTW(w, r, parts[1])

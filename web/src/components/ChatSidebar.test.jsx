@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import ChatSidebar from './ChatSidebar.jsx'
+import ChatSidebar, { ProjectManagerDialog } from './ChatSidebar.jsx'
 
 afterEach(() => cleanup())
 
@@ -131,6 +131,115 @@ describe('ChatSidebar', () => {
     expect(expand.getAttribute('aria-expanded')).toBe('true')
     expect(projectBody?.hidden).toBe(false)
     expect(props.onNewProjectSession).toHaveBeenCalledWith('GenericAgent')
+  })
+
+  test('should route project Manage to the project manager instead of session manager', () => {
+    const props = baseProps({ sidebarTab: 'projects', onOpenProjectManager: vi.fn() })
+    render(<ChatSidebar {...props} formatTime={formatTime} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+
+    expect(props.onOpenProjectManager).toHaveBeenCalledTimes(1)
+    expect(props.onOpenSessionManager).not.toHaveBeenCalled()
+  })
+
+  test('should expose keyboard-reachable project rename and delete actions', () => {
+    const onStartRename = vi.fn()
+    const onRename = vi.fn()
+    const onDelete = vi.fn()
+    const view = render(<ProjectManagerDialog
+      open
+      projectGroups={[{ name: 'GenericAgent', sessions: [{ id: 'session-1' }], pinned: true }]}
+      editingName="GenericAgent"
+      renameDraft="GenericAgent-renamed"
+      actionID=""
+      onStartRename={onStartRename}
+      onRename={onRename}
+      onDelete={onDelete}
+      onRenameDraftChange={vi.fn()}
+      onClose={vi.fn()}
+    />)
+
+    expect(screen.getByRole('dialog', { name: '管理项目' })).toBeTruthy()
+    const input = screen.getByRole('textbox', { name: '重命名项目 GenericAgent' })
+    expect(input.value).toBe('GenericAgent-renamed')
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(onRename).toHaveBeenCalledWith('GenericAgent')
+
+    const cancel = screen.getByRole('button', { name: '取消' })
+    fireEvent.click(cancel)
+    expect(onStartRename).toHaveBeenCalledWith('')
+
+    view.rerender(<ProjectManagerDialog
+      open
+      projectGroups={[{ name: 'GenericAgent', sessions: [{ id: 'session-1' }], pinned: true }]}
+      editingName=""
+      renameDraft=""
+      actionID=""
+      onStartRename={onStartRename}
+      onRename={onRename}
+      onDelete={onDelete}
+      onRenameDraftChange={vi.fn()}
+      onClose={vi.fn()}
+    />)
+    const deleteButton = screen.getByRole('button', { name: '删除项目 GenericAgent' })
+    fireEvent.click(deleteButton)
+    expect(onDelete).toHaveBeenCalledWith('GenericAgent')
+  })
+
+  test('should expose a busy state and disable every project mutation control', () => {
+    render(<ProjectManagerDialog
+      open
+      projectGroups={[{ name:'GenericAgent', sessions:[{ id:'session-1' }], pinned:true }]}
+      editingName="GenericAgent"
+      renameDraft="GenericAgent-renamed"
+      actionID="rename:GenericAgent"
+      onStartRename={vi.fn()}
+      onRename={vi.fn()}
+      onDelete={vi.fn()}
+      onRenameDraftChange={vi.fn()}
+      onClose={vi.fn()}
+    />)
+
+    const dialog = screen.getByRole('dialog', { name:'管理项目' })
+    expect(dialog.getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByRole('textbox', { name:'重命名项目 GenericAgent' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name:'保存' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name:'取消' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name:'关闭项目管理' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name:'完成' }).disabled).toBe(true)
+  })
+
+  test('should render project errors inside the modal as an alert', () => {
+    const error = '项目 Beta 已存在。'
+    render(<ProjectManagerDialog
+      open
+      projectGroups={[{ name:'Alpha', sessions:[] }]}
+      editingName="Alpha"
+      renameDraft="Beta"
+      error={error}
+      onStartRename={vi.fn()}
+      onRename={vi.fn()}
+      onDelete={vi.fn()}
+      onRenameDraftChange={vi.fn()}
+      onClose={vi.fn()}
+    />)
+
+    const dialog = screen.getByRole('dialog', { name:'管理项目' })
+    const alert = within(dialog).getByRole('alert')
+    expect(alert.textContent).toBe(error)
+    expect(alert.classList.contains('oa-project-manager-error')).toBe(true)
+    expect(dialog.getAttribute('aria-describedby')).toBe('oa-project-manager-dialog-error')
+  })
+
+  test('should keep project controls disabled in privacy mode', () => {
+    const props = baseProps({ sidebarTab: 'projects', privacyMode: true, onOpenProjectManager: vi.fn() })
+    render(<ChatSidebar {...props} formatTime={formatTime} />)
+
+    const manage = screen.getByRole('button', { name: '管理' })
+    expect(manage.disabled).toBe(true)
+    fireEvent.click(manage)
+    expect(props.onOpenProjectManager).not.toHaveBeenCalled()
   })
 
   test('should keep title and metadata on separate accessible lines', () => {

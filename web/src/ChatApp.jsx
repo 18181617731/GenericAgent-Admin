@@ -51,7 +51,7 @@ import { buildChatNotification, latestUserPrompt } from './lib/chatNotification.
 import { publishNotification } from './lib/notifications.js'
 import { NotificationCenter } from './components/NotificationUI.jsx'
 import SessionSearchDialog from './components/SessionSearchDialog.jsx'
-import ChatSidebar from './components/ChatSidebar.jsx'
+import ChatSidebar, { ProjectManagerDialog } from './components/ChatSidebar.jsx'
 import ChatPrivacyCurtain from './components/ChatPrivacyCurtain.jsx'
 import { privateSessionTitle } from './lib/chatPrivacy.js'
 import { useChatPrivacyMode } from './hooks/useChatPrivacyMode.js'
@@ -3434,6 +3434,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [projectDraftOpen, setProjectDraftOpen] = useState(false)
   const [projectDraftName, setProjectDraftName] = useState('')
   const [projectCreating, setProjectCreating] = useState(false)
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false)
+  const [projectManagerEditingName, setProjectManagerEditingName] = useState('')
+  const [projectRenameDraft, setProjectRenameDraft] = useState('')
+  const [projectManagerError, setProjectManagerError] = useState('')
+  const [projectActionID, setProjectActionID] = useState('')
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds(chatInstanceID)))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
@@ -3511,6 +3516,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [hubUpdatingSessionId, setHubUpdatingSessionId] = useState('')
   const [sessionActionID, setSessionActionID] = useState('')
   const sessionActionRef = useRef('')
+  const projectActionRef = useRef('')
   const [archiveUndo, setArchiveUndo] = useState(null)
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
@@ -3604,6 +3610,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSelectedSessionIds([])
     setProjectDraftOpen(false)
     setProjectDraftName('')
+    setProjectManagerOpen(false)
+    setProjectManagerEditingName('')
+    setProjectRenameDraft('')
     setQueueEditingId('')
     setQueueDraft('')
     setCmdDrawer({ open:false, filter:'', selectedIdx:0 })
@@ -4653,6 +4662,147 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (e.name !== 'AbortError') setErr(e.message || String(e))
     } finally {
       setProjectCreating(false)
+    }
+  }
+
+  const beginProjectAction = actionID => {
+    if (!actionID || projectActionRef.current) return false
+    projectActionRef.current = actionID
+    setProjectActionID(actionID)
+    return true
+  }
+
+  const endProjectAction = actionID => {
+    if (!actionID || projectActionRef.current !== actionID) return
+    projectActionRef.current = ''
+    setProjectActionID('')
+  }
+
+  const openProjectManager = async () => {
+    if (privacyMode || projectActionRef.current) return
+    setSidebarTab('projects')
+    setProjectDraftOpen(false)
+    setProjectDraftName('')
+    setProjectManagerEditingName('')
+    setProjectRenameDraft('')
+    setProjectManagerOpen(true)
+    setProjectManagerError('')
+    setErr('')
+    try {
+      await loadSessions(activeSidRef.current || sid)
+    } catch (error) {
+      if (error?.name !== 'AbortError') setProjectManagerError(error?.message || String(error))
+    }
+  }
+
+  const closeProjectManager = useCallback(() => {
+    if (projectActionRef.current) return
+    setProjectManagerOpen(false)
+    setProjectManagerEditingName('')
+    setProjectRenameDraft('')
+    setProjectManagerError('')
+    window.requestAnimationFrame?.(() => document.querySelector('[data-project-manager-trigger="true"]')?.focus?.())
+  }, [])
+
+  const startProjectRename = name => {
+    if (projectActionRef.current) return
+    const value = String(name || '')
+    if (!value) {
+      setProjectManagerEditingName('')
+      setProjectRenameDraft('')
+      setProjectManagerError('')
+      return
+    }
+    setProjectManagerEditingName(value)
+    setProjectRenameDraft(value)
+    setProjectManagerError('')
+    setErr('')
+  }
+
+  const renameProject = async oldName => {
+    const source = String(oldName || '').trim()
+    const target = projectRenameDraft.trim()
+    const problem = projectNameError(target)
+    if (problem) {
+      setProjectManagerError(projectNameErrorText(problem, ct))
+      return false
+    }
+    if (source === target) {
+      setProjectManagerError(ct('项目名称没有变化。', 'The project name did not change.'))
+      return false
+    }
+    if (projects.some(name => name !== source && name === target)) {
+      setProjectManagerError(ct(`项目 ${target} 已存在。`, `Project ${target} already exists.`))
+      return false
+    }
+    const actionID = `rename:${source}`
+    if (!beginProjectAction(actionID)) {
+      setNotice(ct('项目操作进行中，请稍候', 'A project action is already in progress'))
+      return false
+    }
+    setProjectManagerError('')
+    setErr('')
+    setNotice('')
+    try {
+      const confirmed = await confirmDanger('chat-project-rename', ct(`将项目“${source}”重命名为“${target}”？项目文件和会话归属会保留。`, `Rename project "${source}" to "${target}"? Project files and chat associations will be preserved.`))
+      if (!confirmed) return false
+      const d = await chatApi('/api/chat/projects/rename', { dangerous:true, method:'PATCH', body:JSON.stringify({ name:source, new_name:target }) })
+      if (Array.isArray(d?.projects)) setProjects(d.projects)
+      if (Array.isArray(d?.pinned_projects)) setPinnedProjects(d.pinned_projects)
+      setExpandedProjectNames(current => {
+        const next = new Set(current)
+        if (next.delete(source)) next.add(target)
+        return next
+      })
+      await loadSessions(activeSidRef.current || sid)
+      setProjectManagerEditingName('')
+      setProjectRenameDraft('')
+      setProjectManagerError('')
+      setNotice(ct(`项目已重命名为 ${target}`, `Project renamed to ${target}`))
+      return true
+    } catch (error) {
+      if (error?.name !== 'AbortError') setProjectManagerError(error?.message || String(error))
+      return false
+    } finally {
+      endProjectAction(actionID)
+    }
+  }
+
+  const deleteProject = async name => {
+    const target = String(name || '').trim()
+    if (!target) return false
+    const actionID = `delete:${target}`
+    if (!beginProjectAction(actionID)) {
+      setNotice(ct('项目操作进行中，请稍候', 'A project action is already in progress'))
+      return false
+    }
+    setProjectManagerError('')
+    setErr('')
+    setNotice('')
+    try {
+      const confirmed = await confirmDanger('chat-project-delete', ct(`删除项目“${target}”的工作区？这会永久删除项目文件和记忆，但会保留聊天历史并解除项目归属。`, `Delete the workspace for "${target}"? This permanently removes its files and memory, but preserves chat history without the project association.`))
+      if (!confirmed) return false
+      const d = await chatApi('/api/chat/projects/delete', { dangerous:true, method:'DELETE', body:JSON.stringify({ name:target }) })
+      if (Array.isArray(d?.projects)) setProjects(d.projects)
+      if (Array.isArray(d?.pinned_projects)) setPinnedProjects(d.pinned_projects)
+      setExpandedProjectNames(current => {
+        const next = new Set(current)
+        next.delete(target)
+        return next
+      })
+      await loadSessions(activeSidRef.current || sid)
+      if (projectManagerEditingName === target) {
+        setProjectManagerEditingName('')
+        setProjectRenameDraft('')
+      }
+      setProjectManagerError('')
+      setNotice(ct(`项目 ${target} 已删除，聊天历史已保留`, `Project ${target} deleted; chat history preserved`))
+      return true
+    } catch (error) {
+      if (error?.name !== 'AbortError') setProjectManagerError(error?.message || String(error))
+      return false
+    } finally {
+      endProjectAction(actionID)
     }
   }
 
@@ -6093,7 +6243,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out', clearProps: 'transform,opacity,visibility' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
-  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions), [projects, sessions])
+  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions, pinnedProjects), [projects, sessions, pinnedProjects])
   const sessionSearchScopes = sessionSearchScopeOptions(chatLanguage())
   const recentSearchSessions = sessions.slice(0, 8)
   const filteredSessions = useMemo(() => {
@@ -6229,6 +6379,16 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       onCloseProjectDraft={closeProjectDraft}
       onProjectDraftNameChange={setProjectDraftName}
       onCreateProject={createProject}
+      projectManagerOpen={projectManagerOpen}
+      projectManagerEditingName={projectManagerEditingName}
+      projectRenameDraft={projectRenameDraft}
+      projectActionID={projectActionID}
+      onOpenProjectManager={openProjectManager}
+      onCloseProjectManager={closeProjectManager}
+      onStartProjectRename={startProjectRename}
+      onProjectRenameDraftChange={setProjectRenameDraft}
+      onRenameProject={renameProject}
+      onDeleteProject={deleteProject}
       sessions={sessions}
       projectGroups={filteredProjectGroups}
       recentGroups={recentSessionGroups}
@@ -6680,6 +6840,20 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       onClose={closeSessionSearch}
     />
     {!privacyMode && worldlineRestorePicker && worldlineRestorePicker.sessionID === sid && <WorldlineRestoreDialog nodes={worldlineRestorePicker.nodes} onClose={()=>setWorldlineRestorePicker(null)} onSelect={selectWorldlineRestoreNode}/>}
+    {!privacyMode && <ProjectManagerDialog
+      open={projectManagerOpen}
+      ct={ct}
+      projectGroups={projectSessionGroups}
+      editingName={projectManagerEditingName}
+      renameDraft={projectRenameDraft}
+      error={projectManagerError}
+      actionID={projectActionID}
+      onClose={closeProjectManager}
+      onStartRename={startProjectRename}
+      onRename={renameProject}
+      onRenameDraftChange={setProjectRenameDraft}
+      onDelete={deleteProject}
+    />}
     {sessionManagerOpen && <div className="oa-session-manager-backdrop" onMouseDown={e=>{ if (e.target === e.currentTarget) closeSessionManager() }}>
       <section className="oa-session-manager-modal" role="dialog" aria-modal="true" aria-labelledby="oa-session-manager-dialog-title" onMouseDown={e=>e.stopPropagation()}>
          <header className="oa-session-manager-dialog-head">
