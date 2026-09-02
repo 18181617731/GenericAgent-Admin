@@ -38,6 +38,9 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			bad(w, 400, err.Error())
 			return
 		}
+		if strings.TrimSpace(c.UITheme) == "" {
+			c.UITheme = s.CfgStore.Snapshot().UITheme
+		}
 		if err := s.validateRemoteAccess(c); err != nil {
 			bad(w, 400, err.Error())
 			return

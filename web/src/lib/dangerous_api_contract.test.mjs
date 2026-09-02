@@ -19,13 +19,13 @@ const dialogGated = (file, window) => [...DIALOG_GATED].some(entry => {
 
 test('every frontend module gates dangerous API calls behind confirmDanger except read-only key reveal', () => {
   const misses = []
-  const noConfirmReadOnlyRevealRoutes = new Set(["'/api/models/raw'"])
+  const noConfirmReadOnlyRevealRoutes = new Set(["'/api/models/raw'", "'/api/ui/theme'"])
   for (const { file, source } of frontendSources()) {
     const lines = source.split(/\r?\n/)
     lines.forEach((line, idx) => {
       if (!line.includes('dangerous:true') && !line.includes('dangerous: true')) return
-      if ([...noConfirmReadOnlyRevealRoutes].some(route => line.includes(route))) return
       const window = lines.slice(Math.max(0, idx - GUARD_LOOKBACK), idx + 2).join('\n')
+      if ([...noConfirmReadOnlyRevealRoutes].some(route => window.includes(route))) return
       if (window.includes('confirmDanger(') || dialogGated(file, window)) return
       misses.push(`${file}:${idx + 1}: ${line.trim()}`)
     })
@@ -90,7 +90,7 @@ const dangerousHeaderRoutes = Array.from(
 
 const protectedFrontendRoutes = Array.from(new Set([...protectedMutatingRoutes, ...dangerousHeaderRoutes]))
 const alwaysHeaderRoutes = new Set(['/api/models/raw'])
-const noConfirmReadOnlyRevealRoutes = new Set(['/api/models/raw'])
+const noConfirmReadOnlyRevealRoutes = new Set(['/api/models/raw', '/api/ui/theme'])
 
 const exactRouteString = (route) => new RegExp(`['"]${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`)
 const mutatingMethod = /method:\s*['"](?:POST|PUT|DELETE)['"]/

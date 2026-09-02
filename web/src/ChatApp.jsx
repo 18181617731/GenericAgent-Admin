@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import katex from 'katex'
-import { applyThemeToDocument, getInitialTheme } from './themes'
+import { applyThemeToDocument, getInitialTheme, persistTheme } from './themes'
 import ThemePicker from './ThemePicker'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
@@ -3901,8 +3901,7 @@ export default function ChatApp() {
   const [theme, setTheme] = useState(getInitialTheme)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
-    localStorage.setItem('ga-admin-theme', activeTheme.id)
-    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: activeTheme.id }))
+    persistTheme(activeTheme.id)
   }, [theme])
 
   useEffect(() => {

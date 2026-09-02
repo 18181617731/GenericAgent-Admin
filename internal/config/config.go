@@ -17,6 +17,18 @@ import (
 // remote access.
 const DefaultRemotePort = 8787
 
+// DefaultUITheme is the appearance used when ui_theme is omitted or empty.
+const DefaultUITheme = "warm"
+
+func ValidUITheme(theme string) bool {
+	switch strings.TrimSpace(theme) {
+	case "light", "warm", "dark":
+		return true
+	default:
+		return false
+	}
+}
+
 type SlashCommandItem struct {
 	Cmd     string `json:"cmd"`
 	Desc    string `json:"desc"`
@@ -91,6 +103,7 @@ type AppConfig struct {
 	GitHubMirror             string                    `json:"github_mirror"`
 	SlashCommands            []SlashCommandItem        `json:"slash_commands,omitempty"`
 	ExtraSystemPromptPresets []ExtraSystemPromptPreset `json:"extra_system_prompt_presets,omitempty"`
+	UITheme                  string                    `json:"ui_theme,omitempty"`
 	// ChatDefaultLLMNo is the llm_no seeded into freshly created chat sessions.
 	// It tracks the model last picked in Admin Chat so a new conversation keeps
 	// using it instead of silently falling back to the first configured model.
@@ -190,6 +203,9 @@ func Validate(cfg AppConfig) error {
 	}
 	if cfg.BufferLines < 0 {
 		return fmt.Errorf("buffer_lines must be positive")
+	}
+	if theme := strings.TrimSpace(cfg.UITheme); theme != "" && !ValidUITheme(theme) {
+		return fmt.Errorf("ui_theme must be one of light, warm, dark")
 	}
 	if cfg.ChatDefaultLLMNo < 0 {
 		return fmt.Errorf("chat_default_llm_no must be positive")
@@ -385,6 +401,7 @@ func Default() AppConfig {
 		LogTailLines: 200,
 		BufferLines:  1000,
 		ProxyMode:    "off",
+		UITheme:      DefaultUITheme,
 		SlashCommands: []SlashCommandItem{
 			{Cmd: "/update", Desc: "git pull 更新 GA 仓库并报告影响面"},
 			{Cmd: "/autorun", Desc: "进入 autonomous_operation 自主模式"},
@@ -509,6 +526,7 @@ func effectiveInstancePython(instance InstanceConfig) string {
 }
 
 func normalize(cfg AppConfig, root string) AppConfig {
+	cfg.UITheme = strings.TrimSpace(cfg.UITheme)
 	if strings.TrimSpace(cfg.ChatDataDir) == "" {
 		cfg.ChatDataDir = defaultChatDataDir(root)
 	}

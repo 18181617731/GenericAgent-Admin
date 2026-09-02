@@ -200,6 +200,40 @@ func TestConfigSaveValidationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestConfigSavePreservesUIThemeWhenOmitted(t *testing.T) {
+	s := newConfigTestServer(t)
+	root := t.TempDir()
+	py := filepath.Join(root, "python.exe")
+	if err := os.WriteFile(py, []byte("stub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.CfgStore.Snapshot()
+	cfg.UITheme = "dark"
+	if err := s.CfgStore.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := config.AppConfig{GARoot: root, PythonPath: py, ProxyMode: "off"}
+	body, _ := json.Marshal(payload)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got config.AppConfig
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.UITheme != "dark" {
+		t.Fatalf("ui_theme=%q want dark", got.UITheme)
+	}
+	if snap := s.CfgStore.Snapshot().UITheme; snap != "dark" {
+		t.Fatalf("stored ui_theme=%q want dark", snap)
+	}
+}
+
 func TestConfigSaveRejectsInvalidPathsAndProxy(t *testing.T) {
 	cases := []struct {
 		name    string

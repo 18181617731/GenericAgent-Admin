@@ -3,7 +3,7 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Activity, BarChart3, BrainCircuit, FileCode2, FolderCog, Globe2, KeyRound, Menu, MessageSquare, PanelLeftClose, Play, RefreshCw, Server, SlidersHorizontal, Sparkles, Target, Terminal } from 'lucide-react'
 import './admin-mobile.css'
-import { applyThemeToDocument, getInitialTheme } from './themes'
+import { applyThemeToDocument, getInitialTheme, persistTheme } from './themes'
 import { api } from './lib/api'
 import { buildObservabilitySnapshot, observabilityRequest } from './lib/observability'
 import { confirmDanger } from './lib/danger'
@@ -95,8 +95,7 @@ export default function App() {
 
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
-    localStorage.setItem('ga-admin-theme', activeTheme.id)
-    window.dispatchEvent(new CustomEvent('ga-admin-theme-change', { detail: activeTheme.id }))
+    persistTheme(activeTheme.id)
   }, [theme])
   useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
   useEffect(() => {

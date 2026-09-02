@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"genericagent-admin-go/internal/config"
 )
 
 func TestStaticRejectsTraversalSegments(t *testing.T) {
@@ -168,6 +170,48 @@ func TestStaticHEADMatchesSelectedGzipRepresentationWithoutBody(t *testing.T) {
 		if got, want := head.Header().Get(name), get.Header().Get(name); got != want {
 			t.Fatalf("%s=%q want %q", name, got, want)
 		}
+	}
+}
+
+func TestStaticInjectsPersistedUIThemeIntoIndex(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	cfg := store.Snapshot()
+	cfg.UITheme = "dark"
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	html := "<html><head></head><body>app</body></html>"
+	s := &Server{
+		CfgStore: store,
+		Static: fstest.MapFS{
+			"index.html": &fstest.MapFile{Data: []byte(html)},
+		},
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	s.static(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	got := rr.Body.String()
+	if !strings.Contains(got, `window.__GA_UI_THEME__="dark"`) {
+		t.Fatalf("missing injected theme: body=%q", got)
+	}
+	if !strings.Contains(got, html) && !strings.Contains(got, "</head>") {
+		t.Fatalf("expected original index markup, body=%q", got)
+	}
+}
+
+func TestStaticDoesNotInjectUIThemeWhenUnset(t *testing.T) {
+	html := "<main>app</main>"
+	s := &Server{Static: fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte(html)},
+	}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	s.static(rr, req)
+	if rr.Body.String() != html {
+		t.Fatalf("unset theme should not rewrite index, body=%q", rr.Body.String())
 	}
 }
 
