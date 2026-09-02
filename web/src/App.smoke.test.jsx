@@ -3141,6 +3141,32 @@ describe('chat loop controls', () => {
   }, 60000)
 })
 
+describe('UltraPlan composer', () => {
+  test('renders readable guidance without changing the explicit objective', async () => {
+    installBrowserPolyfills()
+    Element.prototype.scrollIntoView = vi.fn()
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands: [] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands: [] })
+      if (path === '/api/instances') return jsonResponse({ items: [] })
+      if (path === '/api/chat/sessions') return jsonResponse({ sessions: [] })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    render(<ChatApp />)
+    const prompt = await screen.findByRole('textbox')
+    expect(prompt.getAttribute('placeholder')).toBe('向 GenericAgent 发送消息，可选择/粘贴/拖拽任意文件…')
+    const objective = '/ultraplan 整理当前项目并保留 UltraPlan 执行能力'
+    fireEvent.change(prompt, { target: { value: objective } })
+
+    expect(screen.getByText('将以规划模式执行，并在完成后展示 run 目录与日志摘要')).toBeTruthy()
+    expect(screen.queryByText(/\\u[0-9a-f]{4}/i)).toBeNull()
+    expect(prompt.value).toBe(objective)
+    expect(screen.getByText('/ultraplan <目标>')).toBeTruthy()
+  })
+})
+
 describe('assistant generated image gallery', () => {
   test('opens a local generated image preview and exposes original and download actions', () => {
     const path = String.raw`G:\MygenericAgent\temp\comfy output\final image.png`
