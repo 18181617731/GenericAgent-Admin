@@ -26,7 +26,12 @@ test('all color themes share one product font stack', () => {
   assert.match(bodyRule, /font-family\s*:\s*var\(--font\)/i)
   assert.match(bodyRule, /font-weight\s*:\s*450/i)
   const renderedCss = css.replace(/\/\*[\s\S]*?\*\//g, '')
-  assert.doesNotMatch(renderedCss, /font-weight\s*:\s*400(?:\D|$)/i, 'compact MiSans text must not fall back to its softer 400 instance')
+  const regularWeightRules = [...renderedCss.matchAll(/([^{}]+)\{([^{}]*font-weight\s*:\s*400(?:\D|$)[^{}]*)\}/gi)]
+  assert.ok(
+    regularWeightRules.every(([, selector]) => selector.trim() === '.oa-md'),
+    '400 weight is reserved for full-size conversation text, not compact MiSans UI labels',
+  )
+  assert.equal(regularWeightRules.length, 1, 'conversation text should have one intentional 400-weight source')
   assert.doesNotMatch(renderedCss, /-webkit-font-smoothing\s*:/i, 'Windows ClearType must remain enabled')
   assert.doesNotMatch(renderedCss, /text-rendering\s*:\s*optimizeLegibility/i)
   assert.match(ruleBodies('.oa-session-menu button').join('\n'), /font-size\s*:\s*13px[\s\S]*font-weight\s*:\s*500/i)
@@ -37,6 +42,32 @@ test('all color themes share one product font stack', () => {
 
   assert.match(mainSource, /fontFamily\s*:\s*['"]var\(--font\)['"]/)
   assert.doesNotMatch(mainSource, /fontFamily\s*:\s*['"]Inter\b/i)
+})
+
+test('chat markdown uses a scale-safe readable type hierarchy', () => {
+  const prose = ruleBodies('.oa-md').join('\n')
+  assert.match(prose, /font-size\s*:\s*16px/i)
+  assert.match(prose, /line-height\s*:\s*28px/i)
+  assert.match(prose, /font-weight\s*:\s*400/i)
+  assert.match(prose, /letter-spacing\s*:\s*normal/i)
+
+  const renderedCss = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const bareMarkdownRules = [...renderedCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, selectors]) => selectors.split(',').some(selector => selector.trim() === '.oa-md'))
+    .map(([, , body]) => body)
+  const declaredValues = property => bareMarkdownRules.flatMap(body =>
+    [...body.matchAll(new RegExp(`${property}\\s*:\\s*([^;]+)`, 'gi'))]
+      .map(match => match[1].trim()),
+  )
+  assert.deepEqual(declaredValues('font-size'), ['16px'], 'bare .oa-md must have one font-size source')
+  assert.deepEqual(declaredValues('line-height'), ['28px'], 'bare .oa-md must have one line-height source')
+
+  const emphasis = ruleBodies('.oa-md strong,.oa-md b').join('\n')
+  assert.match(emphasis, /font-weight\s*:\s*500/i)
+
+  const headings = ruleBodies('.oa-md h1,.oa-md h2,.oa-md h3,.oa-md h4,.oa-md h5,.oa-md h6').join('\n')
+  assert.match(headings, /font-weight\s*:\s*600/i)
+  assert.doesNotMatch(headings, /font-weight\s*:\s*700/i)
 })
 
 test('model call rows stay inline until phone-width containers', () => {
