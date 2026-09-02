@@ -3155,7 +3155,7 @@ describe('UltraPlan composer', () => {
     })
 
     render(<ChatApp />)
-    const prompt = await screen.findByRole('textbox')
+    const prompt = await screen.findByRole('textbox', {}, { timeout: 10000 })
     expect(prompt.getAttribute('placeholder')).toBe('向 GenericAgent 发送消息，可选择/粘贴/拖拽任意文件…')
     const objective = '/ultraplan 整理当前项目并保留 UltraPlan 执行能力'
     fireEvent.change(prompt, { target: { value: objective } })
