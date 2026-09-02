@@ -39,6 +39,21 @@ test('all color themes share one product font stack', () => {
   assert.doesNotMatch(mainSource, /fontFamily\s*:\s*['"]Inter\b/i)
 })
 
+test('model call rows stay inline until phone-width containers', () => {
+  const inlineRule = ruleBodies('.models-page .model-call-main')
+    .find(rule => /grid-template-columns\s*:\s*18px\s+42px\s+minmax\(0,\s*1fr\)\s+auto\s+auto/i.test(rule))
+  assert.ok(inlineRule, 'model call rows need a five-column inline layout by default')
+  assert.match(
+    css,
+    /@container\s*\(max-width:\s*480px\)\s*\{[\s\S]*?\.models-page \.model-call-main\s*\{[^}]*grid-template-areas\s*:[^}]*"handle slot copy"[^}]*"provider provider actions"/i,
+  )
+  assert.doesNotMatch(
+    css,
+    /@container\s*\(max-width:\s*860px\)\s*\{[\s\S]*?\.models-page \.model-call-main/i,
+    'normal split-pane widths must not force model call rows onto two lines',
+  )
+})
+
 test('log-view keeps a readable foreground over its forced dark background', () => {
   const sharedPanelRules = ruleBodies('.log-panel pre, .preview pre, .artifact-view, .json-editor, .file-editor')
   assert.ok(

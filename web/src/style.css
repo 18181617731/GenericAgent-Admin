@@ -12349,10 +12349,9 @@ html[data-theme="warm"] .models-page {
   .models-page .model-params-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Narrow containers keep the identity on the first line and drop the provider
-   chip and the actions onto a second line that spans the full row, so the
-   actions stay right-aligned instead of being auto-placed under the handle. */
-@container (max-width: 860px) {
+/* Only stack genuinely compact phone-width rows. At normal split-pane widths the
+   identity can ellipsize, so provider and actions still fit comfortably inline. */
+@container (max-width: 480px) {
   .models-page .model-call-main {
     grid-template-columns: 18px 40px minmax(0, 1fr);
     grid-template-areas:
