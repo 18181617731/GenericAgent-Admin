@@ -13,6 +13,24 @@ export const taskState = (task) => {
   return task.enabled ? 'enabled' : 'disabled'
 }
 
+// Schedule/configuration health and the latest execution outcome are separate
+// signals. An overdue plan may still have a successful latest report.
+export const taskConfigState = (task) => {
+  const state = taskState(task)
+  const rawStatus = String(task?.status || '').trim().toUpperCase()
+  return state === 'error' && !task?.error && rawStatus === 'OVERDUE' ? 'overdue' : state
+}
+
+export const taskConfigStateLabel = (state, t) => {
+  const zh = t?.autostart === '开机自启'
+  const tasks = t?.tasks || {}
+  if (state === 'enabled') return t?.enabled || (zh ? '启用' : 'Enabled')
+  if (state === 'disabled') return t?.disabled || (zh ? '停用' : 'Disabled')
+  if (state === 'overdue') return tasks.overdue || (zh ? '调度逾期' : 'Schedule overdue')
+  if (state === 'error') return tasks.configError || (zh ? '配置异常' : 'Configuration error')
+  return tasks.anomaly || t?.error || (zh ? '需关注' : 'Attention')
+}
+
 export const taskStateLabel = (state, t) => state === 'error' ? (t.tasks?.anomaly || t.error) : (state === 'enabled' ? t.enabled : t.disabled)
 
 export const taskRunState = task => task?.latest_run?.status || 'never_run'
@@ -76,6 +94,10 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
   const status = taskRunStateLabel(runState, t)
   const isRunning = activeRunState?.status === 'pending'
   const zh = t.autostart === '开机自启'
+  const configState = taskConfigState(task)
+  const separator = zh ? '：' : ': '
+  const executionResultLabel = `${t.tasks?.executionResult || (zh ? '执行结果' : 'Execution result')}${separator}${status}`
+  const configStatusLabel = `${t.tasks?.configStatus || (zh ? '配置状态' : 'Configuration status')}${separator}${taskConfigStateLabel(configState, t)}`
   const executedAt = task.latest_run?.executed_at ? new Date(task.latest_run.executed_at) : null
   const validExecutedAt = executedAt && !Number.isNaN(executedAt.getTime())
   const resultDetail = task.latest_run?.reason || task.latest_run?.summary || ''
@@ -94,7 +116,7 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
           <span>{task.schedule || t.tasks.unscheduled} · {task.repeat || t.tasks.manual}</span>
         </div>
         <div className="task-card-actions">
-          <span className={`task-state-badge run-${runState}`}>{status}</span>
+          <span className={`task-state-badge run-${runState}`} title={executionResultLabel}>{executionResultLabel}</span>
           <button type="button" className="task-run" title={isRunning ? t.tasks.runPending : t.tasks.runNow} aria-label={`${isRunning ? t.tasks.runPending : t.tasks.runNow} ${id}`} disabled={isRunning} onClick={event => { event.stopPropagation(); onRun?.(id) }}>
             {isRunning ? <LoaderCircle size={14} className="is-spinning"/> : <Play size={14}/>}<span>{isRunning ? t.tasks.runPending : t.tasks.runNow}</span>
           </button>
@@ -105,7 +127,7 @@ export function TaskRow({ task, llms = [], t, schedulerModelNo = 0, onToggle, on
       </div>
       <div className="task-latest-run">
         <span>{zh ? '最近执行' : 'Latest run'}：{validExecutedAt ? executedAt.toLocaleString() : (zh ? '暂无' : 'None')}</span>
-        <small className={`task-config-state ${task.enabled ? 'enabled' : 'disabled'}`}>{task.enabled ? t.enabled : t.disabled}</small>
+        <small className={`task-config-state ${configState}`} title={configStatusLabel}>{configStatusLabel}</small>
       </div>
       {resultDetail && <em className={`task-run-detail ${runState}`}>{resultDetail}</em>}
       <span className="task-model"><FileText size={14}/>{taskModelLabel(task, llms, t, schedulerModelNo)}</span>

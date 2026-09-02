@@ -1,35 +1,22 @@
 import React, { useMemo, useState } from 'react'
 import { CalendarClock, ChevronLeft, ChevronRight, Circle, CircleAlert, Code2, FileCode2, FileText, History, LoaderCircle, Play, Power, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
-import { ScheduleArtifactPreview, ScheduleTaskHistory, TaskFormEditor, taskModelLabel, taskRunState, taskRunStateLabel, taskState } from './schedule.jsx'
+import { ScheduleArtifactPreview, ScheduleTaskHistory, TaskFormEditor, taskConfigState, taskConfigStateLabel, taskModelLabel, taskRunState, taskRunStateLabel, taskState } from './schedule.jsx'
 
 const workbenchCopy = t => {
   const zh = t?.autostart === '开机自启'
   return zh
     ? {
-    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
+    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', executionResult: '执行结果', configStatus: '配置状态', statusHelp: '执行结果显示最近一次运行；配置状态显示当前计划，两者可能同时存在。', separator: '：', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
     }
     : {
-    title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
+    title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', executionResult: 'Execution result', configStatus: 'Configuration status', statusHelp: 'Execution result is the latest run; configuration status is the current schedule. Both can appear together.', separator: ': ', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
     }
 }
 
 const taskID = (task, unnamed) => task?.id || task?.name || unnamed || 'task'
 
-// Configuration health and execution outcome are separate signals. An overdue
-// schedule can still have a successful latest report; keep that distinction
-// visible instead of rendering both as a generic error state.
-const taskConfigState = task => {
-  const state = taskState(task)
-  const rawStatus = String(task?.status || '').trim().toUpperCase()
-  return state === 'error' && !task?.error && rawStatus === 'OVERDUE' ? 'overdue' : state
-}
-
 const stateLabel = (state, t, copy) => {
-  if (state === 'enabled') return t?.enabled || copy.enabled
-  if (state === 'disabled') return t?.disabled || copy.paused
-  if (state === 'overdue') return t?.tasks?.overdue || copy.overdue
-  if (state === 'error') return t?.tasks?.configError || copy.configError
-  return copy.anomaly
+  return taskConfigStateLabel(state, t) || (state === 'enabled' ? copy.enabled : state === 'disabled' ? copy.paused : state === 'overdue' ? copy.overdue : state === 'error' ? copy.configError : copy.anomaly)
 }
 
 const taskConfigDetail = (task, state) => {
@@ -49,13 +36,15 @@ function TaskListItem({ task, selected, llms, t, schedulerModelNo, onSelect }) {
   const resultDetail = task.latest_run?.reason || task.latest_run?.summary || ''
   const configDetail = taskConfigDetail(task, state)
   const latestLabel = t?.autostart === '开机自启' ? '最近执行' : 'Latest run'
+  const executionResultLabel = `${copy.executionResult}${copy.separator}${runLabel}`
+  const configStatusLabel = `${copy.configStatus}${copy.separator}${stateLabel(state, t, copy)}`
   const summary = task.next_hint || taskModelLabel(task, llms, t, schedulerModelNo)
   const cadence = `${task.schedule || t?.tasks?.unscheduled || '未排程'} · ${task.repeat || t?.tasks?.manual || '手动'}`
   return <button type="button" className={`scheduled-task-row task-row task-run-${runState}${selected ? ' is-selected' : ''}`} role="option" aria-selected={selected} onClick={() => onSelect?.(id)}>
     <span className={`scheduled-task-row-state run-${runState}`} aria-hidden="true">{runState === 'failed' ? <CircleAlert size={17}/> : selected ? <Circle size={17} fill="currentColor"/> : <Circle size={17}/>}</span>
     <span className="scheduled-task-row-main">
-      <span className="scheduled-task-row-title"><b>{id}</b><em className={`task-state-badge run-${runState}`}>{runLabel}</em></span>
-      <span className="scheduled-task-row-meta">{cadence}<em className={`task-config-state ${state}`}>{stateLabel(state, t, copy)}</em></span>
+      <span className="scheduled-task-row-title"><b>{id}</b><em className={`task-state-badge run-${runState}`} title={executionResultLabel}>{executionResultLabel}</em></span>
+      <span className="scheduled-task-row-meta">{cadence}<em className={`task-config-state ${state}`} title={configStatusLabel}>{configStatusLabel}</em></span>
       <span className="scheduled-task-row-latest">{latestLabel}：{validExecutedAt ? executedAt.toLocaleString() : (t?.autostart === '开机自启' ? '暂无' : 'None')}</span>
       <small className={resultDetail ? `task-run-detail ${runState}` : ''}>{resultDetail || summary || copy.noNext}</small>
       {configDetail && configDetail !== resultDetail && <small className={`task-config-detail ${state}`}>{configDetail}</small>}
@@ -167,7 +156,7 @@ export function ScheduledTaskWorkbench({ tasks = [], selectedTask, selectedTaskI
   }
   return <section className="scheduled-task-workbench" aria-label={copy.title}>
     <div className="scheduled-workbench-toolbar">
-      <div><span className="scheduled-workbench-kicker">{t?.lists?.scheduledTasks || copy.title}</span><h3>{copy.title}</h3><p>{copy.summary(filteredTasks.length, tasks.length)}</p></div>
+      <div><span className="scheduled-workbench-kicker">{t?.lists?.scheduledTasks || copy.title}</span><h3>{copy.title}</h3><p>{copy.summary(filteredTasks.length, tasks.length)}</p><p className="scheduled-workbench-status-help">{copy.statusHelp}</p></div>
       <div className="scheduled-workbench-toolbar-actions"><button type="button" className="primary" aria-expanded={createOpen} onClick={() => setCreateOpen(value => !value)}><FileCode2 size={15}/>{t?.create || '创建'}</button><button type="button" className="secondary" onClick={() => loadScheduleTasks?.()} disabled={scheduleLoading}><RefreshCw size={15}/>{t?.refresh || '刷新'}</button>{scheduleLogExists && <button type="button" className="secondary" onClick={onScheduleLog}><FileText size={15}/>{t?.nav?.logs || '日志'}</button>}</div>
     </div>
     {createOpen && <form className="scheduled-task-create-disclosure" onSubmit={submitCreate}><div><b>{t?.create || '创建'}</b><p>{copy.createHelp}</p></div><input aria-label={t?.hints?.newTaskId || 'new_task'} value={newTaskId || ''} onChange={event => setNewTaskId?.(event.target.value)} placeholder={t?.hints?.newTaskId || 'new_task'}/><button type="submit" className="primary" disabled={busy || createSubmitting || !newTaskId?.trim()}>{t?.create || '创建'}</button></form>}

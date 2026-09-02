@@ -21737,6 +21737,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .scheduled-task-detail-heading h3,
 .scheduled-task-detail-empty h3 { margin: 3px 0 0; color: var(--text); letter-spacing: -.02em; }
 .scheduled-workbench-toolbar p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.scheduled-workbench-toolbar p.scheduled-workbench-status-help { max-width: 720px; margin-top: 5px; font-size: 11px; line-height: 1.4; }
 .scheduled-workbench-kicker,
 .scheduled-task-section-kicker { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .scheduled-workbench-toolbar-actions,
