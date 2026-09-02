@@ -1904,6 +1904,15 @@ describe('operator shell feedback', () => {
     expect(adminMobileStyles).toMatch(/\.admin-sidebar-scrim\s*\{[^}]*z-index:\s*1000;/s)
   })
 
+  test('mobile route layout guards keep models, channels, and the shell in view', () => {
+    expect(appStyles).toMatch(/\.models-page \.model-workbench\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) !important;/)
+    expect(appStyles).toMatch(/\.channel-tabs\[role="tablist"\]\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/)
+    expect(appStyles).toMatch(/\.model-preview-drawer \.model-preview-pre\s*\{[\s\S]*?overflow-x:\s*hidden;/)
+    expect(appStyles).toMatch(/\.app:not\(\.app-tab-chat\) \.main > \.admin-page-header\s*\{[\s\S]*?position:\s*relative;/)
+    expect(appStyles).toMatch(/@media \(max-width:640px\)\s*\{[\s\S]*?\.task-run-detail\s*\{[\s\S]*?white-space:\s*normal;/)
+    expect(appStyles).toMatch(/\.goal-stats \.stat,\s*\.goal-stats \.stat span\s*\{[\s\S]*?min-width:\s*0;/)
+  })
+
   test('navigation exposes the selected route with native keyboard semantics', async () => {
     installBrowserPolyfills()
     globalThis.fetch = vi.fn(async (url) => shellPayload(url))

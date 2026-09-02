@@ -1464,11 +1464,11 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [hasUnsavedChanges])
 
   useEffect(() => {
-    if (!mobileNavOpen) return undefined
+    if (!mobileNavOpen && !adminSidebarOpen) return undefined
     const previous = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = previous }
-  }, [mobileNavOpen])
+  }, [mobileNavOpen, adminSidebarOpen])
 
   const needsSetup = !!health && !health?.ok && !health?.root
   if (needsSetup) {
