@@ -1282,6 +1282,80 @@ func TestExportReplacesUnmanagedOfficialMixin(t *testing.T) {
 	}
 }
 
+func TestExportPlacesManagedModelsBeforeUserCodeThatReferencesThem(t *testing.T) {
+	root := t.TempDir()
+	old := "vision_config = {\n" +
+		"    'apikey': native_oai_config_primary['apikey'],\n" +
+		"    'apibase': 'https://vision.example/v1',\n" +
+		"    'model': 'vision-model',\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(old), 0600); err != nil {
+		t.Fatalf("write mykey.py: %v", err)
+	}
+	profiles := []Profile{{
+		VarName: "native_oai_config_primary",
+		Type:    "native_oai",
+		Name:    "primary",
+		APIBase: "https://api.example/v1",
+		Model:   "gpt-primary",
+		APIKey:  "sk-primary",
+	}}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "mykey.py"))
+	if err != nil {
+		t.Fatalf("read exported mykey.py: %v", err)
+	}
+	text := string(data)
+	managedAt := strings.Index(text, managedModelsBegin)
+	userAt := strings.Index(text, "vision_config =")
+	if managedAt < 0 || userAt < 0 || managedAt > userAt {
+		t.Fatalf("managed model block must precede dependent user code:\n%s", text)
+	}
+	if _, err := ImportMyKeyWithPython(root, "", true); err != nil {
+		t.Fatalf("exported mykey.py is not executable when user code references a managed model: %v", err)
+	}
+}
+
+func TestExportIgnoresUserManagedSubscriptMutationWhenReplacingModel(t *testing.T) {
+	root := t.TempDir()
+	old := "vision_config_gpt54 = {\n" +
+		"    'apikey': native_oai_config_primary['apikey'],\n" +
+		"    'apibase': 'https://vision.example/v1',\n" +
+		"    'model': 'vision-model',\n" +
+		"}\n" +
+		"vision_config_gpt54['apikey'] = native_oai_config_primary['apikey']\n"
+	if err := os.WriteFile(filepath.Join(root, "mykey.py"), []byte(old), 0600); err != nil {
+		t.Fatalf("write mykey.py: %v", err)
+	}
+	profiles := []Profile{
+		{
+			VarName: "vision_config_gpt54",
+			Type:    "native_oai",
+			Name:    "vision",
+			APIBase: "https://vision.example/v1",
+			Model:   "vision-model",
+			APIKey:  "sk-primary",
+		},
+		{
+			VarName: "native_oai_config_primary",
+			Type:    "native_oai",
+			Name:    "primary",
+			APIBase: "https://api.example/v1",
+			Model:   "gpt-primary",
+			APIKey:  "sk-primary",
+		},
+	}
+	if _, err := Export(root, profiles, true); err != nil {
+		t.Fatalf("Export() should ignore subscript mutations: %v", err)
+	}
+	if _, err := ImportMyKeyWithPython(root, "", true); err != nil {
+		t.Fatalf("exported mykey.py is not executable after replacing a mutated model: %v", err)
+	}
+}
+
 func TestRenderOfficialFailoverMixin(t *testing.T) {
 	zero, one := 0, 1
 	retries, springBack := 10, 120

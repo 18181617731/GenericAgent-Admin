@@ -41,6 +41,7 @@ import {
   modelConfigDisplayName,
   modelProtocolFields,
   moveOrderedItem,
+  orderedEditableModelConfigs,
   orderedFailoverRows,
   orderedModelAndFailoverRows,
   orderedModelRows,
@@ -274,8 +275,11 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
   const [draft, setDraft] = useState('')
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const text = t.models
-  const configs = profileModelConfigs(profile)
-  const existing = new Set(configs.map(config => modelIdOf(config)))
+  // The runtime loader follows the persisted global sort_order. Keep the
+  // provider editor in that same order while retaining each config's source
+  // index for safe updates/removals.
+  const configs = orderedEditableModelConfigs(profile)
+  const existing = new Set(configs.map(entry => String(entry.config?.model || entry.config?.name || '').trim()).filter(Boolean))
   const candidates = uniqueModels(discovered).filter(model => !existing.has(model))
 
   const addModels = values => onChange(addModelConfigs(profile, values))
@@ -331,14 +335,14 @@ function ModelConfigEditor({ profile, discovered = [], onChange, onDiscover, onC
           <span>{t.delete}</span>
         </div>
         <div className="model-config-list">
-          {configs.length > 0 ? configs.map((config, index) => (
+          {configs.length > 0 ? configs.map(({ config, sourceIndex }, index) => (
             <ModelConfigRow
-              key={index}
+              key={sourceIndex}
               config={config}
               index={index}
               protocol={profile.type || DEFAULT_PROTOCOL}
-              onChange={patch => onChange(updateModelConfig(profile, index, patch))}
-              onRemove={() => onChange(removeModelConfig(profile, index))}
+              onChange={patch => onChange(updateModelConfig(profile, sourceIndex, patch))}
+              onRemove={() => onChange(removeModelConfig(profile, sourceIndex))}
               t={t}
             />
           )) : <div className="model-config-empty">{text.noModels}</div>}
@@ -1208,7 +1212,6 @@ export function Models({
     const state = modelAvailabilitySummary(profile)
     return { total: total.total + state.total, enabled: total.enabled + state.enabled, disabled: total.disabled + state.disabled }
   }, { total: 0, enabled: 0, disabled: 0 })
-  const totalModels = availabilityTotals.total
   const incomingProbeProviderSignature = normalizeModelProbeProviderKeys(modelProbeProviders).join('\n')
   const configuredProbeTargetCount = resolveModelProbeTargets(profiles, effectiveProbeProviders).length
   const probeScopeLabel = !profiles.length
@@ -1846,7 +1849,7 @@ export function Models({
         <div className="model-summary-status">
           <span className={`model-summary-dot${hasErrors ? ' is-error' : ''}`} />
           <strong>{summary.total} 个服务商</strong>
-          <span>{totalModels} 个模型</span>
+          <span>{text.models(availabilityTotals.enabled)}</span>
           {availabilityTotals.disabled > 0 && <span className="is-warning">{availabilityTotals.disabled} 个已禁用</span>}
           {summary.errors > 0 && <span className="is-error">{summary.errors} 个阻断项</span>}
           {summary.warnings > 0 && <span className="is-warning">{summary.warnings} 个提醒</span>}

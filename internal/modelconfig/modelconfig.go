@@ -138,6 +138,7 @@ func ModelConfigEnabled(config ModelConfig) bool {
 
 type Profile struct {
 	VarName            string                 `json:"var_name"`
+	DisplayName        string                 `json:"display_name,omitempty"`
 	SourceVarName      string                 `json:"source_var_name,omitempty"`
 	ProviderSortOrder  *int                   `json:"provider_sort_order,omitempty"`
 	Type               string                 `json:"type"`
@@ -307,6 +308,7 @@ func normalizeProfiles(profiles []Profile) []Profile {
 }
 
 func normalizeProfile(p Profile) Profile {
+	p.DisplayName = strings.TrimSpace(p.DisplayName)
 	configs := profileModelConfigs(p)
 	p.ModelConfigs = configs
 	p.Models = make([]string, 0, len(configs))
@@ -721,7 +723,7 @@ def mask(s):
 profiles_by_var={}
 profile_order=[]
 declaration_order_by_var={}
-identity_by_var={}
+aggregation_key_by_var={}
 mixin_groups_raw=[]
 for mixin_var, mixin_value in vars(mod).items():
     if mixin_var.startswith('_') or 'mixin' not in mixin_var.lower() or not isinstance(mixin_value, dict):
@@ -890,6 +892,8 @@ if isinstance(groups, dict):
         if children:
             base['source_var_name']=children[0].get('source_var_name', '')
         if meta:
+            display_name=str(meta.get('display_name', '') or '').strip()
+            base['display_name']=display_name
             base['type']=str(meta.get('type', base.get('type', 'native_oai')) or 'native_oai')
             base['name']=str(meta.get('name', base.get('name', '')) or '')
             base['apibase']=str(meta.get('apibase', base.get('apibase', '')) or '')
@@ -1111,6 +1115,7 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 		}
 		groupMeta := map[string]interface{}{
 			"children":      childVars,
+			"display_name":  p.DisplayName,
 			"model_configs": configs,
 			"type":          p.Type,
 			"name":          p.Name,
@@ -1146,7 +1151,7 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 	effectiveNames := make(map[string]string, len(entries))
 	claimedNames := make(map[string]bool, len(entries))
 	resolveName := func(entry renderEntry, sessionName string) string {
-		if name := strings.TrimSpace(entry.config.Name); name != "" {
+		if name := strings.TrimSpace(entry.config.Name); name != "" && name != sessionName && !isGeneratedModelName(name) {
 			return name
 		}
 		if model := strings.TrimSpace(entry.config.Model); model != "" {
@@ -1264,6 +1269,22 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 	return b.String(), nil
 }
 
+func isGeneratedModelName(value string) bool {
+	name := strings.ToLower(strings.TrimSpace(value))
+	for _, prefix := range []string{
+		"native_oai_config",
+		"native_claude_config",
+		"oai_config",
+		"claude_config",
+		"vision_config",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func pyDict(m map[string]interface{}) (string, error) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -1376,7 +1397,17 @@ for line in lines:
     offset += len(line)
 
 def bound_names(target):
-    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name)}
+    # Only names bound by a declaration count here. Attribute/subscript
+    # mutations (for example config['apikey'] = ...) are user-managed follow-
+    # up code and must not make the declaration unsafe to replace.
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names=set()
+        for element in target.elts:
+            names.update(bound_names(element))
+        return names
+    return set()
 
 for node in tree.body:
     if isinstance(node, ast.Assign):
@@ -1570,10 +1601,10 @@ func mergeRenderedModels(existing, rendered string, profiles []Profile) (string,
 	base = strings.TrimRight(base, " \t\r\n")
 
 	var b strings.Builder
-	if base != "" {
-		b.WriteString(base)
-		b.WriteString("\n\n")
-	}
+	// Keep generated provider dictionaries before user-managed code. A user
+	// config may legitimately derive a value from one of these dictionaries;
+	// appending the managed block after that code creates a Python forward
+	// reference and makes the whole mykey.py fail during import.
 	b.WriteString(managedModelsBegin)
 	b.WriteByte('\n')
 	b.WriteString("# Model saves replace only this block; settings outside it remain user-managed.\n")
@@ -1581,6 +1612,11 @@ func mergeRenderedModels(existing, rendered string, profiles []Profile) (string,
 	b.WriteByte('\n')
 	b.WriteString(managedModelsEnd)
 	b.WriteByte('\n')
+	if base != "" {
+		b.WriteByte('\n')
+		b.WriteString(base)
+		b.WriteByte('\n')
+	}
 	return b.String(), nil
 }
 

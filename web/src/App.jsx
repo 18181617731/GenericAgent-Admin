@@ -1158,10 +1158,14 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     } catch(e) { if (isCurrentModelScope(scopeID)) setMsg(e.message) } finally { if (isCurrentModelScope(scopeID)) { setModelImportLoading(false); if (!quiet) setBusy(false) } }
   }
   useEffect(() => {
-    if (tab !== 'models' || modelImportAttempted.current || profiles.length) return
+    // The model scope is selected by the instance registry. Waiting for that
+    // registry avoids an initial request for the empty scope, whose response
+    // would otherwise be discarded after the registry selects `default` and
+    // leave the model editor stuck on its loading state.
+    if (!instanceScopeReady || tab !== 'models' || modelImportAttempted.current || profiles.length) return
     modelImportAttempted.current = true
     importModels({ quiet: true })
-  }, [tab, profiles.length])
+  }, [instanceScopeReady, activeInstanceID, modelInstance?.id, tab, profiles.length])
   const previewModels = async () => {
     const scopeID = currentModelScopeID()
     setBusy(true)
@@ -1240,12 +1244,13 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const persistModelProfiles = async (nextProfiles, { confirm = true, statusKeys = [], nextFailoverGroups = failoverGroups } = {}) => {
-    if (confirm && !confirmDanger('models-save', lang === 'zh' ? '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？' : 'Saving model configuration updates mykey.py and may overwrite the active configuration. Continue?')) return false
     const scopeID = currentModelScopeID()
-    if (statusKeys.length) setModelSaveStatus(current => ({ ...current, ...Object.fromEntries(statusKeys.map(k => [k, { status: 'saving', error: '', savedAt: null }])) }))
+    const cleanGroups = normalizeFailoverGroups(nextFailoverGroups)
+    if (confirm && !confirmDanger('models-save', lang === 'zh' ? '保存模型配置会更新 mykey.py，并可能覆盖当前启用配置。确认继续？' : 'Saving model configuration updates mykey.py and may overwrite the active configuration. Continue?')) return false
+    const saving = Object.fromEntries(statusKeys.map(k => [k, { status: 'saving', error: '', savedAt: null }]))
+    if (statusKeys.length) setModelSaveStatus(current => ({ ...current, ...saving }))
     setBusy(true)
     try {
-      const cleanGroups = normalizeFailoverGroups(nextFailoverGroups)
       const d = await api('/api/models/export', { dangerous:true, method:'POST', instanceID: scopeID, body: JSON.stringify({ profiles: nextProfiles, failover_groups: cleanGroups, overwrite_active:true }) })
       if (!isCurrentModelScope(scopeID)) return false
       const cleanProfiles = nextProfiles.map(({ previous_var_name: _previousVarName, ...profile }) => profile)

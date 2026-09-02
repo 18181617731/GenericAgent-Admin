@@ -16,6 +16,8 @@ import {
   orderedModelRows,
   orderedModelAndFailoverRows,
   applyModelAndFailoverOrder,
+  orderedEditableModelConfigs,
+  applyModelOrder,
   applyProviderOrder,
   orderedProviderProfiles,
   draftChangeSummary,
@@ -222,6 +224,22 @@ test('modelConfigDisplayName accepts API display_name aliases before legacy name
   assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: '12' }), '')
   assert.equal(modelConfigDisplayName({ model: 'gpt-model', name: 'gpt-model' }), '')
   assert.equal(modelConfigDisplayName({ model: 'model-id' }), '')
+})
+
+test('modelConfigDisplayName hides custom generated variable names', () => {
+  assert.equal(modelConfigDisplayName({ model: 'gpt-5.4', name: 'vision_config_gpt54_2' }), '')
+})
+
+test('orderedEditableModelConfigs follows runtime order without changing source indexes', () => {
+  const entries = orderedEditableModelConfigs({
+    model_configs: [
+      { model: 'later', sort_order: 5 },
+      { model: 'first', sort_order: 1 },
+      { model: 'fallback' },
+    ],
+  })
+  assert.deepEqual(entries.map(entry => entry.config.model), ['first', 'later', 'fallback'])
+  assert.deepEqual(entries.map(entry => entry.sourceIndex), [1, 0, 2])
 })
 
 test('orderedModelRows keeps legacy provider and model order without metadata', () => {

@@ -92,7 +92,15 @@ export const profileModelConfigs = (profile = {}) => {
   return models.map(model => ({ model, ...settings }))
 }
 
-const internalModelNameRe = /^(?:(?:native_)?(?:oai|claude)|api|config|cookie)_config[A-Za-z0-9_]*$/i
+export const orderedEditableModelConfigs = (profile = {}) => profileModelConfigs(profile)
+  .map((config, sourceIndex) => ({ config, sourceIndex }))
+  .sort((left, right) => {
+    const leftOrder = Number.isInteger(left.config?.sort_order) ? left.config.sort_order : Number.MAX_SAFE_INTEGER
+    const rightOrder = Number.isInteger(right.config?.sort_order) ? right.config.sort_order : Number.MAX_SAFE_INTEGER
+    return leftOrder - rightOrder || left.sourceIndex - right.sourceIndex
+  })
+
+const internalModelNameRe = /^(?:(?:native_)?(?:oai|claude)|vision|api|config|cookie)_config[A-Za-z0-9_]*$/i
 
 export const modelConfigDisplayName = config => {
   const model = text(config?.model)
