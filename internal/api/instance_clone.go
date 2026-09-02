@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,11 +13,88 @@ import (
 // virtual environment, caches, or accidentally mounted data; none of those
 // should make an Admin request unbounded or copy files outside the project.
 const (
-	instanceCloneMaxBytes   = int64(2 << 30)
-	instanceCloneMaxEntries = 100000
+	instanceCloneMaxBytes        = int64(2 << 30)
+	instanceCloneMaxEntries      = 100000
+	instanceCloneReservationFile = ".ga-admin-clone-in-progress"
 )
 
-func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err error) {
+type cloneProgressFunc func(copiedBytes, totalBytes int64, copiedEntries, totalEntries int)
+
+type cloneSourceStats struct {
+	totalBytes   int64
+	totalEntries int
+}
+
+// reserveCloneDestination creates the empty marker-backed directory that the
+// config store requires before an initializing instance can be persisted. The
+// marker lets the background copier distinguish this reservation from an
+// unrelated pre-existing directory.
+func reserveCloneDestination(rawDest string) (string, error) {
+	dest, err := filepath.Abs(filepath.Clean(strings.TrimSpace(rawDest)))
+	if err != nil {
+		return "", err
+	}
+	if dest == "." || strings.TrimSpace(rawDest) == "" {
+		return "", fmt.Errorf("destination instance root is required")
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		return "", fmt.Errorf("destination instance root already exists")
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("check destination instance root: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return "", fmt.Errorf("create destination parent: %w", err)
+	}
+	if err := os.Mkdir(dest, 0755); err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("destination instance root already exists")
+		}
+		return "", fmt.Errorf("create destination instance root: %w", err)
+	}
+	marker := filepath.Join(dest, instanceCloneReservationFile)
+	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		_ = os.RemoveAll(dest)
+		return "", fmt.Errorf("reserve destination instance root: %w", err)
+	}
+	if _, err := file.WriteString("reserved for GenericAgent-Admin clone\n"); err != nil {
+		_ = file.Close()
+		_ = os.RemoveAll(dest)
+		return "", fmt.Errorf("write destination reservation: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.RemoveAll(dest)
+		return "", fmt.Errorf("close destination reservation: %w", err)
+	}
+	return dest, nil
+}
+
+func resetCloneDestinationForResume(rawDest string) error {
+	dest, err := filepath.Abs(filepath.Clean(strings.TrimSpace(rawDest)))
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	_, err = reserveCloneDestination(dest)
+	return err
+}
+
+// cloneGenericAgentProject is kept as the synchronous compatibility wrapper
+// used by callers and tests that do not need cancellation or progress.
+func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) error {
+	return cloneGenericAgentProjectWithContext(context.Background(), src, dest, copyMemory, copyMyKey, nil)
+}
+
+// cloneGenericAgentProjectWithContext copies only the source files that make
+// up a runnable GA project. It performs a bounded preflight scan before
+// creating the destination, then reports byte/file progress while copying so
+// a long-running clone can be surfaced by the Admin UI.
+func cloneGenericAgentProjectWithContext(ctx context.Context, src, dest string, copyMemory, copyMyKey bool, onProgress cloneProgressFunc) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rawSrc := strings.TrimSpace(src)
 	rawDest := strings.TrimSpace(dest)
 	if rawSrc == "" || rawDest == "" {
@@ -44,14 +122,27 @@ func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err
 	if !sourceInfo.IsDir() {
 		return fmt.Errorf("source instance root is not a directory")
 	}
-	if _, err := os.Lstat(dest); err == nil {
-		return fmt.Errorf("destination instance root already exists")
+	reservedDestination := false
+	if info, err := os.Lstat(dest); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("destination instance root already exists")
+		}
+		// The API creates a marker-backed empty directory before saving the
+		// initializing instance. This makes the path satisfy config validation
+		// while preventing an unrelated pre-existing directory from being used.
+		marker := filepath.Join(dest, instanceCloneReservationFile)
+		if markerInfo, markerErr := os.Stat(marker); markerErr != nil || !markerInfo.Mode().IsRegular() {
+			return fmt.Errorf("destination instance root already exists")
+		}
+		reservedDestination = true
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("check destination instance root: %w", err)
-	}
-
-	if err := os.MkdirAll(dest, 0755); err != nil {
+	} else if err := os.MkdirAll(dest, 0755); err != nil {
 		return fmt.Errorf("create destination instance root: %w", err)
+	}
+	stats, err := scanCloneSource(ctx, src, copyMemory, copyMyKey)
+	if err != nil {
+		return fmt.Errorf("scan source instance: %w", err)
 	}
 	keep := false
 	defer func() {
@@ -59,12 +150,23 @@ func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err
 			_ = os.RemoveAll(dest)
 		}
 	}()
+	if reservedDestination {
+		if err := os.Remove(filepath.Join(dest, instanceCloneReservationFile)); err != nil {
+			return fmt.Errorf("prepare destination instance root: %w", err)
+		}
+	}
 
+	if onProgress != nil {
+		onProgress(0, stats.totalBytes, 0, stats.totalEntries)
+	}
 	var entries int
 	var total int64
 	err = filepath.WalkDir(src, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
@@ -107,7 +209,6 @@ func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err
 		if info.Size() < 0 || info.Size() > instanceCloneMaxBytes-total {
 			return fmt.Errorf("source instance exceeds 2 GiB")
 		}
-		total += info.Size()
 
 		target := filepath.Join(dest, rel)
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
@@ -122,7 +223,7 @@ func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err
 			_ = in.Close()
 			return err
 		}
-		written, copyErr := io.Copy(out, io.LimitReader(in, info.Size()+1))
+		written, copyErr := io.Copy(out, io.LimitReader(contextReader{ctx: ctx, reader: in}, info.Size()+1))
 		closeOutErr := out.Close()
 		closeInErr := in.Close()
 		if copyErr != nil {
@@ -137,6 +238,10 @@ func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err
 		if written != info.Size() {
 			return fmt.Errorf("source file changed while copying: %s", rel)
 		}
+		total += written
+		if onProgress != nil {
+			onProgress(total, stats.totalBytes, entries, stats.totalEntries)
+		}
 		return nil
 	})
 	if err != nil {
@@ -146,10 +251,80 @@ func cloneGenericAgentProject(src, dest string, copyMemory, copyMyKey bool) (err
 	return nil
 }
 
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func scanCloneSource(ctx context.Context, src string, copyMemory, copyMyKey bool) (stats cloneSourceStats, err error) {
+	err = filepath.WalkDir(src, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if entry.IsDir() {
+			if skipCloneDirectory(rel, copyMemory) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if skipCloneFile(rel, copyMyKey) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported source entry: %s", rel)
+		}
+		stats.totalEntries++
+		if stats.totalEntries > instanceCloneMaxEntries {
+			return fmt.Errorf("source instance has too many files")
+		}
+		if info.Size() < 0 || info.Size() > instanceCloneMaxBytes-stats.totalBytes {
+			return fmt.Errorf("source instance exceeds 2 GiB")
+		}
+		stats.totalBytes += info.Size()
+		return nil
+	})
+	return stats, err
+}
+
 func skipCloneDirectory(rel string, copyMemory bool) bool {
 	parts := splitClonePath(rel)
 	if len(parts) == 0 {
 		return false
+	}
+	// Cargo keeps compiled Rust dependencies under nested target directories.
+	// They can be many gigabytes and are reproducible build output, not part of
+	// a runnable GenericAgent source tree, so never copy them into a clone.
+	for _, part := range parts {
+		if strings.EqualFold(part, "target") {
+			return true
+		}
 	}
 	first := strings.ToLower(parts[0])
 	if first == "memory" {

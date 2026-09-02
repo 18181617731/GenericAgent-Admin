@@ -19,6 +19,10 @@ type instanceInstallTask struct {
 	done   chan struct{}
 }
 
+// cloneProjectForInstance is a seam for deterministic tests. The production
+// implementation performs the bounded, cancellable copy and emits progress.
+var cloneProjectForInstance = cloneGenericAgentProjectWithContext
+
 func (s *Server) instanceInstallsAvailable() bool {
 	if s == nil {
 		return false
@@ -28,7 +32,7 @@ func (s *Server) instanceInstallsAvailable() bool {
 	return !s.instanceInstallsClosing
 }
 
-func (s *Server) startInstanceInstall(instance config.InstanceConfig) bool {
+func (s *Server) startInstanceTask(instance config.InstanceConfig, run func(context.Context)) bool {
 	if s == nil {
 		return false
 	}
@@ -47,12 +51,26 @@ func (s *Server) startInstanceInstall(instance config.InstanceConfig) bool {
 	task := &instanceInstallTask{cancel: cancel, done: make(chan struct{})}
 	s.instanceInstallTasks[instance.ID] = task
 	s.instanceInstallWG.Add(1)
-	go s.runInstanceInstall(ctx, task, instance)
+	go func() {
+		defer s.finishInstanceInstallTask(instance.ID, task)
+		run(ctx)
+	}()
 	return true
 }
 
-func (s *Server) runInstanceInstall(ctx context.Context, task *instanceInstallTask, instance config.InstanceConfig) {
-	defer s.finishInstanceInstallTask(instance.ID, task)
+func (s *Server) startInstanceInstall(instance config.InstanceConfig) bool {
+	return s.startInstanceTask(instance, func(ctx context.Context) {
+		s.runInstanceInstall(ctx, instance)
+	})
+}
+
+func (s *Server) startInstanceClone(instance, source config.InstanceConfig, copyMemory, copyMyKey bool) bool {
+	return s.startInstanceTask(instance, func(ctx context.Context) {
+		s.runInstanceClone(ctx, instance, source, copyMemory, copyMyKey)
+	})
+}
+
+func (s *Server) runInstanceInstall(ctx context.Context, instance config.InstanceConfig) {
 
 	s.setInstanceInstallProgress(instance, "preparing", 15)
 	err := ctx.Err()
@@ -97,6 +115,65 @@ func (s *Server) runInstanceInstall(ctx context.Context, task *instanceInstallTa
 			message += "; clean up partial install: " + cleanupErr.Error()
 		}
 		s.failInstanceInstall(instance, message)
+		return
+	}
+	s.setInstanceInstallProgress(instance, "finalizing", 95)
+	s.setInstanceInstallState(instance, config.InstanceInitStatusReady, "")
+}
+
+func (s *Server) runInstanceClone(ctx context.Context, instance, source config.InstanceConfig, copyMemory, copyMyKey bool) {
+	s.setInstanceInstallProgress(instance, "preparing", 15)
+	if ctx.Err() != nil {
+		return
+	}
+	s.setInstanceInstallProgress(instance, "cloning", 20)
+	lastProgress := 20
+	err := cloneProjectForInstance(ctx, source.GARoot, instance.GARoot, copyMemory, copyMyKey, func(copiedBytes, totalBytes int64, copiedEntries, totalEntries int) {
+		if ctx.Err() != nil {
+			return
+		}
+		progress := 20
+		if totalBytes > 0 {
+			progress = 20 + int(copiedBytes*65/totalBytes)
+		}
+		if totalEntries > 0 {
+			entryProgress := 20 + copiedEntries*65/totalEntries
+			if entryProgress > progress {
+				progress = entryProgress
+			}
+		}
+		if progress > 85 {
+			progress = 85
+		}
+		if progress > lastProgress {
+			lastProgress = progress
+			s.setInstanceInstallProgress(instance, "cloning", progress)
+		}
+	})
+	if ctx.Err() != nil {
+		if resetErr := resetCloneDestinationForResume(instance.GARoot); resetErr != nil {
+			log.Printf("reset cancelled instance clone %q for resume: %v", instance.ID, resetErr)
+		}
+		return
+	}
+	if err != nil {
+		_ = os.Remove(filepath.Join(instance.GARoot, instanceCloneReservationFile))
+		// Config validation requires every registered instance root to remain
+		// present, including failed initializations. The copier removes its
+		// partial destination on error, so recreate an empty root before
+		// publishing the durable failure details to the UI.
+		if _, statErr := os.Stat(instance.GARoot); os.IsNotExist(statErr) {
+			if mkdirErr := os.MkdirAll(instance.GARoot, 0755); mkdirErr != nil {
+				err = fmt.Errorf("%v; restore failed instance root: %w", err, mkdirErr)
+			}
+		}
+		s.failInstanceInstall(instance, err.Error())
+		return
+	}
+	s.setInstanceInstallProgress(instance, "verifying", 88)
+	health := ga.BuildHealth(instance.GARoot)
+	if !health.OK {
+		s.failInstanceInstall(instance, fmt.Sprintf("cloned GenericAgent is invalid: %s", strings.Join(health.Errors, ", ")))
 		return
 	}
 	s.setInstanceInstallProgress(instance, "finalizing", 95)
@@ -161,6 +238,9 @@ func (s *Server) setInstanceInstallState(instance config.InstanceConfig, status,
 		if status == config.InstanceInitStatusReady {
 			cfg.Instances[i].InitStage = "complete"
 			cfg.Instances[i].InitProgress = 100
+			cfg.Instances[i].InitSourceInstanceID = ""
+			cfg.Instances[i].InitCopyMemory = false
+			cfg.Instances[i].InitCopyMyKey = false
 		}
 		if err := s.saveConfigAndReconcile(cfg); err != nil {
 			log.Printf("persist instance install state %q=%q: %v", instance.ID, status, err)
@@ -173,9 +253,24 @@ func (s *Server) resumeInstanceInstalls() {
 	if s == nil || s.CfgStore == nil {
 		return
 	}
-	for _, instance := range s.CfgStore.Snapshot().Instances {
+	cfg := s.CfgStore.Snapshot()
+	for _, instance := range cfg.Instances {
 		if strings.ToLower(strings.TrimSpace(instance.InitStatus)) == config.InstanceInitStatusInitializing {
-			s.startInstanceInstall(instance)
+			sourceID := strings.TrimSpace(instance.InitSourceInstanceID)
+			if sourceID == "" {
+				s.startInstanceInstall(instance)
+				continue
+			}
+			source, ok := cfg.Instance(sourceID)
+			if !ok {
+				s.failInstanceInstall(instance, fmt.Sprintf("source instance %q no longer exists", sourceID))
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(source.InitStatus), config.InstanceInitStatusInitializing) {
+				s.failInstanceInstall(instance, fmt.Sprintf("source instance %q is still initializing", sourceID))
+				continue
+			}
+			s.startInstanceClone(instance, source, instance.InitCopyMemory, instance.InitCopyMyKey)
 		}
 	}
 }

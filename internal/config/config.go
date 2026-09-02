@@ -60,6 +60,12 @@ type InstanceConfig struct {
 	InitError                string                    `json:"init_error,omitempty"`
 	InitStage                string                    `json:"init_stage,omitempty"`
 	InitProgress             int                       `json:"init_progress,omitempty"`
+	// InitSourceInstanceID and the copy flags are persisted while a project
+	// clone is running so a server restart can resume the same operation
+	// instead of accidentally treating it as a download install.
+	InitSourceInstanceID string `json:"init_source_instance_id,omitempty"`
+	InitCopyMemory       bool   `json:"init_copy_memory,omitempty"`
+	InitCopyMyKey        bool   `json:"init_copy_mykey,omitempty"`
 }
 
 const (
@@ -699,6 +705,7 @@ func normalize(cfg AppConfig, root string) AppConfig {
 		instance.InitStatus = strings.ToLower(strings.TrimSpace(instance.InitStatus))
 		instance.InitError = strings.TrimSpace(instance.InitError)
 		instance.InitStage = strings.ToLower(strings.TrimSpace(instance.InitStage))
+		instance.InitSourceInstanceID = strings.TrimSpace(instance.InitSourceInstanceID)
 		if instance.InitProgress < 0 {
 			instance.InitProgress = 0
 		} else if instance.InitProgress > 100 {

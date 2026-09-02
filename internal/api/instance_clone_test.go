@@ -1,17 +1,237 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"genericagent-admin-go/internal/config"
 	"genericagent-admin-go/internal/service"
 )
+
+func TestInstanceCreateCloneReturnsInitializingAndCompletesInBackground(t *testing.T) {
+	appRoot := t.TempDir()
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	if err := writeValidGenericAgentFixture(sourceRoot); err != nil {
+		t.Fatal(err)
+	}
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = sourceRoot
+	cfg.DefaultInstanceID = "source"
+	cfg.Instances = []config.InstanceConfig{{ID: "source", Name: "Source", GARoot: sourceRoot}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := New(store, service.NewManager(sourceRoot, cfg.BufferLines), nil, nil)
+	t.Cleanup(server.stopInstanceInstalls)
+	oldClone := cloneProjectForInstance
+	started := make(chan struct{})
+	progressed := make(chan struct{})
+	release := make(chan struct{})
+	cloneProjectForInstance = func(ctx context.Context, src, dest string, copyMemory, copyMyKey bool, onProgress cloneProgressFunc) error {
+		close(started)
+		if onProgress != nil {
+			onProgress(1, 2, 1, 2)
+		}
+		close(progressed)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if err := writeValidGenericAgentFixture(dest); err != nil {
+			return err
+		}
+		if onProgress != nil {
+			onProgress(1, 1, 1, 1)
+		}
+		return nil
+	}
+	t.Cleanup(func() { cloneProjectForInstance = oldClone })
+
+	body, err := json.Marshal(map[string]interface{}{"id": "clone", "name": "Clone", "source_instance_id": "source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/create", strings.NewReader(string(body)))
+	markDangerous(req)
+	server.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clone status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var response instanceInstallResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode clone response: %v body=%s", err, rr.Body.String())
+	}
+	if response.Instance.InitStatus != config.InstanceInitStatusInitializing || response.Instance.InitStage != "queued" || response.Instance.InitProgress != 5 {
+		t.Fatalf("clone response state=%+v want queued initialization", response.Instance)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for clone worker")
+	}
+	select {
+	case <-progressed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for clone progress")
+	}
+	queued, ok := store.Snapshot().Instance("clone")
+	if !ok || queued.InitStatus != config.InstanceInitStatusInitializing || queued.InitStage != "cloning" || queued.InitProgress != 52 {
+		t.Fatalf("queued clone state=%+v exists=%v", queued, ok)
+	}
+	close(release)
+	waitInstanceInstallTasksForTest(t, server)
+	completed, ok := store.Snapshot().Instance("clone")
+	if !ok || completed.InitStatus != config.InstanceInitStatusReady || completed.InitProgress != 100 || completed.InitError != "" {
+		t.Fatalf("completed clone state=%+v exists=%v", completed, ok)
+	}
+}
+
+func TestInstanceCreateCloneFailureIsPersistedForUserRecovery(t *testing.T) {
+	appRoot := t.TempDir()
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	if err := writeValidGenericAgentFixture(sourceRoot); err != nil {
+		t.Fatal(err)
+	}
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = sourceRoot
+	cfg.DefaultInstanceID = "source"
+	cfg.Instances = []config.InstanceConfig{{ID: "source", Name: "Source", GARoot: sourceRoot}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := New(store, service.NewManager(sourceRoot, cfg.BufferLines), nil, nil)
+	t.Cleanup(server.stopInstanceInstalls)
+	oldClone := cloneProjectForInstance
+	cloneProjectForInstance = func(_ context.Context, _ string, dest string, _ bool, _ bool, _ cloneProgressFunc) error {
+		_ = os.RemoveAll(dest)
+		return errors.New("source copy interrupted")
+	}
+	t.Cleanup(func() { cloneProjectForInstance = oldClone })
+	body, err := json.Marshal(map[string]interface{}{"id": "failed-clone", "name": "Failed clone", "source_instance_id": "source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/create", strings.NewReader(string(body)))
+	markDangerous(req)
+	server.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clone status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	waitInstanceInstallTasksForTest(t, server)
+	failed, ok := store.Snapshot().Instance("failed-clone")
+	if !ok || failed.InitStatus != config.InstanceInitStatusFailed || !strings.Contains(failed.InitError, "source copy interrupted") {
+		t.Fatalf("failed clone state=%+v exists=%v", failed, ok)
+	}
+	if info, err := os.Stat(failed.GARoot); err != nil || !info.IsDir() {
+		t.Fatalf("failed clone root was not restored for config validation: info=%v err=%v", info, err)
+	}
+}
+
+func TestInstanceCloneResumesAfterServerRestart(t *testing.T) {
+	oldClone := cloneProjectForInstance
+	var calls atomic.Int32
+	started := make(chan string, 2)
+	cloneProjectForInstance = func(ctx context.Context, _, dest string, _, _ bool, _ cloneProgressFunc) error {
+		call := calls.Add(1)
+		started <- dest
+		if call == 1 {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		if err := os.Remove(filepath.Join(dest, instanceCloneReservationFile)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return writeValidGenericAgentFixture(dest)
+	}
+	t.Cleanup(func() { cloneProjectForInstance = oldClone })
+
+	appRoot := t.TempDir()
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	if err := writeValidGenericAgentFixture(sourceRoot); err != nil {
+		t.Fatal(err)
+	}
+	store := config.NewStore(appRoot)
+	cfg := store.Snapshot()
+	cfg.GARoot = sourceRoot
+	cfg.DefaultInstanceID = "source"
+	cfg.Instances = []config.InstanceConfig{{ID: "source", Name: "Source", GARoot: sourceRoot}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	firstServer := New(store, service.NewManager(sourceRoot, cfg.BufferLines), nil, nil)
+	responseBody := `{"id":"resumed-clone","name":"Resumed clone","source_instance_id":"source"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/instances/create", strings.NewReader(responseBody))
+	markDangerous(req)
+	firstServer.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clone status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	firstDest := waitTestSignal(t, started, "initial clone")
+	firstServer.stopInstanceInstalls()
+	stateAfterStop, ok := store.Snapshot().Instance("resumed-clone")
+	if !ok || stateAfterStop.InitStatus != config.InstanceInitStatusInitializing || stateAfterStop.InitSourceInstanceID != "source" {
+		t.Fatalf("state after shutdown=%+v exists=%v", stateAfterStop, ok)
+	}
+
+	reloaded := config.NewStore(appRoot)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	resumedServer := New(reloaded, nil, nil, nil)
+	t.Cleanup(resumedServer.stopInstanceInstalls)
+	secondDest := waitTestSignal(t, started, "resumed clone")
+	if secondDest != firstDest {
+		t.Errorf("resumed destination=%q want %q", secondDest, firstDest)
+	}
+	waitInstanceInstallTasksForTest(t, resumedServer)
+	completed, ok := reloaded.Snapshot().Instance("resumed-clone")
+	if !ok || completed.InitStatus != config.InstanceInitStatusReady || completed.InitProgress != 100 || completed.InitSourceInstanceID != "" {
+		t.Fatalf("resumed clone state=%+v exists=%v", completed, ok)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("clone calls=%d want 2", calls.Load())
+	}
+}
+
+func TestCloneSkipsNestedRustBuildOutput(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := filepath.Join(t.TempDir(), "clone")
+	if err := writeValidGenericAgentFixture(sourceRoot); err != nil {
+		t.Fatal(err)
+	}
+	generated := filepath.Join(sourceRoot, "frontends", "desktop", "src-tauri", "target", "debug", "generated.bin")
+	if err := os.MkdirAll(filepath.Dir(generated), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(generated, []byte("generated build output"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cloneGenericAgentProject(sourceRoot, destinationRoot, false, false); err != nil {
+		t.Fatalf("clone returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destinationRoot, "agentmain.py")); err != nil {
+		t.Fatalf("source file missing from clone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destinationRoot, "frontends", "desktop", "src-tauri", "target")); !os.IsNotExist(err) {
+		t.Fatalf("nested Rust target was copied, err=%v", err)
+	}
+}
 
 func TestInstanceCreateCanCloneProjectWithExplicitSensitiveDataChoices(t *testing.T) {
 	appRoot := t.TempDir()
@@ -78,6 +298,7 @@ func TestInstanceCreateCanCloneProjectWithExplicitSensitiveDataChoices(t *testin
 		if rr.Code != http.StatusOK {
 			t.Fatalf("clone %s status=%d body=%s", id, rr.Code, rr.Body.String())
 		}
+		waitInstanceInstallTasksForTest(t, server)
 		instance, ok := server.CfgStore.Snapshot().Instance(id)
 		if !ok {
 			t.Fatalf("clone %s missing from config", id)

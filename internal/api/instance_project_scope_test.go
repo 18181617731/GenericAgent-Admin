@@ -262,6 +262,7 @@ func TestInstanceCloneCopiesProjectPreferencesButKeepsRuntimeAutostartOff(t *tes
 	})
 	markDangerous(request)
 	serveProjectScope(t, server.Routes(), request, http.StatusOK)
+	waitInstanceInstallTasksForTest(t, server)
 	saved := store.Snapshot()
 	clone, ok := saved.Instance("clone")
 	if !ok {

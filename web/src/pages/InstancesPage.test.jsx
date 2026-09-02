@@ -258,14 +258,30 @@ describe('InstancesPage', () => {
     expect(await screen.findByRole('heading', { name: 'Secondary' })).not.toBeNull()
   })
 
-  it('clones an instance and sends explicit memory and mykey choices', async () => {
+  it('clones an instance asynchronously and shows copy progress', async () => {
     const source = { id: 'source', name: 'Source', ga_root: 'D:/ga-source', python_path: '', effective_python: 'python' }
     const cloneSourcePayload = { ...initialPayload, items: [...initialPayload.items, source] }
-    const created = {
+    const initializing = {
       default_instance_id: 'primary',
-      items: [...cloneSourcePayload.items, { id: 'cloned', name: 'Cloned', ga_root: 'D:/ga-cloned', effective_python: 'python' }],
+      items: [...cloneSourcePayload.items, { id: 'cloned', name: 'Cloned', ga_root: 'D:/ga-cloned', effective_python: 'python', init_status: 'initializing', init_stage: 'queued', init_progress: 5 }],
+      instance: { id: 'cloned', name: 'Cloned', ga_root: 'D:/ga-cloned', effective_python: 'python', init_status: 'initializing', init_stage: 'queued', init_progress: 5 },
     }
-    globalThis.fetch = vi.fn((url) => url === '/api/instances' ? reply(cloneSourcePayload) : reply(created))
+    const progressing = {
+      ...initializing,
+      items: initializing.items.map(item => item.id === 'cloned' ? { ...item, init_stage: 'cloning', init_progress: 42 } : item),
+    }
+    const ready = {
+      ...progressing,
+      items: progressing.items.map(item => item.id === 'cloned' ? { ...item, init_status: 'ready', init_stage: 'complete', init_progress: 100 } : item),
+    }
+    let listCalls = 0
+    globalThis.fetch = vi.fn((url) => {
+      if (url === '/api/instances') {
+        listCalls += 1
+        return reply(listCalls === 1 ? cloneSourcePayload : listCalls === 2 ? progressing : ready)
+      }
+      return reply(initializing)
+    })
     mockDialog()
     const user = userEvent.setup()
     render(<InstancesPage lang="en" />)
@@ -292,6 +308,14 @@ describe('InstancesPage', () => {
       copy_memory: true,
       copy_mykey: true,
     })
+    const clonedCard = (await screen.findByRole('heading', { name: 'Cloned' })).closest('article')
+    expect(within(clonedCard).getByText('Initializing')).not.toBeNull()
+    expect(within(clonedCard).getByText('Waiting to start')).not.toBeNull()
+    expect(within(clonedCard).getByRole('progressbar', { name: 'Waiting to start' }).value).toBe(5)
+    expect(screen.getByText('Instance registered; copying the project in the background')).not.toBeNull()
+    await waitFor(() => expect(within(clonedCard).getByText('Ready')).not.toBeNull(), { timeout: 3000 })
+    expect(within(clonedCard).queryByRole('progressbar')).toBeNull()
+    expect(listCalls).toBe(3)
   })
 
   it('updates an instance without allowing its ID to change', async () => {

@@ -16,7 +16,7 @@ const TEXT = {
     add: '\u65b0\u5efa\u5b9e\u4f8b', install: '\u4e00\u952e\u65b0\u589e', installing: '\u6b63\u5728\u4e0b\u8f7d\u5e76\u65b0\u589e\u2026', refresh: '\u5237\u65b0', loading: '\u6b63\u5728\u8bfb\u53d6\u5b9e\u4f8b\u2026', empty: '\u6682\u65e0 GA \u5b9e\u4f8b',
     default: '\u9ed8\u8ba4', setDefault: '\u8bbe\u4e3a\u9ed8\u8ba4', configureModels: '\u914d\u7f6e\u6a21\u578b', edit: '\u7f16\u8f91', remove: '\u5220\u9664', cancel: '\u53d6\u6d88',
     initializing: '\u521d\u59cb\u5316\u4e2d', ready: '\u5df2\u5c31\u7eea', failed: '\u521d\u59cb\u5316\u5931\u8d25', initError: '\u9519\u8bef\u8be6\u60c5',
-    stages: { queued: '\u7b49\u5f85\u5f00\u59cb', preparing: '\u51c6\u5907\u5b89\u88c5\u76ee\u5f55', downloading: '\u4e0b\u8f7d\u5e76\u89e3\u538b GenericAgent', extracting: '\u89e3\u538b\u4e0a\u4f20\u7684\u6a21\u677f', verifying: '\u6821\u9a8c\u5b89\u88c5\u6587\u4ef6', finalizing: '\u4fdd\u5b58\u5b9e\u4f8b\u914d\u7f6e', complete: '\u521d\u59cb\u5316\u5b8c\u6210' },
+    stages: { queued: '\u7b49\u5f85\u5f00\u59cb', preparing: '\u51c6\u5907\u5b89\u88c5\u76ee\u5f55', cloning: '\u590d\u5236\u5df2\u6709 GenericAgent \u9879\u76ee', downloading: '\u4e0b\u8f7d\u5e76\u89e3\u538b GenericAgent', extracting: '\u89e3\u538b\u4e0a\u4f20\u7684\u6a21\u677f', verifying: '\u6821\u9a8c\u5b89\u88c5\u6587\u4ef6', finalizing: '\u4fdd\u5b58\u5b9e\u4f8b\u914d\u7f6e', complete: '\u521d\u59cb\u5316\u5b8c\u6210' },
     createTitle: '\u65b0\u5efa GA \u5b9e\u4f8b', editTitle: '\u7f16\u8f91 GA \u5b9e\u4f8b', installTitle: '填写新实例 ID', create: '\u521b\u5efa\u5b9e\u4f8b', save: '\u4fdd\u5b58\u4fee\u6539', startInstall: '开始创建',
     createSummary: '设置实例标识与本地运行环境。', editSummary: '更新显示名称或运行时路径。', installSummary: '选择稳定的标识，创建任务将在后台运行。',
     identityGroup: '实例标识', runtimeGroup: '运行环境', sourceGroup: '初始化来源', requiredField: '必填', optionalField: '可选', manualSource: '手动指定新的根目录', sourceHint: '复制已有实例的程序、任务、自主进化记录和项目设置；定时服务自启动不会复制，以免多个实例争抢端口；根目录留空时由系统自动分配隔离目录。', copyMemory: '复制已有记忆', copyMemoryHint: '记忆可能包含个性化上下文，仅在确认需要继承时勾选。', copyMyKey: '复制 mykey.py', copyMyKeyHint: '包含 API Key / Token 等敏感配置，请谨慎勾选。', active: '当前使用中', switchTo: '切换到此实例', switchHint: '切换后文件、任务、记忆、模型、聊天、用量和服务状态会重新加载。',
@@ -25,7 +25,7 @@ const TEXT = {
     id: '\u5b9e\u4f8b ID', name: '\u663e\u793a\u540d\u79f0', root: 'GenericAgent \u6839\u76ee\u5f55', python: 'Python \u8def\u5f84', effectivePython: '\u5b9e\u9645 Python', auto: '\u81ea\u52a8\u68c0\u6d4b',
     idHint: '\u4ec5\u5efa\u7acb\u65f6\u53ef\u8bbe\u7f6e\uff0c\u5efa\u8bae\u4f7f\u7528\u7b80\u77ed\u4e14\u7a33\u5b9a\u7684\u6807\u8bc6\u3002', rootHint: '\u8be5\u76ee\u5f55\u5e94\u5305\u542b agentmain.py\u3002', pythonHint: '\u7559\u7a7a\u65f6\u7531\u540e\u7aef\u81ea\u52a8\u68c0\u6d4b\u3002',
     required: '\u8bf7\u586b\u5199\u5b9e\u4f8b ID\u3001\u540d\u79f0\u548c GenericAgent \u6839\u76ee\u5f55\u3002',
-    loadFailed: '\u8bfb\u53d6\u5b9e\u4f8b\u5931\u8d25', saved: '\u5b9e\u4f8b\u5df2\u4fdd\u5b58', installed: '\u5b9e\u4f8b\u5df2\u65b0\u589e\uff0c\u6b63\u5728\u540e\u53f0\u521d\u59cb\u5316', defaultSaved: '\u9ed8\u8ba4\u5b9e\u4f8b\u5df2\u66f4\u65b0', removed: '\u5b9e\u4f8b\u5df2\u5220\u9664',
+    loadFailed: '\u8bfb\u53d6\u5b9e\u4f8b\u5931\u8d25', saved: '\u5b9e\u4f8b\u5df2\u4fdd\u5b58', installed: '\u5b9e\u4f8b\u5df2\u65b0\u589e\uff0c\u6b63\u5728\u540e\u53f0\u521d\u59cb\u5316', creating: '\u5b9e\u4f8b\u5df2\u767b\u8bb0\uff0c\u6b63\u5728\u540e\u53f0\u590d\u5236\u9879\u76ee', defaultSaved: '\u9ed8\u8ba4\u5b9e\u4f8b\u5df2\u66f4\u65b0', removed: '\u5b9e\u4f8b\u5df2\u5220\u9664',
     confirmInstall: '\u5c06\u4ece GenericAgent main \u5206\u652f\u4e0b\u8f7d\u6e90\u7801\u5e76\u81ea\u52a8\u6ce8\u518c\u4e3a\u65b0\u5b9e\u4f8b\uff0c\u7ee7\u7eed\u5417\uff1f',
     confirmCreate: '\u786e\u8ba4\u521b\u5efa\u8be5 GA \u5b9e\u4f8b\uff1f', confirmUpdate: '\u786e\u8ba4\u4fdd\u5b58\u8be5 GA \u5b9e\u4f8b\u7684\u4fee\u6539\uff1f',
     confirmDefault: name => `\u786e\u8ba4\u5c06\u201c${name}\u201d\u8bbe\u4e3a\u9ed8\u8ba4\u5b9e\u4f8b\uff1f`,
@@ -43,7 +43,7 @@ const TEXT = {
     add: 'Add instance', install: 'One-click add', installing: 'Downloading and adding\u2026', refresh: 'Refresh', loading: 'Loading instances\u2026', empty: 'No GA instances configured',
     default: 'Default', setDefault: 'Set as default', configureModels: 'Configure models', edit: 'Edit', remove: 'Delete', cancel: 'Cancel',
     initializing: 'Initializing', ready: 'Ready', failed: 'Initialization failed', initError: 'Error details',
-    stages: { queued: 'Waiting to start', preparing: 'Preparing install directory', downloading: 'Downloading and extracting GenericAgent', extracting: 'Extracting uploaded template', verifying: 'Verifying installed files', finalizing: 'Saving instance configuration', complete: 'Initialization complete' },
+    stages: { queued: 'Waiting to start', preparing: 'Preparing install directory', cloning: 'Copying the existing GenericAgent project', downloading: 'Downloading and extracting GenericAgent', extracting: 'Extracting uploaded template', verifying: 'Verifying installed files', finalizing: 'Saving instance configuration', complete: 'Initialization complete' },
     createTitle: 'Create GA instance', editTitle: 'Edit GA instance', installTitle: 'Choose the new instance ID', create: 'Create instance', save: 'Save changes', startInstall: 'Start creating',
     createSummary: 'Set the instance identity and local runtime.', editSummary: 'Update the display name or runtime paths.', installSummary: 'Choose a stable ID. Creation continues in the background.',
     identityGroup: 'Instance identity', runtimeGroup: 'Runtime environment', sourceGroup: 'Initialization source', requiredField: 'Required', optionalField: 'Optional', manualSource: 'Choose a new root directory', sourceHint: 'Copies the selected instance program, tasks, autonomous records, and project preferences. Service autostart stays off to avoid port collisions. Leave the root blank to allocate an isolated directory automatically.', copyMemory: 'Copy existing memory', copyMemoryHint: 'Memory may contain personalized context; enable this only when inheritance is intended.', copyMyKey: 'Copy mykey.py', copyMyKeyHint: 'Contains API keys or tokens. Enable only when you accept copying secrets.', active: 'In use', switchTo: 'Switch to this instance', switchHint: 'Switching reloads files, tasks, memory, models, chat, usage, and service state.',
@@ -52,7 +52,7 @@ const TEXT = {
     id: 'Instance ID', name: 'Display name', root: 'GenericAgent root', python: 'Python path', effectivePython: 'Effective Python', auto: 'Auto-detected',
     idHint: 'Set once at creation. Use a short, stable identifier.', rootHint: 'This directory should contain agentmain.py.', pythonHint: 'Leave blank to let the backend detect Python.',
     required: 'Instance ID, display name, and GenericAgent root are required.',
-    loadFailed: 'Failed to load instances', saved: 'Instance saved', installed: 'Instance added and initializing in the background', defaultSaved: 'Default instance updated', removed: 'Instance deleted',
+    loadFailed: 'Failed to load instances', saved: 'Instance saved', installed: 'Instance added and initializing in the background', creating: 'Instance registered; copying the project in the background', defaultSaved: 'Default instance updated', removed: 'Instance deleted',
     confirmInstall: 'Download the GenericAgent main branch and register it as a new instance?',
     confirmCreate: 'Create this GA instance?', confirmUpdate: 'Save changes to this GA instance?',
     confirmDefault: name => `Set "${name}" as the default instance?`,
@@ -206,7 +206,8 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels, activeIn
       applyPayload(result)
       notifyInstancesChanged()
       setEditor(null)
-      setNotice(installing ? copy.installed : copy.saved)
+      const cloning = creating && normalizedInitStatus(result?.instance) === 'initializing'
+      setNotice(cloning ? copy.creating : installing ? copy.installed : copy.saved)
     } catch (saveError) {
       setError(saveError.message)
     } finally {
@@ -364,7 +365,7 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels, activeIn
         </fieldset>}
       </div>
       <div className="instance-editor-footer">
-        <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
+        <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{anyBusy ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
       </div>
     </form>}
 

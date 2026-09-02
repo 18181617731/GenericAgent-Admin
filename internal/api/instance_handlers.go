@@ -267,8 +267,8 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusBadRequest, "copy options require source_instance_id")
 		return
 	}
-	// Initialization state is owned by the server. Manual instance creation
-	// cannot impersonate or enqueue an automatic installation.
+	// Initialization state is owned by the server. A manual root registration
+	// is immediate; project clones below are queued and tracked by the server.
 	instance.InitStatus = ""
 	instance.InitError = ""
 	instance.InitStage = ""
@@ -281,14 +281,23 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 	s.ConfigMu.Lock()
 	defer s.ConfigMu.Unlock()
 	cfg := cloneConfigWithInstances(s.CfgStore.Snapshot())
+	previousCfg := cloneConfigWithInstances(cfg)
+	cloneReservationCreated := false
+	defer func() {
+		if cloneReservationCreated {
+			_ = os.RemoveAll(instance.GARoot)
+		}
+	}()
 	for _, current := range cfg.Instances {
 		if current.ID == instance.ID {
 			bad(w, http.StatusConflict, "instance id already exists")
 			return
 		}
 	}
+	var source config.InstanceConfig
 	if sourceID != "" {
-		source, ok := cfg.Instance(sourceID)
+		var ok bool
+		source, ok = cfg.Instance(sourceID)
 		if !ok {
 			bad(w, http.StatusNotFound, "source instance not found")
 			return
@@ -308,13 +317,30 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			instance.GARoot = filepath.Join(s.CfgStore.Root, automaticInstanceBaseID, "instances", instance.ID)
 		}
-		if err := cloneGenericAgentProject(source.GARoot, instance.GARoot, req.CopyMemory, req.CopyMyKey); err != nil {
-			bad(w, http.StatusBadRequest, err.Error())
+		if _, err := os.Lstat(instance.GARoot); err == nil {
+			bad(w, http.StatusConflict, "instance destination already exists")
+			return
+		} else if !os.IsNotExist(err) {
+			bad(w, http.StatusBadRequest, "check instance destination: "+err.Error())
 			return
 		}
-		instance.InitStatus = config.InstanceInitStatusReady
-		instance.InitStage = "complete"
-		instance.InitProgress = 100
+		if pathsOverlap(source.GARoot, instance.GARoot) {
+			bad(w, http.StatusBadRequest, "source and destination directories must not contain one another")
+			return
+		}
+		reservedRoot, reserveErr := reserveCloneDestination(instance.GARoot)
+		if reserveErr != nil {
+			bad(w, http.StatusConflict, reserveErr.Error())
+			return
+		}
+		instance.GARoot = reservedRoot
+		cloneReservationCreated = true
+		instance.InitStatus = config.InstanceInitStatusInitializing
+		instance.InitStage = "queued"
+		instance.InitProgress = 5
+		instance.InitSourceInstanceID = sourceID
+		instance.InitCopyMemory = req.CopyMemory
+		instance.InitCopyMyKey = req.CopyMyKey
 		if instance.PythonPath == "" {
 			instance.PythonPath = strings.TrimSpace(source.PythonPath)
 		}
@@ -342,20 +368,36 @@ func (s *Server) instanceCreate(w http.ResponseWriter, r *http.Request) {
 		cfg.DefaultInstanceID = instance.ID
 	}
 	if err := s.saveConfigAndReconcile(cfg); err != nil {
-		if sourceID != "" {
-			_ = os.RemoveAll(instance.GARoot)
-		}
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if sourceID != "" {
+		if !s.startInstanceClone(instance, source, req.CopyMemory, req.CopyMyKey) {
+			rollbackErr := s.saveConfigAndReconcile(previousCfg)
+			if rollbackErr != nil {
+				bad(w, http.StatusServiceUnavailable, "instance installer is shutting down; roll back config: "+rollbackErr.Error())
+				return
+			}
+			bad(w, http.StatusServiceUnavailable, "instance installer is shutting down")
+			return
+		}
+		cloneReservationCreated = false
 		saved := s.CfgStore.Snapshot()
-		created, _ := saved.Instance(instance.ID)
+		// Return the queued state even if a tiny test/project clone finishes
+		// before the response is serialized. The next list poll will reconcile
+		// the card to its actual terminal state.
+		responseItems := append([]config.InstanceConfig(nil), saved.Instances...)
+		for i := range responseItems {
+			if responseItems[i].ID == instance.ID {
+				responseItems[i] = instance
+				break
+			}
+		}
 		writeJSON(w, map[string]interface{}{
 			"ok":                      true,
-			"items":                   saved.Instances,
+			"items":                   responseItems,
 			"default_instance_id":     saved.DefaultInstanceID,
-			"instance":                created,
+			"instance":                instance,
 			"copied_from_instance_id": sourceID,
 			"copy_memory":             req.CopyMemory,
 			"copy_mykey":              req.CopyMyKey,
