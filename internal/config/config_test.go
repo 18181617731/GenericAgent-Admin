@@ -486,3 +486,36 @@ func TestStoreUpdateRuntimeIsAtomicAndDoesNotPublishAliases(t *testing.T) {
 	}
 	requireConfigEqual(t, store.Snapshot(), beforeRejectedUpdate)
 }
+
+func TestDefaultAndValidUITheme(t *testing.T) {
+	if Default().UITheme != DefaultUITheme {
+		t.Fatalf("Default().UITheme=%q want %q", Default().UITheme, DefaultUITheme)
+	}
+	for _, theme := range []string{"light", "warm", "dark"} {
+		if !ValidUITheme(theme) {
+			t.Fatalf("ValidUITheme(%q)=false", theme)
+		}
+	}
+	for _, theme := range []string{"", "dim", "not-a-theme"} {
+		if ValidUITheme(theme) {
+			t.Fatalf("ValidUITheme(%q)=true", theme)
+		}
+	}
+}
+
+func TestStorePersistsUITheme(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	cfg := Default()
+	cfg.UITheme = "dark"
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if got := store.Snapshot().UITheme; got != "dark" {
+		t.Fatalf("Snapshot().UITheme=%q want dark", got)
+	}
+	reloaded := NewStore(root)
+	if got := reloaded.Snapshot().UITheme; got != "dark" {
+		t.Fatalf("reloaded UITheme=%q want dark", got)
+	}
+}

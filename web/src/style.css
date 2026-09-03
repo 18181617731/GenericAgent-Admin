@@ -1901,11 +1901,13 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover,html[data-color-scheme=
 .oa-rename input{flex:1;min-width:0;height:32px;border:1px solid #10a37f;border-radius:8px;background:var(--surface-strong);padding:0 9px;font-size:13px;outline:0}
 .oa-rename button{width:30px;height:30px;border:0;border-radius:8px;background:var(--n-f3f3f3);display:flex;align-items:center;justify-content:center;cursor:pointer;color: var(--text)}
 .oa-rename button:hover{background:var(--n-e8e8e8)}
-.oa-md{font-size:15px;line-height:24px;color: var(--text);word-break:break-word}
+.oa-md{font-size:16px;line-height:28px;font-weight:400;letter-spacing:normal;color: var(--text);word-break:break-word}
 .oa-md p{margin:0 0 12px;white-space:pre-wrap}
 .oa-md p:last-child{margin-bottom:0}
-.oa-md h1,.oa-md h2,.oa-md h3,.oa-md h4,.oa-md h5,.oa-md h6{line-height:1.4;margin:18px 0 8px;font-weight:700;color:var(--text)}
+.oa-md h1,.oa-md h2,.oa-md h3,.oa-md h4,.oa-md h5,.oa-md h6{line-height:1.4;margin:18px 0 8px;font-weight:600;color:var(--text)}
 .oa-md h1{font-size:22px}.oa-md h2{font-size:20px}.oa-md h3{font-size:18px}.oa-md h4{font-size:16px}.oa-md h5{font-size:15px}.oa-md h6{font-size:14px}
+.oa-md strong,.oa-md b{font-weight:500}
+.oa-md :is(h1,h2,h3,h4,h5,h6) :is(strong,b){font-weight:inherit}
 .oa-md hr{height:1px;border:0;background:var(--oa-line);margin:18px 0}
 .oa-md code:not(pre code){background:var(--code-inline-bg);border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9em;color: var(--code-text)}
 .oa-md a{color:var(--i-0b57d0);text-decoration:none}.oa-md a:hover{text-decoration:underline}
@@ -6937,7 +6939,6 @@ html[data-color-scheme="dark"] .oa-chat-help::after { box-shadow:0 16px 38px rgb
    23/24px 交替,整段文字看起来像在轻微抖动,也就是那种说不清的"重影"感。
    字号取整数 15px、行高取整数 24px 后每行基线间距恒定。 */
 .oa-content,
-.oa-md,
 .oa-answer-text {
   font-size:15px;
   line-height:24px;
@@ -7050,7 +7051,6 @@ html[data-color-scheme="dark"] .oa-chat-help::after { box-shadow:0 16px 38px rgb
 }
 @media (max-width: 520px) {
   .oa-content,
-  .oa-md,
   .oa-answer-text { font-size:13.75px; }
   .oa-message { padding:11px 0; }
   .oa-model-select { flex:1 1 160px; max-width:none; }
@@ -15363,10 +15363,9 @@ html[data-theme="warm"] .models-page {
   .models-page .model-params-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Narrow containers keep the identity on the first line and drop the provider
-   chip and the actions onto a second line that spans the full row, so the
-   actions stay right-aligned instead of being auto-placed under the handle. */
-@container (max-width: 860px) {
+/* Only stack genuinely compact phone-width rows. At normal split-pane widths the
+   identity can ellipsize, so provider and actions still fit comfortably inline. */
+@container (max-width: 480px) {
   .models-page .model-call-main {
     grid-template-columns: 18px 40px minmax(0, 1fr);
     grid-template-areas:

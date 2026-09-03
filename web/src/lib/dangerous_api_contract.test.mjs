@@ -58,7 +58,7 @@ const dangerousHeaderRoutes = Array.from(
 
 const protectedFrontendRoutes = Array.from(new Set([...protectedMutatingRoutes, ...dangerousHeaderRoutes]))
 const alwaysHeaderRoutes = new Set(['/api/models/raw'])
-const noConfirmReadOnlyRevealRoutes = new Set(['/api/models/raw'])
+const noConfirmReadOnlyRevealRoutes = new Set(['/api/models/raw', '/api/ui/theme'])
 
 const exactRouteString = (route) => new RegExp(`['"]${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`)
 const mutatingMethod = /method:\s*['"](?:POST|PUT|DELETE)['"]/

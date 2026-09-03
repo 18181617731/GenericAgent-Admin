@@ -213,6 +213,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/instances/default", s.requireDangerousConfirm(s.instanceSetDefault))
 	mux.HandleFunc("/api/slash-commands", s.slashCommands)
 	mux.HandleFunc("/api/extra-system-prompt-presets", s.requireDangerousConfirm(s.extraSystemPromptPresets))
+	mux.HandleFunc("/api/ui/theme", s.uiTheme)
 	mux.HandleFunc("/api/setup/state", s.setupState)
 	mux.HandleFunc("/api/setup/env", s.setupEnv)
 	mux.HandleFunc("/api/setup/browse", s.setupBrowse)
@@ -332,6 +333,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/local-cmd/sessions", Level: "dangerous", Action: "create_remote_cmd_session", Reason: "starts a Windows ConPTY cmd.exe session reachable through the authenticated Admin browser"},
 	{Path: "/api/local-cmd/sessions/", Level: "dangerous", Action: "control_remote_cmd_session", Reason: "writes input, resizes, or terminates a remote Windows ConPTY session"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/ui/theme", Level: "reversible", Action: "save_ui_theme", Reason: "updates the persisted Admin-Go appearance theme without a confirm dialog"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
 	{Path: "/api/instances/delete", Level: "dangerous", Action: "delete_instance", Reason: "removes a configured GA runtime instance when its manager is idle"},
@@ -961,7 +963,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if staticGzipEligible(name) {
 		w.Header().Set("Vary", "Accept-Encoding")
 		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			if cached, ok := s.staticGzip.Load(name); ok {
+			// index.html carries a per-response theme bootstrap snippet, so it
+			// must not reuse a gzip cache keyed only by filename.
+			if cached, ok := s.staticGzip.Load(name); ok && name != "index.html" {
 				body = cached.([]byte)
 			} else {
 				var compressed bytes.Buffer
@@ -969,7 +973,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 				_, _ = zw.Write(data)
 				_ = zw.Close()
 				body = compressed.Bytes()
-				s.staticGzip.Store(name, body)
+				if name != "index.html" {
+					s.staticGzip.Store(name, body)
+				}
 			}
 			w.Header().Set("Content-Encoding", "gzip")
 		}
