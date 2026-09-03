@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	chatLoopDefaultMaxRounds = 10
+	chatLoopMaxRounds        = 100
+
 	// A malformed next_prompt gets one corrective re-ask before the loop stops.
 	chatLoopControllerAttempts = 2
 	// A controller that keeps asking for the identical next step is spinning.
@@ -85,6 +88,16 @@ func appendChatLoopTerminalRecord(state *chatLoopState, status, reason string) {
 	appendChatLoopRecord(state, phase, summary, "")
 }
 
+func normalizeChatLoopMaxRounds(value int) int {
+	if value <= 0 {
+		return chatLoopDefaultMaxRounds
+	}
+	if value > chatLoopMaxRounds {
+		return chatLoopMaxRounds
+	}
+	return value
+}
+
 func chatLoopPromptFingerprint(prompt string) string {
 	normalized := strings.ToLower(strings.Join(strings.Fields(prompt), " "))
 	if normalized == "" {
@@ -102,20 +115,20 @@ func chatLoopHasTerminalAssistant(cs chatSession) bool {
 	return last.Role == "assistant" && !last.Error && strings.TrimSpace(last.Content) != ""
 }
 
-func chatLoopControllerPrompt(objective string, round int) string {
+func chatLoopControllerPrompt(objective string, round, maxRounds int) string {
 	return fmt.Sprintf(`You are the controller for an autonomous task loop. Do not perform the task yourself.
 
 Loop objective (quoted): %q
-Completed automatic rounds: %d.
+Completed automatic rounds: %d of %d.
 
 Review the full conversation. If the objective is not yet complete and the worker needs another push, output the next reminder or corrective instruction inside exactly one <next_prompt>...</next_prompt> element.
 If no further worker action is needed, do not output a <next_prompt> element.
 
-Keep any next prompt concise and actionable. Do not use placeholder text, markdown fences, or more than one decision element.`, objective, round)
+Keep any next prompt concise and actionable. Do not use placeholder text, markdown fences, or more than one decision element.`, objective, round, maxRounds)
 }
 
-func chatLoopControllerRetryPrompt(objective string, round int) string {
-	return chatLoopControllerPrompt(objective, round) + `
+func chatLoopControllerRetryPrompt(objective string, round, maxRounds int) string {
+	return chatLoopControllerPrompt(objective, round, maxRounds) + `
 
 Your previous reply contained an empty, placeholder, or malformed next_prompt element. Return one complete non-empty <next_prompt>...</next_prompt> element if another worker action is needed; otherwise return no next_prompt element.`
 }
@@ -189,6 +202,7 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		Objective        string `json:"objective"`
 		ControllerPrompt string `json:"controller_prompt"`
 		ControllerLLMNo  *int   `json:"controller_llm_no"`
+		MaxRounds        int    `json:"max_rounds"`
 	}
 	if err := decode(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
@@ -206,6 +220,7 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 	sid = safeChatID(sid)
 	running := s.chatRunActive(sid)
 	startFirstRun := false
+	controllerEpoch := int64(0)
 	loopEpoch := int64(0)
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
@@ -230,6 +245,7 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 			Status:           chatLoopStatusWaiting,
 			Epoch:            cs.Loop.Epoch + 1,
 			Round:            0,
+			MaxRounds:        normalizeChatLoopMaxRounds(req.MaxRounds),
 			ControllerPrompt: objective,
 			ControllerLLMNo:  controllerLLMNo,
 		}
@@ -242,6 +258,9 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 			// the objective itself as the first main-agent turn instead of leaving
 			// the loop in a permanent waiting/0-of-N state.
 			startFirstRun = len(cs.Messages) == 0
+			if startFirstRun {
+				cs.Loop.Status = chatLoopStatusEvaluating
+			}
 		}
 		loopEpoch = cs.Loop.Epoch
 		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
@@ -254,14 +273,7 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 	s.cancelChatLoopController(sid, controllerEpoch)
 
 	if startFirstRun {
-		s.queueChatLoopRun(chatLoopRunRequest{
-			sid:            sid,
-			epoch:          loopEpoch,
-			prompt:         objective,
-			expectedStatus: chatLoopStatusWaiting,
-			phase:          "starting",
-			summary:        "First task turn queued.",
-		})
+		continueChatLoopFunc(s, sid, loopEpoch, objective)
 		// Return the state after the first turn was admitted so the browser can
 		// attach to the run immediately, even when the worker starts quickly.
 		s.SessionMu.Lock()
@@ -273,6 +285,17 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		s.afterChatRunTerminal(sid, true)
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "loop": cs.Loop})
+}
+
+var continueChatLoopFunc = func(s *Server, sid string, epoch int64, prompt string) {
+	s.queueChatLoopRun(chatLoopRunRequest{
+		sid:            sid,
+		epoch:          epoch,
+		prompt:         prompt,
+		expectedStatus: chatLoopStatusEvaluating,
+		phase:          "starting",
+		summary:        "First task turn queued.",
+	})
 }
 
 func (s *Server) chatLoopStop(w http.ResponseWriter, r *http.Request, sid string) {
@@ -336,6 +359,21 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 		s.SessionMu.Unlock()
 		return
 	}
+	cs.Loop.MaxRounds = normalizeChatLoopMaxRounds(cs.Loop.MaxRounds)
+	if cs.Loop.Round >= cs.Loop.MaxRounds {
+		cs.Loop.Enabled = false
+		cs.Loop.Status = chatLoopStatusCompleted
+		cs.Loop.StopReason = "max_rounds"
+		appendChatLoopRecord(&cs.Loop, "complete", "Loop reached its configured round limit.", "")
+		cs.Loop.Epoch++
+		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+		loop := cs.Loop
+		s.SessionMu.Unlock()
+		if err == nil {
+			s.publishChatLoopState(sid, loop)
+		}
+		return
+	}
 	cs.Loop.Status = chatLoopStatusEvaluating
 	cs.Loop.StopReason = ""
 	appendChatLoopRecord(&cs.Loop, "checking", "Observer is checking the latest run.", "")
@@ -347,6 +385,62 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	s.SessionMu.Unlock()
 	s.publishChatLoopState(sid, cs.Loop)
 	go s.evaluateChatLoop(sid, epoch, cs)
+}
+
+func (s *Server) runChatLoopController(sid string, epoch int64, req map[string]interface{}) (chatMessage, error) {
+	sid = safeChatID(sid)
+	owner := &chatLoopControllerRun{Epoch: epoch}
+	observer := &oneShotBTWWorkerObserver{
+		Started: func(worker *chatWorker) bool {
+			s.ChatMu.Lock()
+			defer s.ChatMu.Unlock()
+			current := s.ChatLoopControllers[sid]
+			if current != nil && (current.Epoch > epoch || current.Epoch == epoch && current.Canceled) {
+				return false
+			}
+			owner.Worker = worker
+			s.ChatLoopControllers[sid] = owner
+			return true
+		},
+		Finished: func(worker *chatWorker) {
+			s.ChatMu.Lock()
+			if current := s.ChatLoopControllers[sid]; current == owner && current.Worker == worker {
+				delete(s.ChatLoopControllers, sid)
+			}
+			s.ChatMu.Unlock()
+		},
+	}
+	controllerReq := make(map[string]interface{}, len(req)+1)
+	for key, value := range req {
+		controllerReq[key] = value
+	}
+	controllerReq[oneShotBTWWorkerObserverKey] = observer
+	return runOneShotBTWWorkerFunc(s.CfgStore.Snapshot(), sid+"-loop", controllerReq)
+}
+
+func (s *Server) cancelChatLoopController(sid string, epoch int64) bool {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	current := s.ChatLoopControllers[sid]
+	if current != nil && current.Epoch > epoch {
+		s.ChatMu.Unlock()
+		return false
+	}
+	if current == nil || current.Epoch < epoch {
+		current = &chatLoopControllerRun{Epoch: epoch}
+		s.ChatLoopControllers[sid] = current
+	}
+	current.Canceled = true
+	worker := current.Worker
+	s.ChatMu.Unlock()
+	if worker != nil {
+		worker.Mu.Lock()
+		if worker.Cmd != nil && worker.Cmd.Process != nil {
+			_ = worker.Cmd.Process.Kill()
+		}
+		worker.Mu.Unlock()
+	}
+	return worker != nil
 }
 
 func (s *Server) failChatLoopAfterRun(sid string) {
@@ -380,9 +474,9 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 	var parseErr error
 	for attempt := 0; attempt < chatLoopControllerAttempts; attempt++ {
 		if attempt == 0 {
-			cmdReq["prompt"] = chatLoopControllerPrompt(state.ControllerPrompt, state.Round)
+			cmdReq["prompt"] = chatLoopControllerPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
 		} else {
-			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round)
+			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
 		}
 		msg, err := s.runChatLoopController(sid, epoch, cmdReq)
 		if err != nil {
@@ -472,7 +566,21 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 		if !latest.Loop.Enabled || latest.Loop.Epoch != req.epoch || latest.Loop.Status != req.expectedStatus {
 			return errChatLoopStale
 		}
-		fingerprint := chatLoopPromptFingerprint(prompt)
+		latest.Loop.MaxRounds = normalizeChatLoopMaxRounds(latest.Loop.MaxRounds)
+		if latest.Loop.Round >= latest.Loop.MaxRounds {
+			latest.Loop.Enabled = false
+			latest.Loop.Status = chatLoopStatusCompleted
+			latest.Loop.StopReason = "max_rounds"
+			appendChatLoopRecord(&latest.Loop, "complete", "Loop reached its configured round limit.", "")
+			latest.Loop.Epoch++
+			if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
+				return err
+			}
+			finished := latest.Loop
+			terminalLoop = &finished
+			return errChatLoopStale
+		}
+		fingerprint := chatLoopPromptFingerprint(req.prompt)
 		if fingerprint != "" && fingerprint == latest.Loop.LastPromptFingerprint {
 			latest.Loop.RepeatStreak++
 		} else {
@@ -499,7 +607,7 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 		if phase == "" {
 			phase = "continue"
 		}
-		appendChatLoopRecord(&latest.Loop, phase, req.summary, "")
+		appendChatLoopRecord(&latest.Loop, phase, req.summary, req.prompt)
 		latest.Messages = append(latest.Messages, userMsg, pendingMsg)
 		latest.UpdatedAt = time.Now().Unix()
 		updateChatTitle(&latest)
@@ -637,6 +745,7 @@ func normalizePersistedChatLoop(state chatLoopState) (chatLoopState, bool) {
 	if !state.Enabled {
 		return state, false
 	}
+	state.MaxRounds = normalizeChatLoopMaxRounds(state.MaxRounds)
 	state.Enabled = false
 	state.Status = chatLoopStatusPaused
 	state.StopReason = "server_restart"

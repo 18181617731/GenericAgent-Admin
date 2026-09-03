@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -53,25 +54,29 @@ type Server struct {
 	// PasswordConfigured reports whether an admin password exists. The
 	// credential itself lives outside this package, so remote-access settings
 	// ask through this hook before they can be saved.
-	PasswordConfigured      func() bool
-	listenMu                sync.RWMutex
-	listenAddress           string
-	listenURL               string
-	titleBackfillStarted    bool
-	autonomousCleanupStop   chan struct{}
-	autonomousCleanupOnce   sync.Once
-	chatSessionMutationHook func()
-	chatExactSaveHook       func(chatSession) error
-	chatWorldlineRPCHook    func(string, map[string]interface{}) error
-	chatHubBridgeMu         sync.Mutex
-	chatHubBridgeCmd        *exec.Cmd
-	chatHubBridgeServer     *http.Server
-	instanceInstallMu       sync.Mutex
-	instanceInstallWG       sync.WaitGroup
-	instanceInstallTasks    map[string]*instanceInstallTask
-	instanceInstallsClosing bool
-	localCmdMu              sync.Mutex
-	localCmdSessions        *localCmdRegistry
+	PasswordConfigured        func() bool
+	listenMu                  sync.RWMutex
+	listenAddress             string
+	listenURL                 string
+	titleBackfillStarted      bool
+	autonomousCleanupStop     chan struct{}
+	autonomousCleanupOnce     sync.Once
+	chatSessionMutationHook   func()
+	chatExactSaveHook         func(chatSession) error
+	chatWorldlineRPCHook      func(string, map[string]interface{}) error
+	chatHubBridgeMu           sync.Mutex
+	chatHubBridgeCmd          *exec.Cmd
+	chatHubBridgeServer       *http.Server
+	chatFeishuBridgeMu        sync.Mutex
+	chatFeishuBridgeCmd       *exec.Cmd
+	chatFeishuBridgeServer    *http.Server
+	chatFeishuBridgeStartedAt time.Time
+	instanceInstallMu         sync.Mutex
+	instanceInstallWG         sync.WaitGroup
+	instanceInstallTasks      map[string]*instanceInstallTask
+	instanceInstallsClosing   bool
+	localCmdMu                sync.Mutex
+	localCmdSessions          *localCmdRegistry
 }
 
 func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, static fs.FS) *Server {
@@ -945,20 +950,26 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		}
 		p = "index.html"
 	}
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
-	if strings.HasSuffix(p, ".js") {
-		w.Header().Set("Content-Type", "application/javascript")
-	} else if strings.HasSuffix(p, ".css") {
-		w.Header().Set("Content-Type", "text/css")
-	} else if strings.HasSuffix(p, ".html") {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	name := p
+	s.serveStaticData(w, r, name, data)
+}
+
+func (s *Server) serveStaticData(w http.ResponseWriter, r *http.Request, name string, data []byte) {
+	if name == "index.html" {
+		data = injectUITheme(data, s.storedUITheme())
+	}
+	if isHashedStaticAsset(name) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else if strings.HasPrefix(name, "assets/") {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	} else {
+		// Root assets have stable URLs. Revalidate them so a deployment cannot
+		// leave an old index referring to chunks that no longer exist.
+		w.Header().Set("Cache-Control", "no-cache")
 	}
 	if contentType := staticContentType(name); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
-
 	body := data
 	if staticGzipEligible(name) {
 		w.Header().Set("Vary", "Accept-Encoding")
@@ -985,6 +996,24 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(body)
+}
+
+func isHashedStaticAsset(name string) bool {
+	if !strings.HasPrefix(name, "assets/") {
+		return false
+	}
+	base := path.Base(name)
+	stem := strings.TrimSuffix(base, path.Ext(base))
+	separator := strings.LastIndexByte(stem, '-')
+	if separator <= 0 || len(stem)-separator-1 < 4 {
+		return false
+	}
+	for _, char := range stem[separator+1:] {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func staticContentType(name string) string {

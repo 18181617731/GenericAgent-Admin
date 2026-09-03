@@ -91,6 +91,7 @@ const nextVarName = (protocol, profiles = []) => nextProviderVarName(
   protocolMeta(protocol)?.prefix || 'native_oai_config',
   profiles,
 )
+const providerName = profile => String(profile?.name || profile?.display_name || '').trim() || providerDisplayName(profile?.var_name)
 
 const modelIdOf = value => String(value?.id || value?.name || value || '').trim()
 const uniqueModels = values => {
@@ -137,7 +138,7 @@ function OptionalBoolSelect({ value, onChange, t, trueLabel, falseLabel }) {
   )
 }
 
-function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
+function ModelConfigRow({ config, index, protocol, onChange, onRemove, onOpenProvider, providerLabel, callList = false, t }) {
   const text = t.models
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
@@ -150,20 +151,20 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
     .join(' · ') || text.defaultParams
 
   return (
-    <article className={`model-config-row model-call-row${configOpen ? ' is-open is-expanded' : ''}${enabled ? '' : ' is-disabled'}`}>
+    <article className={`model-config-row${callList ? ' model-call-row' : ''}${configOpen ? ' is-open is-expanded' : ''}${enabled ? '' : ' is-disabled'}`}>
       <div className="model-config-main">
         <div className="model-config-identity">
-          <span className="model-call-slot" aria-hidden="true">
+          <span className={callList ? 'model-call-slot' : 'model-config-slot'} aria-hidden="true">
             <strong>{index}</strong>
           </span>
           <span className="model-config-index" aria-hidden="true">
             {String(index + 1).padStart(2, '0')}
           </span>
           <div className="model-config-copy">
-            <span className="model-call-title">
+            <span className={callList ? 'model-call-title' : 'model-config-title'}>
               <strong>{displayName || config.model || text.unnamedModel}</strong>
             </span>
-            <span className="model-call-sub">
+            <span className={callList ? 'model-call-sub' : 'model-config-sub'}>
               <em>{config.model || text.unnamedModel}</em>
             </span>
             {displayName && (
@@ -182,6 +183,11 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
                 : null}
           </div>
         </div>
+        {onOpenProvider && (
+          <button type="button" className="model-call-provider" onClick={onOpenProvider} title={t.models.openProvider}>
+            <span>{providerLabel || t.models.unnamed}</span>
+          </button>
+        )}
         <Button
           type="text"
           className="model-config-action model-config-toggle model-call-toggle"
@@ -267,6 +273,113 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, t }) {
         </div>
       )}
     </article>
+  )
+}
+
+function ModelParams({ config, protocol, onChange, t }) {
+  const text = t.models
+  const fields = modelProtocolFields(protocol)
+  const hasProtocolFields = fields.userAgent || fields.apiMode || fields.serviceTier
+    || fields.thinkingType || fields.reasoningFamily || fields.fakeClaudeCode
+  return (
+    <div className="model-row-body">
+      <div className="model-subsection">
+        <div className="model-subsection-head"><strong>{text.callParams}</strong><span>{config.model}</span></div>
+        <p className="model-subsection-help">{text.callParamsHelp}</p>
+        <div className="model-params-grid">
+          <label className="model-field model-field--wide">
+            <span className="model-field-label">{text.displayName}</span>
+            <Input value={config.name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.displayNamePlaceholder} />
+          </label>
+          <label className="model-field"><span className="model-field-label">{text.stream}</span><OptionalBoolSelect value={config.stream} onChange={stream => onChange({ stream })} t={t} /></label>
+          <label className="model-field"><span className="model-field-label">{text.maxRetries}</span><Input type="number" min={0} value={config.max_retries ?? ''} onChange={event => onChange({ max_retries: optionalNumber(event.target.value) })} placeholder={text.inherit} /></label>
+          <label className="model-field"><span className="model-field-label">{text.readTimeout}</span><Input type="number" min={1} value={config.read_timeout ?? ''} onChange={event => onChange({ read_timeout: optionalNumber(event.target.value) })} placeholder={text.inherit} /></label>
+          <label className="model-field"><span className="model-field-label">{text.connectTimeout}</span><Input type="number" min={1} value={config.connect_timeout ?? ''} onChange={event => onChange({ connect_timeout: optionalNumber(event.target.value) })} placeholder={text.inherit} /></label>
+        </div>
+      </div>
+      {hasProtocolFields && (
+        <div className="model-subsection">
+          <div className="model-subsection-head"><strong>{text.protocolParams}</strong><span>{protocolLabel(protocol, t)}</span></div>
+          <div className="model-params-grid">
+            {fields.userAgent && <label className="model-field"><span className="model-field-label">User-Agent</span><Input value={config.user_agent || ''} onChange={event => onChange({ user_agent: event.target.value || undefined })} placeholder={text.optional} /></label>}
+            {fields.apiMode && <label className="model-field"><span className="model-field-label">{text.apiMode}</span><Select allowClear value={config.api_mode || undefined} onChange={api_mode => onChange({ api_mode })} placeholder={text.inherit} options={API_MODE_OPTIONS} /></label>}
+            {fields.serviceTier && <label className="model-field"><span className="model-field-label">{text.serviceTier}</span><Select allowClear value={config.service_tier || undefined} onChange={service_tier => onChange({ service_tier })} placeholder={text.inherit} options={SERVICE_TIER_OPTIONS} /></label>}
+            {fields.thinkingType && <label className="model-field"><span className="model-field-label">{text.thinkingType}</span><Select allowClear value={config.thinking_type || undefined} onChange={thinking_type => onChange({ thinking_type })} placeholder={text.inherit} options={THINKING_TYPE_OPTIONS} /></label>}
+            {fields.reasoningFamily && <label className="model-field"><span className="model-field-label">{text.reasoningEffort}</span><Select allowClear value={config.reasoning_effort || undefined} onChange={reasoning_effort => onChange({ reasoning_effort })} placeholder={text.inherit} options={reasoningEffortOptions(protocol)} /></label>}
+            {fields.fakeClaudeCode && <label className="model-field"><span className="model-field-label">{text.fakeClaude}</span><OptionalBoolSelect value={config.fake_cc_system_prompt} onChange={fake_cc_system_prompt => onChange({ fake_cc_system_prompt })} t={t} /></label>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProviderForm({ profile, profiles, index, onChange, t }) {
+  const text = t.models
+  const meta = protocolMeta(profile?.type || DEFAULT_PROTOCOL, t)
+  return (
+    <div className="model-drawer-provider-fields">
+      <label className="model-field"><span className="model-field-label">{text.displayName}</span><Input value={profile?.name || profile?.display_name || ''} onChange={event => onChange({ name: event.target.value })} placeholder={text.nameExample} /></label>
+      <label className="model-field model-field--provider"><span className="model-field-label">{text.name}</span><Input value={providerDisplayName(profile?.var_name)} onChange={event => onChange({ var_name: providerVarNameFromDisplayName(event.target.value, meta.prefix, profile?.var_name) })} placeholder={text.nameExample} /><small>{text.nameHelp}</small></label>
+      <label className="model-field"><span className="model-field-label">{text.protocol}</span><Select value={profile?.type || DEFAULT_PROTOCOL} onChange={value => onChange({ type: value, var_name: providerVarNameOnProtocolChange(profile?.var_name, protocolMeta(value)?.prefix, profiles, index) })} options={OFFICIAL_PROTOCOLS.map(item => protocolMeta(item.value, t))} /></label>
+      <label className="model-field"><span className="model-field-label">BaseURL</span><Input value={profile?.apibase || ''} onChange={event => onChange({ apibase: event.target.value })} placeholder="https://api.example.com/v1" /></label>
+    </div>
+  )
+}
+
+function ProviderModal({ open, profile, index, profiles, onClose, onChange, onRemoveModel, onAddModels, onRemove, revealedKey, revealBusy, onRevealKey, onClearRevealedKey, t }) {
+  const text = t.models
+  const [expandedModel, setExpandedModel] = useState(null)
+  const configs = profileModelConfigs(profile || {})
+  const revealed = revealedKey != null && String(revealedKey).trim() !== '' && !isMaskedSecret(revealedKey)
+  useEffect(() => setExpandedModel(null), [open, index])
+  const patchModel = (configIndex, patch) => {
+    const next = updateModelConfig(profile || {}, configIndex, patch)
+    onChange({ model: next.model, models: next.models, model_configs: next.model_configs })
+  }
+  return (
+    <Modal
+      title={providerName(profile) || text.providerEditor}
+      width={920}
+      centered
+      open={open}
+      onCancel={onClose}
+      className="model-provider-modal"
+      footer={(
+        <div className="model-drawer-footer">
+          <Button danger icon={<Trash2 size={14} />} onClick={onRemove}>{text.deleteProviderTitle}</Button>
+          <Button type="primary" onClick={onClose}>{t.close}</Button>
+        </div>
+      )}
+    >
+      <div className="model-drawer-body">
+        <ProviderForm profile={profile} profiles={profiles} index={index} onChange={onChange} t={t} />
+        <label className="model-field"><span className="model-field-label">API Key <em>{revealed ? text.tempShown : text.hiddenByDefault}</em></span><Input type={revealed ? 'text' : 'password'} value={profile?.apikey || ''} onChange={event => { onClearRevealedKey?.(index, profile); onChange({ apikey: event.target.value }) }} placeholder={text.keyPlaceholder} addonAfter={revealed ? <Space size={2}><Button size="small" type="text" icon={<EyeOff size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(index, profile, false)}>{t.hide}</Button><Button size="small" type="text" icon={<RefreshCw size={13} />} loading={revealBusy} onClick={() => onRevealKey?.(index, profile, true)} title={text.reread} aria-label={`${text.reread} API Key`} /></Space> : <Button size="small" type="text" icon={<Eye size={14} />} loading={revealBusy} onClick={() => onRevealKey?.(index, profile, false)}>{t.show}</Button>} /></label>
+        <div className="model-subsection">
+          <div className="model-subsection-head"><strong>{text.providerModels}</strong><Button size="small" icon={<Plus size={13} />} onClick={onAddModels}>{text.addModel}</Button></div>
+          {configs.length ? <div className="model-provider-models">{configs.map((config, configIndex) => {
+            const expanded = expandedModel === configIndex
+            const panelId = `provider-model-config-${index}-${configIndex}`
+            const label = modelConfigDisplayName(config) || config.model || text.model
+            return (
+              <article key={config.instance_id || `provider-model-${configIndex}`} className={`model-provider-model-card${expanded ? ' is-expanded' : ''}`}>
+                <div className="model-provider-model-summary-row">
+                  <button type="button" className="model-provider-model-toggle" aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpandedModel(current => current === configIndex ? null : configIndex)}>
+                    <span className="model-provider-model-summary"><strong>{label}</strong></span>
+                    <span className="model-provider-model-action">{expanded ? text.collapse : text.configure}<ChevronDown size={15} aria-hidden="true" /></span>
+                  </button>
+                  <Button danger type="text" icon={<Trash2 size={14} />} aria-label={`${t.delete} ${config.model}`} onClick={() => { setExpandedModel(null); onRemoveModel?.(configIndex, config) }} />
+                </div>
+                {expanded && <div id={panelId} className="model-provider-model-config">
+                  <label className="model-field model-field--wide"><span className="model-field-label">{text.modelId || '模型 ID'}</span><Input value={config.model || ''} onChange={event => patchModel(configIndex, { model: event.target.value })} placeholder={text.modelIdPlaceholder || '例如 gpt-5.2'} /><small>{text.modelIdHelp || '这是发送到服务商 API 的模型 ID，不是上方的自定义显示名称。'}</small></label>
+                  <ModelParams config={config} protocol={profile?.type || DEFAULT_PROTOCOL} onChange={patch => patchModel(configIndex, patch)} t={t} />
+                </div>}
+              </article>
+            )
+          })}</div> : <div className="model-hint-block">{text.providerNoModels}</div>}
+        </div>
+      </div>
+    </Modal>
   )
 }
 
@@ -415,6 +528,8 @@ function ProfileCard({
   revealBusy,
   onRevealKey,
   onClearRevealedKey,
+  onOpen,
+  onAvailabilityReady,
   onSave,
   saveState,
   t,
@@ -501,7 +616,7 @@ function ProfileCard({
   }
 
   const checkAvailability = async () => {
-    if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL)) return
+    if (!supportsModelDiscovery(p.type || DEFAULT_PROTOCOL) || availabilityBusy) return
     const controller = new AbortController()
     availabilityAbortRef.current = controller
     setAvailabilityBusy(true)
@@ -544,16 +659,28 @@ function ProfileCard({
   const cancelAvailability = () => availabilityAbortRef.current?.abort()
 
   useEffect(() => {
-    setExpandedModel(null)
-  }, [open, mode, index])
+    onAvailabilityReady?.(checkAvailability)
+    return () => onAvailabilityReady?.(null)
+  }, [checkAvailability, onAvailabilityReady])
 
-  const patchModel = (configIndex, patch) => {
-    const next = updateModelConfig(profile || {}, configIndex, patch)
-    onChange({ model: next.model, models: next.models, model_configs: next.model_configs })
+  const openFromCard = event => {
+    if (!onOpen || event.target.closest('button,input,textarea,[role="button"],.ant-select')) return
+    onOpen()
   }
 
   return (
-    <article className={`model-source-card model-connection-card${dirty ? ' is-dirty' : ''}${result?.errors?.length ? ' has-error' : ''}`}>
+    <article
+      className={`model-source-card model-connection-card${dirty ? ' is-dirty' : ''}${result?.errors?.length ? ' has-error' : ''}`}
+      onClick={openFromCard}
+      onKeyDown={event => {
+        if ((event.key === 'Enter' || event.key === ' ') && event.target === event.currentTarget) {
+          event.preventDefault()
+          onOpen?.()
+        }
+      }}
+      tabIndex={onOpen ? 0 : undefined}
+      aria-label={onOpen ? `${providerName(p)}，打开连接设置` : undefined}
+    >
       <header className="model-source-head">
         <div className="model-source-identity">
           <span className="model-source-index">{String(idx + 1).padStart(2, '0')}</span>
@@ -1154,7 +1281,9 @@ export function Models({
   modelInstanceLabel,
 }) {
   const text = t.models
+  const [workspace, setWorkspace] = useState('models')
   const [addOpen, setAddOpen] = useState(false)
+  const [providerModal, setProviderModal] = useState(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [orderOpen, setOrderOpen] = useState(false)
@@ -1183,6 +1312,7 @@ export function Models({
   const providerMotionKeysRef = useRef(new WeakMap())
   const providerMotionKeySeedRef = useRef(0)
   const providerFlipRectsRef = useRef(null)
+  const availabilityCheckRef = useRef(new Map())
   const [batchProbeBusy, setBatchProbeBusy] = useState(false)
   const [batchProbeProgress, setBatchProbeProgress] = useState(null)
   const [batchProbeResult, setBatchProbeResult] = useState(null)
@@ -1228,6 +1358,11 @@ export function Models({
   const profileKeyId = (idx, profile) => getProfileKey?.(idx, profile)
     || profile?.client_id
     || `${profile?.var_name || nextVarName(profile?.type || DEFAULT_PROTOCOL, profiles)}:${profile?.type || DEFAULT_PROTOCOL}:${profile?.apibase || ''}:${idx}`
+  const registerAvailabilityCheck = (idx, action) => {
+    if (action) availabilityCheckRef.current.set(idx, action)
+    else availabilityCheckRef.current.delete(idx)
+  }
+  const callRows = orderedModelRows(profiles)
 
   useEffect(() => {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(profiles.length - 1, 0)))
@@ -1281,6 +1416,38 @@ export function Models({
   const openProfile = idx => {
     setAddOpen(false)
     setActiveIndex(idx)
+  }
+
+  const openProvider = idx => {
+    if (!profiles[idx]) return
+    openProfile(idx)
+    setWorkspace('providers')
+    setProviderModal({ index: idx })
+  }
+
+  const closeProvider = () => setProviderModal(null)
+  const patchProviderModal = patch => {
+    const idx = providerModal?.index
+    if (!Number.isInteger(idx) || !profiles[idx]) return
+    patchProfile(idx, patch)
+  }
+
+  const removeModalModel = configIndex => {
+    const idx = providerModal?.index
+    if (!Number.isInteger(idx) || !profiles[idx]) return
+    patchProfile(idx, removeModelConfig(profiles[idx], configIndex))
+  }
+
+  const addModalModels = () => {
+    closeProvider()
+    setWorkspace('providers')
+    setAddOpen(true)
+  }
+
+  const removeModalProvider = async () => {
+    const idx = providerModal?.index
+    closeProvider()
+    if (Number.isInteger(idx)) await removeProfile(idx)
   }
 
   const clearProviderHold = () => {
@@ -1431,7 +1598,16 @@ export function Models({
     void finishProviderDrag(interaction)
   }
 
-  const openAdd = () => setAddOpen(true)
+  const openAdd = () => {
+    setWorkspace('providers')
+    setAddOpen(true)
+  }
+  const openAddModel = () => {
+    if (!profiles.length) return
+    setAddOpen(false)
+    setWorkspace('providers')
+    setActiveIndex(0)
+  }
 
   useEffect(() => () => {
     if (providerHoldTimerRef.current) window.clearTimeout(providerHoldTimerRef.current)
@@ -1786,10 +1962,28 @@ export function Models({
   return (
     <section className="models-page">
       <header className="model-page-head model-page-head--actions-only">
+        <nav className="model-workspace-tabs" aria-label={text.configSummary}>
+          <button type="button" className={workspace === 'models' ? 'is-active' : ''} aria-pressed={workspace === 'models'} onClick={() => setWorkspace('models')}>
+            <Layers size={14} aria-hidden="true" /><span>{text.callListTitle}</span><b>{callRows.length}</b>
+          </button>
+          <button type="button" className={workspace === 'providers' ? 'is-active' : ''} aria-pressed={workspace === 'providers'} onClick={() => setWorkspace('providers')}>
+            <Network size={14} aria-hidden="true" /><span>{text.connections}</span><b className={summary.errors ? 'is-error' : ''}>{summary.total}</b>
+          </button>
+        </nav>
         <div className="model-page-actions">
           <Button type="primary" icon={<ShieldCheck size={14} />} onClick={runBatchAvailability} loading={batchProbeBusy} disabled={batchProbeBusy || !profiles.length}>
             对话检测并同步
           </Button>
+          {workspace === 'models' && (
+            <Button
+              icon={<ShieldCheck size={14} />}
+              onClick={() => availabilityCheckRef.current.get(activeIndex)?.()}
+              disabled={batchProbeBusy || !profiles.length}
+              title="检测当前选中服务商的模型可用性"
+            >
+              检测当前服务商
+            </Button>
+          )}
           {batchProbeBusy && (
             <Button danger type="text" icon={<X size={14} />} onClick={cancelBatchAvailability}>
               取消检测
@@ -1798,7 +1992,7 @@ export function Models({
           <Button icon={<Settings2 size={14} />} onClick={openProbeScope} disabled={batchProbeBusy || !profiles.length} title="配置一键检测涉及的服务商">
             检测范围：{probeScopeLabel}
           </Button>
-          <Button icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading}>重新读取</Button>
+          <Button className="model-utility-action" icon={<UploadCloud size={14} />} onClick={() => importModels()} loading={importLoading} title={text.rereadConfig} aria-label={text.rereadConfig} />
           <Button
             icon={<ListOrdered size={14} />}
             onClick={openModelOrder}
@@ -1815,7 +2009,8 @@ export function Models({
           >
             {text.failover}
           </Button>
-          <Button icon={<FileCode2 size={14} />} onClick={openPreview}>配置预览</Button>
+          <Button className="model-utility-action" icon={<FileCode2 size={14} />} onClick={openPreview} title={text.configPreview} aria-label={text.configPreview} />
+          <Button className="model-utility-action" icon={<RefreshCw size={14} />} onClick={() => discardDraft?.()} disabled={!changes?.total || !discardDraft} title={text.discard} aria-label={text.discard} />
           <Button icon={<Plus size={15} />} onClick={openAdd}>新增服务商</Button>
         </div>
       </header>
@@ -1894,8 +2089,57 @@ export function Models({
       )}
       {hasErrors && <Alert type="error" showIcon title={`有服务商存在阻断项：${text.pageHasErrors || '存在不能保存的服务商，请在目录中选择异常项并修复。'}`} className="model-page-alert" />}
 
+      <section
+        className={`model-call-list${workspace !== 'models' ? ' is-workspace-hidden' : ''}`}
+        aria-label={text.callListTitle}
+        aria-hidden={workspace !== 'models'}
+      >
+        <header className="model-call-head">
+          <div><strong>{text.callListTitle}</strong><span>{text.callListIntro}</span></div>
+          <Button type="primary" icon={<Plus size={15} />} onClick={openAddModel} disabled={!profiles.length}>{text.addModel}</Button>
+        </header>
+        {callRows.length ? (
+          <div className="model-call-rows" role="list">
+            {callRows.map((row, rowIndex) => {
+              const profile = profiles[row.profileIndex] || {}
+              const config = profileModelConfigs(profile)[row.configIndex] || {}
+              return (
+                <ModelConfigRow
+                  key={row.id}
+                  config={config}
+                  index={rowIndex}
+                  protocol={profile.type || DEFAULT_PROTOCOL}
+                  providerLabel={row.providerName || providerName(profile)}
+                  onOpenProvider={() => openProvider(row.profileIndex)}
+                  callList
+                  onChange={patch => patchProfile(row.profileIndex, updateModelConfig(profile, row.configIndex, patch))}
+                  onRemove={() => patchProfile(row.profileIndex, removeModelConfig(profile, row.configIndex))}
+                  t={t}
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="model-empty-state">
+            <Layers size={34} strokeWidth={1.2} className="model-empty-icon" />
+            <strong>{importLoading ? text.loadingMykey : profiles.length ? text.callListEmpty : text.noProviders}</strong>
+            <span>{importLoading ? text.loadingHelp : profiles.length ? text.callListEmptyHelp : text.noProvidersHelp}</span>
+            {!importLoading && profiles.length > 0 && <Button type="primary" icon={<Plus size={15} />} onClick={openAddModel}>{text.addModel}</Button>}
+          </div>
+        )}
+      </section>
+
       {legacyCompatibility && <LegacyFailoverRows groups={failoverGroups} text={text} />}
 
+      <section
+        className={`model-connections${workspace !== 'providers' ? ' is-workspace-hidden' : ''}`}
+        aria-label={text.connections}
+        aria-hidden={workspace !== 'providers'}
+      >
+        <header className="model-connections-head">
+          <div><strong>{text.connections}</strong><span>{text.connectionsHelp}</span></div>
+          <Button icon={<Plus size={14} />} onClick={openAdd}>{text.addProvider}</Button>
+        </header>
       <div className="model-workbench">
         <aside className="model-provider-rail">
           <header className="model-rail-head">
@@ -1931,7 +2175,7 @@ export function Models({
                     } : undefined}
                     onClick={() => {
                       if (Date.now() < suppressProviderClickUntilRef.current) return
-                      openProfile(idx)
+                      openProvider(idx)
                     }}
                     onPointerDown={event => startProviderHold(idx, event)}
                     onPointerMove={moveProviderHold}
@@ -1998,8 +2242,10 @@ export function Models({
                   revealedKey={revealedKeys[key]}
                   revealBusy={!!revealBusy[key]}
                   onRevealKey={onRevealKey}
-                  onClearRevealedKey={onClearRevealedKey}
-                  onSave={saveModelProfile}
+                   onClearRevealedKey={onClearRevealedKey}
+                   onAvailabilityReady={action => registerAvailabilityCheck(idx, action)}
+                   onOpen={() => openProvider(idx)}
+                   onSave={saveModelProfile}
                   saveState={modelSaveStatus[key] || modelSaveStatus[idx] || saveState}
                   t={t}
                 />
@@ -2017,8 +2263,28 @@ export function Models({
           )}
         </section>
       </div>
+      </section>
 
       <Collapse ghost items={riskItems} className="model-risk-collapse" />
+
+      {providerModal && (
+        <ProviderModal
+          open
+          profile={profiles[providerModal.index]}
+          index={providerModal.index}
+          profiles={profiles}
+          onClose={closeProvider}
+          onChange={patchProviderModal}
+          onRemoveModel={removeModalModel}
+          onAddModels={addModalModels}
+          onRemove={removeModalProvider}
+          revealedKey={revealedKeys[profileKeyId(providerModal.index, profiles[providerModal.index])]}
+          revealBusy={!!revealBusy[profileKeyId(providerModal.index, profiles[providerModal.index])]}
+          onRevealKey={onRevealKey}
+          onClearRevealedKey={onClearRevealedKey}
+          t={t}
+        />
+      )}
 
       {probeScopeOpen && (
         <Modal

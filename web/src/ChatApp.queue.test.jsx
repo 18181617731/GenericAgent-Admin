@@ -4,6 +4,17 @@ import { describe, expect, test } from 'vitest'
 const source = readFileSync('src/ChatApp.jsx', 'utf8')
 
 describe('session-scoped guided-message queue wiring', () => {
+  test('creates sessions through the active chat instance scope', () => {
+    const createStart = source.indexOf('const createSession = async')
+    const createEnd = source.indexOf('\n  const newSession', createStart)
+    const createSource = source.slice(createStart, createEnd)
+    expect(createStart).toBeGreaterThan(-1)
+    expect(createEnd).toBeGreaterThan(createStart)
+    expect(createSource).toContain("const d = await chatApi('/api/chat/session/new'")
+    expect(createSource).not.toContain("const d = await api('/api/chat/session/new'")
+    expect(source).toContain('addChatInstanceToURL(url, chatInstanceRef.current)')
+  })
+
   test('clears stale queue immediately, then applies the selected session backend queue', () => {
     const openStart = source.indexOf('const openSession = async')
     const clearQueue = source.indexOf('applyQueueSnapshot([])', openStart)

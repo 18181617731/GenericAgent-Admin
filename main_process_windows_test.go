@@ -3,12 +3,13 @@
 package main
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
 
-func TestPortableBootstrapCommandHidesWindow(t *testing.T) {
-	cmd := newPortableBootstrapCommand("python.exe", "bootstrap.py")
+func TestPortableBootstrapCommandArgumentsAndWindow(t *testing.T) {
+	cmd := newPortableBootstrapCommand(context.Background(), "python.exe", "bootstrap.py")
 	if cmd.SysProcAttr == nil {
 		t.Fatal("portable bootstrap command must configure Windows process attributes")
 	}

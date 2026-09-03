@@ -118,6 +118,16 @@ func (s *Server) startServiceWithManager(manager *service.Manager, name string, 
 	if manager == nil {
 		return service.ServiceInfo{}, fmt.Errorf("service manager unavailable")
 	}
+	name = strings.TrimSpace(name)
+	if name == adminFeishuServiceName {
+		if manager != s.Svc {
+			return service.ServiceInfo{}, service.ErrServiceNotFound
+		}
+		if err := s.StartChatFeishuBridge(); err != nil {
+			return service.ServiceInfo{}, err
+		}
+		return s.adminFeishuServiceInfo(), nil
+	}
 	svc, ok := manager.Find(name)
 	if !ok {
 		return service.ServiceInfo{}, service.ErrServiceNotFound
@@ -210,10 +220,21 @@ func (s *Server) serviceAutostart(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "bad request")
 		return
 	}
-	svc, ok := s.Svc.Find(q.Name)
-	if !ok {
-		bad(w, 404, "service not found")
-		return
+	q.Name = strings.TrimSpace(q.Name)
+	var svc service.ServiceInfo
+	if q.Name == adminFeishuServiceName {
+		if manager != s.Svc {
+			bad(w, http.StatusNotFound, "service not found")
+			return
+		}
+		svc = s.adminFeishuServiceInfo()
+	} else {
+		var found bool
+		svc, found = manager.Find(q.Name)
+		if !found {
+			bad(w, 404, "service not found")
+			return
+		}
 	}
 	if q.Enabled && !service.SupportsManualLifecycle(svc) {
 		bad(w, 400, "service autostart is managed by its Goal or checklist workflow")

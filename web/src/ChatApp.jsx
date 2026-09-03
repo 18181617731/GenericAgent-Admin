@@ -13,7 +13,7 @@ import { projectNameError, projectNameErrorText } from './lib/projectName.js'
 import { Collapse, Tag } from 'antd'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Lock, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Hand, KeyRound, Lock, Maximize, Maximize2, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { SETTINGS_TEXT } from './lib/i18n'
 import { KeychainPage } from './pages/KeychainPage'
@@ -32,8 +32,8 @@ import { parseBlocks, parseInline } from './lib/markdown.js'
 import { getAskUserPayload } from './lib/askUserPayload'
 import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ultraPlanTasks'
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
-import { normalizeSessionIds, runChatSessionBatch } from './lib/chatSessionManagement'
-import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, saveChatSessionDraft } from './lib/chatSessionDrafts'
+import { deleteChatSessions, normalizeSessionIds, runChatSessionBatch } from './lib/chatSessionManagement'
+import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, mergeChatSessionDraftSessions, saveChatSessionDraft } from './lib/chatSessionDrafts'
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
 import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
@@ -560,6 +560,193 @@ const normalizeToolParts = (parts = []) => {
     i = j - 1
   }
   return out
+}
+
+const isMermaidFence = (lang = '') => String(lang || '').trim().split(/\s+/, 1)[0].toLowerCase() === 'mermaid'
+
+let mermaidRenderSequence = 0
+let mermaidRenderQueue = Promise.resolve()
+
+const renderMermaidSvg = (source, colorScheme) => {
+  const render = async () => {
+    const module = await import('mermaid')
+    const mermaid = module.default || module
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: colorScheme === 'dark' ? 'dark' : 'neutral',
+    })
+    mermaidRenderSequence += 1
+    return mermaid.render(`oa-mermaid-${Date.now().toString(36)}-${mermaidRenderSequence}`, source)
+  }
+  const pending = mermaidRenderQueue.then(render, render)
+  mermaidRenderQueue = pending.then(() => undefined, () => undefined)
+  return pending
+}
+
+function MermaidDiagram({ source = '' }) {
+  const cardRef = useRef(null)
+  const hostRef = useRef(null)
+  const dragRef = useRef(null)
+  const fullscreenTriggerRef = useRef(null)
+  const bindFunctionsRef = useRef(null)
+  const [colorScheme, setColorScheme] = useState(() => globalThis.document?.documentElement?.dataset?.colorScheme || 'light')
+  const [state, setState] = useState({ status: 'loading', svg: '', error: '' })
+  const [mode, setMode] = useState('diagram')
+  const [panEnabled, setPanEnabled] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenPlaceholderHeight, setFullscreenPlaceholderHeight] = useState(0)
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
+
+  const resetView = useCallback(() => {
+    dragRef.current = null
+    setDragging(false)
+    setView({ scale: 1, x: 0, y: 0 })
+  }, [])
+
+  const changeZoom = useCallback((step) => {
+    setView(current => ({
+      ...current,
+      scale: Math.min(3, Math.max(.5, Number((current.scale + step).toFixed(2)))),
+    }))
+  }, [])
+
+  useEffect(() => {
+    const root = globalThis.document?.documentElement
+    if (!root || typeof globalThis.MutationObserver !== 'function') return undefined
+    const observer = new globalThis.MutationObserver(() => {
+      setColorScheme(root.dataset.colorScheme || 'light')
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ['data-color-scheme'] })
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    bindFunctionsRef.current = null
+    resetView()
+    setState({ status: 'loading', svg: '', error: '' })
+    renderMermaidSvg(source, colorScheme).then(({ svg, bindFunctions }) => {
+      if (!active) return
+      bindFunctionsRef.current = bindFunctions || null
+      setState({ status: 'ready', svg, error: '' })
+    }).catch(error => {
+      if (!active) return
+      setState({ status: 'error', svg: '', error: String(error?.message || error || ct('未知错误', 'Unknown error')) })
+    })
+    return () => { active = false }
+  }, [source, colorScheme, resetView])
+
+  const showingSource = mode === 'source' || state.status === 'error'
+
+  useLayoutEffect(() => {
+    if (!showingSource && state.status === 'ready' && hostRef.current && bindFunctionsRef.current) {
+      bindFunctionsRef.current(hostRef.current)
+    }
+  }, [showingSource, state.status, state.svg, isFullscreen])
+
+  const closeFullscreen = useCallback(() => {
+    setIsFullscreen(false)
+    globalThis.requestAnimationFrame?.(() => fullscreenTriggerRef.current?.focus())
+  }, [])
+
+  const openFullscreen = useCallback(() => {
+    setFullscreenPlaceholderHeight(cardRef.current?.getBoundingClientRect?.().height || 0)
+    setIsFullscreen(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return undefined
+    globalThis.requestAnimationFrame?.(() => fullscreenTriggerRef.current?.focus())
+    const previousOverflow = globalThis.document?.body?.style?.overflow || ''
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeFullscreen()
+    }
+    globalThis.document?.addEventListener('keydown', closeOnEscape)
+    if (globalThis.document?.body) globalThis.document.body.style.overflow = 'hidden'
+    return () => {
+      globalThis.document?.removeEventListener('keydown', closeOnEscape)
+      if (globalThis.document?.body) globalThis.document.body.style.overflow = previousOverflow
+    }
+  }, [closeFullscreen, isFullscreen])
+
+  const finishDrag = useCallback((event) => {
+    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
+    dragRef.current = null
+    setDragging(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }, [])
+
+  const handlePointerDown = useCallback((event) => {
+    if (!panEnabled || state.status !== 'ready' || event.button !== 0) return
+    dragRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, x: view.x, y: view.y }
+    setDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+  }, [panEnabled, state.status, view.x, view.y])
+
+  const handlePointerMove = useCallback((event) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    setView(current => ({
+      ...current,
+      x: drag.x + event.clientX - drag.clientX,
+      y: drag.y + event.clientY - drag.clientY,
+    }))
+    event.preventDefault()
+  }, [])
+
+  const controlsDisabled = state.status !== 'ready' || showingSource
+
+  const card = <div ref={cardRef} className={`oa-mermaid-card ${state.status === 'error' ? 'is-error' : ''} ${isFullscreen ? 'is-fullscreen' : ''}`}>
+    <div className="oa-code-head oa-mermaid-head">
+      <div className="oa-mermaid-modes" role="group" aria-label={ct('Mermaid 显示模式', 'Mermaid display mode')}>
+        <button type="button" className={showingSource ? '' : 'is-active'} aria-pressed={!showingSource} onClick={() => setMode('diagram')} disabled={state.status === 'error'}>{ct('图表', 'Diagram')}</button>
+        <button type="button" className={showingSource ? 'is-active' : ''} aria-pressed={showingSource} onClick={() => setMode('source')}>{ct('源码', 'Source')}</button>
+      </div>
+      <div className="oa-mermaid-tools">
+        <button type="button" className={`oa-mermaid-tool ${panEnabled ? 'is-active' : ''}`} aria-label={ct('平移模式', 'Pan mode')} aria-pressed={panEnabled} title={ct('平移模式', 'Pan mode')} disabled={controlsDisabled} onClick={() => setPanEnabled(value => !value)}><Hand size={14} /></button>
+        <button type="button" className="oa-mermaid-tool" aria-label={ct('缩小', 'Zoom out')} title={ct('缩小', 'Zoom out')} disabled={controlsDisabled || view.scale <= .5} onClick={() => changeZoom(-.2)}><ZoomOut size={14} /></button>
+        <span className="oa-mermaid-scale" aria-label={ct('当前缩放比例', 'Current zoom')}>{Math.round(view.scale * 100)}%</span>
+        <button type="button" className="oa-mermaid-tool" aria-label={ct('放大', 'Zoom in')} title={ct('放大', 'Zoom in')} disabled={controlsDisabled || view.scale >= 3} onClick={() => changeZoom(.2)}><ZoomIn size={14} /></button>
+        <button type="button" className="oa-mermaid-tool" aria-label={ct('复位视图', 'Reset view')} title={ct('复位视图', 'Reset view')} disabled={controlsDisabled} onClick={resetView}><Maximize2 size={14} /></button>
+        <button ref={fullscreenTriggerRef} type="button" className="oa-mermaid-tool" aria-label={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} title={isFullscreen ? ct('退出全屏', 'Exit fullscreen') : ct('全屏查看', 'View fullscreen')} disabled={state.status !== 'ready'} onClick={isFullscreen ? closeFullscreen : openFullscreen}>{isFullscreen ? <X size={14} /> : <Maximize size={14} />}</button>
+        <CopyButton text={source} compact />
+      </div>
+    </div>
+    {!showingSource && state.status === 'loading' && <div className="oa-mermaid-status" role="status">{ct('正在绘制图表…', 'Rendering diagram…')}</div>}
+    {!showingSource && state.status === 'ready' && <div
+      className={`oa-mermaid-viewport ${panEnabled ? 'is-pan-enabled' : ''} ${dragging ? 'is-dragging' : ''}`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+      onLostPointerCapture={() => { dragRef.current = null; setDragging(false) }}
+    >
+      <div
+        ref={hostRef}
+        className="oa-mermaid-diagram"
+        role="img"
+        aria-label={ct('Mermaid 图表', 'Mermaid diagram')}
+        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+        dangerouslySetInnerHTML={{ __html: state.svg }}
+      />
+    </div>}
+    {state.status === 'error' && <div className="oa-mermaid-error" role="alert">{ct('图表语法无效，已显示源码：', 'Invalid diagram syntax; showing source:')} {state.error}</div>}
+    {showingSource && <pre className="oa-mermaid-source"><code>{source}</code></pre>}
+  </div>
+
+  if (!isFullscreen) return card
+  return <>
+    <div className="oa-mermaid-fullscreen-placeholder" aria-hidden="true" style={{ height: fullscreenPlaceholderHeight }} />
+    {createPortal(<div className="oa-mermaid-fullscreen" role="dialog" aria-modal="true" aria-label={ct('Mermaid 图表全屏查看', 'Mermaid diagram fullscreen view')}>
+      {card}
+    </div>, globalThis.document.body)}
+  </>
 }
 
 const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply, onQuickReply, quickReplyDisabled = false }) {
@@ -3106,7 +3293,13 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
-  const savedFilePaths = m.role === 'user' ? extractSavedFilePaths(m.content) : []
+  const nonImageFiles = messageFiles.filter(file => !isImageFile(file))
+  const metadataFilePaths = nonImageFiles
+    .map(file => String(file?.path || file?.Path || '').trim())
+    .filter(Boolean)
+  const savedFilePaths = m.role === 'user'
+    ? (metadataFilePaths.length > 0 ? metadataFilePaths : extractSavedFilePaths(m.content))
+    : []
   const pendingFiles = savedFilePaths.length > 0 ? [] : messageFiles.filter((file) => !isImageFile(file))
   const modelIdentity = messageModelIdentity(m, models)
   const turnUsages = m.role === 'assistant' && Array.isArray(m.usages) && m.usages.length > 0 ? m.usages : null
@@ -3169,7 +3362,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <MarkdownBlock text={userText} />)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <div className="oa-msg-text"><MarkdownBlock text={userText} /></div>)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
       </div>
@@ -3192,7 +3385,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
   </>
 })
 
-function ComposerActions({ onAttach, onCommands, onSystemPrompt, commandsOpen, systemPromptActive, systemPromptLabel }) {
+export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const fallbackTriggerRef = useRef(null)
@@ -3640,6 +3833,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const streamAbortRef = useRef(null)
   const chatInstanceRef = useRef(chatInstanceID)
   const chatRequestEpochRef = useRef(0)
+  const chatLaunchIntentRef = useRef(readChatLaunchIntent())
+  const chatLaunchStartedRef = useRef(false)
+  const openedChatInstanceRef = useRef('')
   useEffect(() => {
     if (!collapsed || !sidebarFocusPendingRef.current) return undefined
     sidebarFocusPendingRef.current = false
@@ -3735,7 +3931,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
-  const didInitializeChatInstanceRef = useRef(false)
   useEffect(() => {
     setSessionSearchHistory(loadSessionSearchHistory(chatInstanceID))
     setDraftSessionIds(new Set(listChatSessionDraftIds(chatInstanceID)))
@@ -4321,10 +4516,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLoopObjectiveError(false)
     setErr('')
     try {
-      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, controller_llm_no:controllerLlmNo }) })
+      const result = await chatApi(`/api/chat/loop/${id}/start`, { method:'POST', body:JSON.stringify({ objective, max_rounds:maxRounds, controller_llm_no:controllerLlmNo }) })
       setLoopObjective(objective)
       setLoopControllerLlmNo(controllerLlmNo)
-      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, controller_prompt:objective, controller_llm_no:controllerLlmNo }
+      const nextLoopState = result.loop || { enabled:true, status:'waiting', round:0, max_rounds:maxRounds, controller_prompt:objective, controller_llm_no:controllerLlmNo }
       setLoopState(nextLoopState)
       setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
       if (usesCurrentPrompt) {
@@ -4707,7 +4902,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await api('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
+    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
     if (openToken !== openSeqRef.current) return
     forgetSessionScroll(sessionScrollSnapshotsRef.current, d.id)
     pendingSessionScrollRestoreRef.current = null
@@ -4718,10 +4913,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? firstRuntimeModelNo(llms))
     await loadChatState(d.id, openToken)
     if (projectMode) await loadSessions(d.id)
+    return d.id
   }
 
   const newSession = async () => {
-    await createSession()
+    return createSession()
   }
 
   const newProjectSession = async (projectMode) => {
@@ -4949,6 +5145,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     try {
       await chatApi(`/api/chat/session/${id}`, { method:'DELETE' })
       clearSessionDrafts(id)
+      forgetSessionScroll(sessionScrollSnapshotsRef.current, id)
       const activeDeleted = id === sid
       setSessions(xs => xs.filter(x => x.id !== id))
       if (activeDeleted) clearSessionView({ noticeText:ct('会话已删除', 'Session deleted') })
@@ -5038,11 +5235,16 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setErr('')
     setNotice('')
     try {
-      const result = await runChatSessionBatch(ids, actionOne)
+      const result = action === 'delete'
+        ? await deleteChatSessions(ids, actionOne)
+        : await runChatSessionBatch(ids, actionOne)
+      if (action === 'delete') result.succeededIds = result.deletedIds
       if (action === 'delete') clearSessionDrafts(result.succeededIds)
-      const currentRemoved = (action === 'archive' || action === 'delete') && result.succeededIds.includes(currentID)
+      const succeededIds = result.succeededIds
+      if (action === 'delete') forgetSessionScroll(sessionScrollSnapshotsRef.current, result.deletedIds)
+      const currentRemoved = (action === 'archive' || action === 'delete') && succeededIds.includes(currentID)
       if (currentRemoved) clearSessionView()
-      let active = sessions.filter(session => !result.succeededIds.includes(session.id) || (action !== 'archive' && action !== 'delete'))
+      let active = sessions.filter(session => !succeededIds.includes(session.id) || (action !== 'archive' && action !== 'delete'))
       let refreshError = ''
       try { active = await refreshManagedSessionLists() }
       catch (error) { refreshError = error?.message || String(error) }
@@ -5055,7 +5257,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         const detail = result.failures[0]?.error?.message || refreshError
         setErr(ct(`${result.failedIds.length || ids.length} 个会话处理失败${detail ? `：${detail}` : ''}`, `${result.failedIds.length || ids.length} session action(s) failed${detail ? `: ${detail}` : ''}`))
       } else {
-        setNotice(successText(result.succeededIds.length))
+        setNotice(successText(succeededIds.length))
       }
     } catch (error) {
       setErr(error?.message || String(error))
@@ -6030,8 +6232,35 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   useEffect(() => {
     const initialize = async () => {
+      loadPromptPresets().catch(e=>setErr(e.message))
+      api('/api/instances').then(payload => {
+        const options = chatInstanceOptions(payload)
+        setChatInstances(options)
+        const serverDefaultID = payload?.default_instance_id || payload?.default_id
+        if (!chatInstanceRef.current && serverDefaultID) {
+          const defaultID = String(serverDefaultID).trim()
+          chatInstanceRef.current = defaultID
+          setChatInstanceID(defaultID)
+          setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, defaultID)))
+          persistChatInstanceID(defaultID)
+        }
+      }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
+    }
+    void initialize()
+    return () => streamAbortRef.current?.abort?.()
+  }, [])
+
+  useEffect(() => {
+    if (chatInstancesLoading) return
+    const instanceKey = chatInstanceID || '__default__'
+    if (openedChatInstanceRef.current === instanceKey) return
+    openedChatInstanceRef.current = instanceKey
+    const intent = chatLaunchIntentRef.current
+    const openInitialChat = async () => {
       try {
         const draft = memoryDraftRef.current
+        if (draft && chatLaunchStartedRef.current) return
+        if (draft) chatLaunchStartedRef.current = true
         if (draft) {
           await newSession()
           setPrompt(draft.prompt)
@@ -6039,35 +6268,22 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           window.setTimeout(() => promptRef.current?.focus(), 0)
           return
         }
-        await loadSessions('', { open:true })
+        if (!intent.newChat || chatLaunchStartedRef.current) {
+          await loadSessions('', { open:true })
+          return
+        }
+        chatLaunchStartedRef.current = true
+        const newSessionID = await createSession()
+        if (!newSessionID) return
+        if (intent.prompt) setSessionPrompt(intent.prompt, newSessionID)
+        clearChatLaunchIntent()
+        requestAnimationFrame(() => promptRef.current?.focus())
       } catch (error) {
-        setErr(error?.message || String(error))
+        if (error?.name !== 'AbortError') setErr(error?.message || String(error))
       }
     }
-    initialize()
-    loadPromptPresets().catch(e=>setErr(e.message))
-    api('/api/instances').then(payload => {
-      const options = chatInstanceOptions(payload)
-      setChatInstances(options)
-      const serverDefaultID = payload?.default_instance_id || payload?.default_id
-      if (!chatInstanceRef.current && serverDefaultID) {
-        const defaultID = String(serverDefaultID).trim()
-        chatInstanceRef.current = defaultID
-        setChatInstanceID(defaultID)
-        setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, defaultID)))
-        persistChatInstanceID(defaultID)
-      }
-    }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
-    return () => streamAbortRef.current?.abort?.()
-  }, [])
-
-  useEffect(() => {
-    if (!didInitializeChatInstanceRef.current) {
-      didInitializeChatInstanceRef.current = true
-      return undefined
-    }
-    loadSessions('', { open:true }).catch(e => { if (e?.name !== 'AbortError') setErr(e.message) })
-  }, [chatInstanceID])
+    void openInitialChat()
+  }, [chatInstanceID, chatInstancesLoading])
 
   useEffect(() => {
     let stopped = false
@@ -6579,7 +6795,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <button ref={sidebarToggleRef} className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title={ct('展开侧栏', 'Expand sidebar')} aria-label={ct('展开侧栏', 'Expand sidebar')} aria-controls="oa-chat-sidebar" aria-expanded={!collapsed}><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}>Project: {current.project_mode}</span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}><FolderOpen size={12} aria-hidden="true"/><span>{current.project_mode}</span></span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
         <div className="oa-topbar-actions" aria-label={ct('聊天工具', 'Chat tools')}>
           <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid || privacyMode} title={privacyMode ? ct('当前视图不可查看上下文', 'Context unavailable in the current view') : contextHelpText} aria-label={privacyMode ? ct('当前视图不可查看模型上下文', 'Model context unavailable in the current view') : ct('查看模型上下文', 'View model context')}>
             <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span>{!privacyMode && <span className="oa-context-count">{rawHistory?.length || 0}</span>}{!privacyMode && <ChatFeatureHelp text={contextHelpText}/>}
@@ -6664,7 +6880,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>}
         {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onQuickReply={send} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
         {!privacyMode && <SubagentStatusPanel states={subagents}/>}
-        {showFollow && <div className="oa-follow-row"><button className="oa-follow-btn" type="button" onClick={resumeFollow}><ChevronDown size={16}/>继续跟随</button></div>}
+        {(showJumpSent || showFollow) && <div className="oa-follow-row">
+          {showFollow && <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={ct('继续跟随最新消息', 'Follow the latest message')} aria-label={ct('继续跟随最新消息', 'Follow the latest message')}><ChevronDown size={16}/><span className="sr-only">继续跟随</span></button>}
+          {showJumpSent && <button className="oa-follow-btn" type="button" onClick={jumpToPreviousSent} title={ct('跳转到上一条发送消息', 'Jump to previous sent message')} aria-label={ct('跳转到上一条发送消息', 'Jump to previous sent message')}><ChevronUp size={16}/></button>}
+        </div>}
         <div ref={endRef}/>
       </section>
 

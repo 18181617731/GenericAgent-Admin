@@ -58,6 +58,7 @@ func parseOptionalBoolString(v string) bool {
 }
 
 type ModelConfig struct {
+	InstanceID            string                 `json:"instance_id,omitempty"`
 	Model                 string                 `json:"model"`
 	Name                  string                 `json:"name,omitempty"`
 	SortOrder             *int                   `json:"sort_order,omitempty"`
@@ -138,6 +139,7 @@ func ModelConfigEnabled(config ModelConfig) bool {
 
 type Profile struct {
 	VarName            string                 `json:"var_name"`
+	DisplayName        string                 `json:"display_name,omitempty"`
 	SourceVarName      string                 `json:"source_var_name,omitempty"`
 	ProviderSortOrder  *int                   `json:"provider_sort_order,omitempty"`
 	Type               string                 `json:"type"`
@@ -163,6 +165,7 @@ type Profile struct {
 type FailoverMember struct {
 	ProviderVarName string `json:"provider_var_name"`
 	Model           string `json:"model"`
+	InstanceID      string `json:"instance_id,omitempty"`
 }
 
 type FailoverGroup struct {
@@ -307,6 +310,7 @@ func normalizeProfiles(profiles []Profile) []Profile {
 }
 
 func normalizeProfile(p Profile) Profile {
+	p.DisplayName = strings.TrimSpace(p.DisplayName)
 	configs := profileModelConfigs(p)
 	p.ModelConfigs = configs
 	p.Models = make([]string, 0, len(configs))
@@ -445,15 +449,25 @@ func validateProfiles(profiles []Profile, allowMaskedSecrets bool) error {
 			return fmt.Errorf("var_name must contain api/config/cookie: %s", p.VarName)
 		}
 		configs := profileModelConfigs(p)
-		modelSeen := map[string]bool{}
+		modelInstances := map[string][]string{}
+		instanceSeen := map[string]bool{}
 		for i, config := range configs {
 			if config.Model == "" {
 				return fmt.Errorf("model is required at index %d", i)
 			}
-			if modelSeen[config.Model] {
-				return fmt.Errorf("duplicate model: %s", config.Model)
+			instanceID := strings.TrimSpace(config.InstanceID)
+			if instanceID != "" {
+				if instanceSeen[instanceID] {
+					return fmt.Errorf("duplicate model instance_id: %s", instanceID)
+				}
+				instanceSeen[instanceID] = true
 			}
-			modelSeen[config.Model] = true
+			for _, previousID := range modelInstances[config.Model] {
+				if instanceID == "" || previousID == "" {
+					return fmt.Errorf("duplicate model: %s requires instance_id", config.Model)
+				}
+			}
+			modelInstances[config.Model] = append(modelInstances[config.Model], instanceID)
 			if config.MaxRetries != nil && *config.MaxRetries < 0 {
 				return fmt.Errorf("max_retries must be zero or greater for model %s", config.Model)
 			}
@@ -548,6 +562,7 @@ func legacyFailoverGroups(profiles []Profile) []FailoverGroup {
 				member: FailoverMember{
 					ProviderVarName: profile.VarName,
 					Model:           config.Model,
+					InstanceID:      config.InstanceID,
 				},
 				config: config,
 			})
@@ -584,20 +599,28 @@ func resolveFailoverGroups(profiles []Profile, groups []FailoverGroup) ([]resolv
 		sessionName string
 		family      string
 	}
-	targets := map[string]map[string]memberTarget{}
+	type providerTargets struct {
+		byInstance map[string]memberTarget
+		byModel    map[string][]memberTarget
+	}
+	targets := map[string]providerTargets{}
 	generatedNames := map[string]bool{}
 	for _, profile := range profiles {
 		family := "legacy"
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(profile.Type)), "native_") {
 			family = "native"
 		}
-		byModel := map[string]memberTarget{}
+		provider := providerTargets{byInstance: map[string]memberTarget{}, byModel: map[string][]memberTarget{}}
 		for index, config := range profileModelConfigs(profile) {
 			sessionName := expandedVarName(profile.VarName, index)
 			generatedNames[sessionName] = true
-			byModel[config.Model] = memberTarget{sessionName: sessionName, family: family}
+			target := memberTarget{sessionName: sessionName, family: family}
+			if instanceID := strings.TrimSpace(config.InstanceID); instanceID != "" {
+				provider.byInstance[instanceID] = target
+			}
+			provider.byModel[config.Model] = append(provider.byModel[config.Model], target)
 		}
-		targets[profile.VarName] = byModel
+		targets[profile.VarName] = provider
 	}
 
 	seenGroups := map[string]bool{}
@@ -628,13 +651,25 @@ func resolveFailoverGroups(profiles []Profile, groups []FailoverGroup) ([]resolv
 		for memberIndex, member := range group.Members {
 			providerVarName := strings.TrimSpace(member.ProviderVarName)
 			model := strings.TrimSpace(member.Model)
-			byModel, ok := targets[providerVarName]
+			provider, ok := targets[providerVarName]
 			if !ok {
 				return nil, fmt.Errorf("unknown provider_var_name %q in failover group %s", providerVarName, group.VarName)
 			}
-			target, ok := byModel[model]
-			if !ok {
-				return nil, fmt.Errorf("unknown model %q for provider %s in failover group %s", model, providerVarName, group.VarName)
+			var target memberTarget
+			if instanceID := strings.TrimSpace(member.InstanceID); instanceID != "" {
+				target, ok = provider.byInstance[instanceID]
+				if !ok {
+					return nil, fmt.Errorf("unknown model instance_id %q for provider %s in failover group %s", instanceID, providerVarName, group.VarName)
+				}
+			} else {
+				matches := provider.byModel[model]
+				if len(matches) == 0 {
+					return nil, fmt.Errorf("unknown model %q for provider %s in failover group %s", model, providerVarName, group.VarName)
+				}
+				if len(matches) > 1 {
+					return nil, fmt.Errorf("model %q is ambiguous for provider %s in failover group %s; instance_id is required", model, providerVarName, group.VarName)
+				}
+				target = matches[0]
 			}
 			if seenMembers[target.sessionName] {
 				return nil, fmt.Errorf("duplicate member at index %d in failover group %s", memberIndex, group.VarName)
@@ -721,6 +756,10 @@ def mask(s):
 profiles_by_var={}
 profile_order=[]
 declaration_order_by_var={}
+aggregation_key_by_var={}
+model_instances=getattr(mod, '_ga_admin_model_instances', {})
+if not isinstance(model_instances, dict):
+    model_instances={}
 identity_by_var={}
 mixin_groups_raw=[]
 for mixin_var, mixin_value in vars(mod).items():
@@ -794,6 +833,9 @@ for var, value in vars(mod).items():
         p.update(failover_values)
     for src,dst in [('models','models'),('stream','stream'),('max_retries','max_retries'),('read_timeout','read_timeout'),('connect_timeout','connect_timeout'),('user_agent','user_agent'),('api_mode','api_mode'),('service_tier','service_tier'),('thinking_type','thinking_type'),('reasoning_effort','reasoning_effort'),('fake_cc_system_prompt','fake_cc_system_prompt')]:
         if src in d: p[dst]=d.pop(src)
+    instance_id=model_instances.get(var)
+    if isinstance(instance_id, str) and instance_id:
+        p['instance_id']=instance_id
     p['extra']=d
     p['sort_order']=len(profile_order)
     profiles_by_var[var]=p
@@ -813,7 +855,7 @@ def model_configs_of(profile):
     if not model:
         return []
     config={'model':model}
-    for key in ('name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','service_tier','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
+    for key in ('instance_id','name','sort_order','stream','max_retries','read_timeout','connect_timeout','user_agent','api_mode','service_tier','thinking_type','reasoning_effort','fake_cc_system_prompt','failover_order','failover_max_retries','failover_base_delay','failover_spring_back'):
         if key in profile:
             config[key]=profile[key]
     extra=profile.get('extra')
@@ -844,9 +886,12 @@ if isinstance(groups, dict):
         else:
             continue
         configs=[]
-        seen_models=set()
+        seen_config_keys=set()
         declaration_order_by_model={}
-        child_configs_by_model={}
+        child_configs_by_key={}
+        display_names=meta.get('display_names', {}) if meta else {}
+        if not isinstance(display_names, dict):
+            display_names={}
         for child_var in child_vars:
             if not isinstance(child_var, str) or child_var not in profiles_by_var:
                 continue
@@ -856,32 +901,42 @@ if isinstance(groups, dict):
                 declaration_order_by_model[child_model]=declaration_order_by_var[child_var]
             for child_config in model_configs_of(child_profile):
                 child_config_model=str(child_config.get('model', '') or '').strip()
-                if child_config_model and child_config_model not in child_configs_by_model:
-                    child_configs_by_model[child_config_model]=child_config
+                child_instance_id=str(child_config.get('instance_id', '') or '').strip()
+                child_key=('instance:'+child_instance_id) if child_instance_id else ('model:'+child_config_model)
+                if child_config_model and child_key not in child_configs_by_key:
+                    child_configs_by_key[child_key]=child_config
         managed_configs=meta.get('model_configs', []) if meta else []
-        if isinstance(managed_configs, list) and managed_configs:
-            for config in managed_configs:
-                if not isinstance(config, dict):
-                    continue
-                config=dict(config)
-                model=str(config.get('model', '')).strip()
-                if model and model not in seen_models:
-                    child_config=child_configs_by_model.get(model)
-                    if child_config and not str(config.get('name', '') or '').strip():
-                        child_name=str(child_config.get('name', '') or '').strip()
-                        if child_name:
-                            config['name']=child_name
-                    if model in declaration_order_by_model:
-                        config['sort_order']=declaration_order_by_model[model]
-                    seen_models.add(model)
-                    configs.append(config)
-        else:
+        config_sources=managed_configs if isinstance(managed_configs, list) and managed_configs else []
+        if not config_sources:
             for child in children:
-                for config in model_configs_of(child):
-                    model=str(config.get('model', '')).strip()
-                    if model and model not in seen_models:
-                        seen_models.add(model)
-                        configs.append(config)
+                config_sources.extend(model_configs_of(child))
+        for config in config_sources:
+            if not isinstance(config, dict):
+                continue
+            config=dict(config)
+            model=str(config.get('model', '')).strip()
+            if model:
+                instance_id=str(config.get('instance_id', '') or '').strip()
+                config_key=('instance:'+instance_id) if instance_id else ('model:'+model)
+                if config_key in seen_config_keys:
+                    continue
+                child_config=child_configs_by_key.get(config_key)
+                if child_config is None and not instance_id:
+                    child_config=child_configs_by_key.get('model:'+model)
+                if child_config and not str(config.get('name', '') or '').strip():
+                    child_name=str(child_config.get('name', '') or '').strip()
+                    if child_name:
+                        config['name']=child_name
+                if not str(config.get('name', '') or '').strip():
+                    for child_var in child_vars:
+                        child_name=display_names.get(child_var)
+                        if isinstance(child_name, str) and child_name.strip():
+                            config['name']=child_name.strip()
+                            break
+                if model in declaration_order_by_model:
+                    config['sort_order']=declaration_order_by_model[model]
+                seen_config_keys.add(config_key)
+                configs.append(config)
         models=[config['model'] for config in configs]
         base['var_name']=provider
         provider_sort_order=meta.get('provider_sort_order') if meta else None
@@ -890,6 +945,8 @@ if isinstance(groups, dict):
         if children:
             base['source_var_name']=children[0].get('source_var_name', '')
         if meta:
+            display_name=str(meta.get('display_name', '') or '').strip()
+            base['display_name']=display_name
             base['type']=str(meta.get('type', base.get('type', 'native_oai')) or 'native_oai')
             base['name']=str(meta.get('name', base.get('name', '')) or '')
             base['apibase']=str(meta.get('apibase', base.get('apibase', '')) or '')
@@ -932,12 +989,14 @@ for profile in profiles:
         continue
     base=merged_profiles[provider_index[aggregation_key]]
     configs=[]
-    seen_models=set()
+    seen_config_keys=set()
     for source in (base, profile):
         for config in model_configs_of(source):
             model=str(config.get('model', '')).strip()
-            if model and model not in seen_models:
-                seen_models.add(model)
+            instance_id=str(config.get('instance_id', '') or '').strip()
+            config_key=('instance:'+instance_id) if instance_id else ('model:'+model)
+            if model and config_key not in seen_config_keys:
+                seen_config_keys.add(config_key)
                 configs.append(config)
     models=[config['model'] for config in configs]
     base['model']=models[0] if models else ''
@@ -972,6 +1031,9 @@ for source_var, source_profile in profiles_by_var.items():
     if not isinstance(final_var, str) or not final_var or not model:
         continue
     target={'provider_var_name':final_var, 'model':model}
+    instance_id=source_profile.get('instance_id')
+    if isinstance(instance_id, str) and instance_id:
+        target['instance_id']=instance_id
     session_targets[source_var]=target
     source_name=source_profile.get('name')
     if isinstance(source_name, str) and source_name:
@@ -1112,6 +1174,7 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 		groupMeta := map[string]interface{}{
 			"children":      childVars,
 			"model_configs": configs,
+			"display_name":  p.DisplayName,
 			"type":          p.Type,
 			"name":          p.Name,
 			"apibase":       p.APIBase,
@@ -1180,6 +1243,12 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 
 	var b strings.Builder
 	b.WriteString("# -*- coding: utf-8 -*-\n# Auto-generated by GenericAgent-Admin-Go.\n# Review before copying to mykey.py. Keep this file private.\n# GenericAgent discovers official config dicts by variable name: native_claude/native_oai/claude/oai or api/config/cookie.\n\n")
+	modelInstances := map[string]interface{}{}
+	for _, entry := range entries {
+		if instanceID := strings.TrimSpace(entry.config.InstanceID); instanceID != "" {
+			modelInstances[expandedVarName(entry.profile.VarName, entry.localIndex)] = instanceID
+		}
+	}
 	for _, entry := range entries {
 		p := entry.profile
 		config := entry.config
@@ -1232,6 +1301,11 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 		}
 		b.WriteString(fmt.Sprintf("%s = %s\n\n", expandedVarName(p.VarName, entry.localIndex), dict))
 	}
+	modelInstancesDict, err := pyDict(modelInstances)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(fmt.Sprintf("# Admin-only model instance metadata; GenericAgent ignores underscore-prefixed variables.\n_ga_admin_model_instances = %s\n", modelInstancesDict))
 	providerGroupsDict, err := pyDict(providerGroups)
 	if err != nil {
 		return "", err

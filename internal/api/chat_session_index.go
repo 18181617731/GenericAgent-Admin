@@ -9,7 +9,7 @@ import (
 	"genericagent-admin-go/internal/config"
 )
 
-const chatSessionListIndexVersion = 1
+const chatSessionListIndexVersion = 2
 
 type chatSessionSummary struct {
 	ID          string        `json:"id"`
@@ -21,6 +21,7 @@ type chatSessionSummary struct {
 	ProjectMode string        `json:"project_mode,omitempty"`
 	HubEnabled  bool          `json:"hub_enabled,omitempty"`
 	Pinned      bool          `json:"pinned,omitempty"`
+	Archived    bool          `json:"archived,omitempty"`
 	Loop        chatLoopState `json:"loop"`
 }
 
@@ -50,6 +51,7 @@ func summaryFromChatSession(cs chatSession) chatSessionSummary {
 		ProjectMode: cs.ProjectMode,
 		HubEnabled:  cs.HubEnabled,
 		Pinned:      cs.Pinned,
+		Archived:    cs.Archived,
 		Loop:        cs.Loop,
 	}
 }

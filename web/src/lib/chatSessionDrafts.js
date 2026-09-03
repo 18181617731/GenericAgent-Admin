@@ -62,7 +62,10 @@ function scopedStorage(first, second) {
 
 export function listChatSessionDraftIds(storageOrInstanceID, instanceIDOrStorage) {
   const { storage, instanceID } = scopedStorage(storageOrInstanceID, instanceIDOrStorage)
-  return Object.keys(readDraftMap(storage, instanceID))
+  const ids = Object.keys(readDraftMap(storage, instanceID))
+  const includeLegacy = isStorage(storageOrInstanceID) && instanceID !== undefined && instanceKey(instanceID) !== DEFAULT_INSTANCE_KEY
+  if (!includeLegacy) return ids
+  return [...new Set([...Object.keys(readDraftMap(storage)), ...ids])]
 }
 
 export function loadChatSessionDraft(sessionOrInstanceID, storageOrSessionID, maybeStorage) {
@@ -91,6 +94,30 @@ export function saveChatSessionDraft(...args) {
   if (draft) drafts[id] = draft
   else delete drafts[id]
   writeDraftMap(drafts, storage, instanceID)
+}
+
+export function mergeChatSessionDraftSessions(sessions, instanceID, storage) {
+  const sourceSessions = Array.isArray(sessions) ? sessions : []
+  const serverSessions = sourceSessions.filter(session => !session?.local_draft)
+  const serverIDs = new Set(serverSessions.map(session => String(session?.id || '').trim()).filter(Boolean))
+  const scope = instanceKey(instanceID)
+  const draftEntries = Object.entries(readDraftMap(storage, instanceID))
+  if (scope !== DEFAULT_INSTANCE_KEY) {
+    const scopedIDs = new Set(draftEntries.map(([id]) => id))
+    for (const entry of Object.entries(readDraftMap(storage))) {
+      if (!scopedIDs.has(entry[0])) draftEntries.push(entry)
+    }
+  }
+  const draftSessions = draftEntries
+    .filter(([id]) => id && !serverIDs.has(id))
+    .map(([id]) => ({
+      id,
+      title: '',
+      count: 0,
+      updated_at: new Date().toISOString(),
+      local_draft: true,
+    }))
+  return draftSessions.concat(serverSessions)
 }
 
 export function clearChatSessionDrafts(instanceOrSessionIds, sessionIdsOrStorage, maybeStorage) {

@@ -190,6 +190,7 @@ type chatLoopState struct {
 	Status                string           `json:"status"`
 	Epoch                 int64            `json:"epoch"`
 	Round                 int              `json:"round"`
+	MaxRounds             int              `json:"max_rounds"`
 	StopReason            string           `json:"stop_reason,omitempty"`
 	ControllerPrompt      string           `json:"controller_prompt,omitempty"`
 	ControllerLLMNo       int              `json:"controller_llm_no"`
@@ -544,12 +545,16 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	finalLLMNo := &selectedLLMNo
 	worker, err := s.getChatWorker(sid)
 	if err != nil {
+		if token != nil && !s.ownsChatRun(sid, token) {
+			s.endChatRunOwned(sid, token)
+			return
+		}
 		msg := newChatErrorMessage(pendingID, fmt.Sprintf("提交失败：%v", err), finalLLMNo, chatErrorSourceProject, elapsedMillis())
 		cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, msg)
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
-		s.endChatRunOwned(sid, token)
 		s.afterChatRunTerminal(sid, false)
+		s.endChatRunOwned(sid, token)
 		return
 	}
 	s.setChatRunCmd(sid, worker.Cmd)
@@ -570,8 +575,8 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		cs.Messages = replacePendingChatMessage(cs.Messages, pendingID, msg)
 		_ = saveTerminal(cs)
 		s.publishChatRun(sid, map[string]interface{}{"type": "error", "message": msg})
-		s.endChatRunOwned(sid, token)
 		s.afterChatRunTerminal(sid, false)
+		s.endChatRunOwned(sid, token)
 		return
 	}
 	reader := bufio.NewReaderSize(worker.Stdout, 64*1024)

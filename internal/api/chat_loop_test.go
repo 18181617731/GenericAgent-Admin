@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +13,54 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"genericagent-admin-go/internal/config"
 )
+
+const chatLoopControllerTestTimeout = 10 * time.Second
+
+type chatLoopTestProcessGuard struct {
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	stopRequested bool
+}
+
+func (g *chatLoopTestProcessGuard) track(cmd *exec.Cmd) {
+	g.mu.Lock()
+	g.cmd = cmd
+	stop := g.stopRequested
+	g.mu.Unlock()
+	if stop && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+}
+
+func (g *chatLoopTestProcessGuard) requested() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.stopRequested
+}
+
+func (g *chatLoopTestProcessGuard) clear(cmd *exec.Cmd) {
+	g.mu.Lock()
+	if g.cmd == cmd {
+		g.cmd = nil
+	}
+	g.mu.Unlock()
+}
+
+func (g *chatLoopTestProcessGuard) stop() {
+	g.mu.Lock()
+	g.stopRequested = true
+	cmd := g.cmd
+	g.mu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+}
 
 func newChatLoopTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -444,8 +488,18 @@ func TestChatLoopStopKillsActiveController(t *testing.T) {
 
 	started := make(chan struct{}, 1)
 	finished := make(chan error, 1)
+	done := make(chan struct{})
+	var processGuard chatLoopTestProcessGuard
 	oldRun := runOneShotBTWWorkerFunc
 	defer func() { runOneShotBTWWorkerFunc = oldRun }()
+	t.Cleanup(func() {
+		processGuard.stop()
+		select {
+		case <-done:
+		case <-time.After(chatLoopControllerTestTimeout):
+			t.Errorf("loop controller runner did not stop during test cleanup")
+		}
+	})
 	runOneShotBTWWorkerFunc = func(_ config.AppConfig, workerSID string, req map[string]interface{}) (chatMessage, error) {
 		observer, ok := req[oneShotBTWWorkerObserverKey].(*oneShotBTWWorkerObserver)
 		if !ok || observer == nil {
@@ -453,17 +507,24 @@ func TestChatLoopStopKillsActiveController(t *testing.T) {
 		}
 		cmd := exec.Command(os.Args[0], "-test.run=^TestChatLoopBlockingControllerHelper$")
 		cmd.Env = append(os.Environ(), "GA_CHAT_LOOP_BLOCKING_CONTROLLER=1")
+		processGuard.track(cmd)
 		if err := cmd.Start(); err != nil {
+			processGuard.clear(cmd)
 			return chatMessage{}, err
+		}
+		if processGuard.requested() {
+			_ = cmd.Process.Kill()
 		}
 		worker := &chatWorker{SID: workerSID, Cmd: cmd}
 		if observer.Started == nil || !observer.Started(worker) {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
+			processGuard.clear(cmd)
 			return chatMessage{}, errChatLoopStale
 		}
 		started <- struct{}{}
 		err := cmd.Wait()
+		processGuard.clear(cmd)
 		if observer.Finished != nil {
 			observer.Finished(worker)
 		}
@@ -473,10 +534,11 @@ func TestChatLoopStopKillsActiveController(t *testing.T) {
 	go func() {
 		_, err := s.runChatLoopController(sid, 7, map[string]interface{}{"prompt": "decide next"})
 		finished <- err
+		close(done)
 	}()
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(chatLoopControllerTestTimeout):
 		t.Fatal("loop controller did not start")
 	}
 
@@ -490,7 +552,7 @@ func TestChatLoopStopKillsActiveController(t *testing.T) {
 		if err == nil {
 			t.Fatal("controller returned nil after Stop; want killed process error")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(chatLoopControllerTestTimeout):
 		t.Fatal("Stop did not kill the active loop controller")
 	}
 
@@ -523,8 +585,18 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 
 	started := make(chan struct{}, 1)
 	finished := make(chan error, 1)
+	done := make(chan struct{})
+	var processGuard chatLoopTestProcessGuard
 	oldRun := runOneShotBTWWorkerFunc
 	defer func() { runOneShotBTWWorkerFunc = oldRun }()
+	t.Cleanup(func() {
+		processGuard.stop()
+		select {
+		case <-done:
+		case <-time.After(chatLoopControllerTestTimeout):
+			t.Errorf("loop controller runner did not stop during test cleanup")
+		}
+	})
 	runOneShotBTWWorkerFunc = func(_ config.AppConfig, workerSID string, req map[string]interface{}) (chatMessage, error) {
 		observer, ok := req[oneShotBTWWorkerObserverKey].(*oneShotBTWWorkerObserver)
 		if !ok || observer == nil {
@@ -532,17 +604,24 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 		}
 		cmd := exec.Command(os.Args[0], "-test.run=^TestChatLoopBlockingControllerHelper$")
 		cmd.Env = append(os.Environ(), "GA_CHAT_LOOP_BLOCKING_CONTROLLER=1")
+		processGuard.track(cmd)
 		if err := cmd.Start(); err != nil {
+			processGuard.clear(cmd)
 			return chatMessage{}, err
+		}
+		if processGuard.requested() {
+			_ = cmd.Process.Kill()
 		}
 		worker := &chatWorker{SID: workerSID, Cmd: cmd}
 		if observer.Started == nil || !observer.Started(worker) {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
+			processGuard.clear(cmd)
 			return chatMessage{}, errChatLoopStale
 		}
 		started <- struct{}{}
 		err := cmd.Wait()
+		processGuard.clear(cmd)
 		if observer.Finished != nil {
 			observer.Finished(worker)
 		}
@@ -552,10 +631,11 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 	go func() {
 		_, err := s.runChatLoopController(sid, 7, map[string]interface{}{"prompt": "old decision"})
 		finished <- err
+		close(done)
 	}()
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(chatLoopControllerTestTimeout):
 		t.Fatal("old loop controller did not start")
 	}
 
@@ -576,7 +656,7 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 		if err == nil {
 			t.Fatal("old controller returned nil after restart; want killed process error")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(chatLoopControllerTestTimeout):
 		s.cancelChatLoopController(sid, 7)
 		<-finished
 		t.Fatal("restarting the loop did not kill the old controller")

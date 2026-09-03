@@ -324,12 +324,18 @@ def _snapshot_turn_usages():
     If a trailing turn produced cache/input counts without an "[Output]" line
     yet, include it so no usage is dropped.
     """
+    def snapshot_usage(usage):
+        snapshot = dict(usage)
+        if snapshot.get('input_tokens_include_cache_read') == 0:
+            snapshot.pop('input_tokens_include_cache_read', None)
+        return snapshot
+
     with _USAGE_LOCK:
-        usages = [dict(u) for u in _TURN_USAGES]
+        usages = [snapshot_usage(u) for u in _TURN_USAGES]
         if (_CURRENT_USAGE['input_tokens'] or _CURRENT_USAGE['output_tokens']
                 or _CURRENT_USAGE['cache_creation_tokens']
                 or _CURRENT_USAGE['cache_read_tokens'] or _CURRENT_USAGE['cached_tokens']):
-            usages.append(dict(_CURRENT_USAGE))
+            usages.append(snapshot_usage(_CURRENT_USAGE))
         return usages
 
 
@@ -339,7 +345,49 @@ def _snapshot_turn_usages():
 _TOOL_TIMER_LOCK = threading.Lock()
 _TOOL_TIMER_ACTIVE = {}
 _TOOL_TIMER_TOTAL_SECONDS = 0.0
+_TOOL_TIMER_EMITTER = None
 _TOOL_TIMER_HOOK_INSTALLED = False
+
+
+def _set_tool_timer_emitter(emitter):
+    """Bind the current request emitter to tool timing hooks."""
+    global _TOOL_TIMER_EMITTER
+    with _TOOL_TIMER_LOCK:
+        _TOOL_TIMER_EMITTER = emitter
+
+
+def _clear_tool_timer_emitter(emitter=None):
+    global _TOOL_TIMER_EMITTER
+    with _TOOL_TIMER_LOCK:
+        if emitter is None or _TOOL_TIMER_EMITTER is emitter:
+            _TOOL_TIMER_EMITTER = None
+
+
+def _tool_timer_snapshot():
+    """Read tool timing without consuming it, including active calls."""
+    now = time.perf_counter()
+    with _TOOL_TIMER_LOCK:
+        total = _TOOL_TIMER_TOTAL_SECONDS
+        active_count = 0
+        for stack in _TOOL_TIMER_ACTIVE.values():
+            active_count += len(stack)
+            total += sum(max(0.0, now - started_at) for started_at in stack)
+        emitter = _TOOL_TIMER_EMITTER
+    return emitter, {
+        'tool_elapsed_ms': max(0, int(round(total * 1000))),
+        'tool_active_count': active_count,
+        'tool_timing_at_ms': int(time.time() * 1000),
+    }
+
+
+def _emit_tool_timing():
+    emitter, snapshot = _tool_timer_snapshot()
+    if emitter is not None:
+        try:
+            emitter({'type': 'tool_timing', **snapshot})
+        except Exception:
+            pass
+    return snapshot
 
 
 def _install_tool_timer_hook():
@@ -358,6 +406,7 @@ def _install_tool_timer_hook():
         thread_id = threading.get_ident()
         with _TOOL_TIMER_LOCK:
             _TOOL_TIMER_ACTIVE.setdefault(thread_id, []).append(time.perf_counter())
+        _emit_tool_timing()
         return ctx
 
     def _after(ctx):
@@ -370,6 +419,7 @@ def _install_tool_timer_hook():
                 _TOOL_TIMER_TOTAL_SECONDS += max(0.0, now - stack.pop())
                 if not stack:
                     _TOOL_TIMER_ACTIVE.pop(thread_id, None)
+        _emit_tool_timing()
         return ctx
 
     plugin_hooks.register('tool_before')(_before)
@@ -2857,6 +2907,27 @@ def handle_request(agent, worker, req):
     _up_stop = threading.Event() if _up_context else None
     _up_thread = None
     _last_plan = ['']
+    _set_tool_timer_emitter(emit)
+    turn_hook_key = 'ga_admin_structured_turn_' + new_id()
+
+    def emit_structured_turn(ctx):
+        summary = str(ctx.get('summary') or '').strip()
+        if not summary:
+            return
+        response = ctx.get('response')
+        emit({
+            'type': 'turn',
+            'summary': summary,
+            'thinking': str(getattr(response, 'thinking', '') or ''),
+            'content': str(getattr(response, 'content', '') or ''),
+            'tool_calls': list(ctx.get('tool_calls') or []),
+        })
+
+    turn_hooks = getattr(agent, '_turn_end_hooks', None)
+    if turn_hooks is None:
+        turn_hooks = {}
+        agent._turn_end_hooks = turn_hooks
+    turn_hooks[turn_hook_key] = emit_structured_turn
     try:
         _goal_card_baseline = _goal_state_files(root_for_req)
     except Exception:
@@ -2962,6 +3033,10 @@ def handle_request(agent, worker, req):
         usages = _snapshot_turn_usages()
         emit({'type': 'error', 'message': msg, 'usage': usage, 'usages': usages, 'tool_elapsed_ms': _consume_tool_elapsed_ms(), 'raw_history': _snapshot_backend_history(agent), 'plan': _snapshot_plan(agent, root_for_req, ''.join(chunks)), 'reasoning_effort': _snapshot_reasoning_effort(agent)})
     finally:
+        turn_hooks = getattr(agent, '_turn_end_hooks', None)
+        if isinstance(turn_hooks, dict):
+            turn_hooks.pop(turn_hook_key, None)
+        _clear_tool_timer_emitter(emit)
         restore_model_hooks()
 
 

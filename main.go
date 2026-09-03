@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -327,10 +328,10 @@ func tryPortableAutoInit(cwd string, store *config.Store) error {
 		return fmt.Errorf("bundled python path is a directory: %s", pythonExe)
 	}
 
-	// Run bootstrap.py with bundled Python
-	cmd := newPortableBootstrapCommand(pythonExe, bootstrapPy)
-	cmd.Dir = cwd
-	output, err := cmd.CombinedOutput()
+	// Run bootstrap.py with bundled Python. The command is hidden on Windows and
+	// bounded independently of bootstrap.py's own venv probe timeout so a broken
+	// portable interpreter cannot block the desktop window indefinitely.
+	output, err := runPortableBootstrap(cwd, pythonExe, bootstrapPy)
 	if err != nil {
 		log.Printf("bootstrap.py output:\n%s", string(output))
 		return fmt.Errorf("bootstrap.py failed: %w", err)
