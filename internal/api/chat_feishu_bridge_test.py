@@ -12,6 +12,23 @@ bridge_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge_module)
 
 
+class FeishuAuthorizationTest(unittest.TestCase):
+    def test_false_with_empty_allowlist_rejects_sender(self):
+        self.assertFalse(bridge_module._sender_allowed(False, [], "ou-user"))
+
+    def test_explicit_public_access_allows_sender(self):
+        self.assertTrue(bridge_module._sender_allowed(True, [], "ou-user"))
+        self.assertTrue(bridge_module._sender_allowed("true", [], "ou-user"))
+
+    def test_wildcard_allowlist_allows_sender(self):
+        self.assertTrue(bridge_module._sender_allowed(False, ["*"], "ou-user"))
+
+    def test_nonempty_allowlist_allows_only_matching_sender(self):
+        allowed = ["ou-allowed", "ou-second"]
+        self.assertTrue(bridge_module._sender_allowed(False, allowed, "ou-allowed"))
+        self.assertFalse(bridge_module._sender_allowed(False, allowed, "ou-denied"))
+
+
 class FeishuCardPayloadTest(unittest.TestCase):
     def test_task_card_matches_official_fsapp_shape(self):
         payload = json.loads(bridge_module._task_card("### Result\n\n**done**"))

@@ -2333,6 +2333,7 @@ describe('scheduled task execution history', () => {
     fireEvent.click(document.querySelector('.scheduled-task-detail .task-reports'))
     await waitFor(() => expect(window.location.pathname).toBe('/tasks/reports'))
     expect(document.querySelector('.schedule-report-tree')).toBeTruthy()
+    await screen.findByText('Alpha execution report')
 
     fireEvent.click(within(document.querySelector('.task-subtabs')).getByRole('button', { name: '定时任务' }))
     await waitFor(() => expect(window.location.pathname).toBe('/tasks/scheduled'))
@@ -2342,10 +2343,11 @@ describe('scheduled task execution history', () => {
     await waitFor(() => expect(releaseArtifact).toEqual(expect.any(Function)))
     fireEvent.click(document.querySelector('.scheduled-task-detail .task-reports'))
     await waitFor(() => expect(window.location.pathname).toBe('/tasks/reports'))
-    expect(document.querySelector('.app')?.getAttribute('aria-busy')).not.toBe('true')
+    expect(document.querySelector('.app')?.getAttribute('aria-busy')).toBe('true')
     expect(document.querySelector('.task-subtabs button')?.disabled).toBe(false)
     releaseArtifact()
-    await waitFor(() => expect(screen.queryByText('stale scheduled preview')).toBeNull())
+    await waitFor(() => expect(document.querySelector('.app')?.getAttribute('aria-busy')).not.toBe('true'))
+    await waitFor(() => expect(screen.getByText('stale scheduled preview')).toBeTruthy())
     expect(document.querySelector('.schedule-report-tree')).toBeTruthy()
 
     fireEvent.click(within(document.querySelector('.task-subtabs')).getByRole('button', { name: '定时任务' }))
@@ -2883,7 +2885,7 @@ describe('mobile chat session navigation', () => {
 
     fireEvent.keyDown(document, { key:'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog', { name:'聊天工具' })).toBeNull())
-    expect(document.activeElement).toBe(trigger)
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
   test('returns focus to the mobile sidebar trigger after Escape closes the drawer', async () => {
@@ -3249,7 +3251,6 @@ describe('chat loop controls', () => {
     fireEvent.click(screen.getByRole('button', { name:'配置 Loop' }))
     const startButton = screen.getByRole('button', { name:'启动 Loop' })
     const objective = screen.getByRole('textbox', { name:'目标' })
-    const maxRounds = screen.getByRole('spinbutton', { name:'最多轮次' })
     expect(screen.getByText('项目 TODO 修复闭环')).toBeTruthy()
     expect(startButton.disabled).toBe(false)
     fireEvent.click(startButton)
@@ -3257,7 +3258,6 @@ describe('chat loop controls', () => {
 
     fireEvent.click(screen.getByRole('button', { name:'填入此 Demo' }))
     expect(objective.value).toContain('请检查当前项目 TODO')
-    expect(maxRounds.value).toBe('3')
     fireEvent.change(objective, { target:{ value:'' } })
 
     const prompt = '请整理当前项目的待办，并在完成后汇报结果。'
@@ -3269,13 +3269,13 @@ describe('chat loop controls', () => {
     fireEvent.mouseDown(screen.getByRole('option', { name:'Provider A / loop-model' }))
     fireEvent.click(screen.getByRole('button', { name:'启动 Loop' }))
     await waitFor(() => expect(startedBody?.objective).toBe(prompt))
-    expect(startedBody?.max_rounds).toBe(3)
+    expect(startedBody).not.toHaveProperty('max_rounds')
     expect(document.querySelector('.oa-composer textarea')?.value).toBe('')
     expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name:'收起' }))
     expect(screen.queryByRole('complementary', { name:'Loop 控制' })).toBeNull()
-    expect(screen.getByRole('button', { name:'展开 Loop 栏' }).textContent).toContain('0/3')
+    expect(screen.getByRole('button', { name:'展开 Loop 栏' }).textContent).toContain('0')
     fireEvent.click(screen.getByRole('button', { name:'展开 Loop 栏' }))
 
     fireEvent.click(screen.getByRole('button', { name:'停止 Loop' }))

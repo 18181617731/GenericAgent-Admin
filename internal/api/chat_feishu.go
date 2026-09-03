@@ -33,11 +33,13 @@ func writeChatFeishuBridgeScript() (string, error) {
 	return path, nil
 }
 
-func newChatFeishuBridgeCommand(python, script string) *exec.Cmd {
+var newChatFeishuBridgeCommand = func(python, script string) *exec.Cmd {
 	cmd := exec.Command(python, script)
 	hideChildWindow(cmd)
 	return cmd
 }
+
+var chatFeishuBridgeStartupGrace = 300 * time.Millisecond
 
 const adminFeishuServiceName = "admin/feishuapp.py"
 
@@ -99,12 +101,26 @@ func (s *Server) startChatFeishuBridgeLocked() error {
 		_ = os.Remove(script)
 		return fmt.Errorf("start Feishu Admin sync bridge with %q: %w", python, err)
 	}
+	go func() { _ = httpServer.Serve(listener) }()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	timer := time.NewTimer(chatFeishuBridgeStartupGrace)
+	defer timer.Stop()
+	select {
+	case err := <-exited:
+		_ = httpServer.Close()
+		_ = os.Remove(script)
+		if err == nil {
+			return fmt.Errorf("Feishu Admin sync bridge exited during startup")
+		}
+		return fmt.Errorf("Feishu Admin sync bridge exited during startup: %w", err)
+	case <-timer.C:
+	}
 	s.chatFeishuBridgeCmd = cmd
 	s.chatFeishuBridgeServer = httpServer
 	s.chatFeishuBridgeStartedAt = time.Now().UTC()
-	go func() { _ = httpServer.Serve(listener) }()
 	go func() {
-		err := cmd.Wait()
+		err := <-exited
 		_ = httpServer.Close()
 		_ = os.Remove(script)
 		s.chatFeishuBridgeMu.Lock()

@@ -1,11 +1,14 @@
 package ga
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -62,8 +65,16 @@ type ScheduleTask struct {
 	Status        string       `json:"status"`
 	NextHint      string       `json:"next_hint,omitempty"`
 	LastReport    *Entry       `json:"last_report,omitempty"`
+	LatestRun     ScheduleRun  `json:"latest_run"`
 	Error         string       `json:"error,omitempty"`
 	RecentReports []Entry      `json:"recent_reports,omitempty"`
+}
+type ScheduleRun struct {
+	ExecutedAt *time.Time `json:"executed_at,omitempty"`
+	Status     string     `json:"status"`
+	Summary    string     `json:"summary,omitempty"`
+	Reason     string     `json:"reason,omitempty"`
+	ReportPath string     `json:"report_path,omitempty"`
 }
 type ScheduleOverview struct {
 	SchemaVersion int            `json:"schema_version"`
@@ -208,7 +219,7 @@ func BuildSchedule(root string) ScheduleOverview {
 		}
 		p := filepath.Join(root, "sche_tasks", de.Name())
 		id := strings.TrimSuffix(de.Name(), filepath.Ext(de.Name()))
-		t := ScheduleTask{SchemaVersion: 1, ID: id, Path: filepath.ToSlash(filepath.Join("sche_tasks", de.Name())), Status: "OK"}
+		t := ScheduleTask{SchemaVersion: 1, ID: id, Path: filepath.ToSlash(filepath.Join("sche_tasks", de.Name())), Status: "OK", LatestRun: ScheduleRun{Status: "never_run"}}
 		if info, err := de.Info(); err == nil {
 			t.ModTime = info.ModTime()
 		}
@@ -238,6 +249,7 @@ func BuildSchedule(root string) ScheduleOverview {
 		if len(t.RecentReports) > 0 {
 			last := t.RecentReports[0]
 			t.LastReport = &last
+			t.LatestRun = readScheduleRun(root, last)
 		}
 		applyScheduleHealth(&t)
 		switch t.Status {
@@ -258,6 +270,186 @@ func BuildSchedule(root string) ScheduleOverview {
 	sort.Slice(ov.Tasks, func(i, j int) bool { return ov.Tasks[i].ID < ov.Tasks[j].ID })
 	ov.TaskCount = len(ov.Tasks)
 	return ov
+}
+
+const maxScheduleReportBytes int64 = 256 * 1024
+
+var scheduleMetadataField = regexp.MustCompile(`(?i)^\s*[-*]?\s*(?:\*\*|__)?\s*(?:overall[ _-]*status|status|result|execution[ _-]*(?:status|result)|run[ _-]*status|执行状态|执行结果|任务状态|总体状态)\s*(?:\*\*|__)?\s*[:：]\s*(.+?)\s*$`)
+var scheduleReasonField = regexp.MustCompile(`(?i)^\s*[-*]?\s*(?:\*\*|__)?\s*(?:reason|summary|error|failure[ _-]*reason|failed[ _-]*reason|blocked[ _-]*reason|blocker|失败原因|阻塞原因|错误|原因|摘要)\s*(?:\*\*|__)?\s*[:：]\s*(.+?)\s*$`)
+var scheduleTimeField = regexp.MustCompile(`(?i)^\s*[-*]?\s*(?:\*\*|__)?\s*(?:executed[ _-]*at|execution[ _-]*time|run[ _-]*at|finished[ _-]*at|completed[ _-]*at|timestamp|执行时间|完成时间|运行时间)\s*(?:\*\*|__)?\s*[:：]\s*(.+?)\s*$`)
+var scheduleNonSummaryField = regexp.MustCompile(`(?i)^\s*[-*]?\s*(?:\*\*|__)?\s*(?:task|task[ _-]*id|model|llm|serial|report[ _-]*path|path|date|任务|任务名|模型|序号|报告路径|日期)\s*(?:\*\*|__)?\s*[:：]`)
+var scheduleSummaryHeading = regexp.MustCompile(`(?i)^(?:summary|details?|result|execution summary|report|摘要|执行摘要|详情|执行详情|结果|报告)\s*[:：]?$`)
+var scheduleConclusionHeading = regexp.MustCompile(`(?i)^(?:conclusion|final[ _-]*(?:status|result|outcome)|overall[ _-]*(?:result|outcome)|结论|最终结论|最终结果|执行结论)\s*[:：]?$`)
+var scheduleCausalSummary = regexp.MustCompile(`(?i)(?:\b(?:because|missing|unable|cannot|failed|error|timed out|denied|unavailable)\b|由于|因为|缺少|无法|未能|失败|错误|超时|拒绝|不可用)`)
+var scheduleSuccessStatus = regexp.MustCompile(`\b(success|successful|passed|pass|ok|completed)\b`)
+var scheduleBlockedStatus = regexp.MustCompile(`\b(blocked)\b`)
+var scheduleWaitingStatus = regexp.MustCompile(`\b(waiting|pending|paused)\b`)
+var scheduleFailedStatus = regexp.MustCompile(`\b(failed|failure|error|errored)\b`)
+var schedulePartialStatus = regexp.MustCompile(`\b(partial|partially)\b`)
+var scheduleSkippedStatus = regexp.MustCompile(`\b(skipped|skip|cancelled|canceled)\b`)
+
+func readScheduleRun(root string, report Entry) ScheduleRun {
+	executedAt := report.ModTime
+	run := ScheduleRun{Status: "unknown", ExecutedAt: &executedAt, ReportPath: report.Path}
+	p := filepath.Join(root, filepath.FromSlash(report.Path))
+	rootEval, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		run.Reason = "report could not be read"
+		return run
+	}
+	targetEval, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		run.Reason = "report could not be read"
+		return run
+	}
+	rel, err := filepath.Rel(rootEval, targetEval)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		run.Reason = "report path is unsafe"
+		return run
+	}
+	info, err := os.Stat(targetEval)
+	if err != nil || !info.Mode().IsRegular() {
+		run.Reason = "report could not be read"
+		return run
+	}
+	f, err := os.Open(targetEval)
+	if err != nil {
+		run.Reason = "report could not be read"
+		return run
+	}
+	defer f.Close()
+
+	reader := bufio.NewScanner(io.LimitReader(f, maxScheduleReportBytes+1))
+	reader.Buffer(make([]byte, 4096), 64*1024)
+	lines := make([]string, 0, 80)
+	for reader.Scan() && len(lines) < 160 {
+		lines = append(lines, reader.Text())
+	}
+	statusLine := -1
+	for index, line := range lines {
+		if match := scheduleTimeField.FindStringSubmatch(line); len(match) == 2 {
+			if parsed, ok := parseScheduleReportTime(cleanScheduleReportText(match[1], 96)); ok {
+				run.ExecutedAt = &parsed
+			}
+		}
+		if statusLine >= 0 {
+			continue
+		}
+		if match := scheduleMetadataField.FindStringSubmatch(line); len(match) == 2 {
+			if status := normalizeScheduleRunStatus(match[1]); status != "unknown" {
+				run.Status = status
+				statusLine = index
+			}
+		}
+	}
+	// Older reports sometimes put the overall result on the first content line
+	// of a dedicated conclusion section instead of using a status field. Only
+	// inspect that structured section so a nested step result cannot win.
+	if statusLine < 0 {
+		for index, line := range lines {
+			if !scheduleConclusionHeading.MatchString(cleanScheduleReportText(line, 96)) {
+				continue
+			}
+			for next := index + 1; next < len(lines) && next <= index+8; next++ {
+				text := cleanScheduleReportText(lines[next], 240)
+				if text == "" {
+					continue
+				}
+				if status := normalizeScheduleRunStatus(text); status != "unknown" {
+					run.Status = status
+					statusLine = next
+				}
+				break
+			}
+			if statusLine >= 0 {
+				break
+			}
+		}
+	}
+	if run.Status == "failed" || run.Status == "blocked" || run.Status == "waiting" || run.Status == "partial" {
+		for _, line := range lines {
+			if match := scheduleReasonField.FindStringSubmatch(line); len(match) == 2 {
+				text := cleanScheduleReportText(match[1], 240)
+				if text != "" {
+					run.Reason = text
+					break
+				}
+			}
+		}
+	}
+	if statusLine >= 0 {
+		firstSummary := ""
+		for _, line := range lines[statusLine+1:] {
+			text := cleanScheduleReportText(line, 240)
+			if text == "" || scheduleSummaryHeading.MatchString(text) || scheduleMetadataField.MatchString(line) || scheduleTimeField.MatchString(line) || scheduleReasonField.MatchString(line) || scheduleNonSummaryField.MatchString(line) {
+				continue
+			}
+			if firstSummary == "" {
+				firstSummary = text
+			}
+			if scheduleCausalSummary.MatchString(text) && (run.Status == "failed" || run.Status == "blocked" || run.Status == "waiting" || run.Status == "partial") {
+				run.Summary = text
+				break
+			}
+		}
+		if run.Summary == "" {
+			run.Summary = firstSummary
+		}
+	}
+	if run.Reason == "" && (run.Status == "failed" || run.Status == "blocked" || run.Status == "waiting" || run.Status == "partial") {
+		run.Reason = run.Summary
+	}
+	if run.Summary == "" {
+		run.Summary = run.Reason
+	}
+	if reader.Err() != nil && run.Reason == "" {
+		run.Reason = "report could not be parsed"
+	}
+	return run
+}
+
+func normalizeScheduleRunStatus(value string) string {
+	value = strings.ToLower(cleanScheduleReportText(value, 80))
+	value = strings.TrimSpace(strings.Trim(value, ".,;:()[]{}"))
+	switch {
+	case scheduleFailedStatus.MatchString(value), strings.Contains(value, "失败"), strings.Contains(value, "错误"):
+		return "failed"
+	case scheduleBlockedStatus.MatchString(value), strings.Contains(value, "阻塞"):
+		return "blocked"
+	case scheduleWaitingStatus.MatchString(value), strings.Contains(value, "等待"), strings.Contains(value, "暂停"):
+		return "waiting"
+	case schedulePartialStatus.MatchString(value), strings.Contains(value, "部分完成"), strings.Contains(value, "部分通过"):
+		return "partial"
+	case scheduleSkippedStatus.MatchString(value), strings.Contains(value, "跳过"), strings.Contains(value, "取消"):
+		return "skipped"
+	case scheduleSuccessStatus.MatchString(value), strings.Contains(value, "成功"), strings.Contains(value, "通过"), strings.Contains(value, "完成"):
+		return "success"
+	default:
+		return "unknown"
+	}
+}
+
+func cleanScheduleReportText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "**", "")
+	value = strings.ReplaceAll(value, "__", "")
+	value = strings.TrimSpace(strings.TrimLeft(value, "#>-*` "))
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > limit {
+		value = string(runes[:limit]) + "…"
+	}
+	return value
+}
+
+func parseScheduleReportTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(strings.Trim(value, "*`"))
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05 -07:00", "2006-01-02 15:04:05", "2006-01-02 15:04", "2006/01/02 15:04:05", "2006/01/02 15:04"} {
+		if parsed, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func applyScheduleHealth(t *ScheduleTask) {

@@ -75,7 +75,16 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setResolvedInstanceHeader(w, instanceID)
-	writeJSON(w, manager.Summary())
+	summary := manager.Summary()
+	if manager == s.Svc {
+		summary["total"]++
+		if s.IsChatFeishuBridgeRunning() {
+			summary["running"]++
+		} else {
+			summary["stopped"]++
+		}
+	}
+	writeJSON(w, summary)
 }
 
 type nameReq struct {

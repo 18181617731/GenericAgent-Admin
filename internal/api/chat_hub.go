@@ -86,7 +86,7 @@ func (s *Server) listChatHubSessions(allowAll bool) []chatHubSession {
 			}
 			sid := strings.TrimSuffix(entry.Name(), ".json")
 			cs, err := loadChatSession(server.CfgStore.Snapshot(), sid)
-			if err != nil || cs.ID == "" || (!allowAll && !cs.HubEnabled) {
+			if err != nil || cs.ID == "" || cs.Archived || (!allowAll && !cs.HubEnabled) {
 				continue
 			}
 			advertisedInstanceID := instanceID
@@ -235,7 +235,7 @@ func (s *Server) chatSessionBridgeAPI(token string, allowAll bool) http.Handler 
 			return
 		}
 		cs, err := loadChatSession(server.CfgStore.Snapshot(), sid)
-		if err != nil || (!allowAll && !cs.HubEnabled) {
+		if err != nil || cs.Archived || (!allowAll && !cs.HubEnabled) {
 			bad(w, http.StatusNotFound, "session not available to bridge")
 			return
 		}

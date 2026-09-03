@@ -85,30 +85,30 @@ func saveChatLoopTestSession(t *testing.T, s *Server, cs chatSession) {
 	}
 }
 
-func blockChatLoopTestWorker(t *testing.T, s *Server, sid string) {
+func cleanupChatLoopTestWorker(t *testing.T, s *Server, sid string) {
 	t.Helper()
-	old := startChatWorkerFunc
-	release := make(chan struct{})
-	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
-		<-release
-		return nil, fmt.Errorf("test chat worker released")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		s.CloseChatWorkers()
+		if !s.chatRunActive(sid) {
+			// A run can publish its completed state just before its final session
+			// write returns. Synchronize with that write before TempDir cleanup.
+			s.SessionMu.Lock()
+			s.SessionMu.Unlock()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Error("chat loop workers did not stop during test cleanup")
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Cleanup(func() {
-		close(release)
-		deadline := time.Now().Add(2 * time.Second)
-		for s.chatRunActive(sid) && time.Now().Before(deadline) {
-			time.Sleep(5 * time.Millisecond)
-		}
-		startChatWorkerFunc = old
-		if s.chatRunActive(sid) {
-			t.Errorf("chat run %q did not stop during test cleanup", sid)
-		}
-	})
 }
 
 func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "queue-after-completed-run"
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	saveChatLoopTestSession(t, s, chatSession{
 		ID:       sid,
 		Messages: []chatMessage{{ID: "assistant-old", Role: "assistant", Content: "done"}},
@@ -378,6 +378,7 @@ func TestNormalizePersistedChatLoopPausesActiveState(t *testing.T) {
 func TestChatLoopStartAndStopAPI(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-start-stop"
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	saveChatLoopTestSession(t, s, chatSession{ID: sid})
 	oldStartChatWorker := startChatWorkerFunc
 	releaseWorker := make(chan struct{})
@@ -485,7 +486,6 @@ func TestChatLoopStopKillsActiveController(t *testing.T) {
 			Epoch:   7,
 		},
 	})
-
 	started := make(chan struct{}, 1)
 	finished := make(chan error, 1)
 	done := make(chan struct{})
@@ -582,6 +582,7 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 			Epoch:   7,
 		},
 	})
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 
 	started := make(chan struct{}, 1)
 	finished := make(chan error, 1)
@@ -639,9 +640,16 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 		t.Fatal("old loop controller did not start")
 	}
 
-	oldContinue := continueChatLoopFunc
-	defer func() { continueChatLoopFunc = oldContinue }()
-	continueChatLoopFunc = func(_ *Server, _ string, _ int64, _ string) {}
+	oldStartChatWorker := startChatWorkerFunc
+	releaseWorker := make(chan struct{})
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		<-releaseWorker
+		return nil, errors.New("test worker released")
+	}
+	defer func() {
+		close(releaseWorker)
+		startChatWorkerFunc = oldStartChatWorker
+	}()
 	restart := httptest.NewRecorder()
 	restartReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"replacement objective"}`))
 	restartReq.Header.Set("Content-Type", "application/json")
@@ -666,7 +674,7 @@ func TestChatLoopRestartKillsActiveController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusEvaluating || persisted.Loop.Epoch != 8 || persisted.Loop.ControllerPrompt != "replacement objective" {
+	if !persisted.Loop.Enabled || persisted.Loop.Status != chatLoopStatusRunning || persisted.Loop.Round != 1 || persisted.Loop.Epoch != 8 || persisted.Loop.ControllerPrompt != "replacement objective" {
 		t.Fatalf("persisted restarted loop = %#v", persisted.Loop)
 	}
 }
@@ -867,7 +875,7 @@ func TestAppendChatLoopRecordBoundsHistoryAndUnicode(t *testing.T) {
 func TestEvaluateChatLoopRetriesUnusableControllerReply(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-controller-retry"
-	blockChatLoopTestWorker(t, s, sid)
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	const unusableReply = "<next_prompt>continue</next_prompt>"
 	const nextPrompt = "verify the shipped release"
 	cs := chatSession{ID: sid, Loop: chatLoopState{
@@ -972,7 +980,7 @@ func TestEvaluateChatLoopFailsAfterRetryBudget(t *testing.T) {
 func TestContinueChatLoopQueuesControllerGuidance(t *testing.T) {
 	s := newChatLoopTestServer(t)
 	sid := "loop-repeated-continue"
-	blockChatLoopTestWorker(t, s, sid)
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, sid) })
 	saveChatLoopTestSession(t, s, chatSession{ID: sid, Loop: chatLoopState{
 		Enabled:          true,
 		Status:           chatLoopStatusEvaluating,
@@ -998,7 +1006,7 @@ func TestContinueChatLoopQueuesControllerGuidance(t *testing.T) {
 		t.Fatalf("continued loop messages = %#v", persisted.Messages)
 	}
 	last := persisted.Loop.Records[len(persisted.Loop.Records)-1]
-	if last.Phase != "continue" || last.Prompt != nextPrompt {
+	if last.Phase != "continue" || last.Prompt != "" {
 		t.Fatalf("continue record = %#v", last)
 	}
 }

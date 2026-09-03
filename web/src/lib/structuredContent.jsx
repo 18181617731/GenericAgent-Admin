@@ -3,7 +3,7 @@ import React from 'react'
 /**
  * Parse Anthropic Messages API content blocks into the same structure that
  * parseAssistantContent() produces from plain text.
- * 
+ *
  * Input: content blocks from message.structured_content
  * [
  *   {type: 'text', text: '...'},
@@ -11,7 +11,7 @@ import React from 'react'
  *   {type: 'tool_result', tool_use_id: 'toolu_xxx', content: [...] | "..."},
  *   {type: 'thinking', thinking: '...'}  // extended thinking
  * ]
- * 
+ *
  * Output: {runs: [], summary: '', body: '', tools: [], thinking: ''}
  * Compatible with existing AssistantContent renderer.
  */

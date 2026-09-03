@@ -6,6 +6,7 @@ import {
   chatInstanceOptions,
   initialChatInstanceID,
   persistChatInstanceID,
+  requestChatInstance,
 } from './chatInstanceScope.js'
 
 const chatSource = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
@@ -43,6 +44,23 @@ test('addChatInstanceToURL scopes only chat API routes and preserves query/hash'
   assert.equal(addChatInstanceToURL('/api/chat/stream/s1?from=7#tail', 'ga 2'), '/api/chat/stream/s1?from=7&instance_id=ga+2#tail')
   assert.equal(addChatInstanceToURL('/api/instances', 'ga-2'), '/api/instances')
   assert.equal(addChatInstanceToURL('/api/chat/sessions', ''), '/api/chat/sessions')
+})
+
+test('requestChatInstance sends new-session creation to the selected instance', async () => {
+  const calls = []
+  const request = async (...args) => {
+    calls.push(args)
+    return { id: 'new-session' }
+  }
+
+  const result = await requestChatInstance(request, 'secondary', '/api/chat/session/new', {
+    method: 'POST',
+    body: '{}',
+  })
+
+  assert.deepEqual(result, { id: 'new-session' })
+  assert.equal(calls[0][0], '/api/chat/session/new?instance_id=secondary')
+  assert.deepEqual(calls[0][1], { method: 'POST', body: '{}' })
 })
 
 test('initialChatInstanceID prefers the tab URL over session storage', () => {

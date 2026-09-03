@@ -204,6 +204,69 @@ func TestChatHubSessionListMatchesHistoryOrder(t *testing.T) {
 	}
 }
 
+func TestChatHubAndFeishuBridgeSessionListsExcludeArchived(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	s := New(store, nil, nil, nil)
+	fixtures := []chatSession{
+		{ID: "hub-active", Title: "Hub active", HubEnabled: true},
+		{ID: "private-active", Title: "Private active"},
+		{ID: "hub-archived", Title: "Archived", HubEnabled: true, Archived: true},
+	}
+	for _, cs := range fixtures {
+		if err := saveChatSession(store.Snapshot(), cs); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const token = "bridge-secret"
+	decode := func(handler http.Handler) []chatHubSession {
+		t.Helper()
+		w := hubRequest(t, handler, token, http.MethodGet, "/sessions", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("sessions status = %d: %s", w.Code, w.Body.String())
+		}
+		var listing struct {
+			Sessions []chatHubSession `json:"sessions"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+			t.Fatal(err)
+		}
+		return listing.Sessions
+	}
+
+	hubSessions := decode(s.chatSessionBridgeAPI(token, false))
+	if len(hubSessions) != 1 || hubSessions[0].SessionID != "hub-active" {
+		t.Fatalf("Hub sessions = %#v, want only active opted-in session", hubSessions)
+	}
+	feishuSessions := decode(s.chatSessionBridgeAPI(token, true))
+	if len(feishuSessions) != 2 {
+		t.Fatalf("Feishu bridge sessions = %#v, want two active sessions", feishuSessions)
+	}
+	for _, item := range feishuSessions {
+		if item.SessionID == "hub-archived" {
+			t.Fatalf("archived session leaked into Feishu bridge enumeration: %#v", feishuSessions)
+		}
+	}
+
+	for name, handler := range map[string]http.Handler{
+		"Hub":    s.chatSessionBridgeAPI(token, false),
+		"Feishu": s.chatSessionBridgeAPI(token, true),
+	} {
+		for _, op := range []string{"outputs", "snapshot", "state", "put", "abort"} {
+			method, body := http.MethodGet, ""
+			if op == "put" {
+				method, body = http.MethodPost, `{"text":"must not run"}`
+			} else if op == "abort" {
+				method = http.MethodPost
+			}
+			path := "/session/_/hub-archived/" + op
+			if got := hubRequest(t, handler, token, method, path, body).Code; got != http.StatusNotFound {
+				t.Fatalf("%s archived %s status = %d, want %d", name, op, got, http.StatusNotFound)
+			}
+		}
+	}
+}
+
 func TestPrivateChatBridgeCanCreatePersistentSession(t *testing.T) {
 	store := config.NewStore(t.TempDir())
 	cfg := store.Snapshot()

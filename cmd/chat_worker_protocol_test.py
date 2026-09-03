@@ -112,7 +112,7 @@ class ToolTimerTests(unittest.TestCase):
 
         with mock.patch.object(
             chat_worker.time, "perf_counter",
-            side_effect=[10.0, 10.0, 10.125, 10.125, 10.125, 10.125],
+            side_effect=[10.0, 10.125, 10.125, 10.125],
         ):
             hooks.trigger("tool_before", {"tool_name": "file_read"})
             hooks.trigger("tool_after", {"tool_name": "file_read"})
@@ -129,7 +129,7 @@ class ToolTimerTests(unittest.TestCase):
 
         with mock.patch.object(
             chat_worker.time, "perf_counter",
-            side_effect=[20.0, 20.0, 20.4, 20.4],
+            side_effect=[20.0, 20.4, 20.4],
         ):
             worker = threading.Thread(target=begin_tool)
             worker.start()

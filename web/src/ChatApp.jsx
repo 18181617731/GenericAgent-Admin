@@ -17,7 +17,7 @@ import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAl
 import { api, apiStream } from './lib/api'
 import { SETTINGS_TEXT } from './lib/i18n'
 import { KeychainPage } from './pages/KeychainPage'
-import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID } from './lib/chatInstanceScope'
+import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID, requestChatInstance } from './lib/chatInstanceScope'
 import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { forgetSessionScroll, rememberSessionScroll, sessionScrollRestore } from './lib/chatSessionScroll'
@@ -47,7 +47,7 @@ import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 import { hasSubagentLaunch } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
 import { pollGeneratedChatTitle, shouldPollGeneratedTitle } from './lib/chatTitlePolling.js'
-import { consumeMemoryChatDraft } from './lib/memoryChatDraft.js'
+import { consumeMemoryChatDraft, createMemoryChatDraftSession } from './lib/memoryChatDraft.js'
 import { firstRuntimeModelNo } from './lib/modelDefaults.js'
 import { clearSessionSearchHistory, loadSessionSearchHistory, saveSessionSearchHistory, sessionSearchScopeOptions } from './lib/chatSessionSearch.js'
 import { lastUserMessageID, nextActiveSession } from './lib/chatSessionActions.js'
@@ -1314,15 +1314,15 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickRepl
   }
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
-  
+
   // Extract agent protocol folds (tool calls/results/thinking/function_calls)
   const folds = foldAgentProtocolBlocks(cleanText)
   const strippedText = stripAgentProtocolBlocks(cleanText)
-  
+
   if (folds.length === 0) {
     return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} /> : null
   }
-  
+
   return (
     <>
       <div className="ga-execution-log">
@@ -3849,7 +3849,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [collapsed])
   const chatApi = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
-    const result = await api(addChatInstanceToURL(url, chatInstanceRef.current), options)
+    const result = await requestChatInstance(api, chatInstanceRef.current, url, options)
     if (epoch !== chatRequestEpochRef.current) throw new DOMException('Chat instance changed', 'AbortError')
     return result
   }, [])

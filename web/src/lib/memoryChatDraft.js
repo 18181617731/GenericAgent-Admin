@@ -17,3 +17,17 @@ export const consumeMemoryChatDraft = () => {
     return null
   }
 }
+
+export const claimMemoryChatDraft = (draftRef, sessionID) => {
+  if (!sessionID || !draftRef?.current) return null
+  const draft = draftRef.current
+  draftRef.current = null
+  return draft
+}
+
+export const createMemoryChatDraftSession = async (draftRef, createSession) => {
+  if (!draftRef?.current || typeof createSession !== 'function') return null
+  const sessionID = await createSession()
+  const draft = claimMemoryChatDraft(draftRef, sessionID)
+  return draft ? { draft, sessionID } : null
+}

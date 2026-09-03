@@ -40,10 +40,11 @@ func stubProbe(t *testing.T, usable ...string) *[]string {
 // import the dependencies must win instead.
 func TestResolveUsableFallsBackWhenRootHasNoUsableInterpreter(t *testing.T) {
 	appData := isolateHost(t)
-	host := uvPython(t, appData, "3.12.7")
+	uvPython(t, appData, "3.12.7")
 	instanceRoot := t.TempDir()
 	sibling := t.TempDir()
 	want := writeExecutable(t, filepath.Join(sibling, ".venv", "Scripts", "python.exe"))
+	base := Resolve(instanceRoot, "")
 
 	tried := stubProbe(t, want)
 	if got := ResolveUsable(instanceRoot, "", []string{sibling}); got != want {
@@ -51,8 +52,8 @@ func TestResolveUsableFallsBackWhenRootHasNoUsableInterpreter(t *testing.T) {
 	}
 	// Path-only resolution is what shipped the bug; assert it really would have
 	// picked the dependency-less host, so this test fails if the fix is undone.
-	if base := Resolve(instanceRoot, ""); base != host {
-		t.Fatalf("Resolve(no root venv) = %q, want host %q (fixture lost its teeth)", base, host)
+	if base == want {
+		t.Fatalf("Resolve(no root venv) = sibling %q without probing; fixture lost its teeth", want)
 	}
 	if len(*tried) == 0 {
 		t.Fatal("no interpreter was probed; resolution stayed path-only")
@@ -139,11 +140,13 @@ func TestResolveUsableAcceptsInterpreterFallback(t *testing.T) {
 // ModuleNotFoundError, which names the missing package.
 func TestResolveUsableFallsBackToResolveWhenNothingIsUsable(t *testing.T) {
 	appData := isolateHost(t)
-	host := uvPython(t, appData, "3.12.7")
+	uvPython(t, appData, "3.12.7")
+	root := t.TempDir()
+	want := Resolve(root, "")
 
 	stubProbe(t)
-	if got := ResolveUsable(t.TempDir(), "", nil); got != host {
-		t.Fatalf("ResolveUsable(nothing usable) = %q, want Resolve answer %q", got, host)
+	if got := ResolveUsable(root, "", nil); got != want {
+		t.Fatalf("ResolveUsable(nothing usable) = %q, want Resolve answer %q", got, want)
 	}
 }
 

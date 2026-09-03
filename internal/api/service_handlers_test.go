@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,7 +137,21 @@ func TestServicesSummaryReturnsCountsOnGET(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/services/summary", nil)
 	h.ServeHTTP(rr, req)
 	body := rr.Body.String()
-	for _, want := range []string{`"total":1`, `"running":0`, `"stopped":1`} {
+	for _, want := range []string{`"total":2`, `"running":0`, `"stopped":2`} {
+		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
+			t.Fatalf("status=%d missing %s body=%s", rr.Code, want, body)
+		}
+	}
+}
+
+func TestServicesSummaryCountsRunningAdminFeishuBridge(t *testing.T) {
+	s := newServiceHandlerTestServer(t, t.TempDir())
+	s.chatFeishuBridgeCmd = &exec.Cmd{Process: &os.Process{Pid: 12345}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/services/summary", nil)
+	s.Routes().ServeHTTP(rr, req)
+	body := rr.Body.String()
+	for _, want := range []string{`"total":1`, `"running":1`, `"stopped":0`} {
 		if rr.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("status=%d missing %s body=%s", rr.Code, want, body)
 		}
@@ -372,7 +387,9 @@ func TestServiceRoutesEnforceWorkflowAndModelBoundaries(t *testing.T) {
 
 func TestStartAutostartServicesUsesConfiguredServiceStartup(t *testing.T) {
 	s := newServiceHandlerTestServer(t, t.TempDir())
-	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) { cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"} })
+	s.CfgStore.UpdateRuntime(func(cfg *config.AppConfig) {
+		cfg.ServiceAutostart = []string{"reflect/scheduler.py", " ", "reflect/autonomous.py"}
+	})
 	previous := startAutostartService
 	started := []string{}
 	startAutostartService = func(_ *Server, name string) error {

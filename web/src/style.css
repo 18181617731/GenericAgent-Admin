@@ -17298,6 +17298,9 @@ html[data-theme="dark"] .ga-message-banner.is-error { color:var(--ink-err); back
 @media (max-width:680px) {
   .app:not(.app-tab-chat) .main > .admin-page-header { display:grid; gap:15px; min-height:0; padding:17px 18px 15px; border-radius:16px; }
   .admin-page-meta { width:100%; justify-content:space-between; min-height:0; padding:12px 0 0 57px; border-top:1px solid var(--quiet-line); border-left:0; }
+  .admin-page-meta .admin-page-endpoint,
+  .admin-page-meta .admin-page-health { display:none; }
+  .admin-page-meta { justify-content:flex-end; gap:0; padding:0; border-top:0; }
   .autonomous-approval-toolbar { align-items:stretch; }
   .autonomous-approval-selection,.autonomous-approval-bulk-actions { width:100%; }
   .autonomous-approval-selection { justify-content:space-between; }
@@ -21867,6 +21870,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .scheduled-task-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .scheduled-task-status-dot.enabled { background: var(--ga-accent, #10a37f); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ga-accent, #10a37f) 13%, transparent); }
 .scheduled-task-status-dot.error { background: var(--danger, #b4233a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger, #b4233a) 11%, transparent); }
+.scheduled-task-status-dot.overdue { background: #d97706; box-shadow: 0 0 0 3px color-mix(in srgb, #d97706 11%, transparent); }
 .scheduled-task-detail-heading h3 { min-width: 0; overflow-wrap: anywhere; font-size: 22px; }
 .scheduled-task-detail-heading p { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .scheduled-task-detail-actions { max-width: 440px; }

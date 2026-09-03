@@ -1,6 +1,6 @@
 /**
  * Agent protocol text parser (aligned with GA official Tauri desktop app.js)
- * 
+ *
  * Protocol format:
  * - Tool call: 🛠️ Tool: `name` + ```text fence + body + close fence
  * - Tool result: ````` (5+ backticks) + body + close fence

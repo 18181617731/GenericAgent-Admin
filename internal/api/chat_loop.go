@@ -607,7 +607,7 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 		if phase == "" {
 			phase = "continue"
 		}
-		appendChatLoopRecord(&latest.Loop, phase, req.summary, req.prompt)
+		appendChatLoopRecord(&latest.Loop, phase, req.summary, "")
 		latest.Messages = append(latest.Messages, userMsg, pendingMsg)
 		latest.UpdatedAt = time.Now().Unix()
 		updateChatTitle(&latest)

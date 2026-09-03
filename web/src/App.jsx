@@ -477,7 +477,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
           api('/api/ga/inventory'),
         ])
         if (!active) return
-        const current = buildNotificationSnapshot({ schedule, goals: goals?.goals || [], approvals, inventory })
+        const normalizedSchedule = normalizeScheduleTasksPayload(schedule)
+        setScheduleData(normalizedSchedule)
+        setScheduleError('')
+        const current = buildNotificationSnapshot({ schedule: normalizedSchedule, goals: goals?.goals || [], approvals, inventory })
         const events = collectNotificationEvents(notificationMonitorRef.current.snapshot, current)
         notificationMonitorRef.current.snapshot = current
         events.forEach(event => publishNotification(event))
@@ -1270,6 +1273,9 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setScheduleArtifactTitle('')
     setScheduleArtifact('')
     navigateTaskSubTab('reports')
+    const task = tasks.find(item => String(item?.id || item?.name || '') === String(id))
+    const latestReportPath = String(task?.recent_reports?.[0]?.path || '').trim()
+    if (latestReportPath) readScheduleArtifact(latestReportPath, 'tasks', 'reports')
   }
   const openNotification = item => {
     const route = String(item?.route || 'notifications').replace(/^\/+/, '').split('/')[0]

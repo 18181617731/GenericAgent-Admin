@@ -77,6 +77,21 @@ def _allowed_users(value):
     return {str(item).strip() for item in value if str(item).strip()}
 
 
+def _explicit_true(value):
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def _sender_allowed(public_access, allowed, sender_id):
+    """Authorize a Feishu sender without silently turning an empty list public."""
+    allowed = _allowed_users(allowed)
+    if _explicit_true(public_access) or "*" in allowed:
+        return True
+    sender_id = str(sender_id or "").strip()
+    return bool(sender_id and sender_id in allowed)
+
+
 def _events(tasks):
     result = []
     for task in tasks or []:
@@ -640,6 +655,7 @@ def main():
     app_id = str(config.get("feishu_admin_app_id") or "").strip()
     app_secret = str(config.get("feishu_admin_app_secret") or "").strip()
     allowed = _allowed_users(config.get("feishu_admin_allowed_users", []))
+    public_access = config.get("feishu_admin_public_access", False)
     if not app_id or not app_secret:
         print("[feishu_admin_bridge] dedicated App ID/App Secret not configured", flush=True)
         return
@@ -725,7 +741,7 @@ def main():
             message = event.message
             sender = event.sender
             sender_id = str(sender.sender_id.open_id or "")
-            if allowed and "*" not in allowed and sender_id not in allowed:
+            if not _sender_allowed(public_access, allowed, sender_id):
                 return
             message_id = str(message.message_id or "")
             with seen_lock:

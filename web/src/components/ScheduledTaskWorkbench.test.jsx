@@ -62,7 +62,7 @@ describe('ScheduledTaskWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: /清除筛选/ }))
     fireEvent.click(screen.getByRole('button', { name: /已暂停/ }))
     expect(screen.getAllByRole('option')).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: /异常/ }))
+    fireEvent.click(screen.getByRole('button', { name: /需关注/ }))
     expect(screen.getByRole('option', { name: /gamma/ })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
     const disclosure = document.querySelector('.scheduled-task-create-disclosure')
@@ -92,6 +92,34 @@ describe('ScheduledTaskWorkbench', () => {
     expect(document.querySelector('.scheduled-task-create-disclosure')).toBeTruthy()
     fireEvent.click(within(document.querySelector('.scheduled-task-create-disclosure')).getByRole('button', { name: '创建' }))
     await waitFor(() => expect(document.querySelector('.scheduled-task-create-disclosure')).toBeNull())
+  })
+
+  test('shows the latest failed execution as a red card with its reason and separate config state', () => {
+    const failed = { ...taskB, latest_run: { status: 'failed', executed_at: '2026-08-29T10:00:00Z', reason: 'browser login timed out' } }
+    const { container } = render(<ScheduledTaskWorkbench {...props({ tasks: [failed] })}/>)
+    const card = container.querySelector('.scheduled-task-row')
+    expect(card?.classList.contains('task-run-failed')).toBe(true)
+    expect(within(card).getByText('失败')).toBeTruthy()
+    expect(within(card).getByText('browser login timed out')).toBeTruthy()
+    expect(within(card).getByText('停用')).toBeTruthy()
+    expect(within(card).getByText(/最近执行/)).toBeTruthy()
+  })
+
+  test('labels an overdue schedule separately from a successful latest execution', () => {
+    const overdue = {
+      ...taskA,
+      status: 'OVERDUE',
+      next_hint: 'last report 44.5 hours ago',
+      latest_run: { status: 'success', executed_at: '2026-08-29T18:06:41Z', summary: 'report saved' },
+    }
+    const { container } = render(<ScheduledTaskWorkbench {...props({ tasks: [overdue] })}/>)
+    const card = container.querySelector('.scheduled-task-row')
+    expect(card?.classList.contains('task-run-success')).toBe(true)
+    expect(within(card).getByText('成功')).toBeTruthy()
+    expect(within(card).getByText('调度逾期')).toBeTruthy()
+    expect(within(card).getByText('last report 44.5 hours ago')).toBeTruthy()
+    expect(within(card).queryByText('异常')).toBeNull()
+    expect(card?.querySelector('.task-config-state')?.classList.contains('overdue')).toBe(true)
   })
 
   test('keeps actions and editor available, previews a report in place, and replaces history on task switch', () => {

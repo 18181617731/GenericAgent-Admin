@@ -1002,14 +1002,15 @@ func isHashedStaticAsset(name string) bool {
 	if !strings.HasPrefix(name, "assets/") {
 		return false
 	}
-	base := path.Base(name)
-	stem := strings.TrimSuffix(base, path.Ext(base))
-	separator := strings.LastIndexByte(stem, '-')
-	if separator <= 0 || len(stem)-separator-1 < 4 {
+	base := strings.TrimSuffix(path.Base(name), path.Ext(name))
+	if len(base) < 9 || base[len(base)-9] != '-' {
 		return false
 	}
-	for _, char := range stem[separator+1:] {
-		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+	for _, fingerprintChar := range base[len(base)-8:] {
+		if !((fingerprintChar >= 'a' && fingerprintChar <= 'z') ||
+			(fingerprintChar >= 'A' && fingerprintChar <= 'Z') ||
+			(fingerprintChar >= '0' && fingerprintChar <= '9') ||
+			fingerprintChar == '_' || fingerprintChar == '-') {
 			return false
 		}
 	}

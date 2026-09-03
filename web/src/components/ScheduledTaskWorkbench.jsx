@@ -1,38 +1,64 @@
 import React, { useMemo, useState } from 'react'
 import { CalendarClock, ChevronLeft, ChevronRight, Circle, CircleAlert, Code2, FileCode2, FileText, History, LoaderCircle, Play, Power, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
-import { ScheduleArtifactPreview, ScheduleTaskHistory, TaskFormEditor, taskModelLabel, taskState } from './schedule.jsx'
+import { ScheduleArtifactPreview, ScheduleTaskHistory, TaskFormEditor, taskModelLabel, taskRunState, taskRunStateLabel, taskState } from './schedule.jsx'
 
 const workbenchCopy = t => {
   const zh = t?.autostart === '开机自启'
   return zh
     ? {
-    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '异常', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
+    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
     }
     : {
-    title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
+    title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
     }
 }
 
 const taskID = (task, unnamed) => task?.id || task?.name || unnamed || 'task'
 
+// Configuration health and execution outcome are separate signals. An overdue
+// schedule can still have a successful latest report; keep that distinction
+// visible instead of rendering both as a generic error state.
+const taskConfigState = task => {
+  const state = taskState(task)
+  const rawStatus = String(task?.status || '').trim().toUpperCase()
+  return state === 'error' && !task?.error && rawStatus === 'OVERDUE' ? 'overdue' : state
+}
+
 const stateLabel = (state, t, copy) => {
   if (state === 'enabled') return t?.enabled || copy.enabled
   if (state === 'disabled') return t?.disabled || copy.paused
+  if (state === 'overdue') return t?.tasks?.overdue || copy.overdue
+  if (state === 'error') return t?.tasks?.configError || copy.configError
   return copy.anomaly
+}
+
+const taskConfigDetail = (task, state) => {
+  if (state === 'overdue') return String(task?.next_hint || '').trim()
+  if (state === 'error') return String(task?.error || '').trim()
+  return ''
 }
 
 function TaskListItem({ task, selected, llms, t, schedulerModelNo, onSelect }) {
   const copy = workbenchCopy(t)
   const id = taskID(task, t?.tasks?.unnamed)
-  const state = taskState(task)
+  const state = taskConfigState(task)
+  const runState = taskRunState(task)
+  const runLabel = taskRunStateLabel(runState, t)
+  const executedAt = task.latest_run?.executed_at ? new Date(task.latest_run.executed_at) : null
+  const validExecutedAt = executedAt && !Number.isNaN(executedAt.getTime())
+  const resultDetail = task.latest_run?.reason || task.latest_run?.summary || ''
+  const configDetail = taskConfigDetail(task, state)
+  const latestLabel = t?.autostart === '开机自启' ? '最近执行' : 'Latest run'
   const summary = task.next_hint || taskModelLabel(task, llms, t, schedulerModelNo)
   const cadence = `${task.schedule || t?.tasks?.unscheduled || '未排程'} · ${task.repeat || t?.tasks?.manual || '手动'}`
-  return <button type="button" className={`scheduled-task-row task-row task-state-${state}${selected ? ' is-selected' : ''}`} role="option" aria-selected={selected} onClick={() => onSelect?.(id)}>
-    <span className={`scheduled-task-row-state ${state}`} aria-hidden="true">{state === 'error' ? <CircleAlert size={17}/> : selected ? <Circle size={17} fill="currentColor"/> : <Circle size={17}/>}</span>
+  return <button type="button" className={`scheduled-task-row task-row task-run-${runState}${selected ? ' is-selected' : ''}`} role="option" aria-selected={selected} onClick={() => onSelect?.(id)}>
+    <span className={`scheduled-task-row-state run-${runState}`} aria-hidden="true">{runState === 'failed' ? <CircleAlert size={17}/> : selected ? <Circle size={17} fill="currentColor"/> : <Circle size={17}/>}</span>
     <span className="scheduled-task-row-main">
-      <span className="scheduled-task-row-title"><b>{id}</b><em className={`task-state-badge ${state}`}>{stateLabel(state, t, copy)}</em></span>
-      <span className="scheduled-task-row-meta">{cadence}</span>
-      <small>{summary || copy.noNext}</small>
+      <span className="scheduled-task-row-title"><b>{id}</b><em className={`task-state-badge run-${runState}`}>{runLabel}</em></span>
+      <span className="scheduled-task-row-meta">{cadence}<em className={`task-config-state ${state}`}>{stateLabel(state, t, copy)}</em></span>
+      <span className="scheduled-task-row-latest">{latestLabel}：{validExecutedAt ? executedAt.toLocaleString() : (t?.autostart === '开机自启' ? '暂无' : 'None')}</span>
+      <small className={resultDetail ? `task-run-detail ${runState}` : ''}>{resultDetail || summary || copy.noNext}</small>
+      {configDetail && configDetail !== resultDetail && <small className={`task-config-detail ${state}`}>{configDetail}</small>}
     </span>
     <ChevronRight size={16} className="scheduled-task-row-chevron" aria-hidden="true"/>
   </button>
@@ -59,7 +85,7 @@ function TaskFilters({ tasks, query, filter, onQuery, onFilter, onClear, t }) {
 function TaskDetailHeader({ task, llms, t, schedulerModelNo, runState, busy, onRun, onReports, onToggle, onDelete, onClose }) {
   const copy = workbenchCopy(t)
   const id = taskID(task, t?.tasks?.unnamed)
-  const state = taskState(task)
+  const state = taskConfigState(task)
   const running = runState?.status === 'pending'
   return <header className="scheduled-task-detail-header">
     <button type="button" className="scheduled-task-mobile-back" onClick={onClose}><ChevronLeft size={17}/>{copy.close}</button>
@@ -94,11 +120,14 @@ function TaskEditorCard({ taskEditor, setTaskEditor, editorMode, setEditorMode, 
 function TaskDetail({ task, taskEditor, setTaskEditor, editorMode, setEditorMode, taskDirty, onSave, busy, llms, t, schedulerModelNo, scheduleArtifactTitle, scheduleArtifact, onSelectArtifact, runState, onRun, onReports, onToggle, onDelete, onClose }) {
   const copy = workbenchCopy(t)
   const prompt = String(task?.prompt || '').trim()
+  const configState = taskConfigState(task)
+  const nextLabel = configState === 'overdue' ? copy.overdue : copy.next
+  const nextValue = configState === 'overdue' ? (taskConfigDetail(task, configState) || copy.noNext) : (task.next_hint || copy.noNext)
   return <section className="scheduled-task-detail" aria-label={`${copy.detail}: ${taskID(task, t?.tasks?.unnamed)}`}>
     <TaskDetailHeader task={task} llms={llms} t={t} schedulerModelNo={schedulerModelNo} runState={runState} busy={busy} onRun={onRun} onReports={onReports} onToggle={onToggle} onDelete={onDelete} onClose={onClose}/>
     <div className="scheduled-task-detail-scroll">
       <div className="scheduled-task-prompt-card"><span>{copy.prompt}</span><p>{prompt || t?.empty}</p></div>
-      <div className="scheduled-task-detail-facts"><span><b>{copy.next}</b><em>{task.next_hint || copy.noNext}</em></span><span><b>{copy.model}</b><em>{taskModelLabel(task, llms, t, schedulerModelNo)}</em></span></div>
+      <div className="scheduled-task-detail-facts"><span><b>{nextLabel}</b><em>{nextValue}</em></span><span><b>{copy.model}</b><em>{taskModelLabel(task, llms, t, schedulerModelNo)}</em></span></div>
       <TaskEditorCard taskEditor={taskEditor} setTaskEditor={setTaskEditor} editorMode={editorMode} setEditorMode={setEditorMode} taskDirty={taskDirty} onSave={onSave} busy={busy} t={t} llms={llms} schedulerModelNo={schedulerModelNo}/>
       <section className="scheduled-task-history-card">
         <div className="scheduled-task-section-heading"><div><span className="scheduled-task-section-kicker">{t?.lists?.recentReports || '执行记录'}</span><h4>{taskID(task, t?.tasks?.unnamed)}</h4></div><span className="scheduled-task-history-count">{(task.recent_reports || []).length}</span></div>
