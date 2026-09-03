@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.101 - 2026-09-03
+
+### Project management and chat reliability
+- Add a project management workspace for creating, renaming, deleting, expanding, and pinning projects, with keyboard-accessible actions, mobile-safe controls, dangerous-action confirmation, and rollback-safe error handling.
+- Keep project rename/delete operations consistent across workspace directories, session metadata, pinned preferences, active chats, and preserved conversation history while rejecting unsafe or conflicting mutations.
+- Scope new chats and chat operations to the selected GenericAgent instance, and keep Loop, structured-turn, tool-timing, usage, model-profile, and static-theme protocols compatible across fallback and recovery paths.
+- Expand backend, frontend, protocol, model, and responsive UI regression coverage for project lifecycle, multi-instance chat context, Loop behavior, usage accounting, and recovery/error states.
+
 ## v1.0.100 - 2026-08-29
 
 ### Continuous verification reliability
