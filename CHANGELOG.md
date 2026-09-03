@@ -2,13 +2,38 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
-## v1.0.101 - 2026-09-03
+## v1.0.119 - 2026-09-03
 
 ### Project management and chat reliability
 - Add a project management workspace for creating, renaming, deleting, expanding, and pinning projects, with keyboard-accessible actions, mobile-safe controls, dangerous-action confirmation, and rollback-safe error handling.
 - Keep project rename/delete operations consistent across workspace directories, session metadata, pinned preferences, active chats, and preserved conversation history while rejecting unsafe or conflicting mutations.
 - Scope new chats and chat operations to the selected GenericAgent instance, and keep Loop, structured-turn, tool-timing, usage, model-profile, and static-theme protocols compatible across fallback and recovery paths.
 - Expand backend, frontend, protocol, model, and responsive UI regression coverage for project lifecycle, multi-instance chat context, Loop behavior, usage accounting, and recovery/error states.
+
+## v1.0.104 - 2026-08-31
+
+### Scheduled task clarity
+- Rename the mixed scheduler-status filter to “需关注” so successful executions are not confused with configuration or overdue warnings.
+- Open a task's latest execution report automatically when navigating from its detail view, removing the extra selection step.
+- Hide duplicated endpoint and health metadata from the compact mobile page header while preserving the notification control.
+
+## v1.0.101 - 2026-08-30
+
+### Upstream chat and channel integration
+- Add dedicated Feishu Admin session synchronization with paginated session listing, `/new`, `/stop`, instance/session switching, and structured task-card updates that reuse the official Feishu card flow without duplicating final output.
+- Keep Feishu multi-turn output on one task card, improve bridge message presentation, and write Telegram allowlist IDs as integers.
+- Cache chat-session summaries, render Mermaid diagrams safely from Markdown, open self-update requests in a new chat, and align expanded sidebar actions with the compact controls.
+
+### Security and lifecycle reliability
+- Make Feishu Admin authorization fail closed: an empty allowlist denies access unless public access is explicitly enabled, while exact sender matches and the explicit `*` wildcard remain supported.
+- Require the Feishu bridge child process to survive a startup readiness window before reporting it as running, and clean up its listener, server, and temporary script when dependencies or the official task-card implementation fail during startup.
+- Include the synthetic Feishu Admin bridge in service summary counts and close persistent chat workers deterministically in Loop tests so Windows temporary directories are not left locked.
+- Hide archived chats from Hub and Feishu session discovery and reject all bridge operations against archived session IDs.
+- Keep new-chat creation scoped to the selected GenericAgent instance and consume memory-file draft launches exactly once after a session is created.
+- Regenerate the web dependency lock with npm 10 so release runners can install the complete optional `@emnapi` dependency graph.
+- Stabilize the session-summary cache regression test by preserving its explicit ordering timestamps.
+- Accept additional deterministic cleanup inside the chat worker's `finally` block without falsely failing the packaged-runtime health check.
+- Keep empty process collections as JSON arrays, make Python resolution tests host-independent, and align update contracts and Windows restart paths across CI build hosts.
 
 ## v1.0.100 - 2026-08-29
 
