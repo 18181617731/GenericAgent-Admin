@@ -6259,13 +6259,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const openInitialChat = async () => {
       try {
         const draft = memoryDraftRef.current
-        if (draft && chatLaunchStartedRef.current) return
-        if (draft) chatLaunchStartedRef.current = true
         if (draft) {
-          await newSession()
-          setPrompt(draft.prompt)
+          const claimed = await createMemoryChatDraftSession(memoryDraftRef, createSession)
+          if (!claimed) return
+          setSessionPrompt(claimed.draft.prompt, claimed.sessionID)
           setNotice(ct('已创建文件优化对话。请先审阅草稿，确认后再发送。', 'File-improvement chat created. Review the draft before sending.'))
-          window.setTimeout(() => promptRef.current?.focus(), 0)
+          requestAnimationFrame(() => promptRef.current?.focus())
           return
         }
         if (!intent.newChat || chatLaunchStartedRef.current) {

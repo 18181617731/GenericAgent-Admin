@@ -3269,7 +3269,7 @@ describe('chat loop controls', () => {
     fireEvent.mouseDown(screen.getByRole('option', { name:'Provider A / loop-model' }))
     fireEvent.click(screen.getByRole('button', { name:'启动 Loop' }))
     await waitFor(() => expect(startedBody?.objective).toBe(prompt))
-    expect(startedBody).not.toHaveProperty('max_rounds')
+    expect(startedBody).toHaveProperty('max_rounds', 3)
     expect(document.querySelector('.oa-composer textarea')?.value).toBe('')
     expect(screen.getByRole('button', { name:'停止 Loop' })).toBeTruthy()
 
