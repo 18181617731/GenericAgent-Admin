@@ -20425,7 +20425,13 @@ html[data-color-scheme="dark"] .oa-chat .oa-session-badges .oa-session-draft-bad
   }
 }
 .oa-chat .oa-sidebar[aria-hidden="true"] { visibility: hidden; }
-.oa-chat .oa-session-list { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.oa-chat .oa-session-list {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
 .oa-chat .oa-session-menu {
   width: 190px;
   max-height: calc(100dvh - 16px);

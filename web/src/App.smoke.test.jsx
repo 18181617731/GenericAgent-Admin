@@ -1938,6 +1938,7 @@ describe('operator shell feedback', () => {
     expect(appStyles).toMatch(/\.channel-rail\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[\s\S]*?overflow:\s*visible;/)
     expect(appStyles).toMatch(/\.autonomous-report-list button b,[\s\S]*?white-space:\s*normal;/)
     expect(appStyles).toMatch(/\.instance-card dd\s*\{[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?white-space:\s*normal;/)
+    expect(appStyles).toMatch(/\.oa-chat \.oa-session-list\s*\{[\s\S]*?overflow-y:\s*auto;[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?touch-action:\s*pan-y;/)
   })
 
   test('navigation exposes the selected route with native keyboard semantics', async () => {

@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.122 - 2026-09-04
+
+### 手机端侧栏可滑动
+- 为聊天侧栏的会话/项目列表补充 iOS 惯性滚动和纵向触摸手势声明，避免 body 锁定时无法滑动查看更多内容。
+
 ## v1.0.121 - 2026-09-04
 
 ### 消息通知面板可关闭
