@@ -9523,7 +9523,12 @@ html[data-theme="warm"] .overview-page {
   background: var(--overview-soft);
   overflow-wrap: anywhere;
 }
-.overview-page .overview-panel .mini-log { max-height: 150px; }
+.overview-page .overview-panel .mini-log {
+  max-height: 150px;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: pre;
+}
 .overview-page .overview-panel .risk {
   padding: 0;
   list-style: none;
