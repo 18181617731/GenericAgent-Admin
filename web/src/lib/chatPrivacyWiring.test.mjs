@@ -23,6 +23,7 @@ test('browser notifications are redacted before every delivery fallback', () => 
   assert.match(notificationsSource, /showWindowNotification\(displayItem\)/)
 })
 
-test('mobile sidebar reserves a dedicated row for the privacy switch', () => {
-  assert.match(styleSource, /grid-template-rows:\s*auto auto auto auto auto auto auto minmax\(0, 1fr\) auto;/)
+test('mobile sidebar keeps the complete drawer reachable with one touch scroll', () => {
+  assert.match(styleSource, /\.oa-chat \.oa-sidebar\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?overflow-y:\s*auto !important;[\s\S]*?touch-action:\s*pan-y;/)
+  assert.match(styleSource, /\.oa-chat \.oa-session-list\s*\{[\s\S]*?max-height:\s*none;[\s\S]*?overflow:\s*visible;/)
 })

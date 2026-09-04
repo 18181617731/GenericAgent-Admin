@@ -77,6 +77,8 @@ export default function ChatSidebar({
   const collapseButtonRef = useRef(null)
   const sidebarRef = useRef(null)
   const previousFocusRef = useRef(null)
+  const onCollapseRef = useRef(onCollapse)
+  onCollapseRef.current = onCollapse
 
   useEffect(() => {
     const mobile = window.matchMedia?.('(max-width: 900px)')?.matches
@@ -88,7 +90,7 @@ export default function ChatSidebar({
     const handleDrawerKeyDown = event => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onCollapse?.()
+        onCollapseRef.current?.()
         return
       }
       if (event.key !== 'Tab') return
@@ -120,7 +122,7 @@ export default function ChatSidebar({
       }
       else restoreFocus()
     }
-  }, [collapsed, onCollapse])
+  }, [collapsed])
 
   useEffect(() => {
     if (!menuOpen) return

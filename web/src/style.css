@@ -20497,12 +20497,17 @@ html[data-color-scheme="dark"] .oa-chat .oa-session-badges .oa-session-draft-bad
     max-width: calc((100vw - 24px) * var(--ga-ui-scale-width, 1)) !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
-    display: grid !important;
-    grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
-    align-content: stretch;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch;
     gap: 9px;
     padding: max(12px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom)) !important;
-    overflow: hidden !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    scrollbar-gutter: stable;
     visibility: visible;
     opacity: 1;
     transform: none !important;
@@ -20516,12 +20521,29 @@ html[data-color-scheme="dark"] .oa-chat .oa-session-badges .oa-session-draft-bad
     pointer-events: none;
     transition: transform .2s ease, opacity .2s ease, visibility .2s step-end;
   }
-  .oa-chat .oa-sidebar-heading { position: relative; z-index: 2; }
-  .oa-chat .oa-session-list { min-height: 0; padding-bottom: 10px; }
+  .oa-chat .oa-sidebar > * { flex: 0 0 auto; }
+  .oa-chat .oa-sidebar-heading {
+    position: sticky !important;
+    top: 0;
+    z-index: 5;
+    min-height: 42px;
+    margin: 0;
+    padding: 0 4px 4px;
+    border-bottom: 1px solid var(--oa-line);
+    background: var(--oa-sidebar);
+  }
+  .oa-chat .oa-session-list {
+    flex: 0 0 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 10px;
+  }
   .oa-chat .oa-sidebar-foot {
     position: relative;
     z-index: 2;
     margin: 0;
+    flex: 0 0 auto;
     padding: 9px 0 max(2px, env(safe-area-inset-bottom));
     background: var(--oa-sidebar);
   }
