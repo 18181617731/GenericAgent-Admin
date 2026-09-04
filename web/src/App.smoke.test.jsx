@@ -1912,6 +1912,10 @@ describe('operator shell feedback', () => {
     expect(appStyles).toMatch(/@media \(max-width:640px\)\s*\{[\s\S]*?\.task-run-detail\s*\{[\s\S]*?white-space:\s*normal;/)
     expect(appStyles).toMatch(/\.goal-stats \.stat,\s*\.goal-stats \.stat span\s*\{[\s\S]*?min-width:\s*0;/)
     expect(appStyles).toMatch(/\.models-page \.model-config-main\s*\{[\s\S]*?grid-template-areas:\s*[\s\S]*?identity identity identity/)
+    expect(appStyles).toMatch(/\.app:not\(\.app-tab-chat\) \.main > \.admin-page-header \.admin-page-copy p\s*\{[\s\S]*?line-clamp:\s*unset;/)
+    expect(appStyles).toMatch(/\.channel-rail\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[\s\S]*?overflow:\s*visible;/)
+    expect(appStyles).toMatch(/\.autonomous-report-list button b,[\s\S]*?white-space:\s*normal;/)
+    expect(appStyles).toMatch(/\.instance-card dd\s*\{[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?white-space:\s*normal;/)
   })
 
   test('navigation exposes the selected route with native keyboard semantics', async () => {

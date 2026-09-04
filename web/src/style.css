@@ -22185,9 +22185,44 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
    long admin page is being scrolled. */
 @media (max-width: 680px) {
   .app:not(.app-tab-chat) .main > .admin-page-header {
-    position: relative;
-    top: auto;
+    position: relative !important;
+    top: auto !important;
     z-index: 1;
+  }
+
+  /* Keep the route title and its explanation readable after the mobile shell
+     is scrolled.  The desktop two-line clamp makes long Chinese descriptions
+     look like a broken/truncated header on a phone. */
+  .app:not(.app-tab-chat) .main > .admin-page-header .admin-page-copy p {
+    display: block;
+    max-width: none;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+  }
+
+  /* Report and task names are identifiers, not decoration: wrap them instead
+     of hiding the tail behind an ellipsis in the narrow report index/list. */
+  .autonomous-report-list button b,
+  .autonomous-report-list button span,
+  .autonomous-task-row-main strong,
+  .autonomous-task-row-main small {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .autonomous-report-list button {
+    min-height: 0;
+  }
+
+  .instance-card dd {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
   }
 }
 
@@ -22736,11 +22771,13 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   .channel-config-path code,
   .channel-commit-path code { grid-column: 2; white-space: normal; overflow-wrap: anywhere; }
   .channel-config-list { grid-template-columns: minmax(0, 1fr); }
-  .channel-rail { display: flex; min-width: 0; gap: 5px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 8px; scrollbar-width: none; }
-  .channel-rail::-webkit-scrollbar { display: none; }
+  /* Do not leave the next channel card half-hidden behind a scrollbar. Two
+     columns keep every configured channel discoverable without horizontal
+     clipping on phone widths. */
+  .channel-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; gap: 5px; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); padding: 8px; }
   .channel-rail-head { display: none; }
-  .channel-rail > button { width: max-content; min-width: 120px; flex: 0 0 auto; grid-template-columns: 26px minmax(0, 1fr) auto; min-height: 40px; }
-  .channel-rail > button > span:not(.channel-mark):not(.channel-rail-dirty):not(.channel-rail-count) { max-width: 120px; }
+  .channel-rail > button { width: 100%; min-width: 0; flex: none; grid-template-columns: 26px minmax(0, 1fr) auto; min-height: 40px; }
+  .channel-rail > button > span:not(.channel-mark):not(.channel-rail-dirty):not(.channel-rail-count) { max-width: none; overflow: visible; overflow-wrap: anywhere; white-space: normal; }
   .channel-mark { width: 26px; height: 26px; flex-basis: 26px; }
   .channel-config-card,
   .channel-detail { padding: 12px; }
