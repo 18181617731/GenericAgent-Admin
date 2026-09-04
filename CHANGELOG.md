@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.121 - 2026-09-04
+
+### 消息通知面板可关闭
+- 为移动端消息通知弹层提供明确的关闭按钮，并支持按 Escape 键或点击外部区域关闭，避免弹层遮挡页面后无法退出。
+
 ## v1.0.120 - 2026-09-04
 
 ### 移动端页面布局收口

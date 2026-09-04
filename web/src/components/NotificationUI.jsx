@@ -41,6 +41,22 @@ export function NotificationCenter({ lang = 'zh', onOpen }) {
     return () => { unsubscribe(); window.clearTimeout(toastTimer.current) }
   }, [])
 
+  useEffect(() => {
+    if (!open) return undefined
+    const closeOnEscape = event => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    const closeOnOutsidePointer = event => {
+      if (!event.target.closest?.('.notification-center')) setOpen(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape)
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+    }
+  }, [open])
+
   const openItem = item => {
     markNotificationRead(item.id)
     setItems(loadNotifications())
@@ -58,7 +74,7 @@ export function NotificationCenter({ lang = 'zh', onOpen }) {
         {unread ? <BellRing size={17}/> : <Bell size={17}/>} {unread > 0 && <span className="notification-badge">{unread > 99 ? '99+' : unread}</span>}
       </button>
       {open && <div className="notification-popover" role="dialog" aria-label={copy.title}>
-        <header><div><b>{copy.title}</b><span>{unread ? `${unread} ${copy.unread}` : copy.empty}</span></div><button type="button" onClick={readAll} disabled={!unread} title={copy.allRead}><CheckCheck size={16}/></button></header>
+        <header><div><b>{copy.title}</b><span>{unread ? `${unread} ${copy.unread}` : copy.empty}</span></div><button type="button" onClick={readAll} disabled={!unread} title={copy.allRead}><CheckCheck size={16}/></button><button type="button" className="notification-popover-close" onClick={() => setOpen(false)} aria-label={copy.close} title={copy.close}><X size={16}/></button></header>
         <div className="notification-popover-list">{recent.length ? recent.map(item => {
           const displayItem = chatNotificationForDisplay(item, privacyMode, lang)
           return <button type="button" key={item.id} className={itemClass(item)} onClick={() => openItem(item)}>

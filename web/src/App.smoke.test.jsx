@@ -17,6 +17,7 @@ import { SchedulerServiceRow } from './components/schedule.jsx'
 import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
 import { EnvironmentGuardianSection, GoalWorkflowGuide } from './components/ServicePlacement.jsx'
 import { ModuleTodoPanel } from './components/ModuleTodoPanel.jsx'
+import { NotificationCenter } from './components/NotificationUI.jsx'
 import { registerDialogAdapter } from './lib/danger.js'
 
 globalThis.React = React
@@ -137,6 +138,27 @@ const approvalOverview = (items = [pendingApproval]) => ({
   pending: items.filter(item => item.state === 'pending').length,
   approved: items.filter(item => item.state === 'approved').length,
   rejected: items.filter(item => item.state === 'rejected').length,
+})
+
+describe('notification center controls', () => {
+  test('exposes a close action and dismisses the mobile popover', () => {
+    const onOpen = vi.fn()
+    render(<NotificationCenter lang="zh" onOpen={onOpen}/>)
+    const trigger = screen.getByRole('button', { name: '消息通知' })
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog', { name: '消息通知' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    expect(screen.queryByRole('dialog', { name: '消息通知' })).toBeNull()
+
+    fireEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '消息通知' })).toBeNull()
+
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: '消息通知' })).toBeNull()
+  })
 })
 
 describe('autonomous operations page', () => {
