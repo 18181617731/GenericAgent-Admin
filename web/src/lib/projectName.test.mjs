@@ -55,7 +55,7 @@ test('the Projects tab offers a way to create the projects it lists', () => {
   assert.match(source, /'\/api\/chat\/projects', \{ method:'POST'/)
   // Creating a project should leave the user in a chat bound to it, not just a
   // new folder in the sidebar.
-  assert.match(source, /await createSession\(created\)/)
+  assert.match(source, /await createSession\(project\)/)
   assert.match(source, /projectNameError\(name\)/)
 })
 

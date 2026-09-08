@@ -41,7 +41,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]interface{}{"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource, "updated_at": summary.UpdatedAt, "count": summary.Count, "running": s.chatRunActive(summary.ID), "workspace": summary.Workspace, "project_mode": summary.ProjectMode, "hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "archived": summary.Archived, "loop": summary.Loop})
 	}
 	projects, pinnedProjects := chatProjectNamesFor(cfg)
-	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(s.CfgStore.Snapshot()).Order})
+	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order})
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +196,9 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ProjectMode string `json:"project_mode"`
+		ProjectMode     string `json:"project_mode"`
+		ProjectProvider string `json:"project_provider"`
+		ProjectID       string `json:"project_id"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if err := decode(r, &req); err != nil {
@@ -204,23 +206,28 @@ func (s *Server) chatNewSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	projectMode := strings.TrimSpace(req.ProjectMode)
-	if projectMode != "" {
-		found := false
-		for _, name := range discoverProjectNames(s.CfgStore.Snapshot().GARoot) {
-			if name == projectMode {
-				found = true
-				break
-			}
-		}
-		if !found {
+	cfg := s.CfgStore.Snapshot()
+	provider := strings.TrimSpace(req.ProjectProvider)
+	id := strings.TrimSpace(req.ProjectID)
+	// Legacy callers selected official GA Project Mode using project_mode only.
+	if provider == "" && id == "" && strings.TrimSpace(req.ProjectMode) != "" {
+		provider, id = chatProjectProviderOfficial, strings.TrimSpace(req.ProjectMode)
+	}
+	var projectMode, workspace string
+	if id != "" {
+		item, resolvedWorkspace, err := resolveProject(cfg, provider, id)
+		if err != nil {
 			bad(w, http.StatusBadRequest, "project does not exist")
 			return
 		}
+		provider, id, workspace = item.Provider, item.ID, resolvedWorkspace
+		if provider == chatProjectProviderOfficial {
+			projectMode = id
+		}
 	}
-	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}, ProjectMode: projectMode}
-	if projectMode != "" {
-		if err := saveChatSession(s.CfgStore.Snapshot(), cs); err != nil {
+	cs := chatSession{ID: newChatID(), Title: "新会话", UpdatedAt: time.Now().Unix(), Messages: []chatMessage{}, Settings: s.defaultChatSettings(), RawHistory: []map[string]interface{}{}, Workspace: workspace, ProjectMode: projectMode, ProjectProvider: provider, ProjectID: id}
+	if id != "" {
+		if err := saveChatSession(cfg, cs); err != nil {
 			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1023,7 +1030,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["diagnosis"] = payload
 	}
 	running, pendingAssistantID, runStartedAtMS := s.chatRunState(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop, "autorun": cs.Autorun})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "project_provider": cs.ProjectProvider, "project_id": cs.ProjectID, "loop": cs.Loop, "autorun": cs.Autorun})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
@@ -1131,7 +1138,7 @@ func (s *Server) maybeHandleProjectCommand(w http.ResponseWriter, r *http.Reques
 		bad(w, http.StatusInternalServerError, err.Error())
 		return true
 	}
-	s.publishChatRun(sid, map[string]interface{}{"type": "message", "message": msg, "workspace": cs.Workspace, "project_mode": cs.ProjectMode})
+	s.publishChatRun(sid, map[string]interface{}{"type": "message", "message": msg, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "project_provider": cs.ProjectProvider, "project_id": cs.ProjectID})
 	s.endChatRun(sid)
 	s.streamChatRun(w, r, sid, 0)
 	return true
@@ -1165,10 +1172,13 @@ func (s *Server) chatBTW(w http.ResponseWriter, r *http.Request, sid string) {
 		"raw_history":      cs.RawHistory,
 		"workspace":        cs.Workspace,
 		"project_mode":     cs.ProjectMode,
+		"project_provider": cs.ProjectProvider,
+		"project_id":       cs.ProjectID,
 		"llm_no":           cs.Settings.LLMNo,
 		"reasoning_effort": cs.Settings.ReasoningEffort,
 		"ga_root":          s.CfgStore.Snapshot().GARoot,
 	}
+	applyProjectRequestFields(cmdReq, cs, s.CfgStore.Snapshot())
 	msg, err := runOneShotBTWWorkerFunc(s.CfgStore.Snapshot(), sid, cmdReq)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
@@ -1320,6 +1330,8 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		"working":                  cs.Working,
 		"workspace":                cs.Workspace,
 		"project_mode":             cs.ProjectMode,
+		"project_provider":         cs.ProjectProvider,
+		"project_id":               cs.ProjectID,
 		"extra_sys_prompts":        cs.ExtraSysPrompts,
 		"llm_no":                   cs.Settings.LLMNo,
 		"reasoning_effort":         cs.Settings.ReasoningEffort,
@@ -1329,6 +1341,7 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		"_ga_pending_assistant_id": pendingMsg.ID,
 		"_ga_run_started_at_ms":    runStartedAtMS,
 	}
+	applyProjectRequestFields(cmdReq, cs, s.CfgStore.Snapshot())
 	go s.runChatWorkerOwned(sid, token, cs, cmdReq)
 	if startOnly {
 		writeJSON(w, map[string]interface{}{"ok": true, "running": true})

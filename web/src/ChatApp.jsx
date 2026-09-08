@@ -42,7 +42,7 @@ import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, 
 import { groupProjectSessions } from './lib/chatProjectSessions.js'
 import { hubSessions } from './lib/chatHubSessions.js'
 import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
-import { reconcileScalarList, reconcileSessionSummaries } from './lib/chatSessionReconcile.js'
+import { equalSessionSummaryValue, reconcileScalarList, reconcileSessionSummaries } from './lib/chatSessionReconcile.js'
 import { createPromptPreset, normalizePromptPresets, promptPresetPatch, selectedPromptPresetView } from './lib/promptPresets'
 import { commandResultSummary, reduceCommandResult } from './lib/chatCommands'
 import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
@@ -4641,12 +4641,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         setErr(ct(`Loop \u5df2\u5f02\u5e38\u505c\u6b62\uff1a${loopStopReasonText(ev.loop.stop_reason)}`, `Loop stopped with an error: ${loopStopReasonText(ev.loop.stop_reason)}`))
       }
     }
-    if (Object.prototype.hasOwnProperty.call(ev, 'workspace') || Object.prototype.hasOwnProperty.call(ev, 'project_mode')) {
-      setSessions(xs => xs.map(x => x.id === sessionId ? {
-        ...x,
-        ...(Object.prototype.hasOwnProperty.call(ev, 'workspace') ? { workspace: ev.workspace || '' } : {}),
-        ...(Object.prototype.hasOwnProperty.call(ev, 'project_mode') ? { project_mode: ev.project_mode || '' } : {}),
-      } : x))
+    const projectFields = ['workspace', 'project_mode', 'project_provider', 'project_id']
+    if (projectFields.some(field => Object.prototype.hasOwnProperty.call(ev, field))) {
+      const changes = Object.fromEntries(projectFields
+        .filter(field => Object.prototype.hasOwnProperty.call(ev, field))
+        .map(field => [field, ev[field] || '']))
+      setSessions(xs => xs.map(x => x.id === sessionId ? { ...x, ...changes } : x))
     }
     if (ev.type === 'user' && ev.message) {
       setMessages(xs => isActiveSession(sessionId)
@@ -5150,7 +5150,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setNotice('')
       setMenuOpen('')
       setMenuPos(null)
-      setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
+      setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', project_provider: d.project_provider || '', project_id: d.project_id || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
       await loadChatState(d.id, openToken, prefetchedState)
       if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
     } catch (e) {
@@ -5363,7 +5363,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const list = reconcileSessionSummaries(sessionsRef.current, incoming)
     sessionsRef.current = list
     setSessions(list)
-    setProjects(previous => reconcileScalarList(previous, d.projects))
+    const incomingProjects = Array.isArray(d.project_items) ? d.project_items : (d.projects || [])
+    setProjects(previous => equalSessionSummaryValue(previous, incomingProjects) ? previous : incomingProjects)
     setPinnedProjects(previous => reconcileScalarList(previous, d.pinned_projects))
     setProjectOrder(previous => reconcileScalarList(previous, d.project_order))
     if (open) {
@@ -5430,12 +5431,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
 
-  const openProjectFolder = async (name) => {
+  const openProjectFolder = async (project) => {
+    const name = project.name
     const instanceID = chatInstanceRef.current
     if (!await confirmDanger('chat-project-folder-open', ct(`在服务器桌面打开项目文件夹 ${name}？`, `Open project folder ${name} on the server desktop?`))) return
     if (instanceID !== chatInstanceRef.current) return
     try {
-      await chatApi('/api/files/open', { dangerous: true, method: 'POST', body: JSON.stringify({ path: `temp/projects/${name}`, mode: 'folder' }) })
+      await chatApi('/api/files/open', { dangerous: true, method: 'POST', body: JSON.stringify({ project_provider: project.provider || 'official', project_id: project.id || name, mode: 'folder' }) })
     } catch (e) {
       if (e.name !== 'AbortError') setErr(e.message || String(e))
     }
@@ -5462,19 +5464,23 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       setErr(projectNameErrorText(problem, ct))
       return
     }
-    if (projects.some(existing => existing === name)) {
-      setErr(ct(`项目 ${name} 已存在。`, `Project ${name} already exists.`))
-      return
-    }
+    if (projectCreating) return
     setProjectCreating(true)
     setErr('')
     try {
-      const d = await chatApi('/api/chat/projects', { method:'POST', body: JSON.stringify({ name }) })
+      const provider = 'official'
+      if (projects.some(existing => (existing?.id || existing) === name)) {
+        setErr(ct(`项目 ${name} 已存在。`, `Project ${name} already exists.`))
+        return
+      }
+      const d = await chatApi('/api/chat/projects', { method:'POST', body: JSON.stringify({ name, provider }) })
       const created = String(d?.name || name)
-      setProjects(Array.isArray(d.projects) ? d.projects : projects.concat(created))
-      setExpandedProjectNames(current => new Set(current).add(created))
+      const project = d?.provider && d?.id ? { provider: d.provider, id: d.id, name: created } : created
+      const projectKey = typeof project === 'object' ? project.id : created
+      setProjects(Array.isArray(d.project_items) ? d.project_items : Array.isArray(d.projects) ? d.projects : projects.concat(project))
+      setExpandedProjectNames(current => new Set(current).add(projectKey))
       closeProjectDraft()
-      await createSession(created)
+      await createSession(project)
       setNotice(d?.created === false
         ? ct(`项目 ${created} 已存在，已在其中新建对话`, `Project ${created} already existed; started a chat in it`)
         : ct(`已创建项目 ${created}，并新建了一个对话`, `Created project ${created} and started a chat in it`))
@@ -6807,7 +6813,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           const next = reconcileSessionSummaries(previous, incoming)
           sessionsRef.current = next
           setSessions(next)
-          setProjects(current => reconcileScalarList(current, d.projects))
+          const incomingProjects = Array.isArray(d.project_items) ? d.project_items : (d.projects || [])
+          setProjects(current => equalSessionSummaryValue(current, incomingProjects) ? current : incomingProjects)
           setPinnedProjects(current => reconcileScalarList(current, d.pinned_projects))
           setProjectOrder(current => reconcileScalarList(current, d.project_order))
           const activeID = activeSidRef.current
