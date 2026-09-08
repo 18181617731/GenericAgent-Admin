@@ -17,11 +17,12 @@ describe('session-scoped guided-message queue wiring', () => {
 
   test('clears stale queue immediately, then applies the selected session backend queue', () => {
     const openStart = source.indexOf('const openSession = async')
-    const clearQueue = source.indexOf('applyQueueSnapshot([])', openStart)
-    const fetchSession = source.indexOf('const d = await chatApi(`/api/chat/session/${id}`)', openStart)
-    const restoreQueue = source.indexOf('applyQueueSnapshot(d.queued_messages, d.id)', openStart)
+    const open = source.slice(openStart, source.indexOf('const refreshActiveSessionSnapshot', openStart))
+    const clearQueue = open.indexOf('applyQueueSnapshot([])')
+    const fetchSession = open.indexOf('const d = await loadSessionDetail(id, { signal: controller.signal })')
+    const restoreQueue = open.indexOf('applyQueueSnapshot(d.queued_messages, d.id)')
     expect(openStart).toBeGreaterThan(-1)
-    expect(clearQueue).toBeGreaterThan(openStart)
+    expect(clearQueue).toBeGreaterThan(-1)
     expect(fetchSession).toBeGreaterThan(clearQueue)
     expect(restoreQueue).toBeGreaterThan(fetchSession)
   })
@@ -111,7 +112,7 @@ describe('session-scoped guided-message queue wiring', () => {
     const releaseBusy = source.indexOf('setBusy(false)', releaseRun)
     const releaseStreaming = source.indexOf("setStreamingSid('')", releaseBusy)
     const reloadSessions = source.indexOf('const refreshedSessions = await loadSessions(id)', terminalFinally)
-    const reloadSession = source.indexOf('await openSession(id, false)', reloadSessions)
+    const reloadSession = source.indexOf('await refreshCompletedRun(id, openToken, isCurrentRun)', reloadSessions)
     expect(terminalFinally).toBeGreaterThan(runStart)
     expect(releaseRun).toBeGreaterThan(terminalFinally)
     expect(releaseBusy).toBeGreaterThan(releaseRun)
@@ -138,6 +139,27 @@ describe('session-scoped guided-message queue wiring', () => {
     expect(attach).toBeGreaterThan(refreshStart)
     expect(guardedSnapshot).toBeGreaterThan(attach)
     expect(refreshSnapshot).toBeGreaterThan(guardedSnapshot)
+  })
+
+  test('reconciles only the observed local stream after the backend reports a terminal session', () => {
+    const helperStart = source.indexOf('const refreshActiveSessionSnapshot = async (id) =>')
+    const helperEnd = source.indexOf('\n  const loadWorldline = async', helperStart)
+    const helper = source.slice(helperStart, helperEnd)
+    expect(helper).toContain('const streamActivityToken = streamActivitySeqRef.current')
+    expect(helper).toContain('const observedStream = streamAbortRef.current')
+    expect(helper).toContain('streamActivitySeqRef.current !== streamActivityToken')
+    expect(helper).toContain('if (summary?.running || streamAbortRef.current !== observedStream) return')
+    expect(helper).toContain('observedStream?.abort?.()')
+    expect(helper).not.toContain('streamAbortRef.current = null')
+    expect(helper.indexOf('streamActivitySeqRef.current !== streamActivityToken')).toBeLessThan(helper.indexOf('observedStream?.abort?.()'))
+    expect(helper.indexOf('observedStream?.abort?.()')).toBeLessThan(helper.indexOf('historyPages.apply('))
+
+    const attachStart = source.indexOf('const attachRunningStream = async')
+    const attachEnd = source.indexOf('\n  useEffect(() =>', attachStart)
+    const runSendStart = source.indexOf('const runSend = async')
+    const runSendEnd = source.indexOf('\n  const selectWorldlineRestoreNode', runSendStart)
+    expect(source.slice(attachStart, attachEnd)).toContain('++streamActivitySeqRef.current')
+    expect(source.slice(runSendStart, runSendEnd)).toContain('++streamActivitySeqRef.current')
   })
 
   test('keeps queue send and stop as separate actions while the current session is running', () => {

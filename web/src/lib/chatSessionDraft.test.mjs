@@ -27,6 +27,29 @@ function functionBlock(source, start, end) {
   return source.slice(from, to)
 }
 
+test('project new chat is always available outside the actions menu', () => {
+  const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const header = functionBlock(main, '<div className="oa-project-head">', '<div className="oa-project-body"')
+  const menuStart = header.indexOf('<ProjectActionsMenu')
+  assert.ok(menuStart > 0)
+  const outsideMenu = header.slice(0, menuStart)
+  assert.match(outsideMenu, /className="oa-project-add"/)
+  assert.match(outsideMenu, /onClick=\{\(\)=>newProjectSession\(group.name\)\}/)
+  assert.match(outsideMenu, /disabled=\{batchDeleting\}/)
+  assert.doesNotMatch(header.slice(menuStart), /oa-project-add/)
+  assert.doesNotMatch(main, /No chats yet\. Start one from the/)
+})
+
+test('pinned projects expose a persistent status outside the menu and collapsed body', () => {
+  const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const header = functionBlock(main, '<div className="oa-project-head">', '<ProjectActionsMenu')
+  assert.match(header, /group\.pinned && <span className="oa-project-pinned-badge"/)
+  assert.match(header, /<Pin size=\{11\} aria-hidden="true"/)
+  assert.match(header, /'Pinned'/)
+  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+  assert.match(css, /\.oa-sidebar \.oa-project-pinned-badge\s*\{[^}]*display:inline-flex;[^}]*flex:0 0 auto;/)
+})
+
 test('new chat stays out of the session list until its first send', () => {
   const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
 
@@ -153,4 +176,31 @@ test('chat session drafts stay isolated per instance and legacy flat data remain
   clearChatSessionDrafts('alpha', ['shared-session'], storage)
   assert.equal(loadChatSessionDraft('alpha', 'shared-session', storage), '')
   assert.equal(loadChatSessionDraft('default', 'legacy-session', storage), 'legacy draft')
+})
+
+
+test('project drag handles are opt-in from the new-project toolbar', () => {
+  const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  assert.match(main, /\[projectSortMode, setProjectSortMode\] = useState\(false\)/)
+  const toolbar = functionBlock(main, '<div className="oa-session-manager-head">', "{sidebarTab === 'history' ? <>")
+  assert.match(toolbar, /aria-pressed=\{projectSortMode\}/)
+  assert.match(toolbar, /setProjectSortMode\(current => !current\)/)
+  assert.match(toolbar, /onClick=\{openProjectDraft\}/)
+  assert.match(toolbar, /setProjectSortMode\(false\)/)
+  const header = functionBlock(main, '<div className="oa-project-head">', '<div className="oa-project-body"')
+  assert.match(header, /\{projectSortMode && <ProjectDragHandle/)
+  assert.match(header, /onReorder=\{saveProjectOrder\}/)
+})
+
+
+test('project folder action uses selected instance and confirmed folder opening', () => {
+  const source = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const handler = functionBlock(source, '  const openProjectFolder = async', '  const openProjectDraft =')
+  assert.match(handler, /chatApi\('\/api\/files\/open'/)
+  assert.match(handler, /dangerous: true/)
+  assert.ok(handler.includes('path: `temp/projects/${name}`'))
+  assert.match(handler, /mode: 'folder'/)
+  assert.match(source, /onClick=\{\(\)=>openProjectFolder\(group.name\)\}/)
+  const routes = readFileSync(new URL('../../../internal/api/api.go', import.meta.url), 'utf8')
+  assert.ok(routes.includes('s.requireDangerousConfirm(s.withChatInstance((*Server).filesOpen))'))
 })

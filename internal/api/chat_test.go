@@ -82,7 +82,8 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 			{ID: "a1", Role: "assistant", Content: "已完成同步并保留本地修改", CreatedAt: 2},
 		},
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
+	cs.UpdatedAt = 123
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,6 +116,15 @@ func TestChatTitleGenerationReplacesTemporaryTitle(t *testing.T) {
 	if stored.Title != "上游同步与冲突解决" || stored.TitleSource != chatTitleSourceGenerated {
 		t.Fatalf("generated title was not persisted: %+v", stored)
 	}
+
+	if stored.UpdatedAt != 123 {
+		t.Fatalf("title generation changed activity time: %d", stored.UpdatedAt)
+	}
+	fresh := &Server{}
+	summaries, err := fresh.loadChatSessionSummaries(s.CfgStore.Snapshot())
+	if err != nil || len(summaries) != 1 || summaries[0].Title != stored.Title || summaries[0].UpdatedAt != 123 {
+		t.Fatalf("cold read lost generated title/time: %v %#v", err, summaries)
+	}
 }
 
 func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
@@ -142,7 +152,8 @@ func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
 			{ID: "a2", Role: "assistant", Content: "会使用独立模型生成", CreatedAt: 4},
 		},
 	}
-	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
+	cs.UpdatedAt = 123
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,6 +176,19 @@ func TestAutomaticChatTitleBackfillUsesConfiguredModel(t *testing.T) {
 	}
 	if got.Title != "上游同步与独立标题模型" || got.TitleSource != chatTitleSourceGenerated {
 		t.Fatalf("generated legacy title not persisted: %#v", got)
+	}
+
+	// A fresh runtime must reconstruct the title from durable session/index data.
+	fresh := &Server{}
+	for attempt := 0; attempt < 2; attempt++ {
+		summaries, err := fresh.loadChatSessionSummaries(s.CfgStore.Snapshot())
+		if err != nil || len(summaries) != 1 {
+			t.Fatalf("cold title list: %v %#v", err, summaries)
+		}
+		if summaries[0].TitleSource != chatTitleSourceGenerated || summaries[0].UpdatedAt != 123 {
+			t.Fatalf("title/time did not survive cold load: %#v", summaries[0])
+		}
+		fresh = &Server{}
 	}
 }
 
@@ -637,6 +661,23 @@ class GenericAgent:
 	}
 	if llms[0]["model"] != "valid-model" {
 		t.Fatalf("valid model=%v, want valid-model", llms[0]["model"])
+	}
+}
+
+func TestAnnotateChatLLMFailoverGroupsDisplayName(t *testing.T) {
+	for _, tc := range []struct{ displayName, want string }{
+		{"  Primary Route  ", "Primary Route"},
+		{"\u4e3b\u529b\u6545\u969c\u7ec4", "\u4e3b\u529b\u6545\u969c\u7ec4"},
+		{"", "primary"},
+		{" \t ", "primary"},
+	} {
+		t.Run(tc.displayName, func(t *testing.T) {
+			llms := []map[string]interface{}{{"index": 7, "label": "Mixin/a -> b", "provider": "MixinSession"}}
+			annotateChatLLMFailoverGroups(llms, []modelconfig.FailoverGroup{{VarName: "mixin_config_primary", DisplayName: tc.displayName}})
+			if llms[0]["label"] != tc.want || llms[0]["failover_group"] != "primary" || llms[0]["index"] != 7 || llms[0]["provider"] != "MixinSession" {
+				t.Fatalf("unexpected display name or changed identity: %#v", llms)
+			}
+		})
 	}
 }
 

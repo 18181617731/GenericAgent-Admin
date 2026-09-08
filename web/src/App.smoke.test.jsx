@@ -777,6 +777,7 @@ const validModelProfile = {
 }
 
 function ModelsHarness({
+  officialSlots = {},
   initialProfile = validModelProfile,
   discoverModels = vi.fn(async () => ({ models: [] })),
   initialFailoverGroups = [],
@@ -804,6 +805,7 @@ function ModelsHarness({
   return (
     <Models
       t={I18N.zh}
+      officialSlots={officialSlots}
       profiles={profiles}
       setProfiles={setProfiles}
       patchProfile={patchProfile}
@@ -831,16 +833,16 @@ const providerNameInput = () => document.querySelector('.model-field--provider i
 const openAddModel = () => fireEvent.click(screen.getByRole('button', { name: /添加模型$/ }))
 
 describe('Models call list', () => {
-  test('lists every model as a call slot numbered by --llm-no', () => {
+  test('lists every model using official indices, not local positions', () => {
     installBrowserPolyfills()
     render(<ModelsHarness initialProfile={{
       ...validModelProfile,
       models: ['demo-model', 'demo-model-2'],
       model_configs: [{ model: 'demo-model' }, { model: 'demo-model-2' }],
-    }} />)
+    }} officialSlots={{ '0:0': 9, '0:1': 15 }} />)
 
     const slots = [...document.querySelectorAll('.model-call-slot strong')]
-    expect(slots.map(slot => slot.textContent)).toEqual(['0', '1'])
+    expect(slots.map(slot => slot.textContent)).toEqual(['9', '15'])
     expect(document.querySelector('.model-call-row .model-call-title strong').textContent).toBe('demo-model')
   })
 
@@ -1344,7 +1346,7 @@ describe('chat response model identity', () => {
       />,
     )
 
-    expect(container.querySelector('.oa-response-summary')?.textContent).toContain('source differences confirmed')
+    expect(container.querySelector('.ga-summary-block')?.textContent).toContain('source differences confirmed')
     expect(screen.getByRole('heading', { level: 2, name: 'Two legacy CPLD TU comparison report' })).toBeTruthy()
     expect(screen.getByRole('heading', { level: 3, name: 'Basic information' })).toBeTruthy()
     const firstDetailHeading = container.querySelector('.oa-md h4')
@@ -1356,8 +1358,9 @@ describe('chat response model identity', () => {
     expect(container.querySelector('.oa-md code')?.textContent).toBe('update_cpld_firmware()')
     expect(container.querySelector('.oa-md del')?.textContent).toBe('obsolete path')
     expect(container.querySelector('.oa-md img')).toBeNull()
-    expect(container.querySelector('.oa-md')?.textContent).toContain('<img src=x onerror="window.__markdownInjected=true">')
-    expect(container.querySelector('.oa-md')?.textContent).not.toContain('<br>')
+    const markdownText = [...container.querySelectorAll('.oa-md')].map(node => node.textContent).join('\n')
+    expect(markdownText).toContain('<img src=x onerror="window.__markdownInjected=true">')
+    expect(markdownText).not.toContain('<br>')
   })
 
   test('renders mermaid fences as safe diagrams and keeps the source copyable', async () => {

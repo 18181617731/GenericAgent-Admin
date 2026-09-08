@@ -257,6 +257,18 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, onOpenPro
                 <Select allowClear value={config.thinking_type || undefined} onChange={thinking_type => onChange({ thinking_type })} placeholder={text.inherit} options={THINKING_TYPE_OPTIONS} />
               </label>
             )}
+            {fields.thinkingType && (
+              <label className="model-field">
+                <span className="model-field-label">thinking_budget_tokens</span>
+                <Input type="number" min={1} step={1} disabled={config.thinking_type !== 'enabled'} value={extra.thinking_budget_tokens ?? ''} onChange={event => updateExtra('thinking_budget_tokens', optionalNumber(event.target.value))} placeholder={text.inherit} />
+              </label>
+            )}
+            {protocol === 'native_claude' && (
+              <label className="model-field">
+                <span className="model-field-label">api_key_header</span>
+                <Select allowClear value={extra.api_key_header || undefined} onChange={value => updateExtra('api_key_header', value)} placeholder={text.inherit} options={['auto', 'x-api-key', 'bearer'].map(value => ({ value, label: value }))} />
+              </label>
+            )}
             {fields.reasoningFamily && (
               <label className="model-field">
                 <span className="model-field-label">{text.reasoningEffort}</span>
@@ -1243,6 +1255,7 @@ function LegacyFailoverRows({ groups = [], text }) {
 }
 
 export function Models({
+  officialSlots = {},
   t,
   profiles,
   persistedProfiles = [],

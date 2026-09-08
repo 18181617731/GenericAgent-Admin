@@ -16,6 +16,57 @@ const ruleBodies = (selector) => {
   return matches.map(match => match[1])
 }
 
+test('chat shares minimal step styling across all screen sizes', () => {
+  const start = css.indexOf('@media (max-width: 920px) {\n  .oa-content');
+  const end = css.indexOf('/* Conversation observability', start);
+  assert.ok(start >= 0 && end > start);
+  const sharedStart = css.indexOf('/* Shared step presentation', start);
+  assert.ok(sharedStart > start && sharedStart < end);
+  assert.match(css.slice(start, sharedStart), /font-size: 14px !important/);
+  const mobile = css.slice(sharedStart, end);
+  assert.doesNotMatch(mobile, /@media/);
+  assert.match(mobile, /\.oa-turn-stack \{ padding-left: 0; \}/);
+  assert.match(mobile, /\.oa-turn-stack::before,\s*\.oa-turn-node::before \{ display: none; \}/);
+  assert.match(mobile, /\.oa-turn-stack-head \{ margin-left: 0; width: 100%; \}/);
+  const card = mobile.match(/\.oa-turn-card \{([^}]+)\}/)?.[1];
+  assert.ok(card);
+  assert.match(card, /border: 0;/);
+  assert.match(card, /border-bottom: 1px solid var\(--oa-line, var\(--border\)\)/);
+  assert.match(card, /border-radius: 0;/);
+  assert.match(card, /box-shadow: none;/);
+  assert.match(mobile, /\.oa-turn-body \{ border-radius: 0; \}/);
+  assert.match(mobile, /\.oa-turn-card > \.oa-turn-toggle \{ padding-block: 6px; \}/);
+  assert.match(mobile, /\.oa-turn-stack-head,\s*\.oa-turn-card > \.oa-turn-toggle \{ padding-right: 12px; box-sizing: border-box; \}/);
+  assert.match(mobile, /\.oa-turn-toggle > b \{ flex: 1 1 0; \}/);
+  assert.match(mobile, /\.oa-turn-toggle > \.oa-turn-chevron \{ margin-left: auto; \}/);
+})
+
+test('expanded project headers stick within the sidebar scroll group', () => {
+  const body = ruleBodies('.oa-sidebar .oa-project-group.is-expanded > .oa-project-head').join('');
+  assert.match(body, /position:\s*sticky/);
+  assert.match(body, /top:\s*0/);
+  assert.match(body, /z-index:\s*2/);
+  assert.match(body, /background:\s*var\(--oa-sidebar\)/);
+})
+
+test('execution header keeps quiet status and accessible controls', () => {
+  assert.match(chatSource, /data-running=\{pending \? 'true' : 'false'\}/);
+  assert.match(chatSource, /className="oa-run-status"/);
+  assert.match(ruleBodies('.oa-turn-stack-head > .oa-run-status').join(''), /background: none/);
+  assert.match(ruleBodies('.oa-turn-stack-head > .oa-run-dot').join(''), /box-shadow: none/);
+  assert.match(ruleBodies('.oa-turn-stack-head:focus-visible').join(''), /outline: 2px solid/);
+})
+
+test('chat topbar has no waiting-reply navigation or reserved layout', () => {
+  const header = chatSource.match(/<header className="oa-topbar">([\s\S]*?)<\/header>/)?.[1]
+  assert.ok(header, 'the topbar layout must not depend on waiting sessions')
+  assert.doesNotMatch(chatSource, /ChatWaitingMenu/)
+  assert.doesNotMatch(header, /waitingSessions|waitingSessionIds|oa-waiting-/)
+  assert.doesNotMatch(css, /\.oa-waiting-|\.oa-topbar\.has-waiting/)
+  assert.match(header, /oa-topbar-tools/)
+  assert.match(chatSource, /waiting=\{waitingSessionIds\.has\(session\.id\)\}/)
+})
+
 test('all color themes share one product font stack', () => {
   const fontDeclarations = [...css.matchAll(/--font\s*:\s*([^;]+);/g)]
   assert.equal(fontDeclarations.length, 1, 'the product font must have a single source of truth')

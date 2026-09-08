@@ -81,14 +81,47 @@ export const mergeFinalStreamMessage = (streamed = {}, finalMessage = {}) => {
 }
 
 
+export const mergeStreamTerminalMessage = (messages, pendingId, finalMessage, merge = mergeFinalStreamMessage) => {
+  const list = Array.isArray(messages) ? messages : []
+  const finalId = finalMessage?.id
+  const existingIndex = finalId ? list.findIndex(m => m.id === finalId) : -1
+  const pendingIndex = list.findIndex(m => m.id === pendingId)
+  const targetIndex = existingIndex >= 0 ? existingIndex : pendingIndex
+  if (targetIndex < 0) return list
+
+  // History may already contain this reply when an older running snapshot triggers replay.
+  // Keep its position and metadata, then remove only this run's redundant placeholders.
+  const streamed = pendingIndex >= 0 ? list[pendingIndex] : list[targetIndex]
+  const base = existingIndex >= 0 ? { ...streamed, ...list[existingIndex] } : streamed
+  const merged = { ...merge(base, finalMessage) }
+  // The server ID can change at completion; keep the mounted row's React key.
+  const mounted = list[targetIndex]
+  if (mounted.render_key || mounted.id !== merged.id) merged.render_key = mounted.render_key || mounted.id
+  return list.flatMap((message, index) => {
+    if (index === targetIndex) return [merged]
+    if (message.id === pendingId || (finalId && message.id === finalId)) return []
+    return [message]
+  })
+}
+
 // live=true (default): deltas animate frame-by-frame as before.
 // live=false: deltas accumulate silently until beginLive() flushes the backlog
 // in one shot (used for replayed events when reattaching after a page refresh,
 // so the whole in-progress output appears instantly instead of retyping).
-export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = true }) => {
+const streamGraphemes = typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  : null
+
+export const createStreamDeltaBatcher = ({
+  onFlush, schedule, cancel, live = true,
+  now = () => performance.now(),
+  shouldAnimate = () => typeof document === 'undefined' || !document.hidden,
+}) => {
   let pending = ''
   let scheduled = null
   let drainResolvers = []
+  let lastFrameAt = 0
+  let catchUpAt = 0
 
   const resolveDrains = () => {
     if (pending || scheduled != null) return
@@ -98,8 +131,7 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
   }
   const scheduleNext = () => {
     if (pending && scheduled == null) {
-      // Skip frame-by-frame animation when tab is in background
-      if (typeof document !== 'undefined' && document.hidden) {
+      if (!shouldAnimate()) {
         flushNow()
       } else {
         scheduled = schedule(flushFrame)
@@ -109,16 +141,23 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
   const flushFrame = () => {
     scheduled = null
     if (!pending) return
-    // If tab became hidden during scheduled flush, drain immediately instead of chunking
-    if (typeof document !== 'undefined' && document.hidden) {
+    if (!shouldAnimate()) {
       flushNow()
       return
     }
-    // Small model deltas stay immediate; network bursts are drained across a few
-    // frames so the response advances continuously instead of jumping by blocks.
-    const chunkSize = pending.length <= 24 ? pending.length : Math.min(64, Math.max(4, Math.ceil(pending.length / 8)))
+    // Use elapsed time, not a fixed character budget per frame. A burst catches
+    // up within 160ms of its last arrival, including on slow/low-refresh devices.
+    const time = now()
+    const progress = Math.min(1, Math.max(1, time - lastFrameAt) / Math.max(1, catchUpAt - lastFrameAt))
+    let chunkSize = pending.length <= 12 ? pending.length : Math.ceil(pending.length * progress)
+    if (chunkSize < pending.length) {
+      const grapheme = streamGraphemes?.segment(pending).containing(chunkSize - 1)
+      if (grapheme) chunkSize = grapheme.index + grapheme.segment.length
+      else if (/[\uD800-\uDBFF]/.test(pending[chunkSize - 1])) chunkSize += 1
+    }
     const chunk = pending.slice(0, chunkSize)
     pending = pending.slice(chunkSize)
+    lastFrameAt = time
     onFlush(chunk)
     scheduleNext()
     resolveDrains()
@@ -129,7 +168,10 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
       cancel(scheduled)
       scheduled = null
     }
-    if (!pending) return
+    if (!pending) {
+      resolveDrains()
+      return
+    }
     const chunk = pending
     pending = ''
     onFlush(chunk)
@@ -139,6 +181,9 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
   return {
     push(delta) {
       if (!delta) return
+      const time = now()
+      if (!pending) lastFrameAt = time
+      catchUpAt = time + 160
       pending += delta
       if (live) scheduleNext()
     },
@@ -149,7 +194,7 @@ export const createStreamDeltaBatcher = ({ onFlush, schedule, cancel, live = tru
     },
     flushNow,
     drain() {
-      if (!live) flushNow()
+      if (!live || !shouldAnimate()) flushNow()
       if (!pending && scheduled == null) return Promise.resolve()
       return new Promise(resolve => drainResolvers.push(resolve))
     },

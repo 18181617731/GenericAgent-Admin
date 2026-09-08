@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -39,7 +41,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]interface{}{"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource, "updated_at": summary.UpdatedAt, "count": summary.Count, "running": s.chatRunActive(summary.ID), "workspace": summary.Workspace, "project_mode": summary.ProjectMode, "hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "archived": summary.Archived, "loop": summary.Loop})
 	}
 	projects, pinnedProjects := chatProjectNamesFor(cfg)
-	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "pinned_projects": pinnedProjects})
+	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(s.CfgStore.Snapshot()).Order})
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +154,11 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(parts) == 3 && parts[2] == "switch" && r.Method == http.MethodPost {
 			s.chatWorldlineSwitch(w, r, parts[1])
+			return
+		}
+	case "autorun":
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.chatAutorunSet(w, r, parts[1])
 			return
 		}
 	case "loop":
@@ -449,7 +456,29 @@ func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid stri
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, chatSessionForClient(cs))
+	view, status, err := chatSessionView(cs, r)
+	if err != nil {
+		bad(w, status, err.Error())
+		return
+	}
+	body, err := json.Marshal(view)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Hash the complete client snapshot: updated_at alone misses same-second edits.
+	etag := fmt.Sprintf(`"%x"`, sha256.Sum256(body))
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	for _, candidate := range strings.Split(r.Header.Get("If-None-Match"), ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(body)
 }
 
 func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid string) {
@@ -956,7 +985,7 @@ func (s *Server) chatSaveSettings(w http.ResponseWriter, r *http.Request, sid st
 			cs.ExtraSysPrompts = []string{preset.Content}
 		}
 	}
-	if err := saveChatSession(s.CfgStore.Snapshot(), cs); err != nil {
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), cs); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
@@ -994,7 +1023,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["diagnosis"] = payload
 	}
 	running, pendingAssistantID, runStartedAtMS := s.chatRunState(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop})
+	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "loop": cs.Loop, "autorun": cs.Autorun})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {

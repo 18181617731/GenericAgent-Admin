@@ -14,7 +14,7 @@ export const THINKING_TYPE_OPTIONS = ['adaptive', 'enabled', 'disabled'].map(val
 
 const REASONING_EFFORT_OPTIONS = {
   oai: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value })),
-  claude: ['low', 'medium', 'high', 'xhigh'].map(value => ({ value, label: value })),
+  claude: ['low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value })),
 }
 
 export const modelProtocolFields = protocol => (
@@ -330,9 +330,10 @@ export const orderedModelAndFailoverRows = (profiles = [], failoverGroups = []) 
     id: `failover:${groupIndex}`,
     groupIndex,
     varName: text(group.var_name),
+    displayName: text(group.display_name),
     members: group.members || [],
-    order: Number.isInteger(group.sort_order) ? group.sort_order : -(failoverGroups.length - groupIndex),
-    defaultOrder: -(failoverGroups.length - groupIndex),
+    order: Number.isInteger(group.sort_order) ? group.sort_order : defaultOrder + groupIndex,
+    defaultOrder: defaultOrder + groupIndex,
   }))
 
   return [...modelRows, ...failoverRows].sort((left, right) => left.order - right.order)
@@ -414,6 +415,7 @@ export const migrateFailoverGroupNames = (groups = []) => {
 export const normalizeFailoverGroups = (groups = []) => (Array.isArray(groups) ? groups : []).map(group => {
   const next = {
     var_name: text(group?.var_name),
+    ...(text(group?.display_name) ? { display_name: text(group.display_name) } : {}),
     members: (Array.isArray(group?.members) ? group.members : []).map(member => ({
       provider_var_name: text(member?.provider_var_name),
       model: text(member?.model),

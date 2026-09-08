@@ -218,6 +218,7 @@ type chatSession struct {
 	Archived               bool                     `json:"archived"`
 	ExtraSysPrompts        []string                 `json:"extra_sys_prompts,omitempty"`
 	ExtraSysPromptPresetID string                   `json:"extra_sys_prompt_preset_id,omitempty"`
+	Autorun                chatAutorunState         `json:"autorun"`
 	Loop                   chatLoopState            `json:"loop"`
 	QueuedMessages         []chatQueuedMessage      `json:"queued_messages,omitempty"`
 }
@@ -292,6 +293,9 @@ type chatRun struct {
 	SID                string
 	QueueID            string
 	Events             [][]byte
+	TaskbarText        strings.Builder
+	TaskbarDirty       bool
+	TaskbarWaiting     bool
 	Done               bool
 	Canceled           bool
 	CancelReady        bool
@@ -1478,6 +1482,13 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 	}
 	b := append([]byte(nil), line...)
 	r.Events = append(r.Events, b)
+	var ev struct {
+		Delta string `json:"delta"`
+	}
+	if json.Unmarshal(line, &ev) == nil && ev.Delta != "" {
+		r.TaskbarText.WriteString(ev.Delta)
+		r.TaskbarDirty = true
+	}
 	for ch := range r.Subscribers {
 		select {
 		case ch <- b:
@@ -1522,8 +1533,14 @@ func (s *Server) endChatRunOwned(sid string, token *chatRun) {
 
 func (s *Server) endChatRun(sid string) { s.endChatRunOwned(sid, nil) }
 
-func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid string, from int) {
+func setChatStreamHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+}
+
+func (s *Server) streamChatRun(w http.ResponseWriter, r *http.Request, sid string, from int) {
+	setChatStreamHeaders(w)
 	flusher, _ := w.(http.Flusher)
 	s.ChatMu.Lock()
 	run := s.ChatRuns[sid]
@@ -1782,12 +1799,19 @@ func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []model
 		if !isChatLLMFailover(item) || groupIndex >= len(groups) {
 			continue
 		}
-		name := strings.TrimSpace(groups[groupIndex].VarName)
+		group := groups[groupIndex]
+		name := strings.TrimSpace(group.VarName)
 		groupIndex++
 		name = strings.TrimPrefix(name, "mixin_config_")
 		if name != "" {
 			item["failover_group"] = name
-			item["label"] = name
+		}
+		label := strings.TrimSpace(group.DisplayName)
+		if label == "" {
+			label = name
+		}
+		if label != "" {
+			item["label"] = label
 		}
 	}
 }
@@ -2353,6 +2377,7 @@ func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) 
 	candidate.Pinned = latest.Pinned
 	candidate.Archived = latest.Archived
 	candidate.Loop = latest.Loop
+	candidate.Autorun = latest.Autorun
 	candidate.QueuedMessages = latest.QueuedMessages
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
@@ -2739,7 +2764,7 @@ func (s *Server) scheduleChatTitleGeneration(sid string, cs chatSession) {
 		}
 		latest.Title = title
 		latest.TitleSource = chatTitleSourceGenerated
-		if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
+		if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), latest); err != nil {
 			fmt.Fprintf(os.Stderr, "chat title persistence failed for %s: %v\n", sid, err)
 		}
 	}()
@@ -2802,7 +2827,7 @@ func (s *Server) generateLegacyChatTitle(sid string) (chatSession, error) {
 	}
 	latest.Title = title
 	latest.TitleSource = chatTitleSourceGenerated
-	if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
+	if err := saveChatSessionPreserveUpdatedAtLocked(s.CfgStore.Snapshot(), latest); err != nil {
 		return chatSession{}, err
 	}
 	return latest, nil

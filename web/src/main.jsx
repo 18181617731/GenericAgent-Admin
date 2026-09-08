@@ -78,6 +78,7 @@ function LocalizedRoot() {
     },
   }}>
     <AppDialogHost />
+    <GlobalImagePreview />
     <ErrorBoundary>
       <AuthGate lang={lang} theme={colorMode} onLanguageChange={chooseLanguage} onThemeChange={setColorMode}>
         <Suspense fallback={<RouteFallback label={loading} />}>

@@ -1,5 +1,32 @@
-import { describe, expect, test } from 'vitest'
-import { parseToolReceiptArgs, parseToolResultDetails } from './ChatApp.jsx'
+import React from 'react'
+import { afterEach, describe, expect, test } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/react'
+import { ChatMessage, parseToolReceiptArgs, parseToolResultDetails } from './ChatApp.jsx'
+
+afterEach(() => cleanup())
+
+const reportScript = [
+  'import json',
+  '',
+  String.raw`report_path = r"E:\Work\GenericAgent\temp\projects\licai\daily_reports\portfolio_metrics_2026-09-04.json"`,
+  'with open(report_path, "r", encoding="utf-8") as f:',
+  '    data = json.load(f)',
+  '',
+  'print("Funds type:", type(data.get("funds")))',
+  'print("Funds keys or contents:")',
+  'if isinstance(data.get("funds"), dict):',
+  '    for code, info in data["funds"].items():',
+  '        print(code, info)',
+  'elif isinstance(data.get("funds"), list):',
+  '    for f in data["funds"][:3]:',
+  '        print(f)',
+  '',
+].join('\n')
+
+const reportArgs = literalNewlines => {
+  const lines = reportScript.split('\n').map(line => JSON.stringify(line).slice(1, -1))
+  return `{"script":"${lines.join(literalNewlines ? '\n' : '\\n')}"}`
+}
 
 describe('tool receipt argument parsing', () => {
   test('parses valid JSON without changing typed values or escaped code', () => {
@@ -25,6 +52,94 @@ describe('tool receipt argument parsing', () => {
     expect(parseToolReceiptArgs(String.raw`{"path":"E:\\temp\\new.txt"}`)).toEqual({
       path: String.raw`E:\temp\new.txt`,
     })
+  })
+
+  test.each(['E:\\', 'E:\\temp\\', 'E:\\temp\\folder name\\'])('preserves trailing separators in path %s', path => {
+    for (const value of [JSON.stringify(path), `"${path}"`]) {
+      const script = 'print("ok")'
+      expect(parseToolReceiptArgs(`{"path":${value}}`)).toEqual({ path })
+      expect(parseToolReceiptArgs(`{"before":true,"path":${value},"script":${JSON.stringify(script)}}`)).toEqual({ before: true, path, script })
+    }
+  })
+
+  test.each(['E:\\temp"}', 'E:\\temp", another', 'E:\\temp":1', 'E:\\temp"]'])('preserves escaped quotes next to JSON punctuation in %s', script => {
+    expect(parseToolReceiptArgs(JSON.stringify({ script }))).toEqual({ script })
+  })
+
+  test.each([false, true])('preserves quoted paths inside scripts with literal newlines=%s', literalNewlines => {
+    expect(parseToolReceiptArgs(reportArgs(literalNewlines))).toEqual({ script: reportScript })
+  })
+
+  test('preserves embedded paths and escapes when repairing a separate path argument', () => {
+    const script = String.raw`print("E:\temp\new.txt", "\\n", "\\t")`
+    const body = `{"cwd":"E:\\temp\\new","script":${JSON.stringify(script)}}`
+    expect(parseToolReceiptArgs(body)).toEqual({ cwd: String.raw`E:\temp\new`, script })
+  })
+
+  test.each([false, true])('renders script fields instead of raw argument JSON with literal newlines=%s', literalNewlines => {
+    const content = [
+      '\u{1F6E0}\uFE0F Tool: `code_run`',
+      '```text',
+      reportArgs(literalNewlines),
+      '```',
+    ].join('\n')
+    const { container } = render(
+      <ChatMessage message={{ id: 'script-receipt', role: 'assistant', content, files: [], created_at: 0 }} pending={false} />,
+    )
+    const args = container.querySelector('.ga-tool-pair-call')
+    expect(args?.querySelector('.ga-tool-arg dt')?.textContent).toBe('script')
+    const code = args.querySelector('.ga-tool-arg-code')
+    const preview = args.querySelector('.ga-tool-script')
+    const toggle = args.querySelector('.ga-tool-script-toggle')
+    expect(code?.textContent).toBe(reportScript)
+    expect(args.querySelector('.ga-fold-pre')).toBeNull()
+    expect(preview.classList.contains('is-expanded')).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.getAttribute('aria-controls')).toBe(code.id)
+
+    fireEvent.click(toggle)
+    expect(preview.classList.contains('is-expanded')).toBe(true)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(code.textContent).toBe(reportScript)
+
+    fireEvent.click(toggle)
+    expect(preview.classList.contains('is-expanded')).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(code.textContent).toBe(reportScript)
+  })
+
+  test.each([
+    ['one line', 'print("ok")', false],
+    ['four lines', ['a', 'b', 'c', 'd'].join('\n'), false],
+    ['five lines', ['a', 'b', 'c', 'd', 'e'].join('\n'), true],
+    ['Windows newlines', ['a', 'b', 'c', 'd', 'e'].join('\r\n'), true],
+  ])('only offers expansion for long scripts: %s', (_label, script, canExpand) => {
+    const content = [
+      '\u{1F6E0}\uFE0F Tool: `code_run`',
+      '```text',
+      JSON.stringify({ script, content: reportScript }),
+      '```',
+    ].join('\n')
+    const { container } = render(
+      <ChatMessage message={{ id: 'preview-boundary', role: 'assistant', content, files: [], created_at: 0 }} pending={false} />,
+    )
+    expect(container.querySelectorAll('.ga-tool-script')).toHaveLength(1)
+    expect(container.querySelector('.ga-tool-script .ga-tool-arg-code')?.textContent).toBe(script)
+    expect(Boolean(container.querySelector('.ga-tool-script-toggle'))).toBe(canExpand)
+    expect(container.querySelector('.ga-tool-script.is-expanded')).toBeNull()
+    const contentRow = [...container.querySelectorAll('.ga-tool-arg')].find(row => row.querySelector('dt')?.textContent === 'content')
+    expect(contentRow.querySelector('.ga-tool-arg-code').textContent).toBe(reportScript)
+    expect(contentRow.querySelector('.ga-tool-script')).toBeNull()
+  })
+
+  test.each(['\n', '\r\n', '\t'])('repairs a backslash before literal control %j without losing script text', control => {
+    const script = "print('" + '\\' + control + "'.join(lines))";
+    const body = '{"cwd":"C:\\\\Users\\\\demo","inline_eval":false,"script":"' + script + '","timeout":200,"type":"python"}';
+    expect(parseToolReceiptArgs(body)).toEqual({ cwd: 'C:\\Users\\demo', inline_eval: false, script, timeout: 200, type: 'python' });
+    const content = ['\u{1F6E0}\uFE0F Tool: `code_run`', '```text', body, '```'].join('\n');
+    const { container } = render(<ChatMessage message={{ id: 'slash-control', role: 'assistant', content, files: [], created_at: 0 }} pending={false} />);
+    expect(container.querySelectorAll('.ga-tool-arg dt')).toHaveLength(5);
+    expect(container.querySelector('.ga-fold-pre')).toBeNull();
   })
 
   test('falls back for malformed or non-object JSON', () => {
