@@ -242,3 +242,11 @@ func chatProjectNamesFor(cfg config.AppConfig) (names []string, pinned []string)
 	}
 	return names, loadPinnedProjects(cfg)
 }
+
+func loadProjectPrefs(cfg config.AppConfig) chatProjectPrefs {
+	prefs := chatProjectPrefs{Pinned: []string{}, Order: []string{}}
+	if b, err := os.ReadFile(chatProjectPrefsPath(cfg)); err == nil {
+		_ = json.Unmarshal(b, &prefs)
+	}
+	return prefs
+}

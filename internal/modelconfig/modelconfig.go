@@ -853,7 +853,10 @@ def model_configs_of(profile):
         configs=[]
         for item in existing:
             if isinstance(item, dict) and str(item.get('model', '')).strip():
-                configs.append(dict(item))
+                config=dict(item)
+                if 'timeout' in config and 'connect_timeout' not in config:
+                    config['connect_timeout']=config.pop('timeout')
+                configs.append(config)
         if configs:
             return configs
     model=str(profile.get('model', '') or '').strip()
@@ -1142,6 +1145,25 @@ func RenderPreviewWithFailoverGroups(profiles []Profile, groups []FailoverGroup)
 	return renderWithFailoverGroups(profiles, groups, true)
 }
 
+func renderModelConfigMetadata(config ModelConfig) (map[string]interface{}, error) {
+	if _, err := pyDict(config.Extra); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	metadata := map[string]interface{}{}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, err
+	}
+	if timeout, ok := metadata["connect_timeout"]; ok {
+		metadata["timeout"] = timeout
+		delete(metadata, "connect_timeout")
+	}
+	return metadata, nil
+}
+
 func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowMaskedSecrets bool) (string, error) {
 	if err := validateProfiles(profiles, allowMaskedSecrets); err != nil {
 		return "", err
@@ -1183,9 +1205,17 @@ func renderWithFailoverGroups(profiles []Profile, groups []FailoverGroup, allowM
 
 			defaultOrder++
 		}
+		metadataConfigs := make([]map[string]interface{}, 0, len(configs))
+		for _, config := range configs {
+			metadata, err := renderModelConfigMetadata(config)
+			if err != nil {
+				return "", fmt.Errorf("render model metadata: %w", err)
+			}
+			metadataConfigs = append(metadataConfigs, metadata)
+		}
 		groupMeta := map[string]interface{}{
 			"children":      childVars,
-			"model_configs": configs,
+			"model_configs": metadataConfigs,
 			"display_name":  p.DisplayName,
 			"type":          p.Type,
 			"name":          p.Name,

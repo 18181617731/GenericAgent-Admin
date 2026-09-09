@@ -1688,7 +1688,12 @@ def _install_worldline_hook():
 
 def _ensure_worldline_store(agent, ga_root, workspace):
     _ensure_bundled_worldline_import_path()
-    from frontends.worldline import RewindStore
+    # Worldline（包括 rich 等 UI 依赖）是可选能力；普通聊天不应被其缺失阻断。
+    # 仅保护导入，store/workspace 初始化失败等真实错误仍需向上报告。
+    try:
+        from frontends.worldline import RewindStore
+    except ModuleNotFoundError:
+        return None
     cwd = os.path.realpath(str(workspace or ga_root))
     store = getattr(agent, '_admin_worldline_store', None)
     if store is not None:

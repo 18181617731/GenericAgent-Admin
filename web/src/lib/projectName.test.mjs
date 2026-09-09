@@ -61,10 +61,12 @@ test('the Projects tab offers a way to create the projects it lists', () => {
 
 test('projects can be pinned, and the pin is read back from the sessions payload', () => {
   const source = frontendSource()
+  const sessionList = readFileSync(new URL('../components/ChatSessionList.jsx', import.meta.url), 'utf8')
   assert.match(source, /'\/api\/chat\/projects\/pin', \{ method:'PATCH'/)
   assert.match(source, /onToggleProjectPinned=\{toggleProjectPinned\}/)
-  assert.match(source, /onToggleProjectPinned\?\.\(group\.name, !group\.pinned\)/)
-  assert.match(source, /aria-pressed=\{group\.pinned\}/)
+  assert.match(sessionList, /const projectKey = group\.key \|\| group\.name/)
+  assert.match(sessionList, /onToggleProjectPinned\?\.\(projectKey, !group\.pinned\)/)
+  assert.match(sessionList, /aria-pressed=\{group\.pinned\}/)
   assert.match(source, /setPinnedProjects\(previous => reconcileScalarList\(previous, d\.pinned_projects\)\)/)
   assert.match(source, /groupProjectSessions\(projects, sessions, pinnedProjects, projectOrder\)/)
 })

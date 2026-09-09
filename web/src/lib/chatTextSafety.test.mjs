@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantFinalResult, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, splitMarkdownParts, textRenderStats, previewLongText } from './chatTextSafety.js'
+import { MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, splitMarkdownParts, parseCodeFenceInfo, textRenderStats, previewLongText } from './chatTextSafety.js'
 
 test('many content lines do not trigger safe preview by line count alone', () => {
   const text = Array.from({ length: MARKDOWN_LINE_LIMIT + 20 }, (_, i) => `line ${i}`).join('\n')
@@ -61,25 +61,6 @@ test('summary metadata and source positions survive the final marker', () => {
   assert.equal(parsed.runs[0].body, '<summary>work</summary>\nworking')
   assert.equal(parsed.summary, 'transport only')
   assert.equal(parsed.body, '<summary>transport only</summary>\nfinal answer')
-})
-
-test('temporary result reveal returns the final reply without execution logs', () => {
-  const text = [
-    'LLM Running (Turn 1)',
-    '<summary>SECRET_EXECUTION_SUMMARY</summary>',
-    'SECRET_EXECUTION_LOG',
-    '```',
-    '[Info] Final response to user.',
-    '```',
-    '<summary>Result summary</summary>',
-    'FINAL_REPLY',
-  ].join('\n')
-  assert.equal(assistantFinalResult(text), 'Result summary\n\nFINAL_REPLY')
-})
-
-test('temporary result reveal falls back to the latest run when no final reply exists', () => {
-  const text = 'LLM Running (Turn 3)\n<summary>Latest work</summary>\nLATEST_RUN_RESULT'
-  assert.equal(assistantFinalResult(text), 'LATEST_RUN_RESULT')
 })
 
 test('assistant content is split into turns before large-text fallback', () => {

@@ -63,8 +63,7 @@ test('chat topbar has no waiting-reply navigation or reserved layout', () => {
   assert.doesNotMatch(chatSource, /ChatWaitingMenu/)
   assert.doesNotMatch(header, /waitingSessions|waitingSessionIds|oa-waiting-/)
   assert.doesNotMatch(css, /\.oa-waiting-|\.oa-topbar\.has-waiting/)
-  assert.match(header, /oa-topbar-tools/)
-  assert.match(chatSource, /waiting=\{waitingSessionIds\.has\(session\.id\)\}/)
+  assert.match(header, /className="oa-topbar-actions(?:\s+oa-topbar-tools)?"/)
 })
 
 test('all color themes share one product font stack', () => {

@@ -6,6 +6,7 @@ import ThemePicker from './ThemePicker'
 import ScalePicker from './ScalePicker.jsx'
 import { createStreamDeltaBatcher, decideStreamFollow, isBTWCommand, isLoopFollowActive, mergeFinalStreamMessage, mergeStreamUserMessage, nextStreamClientUserID, pickResumePlaceholderId, sameStreamRun, scrollFollowAction, shouldFinishStreamFollow, shouldRefreshChatSnapshot } from './lib/chatStream.js'
 import { cacheHitPercent, cacheReadTokens, measuredOutputRate } from './lib/chatUsage.js'
+import { autorunInitialReplyAt, isAutorunTargetRunning, shouldTriggerAutorun } from './lib/chatAutorun.js'
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
@@ -14,18 +15,12 @@ import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Hand, KeyRound, Lock, Maximize, Maximize2, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { api, apiStream } from './lib/api'
-import { createChatSessionCache } from './lib/chatSessionCache.js'
-import { useChatHistoryPages } from './lib/useChatHistoryPages.js'
-import { useChatReadState } from './lib/useChatReadState.js'
-import { initializeChatReadBaseline } from './lib/chatReadState.js'
-import { historyStatsMessages } from './lib/chatHistoryPages.js'
 import { SETTINGS_TEXT } from './lib/i18n'
 import { KeychainPage } from './pages/KeychainPage'
 import { addChatInstanceToURL, chatInstanceOptions, initialChatInstanceID, persistChatInstanceID, requestChatInstance } from './lib/chatInstanceScope'
 import { clearChatLaunchIntent, readChatLaunchIntent } from './lib/chatLaunchIntent'
 import { chooseChatSessionID, loadSelectedChatSessionID, persistSelectedChatSessionID } from './lib/chatSessionSelection'
 import { forgetSessionScroll, rememberSessionScroll, sessionScrollRestore } from './lib/chatSessionScroll'
-import { createThreadFollowScheduler } from './lib/chatFollowScheduler.js'
 import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger, showAppAlert } from './lib/danger'
@@ -49,6 +44,7 @@ import { buildChatRunPayload, buildEditResendItem } from './lib/worldlineEdit'
 import { extractGeneratedImagePaths, generatedImageDownloadURL, generatedImageURL } from './lib/generatedImages'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue, modelProvider, runtimeModelLabel } from './components/ModelProviderCascade.jsx'
 import { SubagentStatusPanel } from './components/SubagentStatusPanel.jsx'
+import SummaryBlock from './SummaryBlock'
 import { buildWorldlineRows, messageVersionInfo } from './lib/worldlineTree'
 import { hasSubagentLaunch } from './lib/subagentCards'
 import { chatErrorPresentation } from './lib/chatErrors.js'
@@ -163,7 +159,6 @@ const isNearBottom = (el, gap = FOLLOW_END_GAP) => !el || (el.scrollHeight - el.
 const threadCanScroll = (el) => Boolean(el) && (el.scrollHeight - el.clientHeight) > FOLLOW_END_GAP
 // Where a jump parks the message it lands on, and how far its top must have
 // cleared the edge to count as being behind the reader at all.
-const JUMP_TOP_MARGIN = 12
 const parseBTWDisplay = (value) => {
   const raw = String(value || '')
   const match = raw.match(/^\s*(?:>\s*)?(?:🟡\s*)?\/btw(?:[ \t]+([\s\S]*))?\s*$/i)
@@ -205,32 +200,6 @@ export const SessionAutorunBadge = memo(function SessionAutorunBadge({ enabled =
   if (!enabled || !sessionId || sessionId !== targetSessionId) return null
   const label = ct('Autorun 已开启', 'Autorun enabled')
   return <em className="oa-session-autorun-badge" title={label} aria-label={label}>Autorun</em>
-})
-
-const SidebarSessionRow = memo(function SidebarSessionRow({
-  session,
-  active = false,
-  editing = false,
-  menuOpen = false,
-  draftTitle = '',
-  hasDraft = false,
-  ageText = '',
-  unread = false,
-  waiting = false,
-  actionsRef,
-}) {
-  const sidebarLoop = loopSidebarView(session.loop)
-  const title = shortTitle(session)
-  return <div className={`oa-session-row ${active?'active':''} ${session.running?'is-running':''} ${session.pinned?'is-pinned':''}`}>
-    {editing ? <div className="oa-rename">
-      <input value={draftTitle} autoFocus aria-label={ct('会话标题', 'Session title')} onChange={event=>actionsRef.current.setDraftTitle(event.target.value)} onKeyDown={event=>{ if(event.key==='Enter') actionsRef.current.saveRename(session.id); if(event.key==='Escape') actionsRef.current.cancelRename() }}/>
-      <button onClick={()=>actionsRef.current.saveRename(session.id)} aria-label={ct('保存标题', 'Save title')}><Check size={14}/></button><button onClick={()=>actionsRef.current.cancelRename()} aria-label={ct('取消重命名', 'Cancel rename')}><X size={14}/></button>
-    </div> : <button className="oa-session" onClick={()=>actionsRef.current.openSession(session.id)} title={title}>
-      <span className="oa-session-title" title={title}>{session.pinned && <Pin className="oa-session-pin" size={12} aria-label={ct('\u5df2\u7f6e\u9876', 'Pinned')}/>}<b>{title}</b>{waiting && <em className="oa-session-waiting-label" title={ct('\u7b49\u5f85\u56de\u590d', 'Waiting for reply')}><CircleAlert size={12} aria-hidden="true"/>{ct('\u5f85\u56de\u590d', 'Waiting')}</em>}{unread && <em className="oa-session-unread-label">{ct('未读', 'Unread')}</em>}<SessionAutorunBadge enabled={Boolean(session.autorun?.enabled)} sessionId={session.id} targetSessionId={session.id}/>{sidebarLoop && <em className="oa-session-loop-badge" title={ct(`Loop 进行中 · 第 ${sidebarLoop.round} 轮`, `Loop active · round ${sidebarLoop.round}`)}>Loop {sidebarLoop.round}</em>}{session.hub_enabled && <em className="oa-session-hub-badge" title={ct('已入驻官方 Hub', 'Joined official Hub')}>Hub</em>}{hasDraft && <em className="oa-session-draft-badge">{ct('草稿', 'Draft')}</em>}</span>
-      <small title={fmtTime(session.updated_at)}>{session.running && !waiting ? <em className="oa-session-running-label" role="img" aria-label={ct('运行中', 'Running')} title={ct('运行中', 'Running')}><span className="oa-session-running-wave" style={{ '--oa-wave-phase': `${-(Array.from(String(session.id)).reduce((hash, char)=> (hash * 31 + char.charCodeAt(0)) % 2400, 0) / 1000)}s` }} aria-hidden="true"><i/><i/><i/><i/></span></em> : ageText}</small>
-    </button>}
-    {!editing && <button className={`oa-session-more ${menuOpen ? 'is-open' : ''}`} onClick={(event)=>actionsRef.current.toggleMenu(session.id, event)} aria-label={ct('会话操作', 'Session actions')}><MoreHorizontal size={16}/></button>}
-  </div>
 })
 
 const BUILTIN_SLASH_COMMANDS = [
@@ -323,22 +292,13 @@ function InlineNodes({ nodes = [] }) {
       if (node.type === 'math') return <MathFormula key={i} value={node.value} display={node.display} />
       if (node.type === 'br') return <br key={i} />
       if (node.type === 'image') {
-        return <MarkdownImage key={i} node={node} />
+        return <img key={i} className="oa-md-image" src={node.src} alt={node.alt}
+          title={node.title || undefined} loading="lazy" />
       }
       if (node.type === 'link') {
-        return <MarkdownLink key={i} node={node} />
-      }
-      if (node.type === 'footnote_ref') {
-        if (!node.footnoteNumber || !node.footnoteId) {
-          return <span key={i}>{`[^${node.label}]`}</span>
-        }
-        return (
-          <sup key={i} className="oa-footnote-ref" id={node.refId}>
-            <a href={`#${node.footnoteId}`} title={ct(`脚注 ${node.footnoteNumber}：${node.label}`, `Footnote ${node.footnoteNumber}: ${node.label}`)}>
-              [{node.footnoteNumber}]
-            </a>
-          </sup>
-        )
+        return <a key={i} href={node.href} title={node.title || undefined} target="_blank" rel="noreferrer noopener">
+          <InlineNodes nodes={node.children} />
+        </a>
       }
       const Tag = INLINE_EMPHASIS_TAGS[node.type]
       if (!Tag) return null
@@ -347,152 +307,8 @@ function InlineNodes({ nodes = [] }) {
   </>
 }
 
-function MarkdownImage({ node }) {
-  const src = resolveMarkdownImageUrl(node.src)
-  const resolved = resolveMarkdownLink(node.src)
-  const [opening, setOpening] = useState(false)
-
-  const openLocal = async (e, mode = 'file') => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (opening) return
-    const targetDesc = mode === 'folder' ? ct('所在文件夹', 'containing folder') : ct('图片文件', 'image file')
-    if (!await confirmDanger('chat-file-open', ct(`使用系统桌面打开${targetDesc}：${resolved.localPath}？`, `Open ${targetDesc} in desktop system: ${resolved.localPath}?`))) return
-    setOpening(true)
-    try {
-      await api('/api/files/open', { dangerous: true, method: 'POST', body: JSON.stringify({ path: resolved.localPath, mode }) })
-    } catch (err) {
-      await showAppAlert(ct(`打开失败：${err?.message || err}`, `Open failed: ${err?.message || err}`), { operation: 'chat-file-open' })
-    } finally {
-      setOpening(false)
-    }
-  }
-
-  const downloadHref = resolved.isLocal ? resolved.href : src
-  const downloadName = resolved.isLocal ? resolved.downloadName : (String(node.src || '').split(/[\\/]/).filter(Boolean).pop() || 'image')
-
-  return (
-    <span className="oa-md-image-wrap">
-      <img
-        className="oa-md-image"
-        tabIndex={0}
-        role="button"
-        aria-label={ct(`查看大图 ${node.alt || ''}`, `Preview image ${node.alt || ''}`)}
-        src={src}
-        alt={node.alt}
-        title={node.title || undefined}
-        loading="lazy"
-      />
-      <span className="oa-md-image-actions">
-        <a
-          href={downloadHref}
-          download={downloadName}
-          className="oa-md-image-action"
-          title={ct('下载图片', 'Download image')}
-          aria-label={ct('下载图片', 'Download image')}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          <Download size={13} />
-        </a>
-        {resolved.isLocal && (
-          <>
-            <button
-              type="button"
-              className="oa-md-image-action"
-              title={ct('在系统默认程序中打开', 'Open with system default app')}
-              aria-label={ct('在系统默认程序中打开', 'Open with system default app')}
-              disabled={opening}
-              onClick={(e) => openLocal(e, 'file')}
-            >
-              <ExternalLink size={13} />
-            </button>
-            <button
-              type="button"
-              className="oa-md-image-action"
-              title={ct('在文件夹中显示', 'Show in folder')}
-              aria-label={ct('在文件夹中显示', 'Show in folder')}
-              disabled={opening}
-              onClick={(e) => openLocal(e, 'folder')}
-            >
-              <FolderOpen size={13} />
-            </button>
-          </>
-        )}
-      </span>
-    </span>
-  )
-}
-
-function MarkdownLink({ node }) {
-  const resolved = resolveMarkdownLink(node.href)
-  const [opening, setOpening] = useState(false)
-
-  if (!resolved.isLocal) {
-    return (
-      <a href={node.href} title={node.title || undefined} target="_blank" rel="noreferrer noopener">
-        <InlineNodes nodes={node.children} />
-      </a>
-    )
-  }
-
-  const openLocal = async (e, mode = 'file') => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (opening) return
-    const targetDesc = mode === 'folder' ? ct('所在文件夹', 'containing folder') : ct('文件', 'file')
-    if (!await confirmDanger('chat-file-open', ct(`使用系统桌面打开${targetDesc}：${resolved.localPath}？`, `Open ${targetDesc} in desktop system: ${resolved.localPath}?`))) return
-    setOpening(true)
-    try {
-      await api('/api/files/open', { dangerous: true, method: 'POST', body: JSON.stringify({ path: resolved.localPath, mode }) })
-    } catch (err) {
-      await showAppAlert(ct(`打开失败：${err?.message || err}`, `Open failed: ${err?.message || err}`), { operation: 'chat-file-open' })
-    } finally {
-      setOpening(false)
-    }
-  }
-
-  const titleText = node.title || resolved.localPath
-
-  return (
-    <span className="oa-md-file-link-wrap">
-      <a
-        href={resolved.href}
-        download={resolved.downloadName}
-        className="oa-md-file-link"
-        title={ct(`点击下载：${titleText} (Ctrl/Cmd+点击在文件夹中显示)`, `Click to download: ${titleText} (Ctrl/Cmd+click to reveal in folder)`)}
-        onClick={(e) => {
-          if (e.ctrlKey || e.metaKey) {
-            openLocal(e, 'folder')
-          }
-        }}
-      >
-        <InlineNodes nodes={node.children} />
-      </a>
-      <button
-        type="button"
-        className="oa-md-file-link-action"
-        title={ct('在系统默认程序中打开', 'Open with system default app')}
-        disabled={opening}
-        onClick={(e) => openLocal(e, 'file')}
-      >
-        <ExternalLink size={12} />
-      </button>
-      <button
-        type="button"
-        className="oa-md-file-link-action"
-        title={ct('在文件夹中显示', 'Show in folder')}
-        disabled={opening}
-        onClick={(e) => openLocal(e, 'folder')}
-      >
-        <FolderOpen size={12} />
-      </button>
-    </span>
-  )
-}
-
-function InlineMarkdown({ text = '', nodes }) {
-  return <InlineNodes nodes={nodes || parseInline(text)} />
+function InlineMarkdown({ text = '' }) {
+  return <InlineNodes nodes={parseInline(text)} />
 }
 
 function CopyButton({ text, compact = false }) {
@@ -670,12 +486,7 @@ function FileAttachment({ path, resolvedPath = '' }) {
   </>
 }
 
-function InlineRichText({ text = '', runs }) {
-  if (runs) {
-    return <>{runs.map((run, i) => run.type === 'file'
-      ? <FileAttachment key={i} path={run.path} />
-      : <InlineMarkdown key={i} nodes={run.nodes} />)}</>
-  }
+function InlineRichText({ text = '' }) {
   const src = String(text || '')
   const re = /\[FILE:([^\]]+)\]/g
   const nodes = []
@@ -941,11 +752,9 @@ function MermaidDiagram({ source = '' }) {
 const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply, onQuickReply, quickReplyDisabled = false }) {
   const stats = useMemo(() => textRenderStats(text), [text])
   const parts = useMemo(() => stats.tooLarge ? [] : normalizeToolParts(splitMarkdownParts(text)).slice(0, MARKDOWN_BLOCK_LIMIT), [text, stats.tooLarge])
-  const footnoteScope = `oa${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const prepared = useMemo(() => prepareMarkdownParts(parts, footnoteScope), [parts, footnoteScope])
   if (stats.tooLarge) return <div className="oa-md"><LongTextPreview text={text} stats={stats} /></div>
   return <div className="oa-md">
-    {prepared.parts.map((p, idx) => p.type === 'code'
+    {parts.map((p, idx) => p.type === 'code'
       ? isMermaidFence(p.lang)
         ? p.closed
           ? <MermaidDiagram key={idx} source={p.text} />
@@ -954,12 +763,14 @@ const MarkdownBlock = memo(function MarkdownBlock({ text = '', onAskReply, onQui
             <div className="oa-mermaid-status oa-mermaid-stream-note" role="status">{ct('正在接收图表内容，完成后将自动渲染', 'Receiving diagram source; it will render when complete')}</div>
             <pre className="oa-mermaid-source"><code>{p.text}</code></pre>
           </div>
-        : <CodeBlockCard key={idx} lang={p.lang} filename={p.filename} text={p.text} />
+        : <div className="oa-code-card" key={idx}>
+          <div className="oa-code-head"><span>{p.lang || ct('代码', 'Code')}</span><CopyButton text={p.text} compact /></div>
+          <pre><code>{p.text}</code></pre>
+        </div>
       : p.type === 'tool'
         ? <ToolCallBlock key={idx} call={p.call} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} />
         : <TextMarkdown key={idx} text={p.text} onAskReply={onAskReply}/>) }
     {parts.length >= MARKDOWN_BLOCK_LIMIT && <div className="oa-md-truncated">{ct(`内容块过多，仅渲染前 ${MARKDOWN_BLOCK_LIMIT} 块，可复制消息查看完整内容。`, `Too many content blocks. Only the first ${MARKDOWN_BLOCK_LIMIT} are rendered; copy the message to view everything.`)}</div>}
-    <FootnotesSection items={prepared.footnotes} />
   </div>
 })
 
@@ -1282,10 +1093,8 @@ const hasUltraPlanDashboardState = (state) => !!(state && (
 
 
 const preserveWindowsPathsInJson = value => value.replace(
-  /"((?:\\[\s\S]|[^"\\])*(?:\\)?)"(?=\s*(?:[:,}\]]|$))/g,
-  (token, content) => /^[A-Za-z]:(?:\\+[^"\\]*)+$/.test(content)
-    ? `"${content.replace(/\\+/g, run => (run.length % 2 ? `${run}\\` : run))}"`
-    : token,
+  /([A-Za-z]:)((?:\\+[^"\\]*)+)/g,
+  (_match, drive, tail) => drive + tail.replace(/\\+/g, run => (run.length % 2 ? `${run}\\` : run)),
 )
 
 const escapeJsonStringControlCharacters = value => {
@@ -1299,11 +1108,7 @@ const escapeJsonStringControlCharacters = value => {
       continue
     }
     if (escaped) {
-      // Legacy receipts may contain a literal backslash followed by a raw newline.
-      // Preserve both characters rather than leaving an invalid JSON escape.
-      result += char.charCodeAt(0) < 0x20
-        ? '\\' + JSON.stringify(char).slice(1, -1)
-        : char
+      result += char
       escaped = false
       continue
     }
@@ -1340,25 +1145,6 @@ const parseToolArgumentJsonText = value => {
   }
 }
 
-export function SessionManagerGroup({ label, items, selectedIds, collapsed, disabled, onToggle, onSelect, children }) {
-  const selected = items.filter(item => selectedIds.has(item.id)).length
-  const all = items.length > 0 && selected === items.length
-  return <section className="oa-session-manager-group">
-    <div className="oa-session-manager-group-header">
-      <button type="button" className="oa-session-group-select" role="checkbox"
-        aria-label={ct(`选择分组：${label}`, `Select group: ${label}`)} aria-checked={all ? true : selected ? 'mixed' : false}
-        disabled={disabled || !items.length} onClick={onSelect}>
-        <span className={`oa-session-check ${all ? 'is-checked' : selected ? 'is-partial' : ''}`}>{all && <Check size={12}/>}</span>
-      </button>
-      <button type="button" className="oa-session-group-toggle" aria-expanded={!collapsed} onClick={onToggle}>
-        <span>{label}</span><small>{selected} / {items.length}</small>
-        <ChevronDown size={14} style={{ transform: collapsed ? 'rotate(90deg)' : 'none' }} aria-hidden="true"/>
-      </button>
-    </div>
-    {!collapsed && children}
-  </section>
-}
-
 export const parseToolReceiptArgs = (body = '') => {
   if (body && typeof body === 'object' && !Array.isArray(body)) return body
   const parsed = parseToolArgumentJsonText(body)
@@ -1375,44 +1161,6 @@ const parseNestedToolArgumentJson = value => {
 const normalizeToolArgumentValue = value => (
   typeof value === 'string' ? parseNestedToolArgumentJson(value) : value
 )
-
-const ToolScriptPreview = ({ value }) => {
-  const [expanded, setExpanded] = useState(false)
-  const [canExpand, setCanExpand] = useState(() => value.split(/\r\n?|\n/).length > 4)
-  const codeRef = useRef(null)
-  const codeId = useId()
-
-  useLayoutEffect(() => {
-    const code = codeRef.current
-    if (!code) return
-    const measure = () => {
-      if (!code.getClientRects().length) return
-      const lineHeight = Number.parseFloat(getComputedStyle(code).lineHeight)
-      if (lineHeight > 0) setCanExpand(code.scrollHeight > lineHeight * 4 + 1)
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(code)
-    return () => observer.disconnect()
-  }, [value])
-
-  const toggleLabel = expanded
-    ? ct('\u6536\u8d77\u811a\u672c', 'Collapse script')
-    : ct('\u5c55\u5f00\u5b8c\u6574\u811a\u672c', 'Show full script')
-  return (
-    <div className={`ga-tool-script${expanded ? ' is-expanded' : ''}`}>
-      <pre className="ga-tool-arg-code" ref={codeRef} id={codeId}>{value}</pre>
-      {canExpand && (
-        <button type="button" className="ga-tool-script-toggle" aria-expanded={expanded}
-          aria-controls={codeId} title={toggleLabel} onClick={() => setExpanded(current => !current)}>
-          {expanded ? <ChevronUp size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
-          <span>{toggleLabel}</span>
-        </button>
-      )}
-    </div>
-  )
-}
 
 const ToolArgumentValue = ({ value, name = '', depth = 0 }) => {
   const normalized = normalizeToolArgumentValue(value)
@@ -1438,7 +1186,6 @@ const ToolArgumentValue = ({ value, name = '', depth = 0 }) => {
     )
   }
   if (typeof normalized === 'string') {
-    if (/^script$/i.test(name)) return <ToolScriptPreview value={normalized} />
     const codeLike = normalized.includes('\n') || /^(script|code|content|patch|old_content|new_content)$/i.test(name)
     return codeLike
       ? <pre className="ga-tool-arg-code">{normalized}</pre>
@@ -1554,6 +1301,13 @@ const ToolReceiptSummary = ({ fold, target }) => {
   )
 }
 
+const splitResponseSummary = (text = '') => {
+  const source = String(text || '')
+  const match = source.match(/^\s*<summary>([\s\S]*?)<\/summary>\s*/i)
+  if (!match) return { summary: '', body: source }
+  return { summary: String(match[1] || '').trim(), body: source.slice(match[0].length) }
+}
+
 const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickReply, quickReplyDisabled = false, openAskUser = false) => {
   const parsedState = parseUltraPlanText(text)
   const upState = mergeUltraPlanStates(ultraplan_state, parsedState)
@@ -1568,16 +1322,26 @@ const renderAssistantBody = (text = '', onAskReply, ultraplan_state, onQuickRepl
   const result = parseUltraPlanResult(text)
   if (result) return <UltraPlanResultCard text={text} />
 
-  // Extract agent protocol folds (tool calls/results/thinking/function_calls)
-  const folds = foldAgentProtocolBlocks(cleanText)
-  const strippedText = stripAgentProtocolBlocks(cleanText)
+  const responseSummary = splitResponseSummary(cleanText)
+  const bodyText = responseSummary.body
+  const folds = foldAgentProtocolBlocks(bodyText)
+  const strippedText = stripAgentProtocolBlocks(bodyText)
+  const summaryView = responseSummary.summary ? (
+    <SummaryBlock label={ct('摘要', 'Summary')}>
+      <MarkdownBlock text={responseSummary.summary} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} />
+    </SummaryBlock>
+  ) : null
 
   if (folds.length === 0) {
-    return cleanText ? <MarkdownBlock text={cleanText} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} /> : null
+    return <>
+      {summaryView}
+      {bodyText.trim() ? <MarkdownBlock text={bodyText} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} /> : null}
+    </>
   }
 
   return (
     <>
+      {summaryView}
       <div className="ga-execution-log">
         {folds.map((fold, idx) => {
           const hasResult = Object.prototype.hasOwnProperty.call(fold, 'result')
@@ -2468,8 +2232,8 @@ function ToolCallBlock({ call, onAskReply, onQuickReply, quickReplyDisabled = fa
 function MarkdownTable({ table }) {
   return <div className="oa-table-wrap">
     <table className="oa-md-table">
-      <thead><tr>{table.head.map((cell, i) => <th key={i} style={{ textAlign: table.aligns[i] || 'left' }}><InlineRichText text={cell} runs={table.headRuns?.[i]} /></th>)}</tr></thead>
-      <tbody>{table.rows.map((row, r) => <tr key={r}>{table.head.map((_, c) => <td key={c} style={{ textAlign: table.aligns[c] || 'left' }}><InlineRichText text={row[c] || ''} runs={table.rowRuns?.[r]?.[c]} /></td>)}</tr>)}</tbody>
+      <thead><tr>{table.head.map((cell, i) => <th key={i} style={{ textAlign: table.aligns[i] || 'left' }}><InlineRichText text={cell} /></th>)}</tr></thead>
+      <tbody>{table.rows.map((row, r) => <tr key={r}>{table.head.map((_, c) => <td key={c} style={{ textAlign: table.aligns[c] || 'left' }}><InlineRichText text={row[c] || ''} /></td>)}</tr>)}</tbody>
     </table>
   </div>
 }
@@ -2481,7 +2245,7 @@ function ListItemBody({ item, tight }) {
   if (!blocks.length) return null
   if (tight && blocks[0].type === 'paragraph') {
     return <>
-      <InlineRichText text={blocks[0].text} runs={blocks[0].runs} />
+      <InlineRichText text={blocks[0].text} />
       {blocks.length > 1 && <MarkdownNodes blocks={blocks.slice(1)} />}
     </>
   }
@@ -2508,49 +2272,24 @@ function MarkdownList({ list }) {
   </Tag>
 }
 
-const MarkdownNode = memo(function MarkdownNode({ block }) {
-  if (block.type === 'paragraph') return <p><InlineRichText text={block.text} runs={block.runs} /></p>
-  if (block.type === 'heading') {
-    const Tag = `h${block.depth}`
-    return <Tag><InlineRichText text={block.text} runs={block.runs} /></Tag>
-  }
-  if (block.type === 'hr') return <hr />
-  if (block.type === 'math') return <MathFormula value={block.value} display block />
-  if (block.type === 'table') return <MarkdownTable table={block} />
-  if (block.type === 'list') return <MarkdownList list={block} />
-  if (block.type === 'blockquote') return <blockquote className="oa-md-quote"><MarkdownNodes blocks={block.blocks} /></blockquote>
-  if (block.type === 'footnotes') return <FootnotesSection items={block.items} />
-  return null
-}, (prev, next) => prev.language === next.language && prev.signature === next.signature)
-
 function MarkdownNodes({ blocks = [] }) {
-  const language = chatLanguage()
-  // Parsing still sees the whole document: late footnotes can change earlier runs.
-  // Compare the complete plain AST, not just source text, to reuse stable blocks.
-  return <>{blocks.map((block, i) => <MarkdownNode key={i} block={block} language={language} signature={JSON.stringify(block)} />)}</>
-}
-
-function FootnotesSection({ items = [] }) {
-  if (!items || !items.length) return null
-  return (
-    <div className="oa-md-footnotes">
-      <hr className="oa-md-footnotes-sep" />
-      <ol className="oa-md-footnotes-list">
-        {items.map((item) => (
-          <li key={item.footnoteId} id={item.footnoteId} className="oa-md-footnote-item">
-            <span className="oa-md-footnote-body">
-              <InlineRichText text={item.text} runs={item.runs} />
-            </span>
-            {item.refIds.map((refId, idx) => (
-              <a key={refId} href={`#${refId}`} className="oa-md-footnote-backref" title={ct(`返回引用 ${idx + 1}`, `Back to reference ${idx + 1}`)} aria-label={ct(`返回引用 ${idx + 1}`, `Back to reference ${idx + 1}`)}>
-                &#x21a9;&#xfe0e;{item.refIds.length > 1 ? idx + 1 : ''}
-              </a>
-            ))}
-          </li>
-        ))}
-      </ol>
-    </div>
-  )
+  return <>
+    {blocks.map((block, i) => {
+      if (block.type === 'paragraph') return <p key={i}><InlineRichText text={block.text} /></p>
+      if (block.type === 'heading') {
+        const Tag = `h${block.depth}`
+        return <Tag key={i}><InlineRichText text={block.text} /></Tag>
+      }
+      if (block.type === 'hr') return <hr key={i} />
+      if (block.type === 'math') return <MathFormula key={i} value={block.value} display block />
+      if (block.type === 'table') return <MarkdownTable key={i} table={block} />
+      if (block.type === 'list') return <MarkdownList key={i} list={block} />
+      if (block.type === 'blockquote') {
+        return <blockquote key={i} className="oa-md-quote"><MarkdownNodes blocks={block.blocks} /></blockquote>
+      }
+      return null
+    })}
+  </>
 }
 
 // Splits the message into tool segments and prose segments. Tool detection still
@@ -2592,16 +2331,14 @@ const segmentMarkdownText = (text = '') => {
   return { segments, hidden }
 }
 
-function TextMarkdown({ text = '', prepared, onAskReply }) {
-  const parsedText = useMemo(() => {
-    if (prepared) return prepared
+function TextMarkdown({ text = '', onAskReply }) {
+  const { segments, hidden } = useMemo(() => {
     const parsed = segmentMarkdownText(text)
     return {
       ...parsed,
       segments: parsed.segments.map(seg => seg.type === 'prose' ? { ...seg, blocks: parseBlocks(seg.text) } : seg),
     }
-  }, [text, prepared])
-  const { segments, hidden } = parsedText
+  }, [text])
   return <>
     {segments.map((seg, i) => seg.type === 'tool'
       ? <ToolCallBlock key={i} call={seg.call} onAskReply={onAskReply} />
@@ -2961,33 +2698,27 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
       : elapsedSeconds < 2
         ? ct('正在连接模型', 'Connecting to model')
         : ct('正在准备回复', 'Preparing response')
-    const waitingTime = elapsedSeconds >= 60
-      ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
-      : `${elapsedSeconds}s`
-    const waitingStage = modelID ? 'generating' : elapsedSeconds < 2 ? 'connecting' : 'preparing'
-    return <div className="oa-content oa-thinking" data-stage={waitingStage} role="status" aria-label={waitingLabel}>
+    return <div className="oa-content oa-thinking" role="status" aria-label={waitingLabel}>
       <span className="oa-thinking-pulse" aria-hidden="true"><i/><i/><i/></span>
-      <span className="oa-thinking-copy">
-        <span className="oa-thinking-label">{waitingLabel}</span>
-        {modelID && <span className="oa-thinking-model" title={modelID}>{modelID}</span>}
-      </span>
-      {elapsedSeconds >= 3 && <span className="oa-thinking-time" aria-hidden="true">
-        <Clock3 size={12}/>
-        <span>{waitingTime}</span>
-      </span>}
+      <span className="oa-thinking-label">{waitingLabel}</span>
+      {elapsedSeconds >= 3 && <span className="oa-thinking-time" aria-hidden="true">{elapsedSeconds}s</span>}
+      {modelID && <span className="oa-thinking-model" title={modelID}>{modelID}</span>}
     </div>
   }
   if (content && stats.tooLarge && !hasTurnSplit) return <div className="oa-content"><LongTextPreview text={content} stats={stats} /></div>
-  const lastRunIndex = parsed.runs.length - 1
+  const boxedRuns = parsed.runs.slice(0, -1)
+  const lastRun = parsed.runs[parsed.runs.length - 1]
   // A persisted UltraPlan state belongs to the final user-visible branch. When a
   // response has turn markers but no explicit final marker, that branch is the
   // latest run rather than parsed.body.
   const ultraPlanStateForLastRun = !parsed.body && hasLiveUltraPlan
     ? (liveUltraPlanState || ultraplan_state)
     : undefined
+  const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
+  const toggleTurn = (r, i) => setOpenTurns(xs => ({ ...xs, [`${r.turn}-${i}`]: !isTurnOpen(r, i) }))
   return <div className={`oa-content ${parsed.runs.length ? 'oa-agent-output' : ''}`}>
     {parsed.runs.length > 0 && <div className={`oa-turn-stack ${stackOpen ? 'open' : 'collapsed'}`}>
-      <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={() => setStackOpenOverride(!stackOpen)} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
+      <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={() => setStackOpen(v => !v)} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
         <span className="oa-run-dot"/>
         <span className="oa-run-label">{ct('执行过程', 'Execution')}</span>
         <b>{parsed.runs.length}</b>
@@ -3983,18 +3714,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [pinnedProjects, setPinnedProjects] = useState([])
   const [projectOrder, setProjectOrder] = useState([])
   const [projectOrderSaving, setProjectOrderSaving] = useState(false)
-  const saveProjectOrder = async names => {
-    if (projectOrderSaving) return
-    setProjectOrderSaving(true)
-    try {
-      const d = await chatApi('/api/chat/projects/pin', { method:'PATCH', body:JSON.stringify({ order:names }) })
-      setProjectOrder(d.project_order || [])
-    } catch (e) { if (e.name !== 'AbortError') setErr(e.message || String(e)) }
-    finally { setProjectOrderSaving(false) }
-  }
-
-  const [sidebarTab, setSidebarTab] = useState('history')
   const [projectSortMode, setProjectSortMode] = useState(false)
+  const [sidebarTab, setSidebarTab] = useState('history')
   const [sidebarSearch, setSidebarSearch] = useState('')
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
   const [sessionSearchQuery, setSessionSearchQuery] = useState('')
@@ -4015,8 +3736,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [draftSessionIds, setDraftSessionIds] = useState(() => new Set(listChatSessionDraftIds(chatInstanceID)))
   const [sid, setSid] = useState('')
   const [messages, setMessages] = useState([])
-  const [sessionLoading, setSessionLoading] = useState(false)
-  const [sessionLoadFailed, setSessionLoadFailed] = useState(false)
   const [rawHistory, setRawHistory] = useState([])
   const [historyInfo, setHistoryInfo] = useState([])
   const [workingState, setWorkingState] = useState(null)
@@ -4059,23 +3778,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [busy, setBusy] = useState(false)
   const [streamingSid, setStreamingSid] = useState('')
   const [err, setErr] = useState('')
-  const [taskbarStoppedRun, setTaskbarStoppedRun] = useState('')
-  const taskbarRunKey = JSON.stringify([chatInstanceID, sid, messages.findLast(message => message.role === 'user')?.id || ''])
-  const taskbarState = chatTaskbarState({
-    sid, messages, loading: sessionLoading,
-    running: (busy && streamingSid === sid) || sessions.some(session => session.id === sid && session.running),
-    error: err,
-    stopped: taskbarStoppedRun === taskbarRunKey,
-  })
-
-  useEffect(() => {
-    const clear = () => publishTaskbarState('idle')
-    window.addEventListener('pagehide', clear)
-    return () => {
-      window.removeEventListener('pagehide', clear)
-      clear()
-    }
-  }, [])
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
   const [llms, setLlms] = useState([])
@@ -4098,7 +3800,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [menuPos, setMenuPos] = useState(null)
   const menuRef = useRef(null)
   const menuTriggerRef = useRef(null)
-  const sidebarSessionActionsRef = useRef(null)
   const [editing, setEditing] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
@@ -4116,12 +3817,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [queueEditingId, setQueueEditingId] = useState('')
   const [queueDraft, setQueueDraft] = useState('')
   const [guidingQueueId, setGuidingQueueId] = useState('')
-  const autorunEnabled = Boolean(sessions.find(entry => entry.id === sid)?.autorun?.enabled)
-  const autorunSavingRef = useRef(false)
+  const [autorunEnabled, setAutorunEnabled] = useState(false)
+  const autorunEnabledRef = useRef(false)
+  const autorunLastReplyAtRef = useRef(Date.now())
+  const autorunRunSendRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
   const [showFollow, setShowFollow] = useState(false)
-  const [showJumpSent, setShowJumpSent] = useState(false)
   const [subagents, setSubagents] = useState([])
   const [cmdDrawer, setCmdDrawer] = useState({ open: false, filter: '', selectedIdx: 0 })
   const [cmdManagerOpen, setCmdManagerOpen] = useState(false)
@@ -4168,28 +3870,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const epoch = chatRequestEpochRef.current
     const result = await requestChatInstance(api, chatInstanceRef.current, url, options)
     if (epoch !== chatRequestEpochRef.current) throw new DOMException('Chat instance changed', 'AbortError')
-    if (url === '/api/chat/sessions') {
-      let storage
-      try { storage = window.localStorage } catch { /* Use an in-memory baseline if storage is blocked. */ }
-      initializeChatReadBaseline(instance, result.sessions, storage, window)
-    }
     return result
-  }, [])
-  const sessionCacheRef = useRef(null)
-  if (!sessionCacheRef.current) sessionCacheRef.current = createChatSessionCache()
-  const sessionLoadAbortRef = useRef(null)
-  const loadSessionDetail = (id, options = {}) => sessionCacheRef.current.load(
-    addChatInstanceToURL(`/api/chat/session/${id}?view=page`, chatInstanceRef.current), options,
-  )
-  const cancelSessionLoad = () => {
-    sessionLoadAbortRef.current?.abort()
-    sessionLoadAbortRef.current = null
-    setSessionLoading(false)
-    setSessionLoadFailed(false)
-  }
-  useEffect(() => () => {
-    sessionLoadAbortRef.current?.abort()
-    sessionCacheRef.current.clear()
   }, [])
   const chatFetch = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
@@ -4201,7 +3882,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     return result
   }, [])
   const runSeqRef = useRef(0)
-  const streamActivitySeqRef = useRef(0)
   const activeRunRef = useRef(false)
   const queueWriteRef = useRef(Promise.resolve())
   const guidingQueueRef = useRef('')
@@ -4253,18 +3933,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const previousScrollTopRef = useRef(0)
   const previousScrollHeightRef = useRef(0)
   const followSettleUntilRef = useRef(0)
-  const [followScheduler] = useState(() => createThreadFollowScheduler({
-    getThread: () => threadRef.current,
-    isFollowing: () => autoFollowRef.current,
-    onScroll: (thread, behavior) => {
-      previousScrollTopRef.current = thread.scrollTop
-      previousScrollHeightRef.current = thread.scrollHeight
-      followSettleUntilRef.current = Date.now() + (behavior === 'smooth' ? SMOOTH_SETTLE_MS : FOLLOW_SETTLE_MS)
-    },
-    schedule: callback => window.requestAnimationFrame(callback),
-    cancel: handle => window.cancelAnimationFrame(handle),
-  }))
-  useLayoutEffect(() => () => followScheduler.cancel(), [followScheduler, sid])
   const sessionScrollSnapshotsRef = useRef(new Map())
   const pendingSessionScrollRestoreRef = useRef(null)
   const pendingRenderedSessionRef = useRef('')
@@ -4280,49 +3948,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     )
   }
   useLayoutEffect(() => { autoFollowRef.current = autoFollow }, [autoFollow])
-  const historyPages = useChatHistoryPages({
-    api: chatApi, setMessages, messagesRef, threadRef,
-    pauseFollow: () => {
-      autoFollowRef.current = false
-      scrollModeRef.current = 'manual'
-      setAutoFollow(false)
-    },
-    onConflict: () => openSession(activeSidRef.current, false),
-  })
-  const chatReadState = useChatReadState({
-    instance: chatInstanceID, sid, snapshot: historyPages.page, messages, sessions,
-    running: busy && streamingSid === sid, loading: sessionLoading, threadRef,
-  })
-  const waitingSessions = waitingChatSessions({
-    sessions, sid, liveState: taskbarState, liveRunning: busy && streamingSid === sid,
-  })
-  const waitingSessionIds = new Set(waitingSessions.map(session => session.id))
-  const aggregateTaskbarState = aggregateChatTaskbarState({
-    sid, liveRunning: busy && streamingSid === sid, liveState: taskbarState,
-    sessions, unread: new Set(sessions.filter(chatReadState.unread).map(session => session.id)),
-  })
-  useEffect(() => { publishTaskbarState(aggregateTaskbarState) }, [aggregateTaskbarState])
-  const [contextLoading, setContextLoading] = useState(false)
-  const [contextError, setContextError] = useState('')
-  const [contextRefresh, setContextRefresh] = useState(0)
-  useEffect(() => {
-    if (!contextOpen || !sid || sessionLoading) return undefined
-    const controller = new AbortController()
-    const openToken = openSeqRef.current
-    const activity = streamActivitySeqRef.current
-    setContextLoading(true)
-    setContextError('')
-    chatApi(`/api/chat/session/${encodeURIComponent(sid)}?view=context`, { signal: controller.signal })
-      .then(data => {
-        if (controller.signal.aborted || openToken !== openSeqRef.current || activeSidRef.current !== sid || activity !== streamActivitySeqRef.current) return
-        setRawHistory(data.raw_history || [])
-        setHistoryInfo(data.history_info || [])
-        setWorkingState(data.working || null)
-      })
-      .catch(error => { if (!controller.signal.aborted && error.name !== 'AbortError') setContextError(error.message || String(error)) })
-      .finally(() => { if (!controller.signal.aborted) setContextLoading(false) })
-    return () => controller.abort()
-  }, [contextOpen, sid, sessionLoading, contextRefresh, chatApi])
   const queuedRef = useRef([])
   const chatScope = useRef(null)
   useEffect(() => {
@@ -4468,21 +4093,15 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
   }, [prompt])
 
-  const toggleAutorun = useCallback(async () => {
-    if (!sid || autorunSavingRef.current) return
-    const sessionID = sid
-    autorunSavingRef.current = true
-    try {
-      const data = await api(`/api/chat/autorun/${sessionID}`, {
-        method: 'PATCH', body: JSON.stringify({ enabled: !autorunEnabled, language: chatLocale().startsWith('en') ? 'en' : 'zh' }),
-      })
-      setSessions(items => items.map(item => item.id === sessionID ? { ...item, autorun: data.autorun } : item))
-      setNotice(data.autorun.enabled
-        ? ct('本会话已开启后台自主行动：约 1 分钟后启动，之后每次回复 30 分钟后再启动', 'Background auto-action enabled for this session: starts in about 1 minute, then 30 minutes after each reply')
-        : ct('本会话已关闭自主行动', 'Auto-action disabled for this session'))
-    } catch (error) { setErr(error?.message || String(error)) }
-    finally { autorunSavingRef.current = false }
-  }, [sid, autorunEnabled])
+  const toggleAutorun = useCallback(() => {
+    const next = !autorunEnabledRef.current
+    autorunEnabledRef.current = next
+    if (next) autorunLastReplyAtRef.current = autorunInitialReplyAt(Date.now())
+    setAutorunEnabled(next)
+    setNotice(next
+      ? ct('\u5df2\u5141\u8bb8\u81ea\u4e3b\u884c\u52a8\uff1a\u7ea6 1 \u5206\u949f\u540e\u542f\u52a8\uff0c\u4e4b\u540e\u6bcf\u6b21\u56de\u590d 30 \u5206\u949f\u540e\u518d\u542f\u52a8', 'Auto-action enabled: starts in about 1 minute, then 30 minutes after each reply')
+      : ct('\u5df2\u7981\u6b62\u81ea\u4e3b\u884c\u52a8', 'Auto-action disabled'))
+  }, [])
 
   const current = useMemo(() => sessions.find(s => s.id === sid), [sessions, sid])
   const isUltraPlanPrompt = /^\s*\/ultraplan(?:\s|$)/.test(prompt)
@@ -4679,7 +4298,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     if (ev.message && (ev.type === 'done' || ev.type === 'error')) {
       if (typeof ev.reasoning_effort === 'string') setReasoningEffort(normalizeReasoningEffort(ev.reasoning_effort))
-      setMessages(xs => isActiveSession(sessionId) ? mergeStreamTerminalMessage(xs, pendingId, ev.message, m => {
+      setMessages(xs => isActiveSession(sessionId) ? xs.map(m => {
+        if (m.id !== pendingId) return m
         const elapsedMs = getElapsedMs(m)
         const finalMsg = { ...ev.message }
         if ((!finalMsg.model_id || !String(finalMsg.model_id).trim()) && m.model_id) finalMsg.model_id = m.model_id
@@ -4724,7 +4344,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     )) : xs),
     schedule: callback => window.requestAnimationFrame ? window.requestAnimationFrame(callback) : window.setTimeout(callback, 16),
     cancel: handle => window.cancelAnimationFrame ? window.cancelAnimationFrame(handle) : window.clearTimeout(handle),
-    shouldAnimate: () => !document.hidden && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
     // Start in replay mode: backend emits {"type":"sync"} after the backlog,
     // so reattach-after-refresh renders prior output instantly, then animates.
     live: false,
@@ -4733,9 +4352,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const readStream = async (res, pendingId, clientUserID = '', sessionId = '') => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
     const batcher = createStreamBatcher(pendingId, sessionId)
-    // A queued rAF can stop firing when the tab is hidden, including after EOF.
-    const onVisibilityChange = () => { if (document.hidden) batcher.flushNow() }
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibilityChange)
     let commandPatch = null
     let eventCount = 0
     let terminal = false
@@ -4782,10 +4398,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       batcher.flushNow()
       error.chatStreamOutcome = { commandPatch, eventCount, terminal }
       throw error
-    } finally {
-      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange)
-      batcher.flushNow()
-      reader.releaseLock?.()
     }
     return { commandPatch, eventCount, terminal }
   }
@@ -4968,7 +4580,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     try {
       streamAbortRef.current?.abort?.()
       await chatApi(`/api/chat/cancel/${id}`, { method:'POST', body:'{}' })
-      if (isActiveSession(id)) setTaskbarStoppedRun(taskbarRunKey)
       setMessages(xs => xs.map(m => (m.role === 'assistant' && !m.content) ? { ...m, content:ct('已中止。', 'Stopped.'), error:true } : m))
       setSessions(xs => xs.map(s => s.id === id ? { ...s, running:false } : s))
       setNotice(ct('已中止当前执行', 'Current run stopped'))
@@ -4983,7 +4594,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const attachRunningStream = async (id, { waitForRun = false, clientUserID = '' } = {}) => {
     if (!id) return
-    ++streamActivitySeqRef.current
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
     streamAbortRef.current = ctrl
@@ -5041,14 +4651,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     void attachRunningStream(sid, { waitForRun:true })
   }, [sid, streamingSid, loopState?.enabled, loopState?.status])
 
-  const loadChatState = async (id = '', openToken = openSeqRef.current, prefetchedState = null, isCurrent = () => true) => {
-    const result = prefetchedState ? await prefetchedState : null
+  const loadChatState = async (id = '', openToken = openSeqRef.current) => {
+    const st = await chatApi(id ? `/api/chat/state/${id}` : '/api/chat/state')
     if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
-    if (!isCurrent()) return null
-    if (result?.error) throw result.error
-    const st = result ? result.state : await chatApi(id ? `/api/chat/state/${id}` : '/api/chat/state')
-    if (openToken !== openSeqRef.current || !isActiveSession(id)) return null
-    if (!isCurrent()) return null
     const nextLlms = st.llms || []
     const defaultNo = firstRuntimeModelNo(nextLlms)
     const nextNo = st.settings?.llm_no ?? st.llm_no ?? defaultNo
@@ -5088,26 +4693,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const openSession = async (id, refreshList = true) => {
-    historyPages.begin()
     rememberRenderedSessionScroll()
-    renderedSessionRef.current = ''
     pendingSessionScrollRestoreRef.current = null
     pendingRenderedSessionRef.current = ''
     setWorldlineRestorePicker(null)
     const openToken = ++openSeqRef.current
-    sessionLoadAbortRef.current?.abort()
-    const controller = new AbortController()
-    sessionLoadAbortRef.current = controller
-    setSessionLoading(true)
-    setSessionLoadFailed(false)
-    setMessages([])
-    messagesRef.current = []
-    setRawHistory([])
-    setHistoryInfo([])
-    setWorkingState(null)
-    setPlanState(null)
-    setErr('')
-    setShowFollow(false)
     activeSidRef.current = id
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
@@ -5117,65 +4707,19 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setSessionPrompt(loadChatSessionDraft(chatInstanceRef.current, id), id)
     setBusy(false)
     setStreamingSid('')
-    try {
-      // Fetch concurrently, but apply state only after history to avoid overwriting stream events.
-      const prefetchedState = chatApi(`/api/chat/state/${id}`, { signal: controller.signal }).then(
-        state => ({ state }),
-        error => ({ error }),
-      )
-      const d = await loadSessionDetail(id, { signal: controller.signal })
-      if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
-      const scrollRestore = sessionScrollRestore(sessionScrollSnapshotsRef.current, d.id)
-      pendingSessionScrollRestoreRef.current = scrollRestore ? { sessionID: d.id, ...scrollRestore } : null
-      pendingRenderedSessionRef.current = d.id
-      autoFollowRef.current = !scrollRestore
-      setAutoFollow(!scrollRestore)
-      setShowFollow(false)
-      activeSidRef.current = d.id
-      persistSelectedChatSessionID(chatInstanceRef.current, d.id)
-      scrollModeRef.current = 'auto'
-      setSid(d.id)
-      historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page`, chatInstanceRef.current))
-      applyQueueSnapshot(d.queued_messages, d.id)
-      setQueueEditingId('')
-      setQueueDraft('')
-      guidingQueueRef.current = ''
-      setGuidingQueueId('')
-      setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
-      setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
-      setWorkingState(d.working || null)
-      setPlanState(d.plan || null)
-      setLlmNo(d.settings?.llm_no || 0)
-      setErr('')
-      setNotice('')
-      setMenuOpen('')
-      setMenuPos(null)
-      setSessions(xs => xs.map(x => x.id === d.id ? { ...x, title: d.title, workspace: d.workspace || '', project_mode: d.project_mode || '', project_provider: d.project_provider || '', project_id: d.project_id || '', count: d.messages?.length || x.count, updated_at: d.updated_at || x.updated_at } : x))
-      await loadChatState(d.id, openToken, prefetchedState)
-      if (openToken === openSeqRef.current && worldlineOpen) loadWorldline(d.id, { force: true }).catch(() => {})
-    } catch (e) {
-      if (openToken === openSeqRef.current && activeSidRef.current === id && e?.name !== 'AbortError') {
-        setSessionLoadFailed(true)
-        setErr(e?.message || String(e))
-      }
-    } finally {
-      controller.abort()
-      if (sessionLoadAbortRef.current === controller) {
-        sessionLoadAbortRef.current = null
-        setSessionLoading(false)
-      }
-    }
-  }
-
-  const refreshCompletedRun = async (id, openToken, isCurrent) => {
-    if (!isCurrent()) return
-    const [d, state] = await Promise.all([
-      chatApi(`/api/chat/session/${id}?view=page`),
-      chatApi(`/api/chat/state/${id}`),
-    ])
-    if (!isCurrent()) return
-    // Reconcile in place: reopening clears the thread and clamps its scrollTop.
-    historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page`, chatInstanceRef.current))
+    const d = await chatApi(`/api/chat/session/${id}`)
+    if (openToken !== openSeqRef.current || activeSidRef.current !== id) return
+    const scrollRestore = sessionScrollRestore(sessionScrollSnapshotsRef.current, d.id)
+    pendingSessionScrollRestoreRef.current = scrollRestore ? { sessionID: d.id, ...scrollRestore } : null
+    pendingRenderedSessionRef.current = d.id
+    autoFollowRef.current = !scrollRestore
+    setAutoFollow(!scrollRestore)
+    setShowFollow(false)
+    activeSidRef.current = d.id
+    persistSelectedChatSessionID(chatInstanceRef.current, d.id)
+    scrollModeRef.current = 'auto'
+    setSid(d.id)
+    setMessages(d.messages || [])
     applyQueueSnapshot(d.queued_messages, d.id)
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
@@ -5193,22 +4737,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const refreshActiveSessionSnapshot = async (id) => {
     if (!id || activeSidRef.current !== id) return
-    const streamActivityToken = streamActivitySeqRef.current
-    const observedStream = streamAbortRef.current
-    const d = await chatApi(`/api/chat/session/${id}?view=page`)
-    if (activeSidRef.current !== id || streamActivitySeqRef.current !== streamActivityToken) return
-    if (streamAbortRef.current || activeRunRef.current) {
-      const summary = sessionsRef.current.find(session => session.id === id)
-      if (summary?.running || streamAbortRef.current !== observedStream) return
-      // The authoritative session is terminal, but this tab still has a live
-      // fetch. A buffering proxy can leave that fetch waiting forever even
-      // after another client has already received and persisted the reply.
-      // Abort only the stream observed before the detail request. Its owner
-      // remains responsible for clearing the ref and local busy state.
-      observedStream?.abort?.()
-    }
-    historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page`, chatInstanceRef.current))
-    if (contextOpen) setContextRefresh(value => value + 1)
+    const d = await chatApi(`/api/chat/session/${id}`)
+    if (activeSidRef.current !== id || streamAbortRef.current || activeRunRef.current) return
+    setMessages(Array.isArray(d.messages) ? d.messages : [])
+    setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
+    setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
+    setWorkingState(d.working || null)
     setPlanState(d.plan || null)
   }
 
@@ -5359,9 +4893,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
     const d = await chatApi('/api/chat/sessions')
-    const incoming = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
-    const list = reconcileSessionSummaries(sessionsRef.current, incoming)
-    sessionsRef.current = list
+    const list = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
     setSessions(list)
     const incomingProjects = Array.isArray(d.project_items) ? d.project_items : (d.projects || [])
     setProjects(previous => equalSessionSummaryValue(previous, incomingProjects) ? previous : incomingProjects)
@@ -5382,9 +4914,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const createSession = async (projectMode = '') => {
-    cancelSessionLoad()
-    historyPages.begin()
-    const selectedProject = typeof projectMode === 'string' ? projectMode.trim() : ''
+    const selectedProject = projectMode && typeof projectMode === 'object'
+      ? { project_provider: projectMode.provider, project_id: projectMode.id }
+      : typeof projectMode === 'string' && projectMode.trim()
+        ? { project_mode: projectMode.trim() }
+        : null
     if (isNarrowChatViewport()) setCollapsed(true)
     setWorldlineRestorePicker(null)
     setSessionManagerOpen(false)
@@ -5393,7 +4927,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(projectMode ? { project_mode:projectMode } : {}) })
+    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject || {}) })
     if (openToken !== openSeqRef.current) return
     forgetSessionScroll(sessionScrollSnapshotsRef.current, d.id)
     pendingSessionScrollRestoreRef.current = null
@@ -5403,7 +4937,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     clearSessionDrafts(d.id)
     setSid(d.id); setMessages([]); setRawHistory([]); setHistoryInfo([]); setWorkingState(null); setPlanState(null); setContextOpen(false); setSessionPrompt('', d.id); setErr(''); setNotice(ct('已创建新对话', 'New chat created')); setBusy(false); setStreamingSid(''); setAutoFollow(false); setShowFollow(false); setLlmNo(d.settings?.llm_no ?? firstRuntimeModelNo(llms))
     await loadChatState(d.id, openToken)
-    if (projectMode) await loadSessions(d.id)
+    if (selectedProject) await loadSessions(d.id)
     return d.id
   }
 
@@ -5443,6 +4977,18 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
 
+  const saveProjectOrder = async names => {
+    if (projectOrderSaving) return
+    setProjectOrderSaving(true)
+    try {
+      const d = await chatApi('/api/chat/projects/pin', { method:'PATCH', body:JSON.stringify({ order:names }) })
+      setProjectOrder(Array.isArray(d?.project_order) ? d.project_order : names)
+    } catch (e) {
+      if (e.name !== 'AbortError') setErr(e.message || String(e))
+    } finally {
+      setProjectOrderSaving(false)
+    }
+  }
   const openProjectDraft = () => {
     setSidebarTab('projects')
     setProjectDraftName('')
@@ -5638,6 +5184,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     else next.add(projectName)
     return next
   })
+
+  const handleSidebarTabChange = nextTab => {
+    setSidebarTab(nextTab)
+    if (nextTab !== 'projects') setProjectSortMode(false)
+  }
 
   const deleteSession = async (id) => {
     if (!id || !confirmDanger('chat-session-delete', ct('删除此会话？此操作不可恢复。', 'Delete this session? This cannot be undone.'))) return
@@ -6353,14 +5904,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     // can authorize the later completion sound after the stream finishes.
     primeChatCompletionTone()
     const runToken = ++runSeqRef.current
-    const streamToken = ++streamActivitySeqRef.current
     const openToken = openSeqRef.current
     const ctrl = new AbortController()
     activeRunRef.current = true
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = ctrl
     const targetSessionID = item.sessionId || sid
-    setTaskbarStoppedRun('')
     setBusy(true); setStreamingSid(targetSessionID || 'new'); setErr(''); setNotice('')
     let id = targetSessionID
     let commandPatch = null
@@ -6436,15 +5985,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       activeRunRef.current = false
       setBusy(false)
       setStreamingSid('')
-      if (streamAbortRef.current === ctrl) streamAbortRef.current = null
-      const isCurrentRun = () => runToken === runSeqRef.current
-        && openToken === openSeqRef.current && streamToken === streamActivitySeqRef.current
-        && isActiveSession(id)
       if (id) {
         const refreshedSessions = await loadSessions(id).catch(()=>[])
-        if (!isCurrentRun()) return
-        await refreshCompletedRun(id, openToken, isCurrentRun).catch(()=>{})
-        if (!isCurrentRun()) return
+        await openSession(id, false).catch(()=>{})
         const refreshedSession = refreshedSessions.find(session => session.id === id)
         sessionForNotification = refreshedSession
         if (shouldPollGeneratedTitle(refreshedSession)) {
@@ -6803,14 +6346,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     let stopped = false
     let inFlight = false
     const refreshList = async () => {
-      if (stopped || inFlight || !shouldRefreshChatTaskbar()) return
+      if (stopped || inFlight || document.hidden) return
       inFlight = true
       try {
         const d = await chatApi('/api/chat/sessions')
         if (!stopped) {
           const previous = sessionsRef.current
-          const incoming = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
-          const next = reconcileSessionSummaries(previous, incoming)
+          const next = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
           sessionsRef.current = next
           setSessions(next)
           const incomingProjects = Array.isArray(d.project_items) ? d.project_items : (d.projects || [])
@@ -6910,9 +6452,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const switchChatInstance = (nextValue) => {
     const nextID = String(nextValue || '').trim()
     if (!nextID || nextID === chatInstanceRef.current) return
-    historyPages.clear()
-    cancelSessionLoad()
-    sessionCacheRef.current.clear()
     rememberRenderedSessionScroll()
     sessionScrollSnapshotsRef.current.clear()
     pendingSessionScrollRestoreRef.current = null
@@ -6977,7 +6516,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     markProgrammaticScroll(thread, behavior === 'smooth' ? SMOOTH_SETTLE_MS : FOLLOW_SETTLE_MS)
   }
   const setFollowState = (enabled) => {
-    if (!enabled) followScheduler.cancel()
     autoFollowRef.current = enabled
     setAutoFollow(enabled)
     setShowFollow(!enabled && threadCanScroll(threadRef.current))
@@ -6995,22 +6533,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setFollowState(false)
   }
   const breakFollow = pauseFollow
-  const cardTopOffset = (card) => (
-    card.getBoundingClientRect().top - threadRef.current.getBoundingClientRect().top
-  )
-  const jumpToMessageNode = (messageID) => {
-    const sessionID = activeSidRef.current
-    const thread = threadRef.current
-    if (!thread || sessionLoading) return
-    setFollowState(false)
-    requestAnimationFrame(() => {
-      const thread = threadRef.current
-      const card = previousSentCard()
-      if (!thread || !card) return
-      moveThread(thread, { top: thread.scrollTop + cardTopOffset(card) - JUMP_TOP_MARGIN, behavior: 'smooth' })
-      markProgrammaticScroll(thread, SMOOTH_SETTLE_MS)
-    })
-  }
   const updateFollowFromScroll = () => {
     const thread = threadRef.current
     if (!thread) return
@@ -7023,9 +6545,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       scrollHeight,
       programmatic: Date.now() < followSettleUntilRef.current,
     })
-    if (!sessionLoading && Date.now() >= followSettleUntilRef.current && scrollTop < previousScrollTopRef.current && scrollHeight === previousScrollHeightRef.current) {
-      historyPages.loadOlderNearTop()
-    }
     previousScrollTopRef.current = scrollTop
     previousScrollHeightRef.current = scrollHeight
     if (action === 'resume' && !autoFollowRef.current) {
@@ -7106,7 +6625,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out', clearProps: 'transform,opacity,visibility' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
-  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions, pinnedProjects), [projects, sessions, pinnedProjects])
+  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions, pinnedProjects, projectOrder), [projects, sessions, pinnedProjects, projectOrder])
   const sessionSearchScopes = sessionSearchScopeOptions(chatLanguage())
   const recentSearchSessions = sessions.slice(0, 8)
   const filteredSessions = useMemo(() => {
@@ -7234,14 +6753,20 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       onOpenSearch={openSessionSearch}
       searchTriggerRef={sessionSearchTriggerRef}
       sidebarTab={sidebarTab}
-      onSidebarTabChange={setSidebarTab}
+      onSidebarTabChange={handleSidebarTabChange}
       projectDraftOpen={projectDraftOpen}
       projectDraftName={projectDraftName}
       projectCreating={projectCreating}
+      projectSortMode={projectSortMode}
+      projectOrderSaving={projectOrderSaving}
+      projectSessionGroups={projectSessionGroups}
       onOpenProjectDraft={openProjectDraft}
       onCloseProjectDraft={closeProjectDraft}
       onProjectDraftNameChange={setProjectDraftName}
       onCreateProject={createProject}
+      onProjectSortModeChange={setProjectSortMode}
+      onProjectOrder={saveProjectOrder}
+      onOpenProjectFolder={openProjectFolder}
       projectManagerOpen={projectManagerOpen}
       projectManagerEditingName={projectManagerEditingName}
       projectRenameDraft={projectRenameDraft}
@@ -7299,8 +6824,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <button ref={sidebarToggleRef} className="oa-icon-btn oa-sidebar-toggle" onClick={()=>setCollapsed(false)} title={ct('展开侧栏', 'Expand sidebar')} aria-label={ct('展开侧栏', 'Expand sidebar')} aria-controls="oa-chat-sidebar" aria-expanded={!collapsed}><Menu size={18}/></button>
           <button className="oa-icon-btn oa-collapsed-new" onClick={newSession} title={ct('新对话', 'New chat')} aria-label={ct('新对话', 'New chat')}><MessageSquarePlus size={18}/></button>
         </div>}
-        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && current?.project_mode && <span className="oa-project-badge" title={`Project Mode: ${current.project_mode}`}><FolderOpen size={12} aria-hidden="true"/><span>{current.project_mode}</span></span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
-        <div className="oa-topbar-actions" aria-label={ct('聊天工具', 'Chat tools')}>
+        <div className="oa-title"><b title={privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}>{privacyMode ? privacySessionLabel : (current ? shortTitle(current) : '新对话')}</b><span>ChatGPT-style workspace for GenericAgent</span>{!privacyMode && (current?.project_id || current?.project_mode) && <span className="oa-project-badge" title={current.project_id || current.project_mode}><FolderOpen size={12} aria-hidden="true"/><span>{current.project_id || current.project_mode}</span></span>}{!privacyMode && current?.workspace && <span className="oa-workspace-badge" title={current.workspace}>Workspace: {current.workspace}</span>}</div>
+        <div className="oa-topbar-actions oa-topbar-tools" aria-label={ct('聊天工具', 'Chat tools')}>
           <button className={`oa-context-btn ${contextOpen ? 'is-open' : ''}`} type="button" onClick={()=>setContextOpen(v=>!v)} disabled={!sid || privacyMode} title={privacyMode ? ct('当前视图不可查看上下文', 'Context unavailable in the current view') : contextHelpText} aria-label={privacyMode ? ct('当前视图不可查看模型上下文', 'Model context unavailable in the current view') : ct('查看模型上下文', 'View model context')}>
             <PanelRightOpen size={16}/><span className="oa-context-label">上下文</span>{!privacyMode && <span className="oa-context-count">{rawHistory?.length || 0}</span>}{!privacyMode && <ChatFeatureHelp text={contextHelpText}/>}
           </button>
@@ -7360,14 +6885,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       {!privacyMode && contextOpen && <aside className="oa-context-drawer" aria-label={ct('模型上下文', 'Model context')}>
         <div className="oa-context-head">
           <div><b>{ct('模型上下文', 'Model context')}</b><span>{ct('agent.llmclient.backend.history 完成后的快照', 'Snapshot after agent.llmclient.backend.history completes')}</span></div>
-          <div className="oa-context-actions"><button type="button" onClick={() => setContextRefresh(value => value + 1)} disabled={contextLoading} aria-label={ct('刷新上下文', 'Refresh context')}><RotateCw size={15}/></button><button type="button" onClick={copyContext} disabled={contextLoading || Boolean(contextError)}>{ct('复制 JSON', 'Copy JSON')}</button><button type="button" onClick={()=>setContextOpen(false)} aria-label={ct('关闭上下文', 'Close context')}><X size={15}/></button></div>
+          <div className="oa-context-actions"><button type="button" onClick={copyContext}>{ct('复制 JSON', 'Copy JSON')}</button><button type="button" onClick={()=>setContextOpen(false)} aria-label={ct('关闭上下文', 'Close context')}><X size={15}/></button></div>
         </div>
-        {contextLoading && <div className="oa-session-load" role="status">{ct('上下文加载中…', 'Loading context…')}</div>}
-        {contextError && <div className="oa-session-load" role="alert">{contextError}</div>}
-        {!contextLoading && !contextError && <>
-          <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
-          <details className="oa-context-raw"><summary>{ct('原始 JSON', 'Raw JSON')}</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
-        </>}
+        <div className="oa-context-json-tree"><JsonTree data={{ raw_history: rawHistory || [], history_info: historyInfo || [], working: workingState || {} }} /></div>
+        <details className="oa-context-raw"><summary>{ct('原始 JSON', 'Raw JSON')}</summary><pre className="oa-context-raw-json">{contextJson}</pre></details>
       </aside>}
       {!privacyMode && worldlineOpen && (
         <WorldlinePanel
@@ -7388,9 +6909,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>}
         {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onQuickReply={send} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} />}
         {!privacyMode && <SubagentStatusPanel states={subagents}/>}
-        {(showJumpSent || showFollow) && <div className="oa-follow-row">
-          {showFollow && <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={ct('继续跟随最新消息', 'Follow the latest message')} aria-label={ct('继续跟随最新消息', 'Follow the latest message')}><ChevronDown size={16}/><span className="sr-only">继续跟随</span></button>}
-          {showJumpSent && <button className="oa-follow-btn" type="button" onClick={jumpToPreviousSent} title={ct('跳转到上一条发送消息', 'Jump to previous sent message')} aria-label={ct('跳转到上一条发送消息', 'Jump to previous sent message')}><ChevronUp size={16}/></button>}
+        {showFollow && <div className="oa-follow-row">
+          <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={ct('继续跟随最新消息', 'Follow the latest message')} aria-label={ct('继续跟随最新消息', 'Follow the latest message')}><ChevronDown size={16}/><span className="sr-only">继续跟随</span></button>
         </div>}
         <div ref={endRef}/>
       </section>

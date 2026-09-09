@@ -16916,7 +16916,7 @@ html[data-color-scheme="dark"] .progress-bar {
 .autonomous-task-head > div { display:grid; gap:4px; min-width:0; }
 .autonomous-task-head h3 { margin:0; font-size:20px; }
 .autonomous-task-head p { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
-.autonomous-task-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+.autonomous-task-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
 .autonomous-task-metrics > button { display:grid; gap:4px; padding:10px 12px; border:0; border-right:1px solid var(--border); background:var(--surface-muted); cursor:pointer; text-align:start; box-shadow:none; }
 .autonomous-task-metrics > button:last-child { border-right:0; }
 .autonomous-task-metrics > button:hover { background:var(--surface-strong); }
@@ -17210,7 +17210,7 @@ html[data-color-scheme="dark"] .progress-bar {
   .autonomous-task-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .autonomous-task-metrics > button { border-right:1px solid var(--border); }
   .autonomous-task-metrics > button:nth-child(2n) { border-right:0; }
-  .autonomous-task-metrics > button:nth-child(-n+4) { border-bottom:1px solid var(--border); }
+  .autonomous-task-metrics > button:nth-child(-n+3) { border-bottom:1px solid var(--border); }
   .autonomous-task-row-quick { height:36px; min-width:52px; }
   .autonomous-quick-create-actions { flex-wrap:wrap; }
   .autonomous-quick-create-actions button { min-height:36px; }
@@ -20491,6 +20491,44 @@ html { --ga-ui-scale: 1; }
   line-height: 1;
 }
 .oa-chat .oa-project-add:hover { background: var(--oa-hover); color: var(--oa-text); }
+.oa-chat .oa-project-pin,
+.oa-chat .oa-project-reorder {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--oa-muted);
+  cursor: pointer;
+}
+.oa-chat .oa-project-pin:hover,
+.oa-chat .oa-project-reorder:hover:not(:disabled) { background: var(--oa-hover); color: var(--oa-text); }
+.oa-chat .oa-project-pin.is-pinned { color: var(--oa-green); }
+.oa-chat .oa-project-pin:focus-visible,
+.oa-chat .oa-project-reorder:focus-visible { outline: 2px solid var(--oa-green); outline-offset: 2px; }
+.oa-chat .oa-project-reorder:disabled { opacity: .35; cursor: default; }
+.oa-sidebar .oa-project-pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--oa-green) 10%, transparent);
+  color: var(--oa-green);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.oa-sidebar .oa-project-pinned-badge > svg { flex: none; }
 .oa-chat .oa-project-body { display: grid; gap: 3px; padding-left: 0; }
 .oa-chat .oa-project-body[hidden] { display: none; }
 .oa-chat .oa-session-row {
@@ -22373,3 +22411,78 @@ html[data-color-scheme="dark"] .oa-sidebar {
 .models-page .model-failover-provider-toggle { width: 100%; border: 0; background: transparent; color: inherit; padding: 6px 0; cursor: pointer; text-align: left; font: inherit; }
 .models-page .model-failover-provider-toggle:hover { color: var(--model-focus); }
 .models-page .model-failover-provider-toggle:focus-visible { outline: 2px solid var(--model-focus); outline-offset: 2px; }
+
+@media (max-width: 920px) {
+  .oa-content { font-size: 16px; line-height: 1.65; }
+  .oa-composer textarea,
+  .oa-composer textarea:not(.file-editor) { font-size: 14px !important; }
+}
+
+/* Shared step presentation across phone, tablet and desktop. */
+.oa-turn-stack { padding-left: 0; }
+.oa-turn-stack::before,
+.oa-turn-node::before { display: none; }
+.oa-turn-stack-head { margin-left: 0; width: 100%; }
+
+.oa-turn-card {
+  border: 0;
+  border-bottom: 1px solid var(--oa-line, var(--border));
+  border-radius: 0;
+  box-shadow: none;
+}
+.oa-turn-card > .oa-turn-toggle { padding-block: 6px; }
+.oa-turn-stack-head,
+.oa-turn-card > .oa-turn-toggle { padding-right: 12px; box-sizing: border-box; }
+.oa-turn-toggle > b { flex: 1 1 0; }
+.oa-turn-toggle > .oa-usage-inline { margin-left: 0; }
+.oa-turn-toggle > .oa-turn-chevron { margin-left: auto; }
+.oa-turn-card > .oa-turn-toggle,
+.oa-turn-card > .oa-turn-body { border-radius: 0; }
+
+/* Refined execution header: quiet metadata, aligned controls. */
+.oa-turn-stack > .oa-turn-stack-head {
+  min-height: 34px;
+  padding: 6px 12px;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  border-radius: 6px;
+  transition: background-color .15s ease, color .15s ease;
+}
+.oa-turn-stack > .oa-turn-stack-head:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.oa-turn-stack-head:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.oa-turn-stack-head > .oa-run-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  box-shadow: none;
+}
+.oa-turn-stack-head > .oa-run-label { color: var(--text); font-weight: 550; white-space: nowrap; }
+.oa-turn-stack-head > b { color: var(--muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.oa-turn-stack-head > .oa-run-status {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+html[data-color-scheme="dark"] .oa-turn-stack-head > .oa-run-status { color: var(--muted) !important; }
+.oa-turn-stack-head[data-running="true"] > .oa-run-status { color: var(--ink-ok) !important; }
+.oa-turn-stack-head > .oa-stack-chevron { margin-left: 6px; color: var(--muted); }
+
+/* Keep the expanded project identity visible within its own scrolling group. */
+.oa-sidebar .oa-project-group.is-expanded > .oa-project-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--oa-sidebar);
+  box-shadow: 0 1px 0 var(--oa-side-line);
+}
+
+/* Conversation observability summary below the composer. */

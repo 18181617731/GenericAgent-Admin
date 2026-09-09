@@ -138,7 +138,7 @@ function OptionalBoolSelect({ value, onChange, t, trueLabel, falseLabel }) {
   )
 }
 
-function ModelConfigRow({ config, index, protocol, onChange, onRemove, onOpenProvider, providerLabel, callList = false, t }) {
+function ModelConfigRow({ config, index, officialIndex, protocol, onChange, onRemove, onOpenProvider, providerLabel, callList = false, t }) {
   const text = t.models
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
@@ -149,13 +149,20 @@ function ModelConfigRow({ config, index, protocol, onChange, onRemove, onOpenPro
   const configSummary = [config.api_mode, config.thinking_type, config.reasoning_effort]
     .filter(Boolean)
     .join(' · ') || text.defaultParams
+  const extra = config.extra || {}
+  const updateExtra = (key, value) => {
+    const next = { ...extra }
+    if (value === undefined || value === '') delete next[key]
+    else next[key] = value
+    onChange({ extra: next })
+  }
 
   return (
     <article className={`model-config-row${callList ? ' model-call-row' : ''}${configOpen ? ' is-open is-expanded' : ''}${enabled ? '' : ' is-disabled'}`}>
       <div className="model-config-main">
         <div className="model-config-identity">
           <span className={callList ? 'model-call-slot' : 'model-config-slot'} aria-hidden="true">
-            <strong>{index}</strong>
+            <strong>{callList ? (officialIndex ?? index) : index}</strong>
           </span>
           <span className="model-config-index" aria-hidden="true">
             {String(index + 1).padStart(2, '0')}
@@ -2121,6 +2128,7 @@ export function Models({
                   key={row.id}
                   config={config}
                   index={rowIndex}
+                  officialIndex={officialSlots[row.id]}
                   protocol={profile.type || DEFAULT_PROTOCOL}
                   providerLabel={row.providerName || providerName(profile)}
                   onOpenProvider={() => openProvider(row.profileIndex)}

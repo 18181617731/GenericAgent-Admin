@@ -367,6 +367,182 @@ export function foldAgentProtocolBlocks(text) {
 }
 
 /**
+ * Segment text into ordered prose / fold-group segments, preserving the original
+ * interleaving of narration and tool activity. Consecutive folds (only blank
+ * lines between them) stay in one group so they render as a single execution
+ * log; genuine prose between folds breaks the group and is emitted in place.
+ * foldAgentProtocolBlocks above keeps returning a flat fold list for callers
+ * that do not care about position.
+ * @param {string} text
+ * @returns {Array<{kind:'prose',text:string}|{kind:'summary',body:string,live:boolean}|{kind:'folds',folds:object[]}>}
+ */
+export function segmentAgentProtocolBlocks(text) {
+  const lines = String(text || '').split('\n')
+  const segments = []
+  let proseBuf = []
+  let currentFolds = null
+  let pendingToolFolds = []
+
+  // Flush buffered prose. Whitespace-only gaps do NOT emit prose and do NOT
+  // break the current fold group, so adjacent tools stay grouped.
+  const flushProse = () => {
+    const proseText = proseBuf.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+    proseBuf = []
+    if (!proseText) return
+    segments.push({ kind: 'prose', text: proseText })
+    currentFolds = null
+    pendingToolFolds = []
+  }
+
+  // Lazily open a fold group at the current position.
+  const foldGroup = () => {
+    if (!currentFolds) {
+      currentFolds = []
+      pendingToolFolds = []
+      segments.push({ kind: 'folds', folds: currentFolds })
+    }
+    return currentFolds
+  }
+
+  const appendToolResult = (result, live = false) => {
+    const target = pendingToolFolds.shift()
+    if (target) {
+      target.result = result.body
+      target.resultLive = live
+      if (live) {
+        target.open = true
+        target.cls += ' fold-tool-live'
+      }
+      return
+    }
+    foldGroup().push({
+      type: live ? 'tool-result-live' : 'tool-result',
+      label: live ? '工具结果…' : '工具结果',
+      body: result.body,
+      open: live,
+      cls: live ? 'fold-result fold-result-live' : 'fold-result',
+    })
+  }
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+
+    const tool = parseToolCallBlock(lines, i)
+    if (tool) {
+      flushProse()
+      const fold = { type: 'tool-call', label: tool.name, body: tool.body, open: false, cls: 'fold-tool' }
+      foldGroup().push(fold)
+      pendingToolFolds.push(fold)
+      i = tool.nextLine
+      continue
+    }
+
+    const result = parseToolResultBlock(lines, i)
+    if (result) {
+      flushProse()
+      appendToolResult(result)
+      i = result.nextLine
+      continue
+    }
+
+    const fenceEnd = markdownFenceEnd(lines, i)
+    if (fenceEnd !== null) {
+      proseBuf.push(...lines.slice(i, fenceEnd))
+      i = fenceEnd
+      continue
+    }
+    const summaryIndex = taggedBlockIndex(line, 'summary')
+    const thinkingIndex = taggedBlockIndex(line, 'thinking')
+    const summary = summaryIndex >= 0 && (thinkingIndex < 0 || summaryIndex < thinkingIndex)
+      ? parseTaggedBlock(lines, i, 'summary') : null
+    if (summary) {
+      if (summary.prefix.trim()) proseBuf.push(summary.prefix)
+      if (summary.body) {
+        flushProse()
+        segments.push({ kind: 'summary', body: summary.body, live: summary.live })
+        currentFolds = null
+        pendingToolFolds = []
+      }
+      i = summary.nextLine
+      continue
+    }
+    const thinking = parseThinkingBlock(lines, i)
+    if (thinking) {
+      if (thinking.prefix.trim()) proseBuf.push(thinking.prefix)
+      if (thinking.body) {
+        flushProse()
+        foldGroup().push(thinkingFold(thinking))
+      }
+      i = thinking.nextLine
+      continue
+    }
+
+    if (/^<function_calls>/i.test(line)) {
+      const closeIdx = lines.findIndex((l, idx) => idx > i && /<\/function_calls>/i.test(l))
+      if (closeIdx >= 0) {
+        flushProse()
+        foldGroup().push({
+          type: 'function-calls',
+          label: '函数调用',
+          body: lines.slice(i + 1, closeIdx).join('\n'),
+          open: false,
+          cls: 'fold-function-calls',
+        })
+        i = closeIdx + 1
+        continue
+      }
+    }
+
+    if (/^<function_results>/i.test(line)) {
+      const closeIdx = lines.findIndex((l, idx) => idx > i && /<\/function_results>/i.test(l))
+      if (closeIdx >= 0) {
+        flushProse()
+        foldGroup().push({
+          type: 'function-results',
+          label: '函数结果',
+          body: lines.slice(i + 1, closeIdx).join('\n'),
+          open: false,
+          cls: 'fold-function-results',
+        })
+        i = closeIdx + 1
+        continue
+      }
+    }
+
+    const inFlightTool = parseInFlightToolCall(lines, i)
+    if (inFlightTool) {
+      flushProse()
+      const fold = {
+        type: 'tool-call-live',
+        label: inFlightTool.name + '…',
+        body: inFlightTool.body,
+        open: true,
+        cls: 'fold-tool fold-tool-live',
+      }
+      foldGroup().push(fold)
+      pendingToolFolds.push(fold)
+      i = inFlightTool.nextLine
+      continue
+    }
+
+    const inFlightResult = parseInFlightToolResult(lines, i)
+    if (inFlightResult) {
+      flushProse()
+      appendToolResult(inFlightResult, true)
+      i = inFlightResult.nextLine
+      continue
+    }
+
+    proseBuf.push(line)
+    i++
+  }
+
+  flushProse()
+  return segments
+}
+
+/**
  * Remove agent protocol blocks from text, return clean text
  * @param {string} text
  * @returns {string}

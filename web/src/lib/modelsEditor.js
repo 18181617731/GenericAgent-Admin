@@ -548,6 +548,29 @@ export const applyModelAndFailoverOrder = (profiles = [], failoverGroups = [], o
   return { profiles: nextProfiles, failoverGroups: nextFailoverGroups }
 }
 
+// 只有能唯一映射到 GA 索引的官方槽位才作为实时 llm-no 暴露。
+export const officialModelSlots = (profiles, groups, llms = []) => {
+  const rows = orderedModelAndFailoverRows(profiles, groups)
+  const candidates = rows.map(row => llms.filter(llm => {
+    if (!Number.isInteger(llm.index)) return false
+    if (row.type === 'failover') return String(llm.failover_group ?? '') === failoverGroupSuffix(row.varName)
+    if (llm.failover_group !== undefined) return false
+    const profile = profiles[row.profileIndex]
+    const config = profileModelConfigs(profile)[row.configIndex]
+    return llm.model === row.model && llm.provider === (profile.display_name || profile.var_name.replace(/^(native_oai_config|native_claude_config|oai_config|claude_config)_?/, '') || 'Unknown provider')
+      && (!config.name || llm.name === config.name)
+      && (!config.reasoning_effort || llm.reasoning_effort === config.reasoning_effort)
+  }))
+  return Object.fromEntries(rows.map((row, i) => {
+    const matches = candidates[i].length > 1
+      ? candidates[i].filter(item => item.index === rows[i].order && Number.isInteger(profileModelConfigs(profiles[rows[i].profileIndex])[rows[i].configIndex].sort_order))
+      : candidates[i]
+    const slot = matches.length === 1
+      ? matches[0].index : null
+    return [row.id, slot]
+  }))
+}
+
 export const orderedFailoverRows = (profiles = []) => orderedModelRows(profiles)
   .map(row => ({ ...row, config: profileModelConfigs(profiles[row.profileIndex])[row.configIndex] }))
   .filter(row => Number.isInteger(row.config.failover_order) && row.config.failover_order >= 0)

@@ -1689,6 +1689,10 @@ func updatePayload(dir, assetName, binName string) (string, string, error) {
 	return newExe, newWorker, nil
 }
 
+func isDarwinUpdateAsset(rootName string) bool {
+	return strings.HasSuffix(rootName, "-darwin-amd64") || strings.HasSuffix(rootName, "-darwin-arm64")
+}
+
 var inspectCandidateCommand = func(ctx context.Context, path string) *exec.Cmd {
 	return exec.CommandContext(ctx, path, "--version-json")
 }

@@ -87,22 +87,126 @@ func saveChatLoopTestSession(t *testing.T, s *Server, cs chatSession) {
 
 func cleanupChatLoopTestWorker(t *testing.T, s *Server, sid string) {
 	t.Helper()
+	stopChatLoopTestRuntime(t, s, sid)
 	deadline := time.Now().Add(3 * time.Second)
+	stableUntil := time.Time{}
 	for {
 		s.CloseChatWorkers()
-		if !s.chatRunActive(sid) {
-			// A run can publish its completed state just before its final session
-			// write returns. Synchronize with that write before TempDir cleanup.
-			s.SessionMu.Lock()
-			s.SessionMu.Unlock()
-			return
+		cancelChatLoopTestRuntime(t, s, sid)
+		if chatLoopTestRuntimeSettled(s, sid) {
+			if stableUntil.IsZero() {
+				stableUntil = time.Now().Add(25 * time.Millisecond)
+			} else if time.Now().After(stableUntil) {
+				// A run can publish its completed state just before its final
+				// session write returns. Synchronize with that write before
+				// TempDir cleanup, then require a short quiet window so a late
+				// terminal callback cannot recreate a writer after this check.
+				s.SessionMu.Lock()
+				s.SessionMu.Unlock()
+				if chatLoopTestRuntimeSettled(s, sid) {
+					return
+				}
+				stableUntil = time.Time{}
+			}
+		} else {
+			stableUntil = time.Time{}
 		}
 		if time.Now().After(deadline) {
-			t.Error("chat loop workers did not stop during test cleanup")
+			t.Errorf("chat loop runtime did not settle during test cleanup: %s", chatLoopTestRuntimeState(s, sid))
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// stopChatLoopTestRuntime prevents terminal callbacks from scheduling more
+// work while TempDir is waiting for the current worker state to drain.
+func stopChatLoopTestRuntime(t *testing.T, s *Server, sid string) {
+	t.Helper()
+	sid = safeChatID(sid)
+	var persistErr error
+	s.SessionMu.Lock()
+	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err == nil && cs.ID != "" && cs.Loop.Enabled {
+		cs.Loop.Enabled = false
+		cs.Loop.Status = chatLoopStatusStopped
+		cs.Loop.StopReason = "test_cleanup"
+		cs.Loop.Epoch++
+		persistErr = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+	}
+	s.SessionMu.Unlock()
+	if err != nil && !os.IsNotExist(err) {
+		t.Errorf("load chat session during test cleanup: %v", err)
+	}
+	if persistErr != nil {
+		t.Errorf("stop chat loop during test cleanup: %v", persistErr)
+	}
+	cancelChatLoopTestRuntime(t, s, sid)
+}
+
+func cancelChatLoopTestRuntime(t *testing.T, s *Server, sid string) {
+	t.Helper()
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	controller := s.ChatLoopControllers[sid]
+	controllerEpoch := int64(0)
+	if controller != nil {
+		controllerEpoch = controller.Epoch
+	}
+	s.ChatMu.Unlock()
+	if controller != nil {
+		s.cancelChatLoopController(sid, controllerEpoch)
+	}
+	if _, err := s.cancelChatRun(sid); err != nil {
+		t.Errorf("cancel chat run during test cleanup: %v", err)
+	}
+}
+
+func chatLoopTestRuntimeSettled(s *Server, sid string) bool {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	run := s.ChatRuns[sid]
+	worker := s.ChatWorkers[sid]
+	controller := s.ChatLoopControllers[sid]
+	titleJob := s.ChatTitleJobs[sid]
+	runActive := run != nil && !run.Done
+	workerActive := worker != nil
+	controllerActive := controller != nil && (!controller.Canceled || controller.Worker != nil)
+	s.ChatMu.Unlock()
+	// cancelChatLoopController intentionally leaves a canceled, worker-less
+	// sentinel behind when stop wins before a controller starts. Treat that
+	// sentinel as completed: it prevents a late observer from registering a
+	// controller, but it is no longer an asynchronous writer.
+	return !runActive && !workerActive && !controllerActive && !titleJob
+}
+
+func chatLoopTestRuntimeState(s *Server, sid string) string {
+	sid = safeChatID(sid)
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	run := s.ChatRuns[sid]
+	return fmt.Sprintf("run=%t worker=%t controller=%t title=%t", run != nil && !run.Done, s.ChatWorkers[sid] != nil, s.ChatLoopControllers[sid] != nil, s.ChatTitleJobs[sid])
+}
+
+func blockChatLoopTestWorker(t *testing.T, s *Server, sid string) {
+	t.Helper()
+	old := startChatWorkerFunc
+	release := make(chan struct{})
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		<-release
+		return nil, fmt.Errorf("test chat worker released")
+	}
+	t.Cleanup(func() {
+		close(release)
+		deadline := time.Now().Add(2 * time.Second)
+		for s.chatRunActive(sid) && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		startChatWorkerFunc = old
+		if s.chatRunActive(sid) {
+			t.Errorf("chat run %q did not stop during test cleanup", sid)
+		}
+	})
 }
 
 func TestProcessNextQueuedMessageStartsAfterCompletedRun(t *testing.T) {

@@ -1,6 +1,8 @@
 import React from 'react'
 import { ChevronRight, FolderOpen, Pin } from 'lucide-react'
 import ChatSessionRow from './ChatSessionRow.jsx'
+import ProjectActionsMenu from './ProjectActionsMenu.jsx'
+import ProjectDragHandle from './ProjectDragHandle.jsx'
 import { loopSidebarView } from '../lib/chatLoopSidebar.js'
 
 const defaultCopy = (zh) => zh
@@ -45,6 +47,11 @@ export default function ChatSessionList({
   onToggleProject,
   onToggleProjectPinned,
   onNewProjectSession,
+  onOpenProjectFolder,
+  projectSortMode = false,
+  projectOrderSaving = false,
+  projectSessionGroups = [],
+  onProjectOrder,
   batchDeleting = false,
 }) {
   const row = session => <ChatSessionRow
@@ -68,22 +75,32 @@ export default function ChatSessionList({
 
   if (tab === 'projects') return <div className="oa-session-list oa-project-list" aria-label={ct('项目会话', 'Project sessions')} onKeyDown={moveSessionFocus}>
     {projectGroups.map((group, index) => {
-      const expanded = expandedProjectNames.has(group.name)
+      const projectKey = group.key || group.name
+      const expanded = expandedProjectNames.has(projectKey)
       const bodyId = `oa-project-sessions-${index}`
       const toggleLabel = ct(`${expanded ? '收起' : '展开'} ${group.name}`, `${expanded ? 'Collapse' : 'Expand'} ${group.name}`)
       const newLabel = ct(`在 ${group.name} 中新建对话`, `Start a chat in ${group.name}`)
       const pinLabel = group.pinned ? ct(`取消置顶 ${group.name}`, `Unpin ${group.name}`) : ct(`置顶 ${group.name}`, `Pin ${group.name}`)
+      const folderLabel = ct(`打开 ${group.name} 的项目文件夹`, `Open ${group.name} project folder`)
+      const reorderLabel = ct('长按拖动排序', 'Hold to reorder')
       const displayName = privacyMode ? ct(`项目 ${String(index + 1).padStart(2, '0')}`, `Project ${String(index + 1).padStart(2, '0')}`) : group.name
       const privateToggleLabel = ct(`${expanded ? '收起' : '展开'} ${displayName}`, `${expanded ? 'Collapse' : 'Expand'} ${displayName}`)
       const privateNewLabel = ct(`在 ${displayName} 中新建对话`, `Start a chat in ${displayName}`)
       const privatePinLabel = group.pinned ? ct(`取消置顶 ${displayName}`, `Unpin ${displayName}`) : ct(`置顶 ${displayName}`, `Pin ${displayName}`)
-      return <section className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'} ${group.pinned ? 'is-pinned' : ''}`} key={group.name}>
+      return <section data-project-name={privacyMode ? undefined : projectKey} className={`oa-project-group ${expanded ? 'is-expanded' : 'is-collapsed'} ${group.pinned ? 'is-pinned' : ''}`} key={projectKey}>
         <div className="oa-project-head">
-          <button className="oa-project-toggle" type="button" onClick={() => onToggleProject?.(group.name)} aria-expanded={expanded} aria-controls={bodyId} aria-label={privacyMode ? privateToggleLabel : toggleLabel} title={privacyMode ? privateToggleLabel : toggleLabel}>
+          <button className="oa-project-toggle" type="button" onClick={() => onToggleProject?.(projectKey)} aria-expanded={expanded} aria-controls={bodyId} aria-label={privacyMode ? privateToggleLabel : toggleLabel} title={privacyMode ? privateToggleLabel : toggleLabel}>
             <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={displayName}>{displayName}</b><small>{group.sessions.length}</small>
           </button>
-          <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={() => onToggleProjectPinned?.(group.name, !group.pinned)} aria-pressed={group.pinned} title={privacyMode ? privatePinLabel : pinLabel} aria-label={privacyMode ? privatePinLabel : pinLabel}><Pin size={14} aria-hidden="true"/></button>
-          <button className="oa-project-add" type="button" onClick={() => onNewProjectSession?.(group.name)} disabled={batchDeleting} title={privacyMode ? privateNewLabel : newLabel} aria-label={privacyMode ? privateNewLabel : newLabel}><span aria-hidden="true">+</span></button>
+          {group.pinned && <span className="oa-project-pinned-badge" title={ct('项目已置顶', 'Project pinned')}><Pin size={11} aria-hidden="true"/>{ct('置顶', 'Pinned')}</span>}
+          {projectSortMode && (
+            <ProjectDragHandle name={projectKey} groups={projectSessionGroups.length ? projectSessionGroups : projectGroups} disabled={batchDeleting || projectOrderSaving} onReorder={onProjectOrder} label={reorderLabel}/>
+          )}
+          <button className="oa-project-add" type="button" onClick={() => onNewProjectSession?.(group.provider ? group : group.name)} disabled={batchDeleting} title={privacyMode ? privateNewLabel : newLabel} aria-label={privacyMode ? privateNewLabel : newLabel}><span aria-hidden="true">+</span></button>
+          {!privacyMode && <ProjectActionsMenu label={ct('项目操作', 'Project actions')}>
+            <button className={`oa-project-pin ${group.pinned ? 'is-pinned' : ''}`} type="button" onClick={() => onToggleProjectPinned?.(projectKey, !group.pinned)} aria-pressed={group.pinned} title={pinLabel} aria-label={pinLabel}><Pin size={14} aria-hidden="true"/>{pinLabel}</button>
+            <button type="button" onClick={() => onOpenProjectFolder?.(group)} title={folderLabel}><FolderOpen size={14} aria-hidden="true"/>{folderLabel}</button>
+          </ProjectActionsMenu>}
         </div>
         <div className="oa-project-body" id={bodyId} hidden={!expanded}>
           {group.sessions.map(row)}

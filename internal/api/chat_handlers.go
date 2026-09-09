@@ -38,7 +38,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if (state == "active" && summary.Archived) || (state == "archived" && !summary.Archived) {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource, "updated_at": summary.UpdatedAt, "count": summary.Count, "running": s.chatRunActive(summary.ID), "workspace": summary.Workspace, "project_mode": summary.ProjectMode, "hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "archived": summary.Archived, "loop": summary.Loop})
+		items = append(items, map[string]interface{}{"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource, "updated_at": summary.UpdatedAt, "count": summary.Count, "running": s.chatRunActive(summary.ID), "workspace": summary.Workspace, "project_mode": summary.ProjectMode, "hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "archived": summary.Archived, "loop": summary.Loop, "autorun": summary.Autorun})
 	}
 	projects, pinnedProjects := chatProjectNamesFor(cfg)
 	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order})

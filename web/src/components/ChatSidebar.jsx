@@ -103,10 +103,16 @@ export default function ChatSidebar({
   projectDraftOpen = false,
   projectDraftName = '',
   projectCreating = false,
+  projectSortMode = false,
+  projectOrderSaving = false,
+  projectSessionGroups = [],
   onOpenProjectDraft,
   onCloseProjectDraft,
   onProjectDraftNameChange,
   onCreateProject,
+  onProjectSortModeChange,
+  onProjectOrder,
+  onOpenProjectFolder,
   projectManagerOpen = false,
   projectManagerEditingName = '',
   projectRenameDraft = '',
@@ -270,7 +276,10 @@ export default function ChatSidebar({
         <span className="oa-session-manager-actions">
           {sidebarTab === 'projects' && <button className="oa-session-manage-open" type="button" onClick={onOpenProjectDraft} disabled={privacyMode || projectCreating || projectDraftOpen} title={privacyMode ? ct('当前视图不可新建项目', 'Projects cannot be created in the current view') : undefined}><FolderPlus size={13} aria-hidden="true"/>{ct('新建', 'New')}</button>}
           {sidebarTab === 'projects'
-            ? <button data-project-manager-trigger="true" className="oa-session-manage-open" type="button" onClick={onOpenProjectManager} disabled={privacyMode || projectManagerBusy || projectManagerOpen} title={privacyMode ? ct('当前视图不可管理项目', 'Projects cannot be managed in the current view') : undefined}>{ct('管理', 'Manage')}</button>
+            ? <>
+                <button className="oa-session-manage-open" type="button" aria-pressed={projectSortMode} onClick={() => onProjectSortModeChange?.(!projectSortMode)} disabled={privacyMode || batchDeleting || projectOrderSaving || (!projectSortMode && projectSessionGroups.length < 2)} title={ct('开启后长按项目手柄拖动，顺序自动保存', 'Enable, then hold a project handle to drag. Order saves automatically.')}>{projectSortMode ? ct('完成', 'Done') : ct('排序', 'Sort')}</button>
+                <button data-project-manager-trigger="true" className="oa-session-manage-open" type="button" onClick={onOpenProjectManager} disabled={privacyMode || projectManagerBusy || projectManagerOpen} title={privacyMode ? ct('当前视图不可管理项目', 'Projects cannot be managed in the current view') : undefined}>{ct('管理', 'Manage')}</button>
+              </>
             : <button className="oa-session-manage-open" type="button" onClick={onOpenSessionManager} disabled={!sessions.length || batchDeleting}>{ct('管理', 'Manage')}</button>}
         </span>
       </div>
@@ -314,6 +323,11 @@ export default function ChatSidebar({
         onToggleProject={onToggleProject}
         onToggleProjectPinned={onToggleProjectPinned}
         onNewProjectSession={onNewProjectSession}
+        onOpenProjectFolder={onOpenProjectFolder}
+        projectSortMode={projectSortMode}
+        projectOrderSaving={projectOrderSaving}
+        projectSessionGroups={projectSessionGroups}
+        onProjectOrder={onProjectOrder}
         batchDeleting={batchDeleting}
       />
 

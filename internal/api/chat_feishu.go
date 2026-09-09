@@ -41,6 +41,48 @@ var newChatFeishuBridgeCommand = func(python, script string) *exec.Cmd {
 
 var chatFeishuBridgeStartupGrace = 300 * time.Millisecond
 
+const (
+	chatFeishuBridgeStartupProbeWindow      = time.Second
+	chatFeishuBridgeStartupProbeInterval    = 10 * time.Millisecond
+	chatFeishuBridgeStartupWaitResultWindow = 250 * time.Millisecond
+)
+
+func waitForChatFeishuBridgeStartup(pid int, exited <-chan error) (error, bool) {
+	probeDeadline := time.NewTimer(chatFeishuBridgeStartupProbeWindow)
+	defer probeDeadline.Stop()
+	probeTicker := time.NewTicker(chatFeishuBridgeStartupProbeInterval)
+	defer probeTicker.Stop()
+	for {
+		select {
+		case err := <-exited:
+			return err, true
+		case <-probeTicker.C:
+			if !processAlive(pid) {
+				return readChatFeishuBridgeExit(exited), true
+			}
+		case <-probeDeadline.C:
+			select {
+			case err := <-exited:
+				return err, true
+			default:
+			}
+			if !processAlive(pid) {
+				return readChatFeishuBridgeExit(exited), true
+			}
+			return nil, false
+		}
+	}
+}
+
+func readChatFeishuBridgeExit(exited <-chan error) error {
+	select {
+	case err := <-exited:
+		return err
+	case <-time.After(chatFeishuBridgeStartupWaitResultWindow):
+		return fmt.Errorf("bridge process exited before its wait result was available")
+	}
+}
+
 const adminFeishuServiceName = "admin/feishuapp.py"
 
 // StartChatFeishuBridge starts the optional Admin-specific Feishu session bridge.
@@ -104,25 +146,38 @@ func (s *Server) startChatFeishuBridgeLocked() error {
 	go func() { _ = httpServer.Serve(listener) }()
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
-	timer := time.NewTimer(chatFeishuBridgeStartupGrace)
-	defer timer.Stop()
-	select {
-	case err := <-exited:
+	cleanup := func() {
 		_ = httpServer.Close()
+		_ = listener.Close()
 		_ = os.Remove(script)
+	}
+	startupError := func(err error) error {
+		cleanup()
 		if err == nil {
 			return fmt.Errorf("Feishu Admin sync bridge exited during startup")
 		}
 		return fmt.Errorf("Feishu Admin sync bridge exited during startup: %w", err)
+	}
+	timer := time.NewTimer(chatFeishuBridgeStartupGrace)
+	defer timer.Stop()
+	select {
+	case err := <-exited:
+		return startupError(err)
 	case <-timer.C:
+		// Wait can lag behind the OS process state at the grace boundary. Use
+		// the platform-specific liveness check before publishing a running
+		// bridge, then converge both signals for a bounded window before
+		// publishing a running bridge.
+		if err, exitedDuringStartup := waitForChatFeishuBridgeStartup(cmd.Process.Pid, exited); exitedDuringStartup {
+			return startupError(err)
+		}
 	}
 	s.chatFeishuBridgeCmd = cmd
 	s.chatFeishuBridgeServer = httpServer
 	s.chatFeishuBridgeStartedAt = time.Now().UTC()
 	go func() {
 		err := <-exited
-		_ = httpServer.Close()
-		_ = os.Remove(script)
+		cleanup()
 		s.chatFeishuBridgeMu.Lock()
 		unexpected := s.chatFeishuBridgeCmd == cmd
 		if unexpected {
