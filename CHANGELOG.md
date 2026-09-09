@@ -2,6 +2,16 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.125 - 2026-09-09
+
+### Autonomous task state classification
+- Require an explicit approval marker on the TODO row for the pending-approval state; unchecked rows without that marker remain queued and checked rows remain closed.
+- Keep canonical TODO titles and IDs stable across approval, queue, and completion transitions, including no-pipe approval prefixes and full-width delimiters.
+- Preserve TODO.txt as the sole autonomous-task source while tolerating malformed or future ledger metadata and retaining the minimal approval workflow.
+
+### Upstream chat compatibility
+- Restore upstream chat-session summary, project, and Conductor compatibility while preserving the local privacy, audio, draft, and instance-isolation behavior.
+
 ## v1.0.124 - 2026-09-09
 
 ### Autonomous task workflow
