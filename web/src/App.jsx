@@ -470,10 +470,13 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (!active || notificationMonitorRef.current.busy) return
       notificationMonitorRef.current.busy = true
       try {
+        const approvalsRequest = tab === 'autonomous'
+          ? Promise.resolve({ items: [] })
+          : api('/api/autonomous/approvals')
         const [schedule, goals, approvals, inventory] = await Promise.all([
           api('/api/schedule/tasks'),
           api('/api/goals/list'),
-          api('/api/autonomous/approvals'),
+          approvalsRequest,
           api('/api/ga/inventory'),
         ])
         if (!active) return
@@ -493,7 +496,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     poll()
     const timer = window.setInterval(poll, 15000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [health?.root])
+  }, [health?.root, tab])
   useEffect(() => {
     if (tab === 'goals' && health?.ok) { loadGoals().catch(e => setMsg(e.message)); loadLLMs() }
     if (tab === 'chat' && health?.ok && !llms.length) loadLLMs()
@@ -1517,7 +1520,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       </section>{moduleTodo('tasks')}</>}
       {tab==='memory' && <><MemoryPage t={t} memory={inv.memory} onOpen={openMemoryEntry} onDownload={downloadFile} onReveal={entry => revealFileInExplorer(entry.path, 'folder')} onCopy={copyMemoryPath} onDiscuss={discussMemoryFile} onRefresh={refreshMemoryInventory} refreshing={memoryRefreshing}/>{moduleTodo('memory')}</>}
       {tab==='channels' && <><ChannelsPage frontendSvcs={frontendSvcs} t={t} actionStates={serviceActionStates} onStart={n=>serviceAction(n,'start')} onStop={n=>serviceAction(n,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onReflectStart={startReflectService} onOpenHub={openHub}/>{moduleTodo('channels')}</>}
-      {tab==='autonomous' && <><AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>{moduleTodo('autonomous')}</>}
+      {tab==='autonomous' && <AutonomousPage lang={lang} services={reflectSvcs} llms={llms} actionStates={serviceActionStates} reports={inv.autonomous_reports || []} onStart={name=>serviceAction(name,'start')} onStop={name=>serviceAction(name,'stop')} onLogs={viewServiceLogs} onAutostart={toggleServiceAutostart} onModel={setServiceModel} onRefresh={load} setMessage={setMsg}/>}
       {tab==='usage' && <><UsagePage lang={lang}/>{moduleTodo('usage')}</>}
       {tab==='goals' && <><GoalsPage t={t} goals={goals} objective={goalObjective} setObjective={setGoalObjective} budget={goalBudget} setBudget={setGoalBudget} maxTurns={goalMaxTurns} setMaxTurns={setGoalMaxTurns} llmNo={goalLLMNo} setLLMNo={setGoalLLMNo} llms={llms} hive={goalHive} setHive={setGoalHive} outputBytes={goalOutputBytes} setOutputBytes={setGoalOutputBytes} autoRefresh={goalAutoRefresh} setAutoRefresh={setGoalAutoRefresh} selected={selectedGoal} output={goalOutput} outputMeta={goalOutputMeta} busy={busy} onStart={startGoal} onStop={stopGoal} onDelete={deleteGoal} onRefresh={loadGoals} onOutput={loadGoalOutput} onClearOutput={()=>{ goalOutputSeq.current += 1; setGoalOutput(''); setGoalOutputMeta(null); setMsg(t.hints.goalOutputCleared) }} setMsg={setMsg}/>{moduleTodo('goals')}</>}
       {tab==='settings' && <><SettingsPage t={t} lang={lang} root={root} setRoot={setRoot} config={cfg} setConfig={setCfg} dirty={settingsDirty} busy={busy} onSave={saveConfig} onReset={resetConfigDraft} uiScale={uiScale} onUiScaleChange={onUiScaleChange}/>{moduleTodo('settings')}</>}

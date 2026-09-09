@@ -169,59 +169,501 @@ func LoadAutonomousTaskBoard(root string) (AutonomousTaskBoard, error) {
 
 func loadAutonomousTaskBoardUnlocked(root string) (AutonomousTaskBoard, error) {
 	board := AutonomousTaskBoard{SchemaVersion: autonomousTaskSchemaVersion, Tasks: []AutonomousTask{}, Runs: []AutonomousRun{}, Events: []AutonomousEvent{}}
-	var tasks autonomousTaskLedger
-	if err := readJSONLedger(root, autonomousTaskStorePath, &tasks); err == nil {
-		if tasks.SchemaVersion > autonomousTaskSchemaVersion {
-			return board, fmt.Errorf("unsupported autonomous task schema_version %d", tasks.SchemaVersion)
-		}
-		board.MigrationVersion = tasks.MigrationVersion
-		board.Tasks = append(board.Tasks, tasks.Tasks...)
-	} else if !os.IsNotExist(err) {
+	tasks, err := readAutonomousTaskLedger(root)
+	if err != nil {
 		return board, err
 	}
-	var runs autonomousRunLedger
-	if err := readJSONLedger(root, autonomousRunStorePath, &runs); err == nil {
-		if runs.SchemaVersion > autonomousTaskSchemaVersion {
-			return board, fmt.Errorf("unsupported autonomous run schema_version %d", runs.SchemaVersion)
-		}
-		board.Runs = append(board.Runs, runs.Runs...)
-	} else if !os.IsNotExist(err) {
+	board.MigrationVersion = tasks.MigrationVersion
+	runBytes, err := readOptionalJSONLedger(root, autonomousRunStorePath)
+	if err != nil {
 		return board, err
 	}
-	var events autonomousEventLedger
-	if err := readJSONLedger(root, autonomousEventStorePath, &events); err == nil {
-		if events.SchemaVersion > autonomousTaskSchemaVersion {
-			return board, fmt.Errorf("unsupported autonomous event schema_version %d", events.SchemaVersion)
+	if len(runBytes) > 0 {
+		var runs autonomousRunLedger
+		if json.Unmarshal(runBytes, &runs) == nil && runs.SchemaVersion <= autonomousTaskSchemaVersion {
+			board.Runs = append(board.Runs, runs.Runs...)
 		}
-		board.Events = append(board.Events, events.Events...)
-	} else if !os.IsNotExist(err) {
+	}
+	eventBytes, err := readOptionalJSONLedger(root, autonomousEventStorePath)
+	if err != nil {
 		return board, err
 	}
+	if len(eventBytes) > 0 {
+		var events autonomousEventLedger
+		if json.Unmarshal(eventBytes, &events) == nil && events.SchemaVersion <= autonomousTaskSchemaVersion {
+			board.Events = append(board.Events, events.Events...)
+		}
+	}
+	// TODO.txt is the sole source of autonomous task rows. The JSON task
+	// ledger remains only as a compatibility store for run metadata; its rows
+	// must not reappear when a task list is rebuilt.
+	todoTasks, err := loadAutonomousTodoTasks(root, tasks.Tasks)
+	if err != nil {
+		return board, err
+	}
+	board.Tasks = todoTasks
 	if board.MigrationVersion < autonomousTaskMigrationVersion {
-		if err := migrateAutonomousApprovals(root, &board); err != nil {
-			return board, err
-		}
 		board.MigrationVersion = autonomousTaskMigrationVersion
-		if err := saveAutonomousTaskBoardUnlocked(root, board); err != nil {
-			return board, err
-		}
 	}
+	filterAutonomousTaskHistory(&board)
 	sort.SliceStable(board.Tasks, func(i, j int) bool { return board.Tasks[i].UpdatedAt.After(board.Tasks[j].UpdatedAt) })
 	sort.SliceStable(board.Runs, func(i, j int) bool { return board.Runs[i].UpdatedAt.After(board.Runs[j].UpdatedAt) })
 	sort.SliceStable(board.Events, func(i, j int) bool { return board.Events[i].CreatedAt.After(board.Events[j].CreatedAt) })
 	return board, nil
 }
 
-func readJSONLedger(root, rel string, dst interface{}) error {
+// loadAutonomousTodoTasks projects TODO.txt into the small public task model.
+// Stored rows are consulted only for execution metadata; source fields and
+// status are recalculated from TODO on every read.
+func loadAutonomousTodoTasks(root string, stored []AutonomousTask) ([]AutonomousTask, error) {
+	overview, err := BuildProjectTodos(root)
+	if err != nil {
+		return nil, err
+	}
+	storedByID := make(map[string]AutonomousTask, len(stored))
+	for _, task := range stored {
+		storedByID[task.ID] = task
+		if task.SourcePath == autonomousTodoPath && task.SourceLine > 0 {
+			storedByID[autonomousTodoLineKey(task.SourceLine)] = task
+		}
+	}
+	tasks := make([]AutonomousTask, 0, len(overview.Items))
+	now := time.Now()
+	lines := autonomousTodoSourceLines(root)
+	for _, item := range overview.Items {
+		status := autonomousTaskStatusFromTodo(item)
+		title, objective, nextStep := autonomousTodoTaskFields(lines, item)
+		task := AutonomousTask{
+			ID: projectTodoID(title, item.Line), Title: title, Objective: objective, Status: status,
+			SourceType: "todo", SourcePath: item.SourcePath, SourceLine: item.Line,
+			Priority: item.Priority, CurrentStage: autonomousTaskStage(status),
+			NextStep: nextStep, Progress: autonomousTaskProgress(status), CreatedAt: now, UpdatedAt: now,
+			Imported: true,
+		}
+		previous, ok := storedByID[item.ID]
+		if !ok {
+			previous, ok = storedByID[autonomousTodoLineKey(item.Line)]
+		}
+		if ok {
+			task.CreatedAt, task.UpdatedAt = previous.CreatedAt, previous.UpdatedAt
+			task.Risk, task.Project = previous.Risk, previous.Project
+			task.ScheduleAt, task.DueAt = previous.ScheduleAt, previous.DueAt
+			task.Progress, task.BlockReason = previous.Progress, previous.BlockReason
+			task.Owner, task.ApprovalNote = previous.Owner, previous.ApprovalNote
+			task.ReportPath, task.LastRunID = previous.ReportPath, previous.LastRunID
+		}
+		if task.CreatedAt.IsZero() {
+			task.CreatedAt = now
+		}
+		if task.UpdatedAt.IsZero() {
+			task.UpdatedAt = now
+		}
+		if status == TaskCompleted {
+			task.Progress = 100
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
+}
+
+func autonomousTodoLineKey(line int) string {
+	return fmt.Sprintf("todo-line:%d", line)
+}
+
+func autonomousTodoSourceLines(root string) []string {
+	detail, err := ReadSafe(root, autonomousTodoPath)
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.ReplaceAll(detail.Content, "\r\n", "\n"), "\n")
+}
+
+func autonomousTodoTaskFields(lines []string, item ProjectTodoItem) (string, string, string) {
+	if item.Line < 1 || item.Line > len(lines) {
+		return item.Title, item.Summary, ""
+	}
+	_, body, ok := projectTodoChecklist(lines[item.Line-1])
+	if !ok {
+		return item.Title, item.Summary, ""
+	}
+	title, objectiveParts := autonomousTodoCanonicalFields(body)
+	if title == "" {
+		title = item.Title
+	}
+	nextStep := ""
+	if len(objectiveParts) > 0 && (projectTodoNextStep(objectiveParts[len(objectiveParts)-1]) || containsAny(strings.ToLower(objectiveParts[len(objectiveParts)-1]), "批准后", "批准并")) {
+		nextStep = objectiveParts[len(objectiveParts)-1]
+	}
+	if nextStep != "" && len(objectiveParts) > 0 {
+		objectiveParts = objectiveParts[:len(objectiveParts)-1]
+	}
+	if autonomousTodoRoundTitle(title) {
+		// BuildProjectTodos treats a round token such as R11 as a label and
+		// keeps the following pipe-delimited description in the title. Build
+		// the same canonical title before and after adding a decision prefix,
+		// otherwise a status transition changes the derived task ID.
+		title = strings.Join(append([]string{title}, objectiveParts...), " · ")
+		objectiveParts = nil
+	}
+	objective := strings.Join(objectiveParts, " | ")
+	if objective == "" && nextStep == "" {
+		objective = item.Summary
+	}
+	return title, objective, nextStep
+}
+
+func autonomousTodoRoundTitle(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || (value[0] != 'R' && value[0] != 'r') {
+		return false
+	}
+	for _, char := range value[1:] {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func autonomousTodoCanonicalIdentityTitle(body string) string {
+	title, parts := autonomousTodoCanonicalFields(body)
+	if !autonomousTodoRoundTitle(title) {
+		return title
+	}
+	if len(parts) > 0 && (projectTodoNextStep(parts[len(parts)-1]) || containsAny(strings.ToLower(parts[len(parts)-1]), "批准后", "批准并")) {
+		parts = parts[:len(parts)-1]
+	}
+	return strings.Join(append([]string{title}, parts...), " · ")
+}
+
+// autonomousTodoCanonicalFields parses the stable, user-facing TODO shape:
+// an optional decision prefix followed by title, objective, and next step.
+// Plain checklist rows use their first pipe-delimited field as the title.
+func autonomousTodoCanonicalFields(body string) (string, []string) {
+	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
+	parts = slicesWithoutEmptyStrings(parts)
+	if len(parts) == 0 {
+		return "", nil
+	}
+	if projectTodoDecisionPrefix(parts[0]) {
+		if len(parts) == 1 {
+			return parts[0], nil
+		}
+		return parts[1], parts[2:]
+	}
+	return parts[0], parts[1:]
+}
+
+func autonomousTaskStatusFromTodo(item ProjectTodoItem) string {
+	switch item.Status {
+	case "completed":
+		return TaskCompleted
+	case "queued":
+		return TaskQueued
+	default:
+		return TaskPendingApproval
+	}
+}
+
+func autonomousTaskProgress(status string) int {
+	if status == TaskCompleted {
+		return 100
+	}
+	return 0
+}
+
+func autonomousTaskStage(status string) string {
+	switch status {
+	case TaskCompleted:
+		return "已闭环"
+	case TaskQueued:
+		return "排队中"
+	default:
+		return "待批准"
+	}
+}
+
+// UpdateAutonomousTodoTask changes the canonical TODO row for a task. The
+// operation intentionally updates one existing row instead of appending a
+// second task, so TODO.txt remains the only task source.
+func UpdateAutonomousTodoTask(root, id, state, note string) (bool, error) {
+	if state != TaskPendingApproval && state != TaskQueued && state != TaskCompleted {
+		return false, fmt.Errorf("unsupported autonomous TODO state %q", state)
+	}
+	if len([]rune(note)) > 1000 {
+		return false, errors.New("TODO note is too long")
+	}
+	path, _, err := SafeResolve(root, autonomousTodoPath)
+	if err != nil {
+		return false, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, fmt.Errorf("autonomous TODO source not found")
+		}
+		return false, err
+	}
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	updated := false
+	for index, line := range lines {
+		marker, body, ok := projectTodoChecklist(line)
+		if !ok || !autonomousTodoLineMatches(body, id, index+1) {
+			continue
+		}
+		if state == TaskQueued && marker != 'x' && marker != 'X' && strings.Contains(body, "ga-admin-approval:"+id) && containsAny(strings.ToLower(body), "排队中", "用户已批准", "已批准", "已审批") {
+			return false, nil
+		}
+		if state == TaskCompleted && (marker == 'x' || marker == 'X') {
+			return false, nil
+		}
+		if state == TaskPendingApproval && (marker == 'x' || marker == 'X') {
+			return false, errors.New("closed autonomous TODO cannot be moved back to approval")
+		}
+		lines[index] = rewriteAutonomousTodoLine(line, body, state, id, note)
+		updated = true
+		break
+	}
+	if !updated {
+		return false, fmt.Errorf("autonomous TODO task %q not found", strings.TrimSpace(id))
+	}
+	return true, writeAutonomousTodoContent(root, path, strings.Join(lines, "\n"))
+}
+
+// UpdateAutonomousTodoTaskDetails keeps the compatibility PUT route anchored
+// to the same TODO row instead of persisting edits only in tasks.json.
+func UpdateAutonomousTodoTaskDetails(root, id, title, objective, nextStep string) (bool, error) {
+	path, _, err := SafeResolve(root, autonomousTodoPath)
+	if err != nil {
+		return false, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, fmt.Errorf("autonomous TODO source not found")
+		}
+		return false, err
+	}
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	for index, line := range lines {
+		marker, body, ok := projectTodoChecklist(line)
+		if !ok || !autonomousTodoLineMatches(body, id, index+1) {
+			continue
+		}
+		if marker == 'x' || marker == 'X' {
+			return false, errors.New("closed autonomous TODO cannot be edited")
+		}
+		canonicalTitle, _ := autonomousTodoCanonicalFields(body)
+		if strings.TrimSpace(title) == "" {
+			title = canonicalTitle
+		}
+		if strings.TrimSpace(title) == "" {
+			return false, errors.New("autonomous TODO title cannot be empty")
+		}
+		state := autonomousTodoDecisionState(body)
+		lines[index] = rewriteAutonomousTodoFieldsLine(line, state, id, title, objective, nextStep)
+		return true, writeAutonomousTodoContent(root, path, strings.Join(lines, "\n"))
+	}
+	return false, fmt.Errorf("autonomous TODO task %q not found", strings.TrimSpace(id))
+}
+
+func autonomousTodoDecisionState(body string) string {
+	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
+	if len(parts) > 0 && containsAny(strings.ToLower(strings.TrimSpace(parts[0])), "排队中", "用户已批准", "已批准", "已审批") {
+		return TaskQueued
+	}
+	return TaskPendingApproval
+}
+
+func rewriteAutonomousTodoFieldsLine(line, state, id, title, objective, nextStep string) string {
+	position := strings.Index(line, "[")
+	prefix := ""
+	if position >= 0 {
+		prefix = line[:position]
+	}
+	decision := "待批准"
+	if state == TaskQueued {
+		decision = "排队中"
+	}
+	parts := []string{decision, sanitizeAutonomousTodoText(title)}
+	for _, value := range []string{objective, nextStep} {
+		if clean := sanitizeAutonomousTodoText(value); clean != "" {
+			parts = append(parts, clean)
+		}
+	}
+	body := strings.Join(parts, " | ")
+	if state == TaskQueued {
+		body += " <!-- ga-admin-approval:" + id + " -->"
+	}
+	marker := " "
+	return prefix + "[" + marker + "] " + body
+}
+
+func autonomousTodoLineMatches(body, id string, line int) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	if strings.Contains(body, "ga-admin-approval:"+id) || strings.Contains(body, "ga-admin-task:"+id) {
+		return true
+	}
+	title := autonomousTodoCanonicalIdentityTitle(body)
+	legacyTitle, _ := autonomousTodoTitle(body)
+	projectTitle, _ := projectTodoTitle(body)
+	canonicalTitle, _ := autonomousTodoCanonicalFields(body)
+	return autonomousApprovalID(title) == id || autonomousApprovalID(legacyTitle) == id || projectTodoID(title, line) == id || projectTodoID(canonicalTitle, line) == id || projectTodoID(projectTitle, line) == id
+}
+
+func rewriteAutonomousTodoLine(line, body, state, id, note string) string {
+	position := strings.Index(line, "[")
+	prefix := ""
+	if position >= 0 {
+		prefix = line[:position]
+	}
+	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
+	parts = slicesWithoutEmptyStrings(parts)
+	if len(parts) == 0 {
+		parts = []string{"待批准"}
+	}
+	switch state {
+	case TaskQueued:
+		if projectTodoDecisionPrefix(parts[0]) {
+			parts[0] = "排队中"
+		} else {
+			parts = append([]string{"排队中"}, parts...)
+		}
+		if reply := autonomousApprovalReply(note); reply != "" && !strings.Contains(clean, "用户补充：") {
+			parts = append(parts, "用户补充："+reply)
+		}
+	case TaskPendingApproval:
+		if projectTodoDecisionPrefix(parts[0]) {
+			parts[0] = "待批准"
+		}
+	case TaskCompleted:
+		// The checked marker is the completion record; keep the task text intact.
+	}
+	newMarker := ' '
+	if state == TaskCompleted {
+		newMarker = 'x'
+	}
+	newBody := strings.Join(parts, " | ")
+	if state == TaskQueued && !strings.Contains(newBody, "ga-admin-approval:"+id) {
+		newBody += " <!-- ga-admin-approval:" + id + " -->"
+	}
+	return prefix + "[" + string(newMarker) + "] " + newBody
+}
+
+func writeAutonomousTodoContent(root, path, content string) error {
+	if err := ensureWriteParentWithinRoot(root, path); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, []byte(content), 0644)
+}
+
+// AppendAutonomousTodoTask adds a newly created task in the same canonical
+// three-state format used by the list parser. It returns the source line.
+func AppendAutonomousTodoTask(root string, task AutonomousTask) (int, error) {
+	path, _, err := SafeResolve(root, autonomousTodoPath)
+	if err != nil {
+		return 0, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	parts := []string{"待批准", sanitizeAutonomousTodoText(task.Title)}
+	if objective := sanitizeAutonomousTodoText(task.Objective); objective != "" {
+		parts = append(parts, objective)
+	}
+	if next := sanitizeAutonomousTodoText(task.NextStep); next != "" {
+		parts = append(parts, next)
+	}
+	text := strings.TrimRight(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	if text != "" {
+		text += "\n"
+	}
+	line := "[ ] " + strings.Join(parts, " | ")
+	text += line + "\n"
+	if err := ensureWriteParentWithinRoot(root, path); err != nil {
+		return 0, err
+	}
+	if err := writeFileAtomic(path, []byte(text), 0644); err != nil {
+		return 0, err
+	}
+	return strings.Count(text, "\n"), nil
+}
+
+func sanitizeAutonomousTodoText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, "|", "／")
+	value = strings.ReplaceAll(value, "｜", "／")
+	value = strings.ReplaceAll(value, "<!--", "&lt;!--")
+	value = strings.ReplaceAll(value, "-->", "--&gt;")
+	return strings.TrimSpace(value)
+}
+
+func filterAutonomousTaskHistory(board *AutonomousTaskBoard) {
+	ids := make(map[string]bool, len(board.Tasks))
+	for _, task := range board.Tasks {
+		ids[task.ID] = true
+	}
+	runs := board.Runs[:0]
+	for _, run := range board.Runs {
+		if ids[run.TaskID] {
+			runs = append(runs, run)
+		}
+	}
+	board.Runs = runs
+	events := board.Events[:0]
+	for _, event := range board.Events {
+		if ids[event.TaskID] {
+			events = append(events, event)
+		}
+	}
+	board.Events = events
+}
+
+func readOptionalJSONLedger(root, rel string) ([]byte, error) {
 	path, _, err := SafeResolve(root, rel)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
+	if os.IsNotExist(err) {
+		return nil, nil
 	}
-	return json.Unmarshal(b, dst)
+	if err != nil {
+		return nil, err
+	}
+	// Run and event ledgers are derived metadata. Return raw bytes so callers
+	// can decode into a temporary ledger and discard malformed or future data
+	// without exposing a partially populated destination.
+	return b, nil
+}
+
+func readAutonomousTaskLedger(root string) (autonomousTaskLedger, error) {
+	path, _, err := SafeResolve(root, autonomousTaskStorePath)
+	if err != nil {
+		return autonomousTaskLedger{}, err
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return autonomousTaskLedger{}, nil
+	}
+	if err != nil {
+		return autonomousTaskLedger{}, err
+	}
+	// tasks.json is compatibility metadata only. Decode into a temporary value
+	// so malformed or future data can never block the TODO-backed task list or
+	// leak a partially populated ledger into the public board.
+	var candidate autonomousTaskLedger
+	if err := json.Unmarshal(b, &candidate); err != nil || candidate.SchemaVersion > autonomousTaskSchemaVersion {
+		return autonomousTaskLedger{}, nil
+	}
+	return candidate, nil
 }
 
 func saveAutonomousTaskBoardUnlocked(root string, board AutonomousTaskBoard) error {
@@ -249,29 +691,6 @@ func writeAutonomousLedger(root, rel string, value interface{}) error {
 	return writeFileAtomic(path, append(b, '\n'), 0644)
 }
 
-func migrateAutonomousApprovals(root string, board *AutonomousTaskBoard) error {
-	overview, err := BuildAutonomousApprovals(root)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	for _, item := range overview.Items {
-		status := "pending_approval"
-		switch {
-		case item.State == "closed" || item.ExecutionState == autonomousExecutionCompleted:
-			status = "completed"
-		case item.Decision == "rejected":
-			status = "cancelled"
-		case item.Decision == "approved":
-			status = "queued"
-		case item.ExecutionState == autonomousExecutionFailed:
-			status = "failed"
-		}
-		board.Tasks = append(board.Tasks, AutonomousTask{ID: "task-" + item.ID, Title: item.Title, Objective: firstNonEmptyTaskText(item.Problem, item.Title), Status: status, SourceType: item.CandidateSource, SourcePath: firstNonEmptyTaskText(item.Source, item.DraftPath), Priority: "normal", Risk: item.Risk, CurrentStage: taskStageForStatus(status), NextStep: item.NextStep, ApprovalNote: item.Note, ReportPath: autonomousTaskReportPath(item), CreatedAt: now, UpdatedAt: now, Imported: true})
-	}
-	return nil
-}
-
 func firstNonEmptyTaskText(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -280,30 +699,6 @@ func firstNonEmptyTaskText(values ...string) string {
 	}
 	return ""
 }
-func taskStageForStatus(status string) string {
-	switch status {
-	case "completed":
-		return "已完成"
-	case "failed":
-		return "失败待重试"
-	case "queued":
-		return "等待执行"
-	case "running":
-		return "执行中"
-	default:
-		return "等待审核"
-	}
-}
-func autonomousTaskReportPath(item AutonomousApproval) string {
-	if item.ExecutionReport != nil {
-		return item.ExecutionReport.Path
-	}
-	if item.ReviewReport != nil {
-		return item.ReviewReport.Path
-	}
-	return ""
-}
-
 func makeAutonomousTaskID(title string, now time.Time) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(title) + "|" + now.UTC().Format(time.RFC3339Nano)))
 	return "task-" + hex.EncodeToString(sum[:8])

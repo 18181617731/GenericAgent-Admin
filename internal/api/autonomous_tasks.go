@@ -127,7 +127,10 @@ func (s *Server) createAutonomousTask(w http.ResponseWriter, r *http.Request, ro
 	}
 	now := time.Now()
 	input.ID = ga.NewAutonomousTaskID(input.Title, now)
-	input.Status = "draft"
+	input.Status = ga.TaskPendingApproval
+	input.SourceType = "todo"
+	input.SourcePath = "temp/TODO.txt"
+	input.Imported = true
 	input.CreatedAt = now
 	input.UpdatedAt = now
 	if err := ga.ValidateAutonomousTask(input); err != nil {
@@ -139,13 +142,36 @@ func (s *Server) createAutonomousTask(w http.ResponseWriter, r *http.Request, ro
 		bad(w, 500, err.Error())
 		return
 	}
-	board.Tasks = append(board.Tasks, input)
-	ga.AppendAutonomousTaskEvent(&board, input.ID, "", "created", "任务已创建", nil)
+	line, err := ga.AppendAutonomousTodoTask(root, input)
+	if err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	board, err = ga.LoadAutonomousTaskBoard(root)
+	if err != nil {
+		bad(w, 500, err.Error())
+		return
+	}
+	created := findAutonomousTaskBySourceLine(board, line)
+	if created == nil {
+		bad(w, 500, "created autonomous TODO task could not be reloaded")
+		return
+	}
+	ga.AppendAutonomousTaskEvent(&board, created.ID, "", "created", "任务已创建，等待批准", nil)
 	if err := ga.SaveAutonomousTaskBoard(root, board); err != nil {
 		bad(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "task": input})
+	writeJSON(w, map[string]interface{}{"ok": true, "task": created})
+}
+
+func findAutonomousTaskBySourceLine(board ga.AutonomousTaskBoard, line int) *ga.AutonomousTask {
+	for index := range board.Tasks {
+		if board.Tasks[index].SourceLine == line {
+			return &board.Tasks[index]
+		}
+	}
+	return nil
 }
 
 func (s *Server) updateAutonomousTask(w http.ResponseWriter, r *http.Request, root, id string) {
@@ -166,6 +192,10 @@ func (s *Server) updateAutonomousTask(w http.ResponseWriter, r *http.Request, ro
 	}
 	if task.Status != ga.TaskDraft && task.Status != ga.TaskPendingApproval {
 		bad(w, http.StatusConflict, "only draft or pending approval tasks can be edited")
+		return
+	}
+	if task.SourceType == "todo" && strings.TrimSpace(input.Title) != "" && strings.TrimSpace(input.Title) != strings.TrimSpace(task.Title) {
+		bad(w, http.StatusConflict, "TODO-backed task titles are immutable; edit TODO.txt directly")
 		return
 	}
 	if input.Title != "" {
@@ -197,6 +227,12 @@ func (s *Server) updateAutonomousTask(w http.ResponseWriter, r *http.Request, ro
 	if err := ga.ValidateAutonomousTask(*task); err != nil {
 		bad(w, 400, err.Error())
 		return
+	}
+	if task.SourceType == "todo" {
+		if _, err := ga.UpdateAutonomousTodoTaskDetails(root, id, task.Title, task.Objective, task.NextStep); err != nil {
+			bad(w, http.StatusConflict, err.Error())
+			return
+		}
 	}
 	ga.AppendAutonomousTaskEvent(&board, id, task.LastRunID, "updated", "任务配置已更新", nil)
 	if err := ga.SaveAutonomousTaskBoard(root, board); err != nil {
@@ -230,31 +266,47 @@ func (s *Server) autonomousTaskAction(w http.ResponseWriter, r *http.Request, ro
 	switch action {
 	case "duplicate":
 		copy := *task
-		copy.ID = ga.NewAutonomousTaskID(task.Title+" copy", now)
 		copy.Title = task.Title + "（副本）"
-		copy.Status = "draft"
+		copy.Status = ga.TaskPendingApproval
 		copy.LastRunID = ""
 		copy.CreatedAt, copy.UpdatedAt = now, now
-		copy.Imported = false
-		board.Tasks = append(board.Tasks, copy)
-		task = &board.Tasks[len(board.Tasks)-1]
+		copy.Imported = true
+		line, appendErr := ga.AppendAutonomousTodoTask(root, copy)
+		if appendErr != nil {
+			bad(w, http.StatusInternalServerError, appendErr.Error())
+			return
+		}
+		board, err = ga.LoadAutonomousTaskBoard(root)
+		if err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		task = findAutonomousTaskBySourceLine(board, line)
+		if task == nil {
+			bad(w, http.StatusInternalServerError, "duplicated autonomous TODO task could not be reloaded")
+			return
+		}
 		eventType, message = "duplicated", "任务已复制"
 	case "approve":
-		if task.Status == ga.TaskDraft {
-			task.Status = ga.TaskPendingApproval
-			ga.AppendAutonomousTaskEvent(&board, id, task.LastRunID, "submitted", "任务已提交审批", nil)
-		}
-		if !ga.CanTransitionAutonomousTask(task.Status, ga.TaskQueued) {
+		if task.Status != ga.TaskPendingApproval {
 			bad(w, http.StatusConflict, "task cannot be approved from its current state")
 			return
 		}
-		task.Status, task.ApprovalNote, eventType, message = "queued", note, "approved", "任务已批准并排队"
+		if _, err := ga.UpdateAutonomousTodoTask(root, id, ga.TaskQueued, note); err != nil {
+			bad(w, http.StatusConflict, err.Error())
+			return
+		}
+		task.Status, task.ApprovalNote, task.CurrentStage, eventType, message = ga.TaskQueued, note, "排队中", "approved", "任务已批准并排队"
 	case "reject":
-		if !ga.CanTransitionAutonomousTask(task.Status, ga.TaskCancelled) {
+		if task.Status != ga.TaskPendingApproval {
 			bad(w, http.StatusConflict, "task cannot be rejected from its current state")
 			return
 		}
-		task.Status, task.ApprovalNote, eventType, message = "cancelled", note, "rejected", "任务已拒绝"
+		if _, err := ga.UpdateAutonomousTodoTask(root, id, ga.TaskPendingApproval, note); err != nil {
+			bad(w, http.StatusConflict, err.Error())
+			return
+		}
+		task.Status, task.ApprovalNote, task.CurrentStage, eventType, message = ga.TaskPendingApproval, note, "待批准", "rejected", "任务仍待批准"
 	case "start", "retry":
 		if action == "start" && task.Status != ga.TaskQueued {
 			bad(w, http.StatusConflict, "only queued tasks can be started")
@@ -264,20 +316,24 @@ func (s *Server) autonomousTaskAction(w http.ResponseWriter, r *http.Request, ro
 			bad(w, http.StatusConflict, "only failed tasks can be retried")
 			return
 		}
-		run := ga.AutonomousRun{ID: ga.NewAutonomousRunID(id, now), TaskID: id, Status: "queued", Stage: "等待执行", Service: "reflect/autonomous.py", RetryCount: 0, UpdatedAt: now}
+		run := ga.AutonomousRun{ID: ga.NewAutonomousRunID(id, now), TaskID: id, Status: "queued", Stage: "排队中", Service: "reflect/autonomous.py", RetryCount: 0, UpdatedAt: now}
 		if action == "retry" {
 			run.RetryCount = countTaskRetries(board, id) + 1
 		}
 		board.Runs = append(board.Runs, run)
-		task.LastRunID, task.Status, task.CurrentStage, task.Progress = run.ID, ga.TaskQueued, run.Stage, 0
+		task.LastRunID, task.Status, task.CurrentStage, task.Progress = run.ID, ga.TaskQueued, "排队中", 0
 		eventType, message = action+"ed", "任务已加入执行队列"
 	case "pause", "resume", "cancel":
 		if action == "cancel" && task.LastRunID == "" {
-			if !ga.CanTransitionAutonomousTask(task.Status, ga.TaskCancelled) {
-				bad(w, http.StatusConflict, "task cannot be cancelled from its current state")
+			if task.Status == ga.TaskCompleted {
+				bad(w, http.StatusConflict, "closed tasks cannot be cancelled")
 				return
 			}
-			task.Status, eventType, message = ga.TaskCancelled, "cancelled", "任务已取消"
+			if _, err := ga.UpdateAutonomousTodoTask(root, id, ga.TaskPendingApproval, note); err != nil {
+				bad(w, http.StatusConflict, err.Error())
+				return
+			}
+			task.Status, task.CurrentStage, eventType, message = ga.TaskPendingApproval, "待批准", "cancelled", "任务已退回待批准"
 			break
 		}
 		run, runErr := latestTaskRun(board, id)
@@ -286,25 +342,29 @@ func (s *Server) autonomousTaskAction(w http.ResponseWriter, r *http.Request, ro
 			return
 		}
 		if action == "pause" {
-			if task.Status != ga.TaskRunning {
+			if run.Status != "running" {
 				bad(w, http.StatusConflict, "only running tasks can be paused")
 				return
 			}
-			run.Status, run.PauseReason, task.Status, eventType, message = "paused", note, ga.TaskPaused, "paused", "已请求暂停，等待当前步骤结束"
+			run.Status, run.PauseReason, task.Status, task.CurrentStage, eventType, message = "paused", note, ga.TaskQueued, "排队中", "paused", "已请求暂停，任务保持排队中"
 		}
 		if action == "resume" {
-			if task.Status != ga.TaskPaused && task.Status != ga.TaskBlocked {
+			if run.Status != "paused" && run.Status != "blocked" {
 				bad(w, http.StatusConflict, "only paused or blocked tasks can be resumed")
 				return
 			}
-			run.Status, run.PauseReason, task.Status, eventType, message = "running", "", ga.TaskRunning, "resumed", "任务已恢复执行"
+			run.Status, run.PauseReason, task.Status, task.CurrentStage, eventType, message = "running", "", ga.TaskQueued, "排队中", "resumed", "任务已恢复排队"
 		}
 		if action == "cancel" {
-			if task.Status == ga.TaskCompleted || task.Status == ga.TaskCancelled {
+			if run.Status == "completed" || run.Status == "cancelled" {
 				bad(w, http.StatusConflict, "terminal tasks cannot be cancelled")
 				return
 			}
-			run.Status, run.FinishedAt, task.Status, eventType, message = "cancelled", now, ga.TaskCancelled, "cancelled", "已请求取消任务"
+			run.Status, run.FinishedAt, task.Status, task.CurrentStage, eventType, message = "cancelled", now, ga.TaskPendingApproval, "待批准", "cancelled", "任务已退回待批准"
+			if _, err := ga.UpdateAutonomousTodoTask(root, id, ga.TaskPendingApproval, note); err != nil {
+				bad(w, http.StatusConflict, err.Error())
+				return
+			}
 		}
 		run.UpdatedAt = now
 		if action == "pause" || action == "resume" || action == "cancel" {
@@ -389,6 +449,12 @@ func (s *Server) appendAutonomousRunEvent(w http.ResponseWriter, r *http.Request
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	runBefore, err := findRun(board, runID)
+	if err != nil {
+		bad(w, http.StatusNotFound, err.Error())
+		return
+	}
+	taskID := runBefore.TaskID
 	if err := ga.ApplyAutonomousRunEvent(&board, runID, input); err != nil {
 		code := http.StatusBadRequest
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "cannot become") {
@@ -396,6 +462,18 @@ func (s *Server) appendAutonomousRunEvent(w http.ResponseWriter, r *http.Request
 		}
 		bad(w, code, err.Error())
 		return
+	}
+	if input.Type == ga.EventRunCompleted {
+		if _, err := ga.UpdateAutonomousTodoTask(root, taskID, ga.TaskCompleted, ""); err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if input.Type == ga.EventApprovalRequired || input.Type == ga.EventRunCancelled {
+		if _, err := ga.UpdateAutonomousTodoTask(root, taskID, ga.TaskPendingApproval, input.Message); err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if err := ga.SaveAutonomousTaskBoard(root, board); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())

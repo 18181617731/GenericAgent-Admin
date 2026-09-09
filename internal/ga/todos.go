@@ -178,7 +178,7 @@ func projectTodoTitle(body string) (string, string) {
 
 func projectTodoDecisionPrefix(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
-	return containsAny(lower, "用户已批准", "已批准", "用户已拒绝", "已拒绝", "待审批", "待批准")
+	return containsAny(lower, "排队中", "用户已批准", "已批准", "用户已拒绝", "已拒绝", "待审批", "待批准")
 }
 
 func projectTodoNextStep(value string) bool {
@@ -187,7 +187,7 @@ func projectTodoNextStep(value string) bool {
 }
 
 func newProjectTodoItem(marker rune, body, title, summary, section string, line int) ProjectTodoItem {
-	approved := containsAny(strings.ToLower(body), "用户已批准", "已批准", "已审批")
+	approved := projectTodoApprovedPrefix(body)
 	item := ProjectTodoItem{
 		ID: projectTodoID(title, line), Title: title, Summary: summary, Section: section,
 		Status: projectTodoStatus(marker, title, approved), Module: projectTodoModule(title),
@@ -195,6 +195,12 @@ func newProjectTodoItem(marker rune, body, title, summary, section string, line 
 		Approved: approved, SourcePath: projectTodoPath, Line: line,
 	}
 	return item
+}
+
+func projectTodoApprovedPrefix(body string) bool {
+	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
+	return len(parts) > 0 && containsAny(strings.ToLower(strings.TrimSpace(parts[0])), "排队中", "用户已批准", "已批准", "已审批")
 }
 
 func projectTodoStatus(marker rune, title string, approved bool) string {

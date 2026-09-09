@@ -354,7 +354,7 @@ func slicesWithoutEmptyStrings(values []string) []string {
 }
 
 func autonomousTodoState(body string) (string, string, string) {
-	if containsAny(body, "用户已批准", "已批准", "已审批") {
+	if projectTodoApprovedPrefix(body) {
 		return "approved", "approved", "已批准"
 	}
 	if containsAny(body, "用户已拒绝", "已拒绝", "已驳回") {

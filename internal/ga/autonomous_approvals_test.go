@@ -147,7 +147,7 @@ func TestBuildAutonomousApprovalsFallsBackToTodoQueue(t *testing.T) {
 [ ] 自身演进 | complete_task 待用户确认的源码变更 | 经用户批准后执行
 [ ] 未标注的候选任务 | 需要人工复核后再决定
 [x] 已完成但曾提到待用户批准 | 已归档
-[ ] 用户已批准 | 已批准任务 | 按 TODO 执行
+[ ] 排队中 | 已批准任务 | 按 TODO 执行
 `
 	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(autonomousTodoPath)), []byte(todo), 0644); err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestApproveAutonomousDraftQueuesExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(todo), "ga-admin-approval:"+id) != 1 || !strings.Contains(string(todo), "[ ] 用户已批准") || !strings.Contains(string(todo), "用户补充：reviewed") {
+	if strings.Count(string(todo), "ga-admin-approval:"+id) != 1 || !strings.Contains(string(todo), "[ ] 排队中") || !strings.Contains(string(todo), "用户补充：reviewed") {
 		t.Fatalf("TODO was not queued exactly once: %s", todo)
 	}
 }

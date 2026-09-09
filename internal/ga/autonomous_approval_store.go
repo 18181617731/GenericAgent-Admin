@@ -217,6 +217,17 @@ func queueApprovedAutonomousTask(root string, item AutonomousApproval, note stri
 	if err != nil {
 		return false, err
 	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		updated, updateErr := UpdateAutonomousTodoTask(root, item.ID, TaskQueued, note)
+		if updateErr == nil {
+			return updated, nil
+		}
+		if !strings.Contains(updateErr.Error(), "not found") {
+			return false, updateErr
+		}
+	} else if !os.IsNotExist(statErr) {
+		return false, statErr
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
@@ -225,7 +236,7 @@ func queueApprovedAutonomousTask(root string, item AutonomousApproval, note stri
 	if strings.Contains(string(b), marker) {
 		return false, nil
 	}
-	line := fmt.Sprintf("[ ] 用户已批准 | %s | 按 %s 中的下一步执行并生成报告", item.Title, filepath.ToSlash(autonomousApprovalSource))
+	line := fmt.Sprintf("[ ] 排队中 | %s | 按 %s 中的下一步执行并生成报告", item.Title, filepath.ToSlash(autonomousApprovalSource))
 	if reply := autonomousApprovalReply(note); reply != "" {
 		line += " | 用户补充：" + reply
 	}

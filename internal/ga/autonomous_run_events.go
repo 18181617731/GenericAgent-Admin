@@ -44,6 +44,21 @@ func ApplyAutonomousRunEvent(board *AutonomousTaskBoard, runID string, input Aut
 		return errors.New("run event text is too long")
 	}
 	now := time.Now()
+	executionStatus := task.Status
+	switch run.Status {
+	case "running":
+		executionStatus = TaskRunning
+	case "paused":
+		executionStatus = TaskPaused
+	case "blocked":
+		executionStatus = TaskBlocked
+	case "failed":
+		executionStatus = TaskFailed
+	case "completed":
+		executionStatus = TaskCompleted
+	case "cancelled":
+		executionStatus = TaskCancelled
+	}
 	run.LastEventAt = now
 	run.UpdatedAt = now
 	if input.ReportPath != "" {
@@ -60,8 +75,8 @@ func ApplyAutonomousRunEvent(board *AutonomousTaskBoard, runID string, input Aut
 	}
 	switch input.Type {
 	case EventRunStarted:
-		if !CanTransitionAutonomousTask(task.Status, TaskRunning) {
-			return fmt.Errorf("task cannot become running from %q", task.Status)
+		if !CanTransitionAutonomousTask(executionStatus, TaskRunning) {
+			return fmt.Errorf("task cannot become running from %q", executionStatus)
 		}
 		run.Status, task.Status = TaskRunning, TaskRunning
 		if run.StartedAt.IsZero() {
@@ -80,24 +95,24 @@ func ApplyAutonomousRunEvent(board *AutonomousTaskBoard, runID string, input Aut
 	case EventCheckpointSaved:
 		run.Checkpoint = &AutonomousCheckpoint{StepOrder: input.StepOrder, StepName: input.StepName, State: input.Checkpoint, SavedAt: now, Resumable: input.Resumable}
 	case EventRunPaused:
-		if !CanTransitionAutonomousTask(task.Status, TaskPaused) {
-			return fmt.Errorf("task cannot become paused from %q", task.Status)
+		if !CanTransitionAutonomousTask(executionStatus, TaskPaused) {
+			return fmt.Errorf("task cannot become paused from %q", executionStatus)
 		}
 		run.Status, task.Status, run.PauseReason = TaskPaused, TaskPaused, firstNonEmptyTaskText(input.Message, "等待当前步骤结束")
 	case EventRunResumed:
-		if !CanTransitionAutonomousTask(task.Status, TaskRunning) {
-			return fmt.Errorf("task cannot become running from %q", task.Status)
+		if !CanTransitionAutonomousTask(executionStatus, TaskRunning) {
+			return fmt.Errorf("task cannot become running from %q", executionStatus)
 		}
 		run.Status, task.Status, run.PauseReason = TaskRunning, TaskRunning, ""
 	case EventRunCompleted:
-		if !CanTransitionAutonomousTask(task.Status, TaskCompleted) {
-			return fmt.Errorf("task cannot become completed from %q", task.Status)
+		if !CanTransitionAutonomousTask(executionStatus, TaskCompleted) {
+			return fmt.Errorf("task cannot become completed from %q", executionStatus)
 		}
 		run.Status, task.Status, run.Progress = TaskCompleted, TaskCompleted, 100
 		task.Progress, run.FinishedAt = 100, now
 	case EventRunCancelled:
-		if !CanTransitionAutonomousTask(task.Status, TaskCancelled) {
-			return fmt.Errorf("task cannot become cancelled from %q", task.Status)
+		if !CanTransitionAutonomousTask(executionStatus, TaskCancelled) {
+			return fmt.Errorf("task cannot become cancelled from %q", executionStatus)
 		}
 		run.Status, task.Status, run.FinishedAt = TaskCancelled, TaskCancelled, now
 	case EventStepStarted, EventStepProgress:
