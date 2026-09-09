@@ -817,6 +817,12 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 			return false
 		}
 	}
+	conductorReq := map[string]interface{}{"extra_sys_prompts": cs.ExtraSysPrompts}
+	if err := s.prepareConductorWorkerRequest(cs, conductorReq); err != nil {
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
 	queuedItem := cs.QueuedMessages[queueIndex]
 	s.SessionMu.Unlock()
 
@@ -872,19 +878,18 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 		Files:     convertChatUploadsToMaps(queuedItem.Files),
 		CreatedAt: time.Now().Unix(),
 	}
-	cs.Messages = append(cs.Messages, queuedUserMsg, pendingMsg)
+	// Internal completion evidence wakes the model, but is not a user turn.
+	internalCompletion := queuedItem.Kind == "conductor_completion"
+	workerHistory := append([]chatMessage(nil), cs.Messages...)
+	if !internalCompletion {
+		cs.Messages = append(cs.Messages, queuedUserMsg)
+	}
+	cs.Messages = append(cs.Messages, pendingMsg)
 	if queuedItem.LLMNo > 0 {
 		cs.Settings.LLMNo = queuedItem.LLMNo
 	}
 	if queuedItem.ReasoningEffort != "" {
 		cs.Settings.ReasoningEffort = queuedItem.ReasoningEffort
-	}
-	workerHistory := append([]chatMessage(nil), cs.Messages...)
-	for i := len(workerHistory) - 1; i >= 0; i-- {
-		if workerHistory[i].ID == queuedUserMsg.ID {
-			workerHistory = workerHistory[:i]
-			break
-		}
 	}
 	cmdReq := map[string]interface{}{
 		"prompt":                   queuedItem.Text,
@@ -905,6 +910,13 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 		"_ga_run_started_at_ms":    runStartedAtMS,
 	}
 
+	if internalCompletion {
+		cmdReq["input_kind"] = "conductor_completion"
+	}
+
+	for key, value := range conductorReq {
+		cmdReq[key] = value
+	}
 	applyProjectRequestFields(cmdReq, cs, s.CfgStore.Snapshot())
 
 	// Publish the pending assistant identity together with the persisted session.
@@ -925,7 +937,9 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	// Automatic queue consumption bypasses the frontend's optimistic guide path.
 	// Publish the persisted user turn on the run stream so attached clients render
 	// it immediately; replay and the frontend's message-id dedupe make reconnects safe.
-	s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": queuedUserMsg})
+	if !internalCompletion {
+		s.publishChatRun(sid, map[string]interface{}{"type": "user", "message": queuedUserMsg})
+	}
 
 	s.ChatMu.Lock()
 	if current := s.ChatRuns[sid]; current == token {

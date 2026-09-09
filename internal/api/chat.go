@@ -203,6 +203,8 @@ type chatLoopState struct {
 type chatSession struct {
 	ID                     string                   `json:"id"`
 	Title                  string                   `json:"title"`
+	Conductor              *chatConductorState      `json:"conductor,omitempty"`
+	ConductorChildren      []chatConductorChild     `json:"conductor_children,omitempty"`
 	TitleSource            string                   `json:"title_source,omitempty"`
 	UpdatedAt              int64                    `json:"updated_at"`
 	Messages               []chatMessage            `json:"messages"`
@@ -257,6 +259,7 @@ type chatUpload struct {
 }
 
 type chatQueuedMessage struct {
+	Kind            string       `json:"kind,omitempty"`
 	ID              string       `json:"id"`
 	Text            string       `json:"text"`
 	Files           []chatUpload `json:"files,omitempty"`
@@ -530,11 +533,18 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 	delete(cmdReq, "_ga_pending_assistant_id")
 	startedAtMS, _ := cmdReq["_ga_run_started_at_ms"].(int64)
 	delete(cmdReq, "_ga_run_started_at_ms")
-	saveTerminal := func(session chatSession) error {
+	saveProgress := func(session chatSession) error {
 		if worldlineResend {
 			return s.saveChatSessionExact(session)
 		}
 		return s.saveChatSessionMerged(session)
+	}
+	saveTerminal := func(session chatSession) error {
+		err := saveProgress(session)
+		if err == nil {
+			s.syncConductorTerminal(session)
+		}
+		return err
 	}
 	startedAt := time.UnixMilli(startedAtMS)
 	if startedAtMS <= 0 {
@@ -625,6 +635,18 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			continue
 		}
+		if ev["type"] == "conductor_dispatch" {
+			s.handleConductorDispatchEvent(sid, ev)
+			continue
+		}
+		if ev["type"] == "conductor_cancel" {
+			s.handleConductorCancelEvent(sid, ev)
+			continue
+		}
+		if ev["type"] == "conductor_collect" {
+			s.handleConductorCollectEvent(sid, ev)
+			continue
+		}
 		if ev["type"] == "model" {
 			if modelID, ok := ev["model_id"].(string); ok {
 				finalModelID = strings.TrimSpace(modelID)
@@ -687,7 +709,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		}
 		isTerminalEvent := ev["type"] == "done" || ev["type"] == "error"
 		if structuredChanged && !isTerminalEvent && (token == nil || s.ownsChatRun(sid, token)) {
-			_ = saveTerminal(cs)
+			_ = saveProgress(cs)
 		}
 		if msg, ok := ev["message"].(map[string]interface{}); ok && (ev["type"] == "done" || ev["type"] == "error") {
 			b, _ := json.Marshal(msg)
@@ -2382,6 +2404,8 @@ func preserveLatestChatUserMetadata(candidate *chatSession, latest chatSession) 
 	candidate.Loop = latest.Loop
 	candidate.Autorun = latest.Autorun
 	candidate.QueuedMessages = latest.QueuedMessages
+	candidate.Conductor = latest.Conductor
+	candidate.ConductorChildren = latest.ConductorChildren
 	if latest.TitleSource == chatTitleSourceManual ||
 		(latest.TitleSource == chatTitleSourceGenerated && candidate.TitleSource != chatTitleSourceManual) {
 		candidate.Title = latest.Title

@@ -3308,6 +3308,9 @@ const ChatErrorCard = memo(function ChatErrorCard({ message, onRetry }) {
 
 export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onQuickReply, quickReplyDisabled = false, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '' }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
+  const workerInstruction = '\n\n[Server-owned Conductor worker instruction]\nComplete only this delegated objective. Return a concise, evidence-based result for the parent. Do not attempt to dispatch other workers.'
+  const delegated = conductorWorker && m.role === 'user' && typeof userText === 'string' && userText.endsWith(workerInstruction)
+  const delegatedObjective = delegated ? userText.slice(0, -workerInstruction.length) : ''
   const messageFiles = Array.isArray(m.files) ? m.files : []
   const imageFiles   = messageFiles.filter(isImageFile)
   const nonImageFiles = messageFiles.filter(file => !isImageFile(file))
@@ -3676,6 +3679,8 @@ function CustomSelect({ value, onChange, options, disabled, native = false, aria
 
 export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   // Theme state: sync with localStorage and system preference
+  const [conductorEventsOpen, setConductorEventsOpen] = useState(false)
+  const [conductorWorkersOpen, setConductorWorkersOpen] = useState(false)
   const [theme, setTheme] = useState(getInitialTheme)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
@@ -3764,6 +3769,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [btwRailOpen, setBtwRailOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [loopState, setLoopState] = useState(null)
+  const [activeSessionDetail, setActiveSessionDetail] = useState(null)
+  const [conductorStoppingID, setConductorStoppingID] = useState('')
   const [loopConfigOpen, setLoopConfigOpen] = useState(false)
   const loopConfigRef = useRef(null)
   const [loopObjective, setLoopObjective] = useState('')
@@ -4927,7 +4934,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     activeRunRef.current = false
     streamAbortRef.current?.abort?.()
     streamAbortRef.current = null
-    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(selectedProject || {}) })
+    const sessionPayload = { ...(selectedProject || {}), ...sessionOptions }
+    const d = await chatApi('/api/chat/session/new', { method:'POST', body:JSON.stringify(sessionPayload) })
     if (openToken !== openSeqRef.current) return
     forgetSessionScroll(sessionScrollSnapshotsRef.current, d.id)
     pendingSessionScrollRestoreRef.current = null
@@ -4947,6 +4955,26 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const newProjectSession = async (projectMode) => {
     await createSession(projectMode)
+  }
+
+  const newConductorSession = async () => {
+    await createSession('', { mode:'conductor' })
+  }
+
+  const stopConductorWorker = async (workerID) => {
+    if (!workerID || conductorStoppingID) return
+    setConductorStoppingID(workerID)
+    setErr('')
+    try {
+      await chatApi(`/api/chat/cancel/${encodeURIComponent(workerID)}`, { method:'POST' })
+      setNotice(ct('已请求停止子任务', 'Worker stop requested'))
+      await loadSessions(activeSidRef.current || '')
+      if (activeSidRef.current) await refreshActiveSessionSnapshot(activeSidRef.current)
+    } catch (e) {
+      setErr(e?.message || String(e))
+    } finally {
+      setConductorStoppingID('')
+    }
   }
 
   // Pinned first, so the projects someone actually works in stop sinking under
@@ -6362,8 +6390,22 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           const activeID = activeSidRef.current
           const before = previous.find(item => item.id === activeID)
           const after = next.find(item => item.id === activeID)
-          if (after?.running && !streamAbortRef.current && !activeRunRef.current) {
+          const conductorPoll = conductorPollActions(after, {
+            streamAttached: Boolean(streamAbortRef.current),
+            runAttached: Boolean(activeRunRef.current),
+          })
+          if (conductorPoll.attachRunningStream) {
             void attachRunningStream(activeID, { waitForRun:true })
+          }
+          if (conductorPoll.refreshMetadata) {
+            const metadata = isConductorParent(after)
+              ? await chatApi(`/api/chat/conductor/${encodeURIComponent(activeID)}/children`)
+              : null
+            if (!stopped && activeSidRef.current === activeID) {
+              setActiveSessionDetail(current => current && String(current.id) === String(after.id)
+                ? { ...current, ...after, ...(Array.isArray(metadata?.children) ? { conductor_children: metadata.children } : {}) }
+                : current)
+            }
           } else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {
             void refreshActiveSessionSnapshot(activeID).catch(() => {})
           }
@@ -6634,6 +6676,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     return sessions.filter(s => (s.title || '').toLowerCase().includes(q))
   }, [sessions, sidebarSearch])
   const recentSessionGroups = useMemo(() => groupRecentSessions(filteredSessions), [filteredSessions])
+  const conductorSidebarTrees = useMemo(() => conductorSessionTree(filteredSessions), [filteredSessions])
+  const conductorSidebarTreeByID = useMemo(() => new Map(conductorSidebarTrees.map(node => [String(node.session?.id || ''), node])), [conductorSidebarTrees])
+  const conductorNestedWorkerIDs = useMemo(() => new Set(conductorSidebarTrees.flatMap(node => node.workers.map(worker => String(worker?.id || '')))), [conductorSidebarTrees])
   const recentGroupLabels = {
     pinned: ct('\u7f6e\u9876', 'Pinned'),
     today: ct('\u4eca\u5929', 'Today'),
@@ -6871,6 +6916,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           >
             <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{!privacyMode && (worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
           </button>
+          {isConductorParent(activeSessionDetail) && <button type="button" className={`oa-context-btn ${conductorWorkersOpen ? 'is-open' : ''}`} aria-expanded={conductorWorkersOpen} aria-controls="oa-conductor-workers" onClick={()=>{setConductorWorkersOpen(v=>!v); setConductorEventsOpen(false)}}><PanelRightOpen size={16}/>Subagents</button>}
+          {isConductorParent(activeSessionDetail) && <button type="button" className={`oa-context-btn ${conductorEventsOpen ? 'is-open' : ''}`} aria-expanded={conductorEventsOpen} aria-controls="oa-conductor-events" onClick={()=>{setConductorEventsOpen(v=>!v); setConductorWorkersOpen(false)}}><PanelRightOpen size={16}/>{ct('任务事件', 'Task events')}</button>}
           <ThemePicker
             className="oa-mobile-tools-theme"
             value={theme}
