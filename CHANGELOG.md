@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.126 - 2026-09-09
+
+### Autonomous task classification release
+- Clarify the `TODO.txt`-only projection: checked rows are 已闭环, only explicit row-leading approval markers are 待批准, and other unchecked rows are 排队中.
+- Keep canonical TODO titles and IDs stable across approval, queue, and completion transitions, including no-pipe forms and full-width separators.
+- Carry forward upstream chat-session and Conductor compatibility while retaining local privacy, audio, draft, and instance-isolation behavior.
+
 ## v1.0.125 - 2026-09-09
 
 ### Autonomous task state classification
