@@ -4960,8 +4960,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [chatApi, chatInstanceID, sessionSearchOpen, sessionSearchQuery, sessionSearchScope])
 
   const loadSessions = async (prefer = sid, options = {}) => {
-    const { open = false } = options
+    const { open = false, isCurrent = () => true } = options
     const d = await chatApi('/api/chat/sessions')
+    if (!isCurrent()) return []
     const list = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
     setSessions(list)
     const incomingProjects = Array.isArray(d.project_items) ? d.project_items : (d.projects || [])
@@ -4971,8 +4972,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (open) {
       const restored = loadSelectedChatSessionID(chatInstanceRef.current)
       const next = chooseChatSessionID(list, prefer, restored)
+      if (!isCurrent()) return list
       if (next) await openSession(next, false)
       else {
+        if (!isCurrent()) return list
         persistSelectedChatSessionID(chatInstanceRef.current, '')
         await loadChatState('', openSeqRef.current)
       }
@@ -6379,9 +6382,11 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   useEffect(() => {
+    let stopped = false
     const initialize = async () => {
-      loadPromptPresets().catch(e=>setErr(e.message))
+      loadPromptPresets().catch(e=>{ if (!stopped) setErr(e.message) })
       api('/api/instances').then(payload => {
+        if (stopped) return
         const options = chatInstanceOptions(payload)
         setChatInstances(options)
         const serverDefaultID = payload?.default_instance_id || payload?.default_id
@@ -6392,44 +6397,57 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           setDraftSessionIds(new Set(listChatSessionDraftIds(undefined, defaultID)))
           persistChatInstanceID(defaultID)
         }
-      }).catch(e => setErr(e.message)).finally(() => setChatInstancesLoading(false))
+      }).catch(e => { if (!stopped) setErr(e.message) }).finally(() => {
+        if (!stopped) setChatInstancesLoading(false)
+      })
     }
     void initialize()
-    return () => streamAbortRef.current?.abort?.()
+    return () => {
+      stopped = true
+      streamAbortRef.current?.abort?.()
+    }
   }, [])
 
   useEffect(() => {
     if (chatInstancesLoading) return
+    let stopped = false
     const instanceKey = chatInstanceID || '__default__'
     if (openedChatInstanceRef.current === instanceKey) return
     openedChatInstanceRef.current = instanceKey
     const intent = chatLaunchIntentRef.current
     const openInitialChat = async () => {
       try {
+        if (stopped) return
         const draft = memoryDraftRef.current
         if (draft) {
           const claimed = await createMemoryChatDraftSession(memoryDraftRef, createSession)
-          if (!claimed) return
+          if (stopped || !claimed) return
           setSessionPrompt(claimed.draft.prompt, claimed.sessionID)
           setNotice(ct('已创建文件优化对话。请先审阅草稿，确认后再发送。', 'File-improvement chat created. Review the draft before sending.'))
           requestAnimationFrame(() => promptRef.current?.focus())
           return
         }
         if (!intent.newChat || chatLaunchStartedRef.current) {
-          await loadSessions('', { open:true })
+          await loadSessions('', { open:true, isCurrent:() => !stopped })
           return
         }
+        if (stopped) return
         chatLaunchStartedRef.current = true
         const newSessionID = await createSession()
-        if (!newSessionID) return
+        if (stopped || !newSessionID) return
         if (intent.prompt) setSessionPrompt(intent.prompt, newSessionID)
         clearChatLaunchIntent()
         requestAnimationFrame(() => promptRef.current?.focus())
       } catch (error) {
-        if (error?.name !== 'AbortError') setErr(error?.message || String(error))
+        if (!stopped && error?.name !== 'AbortError') setErr(error?.message || String(error))
       }
     }
     void openInitialChat()
+    return () => {
+      stopped = true
+      ++openSeqRef.current
+      streamAbortRef.current?.abort?.()
+    }
   }, [chatInstanceID, chatInstancesLoading])
 
   useEffect(() => {

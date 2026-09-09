@@ -56,5 +56,5 @@ test('ChatApp persists successful opens and restores a valid selection on mount'
   assert.match(source, /const restored = loadSelectedChatSessionID\(chatInstanceRef\.current\)/)
   assert.match(source, /const next = chooseChatSessionID\(list, prefer, restored\)/)
   assert.match(source, /persistSelectedChatSessionID\(chatInstanceRef\.current, ''\)/)
-  assert.match(source, /loadSessions\('', \{ open:true \}\)/)
+  assert.match(source, /loadSessions\('', \{ open:true, isCurrent:/)
 })

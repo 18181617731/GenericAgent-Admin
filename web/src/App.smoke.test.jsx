@@ -3064,6 +3064,46 @@ describe('chat worldline controls', () => {
 })
 
 describe('chat loop controls', () => {
+  test('cancels an initial session load after the chat is unmounted', async () => {
+    installBrowserPolyfills()
+    let resolveStaleSessions
+    const staleSessions = new Promise(resolve => { resolveStaleSessions = resolve })
+    let sessionRequests = 0
+    const staleSessionRequests = []
+    const freshSession = { id:'fresh-session', title:'Fresh chat', count:0, updated_at:'2026-08-18T10:00:00Z' }
+    globalThis.fetch = vi.fn(async url => {
+      const path = String(url).split('?')[0]
+      if (path === '/api/config') return jsonResponse({ slash_commands:[] })
+      if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
+      if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
+      if (path === '/api/instances') return jsonResponse({ items:[] })
+      if (path === '/api/chat/sessions') {
+        sessionRequests += 1
+        return sessionRequests === 1 ? staleSessions : jsonResponse({ sessions:[freshSession] })
+      }
+      if (path === '/api/chat/session/stale-session') {
+        staleSessionRequests.push(path)
+        return jsonResponse({ id:'stale-session', title:'Stale chat', messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      }
+      if (path === '/api/chat/session/fresh-session') return jsonResponse({ ...freshSession, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path.startsWith('/api/chat/state/')) return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' } })
+      if (path.startsWith('/api/chat/queue/')) return jsonResponse({ items:[] })
+      throw new Error(`unexpected url ${url}`)
+    })
+
+    const first = render(<ChatApp />)
+    await waitFor(() => expect(sessionRequests).toBe(1))
+    first.unmount()
+
+    render(<ChatApp />)
+    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Fresh chat'))
+    resolveStaleSessions(jsonResponse({ sessions:[{ id:'stale-session', title:'Stale chat', count:0, updated_at:'2026-08-18T09:00:00Z' }] }))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(staleSessionRequests).toHaveLength(0)
+  })
+
   test('privacy mode hides a Loop objective in the same interaction that starts it', async () => {
     installBrowserPolyfills()
     Element.prototype.scrollIntoView = vi.fn()
