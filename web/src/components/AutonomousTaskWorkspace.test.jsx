@@ -44,6 +44,27 @@ describe('AutonomousTaskWorkspace', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/autonomous/tasks/task-1', expect.any(Object))
   })
 
+  test('renders only the three public TODO states', async () => {
+    const fetchMock = vi.fn(() => response({ tasks: [
+      { id: 'r720', title: 'R720', objective: '已闭环', status: 'completed', progress: 100, source_type: 'todo' },
+      { id: 'r721', title: 'R721', objective: '已闭环', status: 'completed', progress: 100, source_type: 'todo' },
+      { id: 'r722', title: 'R722', objective: '待批准', status: 'pending_approval', progress: 0, source_type: 'todo' },
+      { id: 'r723', title: 'R723', objective: '排队中', status: 'queued', progress: 0, source_type: 'todo' },
+      { id: 'legacy', title: '旧运行任务', objective: '不应显示', status: 'running', progress: 50, source_type: 'ledger' },
+    ] }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<AutonomousTaskWorkspace />)
+
+    expect(await screen.findByText('R720')).toBeTruthy()
+    expect(screen.getByText('R721')).toBeTruthy()
+    expect(screen.getByText('R722')).toBeTruthy()
+    expect(screen.getByText('R723')).toBeTruthy()
+    expect(screen.queryByText('旧运行任务')).toBeNull()
+    expect(screen.getByRole('combobox', { name: '任务状态' }).querySelectorAll('option')).toHaveLength(4)
+    expect(screen.queryByText('运行中')).toBeNull()
+    expect(screen.queryByText('失败')).toBeNull()
+  })
+
   test('creates a task with explicit confirmation and dangerous header', async () => {
     const created = { id: 'task-new', title: '新任务', status: 'pending_approval' }
     const fetchMock = vi.fn((url, options = {}) => {

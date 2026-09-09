@@ -132,6 +132,41 @@ func TestAutonomousTaskAPIUsesTodoAsOnlySourceAndClosesInPlace(t *testing.T) {
 	}
 }
 
+func TestAutonomousTaskAPIClassifiesTodoStatesFromExplicitMarkers(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	todo := "# TODO\n" +
+		"[x] R720 | 已完成并验证\n" +
+		"[x] R721 | 已完成并验证，说明里仍提到待批准:\n" +
+		"[ ] 待批准： | R722 | 等待人工确认\n" +
+		"[ ] R723 | 探索串口日志波特率自适应算法 <-- 【排队中】\n" +
+		"[ ] R724 | 普通排队任务 | 停在这等你\n" +
+		"[ ] R725 | 文档说明待批准: 只是描述，不是状态标记\n"
+	if err := os.WriteFile(filepath.Join(root, "temp", "TODO.txt"), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	listed := getAutonomousTaskList(t, newGoalTestServer(t, root).Routes())
+	want := map[string]string{"R720": "completed", "R721": "completed", "R722": "pending_approval", "R723": "queued", "R724": "queued", "R725": "queued"}
+	if len(listed) != len(want) {
+		t.Fatalf("tasks=%+v", listed)
+	}
+	for _, task := range listed {
+		title, _ := task["title"].(string)
+		baseTitle := title
+		for _, prefix := range []string{"R720", "R721", "R722", "R723", "R724", "R725"} {
+			if strings.HasPrefix(baseTitle, prefix) {
+				baseTitle = prefix
+				break
+			}
+		}
+		if want[baseTitle] == "" || task["status"] != want[baseTitle] || task["source_path"] != "temp/TODO.txt" {
+			t.Fatalf("unexpected TODO classification=%+v", task)
+		}
+	}
+}
+
 func TestAutonomousTaskAPIRejectKeepsTodoPending(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
@@ -154,6 +189,35 @@ func TestAutonomousTaskAPIRejectKeepsTodoPending(t *testing.T) {
 	content, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(content), "[ ] 待批准 | reject task") || strings.Contains(string(content), "用户已拒绝") {
 		t.Fatalf("rejected TODO row=%q err=%v", content, err)
+	}
+}
+
+func TestAutonomousTaskAPICancelCanonicalizesUnmarkedTodoAsPending(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "temp", "TODO.txt")
+	if err := os.WriteFile(path, []byte("[ ] ordinary queue task | original objective\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+	listed := getAutonomousTaskList(t, h)
+	if len(listed) != 1 || listed[0]["status"] != "queued" {
+		t.Fatalf("initial TODO classification=%+v", listed)
+	}
+	id := listed[0]["id"].(string)
+	cancelled := requestAutonomousTask(t, h, http.MethodPost, "/api/autonomous/tasks/"+id+"/cancel", `{}`)
+	if task := cancelled["task"].(map[string]interface{}); task["id"] != id || task["status"] != "pending_approval" {
+		t.Fatalf("cancelled response=%+v", cancelled)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "[ ] 待批准 | ordinary queue task | original objective\n" {
+		t.Fatalf("cancelled TODO row=%q err=%v", content, err)
+	}
+	listed = getAutonomousTaskList(t, h)
+	if len(listed) != 1 || listed[0]["id"] != id || listed[0]["status"] != "pending_approval" {
+		t.Fatalf("reloaded pending TODO=%+v", listed)
 	}
 }
 

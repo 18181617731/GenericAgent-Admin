@@ -137,6 +137,60 @@ func TestAutonomousTaskBoardUsesOnlyTodoAndExposesThreeStates(t *testing.T) {
 	}
 }
 
+func TestAutonomousTodoStatusRequiresExplicitApprovalMarker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	todo := "# TODO\n" +
+		"[x] R720 | 已完成并验证\n" +
+		"[x] R721 | 已完成并验证，说明里仍提到待批准:\n" +
+		"[ ] 待批准： | R722 | 等待人工确认\n" +
+		"[ ] 【待批准】 | R723-pending | 等待人工确认\n" +
+		"[ ] R723 | 探索串口日志波特率自适应算法 <-- 【排队中】\n" +
+		"[ ] R724 | 普通排队任务 | 停在这等你\n" +
+		"[ ] R725 | 普通排队任务 | 用户批准后执行\n" +
+		"[ ] 待批准任务 | 普通标题，不含显式状态标记\n" +
+		"[ ] R726 | 文档说明待批准: 只是描述，不是状态标记\n"
+	if err := os.WriteFile(filepath.Join(root, "temp", "TODO.txt"), []byte(todo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	board, err := LoadAutonomousTaskBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"R720":         TaskCompleted,
+		"R721":         TaskCompleted,
+		"R722":         TaskPendingApproval,
+		"R723-pending": TaskPendingApproval,
+		"R723":         TaskQueued,
+		"R724":         TaskQueued,
+		"R725":         TaskQueued,
+		"待批准任务":        TaskQueued,
+		"R726":         TaskQueued,
+	}
+	if len(board.Tasks) != len(want) {
+		t.Fatalf("tasks=%+v", board.Tasks)
+	}
+	for _, task := range board.Tasks {
+		baseTitle := task.Title
+		for _, prefix := range []string{"R723-pending", "R720", "R721", "R722", "R723", "R724", "R725", "R726"} {
+			if strings.HasPrefix(baseTitle, prefix) {
+				baseTitle = prefix
+				break
+			}
+		}
+		expected, ok := want[baseTitle]
+		if !ok || task.Status != expected {
+			t.Fatalf("unexpected status for %q: got=%q task=%+v", task.Title, task.Status, task)
+		}
+		if task.CurrentStage == "" || task.CurrentStage == "需关注" || task.CurrentStage == "运行中" {
+			t.Fatalf("unexpected public stage for %q: %+v", task.Title, task)
+		}
+	}
+}
+
 func TestAutonomousTodoStateChangesInPlace(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
@@ -176,6 +230,83 @@ func TestAutonomousTodoStateChangesInPlace(t *testing.T) {
 	}
 }
 
+func TestAutonomousTodoPendingTransitionCanonicalizesUnmarkedRow(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, filepath.FromSlash(autonomousTodoPath))
+	if err := os.WriteFile(path, []byte("[ ] ordinary queue task | original objective\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(initial.Tasks) != 1 || initial.Tasks[0].Status != TaskQueued {
+		t.Fatalf("initial=%+v err=%v", initial, err)
+	}
+	id := initial.Tasks[0].ID
+	if changed, err := UpdateAutonomousTodoTask(root, id, TaskPendingApproval, ""); err != nil || !changed {
+		t.Fatalf("pending transition changed=%v err=%v", changed, err)
+	}
+	pending, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(pending.Tasks) != 1 || pending.Tasks[0].ID != id || pending.Tasks[0].Status != TaskPendingApproval {
+		t.Fatalf("pending=%+v err=%v", pending, err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "[ ] 待批准 | ordinary queue task | original objective\n" {
+		t.Fatalf("pending TODO row=%q err=%v", content, err)
+	}
+	if changed, err := UpdateAutonomousTodoTask(root, id, TaskCompleted, ""); err != nil || !changed {
+		t.Fatalf("close transition changed=%v err=%v", changed, err)
+	}
+	if changed, err := UpdateAutonomousTodoTask(root, id, TaskPendingApproval, ""); err == nil || changed {
+		t.Fatalf("closed TODO was allowed to return to approval: changed=%v err=%v", changed, err)
+	}
+	content, err = os.ReadFile(path)
+	if err != nil || !strings.HasPrefix(string(content), "[x] 待批准 | ordinary queue task | original objective") {
+		t.Fatalf("closed TODO row changed after rejected rollback=%q err=%v", content, err)
+	}
+}
+
+func TestAutonomousTodoNoPipePendingPrefixKeepsTitleAndIDStable(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, filepath.FromSlash(autonomousTodoPath))
+	if err := os.WriteFile(path, []byte("[ ] 待批准: no-pipe task\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(pending.Tasks) != 1 || pending.Tasks[0].Status != TaskPendingApproval || pending.Tasks[0].Title != "no-pipe task" {
+		t.Fatalf("pending projection=%+v err=%v", pending, err)
+	}
+	id := pending.Tasks[0].ID
+	if changed, err := UpdateAutonomousTodoTask(root, id, TaskQueued, ""); err != nil || !changed {
+		t.Fatalf("queue transition changed=%v err=%v", changed, err)
+	}
+	queued, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(queued.Tasks) != 1 || queued.Tasks[0].ID != id || queued.Tasks[0].Title != "no-pipe task" || queued.Tasks[0].Status != TaskQueued {
+		t.Fatalf("queued projection=%+v err=%v", queued, err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(content), "[ ] 排队中 | no-pipe task") {
+		t.Fatalf("queued TODO row=%q err=%v", content, err)
+	}
+
+	if changed, err := UpdateAutonomousTodoTask(root, id, TaskCompleted, ""); err != nil || !changed {
+		t.Fatalf("completion transition changed=%v err=%v", changed, err)
+	}
+	completed, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(completed.Tasks) != 1 || completed.Tasks[0].ID != id || completed.Tasks[0].Title != "no-pipe task" || completed.Tasks[0].Status != TaskCompleted {
+		t.Fatalf("completed projection=%+v err=%v", completed, err)
+	}
+	content, err = os.ReadFile(path)
+	if err != nil || !strings.Contains(string(content), "[x] 排队中 | no-pipe task") {
+		t.Fatalf("completed TODO row=%q err=%v", content, err)
+	}
+}
+
 func TestAutonomousTodoTaskFieldsKeepPlainTitlesStable(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
@@ -183,6 +314,7 @@ func TestAutonomousTodoTaskFieldsKeepPlainTitlesStable(t *testing.T) {
 	}
 	todo := "# TODO\n" +
 		"[ ] plain title\n" +
+		"[ ] 待批准任务 | ordinary title without an explicit marker\n" +
 		"- [x] closed task | closed summary\n" +
 		"[ ] 待批准 | approval title | approval objective | 批准后执行\n" +
 		"* [ ] 排队中 | queued title | queued objective\n"
@@ -193,13 +325,14 @@ func TestAutonomousTodoTaskFieldsKeepPlainTitlesStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(board.Tasks) != 4 {
+	if len(board.Tasks) != 5 {
 		t.Fatalf("tasks=%+v", board.Tasks)
 	}
 	want := map[string]struct {
 		status, objective string
 	}{
-		"plain title":    {TaskPendingApproval, ""},
+		"plain title":    {TaskQueued, ""},
+		"待批准任务":          {TaskQueued, "ordinary title without an explicit marker"},
 		"closed task":    {TaskCompleted, "closed summary"},
 		"approval title": {TaskPendingApproval, "approval objective"},
 		"queued title":   {TaskQueued, "queued objective"},
@@ -227,7 +360,7 @@ func TestAutonomousTodoRoundTitleKeepsDescriptionAndIDAcrossTransitions(t *testi
 		t.Fatalf("pending board=%+v err=%v", pending, err)
 	}
 	initial := pending.Tasks[0]
-	if initial.Title != "R11 · deep_search 模型链路修复" || initial.Status != TaskPendingApproval {
+	if initial.Title != "R11 · deep_search 模型链路修复" || initial.Status != TaskQueued {
 		t.Fatalf("round pending projection=%+v", initial)
 	}
 	if changed, err := UpdateAutonomousTodoTask(root, initial.ID, TaskQueued, ""); err != nil || !changed {
@@ -268,6 +401,33 @@ func TestAutonomousTodoDetailsOnlyUsesDecisionPrefixForQueuedState(t *testing.T)
 	content, err := os.ReadFile(path)
 	if err != nil || strings.Contains(string(content), "[ ] 用户已批准") || !strings.Contains(string(content), "[ ] 待批准") {
 		t.Fatalf("objective text changed decision state=%q err=%v", content, err)
+	}
+}
+
+func TestAutonomousTodoDetailsPreserveDefaultQueuedState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "temp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, filepath.FromSlash(autonomousTodoPath))
+	if err := os.WriteFile(path, []byte("[ ] ordinary queue task | old objective\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	board, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(board.Tasks) != 1 || board.Tasks[0].Status != TaskQueued {
+		t.Fatalf("initial board=%+v err=%v", board, err)
+	}
+	id := board.Tasks[0].ID
+	if changed, err := UpdateAutonomousTodoTaskDetails(root, id, board.Tasks[0].Title, "new objective", ""); err != nil || !changed {
+		t.Fatalf("details update changed=%v err=%v", changed, err)
+	}
+	updated, err := LoadAutonomousTaskBoard(root)
+	if err != nil || len(updated.Tasks) != 1 || updated.Tasks[0].Status != TaskQueued || updated.Tasks[0].ID != id {
+		t.Fatalf("default queued state changed after details update=%+v err=%v", updated, err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(content), "[ ] 排队中 | ordinary queue task | new objective") {
+		t.Fatalf("default queued TODO row was not preserved=%q err=%v", content, err)
 	}
 }
 

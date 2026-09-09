@@ -231,7 +231,8 @@ func loadAutonomousTodoTasks(root string, stored []AutonomousTask) ([]Autonomous
 	now := time.Now()
 	lines := autonomousTodoSourceLines(root)
 	for _, item := range overview.Items {
-		status := autonomousTaskStatusFromTodo(item)
+		marker, body, _ := autonomousTodoChecklistAtLine(lines, item.Line)
+		status := autonomousTaskStatusFromTodo(item, marker, body)
 		title, objective, nextStep := autonomousTodoTaskFields(lines, item)
 		task := AutonomousTask{
 			ID: projectTodoID(title, item.Line), Title: title, Objective: objective, Status: status,
@@ -264,6 +265,13 @@ func loadAutonomousTodoTasks(root string, stored []AutonomousTask) ([]Autonomous
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
+}
+
+func autonomousTodoChecklistAtLine(lines []string, line int) (rune, string, bool) {
+	if line < 1 || line > len(lines) {
+		return 0, "", false
+	}
+	return projectTodoChecklist(lines[line-1])
 }
 
 func autonomousTodoLineKey(line int) string {
@@ -343,27 +351,119 @@ func autonomousTodoCanonicalFields(body string) (string, []string) {
 	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
 	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
 	parts = slicesWithoutEmptyStrings(parts)
+	parts = autonomousTodoCanonicalParts(parts)
 	if len(parts) == 0 {
 		return "", nil
-	}
-	if projectTodoDecisionPrefix(parts[0]) {
-		if len(parts) == 1 {
-			return parts[0], nil
-		}
-		return parts[1], parts[2:]
 	}
 	return parts[0], parts[1:]
 }
 
-func autonomousTaskStatusFromTodo(item ProjectTodoItem) string {
-	switch item.Status {
-	case "completed":
+func autonomousTaskStatusFromTodo(item ProjectTodoItem, marker rune, body string) string {
+	// The checklist marker is authoritative for closure, even if the text
+	// still contains an old approval phrase.
+	if marker == 'x' || marker == 'X' || (marker == 0 && item.Status == "completed") {
 		return TaskCompleted
-	case "queued":
-		return TaskQueued
-	default:
+	}
+	if autonomousTodoHasExplicitPendingMarker(body) {
 		return TaskPendingApproval
 	}
+	// An unchecked TODO row is executable by default. Approval is opt-in and
+	// must be expressed by a narrow, unambiguous marker on that same row.
+	return TaskQueued
+}
+
+func autonomousTodoHasExplicitPendingMarker(body string) bool {
+	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
+	parts = slicesWithoutEmptyStrings(parts)
+	return len(parts) > 0 && (autonomousTodoPendingPrefix(parts[0]) || autonomousTodoPendingTokenPrefix(parts[0]))
+}
+
+func autonomousTodoPendingPrefix(value string) bool {
+	clean := strings.TrimSpace(value)
+	for _, label := range []string{"待批准", "待审批", "待人工批准", "待人工审批"} {
+		if autonomousTodoTokenPrefix(clean, label) {
+			return true
+		}
+	}
+	return false
+}
+
+func autonomousTodoPendingTokenPrefix(value string) bool {
+	clean := strings.TrimSpace(value)
+	for _, marker := range []string{"【待批准】", "【待审批】", "[待批准]", "[待审批]"} {
+		if autonomousTodoTokenPrefix(clean, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func autonomousTodoTokenPrefix(value, token string) bool {
+	if value == token {
+		return true
+	}
+	if !strings.HasPrefix(value, token) {
+		return false
+	}
+	rest := value[len(token):]
+	return strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, "：") || strings.HasPrefix(rest, " ")
+}
+
+func autonomousTodoDecisionPrefix(value string) bool {
+	clean := strings.TrimSpace(value)
+	if autonomousTodoPendingPrefix(clean) || autonomousTodoPendingTokenPrefix(clean) {
+		return true
+	}
+	for _, marker := range []string{"【待批准】", "【待审批】", "[待批准]", "[待审批]", "排队中", "用户已批准", "已批准", "已审批", "用户已拒绝", "已拒绝", "已驳回"} {
+		if autonomousTodoTokenPrefix(clean, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// autonomousTodoDecisionRemainder splits a decision prefix from an inline
+// title, for example "待批准: task" -> "task". A prefix without a title is
+// represented by an empty remainder. The delimiter requirement keeps prose
+// such as "待批准任务" from being mistaken for a decision marker.
+func autonomousTodoDecisionRemainder(value string) (string, bool) {
+	clean := strings.TrimSpace(value)
+	for _, token := range []string{
+		"【待人工批准】", "【待人工审批】", "【待批准】", "【待审批】",
+		"[待人工批准]", "[待人工审批]", "[待批准]", "[待审批]",
+		"待人工批准", "待人工审批", "待批准", "待审批",
+		"用户已拒绝", "已拒绝", "已驳回", "用户已批准", "已批准", "已审批", "排队中",
+	} {
+		if clean == token {
+			return "", true
+		}
+		if !strings.HasPrefix(clean, token) {
+			continue
+		}
+		rest := clean[len(token):]
+		if strings.HasPrefix(rest, ":") {
+			return strings.TrimSpace(strings.TrimPrefix(rest, ":")), true
+		}
+		if strings.HasPrefix(rest, "：") {
+			return strings.TrimSpace(strings.TrimPrefix(rest, "：")), true
+		}
+		if strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t") {
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return "", false
+}
+
+func autonomousTodoCanonicalParts(parts []string) []string {
+	if len(parts) == 0 || !autonomousTodoDecisionPrefix(parts[0]) {
+		return parts
+	}
+	remainder, ok := autonomousTodoDecisionRemainder(parts[0])
+	if !ok || remainder == "" {
+		return parts[1:]
+	}
+	return append([]string{remainder}, parts[1:]...)
 }
 
 func autonomousTaskProgress(status string) int {
@@ -469,12 +569,10 @@ func UpdateAutonomousTodoTaskDetails(root, id, title, objective, nextStep string
 }
 
 func autonomousTodoDecisionState(body string) string {
-	clean := strings.TrimSpace(projectTodoCommentPattern.ReplaceAllString(body, ""))
-	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '|' || r == '｜' })
-	if len(parts) > 0 && containsAny(strings.ToLower(strings.TrimSpace(parts[0])), "排队中", "用户已批准", "已批准", "已审批") {
-		return TaskQueued
+	if autonomousTodoHasExplicitPendingMarker(body) {
+		return TaskPendingApproval
 	}
-	return TaskPendingApproval
+	return TaskQueued
 }
 
 func rewriteAutonomousTodoFieldsLine(line, state, id, title, objective, nextStep string) string {
@@ -528,9 +626,15 @@ func rewriteAutonomousTodoLine(line, body, state, id, note string) string {
 	if len(parts) == 0 {
 		parts = []string{"待批准"}
 	}
+	if state == TaskQueued || state == TaskPendingApproval {
+		parts = autonomousTodoCanonicalParts(parts)
+		if len(parts) == 0 {
+			parts = []string{"待批准"}
+		}
+	}
 	switch state {
 	case TaskQueued:
-		if projectTodoDecisionPrefix(parts[0]) {
+		if autonomousTodoDecisionPrefix(parts[0]) {
 			parts[0] = "排队中"
 		} else {
 			parts = append([]string{"排队中"}, parts...)
@@ -539,8 +643,10 @@ func rewriteAutonomousTodoLine(line, body, state, id, note string) string {
 			parts = append(parts, "用户补充："+reply)
 		}
 	case TaskPendingApproval:
-		if projectTodoDecisionPrefix(parts[0]) {
+		if autonomousTodoDecisionPrefix(parts[0]) {
 			parts[0] = "待批准"
+		} else {
+			parts = append([]string{"待批准"}, parts...)
 		}
 	case TaskCompleted:
 		// The checked marker is the completion record; keep the task text intact.
