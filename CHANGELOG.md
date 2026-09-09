@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.124 - 2026-09-09
+
+### Autonomous task workflow
+- Make `temp/TODO.txt` the sole source for autonomous tasks, keeping task rows stable while ignoring draft, report, and legacy ledger entries in the main list.
+- Reduce public task states to pending approval, queued, and closed, with approval actions writing the canonical TODO row in place and completed runs marking that row closed.
+- Simplify the autonomous workspace and route to a TODO-backed list with minimal approval controls while retaining execution records and compatibility APIs.
+- Add Go and web regression coverage for three-state projection, stable TODO identity, malformed metadata tolerance, approval transitions, and the autonomous route boundary.
+
 ## v1.0.119 - 2026-09-03
 
 ### Project management and chat reliability
