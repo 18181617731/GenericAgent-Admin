@@ -154,13 +154,12 @@ export function AutonomousTaskWorkspace({ lang = 'zh' }) {
     try {
       const params = new URLSearchParams()
       if (query) params.set('q', query)
-      if (STATUS[status]) params.set('status', status)
       const result = await api(`/api/autonomous/tasks${params.toString() ? `?${params}` : ''}`)
       const nextTasks = (Array.isArray(result.tasks) ? result.tasks : []).filter(task => STATUS[task.status])
       setTasks(nextTasks)
       if (selected && !nextTasks.some(task => task.id === selected)) { setSelected(''); setDetail(null) }
     } catch (error) { setMessage(error.message) } finally { setLoading(false) }
-  }, [query, selected, status])
+  }, [query, selected])
 
   useEffect(() => { refresh() }, [refresh])
 
@@ -210,6 +209,7 @@ export function AutonomousTaskWorkspace({ lang = 'zh' }) {
     } catch (error) { setMessage(error.message) } finally { setSaving(false) }
   }
 
+  const visibleTasks = useMemo(() => STATUS[status] ? tasks.filter(task => publicStatus(task.status) === status) : tasks, [status, tasks])
   const metrics = useMemo(() => taskMetrics(tasks), [tasks])
   const createTask = async payload => {
     const result = await api('/api/autonomous/tasks', { dangerous: true, method: 'POST', body: JSON.stringify({ ...payload, priority: 'normal' }) })
@@ -224,7 +224,7 @@ export function AutonomousTaskWorkspace({ lang = 'zh' }) {
     <MetricStrip metrics={metrics} zh={zh} activeFilter={status} onFilter={setStatus} />
     <div className="autonomous-task-toolbar"><label><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={zh ? '搜索任务或目标' : 'Search tasks or objectives'} aria-label={zh ? '搜索任务' : 'Search tasks'} /></label><select value={status} onChange={event => setStatus(event.target.value)} aria-label={zh ? '任务状态' : 'Task status'}><option value="">{zh ? '全部状态' : 'All states'}</option>{STATUS_KEYS.map(key => <option key={key} value={key}>{statusLabel(key, zh)}</option>)}</select><button type="button" className="secondary" onClick={refresh} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />{zh ? '刷新' : 'Refresh'}</button></div>
     {message && <div className="autonomous-task-message" role="status">{message}<button type="button" className="icon-button" aria-label={zh ? '关闭消息' : 'Close message'} onClick={() => setMessage('')}><X size={15} /></button></div>}
-    <div className="autonomous-task-layout"><div className="autonomous-task-list">{tasks.length === 0 && <div className="autonomous-empty">{loading ? (zh ? '正在读取任务…' : 'Loading tasks…') : (zh ? '暂无任务。请在 TODO.txt 中添加任务，或点击新建任务。' : 'No tasks. Add one to TODO.txt or choose New task.')}</div>}{tasks.map(task => <TaskRow key={task.id} task={task} selected={selected === task.id} onOpen={openTask} onApprove={task => onAction(task, 'approve')} zh={zh} />)}</div><aside className="autonomous-task-detail"><TaskDetail detail={detail} saving={saving} onAction={onAction} onReject={task => { setRejecting(task); setRejectNote('') }} zh={zh} /></aside></div>
+    <div className="autonomous-task-layout"><div className="autonomous-task-list">{visibleTasks.length === 0 && <div className="autonomous-empty">{loading ? (zh ? '正在读取任务…' : 'Loading tasks…') : (zh ? '暂无任务。请在 TODO.txt 中添加任务，或点击新建任务。' : 'No tasks. Add one to TODO.txt or choose New task.')}</div>}{visibleTasks.map(task => <TaskRow key={task.id} task={task} selected={selected === task.id} onOpen={openTask} onApprove={task => onAction(task, 'approve')} zh={zh} />)}</div><aside className="autonomous-task-detail"><TaskDetail detail={detail} saving={saving} onAction={onAction} onReject={task => { setRejecting(task); setRejectNote('') }} zh={zh} /></aside></div>
     {editorOpen && <TaskEditor draft={draft} saving={saving} onChange={values => setDraft(current => ({ ...current, ...values }))} onClose={() => { setEditorOpen(false); setDraft(emptyDraft) }} onSubmit={saveTask} zh={zh} />}
     {rejecting && <div className="autonomous-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRejecting(null) }}><div className="autonomous-dialog" role="dialog" aria-modal="true" aria-labelledby="autonomous-task-reject-title"><header><b id="autonomous-task-reject-title">{zh ? `拒绝任务：${rejecting.title}` : `Reject task: ${rejecting.title}`}</b><button type="button" aria-label={zh ? '取消' : 'Cancel'} onClick={() => setRejecting(null)}><X size={18} /></button></header><label>{zh ? '拒绝意见（可选）' : 'Rejection note (optional)'}<textarea maxLength={1000} value={rejectNote} onChange={event => setRejectNote(event.target.value)} /></label><footer><button type="button" className="secondary" onClick={() => setRejecting(null)}>{zh ? '取消' : 'Cancel'}</button><button type="button" className="danger" disabled={saving} onClick={confirmReject}>{zh ? '确认拒绝' : 'Confirm reject'}</button></footer></div></div>}
   </section>

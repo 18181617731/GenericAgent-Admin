@@ -44,6 +44,31 @@ describe('AutonomousTaskWorkspace', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/autonomous/tasks/task-1', expect.any(Object))
   })
 
+  test('keeps complete metrics while filtering the visible task list', async () => {
+    const fetchMock = vi.fn(() => response({ tasks }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<AutonomousTaskWorkspace />)
+
+    expect(await screen.findByText('等待批准')).toBeTruthy()
+    const metricButtons = () => Array.from(document.querySelectorAll('.autonomous-task-metrics button')).map(button => button.textContent.trim())
+    expect(metricButtons()).toEqual(['待批准1', '排队中1', '已闭环1'])
+
+    fireEvent.click(document.querySelector('.autonomous-task-metrics button'))
+    expect(metricButtons()).toEqual(['待批准1', '排队中1', '已闭环1'])
+    expect(document.querySelectorAll('.autonomous-task-row')).toHaveLength(1)
+    expect(screen.getByText('等待批准')).toBeTruthy()
+    expect(screen.queryByText('排队任务')).toBeNull()
+    expect(screen.queryByText('已闭环任务')).toBeNull()
+
+    fireEvent.change(screen.getByRole('combobox', { name: '任务状态' }), { target: { value: 'queued' } })
+    expect(metricButtons()).toEqual(['待批准1', '排队中1', '已闭环1'])
+    expect(document.querySelectorAll('.autonomous-task-row')).toHaveLength(1)
+    expect(screen.getByText('排队任务')).toBeTruthy()
+    expect(screen.queryByText('等待批准')).toBeNull()
+    expect(screen.queryByText('已闭环任务')).toBeNull()
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes('status='))).toBe(true)
+  })
+
   test('renders only the three public TODO states', async () => {
     const fetchMock = vi.fn(() => response({ tasks: [
       { id: 'r720', title: 'R720', objective: '已闭环', status: 'completed', progress: 100, source_type: 'todo' },
