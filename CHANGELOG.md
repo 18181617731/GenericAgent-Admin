@@ -2,6 +2,12 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.127 - 2026-09-09
+
+### Autonomous task filter metrics
+- Keep the three status counts based on the complete TODO.txt task set matching the current search while filtering only visible rows by the selected status.
+- Avoid refetching a status-filtered task list when switching metric cards or the status dropdown, and add regression coverage for stable counts and filtered rows.
+
 ## v1.0.126 - 2026-09-09
 
 ### Autonomous task classification release
