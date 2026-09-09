@@ -43,7 +43,15 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		if (state == "active" && summary.Archived) || (state == "archived" && !summary.Archived) {
 			continue
 		}
-		items = append(items, map[string]interface{}{"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource, "updated_at": summary.UpdatedAt, "count": summary.Count, "running": s.chatRunActive(summary.ID), "workspace": summary.Workspace, "project_mode": summary.ProjectMode, "hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "archived": summary.Archived, "loop": summary.Loop, "autorun": summary.Autorun})
+		running, taskbarState := s.chatSessionTaskbarSnapshot(summary)
+		items = append(items, map[string]interface{}{
+			"id": summary.ID, "title": summary.Title, "title_source": summary.TitleSource,
+			"updated_at": summary.UpdatedAt, "count": summary.Count, "running": running, "taskbar_state": taskbarState,
+			"workspace": summary.Workspace, "project_mode": summary.ProjectMode, "project_provider": summary.ProjectProvider, "project_id": summary.ProjectID,
+			"hub_enabled": summary.HubEnabled, "pinned": summary.Pinned, "archived": summary.Archived, "loop": summary.Loop, "autorun": summary.Autorun,
+			"result": summary.Result, "conductor": summary.Conductor,
+			"unread": !running && summary.Result != nil && readState[summary.ID] != *summary.Result,
+		})
 	}
 	projects, pinnedProjects := chatProjectNamesFor(cfg)
 	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order})
@@ -1287,6 +1295,12 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		return
 	}
 	if s.maybeHandleProjectCommand(w, r, sid, &cs, req.Prompt) {
+		return
+	}
+	conductorReq := map[string]interface{}{"extra_sys_prompts": cs.ExtraSysPrompts}
+	if err := s.prepareConductorWorkerRequest(cs, conductorReq); err != nil {
+		s.endChatRunOwned(sid, token)
+		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if sourceID := strings.TrimSpace(req.SourceUserMessageID); sourceID != "" {

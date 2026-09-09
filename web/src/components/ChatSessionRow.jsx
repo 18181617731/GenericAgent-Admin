@@ -1,5 +1,6 @@
 import React from 'react'
 import { Check, Clock3, MoreHorizontal, Pin, X } from 'lucide-react'
+import { isConductorParent } from '../lib/chatConductor.js'
 
 const defaultCopy = (zh) => zh
 
@@ -52,6 +53,7 @@ export default function ChatSessionRow({
     >
       <span className="oa-session-title" title={title}>
         {session?.pinned && <span className="oa-session-pin" title={ct('已置顶', 'Pinned')}><Pin size={12} aria-hidden="true"/></span>}
+        {isConductorParent(session) && <span className="oa-session-conductor-badge" title={ct('指挥家会话', 'Conductor session')} aria-label={ct('指挥家会话', 'Conductor session')}>{ct('指挥家', 'Conductor')}</span>}
         <b>{title}</b>
         <span className="oa-session-badges" aria-label={ct('会话状态', 'Session status')}>
           {loopView && <em className="oa-session-loop-badge" title={ct(`Loop 进行中 · 第 ${loopView.round}/${loopView.maxRounds} 轮`, `Loop active · round ${loopView.round}/${loopView.maxRounds}`)}>Loop {loopView.round}/{loopView.maxRounds}</em>}

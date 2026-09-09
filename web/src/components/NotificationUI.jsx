@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Bell, BellRing, CheckCheck, ExternalLink, X } from 'lucide-react'
 import {
   formatNotificationTime,

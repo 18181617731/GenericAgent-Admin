@@ -41,22 +41,23 @@ func latestChatSessionResult(cs chatSession) *chatSessionResult {
 }
 
 type chatSessionSummary struct {
-	TaskbarState    string             `json:"taskbar_state"`
-	Result          *chatSessionResult `json:"result,omitempty"`
-	ID              string             `json:"id"`
-	Title           string             `json:"title"`
-	TitleSource     string             `json:"title_source,omitempty"`
-	UpdatedAt       int64              `json:"updated_at"`
-	Count           int                `json:"count"`
-	Workspace       string             `json:"workspace,omitempty"`
-	ProjectMode     string             `json:"project_mode,omitempty"`
-	ProjectProvider string             `json:"project_provider,omitempty"`
-	ProjectID       string             `json:"project_id,omitempty"`
-	HubEnabled      bool               `json:"hub_enabled,omitempty"`
-	Pinned          bool               `json:"pinned,omitempty"`
-	Archived        bool               `json:"archived,omitempty"`
-	Autorun         chatAutorunState   `json:"autorun"`
-	Loop            chatLoopState      `json:"loop"`
+	Conductor       *chatConductorState `json:"conductor,omitempty"`
+	TaskbarState    string              `json:"taskbar_state"`
+	Result          *chatSessionResult  `json:"result,omitempty"`
+	ID              string              `json:"id"`
+	Title           string              `json:"title"`
+	TitleSource     string              `json:"title_source,omitempty"`
+	UpdatedAt       int64               `json:"updated_at"`
+	Count           int                 `json:"count"`
+	Workspace       string              `json:"workspace,omitempty"`
+	ProjectMode     string              `json:"project_mode,omitempty"`
+	ProjectProvider string              `json:"project_provider,omitempty"`
+	ProjectID       string              `json:"project_id,omitempty"`
+	HubEnabled      bool                `json:"hub_enabled,omitempty"`
+	Pinned          bool                `json:"pinned,omitempty"`
+	Archived        bool                `json:"archived,omitempty"`
+	Autorun         chatAutorunState    `json:"autorun"`
+	Loop            chatLoopState       `json:"loop"`
 }
 
 type chatSessionListIndexEntry struct {
