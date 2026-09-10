@@ -4746,7 +4746,6 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const nextLoopState = st.loop && typeof st.loop === 'object' ? st.loop : null
     setLoopState(nextLoopState)
     setLoopMaxRounds(nextLoopState?.max_rounds ?? 0)
-    setLoopMaxRetries(nextLoopState?.max_retries ?? 2)
     if (id && nextLoopState) setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
     const savedControllerLlmNo = Number(nextLoopState?.controller_llm_no)
     setLoopControllerLlmNo(Number(nextLoopState?.epoch) > 0 && nextLlms.some(model => model.index === savedControllerLlmNo) ? savedControllerLlmNo : null)

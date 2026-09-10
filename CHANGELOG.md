@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.128 - 2026-09-10
+
+### Upstream chat compatibility
+- Merge the latest GenericAgent-Admin Conductor and chat-loop behavior while preserving the local session contracts.
+- Add bounded retries for interrupted worker failures, while keeping first-run startup failures visible without retrying.
+- Guard Conductor continuation when the worker relationship is invalid or the parent run is canceled to prevent cross-session mutation and cleanup races.
+- Remove duplicate loop request/state fields and a stale frontend setter, with the merged regression coverage passing end to end.
+
 ## v1.0.127 - 2026-09-09
 
 ### Autonomous task filter metrics

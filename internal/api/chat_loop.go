@@ -212,7 +212,6 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 		Objective        string `json:"objective"`
 		ControllerPrompt string `json:"controller_prompt"`
 		ControllerLLMNo  *int   `json:"controller_llm_no"`
-		MaxRounds        int    `json:"max_rounds"`
 	}
 	if err := decode(r, &req); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
@@ -255,7 +254,6 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 			controllerLLMNo = *req.ControllerLLMNo
 		}
 		cs.Loop = chatLoopState{
-			MaxRounds:        req.MaxRounds,
 			MaxRetries:       req.MaxRetries,
 			Enabled:          true,
 			Status:           chatLoopStatusWaiting,
@@ -303,15 +301,19 @@ func (s *Server) chatLoopStart(w http.ResponseWriter, r *http.Request, sid strin
 	writeJSON(w, map[string]interface{}{"ok": true, "loop": cs.Loop})
 }
 
-var continueChatLoopFunc = func(s *Server, sid string, epoch int64, prompt string) {
-	s.queueChatLoopRun(chatLoopRunRequest{
-		sid:            sid,
-		epoch:          epoch,
-		prompt:         prompt,
-		expectedStatus: chatLoopStatusEvaluating,
-		phase:          "starting",
-		summary:        "First task turn queued.",
-	})
+var continueChatLoopFunc func(s *Server, sid string, epoch int64, prompt string)
+
+func init() {
+	continueChatLoopFunc = func(s *Server, sid string, epoch int64, prompt string) {
+		s.queueChatLoopRun(chatLoopRunRequest{
+			sid:            sid,
+			epoch:          epoch,
+			prompt:         prompt,
+			expectedStatus: chatLoopStatusEvaluating,
+			phase:          "starting",
+			summary:        "First task turn queued.",
+		})
+	}
 }
 
 func (s *Server) chatLoopStop(w http.ResponseWriter, r *http.Request, sid string) {
@@ -351,8 +353,7 @@ func (s *Server) publishChatLoopState(sid string, state chatLoopState) {
 
 func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	s.resetChatAutorunAfterReply(sid)
-	if !success {
-		s.failChatLoopAfterRun(sid)
+	if !success && s.chatRunCanceled(sid) {
 		return
 	}
 	sid = safeChatID(sid)
@@ -374,6 +375,46 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	// Then check loop mode
 	if !cs.Loop.Enabled || cs.Loop.Status == chatLoopStatusEvaluating {
 		s.SessionMu.Unlock()
+		return
+	}
+	if success {
+		cs.Loop.WorkerErrorStreak = 0
+	} else {
+		// A brand-new loop has no interrupted turn to resume. Preserve the
+		// existing first-run contract and surface worker startup failures
+		// immediately; bounded retries apply after a round has completed.
+		if cs.Loop.Round == 1 && len(cs.Messages) == 2 {
+			epoch := cs.Loop.Epoch
+			s.SessionMu.Unlock()
+			s.finishChatLoop(sid, epoch, chatLoopStatusError, "agent_error")
+			return
+		}
+		cs.Loop.WorkerErrorStreak++
+		if cs.Loop.WorkerErrorStreak > chatLoopRetryBudget(cs.Loop, chatLoopWorkerRetries) {
+			cs.Loop.Enabled = false
+			cs.Loop.Status = chatLoopStatusError
+			cs.Loop.StopReason = "worker_error: retry budget exhausted"
+			cs.Loop.Epoch++
+			appendChatLoopRecord(&cs.Loop, "error", "Worker failed after automatic retries.", "")
+			err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+			s.SessionMu.Unlock()
+			if err == nil {
+				s.publishChatLoopState(sid, cs.Loop)
+			}
+			return
+		}
+		cs.Loop.Status = chatLoopStatusEvaluating
+		cs.Loop.StopReason = ""
+		appendChatLoopRecord(&cs.Loop, "retry", "Worker failed; retrying the interrupted task.", "")
+		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+		s.SessionMu.Unlock()
+		if err == nil {
+			s.publishChatLoopState(sid, cs.Loop)
+			go func(epoch int64) {
+				time.Sleep(time.Second)
+				continueChatLoopFunc(s, sid, epoch, "The previous run failed. Resume the interrupted task from the existing context. Check which actions already completed before repeating any side effects.")
+			}(cs.Loop.Epoch)
+		}
 		return
 	}
 	cs.Loop.MaxRounds = normalizeChatLoopMaxRounds(cs.Loop.MaxRounds)
@@ -497,7 +538,7 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 	applyProjectRequestFields(cmdReq, cs, s.CfgStore.Snapshot())
 	var decision chatLoopDecision
 	var parseErr error
-	for attempt := 0; attempt < chatLoopControllerAttempts; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt == 0 {
 			cmdReq["prompt"] = chatLoopControllerPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
 		} else {

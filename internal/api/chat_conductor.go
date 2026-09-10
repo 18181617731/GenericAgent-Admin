@@ -598,7 +598,7 @@ func (s *Server) finishConductorChild(parentID, dispatchID, status, result, reas
     s.publishChatRun(parentID, map[string]interface{}{"type": "conductor_child", "child": event})
     s.writeConductorOutcome(parentID, event)
     s.scheduleConductorChildren(parentID)
-    if status != conductorCancelled && !s.chatRunCanceled(parentID) {
+    if workerValid && status != conductorCancelled && !s.chatRunCanceled(parentID) {
         go s.processNextQueuedMessage(parentID)
     }
 }
