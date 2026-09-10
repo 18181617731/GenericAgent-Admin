@@ -3464,7 +3464,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
   </>
 })
 
-export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
+export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, onConductor, conductorDisabled, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const fallbackTriggerRef = useRef(null)
@@ -3487,6 +3487,7 @@ export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeycha
     { icon: KeyRound, label: ct('密钥管理', 'Keychain'), onClick: onKeychain, active: keychainOpen },
     { icon: Bot, label: ct('自主行动', 'Auto-action'), onClick: onAutorun, active: autorunEnabled },
     { icon: Orbit, label: 'Loop', onClick: onLoop, active: loopOpen },
+    ...(onConductor ? [{ icon: Bot, label: ct('升级为指挥家', 'Upgrade to Conductor'), onClick: onConductor, disabled: conductorDisabled }] : []),
   ]
 
   return (
@@ -3513,6 +3514,7 @@ export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeycha
                 key={i}
                 type="button"
                 className={action.active ? 'is-active' : ''}
+                disabled={action.disabled}
                 onClick={() => {
                   action.onClick?.()
                   setOpen(false)
@@ -3829,6 +3831,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [prompt, setPrompt] = useState('')
   const [loopState, setLoopState] = useState(null)
   const [activeSessionDetail, setActiveSessionDetail] = useState(null)
+  const [conductorEnabling, setConductorEnabling] = useState(false)
+  const conductorEnablingRef = useRef(false)
   const [conductorStoppingID, setConductorStoppingID] = useState('')
   const [loopConfigOpen, setLoopConfigOpen] = useState(false)
   const loopConfigRef = useRef(null)
@@ -4741,6 +4745,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setExtraSysPromptPresetID(nextExtraSysPromptPresetID)
     const nextLoopState = st.loop && typeof st.loop === 'object' ? st.loop : null
     setLoopState(nextLoopState)
+    setLoopMaxRounds(nextLoopState?.max_rounds ?? 0)
+    setLoopMaxRetries(nextLoopState?.max_retries ?? 2)
     if (id && nextLoopState) setSessions(xs => updateSessionLoop(xs, id, nextLoopState))
     const savedControllerLlmNo = Number(nextLoopState?.controller_llm_no)
     setLoopControllerLlmNo(Number(nextLoopState?.epoch) > 0 && nextLlms.some(model => model.index === savedControllerLlmNo) ? savedControllerLlmNo : null)
@@ -5020,6 +5026,26 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const newProjectSession = async (projectMode) => {
     await createSession(projectMode)
+  }
+
+  const upgradeToConductor = async () => {
+    const target = activeSidRef.current
+    if (!target || conductorEnablingRef.current) return
+    conductorEnablingRef.current = true
+    setConductorEnabling(true)
+    setErr('')
+    try {
+      const result = await api(`/api/chat/conductor/${encodeURIComponent(target)}/enable`, { method: 'POST' })
+      setSessions(items => items.map(item => String(item.id) === String(target) ? { ...item, conductor: result.conductor } : item))
+      if (activeSidRef.current === target) {
+        setActiveSessionDetail(current => current && String(current.id) === String(target) ? { ...current, conductor: result.conductor } : current)
+      }
+    } catch (error) {
+      if (activeSidRef.current === target) setErr(error.message || String(error))
+    } finally {
+      conductorEnablingRef.current = false
+      setConductorEnabling(false)
+    }
   }
 
   const newConductorSession = async () => {

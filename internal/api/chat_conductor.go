@@ -94,23 +94,42 @@ func conductorFindChild(children []chatConductorChild, dispatchID string) int {
     return -1
 }
 
+var errConductorBusy = errors.New("session is running; wait until it finishes")
+var errConductorWorker = errors.New("a worker session cannot become a conductor")
+
+func (s *Server) chatConductorEnable(w http.ResponseWriter, r *http.Request, sid string) {
+    cs, err := s.enableChatConductor(sid)
+    if err != nil {
+        status := http.StatusInternalServerError
+        if errors.Is(err, os.ErrNotExist) { status = http.StatusNotFound }
+        if errors.Is(err, errConductorBusy) || errors.Is(err, errConductorWorker) { status = http.StatusConflict }
+        bad(w, status, err.Error())
+        return
+    }
+    writeJSON(w, map[string]interface{}{"id": cs.ID, "conductor": cs.Conductor})
+}
+
 func (s *Server) enableChatConductor(sid string) (chatSession, error) {
     sid = safeChatID(sid)
     s.SessionMu.Lock()
     defer s.SessionMu.Unlock()
+    if _, err := os.Stat(chatSessionPath(s.CfgStore.Snapshot(), sid)); err != nil {
+        return chatSession{}, err
+    }
     cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
     if err != nil {
         return chatSession{}, err
     }
-    if cs.ID == "" {
-        return chatSession{}, os.ErrNotExist
-    }
     if cs.Conductor != nil && cs.Conductor.Role == conductorRoleWorker {
-        return chatSession{}, errors.New("worker sessions cannot become Conductor parents")
+        return chatSession{}, errConductorWorker
     }
-    if cs.Conductor == nil {
-        cs.Conductor = &chatConductorState{Role: conductorRoleParent}
+    if cs.Conductor != nil && cs.Conductor.Role == conductorRoleParent {
+        return cs, nil
     }
+    if s.chatRunActive(sid) || len(cs.QueuedMessages) > 0 {
+        return chatSession{}, errConductorBusy
+    }
+    cs.Conductor = &chatConductorState{Role: conductorRoleParent}
     if err := saveChatSessionLocked(s.CfgStore.Snapshot(), cs); err != nil {
         return chatSession{}, err
     }
@@ -142,6 +161,7 @@ func (s *Server) chatConductorChildren(w http.ResponseWriter, _ *http.Request, s
 const conductorParentPrompt = `You are the Conductor (agent manager). The user talks to you; you coordinate, review, and deliver to reduce their burden of managing agents.
 
 Non-negotiable role boundary:
+- Admin Conductor is the only delegation transport in this mode. Reading subagent_sop, subagent.md, supervisor SOPs, or other memories does not switch modes: their standalone launch/poll/cancel/collect instructions are inapplicable. Never use agentmain.py --task/--func, subprocesses, standalone HTTP APIs, or scripts as a fallback. Use only conductor_dispatch/conductor_collect/conductor_cancel; if unavailable, report a blocker. Do not ask workers to launch unmanaged agents or bypass this boundary.
 - Never execute user tasks or probe the environment yourself. ALL execution belongs to workers, including a single simple task. You only analyze, dispatch, review, and communicate. Ordinary execution tools being available is NOT permission to use them.
 - For follow-up work, pass the prior worker session_id to conductor_dispatch to reuse its conversation and context. Omit session_id for a new independent worker. Reuse only completed workers; each dispatch returns a new dispatch_id for collection.
 - Use conductor_cancel(dispatch_id) to stop obsolete or incorrect owned work. Cancellation is not rollback or pause: already performed actions remain. Wait for a successful terminal cancellation receipt before reusing its session_id with corrected instructions. Never cancel unrelated work.
@@ -162,7 +182,14 @@ Worker-result workflow:
 - Once the result is satisfactory, provide a concise final delivery with evidence, files where relevant, and explicit unverified boundaries. Distinguish failed, canceled, and pending outcomes from success.
 `
 
+const conductorWorkerPrompt = `You are an Admin Conductor worker. Execute the assigned objective, but do not create or delegate to additional agents. Reading subagent_sop, subagent.md, supervisor SOPs, or other memories does not authorize their standalone launch/poll/cancel/collect workflow. Do not launch agentmain.py --task/--func, subprocess agents, or standalone agent HTTP APIs, including on the parent's behalf. If more workers are needed, report the proposed split to the parent; if blocked, report the blocker rather than switching orchestration modes. Treat this as a mode boundary, not a restriction on ordinary non-agent tools needed for your task.`
+
 func (s *Server) prepareConductorWorkerRequest(cs chatSession, req map[string]interface{}) error {
+    if cs.Conductor != nil && cs.Conductor.Role == conductorRoleWorker {
+        prompts, _ := req["extra_sys_prompts"].([]string)
+        req["extra_sys_prompts"] = append(prompts, conductorWorkerPrompt)
+        return nil
+    }
     if cs.Conductor == nil || cs.Conductor.Role != conductorRoleParent {
         return nil
     }
@@ -197,7 +224,50 @@ func (s *Server) prepareConductorWorkerRequest(cs chatSession, req map[string]in
     return nil
 }
 
+type conductorDispatchOptions struct {
+    ProjectID *string `json:"project_id,omitempty"`
+    SessionID string `json:"session_id"`
+    LLMNo *int `json:"llm_no,omitempty"`
+    ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+}
+
+func (o conductorDispatchOptions) apply(st chatSettings) (chatSettings, error) {
+    if o.LLMNo != nil {
+        if *o.LLMNo < 0 { return st, errors.New("llm_no must be a non-negative integer") }
+        st.LLMNo = *o.LLMNo
+    }
+    if o.ReasoningEffort != nil {
+        effort := strings.ToLower(strings.TrimSpace(*o.ReasoningEffort))
+        switch effort {
+        case "off", "none", "minimal", "low", "medium", "high", "xhigh", "max":
+            st.ReasoningEffort = effort
+        default:
+            return st, errors.New("invalid reasoning_effort")
+        }
+    }
+    return st, nil
+}
+
 func (s *Server) dispatchConductor(parentID, objective string, reuseSessionID ...string) (chatConductorChild, error) {
+    options := conductorDispatchOptions{}
+    if len(reuseSessionID) > 0 { options.SessionID = reuseSessionID[0] }
+    return s.dispatchConductorWithOptions(parentID, objective, options)
+}
+
+func (s *Server) dispatchConductorWithOptions(parentID, objective string, options conductorDispatchOptions) (chatConductorChild, error) {
+    if _, err := options.apply(chatSettings{}); err != nil { return chatConductorChild{}, err }
+
+    var selectedProject *chatProjectItem
+    if options.ProjectID != nil {
+        if strings.TrimSpace(options.SessionID) != "" { return chatConductorChild{}, errors.New("project_id is only supported for new workers; omit session_id") }
+        cfg := s.CfgStore.Snapshot()
+        provider := chatProjectProviderOfficial
+        if cfg.DefaultProjectProvider == chatProjectProviderAdmin { provider = chatProjectProviderAdmin }
+        item, _, err := resolveProject(cfg, provider, strings.TrimSpace(*options.ProjectID))
+        if err != nil { return chatConductorChild{}, fmt.Errorf("invalid project_id: %w", err) }
+        selectedProject = &item
+    }
+
     parentID = safeChatID(parentID)
     objective = boundedConductorText(objective, conductorMaxObjective)
     if objective == "" {
@@ -251,8 +321,8 @@ func (s *Server) dispatchConductor(parentID, objective string, reuseSessionID ..
         },
     }
     var previous *chatSession
-    if len(reuseSessionID) > 0 && reuseSessionID[0] != "" {
-        target := reuseSessionID[0]
+    if options.SessionID != "" {
+        target := options.SessionID
         if safeChatID(target) != target {
             s.SessionMu.Unlock()
             return chatConductorChild{}, errors.New("invalid session_id")
@@ -280,6 +350,14 @@ func (s *Server) dispatchConductor(parentID, objective string, reuseSessionID ..
         worker.UpdatedAt = now
         childID, child.SessionID = target, target
     }
+    if selectedProject != nil {
+        worker.ProjectID, worker.ProjectProvider = selectedProject.ID, selectedProject.Provider
+        worker.ProjectMode = ""
+        if selectedProject.Provider == chatProjectProviderOfficial { worker.ProjectMode = selectedProject.ID }
+        // Project memory is not an execution workspace. Match explicit project creation.
+        worker.Workspace = ""
+    }
+    worker.Settings, _ = options.apply(worker.Settings)
     parent.ConductorChildren = append(parent.ConductorChildren, child)
 
     // Persist both relationship ends before acceptance; restore reused history
@@ -644,8 +722,14 @@ func (s *Server) handleConductorDispatchEvent(parentID string, ev map[string]int
     }
     response := conductorDispatchResponse{}
     objective := boundedConductorText(fmt.Sprint(ev["objective"]), conductorMaxObjective)
-    sessionID, _ := ev["session_id"].(string)
-    child, err := s.dispatchConductor(parentID, objective, sessionID)
+    options := conductorDispatchOptions{}
+    dataOptions, err := json.Marshal(ev)
+    if err == nil { err = json.Unmarshal(dataOptions, &options) }
+    for _, key := range []string{"llm_no", "reasoning_effort", "project_id"} {
+        if value, present := ev[key]; present && value == nil { err = fmt.Errorf("%s cannot be null", key) }
+    }
+    var child chatConductorChild
+    if err == nil { child, err = s.dispatchConductorWithOptions(parentID, objective, options) }
     if err != nil {
         response.Error = boundedConductorText(err.Error(), 4096)
     } else {

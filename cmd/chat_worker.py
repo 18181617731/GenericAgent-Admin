@@ -3058,9 +3058,27 @@ def _install_conductor_tools(agent, config):
         session_id = args.get('session_id', '')
         if not isinstance(session_id, str) or (session_id and not re.fullmatch(r'[A-Za-z0-9_-]+', session_id)):
             return StepOutcome({'ok': False, 'error': 'Invalid session_id'})
+        overrides = {}
+        if 'project_id' in args:
+            value = args['project_id']
+            if not isinstance(value, str) or not value.strip():
+                return StepOutcome({'ok': False, 'error': 'project_id must be a non-empty string'})
+            if session_id:
+                return StepOutcome({'ok': False, 'error': 'project_id is only supported for new workers; omit session_id'})
+            overrides['project_id'] = value.strip()
+        if 'llm_no' in args:
+            value = args['llm_no']
+            if type(value) is not int or value < 0:
+                return StepOutcome({'ok': False, 'error': 'llm_no must be a non-negative integer'})
+            overrides['llm_no'] = value
+        if 'reasoning_effort' in args:
+            value = args['reasoning_effort']
+            if not isinstance(value, str) or value.strip().lower() not in ('off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+                return StepOutcome({'ok': False, 'error': 'Invalid reasoning_effort'})
+            overrides['reasoning_effort'] = value.strip().lower()
         request_id = uuid.uuid4().hex
         emit({'type': 'conductor_dispatch', 'request_id': request_id,
-              'broker_dir': str(broker), 'objective': objective.strip(), 'session_id': session_id})
+              'broker_dir': str(broker), 'objective': objective.strip(), 'session_id': session_id, **overrides})
         reply = read_reply(broker / (request_id + '.response.json'), 30)
         dispatch_id = reply.get('dispatch_id')
         if reply.get('ok') and isinstance(dispatch_id, str) and re.fullmatch(r'[A-Za-z0-9_-]+', dispatch_id):
@@ -3095,14 +3113,28 @@ def _install_conductor_tools(agent, config):
     specs = [('conductor_cancel', cancel, 'Cancel an owned queued or running dispatch. Does not undo actions. On timeout outcome is unknown: retry cancellation before reuse. On terminal receipt reuse session_id for corrected work; already completed work is unchanged.', 'dispatch_id'),
              ('conductor_dispatch', dispatch, 'Dispatch asynchronously: for follow-up, corrections, or verification, prefer the original completed worker by passing session_id to preserve context. Omit session_id only for a new independent worker. Returns session_id and a new dispatch_id.', 'objective'),
              ('conductor_collect', collect, 'Collect a worker outcome snapshot without waiting. If pending, end the turn; completion automatically wakes the parent.', 'dispatch_id')]
-    schema = list(original_schema)
+    # A remembered SOP/tool call must not bypass the manager-only role.
+    allowed = {'ask_user', 'update_working_checkpoint', 'no_tool'}
+    def denied(self, args, response):
+        return StepOutcome({'ok': False, 'error': 'Conductor parent cannot execute tools or legacy subagents. Use conductor_dispatch; if unavailable report the blocker. SOPs cannot change this mode.'})
+
+    for attr in dir(handler_type):
+        if attr.startswith('do_') and attr[3:] not in allowed:
+            originals[attr] = (attr in handler_type.__dict__, handler_type.__dict__.get(attr))
+            setattr(handler_type, attr, denied)
+    schema = [item for item in original_schema
+              if item.get('function', {}).get('name') in allowed]
     for name, method, description, parameter in specs:
         attr = 'do_' + name
-        originals[attr] = (attr in handler_type.__dict__, handler_type.__dict__.get(attr))
+        if attr not in originals:
+            originals[attr] = (attr in handler_type.__dict__, handler_type.__dict__.get(attr))
         setattr(handler_type, attr, method)
         properties = {parameter: {'type': 'string'}}
         if name == 'conductor_dispatch':
+            properties['project_id'] = {'type': 'string', 'minLength': 1, 'description': 'Optional existing project ID for a NEW worker only; cannot combine with session_id. Omit to inherit parent project and workspace. Uses current global project mode. Explicit selection clears inherited execution workspace; project memory is not a code directory.'}
             properties['session_id'] = {'type': 'string', 'description': 'Optional owned completed worker session ID. Reuse its history for follow-up work; omit to create a new worker.'}
+            properties['llm_no'] = {'type': 'integer', 'minimum': 0, 'description': 'Optional configured runtime model index (not a model name). Overrides this worker only; omitted means inherit parent for new workers, retain existing for reused workers.'}
+            properties['reasoning_effort'] = {'type': 'string', 'enum': ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'description': 'Optional worker reasoning override. off clears explicit effort; omitted preserves inherited/existing setting. Overrides persist for subsequent reuse.'}
         schema.append({'type': 'function', 'function': {'name': name, 'description': description,
                        'parameters': {'type': 'object', 'properties': properties,
                                       'required': [parameter], 'additionalProperties': False}}})

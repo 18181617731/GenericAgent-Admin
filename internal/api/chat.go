@@ -187,6 +187,9 @@ type chatLoopRecord struct {
 }
 
 type chatLoopState struct {
+	MaxRounds             int              `json:"max_rounds"`
+	MaxRetries            *int             `json:"max_retries,omitempty"`
+	WorkerErrorStreak     int              `json:"worker_error_streak,omitempty"`
 	Enabled               bool             `json:"enabled"`
 	Status                string           `json:"status"`
 	Epoch                 int64            `json:"epoch"`

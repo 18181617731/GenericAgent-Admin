@@ -496,7 +496,7 @@ func TestChatLoopStartAndStopAPI(t *testing.T) {
 	}()
 
 	start := httptest.NewRecorder()
-	startReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"Finish the release","max_rounds":999}`))
+	startReq := httptest.NewRequest(http.MethodPost, "/api/chat/loop/"+sid+"/start", bytes.NewBufferString(`{"objective":"Finish the release","max_rounds":999,"max_retries":0}`))
 	startReq.Header.Set("Content-Type", "application/json")
 	s.chatHandler(start, startReq)
 	if start.Code != http.StatusOK {
