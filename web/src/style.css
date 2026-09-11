@@ -22154,7 +22154,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .scheduled-task-detail-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
 .scheduled-task-detail-facts span { display: grid; gap: 3px; min-width: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-muted); }
 .scheduled-task-detail-facts b { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
-.scheduled-task-detail-facts em { overflow: hidden; color: var(--text); font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-detail-facts em { min-width: 0; color: var(--text); font-size: 12px; font-style: normal; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .scheduled-task-editor-card,
 .scheduled-task-history-card { display: grid; gap: 11px; min-width: 0; margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
 .scheduled-task-editor-card,

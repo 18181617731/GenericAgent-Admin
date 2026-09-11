@@ -2,6 +2,10 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.132 - 2026-09-11
+
+- mobile schedule detail: wrap execution-model and next-run facts instead of clipping long values with an ellipsis
+
 ## v1.0.131 - 2026-09-11
 
 - schedule: preview and confirm one-time migration of legacy numeric task models to stable model identities
