@@ -112,6 +112,52 @@ test('real ChatApp renders a Conductor workspace and navigates and stops workers
   await waitFor(() => expect(paths).toContain('POST /api/chat/cancel/worker-1'))
 })
 
+test.each(['light', 'dark', 'warm'])('review evidence remains distinct from execution (%s)', async theme => {
+  document.documentElement.dataset.theme = theme
+  localStorage.setItem('ga-admin-lang', 'en')
+  localStorage.setItem('ga-chat-last-session', 'review-parent')
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+  vi.stubGlobal('EventSource', class { addEventListener() {} removeEventListener() {} close() {} })
+  Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  const children = ['pending', 'verified', 'needs_work'].map((status, index) => ({
+    session_id: `review-worker-${index}`, dispatch_id: `dispatch-${index}`, title: status,
+    status: 'succeeded', result: 'Model claims completion',
+    evidence: [{ id: `evidence-${index}`, tool: 'code_run', result: 'Persisted test receipt' }],
+    review: { status, basis: `Review basis ${index}`, unverified: `Unverified boundary ${index}` },
+  }))
+  const parent = session('review-parent', 'Review parent', { conductor: { role: 'parent' }, conductor_children: children })
+  const sessions = [parent, ...children.map(child => session(child.session_id, child.title, {
+    conductor: { role: 'worker', parent_session_id: parent.id, dispatch_id: child.dispatch_id, status: child.status },
+  }))]
+  vi.stubGlobal('fetch', vi.fn(async input => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    let data = {}
+    if (path === '/api/chat/sessions') data = { sessions }
+    else if (path === '/api/chat/session/review-parent') data = { ...parent, messages: [], queue: [] }
+    else if (path === '/api/chat/conductor/review-parent/children') data = { children, dispatch_count: 3, dispatch_limit: 48, usage_summary: { parent: { prompt_tokens: 10, output_tokens: 2 }, children: { prompt_tokens: 50, output_tokens: 7 }, total: { prompt_tokens: 60, output_tokens: 9 }, missing_dispatches: 1 } }
+    return new Response(JSON.stringify({ ok: true, ...data, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+  render(<ChatApp />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Subagents' }))
+  const workspace = within(await screen.findByRole('complementary', { name: 'Subagents' }))
+  await waitFor(() => expect(workspace.getByText('Recorded total: 60 / 9')).toBeTruthy(), { timeout: 5000 })
+  expect(workspace.getByText('Dispatches: 3 / 48')).toBeTruthy()
+  expect(workspace.getByText('Parent: 10 / 2')).toBeTruthy()
+  expect(workspace.getByText('Finalized children: 50 / 7')).toBeTruthy()
+  expect(workspace.getByText(/Missing usage snapshots: 1/)).toBeTruthy()
+  expect(workspace.getByText(/Running usage is incomplete/)).toBeTruthy()
+  expect(workspace.getAllByText('Execution finished')).toHaveLength(3)
+  for (const label of ['Pending review', 'Verified (parent review)', 'Needs work']) expect(workspace.getByText(label)).toBeTruthy()
+  for (let index = 0; index < 3; index++) {
+    expect(workspace.getByText(`Review basis ${index}`)).toBeTruthy()
+    expect(workspace.getByText(`Unverified boundary ${index}`)).toBeTruthy()
+    expect(workspace.getByText(`evidence-${index} \u00b7 code_run`)).toBeTruthy()
+  }
+  expect(workspace.getAllByText('Persisted test receipt')).toHaveLength(3)
+  delete document.documentElement.dataset.theme
+})
+
 test('inline completion appears on detail update without becoming a user message', () => {
   const worker = { session_id: 'dynamic-worker', title: 'Live job', created_at: 1788912000 }
   const detail = child => ({ conductor: { role: 'parent' }, conductor_children: [child] })
@@ -152,7 +198,12 @@ test('inline completion appears on detail update without becoming a user message
   let upgraded = false
   const fetcher = vi.fn(async (input, init = {}) => {
     const url = new URL(String(input), 'http://localhost')
-    const current = session('plain', 'Existing conversation', upgraded ? { conductor: { role: 'parent' } } : {})
+    const current = session('plain', 'Existing conversation', { conductor: { role: upgraded ? 'parent' : '' }, conductor_children: [{ session_id: 'old-worker', dispatch_id: 'old-dispatch', status: 'succeeded', objective: 'Historical task', review: { status: 'verified' } }] })
+    if (url.pathname === '/api/chat/conductor/plain/disable') {
+      expect(init.method).toBe('POST')
+      upgraded = false
+      return json({ conductor: { role: '' } })
+    }
     if (url.pathname === '/api/chat/conductor/plain/enable') {
       expect(init.method).toBe('POST')
       upgraded = true
@@ -182,6 +233,13 @@ test('inline completion appears on detail update without becoming a user message
   expect(localStorage.getItem('ga-chat-last-session')).toBe('plain')
   expect(fetcher.mock.calls.some(([url]) => String(url).includes('/api/chat/new'))).toBe(false)
   fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
-  expect(screen.queryByRole('menuitem', { name: 'Upgrade to Conductor' })).toBeNull()
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to ordinary chat' }))
+  await waitFor(() => expect(upgraded).toBe(false))
+  expect((await screen.findAllByRole('button', { name: 'Subagents' })).length).toBeGreaterThan(0)
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  const again = await screen.findByRole('menuitem', { name: 'Upgrade to Conductor' })
+  await waitFor(() => expect(again.disabled).toBe(false))
+  fireEvent.click(again)
+  await waitFor(() => expect(upgraded).toBe(true))
   delete document.documentElement.dataset.theme
  })

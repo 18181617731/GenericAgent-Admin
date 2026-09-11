@@ -32,6 +32,7 @@ import (
 type chatMessage struct {
 	ID                string                   `json:"id"`
 	Role              string                   `json:"role"`
+	SenderKind        string                   `json:"sender_kind,omitempty"`
 	Content           string                   `json:"content"`
 	Outputs           []string                 `json:"outputs,omitempty"`
 	ModelID           string                   `json:"model_id,omitempty"`
@@ -641,8 +642,18 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			s.handleConductorDispatchEvent(sid, ev)
 			continue
 		}
+		if ev["type"] == "conductor_review" {
+			s.handleConductorReviewEvent(sid, ev)
+			continue
+		}
 		if ev["type"] == "conductor_cancel" {
 			s.handleConductorCancelEvent(sid, ev)
+			continue
+		}
+		if ev["type"] == "conductor_read" {
+			if readErr := s.confirmConductorRead(sid, ev); readErr != nil {
+				s.publishChatRun(sid, map[string]interface{}{"type": "warning", "message": "Conductor read receipt persistence failed: " + readErr.Error()})
+			}
 			continue
 		}
 		if ev["type"] == "conductor_collect" {

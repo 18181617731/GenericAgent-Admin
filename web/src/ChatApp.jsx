@@ -3464,7 +3464,7 @@ const MessageList = memo(function MessageList({ messages, models, isCurrentRunni
   </>
 })
 
-export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, onConductor, conductorDisabled, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
+export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, onConductor, conductorActive, conductorDisabled, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const fallbackTriggerRef = useRef(null)
@@ -3487,7 +3487,7 @@ export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeycha
     { icon: KeyRound, label: ct('密钥管理', 'Keychain'), onClick: onKeychain, active: keychainOpen },
     { icon: Bot, label: ct('自主行动', 'Auto-action'), onClick: onAutorun, active: autorunEnabled },
     { icon: Orbit, label: 'Loop', onClick: onLoop, active: loopOpen },
-    ...(onConductor ? [{ icon: Bot, label: ct('升级为指挥家', 'Upgrade to Conductor'), onClick: onConductor, disabled: conductorDisabled }] : []),
+    ...(onConductor ? [{ icon: Bot, label: conductorActive ? ct('切换为普通会话', 'Switch to ordinary chat') : ct('升级为指挥家', 'Upgrade to Conductor'), onClick: onConductor, disabled: conductorDisabled }] : []),
   ]
 
   return (
@@ -5028,13 +5028,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   const upgradeToConductor = async () => {
+    const action = isConductorParent(activeSessionDetail) ? 'disable' : 'enable'
     const target = activeSidRef.current
     if (!target || conductorEnablingRef.current) return
     conductorEnablingRef.current = true
     setConductorEnabling(true)
     setErr('')
     try {
-      const result = await api(`/api/chat/conductor/${encodeURIComponent(target)}/enable`, { method: 'POST' })
+      const result = await api(`/api/chat/conductor/${encodeURIComponent(target)}/${action}`, { method: 'POST' })
       setSessions(items => items.map(item => String(item.id) === String(target) ? { ...item, conductor: result.conductor } : item))
       if (activeSidRef.current === target) {
         setActiveSessionDetail(current => current && String(current.id) === String(target) ? { ...current, conductor: result.conductor } : current)
@@ -6503,12 +6504,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             void attachRunningStream(activeID, { waitForRun:true })
           }
           if (conductorPoll.refreshMetadata) {
-            const metadata = isConductorParent(after)
+            const metadata = (isConductorParent(after) || after?.conductor_children?.length > 0)
               ? await chatApi(`/api/chat/conductor/${encodeURIComponent(activeID)}/children`)
               : null
             if (!stopped && activeSidRef.current === activeID) {
               setActiveSessionDetail(current => current && String(current.id) === String(after.id)
-                ? { ...current, ...after, ...(Array.isArray(metadata?.children) ? { conductor_children: metadata.children } : {}) }
+                ? { ...current, ...after, ...(Array.isArray(metadata?.children) ? { conductor_children: metadata.children, conductor_usage_summary: metadata.usage_summary, conductor_dispatch_limit: metadata.dispatch_limit, conductor_dispatch_count: metadata.dispatch_count } : {}) }
                 : current)
             }
           } else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {
@@ -7023,8 +7024,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           >
             <GitBranch size={17}/><span className="oa-mobile-tools-item-copy">{ct('世界线', 'Timeline')}</span>{!privacyMode && (worldlineForView?.nodes?.length || 0) > 0 && <b className="oa-mobile-tools-item-badge">{worldlineForView.nodes.length}</b>}
           </button>
-          {isConductorParent(activeSessionDetail) && <button type="button" className={`oa-context-btn ${conductorWorkersOpen ? 'is-open' : ''}`} aria-expanded={conductorWorkersOpen} aria-controls="oa-conductor-workers" onClick={()=>{setConductorWorkersOpen(v=>!v); setConductorEventsOpen(false)}}><PanelRightOpen size={16}/>Subagents</button>}
-          {isConductorParent(activeSessionDetail) && <button type="button" className={`oa-context-btn ${conductorEventsOpen ? 'is-open' : ''}`} aria-expanded={conductorEventsOpen} aria-controls="oa-conductor-events" onClick={()=>{setConductorEventsOpen(v=>!v); setConductorWorkersOpen(false)}}><PanelRightOpen size={16}/>{ct('任务事件', 'Task events')}</button>}
+          {(isConductorParent(activeSessionDetail) || activeSessionDetail?.conductor_children?.length > 0) && <button type="button" className={`oa-context-btn ${conductorWorkersOpen ? 'is-open' : ''}`} aria-expanded={conductorWorkersOpen} aria-controls="oa-conductor-workers" onClick={()=>{setConductorWorkersOpen(v=>!v); setConductorEventsOpen(false)}}><PanelRightOpen size={16}/>Subagents</button>}
+          {(isConductorParent(activeSessionDetail) || activeSessionDetail?.conductor_children?.length > 0) && <button type="button" className={`oa-context-btn ${conductorEventsOpen ? 'is-open' : ''}`} aria-expanded={conductorEventsOpen} aria-controls="oa-conductor-events" onClick={()=>{setConductorEventsOpen(v=>!v); setConductorWorkersOpen(false)}}><PanelRightOpen size={16}/>{ct('任务事件', 'Task events')}</button>}
           <ThemePicker
             className="oa-mobile-tools-theme"
             value={theme}
