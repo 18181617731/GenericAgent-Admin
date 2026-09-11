@@ -7,14 +7,17 @@ const workbenchCopy = t => {
   const folderCopy = zh
     ? { folders: '任务文件夹', allTasks: '全部任务', unassigned: '未归类', newFolder: '新建文件夹', folderName: '文件夹名称', folderHelp: '用文件夹整理任务；删除文件夹不会删除任务。', renameFolder: '重命名文件夹', deleteFolder: '删除文件夹', moveTo: '移动到', folderUpdated: '文件夹已更新', cancel: '取消' }
     : { folders: 'Task folders', allTasks: 'All tasks', unassigned: 'Unassigned', newFolder: 'New folder', folderName: 'Folder name', folderHelp: 'Organize tasks into folders; deleting a folder never deletes its tasks.', renameFolder: 'Rename folder', deleteFolder: 'Delete folder', moveTo: 'Move to', folderUpdated: 'Folder updated', cancel: 'Cancel' }
+  const migrationCopy = zh
+    ? { title: '旧任务模型需要同步', description: count => `检测到 ${count} 个任务仍使用模型序号。同步会按当前模型列表写入稳定标识，并为每个任务保留 .bak 备份。`, sync: '同步旧任务模型', syncing: '同步中…', skipped: count => `${count} 个任务无法安全确认`, details: '查看无法同步的任务', stable: '已绑定稳定模型', noSelection: '跟随调度器，无需迁移' }
+    : { title: 'Legacy task models need syncing', description: count => `${count} task${count === 1 ? '' : 's'} still use numeric model positions. Syncing writes stable identities from the current model list and keeps a .bak backup for each task.`, sync: 'Sync legacy models', syncing: 'Syncing…', skipped: count => `${count} task${count === 1 ? '' : 's'} need review`, details: 'Review tasks that could not be synced', stable: 'Stable model already saved', noSelection: 'Follows the scheduler; no migration needed' }
   return zh
     ? {
     title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', executionResult: '执行结果', configStatus: '配置状态', statusHelp: '执行结果显示最近一次运行；配置状态显示当前计划，两者可能同时存在。', separator: '：', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
-      ...folderCopy,
+    ...folderCopy, migration: migrationCopy,
     }
     : {
     title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', executionResult: 'Execution result', configStatus: 'Configuration status', statusHelp: 'Execution result is the latest run; configuration status is the current schedule. Both can appear together.', separator: ': ', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
-      ...folderCopy,
+    ...folderCopy, migration: migrationCopy,
     }
 }
 
@@ -114,6 +117,19 @@ function TaskFilters({ tasks, query, filter, onQuery, onFilter, onClear, t }) {
   </div>
 }
 
+function ModelMigrationNotice({ migration, busy, onMigrate, t }) {
+  const copy = workbenchCopy(t)
+  const items = Array.isArray(migration?.items) ? migration.items : []
+  const candidates = items.filter(item => item?.status === 'migratable')
+  const skipped = items.filter(item => ['unavailable', 'ambiguous', 'invalid', 'migration_failed'].includes(item?.status))
+  if (!candidates.length && !skipped.length) return null
+  return <section className="scheduled-task-model-migration" aria-label={copy.migration.title} role="status">
+    <div className="scheduled-task-model-migration-main"><span className="scheduled-task-model-migration-icon" aria-hidden="true"><RefreshCw size={16}/></span><div><b>{copy.migration.title}</b><p>{candidates.length ? copy.migration.description(candidates.length) : copy.migration.skipped(skipped.length)}</p></div></div>
+    {candidates.length > 0 && <button type="button" className="primary scheduled-task-model-migration-action" disabled={busy} onClick={() => onMigrate?.()}><RefreshCw size={14} className={busy ? 'is-spinning' : ''}/>{busy ? copy.migration.syncing : copy.migration.sync}</button>}
+    {skipped.length > 0 && <details className="scheduled-task-model-migration-details"><summary>{copy.migration.details} ({skipped.length})</summary><ul>{skipped.map(item => <li key={item.id}><b>{item.id}</b><span>{item.reason || copy.migration.skipped(1)}</span></li>)}</ul></details>}
+  </section>
+}
+
 function TaskDetailHeader({ task, llms, t, schedulerModelNo, runState, busy, onRun, onReports, onToggle, onDelete, onClose }) {
   const copy = workbenchCopy(t)
   const id = taskID(task, t?.tasks?.unnamed)
@@ -198,7 +214,7 @@ function FolderRail({ tasks, folders, selectedFolderId, onSelectFolder, onCreate
   </aside>
 }
 
-export function ScheduledTaskWorkbench({ tasks = [], folders = [], selectedTask, selectedTaskId = '', scheduleLoading = false, scheduleError = '', scheduleLogExists = false, newTaskId, setNewTaskId, createTask, loadScheduleTasks, onScheduleLog, loadTask, clearTaskSelection, taskEditor, setTaskEditor, editorMode, setEditorMode, taskDirty, saveTask, busy, llms, t, schedulerModelNo, scheduleArtifactTitle, scheduleArtifact, onSelectArtifact, onToggle, onDelete, onRun, onReports, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveTask, taskRunStates = {} }) {
+export function ScheduledTaskWorkbench({ tasks = [], folders = [], selectedTask, selectedTaskId = '', scheduleLoading = false, scheduleError = '', scheduleLogExists = false, scheduleModelMigration = null, onMigrateModels, newTaskId, setNewTaskId, createTask, loadScheduleTasks, onScheduleLog, loadTask, clearTaskSelection, taskEditor, setTaskEditor, editorMode, setEditorMode, taskDirty, saveTask, busy, llms, t, schedulerModelNo, scheduleArtifactTitle, scheduleArtifact, onSelectArtifact, onToggle, onDelete, onRun, onReports, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveTask, taskRunStates = {} }) {
   const copy = workbenchCopy(t)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -234,6 +250,7 @@ export function ScheduledTaskWorkbench({ tasks = [], folders = [], selectedTask,
     </div>
     {createOpen && <form className="scheduled-task-create-disclosure" onSubmit={submitCreate}><div><b>{t?.create || '创建'}</b><p>{copy.createHelp}</p></div><input aria-label={t?.hints?.newTaskId || 'new_task'} value={newTaskId || ''} onChange={event => setNewTaskId?.(event.target.value)} placeholder={t?.hints?.newTaskId || 'new_task'}/><button type="submit" className="primary" disabled={busy || createSubmitting || !newTaskId?.trim()}>{t?.create || '创建'}</button></form>}
     <TaskFilters tasks={tasks} query={query} filter={filter} onQuery={setQuery} onFilter={setFilter} onClear={clearFilters} t={t}/>
+    <ModelMigrationNotice migration={scheduleModelMigration} busy={busy} onMigrate={onMigrateModels} t={t}/>
     {scheduleError && <p className="err-text scheduled-task-error">{scheduleError}</p>}
     <div className={`scheduled-workbench-body${selectedTask ? ' has-selection' : ''}`}>
       <FolderRail tasks={tasks} folders={folders} selectedFolderId={selectedFolderId} onSelectFolder={setSelectedFolderId} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} disabled={busy || scheduleLoading} t={t}/>

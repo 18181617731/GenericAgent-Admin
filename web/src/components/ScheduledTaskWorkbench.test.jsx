@@ -175,4 +175,24 @@ describe('ScheduledTaskWorkbench', () => {
     fireEvent.click(within(document.querySelector('.scheduled-task-folder-create')).getByRole('button', { name: '新建文件夹' }))
     await waitFor(() => expect(onCreateFolder).toHaveBeenCalledWith('复盘'))
   })
+
+  test('shows a safe legacy-model migration notice and delegates the confirmed action', () => {
+    const onMigrateModels = vi.fn()
+    render(<ScheduledTaskWorkbench {...props({
+      scheduleModelMigration: {
+        items: [
+          { id: 'legacy', status: 'migratable', llm_no: 4, model_label: 'Primary model' },
+          { id: 'missing', status: 'unavailable', llm_no: 8, reason: '当前模型列表中不存在 #8' },
+        ],
+        migratable: 1,
+        skipped: 1,
+      },
+      onMigrateModels,
+    })}/> )
+    expect(screen.getByRole('status', { name: '旧任务模型需要同步' })).toBeTruthy()
+    expect(screen.getByText(/检测到 1 个任务仍使用模型序号/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '同步旧任务模型' }))
+    expect(onMigrateModels).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/查看无法同步的任务/)).toBeTruthy()
+  })
 })

@@ -347,13 +347,14 @@ func TestRegisteredGetRoutesDoNotReachUnreviewedSideEffects(t *testing.T) {
 	}
 
 	reviewedGetSideEffects := map[string]bool{
-		"/api/chat/search":        true, // GET may run one-time chat data migration/dir initialization before searching.
-		"/api/chat/sessions":      true, // GET may run one-time chat data migration/dir initialization before listing sessions.
-		"/api/chat/":              true, // GET session/state/stream/file paths share chat storage helpers that may migrate legacy data.
-		"/api/usage/overview":     true, // First GET migrates legacy per-message usage into the independent ledger.
-		"/api/setup/env":          true, // GET setup diagnostics intentionally run tool version probes (git/python/uv/npm).
-		"/api/tmwebdriver/status": true, // GET TMWebDriver diagnostics intentionally run local process/python dependency probes.
-		"/api/keychain":           true, // GET decrypts the local keychain to list names; it never writes or returns values.
+		"/api/chat/search":              true, // GET may run one-time chat data migration/dir initialization before searching.
+		"/api/chat/sessions":            true, // GET may run one-time chat data migration/dir initialization before listing sessions.
+		"/api/chat/":                    true, // GET session/state/stream/file paths share chat storage helpers that may migrate legacy data.
+		"/api/usage/overview":           true, // First GET migrates legacy per-message usage into the independent ledger.
+		"/api/setup/env":                true, // GET setup diagnostics intentionally run tool version probes (git/python/uv/npm).
+		"/api/tmwebdriver/status":       true, // GET TMWebDriver diagnostics intentionally run local process/python dependency probes.
+		"/api/keychain":                 true, // GET decrypts the local keychain to list names; it never writes or returns values.
+		"/api/schedule/model-migration": true, // GET previews the current runtime model list before any task file is changed.
 	}
 
 	var unreviewed []string
@@ -394,7 +395,7 @@ func TestReviewedGetSideEffectRoutesStayCurrent(t *testing.T) {
 	for _, route := range registered {
 		routesByPath[route.Path] = route
 	}
-	for _, routePath := range []string{"/api/chat/search", "/api/chat/sessions", "/api/chat/", "/api/usage/overview", "/api/setup/env", "/api/tmwebdriver/status"} {
+	for _, routePath := range []string{"/api/chat/search", "/api/chat/sessions", "/api/chat/", "/api/usage/overview", "/api/setup/env", "/api/tmwebdriver/status", "/api/schedule/model-migration"} {
 		route, ok := routesByPath[routePath]
 		if !ok || !methodsByHandler[route.Handler][http.MethodGet] || len(sideEffectsByHandler[route.Handler]) == 0 {
 			t.Fatalf("reviewed GET side-effect route %s is stale; update route safety contract", routePath)
@@ -1098,6 +1099,7 @@ func dangerousConfirmRouteCases() []dangerousConfirmRouteCase {
 		{http.MethodPut, "/api/schedule/task", `{"id":"task","task":{}}`},
 		{http.MethodPost, "/api/schedule/create", `{}`},
 		{http.MethodPost, "/api/schedule/folders", `{}`},
+		{http.MethodPost, "/api/schedule/model-migration", `{}`},
 		{http.MethodPost, "/api/schedule/delete", `{}`},
 		{http.MethodPost, "/api/schedule/toggle", `{}`},
 		{http.MethodPost, "/api/schedule/run", `{}`},

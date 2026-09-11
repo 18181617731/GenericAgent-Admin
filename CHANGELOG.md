@@ -2,6 +2,12 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.131 - 2026-09-11
+
+- schedule: preview and confirm one-time migration of legacy numeric task models to stable model identities
+- schedule: preserve legacy `llm_no` hints and create timestamped backups for every migrated task
+- schedule UI: show migration candidates and safe-review reasons with a mobile-friendly sync action
+
 ## v1.0.130 - 2026-09-11
 
 ### 管理台路径兼容

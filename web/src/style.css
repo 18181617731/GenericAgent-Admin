@@ -22072,6 +22072,17 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .scheduled-task-filter-buttons button.active span { background: color-mix(in srgb, var(--ga-accent, #10a37f) 16%, var(--surface)); color: var(--ga-accent, #08745c); }
 .scheduled-task-clear { border-color: var(--border); background: var(--surface); color: var(--text); }
 .scheduled-task-error { margin: 0 20px 12px; }
+.scheduled-task-model-migration { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; margin: 0 20px 12px; padding: 11px 12px; border: 1px solid color-mix(in srgb, #d97706 34%, var(--border)); border-left: 3px solid #d97706; border-radius: 10px; background: color-mix(in srgb, #d97706 7%, var(--surface)); }
+.scheduled-task-model-migration-main { display: flex; align-items: flex-start; gap: 9px; min-width: 0; flex: 1 1 300px; }
+.scheduled-task-model-migration-icon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; background: color-mix(in srgb, #d97706 16%, var(--surface)); color: #a95100; }
+.scheduled-task-model-migration-main b { color: var(--text); font-size: 12px; }
+.scheduled-task-model-migration-main p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.scheduled-task-model-migration-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 31px; white-space: nowrap; }
+.scheduled-task-model-migration-details { flex: 1 1 100%; min-width: 0; color: var(--muted); font-size: 11px; }
+.scheduled-task-model-migration-details summary { cursor: pointer; color: #a95100; }
+.scheduled-task-model-migration-details ul { display: grid; gap: 4px; margin: 7px 0 0; padding-left: 17px; }
+.scheduled-task-model-migration-details li { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.scheduled-task-model-migration-details li span { min-width: 0; overflow-wrap: anywhere; }
 .scheduled-workbench-body { display: grid; grid-template-columns: minmax(255px, .86fr) minmax(0, 1.42fr); min-height: 520px; }
 .scheduled-task-list-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface-muted) 42%, var(--surface)); }
 .scheduled-task-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px 10px; border-bottom: 1px solid var(--border); }
@@ -22186,6 +22197,8 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   .scheduled-task-filter-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .scheduled-task-filter-buttons button { justify-content: center; padding-inline: 4px; }
   .scheduled-task-clear { align-self: flex-start; }
+  .scheduled-task-model-migration { align-items: stretch; flex-direction: column; margin-inline: 15px; }
+  .scheduled-task-model-migration-action { width: 100%; }
   .scheduled-workbench-body { display: block; min-height: 0; }
   .scheduled-task-list-pane { border-right: 0; }
   .scheduled-task-list { max-height: min(62svh, 560px); }

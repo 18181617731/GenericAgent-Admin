@@ -283,7 +283,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [fileStatus, setFileStatus] = useState({}), [memoryRefreshing, setMemoryRefreshing] = useState(false)
   const [taskId, setTaskId] = useState(''), [taskEditor, setTaskEditor] = useState('{}'), [loadedTaskEditor, setLoadedTaskEditor] = useState('{}'), [newTaskId, setNewTaskId] = useState('new_task')
   const [editorMode, setEditorMode] = useState('form')
-  const [scheduleData, setScheduleData] = useState(null), [scheduleLoading, setScheduleLoading] = useState(false), [scheduleError, setScheduleError] = useState('')
+  const [scheduleData, setScheduleData] = useState(null), [scheduleLoading, setScheduleLoading] = useState(false), [scheduleError, setScheduleError] = useState(''), [scheduleModelMigration, setScheduleModelMigration] = useState(null)
   const scheduleInitialLoad = useRef(false)
   const [taskSubTab, setTaskSubTab] = useState(initialRoute.taskSubTab)
   const [scheduleArtifactTitle, setScheduleArtifactTitle] = useState(''), [scheduleArtifact, setScheduleArtifact] = useState('')
@@ -360,9 +360,13 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (!quiet) setScheduleLoading(true)
     setScheduleError('')
     try {
-      const d = await api('/api/schedule/tasks')
+      const [d, migration] = await Promise.all([
+        api('/api/schedule/tasks'),
+        api('/api/schedule/model-migration').catch(() => null),
+      ])
       const normalized = normalizeScheduleTasksPayload(d)
       setScheduleData(normalized)
+      setScheduleModelMigration(migration)
       return normalized
     } catch (e) {
       setScheduleData({ enabled: false, version: 'unknown', tasks: [] })
@@ -889,6 +893,21 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setScheduleReportTaskId('')
   }
   const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; known.push('model_key'); const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(result?.raw || raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const migrateScheduleModels = async () => {
+    const count = Number(scheduleModelMigration?.migratable || 0)
+    if (!count || !await confirmDanger('schedule-model-migration', `同步 ${count} 个旧定时任务的模型标识？每个任务会保留原 JSON 备份。`)) return false
+    setBusy(true)
+    try {
+      const result = await api('/api/schedule/model-migration', { dangerous: true, method: 'POST', body: JSON.stringify({}) })
+      await loadScheduleTasks({ quiet: true })
+      const migrated = Number(result?.migrated || 0)
+      setMsg(lang === 'zh' ? `已同步 ${migrated} 个旧任务模型，原配置已备份` : `Synced ${migrated} legacy task model${migrated === 1 ? '' : 's'} with backups`)
+      return migrated > 0
+    } catch (e) {
+      setMsg(e.message)
+      return false
+    } finally { setBusy(false) }
+  }
   const createTask = async () => {
     const id = newTaskId.trim()
     if (!id) { setMsg('Schedule task id is required'); return false }
@@ -1506,6 +1525,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
           selectedTaskId={taskId}
           scheduleLoading={scheduleLoading}
           scheduleError={scheduleError}
+          scheduleModelMigration={scheduleModelMigration}
+          onMigrateModels={migrateScheduleModels}
           scheduleLogExists={schedule.log?.exists}
           newTaskId={newTaskId}
           setNewTaskId={setNewTaskId}
