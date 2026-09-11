@@ -888,7 +888,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLoadedTaskEditor('{}')
     setScheduleReportTaskId('')
   }
-  const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
+  const saveTask = async () => { const id = taskId || newTaskId; if (!taskDirty || !confirmDanger('schedule-save', `保存定时任务 ${id}？后端会写入 JSON 并生成备份。`)) return; setBusy(true); try { let raw = JSON.parse(taskEditor); if (editorMode==='form') { const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no']; known.push('model_key'); const filtered = {}; for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]; raw = filtered; } const result = await api('/api/schedule/task', { dangerous:true, method:'PUT', body: JSON.stringify({ id, raw }) }); const saved = safeJson(result?.raw || raw); setTaskEditor(saved); setLoadedTaskEditor(saved); const dispatchUpdated = result?.runtime_patch?.updated?.length; setMsg(dispatchUpdated ? t.tasks.modelDispatchUpdated(result.scheduler_restarted) : t.hints.taskSaved); await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const createTask = async () => {
     const id = newTaskId.trim()
     if (!id) { setMsg('Schedule task id is required'); return false }
@@ -913,6 +913,50 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       setMsg(e.message)
       return false
     } finally{ setBusy(false) }
+  }
+  const createScheduleFolder = async name => {
+    const folderName = String(name || '').trim()
+    if (!folderName) return false
+    if (!confirmDanger('schedule-folder-create', `新建定时任务文件夹“${folderName}”？`)) return false
+    setBusy(true)
+    try {
+      await api('/api/schedule/folders', { dangerous:true, method:'POST', body: JSON.stringify({ action:'create', name: folderName }) })
+      await loadScheduleTasks({ quiet: true })
+      setMsg(lang === 'zh' ? '文件夹已创建' : 'Folder created')
+      return true
+    } catch (e) { setMsg(e.message); return false } finally { setBusy(false) }
+  }
+  const renameScheduleFolder = async (id, name) => {
+    const folderName = String(name || '').trim()
+    if (!id || !folderName || !confirmDanger('schedule-folder-rename', `将定时任务文件夹重命名为“${folderName}”？`)) return false
+    setBusy(true)
+    try {
+      await api('/api/schedule/folders', { dangerous:true, method:'POST', body: JSON.stringify({ action:'rename', id, name: folderName }) })
+      await loadScheduleTasks({ quiet: true })
+      setMsg(lang === 'zh' ? '文件夹已重命名' : 'Folder renamed')
+      return true
+    } catch (e) { setMsg(e.message); return false } finally { setBusy(false) }
+  }
+  const deleteScheduleFolder = async id => {
+    if (!id || !confirmDanger('schedule-folder-delete', '删除文件夹？任务不会删除，会移回“未归类”。')) return false
+    setBusy(true)
+    try {
+      await api('/api/schedule/folders', { dangerous:true, method:'POST', body: JSON.stringify({ action:'delete', id }) })
+      await loadScheduleTasks({ quiet: true })
+      setMsg(lang === 'zh' ? '文件夹已删除，任务已移回未归类' : 'Folder deleted; tasks moved to Unassigned')
+      return true
+    } catch (e) { setMsg(e.message); return false } finally { setBusy(false) }
+  }
+  const moveScheduleTask = async (taskID, folderID) => {
+    if (!taskID) return false
+    const destination = folderID || (lang === 'zh' ? '未归类' : 'Unassigned')
+    if (!await confirmDanger('schedule-folder-move', lang === 'zh' ? `将任务 ${taskID} 移动到“${destination}”？` : `Move scheduled task ${taskID} to “${destination}”?`)) return false
+    setBusy(true)
+    try {
+      await api('/api/schedule/folders', { dangerous:true, method:'POST', body: JSON.stringify({ action:'move', task_id: taskID, folder_id: folderID || '' }) })
+      await loadScheduleTasks({ quiet: true })
+      return true
+    } catch (e) { setMsg(e.message); return false } finally { setBusy(false) }
   }
   const deleteTask = async (id = taskId) => { if (!id) return; if (!confirmDanger('schedule-delete', `删除定时任务 ${id}？后端会先生成备份。`)) return; setBusy(true); try { await api('/api/schedule/delete', { dangerous:true, method:'POST', body: JSON.stringify({ id }) }); setMsg(t.hints.taskDeleted); if (id === taskId) { invalidateScheduleArtifact(true); setTaskId(''); setTaskEditor('{}'); setLoadedTaskEditor('{}') }; await load(); setTaskSubTab('scheduled') } catch(e){ setMsg(e.message) } finally{ setBusy(false) } }
   const readScheduleArtifact = async (path, targetTab = 'tasks', targetSubTab = 'reports') => {
@@ -1457,6 +1501,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
 
         {taskSubTab==='scheduled' && <ScheduledTaskWorkbench
           tasks={tasks}
+          folders={Array.isArray(schedule.folders) ? schedule.folders : []}
           selectedTask={selectedScheduleTask}
           selectedTaskId={taskId}
           scheduleLoading={scheduleLoading}
@@ -1486,6 +1531,10 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
           onDelete={deleteTask}
           onRun={runTask}
           onReports={openTaskReports}
+          onCreateFolder={createScheduleFolder}
+          onRenameFolder={renameScheduleFolder}
+          onDeleteFolder={deleteScheduleFolder}
+          onMoveTask={moveScheduleTask}
           taskRunStates={taskRunStates}
         />}
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -144,6 +145,20 @@ func readScheduleRunID(r *http.Request) string {
 }
 
 func (s *Server) manualScheduleModelNo(cfg config.AppConfig, raw map[string]any) (int, error) {
+	modelKey, selectedKey, err := ga.ScheduleTaskModelKey(raw)
+	if err != nil {
+		return 0, err
+	}
+	if selectedKey {
+		llms, listErr := s.listGARuntimeLLMs(cfg)
+		if listErr != nil {
+			return 0, fmt.Errorf("cannot resolve scheduled task model: %w", listErr)
+		}
+		if llmNo, ok := scheduleLLMNoByModelKey(llms, modelKey); ok {
+			return llmNo, nil
+		}
+		return 0, errors.New("scheduled task model is unavailable; choose it again from the current model list")
+	}
 	llmNo, selected, err := ga.ScheduleTaskLLMNo(raw)
 	if err != nil {
 		return 0, err

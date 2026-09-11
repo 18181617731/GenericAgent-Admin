@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"genericagent-admin-go/internal/ga"
 )
@@ -13,6 +14,58 @@ func (s *Server) scheduleTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, ga.BuildSchedule(s.CfgStore.Snapshot().GARoot))
+}
+
+// scheduleFolders exposes the Admin-only grouping index. GET is read-only;
+// mutations remain behind the existing dangerous-confirm middleware because
+// they write metadata under the selected GA root.
+func (s *Server) scheduleFolders(w http.ResponseWriter, r *http.Request) {
+	root := s.CfgStore.Snapshot().GARoot
+	switch r.Method {
+	case http.MethodGet:
+		state, err := ga.LoadScheduleFolders(root)
+		if err != nil {
+			bad(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, state)
+	case http.MethodPost:
+		var req struct {
+			Action   string `json:"action"`
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			TaskID   string `json:"task_id"`
+			FolderID string `json:"folder_id"`
+		}
+		if err := decode(r, &req); err != nil {
+			bad(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		var (
+			state ga.ScheduleFolders
+			err   error
+		)
+		switch strings.ToLower(strings.TrimSpace(req.Action)) {
+		case "create":
+			state, err = ga.CreateScheduleFolder(root, req.Name)
+		case "rename":
+			state, err = ga.RenameScheduleFolder(root, req.ID, req.Name)
+		case "delete":
+			state, err = ga.DeleteScheduleFolder(root, req.ID)
+		case "move":
+			state, err = ga.MoveScheduleTask(root, req.TaskID, req.FolderID)
+		default:
+			bad(w, http.StatusBadRequest, "action must be create, rename, delete or move")
+			return
+		}
+		if err != nil {
+			bad(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "folders": state})
+	default:
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (s *Server) scheduleTask(w http.ResponseWriter, r *http.Request) {
@@ -100,15 +153,42 @@ func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) prepareScheduleTaskModel(raw map[string]any) (ga.ScheduleModelDispatchResult, bool, error) {
 	llmNo, selected, err := ga.ScheduleTaskLLMNo(raw)
-	if err != nil || !selected {
+	if err != nil {
 		return ga.ScheduleModelDispatchResult{}, false, err
+	}
+	modelKey, selectedKey, err := ga.ScheduleTaskModelKey(raw)
+	if err != nil {
+		return ga.ScheduleModelDispatchResult{}, false, err
+	}
+	if !selected && !selectedKey {
+		return ga.ScheduleModelDispatchResult{}, false, nil
 	}
 	llms, err := s.listGARuntimeLLMs(s.CfgStore.Snapshot())
 	if err != nil {
 		return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("cannot verify scheduled task model: %w", err)
 	}
-	if !containsScheduleLLMNo(llms, llmNo) {
-		return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("scheduled task model #%d is unavailable", llmNo)
+	if selectedKey {
+		resolved, ok := scheduleLLMNoByModelKey(llms, modelKey)
+		if !ok {
+			return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("scheduled task model is unavailable; choose it again from the current model list")
+		}
+		llmNo, selected = resolved, true
+		// Keep the numeric field as a backwards-compatible hint for older GA
+		// runtimes; the stable key remains authoritative.
+		if raw != nil {
+			raw["llm_no"] = llmNo
+		}
+	} else {
+		if !containsScheduleLLMNo(llms, llmNo) {
+			return ga.ScheduleModelDispatchResult{}, false, fmt.Errorf("scheduled task model #%d is unavailable", llmNo)
+		}
+		// Migrate old tasks when they are next saved. This locks the selected
+		// backend before a later provider reorder can change its index.
+		if raw != nil {
+			if key := scheduleModelKeyByLLMNo(llms, llmNo); key != "" {
+				raw["model_key"] = key
+			}
+		}
 	}
 	patch, err := ga.EnsureScheduleModelDispatch(s.CfgStore.Snapshot().GARoot)
 	if err != nil || len(patch.Updated) == 0 {
@@ -125,6 +205,33 @@ func (s *Server) prepareScheduleTaskModel(raw map[string]any) (ga.ScheduleModelD
 		return patch, false, fmt.Errorf("restart scheduler for model dispatch: %w", err)
 	}
 	return patch, true, nil
+}
+
+func scheduleLLMNoByModelKey(llms []map[string]interface{}, want string) (int, bool) {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return 0, false
+	}
+	for _, llm := range llms {
+		if strings.TrimSpace(fmt.Sprint(llm["model_key"])) != want {
+			continue
+		}
+		index, selected, err := ga.ScheduleTaskLLMNo(map[string]any{"llm_no": llm["index"]})
+		if err == nil && selected {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func scheduleModelKeyByLLMNo(llms []map[string]interface{}, want int) string {
+	for _, llm := range llms {
+		index, selected, err := ga.ScheduleTaskLLMNo(map[string]any{"llm_no": llm["index"]})
+		if err == nil && selected && index == want {
+			return strings.TrimSpace(fmt.Sprint(llm["model_key"]))
+		}
+	}
+	return ""
 }
 
 func containsScheduleLLMNo(llms []map[string]interface{}, want int) bool {

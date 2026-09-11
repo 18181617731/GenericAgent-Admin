@@ -662,6 +662,12 @@ class GenericAgent:
 	if llms[0]["model"] != "valid-model" {
 		t.Fatalf("valid model=%v, want valid-model", llms[0]["model"])
 	}
+	if got, want := llms[0]["model_key"], "valid-model\x1fvalid-provider\x1f"; got != want {
+		t.Fatalf("valid model key=%v, want %q", got, want)
+	}
+	if _, leaked := llms[0]["apibase"]; leaked {
+		t.Fatal("runtime model response must not expose apibase")
+	}
 }
 
 func TestAnnotateChatLLMFailoverGroupsDisplayName(t *testing.T) {

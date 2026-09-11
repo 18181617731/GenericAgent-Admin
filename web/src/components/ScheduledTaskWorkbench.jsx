@@ -1,15 +1,20 @@
 import React, { useMemo, useState } from 'react'
-import { CalendarClock, ChevronLeft, ChevronRight, Circle, CircleAlert, Code2, FileCode2, FileText, History, LoaderCircle, Play, Power, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { CalendarClock, ChevronLeft, ChevronRight, Circle, CircleAlert, Code2, FileCode2, FileText, Folder, FolderPlus, History, Inbox, LoaderCircle, Pencil, Play, Power, RefreshCw, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { ScheduleArtifactPreview, ScheduleTaskHistory, TaskFormEditor, taskModelLabel, taskRunState, taskRunStateLabel, taskState } from './schedule.jsx'
 
 const workbenchCopy = t => {
   const zh = t?.autostart === '开机自启'
+  const folderCopy = zh
+    ? { folders: '任务文件夹', allTasks: '全部任务', unassigned: '未归类', newFolder: '新建文件夹', folderName: '文件夹名称', folderHelp: '用文件夹整理任务；删除文件夹不会删除任务。', renameFolder: '重命名文件夹', deleteFolder: '删除文件夹', moveTo: '移动到', folderUpdated: '文件夹已更新', cancel: '取消' }
+    : { folders: 'Task folders', allTasks: 'All tasks', unassigned: 'Unassigned', newFolder: 'New folder', folderName: 'Folder name', folderHelp: 'Organize tasks into folders; deleting a folder never deletes its tasks.', renameFolder: 'Rename folder', deleteFolder: 'Delete folder', moveTo: 'Move to', folderUpdated: 'Folder updated', cancel: 'Cancel' }
   return zh
     ? {
-    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
+    title: '已安排的任务', summary: (shown, total) => `显示 ${shown} / ${total} 项`, search: '搜索任务名称或提示词', filterLabel: '状态筛选', all: '全部', enabled: '已启用', paused: '已暂停', anomaly: '需关注', configError: '配置异常', overdue: '调度逾期', executionResult: '执行结果', configStatus: '配置状态', statusHelp: '执行结果显示最近一次运行；配置状态显示当前计划，两者可能同时存在。', separator: '：', noMatch: '没有匹配的任务', clear: '清除筛选', choose: '选择一个任务查看详情', createHelp: '输入任务 ID 后创建新的定时任务', close: '返回任务列表', detail: '任务详情', prompt: '任务提示词', next: '下次执行', model: '执行模型', noNext: '暂无下一次执行提示', service: '调度服务',
+      ...folderCopy,
     }
     : {
-    title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
+    title: 'Scheduled tasks', summary: (shown, total) => `${shown} of ${total} tasks`, search: 'Search task name or prompt', filterLabel: 'Status filter', all: 'All', enabled: 'Enabled', paused: 'Paused', anomaly: 'Attention', configError: 'Configuration error', overdue: 'Schedule overdue', executionResult: 'Execution result', configStatus: 'Configuration status', statusHelp: 'Execution result is the latest run; configuration status is the current schedule. Both can appear together.', separator: ': ', noMatch: 'No matching tasks', clear: 'Clear filters', choose: 'Select a task to view details', createHelp: 'Enter a task ID to create a new scheduled task', close: 'Back to task list', detail: 'Task details', prompt: 'Task prompt', next: 'Next run', model: 'Execution model', noNext: 'No next-run hint', service: 'Scheduler service',
+      ...folderCopy,
     }
 }
 
@@ -38,7 +43,25 @@ const taskConfigDetail = (task, state) => {
   return ''
 }
 
-function TaskListItem({ task, selected, llms, t, schedulerModelNo, onSelect }) {
+function FolderAssignment({ task, folders = [], t, onMoveTask }) {
+  const copy = workbenchCopy(t)
+  const [open, setOpen] = useState(false)
+  const current = folders.find(folder => folder.id === task?.folder_id)
+  const label = current?.name || copy.unassigned
+  const choose = folderID => {
+    setOpen(false)
+    if (folderID !== (task?.folder_id || '')) onMoveTask?.(task.id, folderID)
+  }
+  return <div className="scheduled-task-folder-assignment" onClick={event => event.stopPropagation()}>
+    <button type="button" className="scheduled-task-folder-trigger" aria-haspopup="menu" aria-expanded={open} aria-label={copy.moveTo + ': ' + label} onClick={() => setOpen(value => !value)}><Folder size={13}/><span>{label}</span><ChevronRight size={13} className={open ? 'is-open' : ''}/></button>
+    {open && <div className="scheduled-task-folder-menu" role="menu">
+      <button type="button" role="menuitemradio" aria-checked={!task?.folder_id} onClick={() => choose('')}><Inbox size={13}/>{copy.unassigned}</button>
+      {folders.map(folder => <button type="button" role="menuitemradio" aria-checked={folder.id === task?.folder_id} key={folder.id} onClick={() => choose(folder.id)}><Folder size={13}/>{folder.name}</button>)}
+    </div>}
+  </div>
+}
+
+function TaskListItem({ task, selected, llms, t, schedulerModelNo, folders, onMoveTask, onSelect }) {
   const copy = workbenchCopy(t)
   const id = taskID(task, t?.tasks?.unnamed)
   const state = taskConfigState(task)
@@ -51,7 +74,15 @@ function TaskListItem({ task, selected, llms, t, schedulerModelNo, onSelect }) {
   const latestLabel = t?.autostart === '开机自启' ? '最近执行' : 'Latest run'
   const summary = task.next_hint || taskModelLabel(task, llms, t, schedulerModelNo)
   const cadence = `${task.schedule || t?.tasks?.unscheduled || '未排程'} · ${task.repeat || t?.tasks?.manual || '手动'}`
-  return <button type="button" className={`scheduled-task-row task-row task-run-${runState}${selected ? ' is-selected' : ''}`} role="option" aria-selected={selected} onClick={() => onSelect?.(id)}>
+  const openTask = () => onSelect?.(id)
+  const onKeyDown = event => {
+    if (event.target !== event.currentTarget) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openTask()
+    }
+  }
+  return <article className={`scheduled-task-row task-row task-run-${runState}${selected ? ' is-selected' : ''}`} role="option" aria-selected={selected} tabIndex={0} onClick={openTask} onKeyDown={onKeyDown}>
     <span className={`scheduled-task-row-state run-${runState}`} aria-hidden="true">{runState === 'failed' ? <CircleAlert size={17}/> : selected ? <Circle size={17} fill="currentColor"/> : <Circle size={17}/>}</span>
     <span className="scheduled-task-row-main">
       <span className="scheduled-task-row-title"><b>{id}</b><em className={`task-state-badge run-${runState}`}>{runLabel}</em></span>
@@ -59,9 +90,10 @@ function TaskListItem({ task, selected, llms, t, schedulerModelNo, onSelect }) {
       <span className="scheduled-task-row-latest">{latestLabel}：{validExecutedAt ? executedAt.toLocaleString() : (t?.autostart === '开机自启' ? '暂无' : 'None')}</span>
       <small className={resultDetail ? `task-run-detail ${runState}` : ''}>{resultDetail || summary || copy.noNext}</small>
       {configDetail && configDetail !== resultDetail && <small className={`task-config-detail ${state}`}>{configDetail}</small>}
+      <FolderAssignment task={task} folders={folders} t={t} onMoveTask={onMoveTask}/>
     </span>
     <ChevronRight size={16} className="scheduled-task-row-chevron" aria-hidden="true"/>
-  </button>
+  </article>
 }
 
 function TaskFilters({ tasks, query, filter, onQuery, onFilter, onClear, t }) {
@@ -138,10 +170,39 @@ function TaskDetail({ task, taskEditor, setTaskEditor, editorMode, setEditorMode
   </section>
 }
 
-export function ScheduledTaskWorkbench({ tasks = [], selectedTask, selectedTaskId = '', scheduleLoading = false, scheduleError = '', scheduleLogExists = false, newTaskId, setNewTaskId, createTask, loadScheduleTasks, onScheduleLog, loadTask, clearTaskSelection, taskEditor, setTaskEditor, editorMode, setEditorMode, taskDirty, saveTask, busy, llms, t, schedulerModelNo, scheduleArtifactTitle, scheduleArtifact, onSelectArtifact, onToggle, onDelete, onRun, onReports, taskRunStates = {} }) {
+function FolderRail({ tasks, folders, selectedFolderId, onSelectFolder, onCreateFolder, onRenameFolder, onDeleteFolder, disabled, t }) {
+  const copy = workbenchCopy(t)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [name, setName] = useState('')
+  const submit = async event => {
+    event.preventDefault()
+    if (disabled || !name.trim()) return
+    if (await onCreateFolder?.(name.trim())) {
+      setName('')
+      setCreateOpen(false)
+    }
+  }
+  const countFor = folderID => tasks.filter(task => (task.folder_id || '') === folderID).length
+  const rename = folder => {
+    const next = window.prompt(copy.renameFolder, folder.name)
+    if (next && next.trim() && next.trim() !== folder.name) onRenameFolder?.(folder.id, next.trim())
+  }
+  return <aside className="scheduled-task-folder-rail" aria-label={copy.folders}>
+    <div className="scheduled-task-folder-heading"><div><span className="scheduled-workbench-kicker">{copy.folders}</span><p>{copy.folderHelp}</p></div><button type="button" className="scheduled-task-folder-add" aria-label={copy.newFolder} title={copy.newFolder} disabled={disabled} onClick={() => setCreateOpen(value => !value)}><FolderPlus size={15}/></button></div>
+    {createOpen && <form className="scheduled-task-folder-create" onSubmit={submit}><input autoFocus aria-label={copy.folderName} value={name} onChange={event => setName(event.target.value)} placeholder={copy.folderName}/><div><button type="submit" className="primary" disabled={disabled || !name.trim()}>{copy.newFolder}</button><button type="button" className="secondary" onClick={() => { setCreateOpen(false); setName('') }}><X size={13}/>{copy.cancel}</button></div></form>}
+    <nav className="scheduled-task-folder-list" aria-label={copy.folders}>
+      <button type="button" className={selectedFolderId === '' ? 'active' : ''} aria-pressed={selectedFolderId === ''} onClick={() => onSelectFolder('')}><Inbox size={14}/><span>{copy.allTasks}</span><b>{tasks.length}</b></button>
+      <button type="button" className={selectedFolderId === '__unassigned__' ? 'active' : ''} aria-pressed={selectedFolderId === '__unassigned__'} onClick={() => onSelectFolder('__unassigned__')}><Inbox size={14}/><span>{copy.unassigned}</span><b>{countFor('')}</b></button>
+      {folders.map(folder => <div className="scheduled-task-folder-item" key={folder.id}><button type="button" className={selectedFolderId === folder.id ? 'active' : ''} aria-pressed={selectedFolderId === folder.id} onClick={() => onSelectFolder(folder.id)}><Folder size={14}/><span>{folder.name}</span><b>{countFor(folder.id)}</b></button><div className="scheduled-task-folder-actions"><button type="button" aria-label={copy.renameFolder + ': ' + folder.name} title={copy.renameFolder} disabled={disabled} onClick={() => rename(folder)}><Pencil size={12}/></button><button type="button" aria-label={copy.deleteFolder + ': ' + folder.name} title={copy.deleteFolder} disabled={disabled} onClick={() => onDeleteFolder?.(folder.id)}><Trash2 size={12}/></button></div></div>)}
+    </nav>
+  </aside>
+}
+
+export function ScheduledTaskWorkbench({ tasks = [], folders = [], selectedTask, selectedTaskId = '', scheduleLoading = false, scheduleError = '', scheduleLogExists = false, newTaskId, setNewTaskId, createTask, loadScheduleTasks, onScheduleLog, loadTask, clearTaskSelection, taskEditor, setTaskEditor, editorMode, setEditorMode, taskDirty, saveTask, busy, llms, t, schedulerModelNo, scheduleArtifactTitle, scheduleArtifact, onSelectArtifact, onToggle, onDelete, onRun, onReports, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveTask, taskRunStates = {} }) {
   const copy = workbenchCopy(t)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
+  const [selectedFolderId, setSelectedFolderId] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const filteredTasks = useMemo(() => {
@@ -150,11 +211,12 @@ export function ScheduledTaskWorkbench({ tasks = [], selectedTask, selectedTaskI
       const state = taskState(task)
       const id = taskID(task, t?.tasks?.unnamed)
       const matchesFilter = filter === 'all' || state === filter
+      const matchesFolder = selectedFolderId === '' || (selectedFolderId === '__unassigned__' ? !task.folder_id : task.folder_id === selectedFolderId)
       const haystack = `${id} ${task.name || ''} ${task.prompt || ''}`.toLowerCase()
-      return matchesFilter && (!needle || haystack.includes(needle))
+      return matchesFilter && matchesFolder && (!needle || haystack.includes(needle))
     })
-  }, [filter, query, t?.tasks?.unnamed, tasks])
-  const clearFilters = () => { setQuery(''); setFilter('all') }
+  }, [filter, query, selectedFolderId, t?.tasks?.unnamed, tasks])
+  const clearFilters = () => { setQuery(''); setFilter('all'); setSelectedFolderId('') }
   const submitCreate = async event => {
     event.preventDefault()
     if (busy || createSubmitting || !newTaskId?.trim()) return
@@ -174,7 +236,8 @@ export function ScheduledTaskWorkbench({ tasks = [], selectedTask, selectedTaskI
     <TaskFilters tasks={tasks} query={query} filter={filter} onQuery={setQuery} onFilter={setFilter} onClear={clearFilters} t={t}/>
     {scheduleError && <p className="err-text scheduled-task-error">{scheduleError}</p>}
     <div className={`scheduled-workbench-body${selectedTask ? ' has-selection' : ''}`}>
-      <aside className="scheduled-task-list-pane"><div className="scheduled-task-list-heading"><div><b>{t?.lists?.scheduledTasks || copy.title}</b><span>{copy.summary(filteredTasks.length, tasks.length)}</span></div><span className="scheduled-task-list-count">{filteredTasks.length}</span></div><div className="scheduled-task-list" role="listbox" aria-label={copy.title} aria-busy={scheduleLoading}>{scheduleLoading ? <p className="muted">{t?.busy || '执行中'}</p> : filteredTasks.length ? filteredTasks.map((task, index) => <TaskListItem key={taskID(task, `${index}`)} task={task} selected={String(selectedTaskId) === String(taskID(task))} llms={llms} t={t} schedulerModelNo={schedulerModelNo} onSelect={loadTask}/>) : <div className="scheduled-task-list-empty"><CircleAlert size={20}/><p>{copy.noMatch}</p>{(query || filter !== 'all') && <button type="button" onClick={clearFilters}>{copy.clear}</button>}</div>}</div></aside>
+      <FolderRail tasks={tasks} folders={folders} selectedFolderId={selectedFolderId} onSelectFolder={setSelectedFolderId} onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder} onDeleteFolder={onDeleteFolder} disabled={busy || scheduleLoading} t={t}/>
+      <aside className="scheduled-task-list-pane"><div className="scheduled-task-list-heading"><div><b>{t?.lists?.scheduledTasks || copy.title}</b><span>{copy.summary(filteredTasks.length, tasks.length)}</span></div><span className="scheduled-task-list-count">{filteredTasks.length}</span></div><div className="scheduled-task-list" role="listbox" aria-label={copy.title} aria-busy={scheduleLoading}>{scheduleLoading ? <p className="muted">{t?.busy || '执行中'}</p> : filteredTasks.length ? filteredTasks.map((task, index) => <TaskListItem key={taskID(task, `${index}`)} task={task} selected={String(selectedTaskId) === String(taskID(task))} llms={llms} t={t} schedulerModelNo={schedulerModelNo} folders={folders} onMoveTask={onMoveTask} onSelect={loadTask}/>) : <div className="scheduled-task-list-empty"><CircleAlert size={20}/><p>{copy.noMatch}</p>{(query || filter !== 'all' || selectedFolderId) && <button type="button" onClick={clearFilters}>{copy.clear}</button>}</div>}</div></aside>
       {selectedTask ? <TaskDetail task={selectedTask} taskEditor={taskEditor} setTaskEditor={setTaskEditor} editorMode={editorMode} setEditorMode={setEditorMode} taskDirty={taskDirty} onSave={saveTask} busy={busy} llms={llms} t={t} schedulerModelNo={schedulerModelNo} scheduleArtifactTitle={scheduleArtifactTitle} scheduleArtifact={scheduleArtifact} onSelectArtifact={onSelectArtifact} runState={taskRunStates[taskID(selectedTask)]} onRun={onRun} onReports={onReports} onToggle={onToggle} onDelete={onDelete} onClose={clearTaskSelection}/> : <section className="scheduled-task-detail scheduled-task-detail-empty"><div><CalendarClock size={27}/><h3>{copy.choose}</h3><p>{t?.desc?.schedule || t?.desc?.tasks}</p></div></section>}
     </div>
   </section>

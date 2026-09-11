@@ -1721,6 +1721,16 @@ print(json.dumps(items, ensure_ascii=False))`
 	if parseErr != nil {
 		return []map[string]interface{}{}, &chatLLMListError{Stage: "parse GA LLMs failed", Python: py, Root: root, Output: string(out), Err: parseErr}
 	}
+	// Keep a stable identity next to the legacy numeric index. The API never
+	// returns apibase (which may contain tenant-specific details), but the key
+	// lets scheduled tasks resolve the same backend after provider reordering.
+	for _, item := range llms {
+		item["model_key"] = ga.ScheduleModelKey(
+			strings.TrimSpace(fmt.Sprint(item["model"])),
+			strings.TrimSpace(fmt.Sprint(item["name"])),
+			strings.TrimSpace(fmt.Sprint(item["apibase"])),
+		)
+	}
 	if draft, importErr := s.loadModelsFromOfficialMyKey(false); importErr == nil {
 		annotateChatLLMProviders(llms, draft.Profiles)
 		annotateChatLLMFailoverGroups(llms, draft.FailoverGroups)

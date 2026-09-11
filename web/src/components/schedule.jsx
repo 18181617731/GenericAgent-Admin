@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, Eye, FileText, History, LoaderCircle, Play, Power, Square, Trash2 } from 'lucide-react'
-import { effectiveScheduleModelNo, hasScheduleTaskModel, normalizeScheduleModelNo } from '../lib/schedule'
+import { hasScheduleTaskModel, normalizeScheduleModelNo, resolveScheduleTaskModel } from '../lib/schedule'
 import { firstRuntimeModelNo, runtimeModelDescription } from '../lib/modelDefaults.js'
 import { ModelCascadePicker } from './ModelCascadePicker.jsx'
 import { ProviderModelCascade, buildModelProviderGroups, findModelProviderValue } from './ModelProviderCascade.jsx'
@@ -26,11 +26,13 @@ export const taskRunStateLabel = (state, t) => {
 }
 
 export const taskModelLabel = (task, llms, t, schedulerModelNo) => {
-  const modelNo = effectiveScheduleModelNo(task, schedulerModelNo)
-  const model = llms.find(item => Number(item?.index) === modelNo)
-  const modelText = model
-    ? runtimeModelDescription(model, t.tasks.unnamedModel)
-    : `#${modelNo}`
+  const resolved = resolveScheduleTaskModel(task, llms, schedulerModelNo)
+  const modelNo = resolved.index
+  const modelText = resolved.model
+    ? runtimeModelDescription(resolved.model, t.tasks.unnamedModel)
+    : resolved.unavailable
+      ? (t.tasks.modelUnavailable || (t.autostart === '开机自启' ? '已保存模型不可用，请重新选择' : 'Saved model unavailable; choose again'))
+      : `#${modelNo}`
   const zh = t.autostart === '开机自启'
   const prefix = hasScheduleTaskModel(task)
     ? (t.tasks.taskModelPrefix || (zh ? '任务指定模型' : 'Task model'))
@@ -48,23 +50,38 @@ export const TaskFormEditor = ({ value, onChange, t, llms = [], schedulerModelNo
   const updateField = (key, val) => onChange(JSON.stringify({ ...data, [key]: val }, null, 2))
   const updateModel = modelValue => {
     const next = { ...data }
-    if (modelValue === '') delete next.llm_no
-    else next.llm_no = Number(modelValue)
+    if (modelValue === '') {
+      delete next.llm_no
+      delete next.model_key
+    } else {
+      const selected = taskModels.find(model => Number(model?.index) === Number(modelValue))
+      next.llm_no = Number(modelValue)
+      if (selected?.model_key) next.model_key = selected.model_key
+      else delete next.model_key
+    }
     onChange(JSON.stringify(next, null, 2))
   }
-  const extraKeys = Object.keys(data).filter(key => !['enabled', 'max_delay_hours', 'repeat', 'schedule', 'prompt', 'llm_no'].includes(key))
+  const extraKeys = Object.keys(data).filter(key => !['enabled', 'max_delay_hours', 'repeat', 'schedule', 'prompt', 'llm_no', 'model_key'].includes(key))
   const repeatOptions = ['manual', 'daily', 'weekly', 'every_2h', 'every_4h', 'every_6h', 'every_8h', 'every_12h', 'once']
   const taskModels = llms.filter(model => Number.isInteger(Number(model?.index)) && Number(model.index) >= 0)
   const schedulerNo = normalizeScheduleModelNo(schedulerModelNo)
   const schedulerModel = taskModels.find(model => Number(model.index) === schedulerNo)
   const schedulerText = schedulerModel ? runtimeModelDescription(schedulerModel, text.unnamedModel) : `#${schedulerNo}`
+  const resolvedTask = resolveScheduleTaskModel(data, taskModels, schedulerNo)
+  const pickerValue = data.model_key && !resolvedTask.model ? '' : (resolvedTask.source === 'task' && resolvedTask.index !== null ? resolvedTask.index : '')
+  const legacyTaskModel = !data.model_key && resolvedTask.source === 'task' && resolvedTask.index !== null
   const followLabel = text.followScheduler || (t.autostart === '开机自启' ? '跟随调度器' : 'Follow scheduler')
+  const modelHelp = resolvedTask.unavailable
+    ? (text.modelUnavailableHelp || '已保存模型不在当前服务商列表中，请重新选择并保存。')
+    : legacyTaskModel
+      ? (text.modelLegacyHelp || '此任务仍使用旧的模型序号；请确认当前模型后保存，以锁定模型。')
+      : text.executionModelHelp
   return <div className="schedule-form-editor">
     <div className="form-field"><label>{text.enabledLabel}</label><label className="toggle-switch"><input type="checkbox" checked={!!data.enabled} onChange={event => updateField('enabled', event.target.checked)}/><span className="toggle-slider"></span><span className="toggle-label">{data.enabled ? t.enabled : t.disabled}</span></label></div>
     <div className="form-field"><label>{text.maxDelay}</label><input type="number" value={data.max_delay_hours ?? ''} onChange={event => updateField('max_delay_hours', event.target.value ? parseInt(event.target.value, 10) : 0)}/></div>
     <div className="form-field"><label>{text.repeat}</label><select value={data.repeat || ''} onChange={event => updateField('repeat', event.target.value)}><option value="">{text.choose}</option>{repeatOptions.map(option => <option key={option} value={option}>{option}</option>)}</select></div>
     <div className="form-field"><label>{text.schedule}</label><input type="text" value={data.schedule || ''} onChange={event => updateField('schedule', event.target.value)} placeholder={text.schedulePlaceholder}/></div>
-    <div className="form-field"><label>{text.executionModel}</label><ModelCascadePicker models={taskModels} value={data.llm_no ?? ''} allowDefault defaultLabel={`${followLabel}${t.autostart === '开机自启' ? '：' : ': '}${schedulerText}`} label="" showLabel={false} placement="auto" align="start" className="schedule-task-model-cascade" onChange={updateModel}/><small>{text.executionModelHelp}</small></div>
+    <div className="form-field"><label>{text.executionModel}</label><ModelCascadePicker models={taskModels} value={pickerValue} allowDefault defaultLabel={`${followLabel}${t.autostart === '开机自启' ? '：' : ': '}${schedulerText}`} label="" showLabel={false} placement="auto" align="start" className="schedule-task-model-cascade" onChange={updateModel}/><small className={resolvedTask.unavailable || legacyTaskModel ? 'model-selection-help warn' : ''}>{modelHelp}</small></div>
     <div className="form-field"><label>{text.prompt}</label><textarea value={data.prompt || ''} onChange={event => updateField('prompt', event.target.value)} placeholder={text.promptPlaceholder}/></div>
     {extraKeys.length > 0 && <details className="extra-fields"><summary>{text.extraFields} ({extraKeys.length})</summary><pre>{JSON.stringify(Object.fromEntries(extraKeys.map(key => [key, data[key]])), null, 2)}</pre></details>}
   </div>

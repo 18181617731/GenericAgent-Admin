@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildScheduleCreateRequest, effectiveScheduleModelNo, firstScheduleTaskID, normalizeScheduleLatestRun, normalizeScheduleModelNo, normalizeScheduleTasksPayload } from './schedule.js'
+import { buildScheduleCreateRequest, effectiveScheduleModelNo, firstScheduleTaskID, normalizeScheduleLatestRun, normalizeScheduleModelNo, normalizeScheduleTasksPayload, resolveScheduleTaskModel } from './schedule.js'
 
 test('normalizeScheduleTasksPayload gives stable empty and row states', () => {
   assert.deepEqual(normalizeScheduleTasksPayload(null).tasks, [])
@@ -105,6 +105,33 @@ test('normalizeScheduleTasksPayload preserves a valid task model selection', () 
   assert.equal(state.tasks[0].llm_no, 7)
   assert.equal(normalizeScheduleTasksPayload({ tasks: [{ id: 'daily', llm_no: null }] }).tasks[0].llm_no, null)
   assert.equal(normalizeScheduleTasksPayload({ tasks: [{ id: 'daily', llm_no: -1 }] }).tasks[0].llm_no, null)
+})
+
+test('stable task model identity wins over a reordered runtime list', () => {
+  const models = [
+    { index: 0, model: 'new-model', model_key: 'new-model\x1fprovider\x1fhttps://new.test' },
+    { index: 4, model: 'saved-model', model_key: 'saved-model\x1fprovider\x1fhttps://saved.test' },
+  ]
+  const resolved = resolveScheduleTaskModel({ llm_no: 0, model_key: 'saved-model\x1fprovider\x1fhttps://saved.test' }, models, 0)
+  assert.equal(resolved.source, 'task')
+  assert.equal(resolved.index, 4)
+  assert.equal(resolved.model.model, 'saved-model')
+  const stale = resolveScheduleTaskModel({ llm_no: 0, model_key: 'removed\x1fprovider\x1fhttps://removed.test' }, models, 0)
+  assert.equal(stale.unavailable, true)
+  assert.equal(stale.index, 0)
+  const follow = resolveScheduleTaskModel({}, models, 4)
+  assert.equal(follow.source, 'scheduler')
+  assert.equal(follow.model.model, 'saved-model')
+})
+
+test('normalizeScheduleTasksPayload keeps folder metadata ordered and safe', () => {
+  const state = normalizeScheduleTasksPayload({
+    folders: [{ id: 'b', name: '第二组', order: 2 }, { id: 'a', name: '第一组', order: 1 }, null, { id: '', name: 'ignored' }],
+    tasks: [{ id: 'daily', folder_id: 'a' }, { id: 'inbox', folder_id: null }],
+  })
+  assert.deepEqual(state.folders.map(folder => folder.id), ['a', 'b'])
+  assert.equal(state.tasks[0].folder_id, 'a')
+  assert.equal(state.tasks[1].folder_id, '')
 })
 
 test('schedule UI exposes model selection, card editing, and grouped markdown reports', () => {

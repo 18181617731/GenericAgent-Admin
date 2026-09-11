@@ -563,7 +563,7 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 		if attempt == 0 {
 			cmdReq["prompt"] = chatLoopControllerPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
 		} else {
-			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
+			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds)) + "\nRejected decision category: " + failureCategory + "."
 		}
 		s.SessionMu.Lock()
 		latest, loadErr := loadChatSession(s.CfgStore.Snapshot(), sid)

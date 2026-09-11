@@ -200,6 +200,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/files/image", s.filesImage)
 	mux.HandleFunc("/api/todos", s.projectTodos)
 	mux.HandleFunc("/api/schedule/tasks", s.scheduleTasks)
+	mux.HandleFunc("/api/schedule/folders", s.requireDangerousConfirm(s.scheduleFolders))
 	mux.HandleFunc("/api/schedule/task", s.requireDangerousConfirm(s.scheduleTask))
 	mux.HandleFunc("/api/schedule/create", s.requireDangerousConfirm(s.scheduleCreate))
 	mux.HandleFunc("/api/schedule/delete", s.requireDangerousConfirm(s.scheduleDelete))
@@ -376,6 +377,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/autostart/enable", Level: "dangerous", Action: "enable_os_autostart", Reason: "writes OS autostart entry"},
 	{Path: "/api/autostart/disable", Level: "reversible", Action: "disable_os_autostart", Reason: "removes OS autostart entry"},
 	{Path: "/api/schedule/task", Level: "dangerous", Action: "edit_schedule_task", Reason: "changes scheduled task JSON"},
+	{Path: "/api/schedule/folders", Level: "dangerous", Action: "manage_schedule_folders", Reason: "creates or updates reversible scheduled-task grouping metadata under the selected GA root"},
 	{Path: "/api/schedule/create", Level: "dangerous", Action: "create_schedule_task", Reason: "creates scheduled task JSON"},
 	{Path: "/api/schedule/delete", Level: "dangerous", Action: "delete_schedule_task", Reason: "deletes scheduled task JSON"},
 	{Path: "/api/schedule/toggle", Level: "reversible", Action: "toggle_schedule_task", Reason: "enables or disables scheduled task"},

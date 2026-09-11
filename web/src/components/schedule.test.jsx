@@ -1,7 +1,7 @@
 import React from 'react'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TaskRow } from './schedule.jsx'
+import { TaskRow, taskModelLabel } from './schedule.jsx'
 
 const t = {
   autostart: '开机自启', enabled: '已启用', disabled: '已禁用', remove: '删除', empty: '空', error: '错误',
@@ -11,6 +11,14 @@ const t = {
 afterEach(cleanup)
 
 describe('scheduled task latest execution card', () => {
+  it('labels the saved backend instead of a reordered numeric slot', () => {
+    const llms = [
+      { index: 0, model: 'new-model', model_key: 'new-model\x1fprovider\x1fhttps://new.test' },
+      { index: 4, model: 'saved-model', model_key: 'saved-model\x1fprovider\x1fhttps://saved.test' },
+    ]
+    expect(taskModelLabel({ id: 'stable', llm_no: 0, model_key: 'saved-model\x1fprovider\x1fhttps://saved.test' }, llms, t, 0)).toContain('saved-model')
+  })
+
   it('keeps a failed run red and visible even when configuration is disabled', () => {
     const { container } = render(<TaskRow task={{ id: 'daily', enabled: false, schedule: '10:00', repeat: 'daily', latest_run: { status: 'failed', executed_at: '2026-08-29T10:00:00Z', reason: 'browser login timed out' } }} t={t}/>)
     expect(container.querySelector('.task-row')?.classList.contains('task-run-failed')).toBe(true)

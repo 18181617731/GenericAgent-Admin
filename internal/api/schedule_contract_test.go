@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"genericagent-admin-go/internal/ga"
 )
 
 func TestScheduleArtifactRouteSafeRead(t *testing.T) {
@@ -127,6 +129,64 @@ func TestScheduleTaskPutRequiresDangerousConfirm(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusPreconditionRequired || !strings.Contains(rr.Body.String(), "X-GA-Confirm") {
 		t.Fatalf("PUT /api/schedule/task without confirm status/body = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestScheduleFoldersRouteSupportsReadAndConfirmedGroupingMutations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sche_tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sche_tasks", "daily.json"), []byte(`{"schedule":"09:00","repeat":"daily","enabled":true,"prompt":"run"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := newGoalTestServer(t, root).Routes()
+
+	request := func(method, body string, confirmed bool) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(method, "/api/schedule/folders", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if confirmed {
+			req.Header.Set("X-GA-Confirm", "dangerous")
+		}
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := request(http.MethodPost, `{"action":"create","name":"Operations"}`, false); rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("unconfirmed folder mutation status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	create := request(http.MethodPost, `{"action":"create","name":"Operations"}`, true)
+	if create.Code != http.StatusOK {
+		t.Fatalf("create folder status=%d body=%s", create.Code, create.Body.String())
+	}
+	var created struct {
+		Folders ga.ScheduleFolders `json:"folders"`
+	}
+	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Folders.Folders) != 1 {
+		t.Fatalf("create folder response=%#v", created)
+	}
+	folderID := created.Folders.Folders[0].ID
+	move := request(http.MethodPost, `{"action":"move","task_id":"daily","folder_id":"`+folderID+`"}`, true)
+	if move.Code != http.StatusOK || !strings.Contains(move.Body.String(), `"daily":"`+folderID+`"`) {
+		t.Fatalf("move folder status/body=%d %s", move.Code, move.Body.String())
+	}
+	read := request(http.MethodGet, "", false)
+	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), `"id":"`+folderID+`"`) {
+		t.Fatalf("read folders status/body=%d %s", read.Code, read.Body.String())
+	}
+	overview := ga.BuildSchedule(root)
+	if len(overview.Tasks) != 1 || overview.Tasks[0].FolderID != folderID {
+		t.Fatalf("folder assignment not reflected in schedule overview=%#v", overview)
+	}
+	if rr := request(http.MethodPost, `{"action":"delete","id":"`+folderID+`"}`, true); rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), folderID) {
+		t.Fatalf("delete folder status/body=%d %s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "sche_tasks", "daily.json")); err != nil {
+		t.Fatalf("deleting folder must preserve task file: %v", err)
 	}
 }
 

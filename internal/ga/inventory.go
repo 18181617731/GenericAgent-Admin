@@ -60,6 +60,8 @@ type ScheduleTask struct {
 	Enabled       bool         `json:"enabled"`
 	Prompt        string       `json:"prompt"`
 	LLMNo         *int         `json:"llm_no,omitempty"`
+	ModelKey      string       `json:"model_key,omitempty"`
+	FolderID      string       `json:"folder_id,omitempty"`
 	MaxDelayHours any          `json:"max_delay_hours,omitempty"`
 	ModTime       time.Time    `json:"mod_time,omitempty"`
 	Status        string       `json:"status"`
@@ -77,17 +79,18 @@ type ScheduleRun struct {
 	ReportPath string     `json:"report_path,omitempty"`
 }
 type ScheduleOverview struct {
-	SchemaVersion int            `json:"schema_version"`
-	Tasks         []ScheduleTask `json:"tasks"`
-	TaskCount     int            `json:"task_count"`
-	Enabled       int            `json:"enabled"`
-	Disabled      int            `json:"disabled"`
-	Overdue       int            `json:"overdue"`
-	Errors        int            `json:"errors"`
-	NeverRun      int            `json:"never_run"`
-	DoneCount     int            `json:"done_count"`
-	Log           FileStatus     `json:"log"`
-	DoneRecent    []Entry        `json:"done_recent"`
+	SchemaVersion int              `json:"schema_version"`
+	Tasks         []ScheduleTask   `json:"tasks"`
+	TaskCount     int              `json:"task_count"`
+	Enabled       int              `json:"enabled"`
+	Disabled      int              `json:"disabled"`
+	Overdue       int              `json:"overdue"`
+	Errors        int              `json:"errors"`
+	NeverRun      int              `json:"never_run"`
+	DoneCount     int              `json:"done_count"`
+	Log           FileStatus       `json:"log"`
+	DoneRecent    []Entry          `json:"done_recent"`
+	Folders       []ScheduleFolder `json:"folders"`
 }
 type Health struct {
 	OK        bool              `json:"ok"`
@@ -202,7 +205,13 @@ func buildMemory(root string) MemorySummary {
 }
 
 func BuildSchedule(root string) ScheduleOverview {
-	ov := ScheduleOverview{SchemaVersion: 1, Log: status(root, "sche_tasks/scheduler.log")}
+	foldersState, _ := LoadScheduleFolders(root)
+	foldersState = normalizeScheduleFolders(foldersState)
+	folderIDs := make(map[string]struct{}, len(foldersState.Folders))
+	for _, folder := range foldersState.Folders {
+		folderIDs[folder.ID] = struct{}{}
+	}
+	ov := ScheduleOverview{SchemaVersion: 1, Log: status(root, "sche_tasks/scheduler.log"), Folders: append([]ScheduleFolder{}, foldersState.Folders...)}
 	allReports := listDir(root, "sche_tasks/done", func(name string, isDir bool) string { return "report" })
 	ov.DoneCount = len(allReports)
 	ov.DoneRecent = append([]Entry(nil), allReports...)
@@ -235,6 +244,17 @@ func BuildSchedule(root string) ScheduleOverview {
 		t.Schedule, _ = raw["schedule"].(string)
 		t.Repeat, _ = raw["repeat"].(string)
 		t.Prompt, _ = raw["prompt"].(string)
+		if modelKey, selected, modelKeyErr := ScheduleTaskModelKey(raw); modelKeyErr != nil {
+			t.Status = "ERROR"
+			t.Error = modelKeyErr.Error()
+		} else if selected {
+			t.ModelKey = modelKey
+		}
+		if folderID, ok := foldersState.Assignments[id]; ok {
+			if _, exists := folderIDs[folderID]; exists {
+				t.FolderID = folderID
+			}
+		}
 		if v, ok := raw["enabled"].(bool); ok {
 			t.Enabled = v
 		}

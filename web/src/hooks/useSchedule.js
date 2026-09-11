@@ -62,7 +62,7 @@ export function useSchedule({ t, lang, setMsg, setBusy, onOpenSection }) {
     try {
       let raw = JSON.parse(editor)
       if (editorMode === 'form') {
-        const known = ['enabled','max_delay_hours','repeat','schedule','prompt']
+        const known = ['enabled','max_delay_hours','repeat','schedule','prompt','llm_no','model_key']
         const filtered = {}
         for (const k of known) if (k in raw && raw[k] !== undefined && raw[k] !== null && raw[k] !== '') filtered[k] = raw[k]
         raw = filtered

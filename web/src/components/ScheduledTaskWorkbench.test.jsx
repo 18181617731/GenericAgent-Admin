@@ -146,4 +146,33 @@ describe('ScheduledTaskWorkbench', () => {
     expect(screen.getByText(/暂无执行记录/)).toBeTruthy()
     expect(screen.queryByText('alpha-run.md')).toBeNull()
   })
+
+  test('organizes cards with folder filters, assignment menu, and create flow', async () => {
+    const folders = [{ id: 'ops', name: '运营', order: 0 }]
+    const onMoveTask = vi.fn()
+    const onCreateFolder = vi.fn().mockResolvedValue(true)
+    render(<ScheduledTaskWorkbench {...props({
+      folders,
+      onMoveTask,
+      onCreateFolder,
+      tasks: [{ ...taskA, folder_id: 'ops' }, taskB],
+    })}/>)
+    const folderList = document.querySelector('.scheduled-task-folder-list')
+    expect(folderList).toBeTruthy()
+    const operationsFolder = folderList.querySelector('.scheduled-task-folder-item > button')
+    expect(operationsFolder).toBeTruthy()
+    fireEvent.click(operationsFolder)
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option', { name: /alpha/ })).toBeTruthy()
+
+    const alpha = screen.getByRole('option', { name: /alpha/ })
+    fireEvent.click(within(alpha).getByRole('button', { name: /移动到/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '未归类' }))
+    expect(onMoveTask).toHaveBeenCalledWith('alpha', '')
+
+    fireEvent.click(screen.getByRole('button', { name: '新建文件夹' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '文件夹名称' }), { target: { value: '复盘' } })
+    fireEvent.click(within(document.querySelector('.scheduled-task-folder-create')).getByRole('button', { name: '新建文件夹' }))
+    await waitFor(() => expect(onCreateFolder).toHaveBeenCalledWith('复盘'))
+  })
 })

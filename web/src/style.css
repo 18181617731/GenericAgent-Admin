@@ -4321,6 +4321,7 @@ pre, code { font-variant-ligatures: none; }
 .is-spinning { animation: task-run-spin .9s linear infinite; }
 @keyframes task-run-spin { to { transform:rotate(360deg); } }
 .schedule-form-editor .form-field small { display:block; margin-top:5px; color:var(--muted); font-size:12px; line-height:1.45; }
+.schedule-form-editor .form-field small.model-selection-help.warn { color: color-mix(in srgb, var(--orange, #a45305) 88%, var(--text)); }
 .schedule-report-tree { display:grid; gap:8px; max-height:560px; overflow:auto; padding-right:2px; }
 .schedule-report-group { overflow:hidden; border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); }
 .schedule-report-group-toggle { display:flex; align-items:center; width:100%; min-height:50px; gap:8px; padding:9px 11px; border:0; border-radius:0; background:transparent; box-shadow:none; text-align:left; }
@@ -22244,6 +22245,48 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .task-run-detail.blocked,.task-run-detail.waiting,.task-run-detail.partial { color:#9a4b05 !important; }
 .scheduled-task-row-meta { align-items:center; flex-wrap:wrap; }
 
+/* Folder rail and per-card assignment controls. The rail is intentionally a
+   sibling of the task list so mobile can collapse it without introducing a
+   second horizontal scroll container. */
+.scheduled-workbench-body { grid-template-columns: minmax(176px, .48fr) minmax(265px, .82fr) minmax(0, 1.42fr); }
+.scheduled-task-folder-rail { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 13px 10px; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface-muted) 58%, var(--surface)); }
+.scheduled-task-folder-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 7px; min-width: 0; }
+.scheduled-task-folder-heading p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.scheduled-task-folder-add { display: inline-grid; place-items: center; flex: 0 0 auto; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.scheduled-task-folder-add:disabled { cursor: wait; opacity: .55; }
+.scheduled-task-folder-create { display: grid; gap: 7px; padding: 9px; border: 1px solid color-mix(in srgb, var(--ga-accent, #10a37f) 34%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--ga-accent, #10a37f) 6%, var(--surface)); }
+.scheduled-task-folder-create input { width: 100%; min-width: 0; box-sizing: border-box; }
+.scheduled-task-folder-create > div { display: flex; gap: 6px; }
+.scheduled-task-folder-create button { min-height: 29px; padding: 4px 7px; font-size: 11px; }
+.scheduled-task-folder-list { display: grid; gap: 3px; min-width: 0; }
+.scheduled-task-folder-list > button,
+.scheduled-task-folder-item > button { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 32px; padding: 6px 7px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; text-align: left; }
+.scheduled-task-folder-list > button:hover,
+.scheduled-task-folder-list > button.active,
+.scheduled-task-folder-item > button:hover,
+.scheduled-task-folder-item > button.active { border-color: var(--border); background: var(--surface); color: var(--text); }
+.scheduled-task-folder-list button svg { flex: 0 0 auto; }
+.scheduled-task-folder-list button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-folder-list button b { margin-left: auto; padding: 1px 5px; border-radius: 999px; background: var(--surface-strong, var(--surface)); color: var(--muted); font-size: 10px; font-weight: 650; }
+.scheduled-task-folder-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; }
+.scheduled-task-folder-actions { display: flex; gap: 1px; opacity: 0; transition: opacity .15s ease; }
+.scheduled-task-folder-item:hover .scheduled-task-folder-actions,
+.scheduled-task-folder-item:focus-within .scheduled-task-folder-actions { opacity: 1; }
+.scheduled-task-folder-actions button { display: inline-grid; place-items: center; width: 25px; height: 25px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.scheduled-task-folder-actions button:hover { background: var(--surface); color: var(--text); }
+.scheduled-task-folder-actions button:last-child:hover { color: var(--danger, #b4233a); }
+.scheduled-task-folder-assignment { position: relative; min-width: 0; margin-top: 2px; }
+.scheduled-task-folder-trigger { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 26px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 10px; }
+.scheduled-task-folder-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-folder-trigger svg:last-child { transition: transform .15s ease; }
+.scheduled-task-folder-trigger svg.is-open { transform: rotate(90deg); }
+.scheduled-task-folder-menu { position: absolute; z-index: 4; top: calc(100% + 4px); left: 0; display: grid; min-width: 150px; max-width: min(220px, 90vw); max-height: 220px; overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 24px rgba(33,32,28,.14); }
+.scheduled-task-folder-menu button { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 29px; padding: 5px 7px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 11px; text-align: left; }
+.scheduled-task-folder-menu button:hover,
+.scheduled-task-folder-menu button[aria-checked="true"] { background: color-mix(in srgb, var(--ga-accent, #10a37f) 11%, var(--surface)); color: var(--ga-accent, #08745c); }
+.scheduled-task-row.task-row { cursor: pointer; }
+.scheduled-task-row.task-row:focus-visible { outline: 2px solid color-mix(in srgb, var(--ga-accent, #10a37f) 72%, transparent); outline-offset: -2px; }
+
 @media (max-width:640px) {
   .task-row { max-width:100%; overflow:hidden; }
   .task-card-head { display:grid; grid-template-columns:minmax(0,1fr); }
@@ -22258,6 +22301,46 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .oa-sidebar .oa-session-title:has(> .oa-session-running-dot) {
   margin-inline-start: -4px;
   padding-inline-start: 4px;
+}
+
+@media (max-width:860px) {
+  .scheduled-workbench-body { display: block; }
+  .scheduled-task-folder-rail { border-right: 0; border-bottom: 1px solid var(--border); }
+  .scheduled-task-folder-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scheduled-workbench-body.has-selection .scheduled-task-folder-rail { display: none; }
+}
+
+@media (max-width:560px) {
+  .scheduled-task-folder-list { grid-template-columns: 1fr; }
+  .scheduled-task-folder-actions { opacity: 1; }
+  .scheduled-task-folder-create > div { flex-wrap: wrap; }
+  .scheduled-task-folder-create button { flex: 1 1 0; }
+}
+
+/* Match expanded sidebar controls to their compact collapsed counterparts. */
+.oa-side-head > .oa-new-chat,
+.oa-side-head > .oa-icon-btn {
+  width:36px;
+  min-width:36px;
+  height:36px;
+  min-height:36px;
+  margin-left:0;
+  padding:0;
+  border:0;
+  border-radius:10px;
+  color:var(--text) !important;
+  background:transparent !important;
+  box-shadow:none;
+  transition:background .16s ease, box-shadow .16s ease, transform .16s ease, opacity .16s ease;
+}
+.oa-side-head > .oa-new-chat > svg,
+.oa-side-head > .oa-icon-btn > svg { opacity:1; }
+.oa-side-head > .oa-new-chat:hover,
+.oa-side-head > .oa-icon-btn:hover {
+  color:var(--text) !important;
+  background:var(--oa-side-hover) !important;
+  box-shadow:none;
+  transform:none;
 }
 
 /* Compact sidebar instance switcher; keep native selection and focus behavior. */
