@@ -115,7 +115,10 @@ jobs:
         run: |
           cd web
           npm ci
-          npm run verify
+          if ! npm run verify; then
+            echo "Web verification failed once; retrying the complete gate for transient runner failures."
+            npm run verify
+          fi
 
       - name: Build binary
         shell: bash

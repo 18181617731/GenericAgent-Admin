@@ -2,6 +2,10 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.133 - 2026-09-11
+
+- release CI: retry the complete web verification once after a transient runner failure
+
 ## v1.0.132 - 2026-09-11
 
 - mobile schedule detail: wrap execution-model and next-run facts instead of clipping long values with an ellipsis
