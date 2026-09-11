@@ -2,6 +2,11 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.130 - 2026-09-11
+
+### 管理台路径兼容
+- 修复管理员定时任务页在 `/admin/tasks/...` 直达或刷新时被错误回退到总览的问题；保留聊天壳层根路径，并确保从管理台进入聊天不会生成 `/admin/chat`。
+
 ## v1.0.129 - 2026-09-11
 
 ### 定时任务模型与文件夹
