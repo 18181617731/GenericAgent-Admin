@@ -23,10 +23,19 @@ const TASK_ROUTE_ALIASES = {
 
 const baseURL = () => (import.meta.env?.BASE_URL || '/').replace(/\/$/, '')
 
+// The chat shell owns the root routes while the admin console is mounted below
+// `/admin`. Keep the prefix in one place so direct links, refreshes, and
+// client-side navigation all resolve to the same route family.
+const routeBase = () => {
+  const path = window.location.pathname || '/'
+  if (path === '/admin' || path.startsWith('/admin/')) return '/admin'
+  return baseURL()
+}
+
 const routeParts = () => {
   const rawHash = (window.location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)
   if (rawHash.length) return rawHash
-  const base = baseURL()
+  const base = routeBase()
   let path = window.location.pathname || '/'
   if (base && base !== '/' && path.startsWith(base)) path = path.slice(base.length) || '/'
   return path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -49,6 +58,8 @@ export const parseRoute = () => {
 export const buildRoute = (tab, taskSubTab = 'scheduled') => {
   const safeTab = ROUTE_TABS.includes(tab) ? tab : 'overview'
   const suffix = safeTab === 'tasks' ? `/${TASK_SUB_TABS.includes(taskSubTab) ? taskSubTab : 'scheduled'}` : ''
-  const base = baseURL()
+  // Chat is a separate root shell; navigating there from the admin console
+  // must not create `/admin/chat`, which would be mounted by AdminRoot.
+  const base = safeTab === 'chat' ? baseURL() : routeBase()
   return `${base}/${safeTab}${suffix}`.replace(/\/+/g, '/')
 }

@@ -48,3 +48,15 @@ test('Local CMD has a stable refreshable route', () => {
   assert.deepEqual(parseRoute(), { tab: 'local-cmd', taskSubTab: 'scheduled' })
   assert.equal(buildRoute('local-cmd'), '/local-cmd')
 })
+
+test('admin routes strip and preserve the admin shell prefix', () => {
+  setLocation('http://localhost/admin/tasks/scheduled')
+  assert.deepEqual(parseRoute(), { tab: 'tasks', taskSubTab: 'scheduled' })
+  assert.equal(buildRoute('tasks', 'reports'), '/admin/tasks/reports')
+  assert.equal(buildRoute('overview'), '/admin/overview')
+})
+
+test('chat navigation always returns to the chat shell', () => {
+  setLocation('http://localhost/admin/tasks/scheduled')
+  assert.equal(buildRoute('chat'), '/chat')
+})
