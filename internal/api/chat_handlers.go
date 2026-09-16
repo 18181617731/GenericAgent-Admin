@@ -187,6 +187,10 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "conductor":
+		if len(parts) == 3 && parts[2] == "disable" && r.Method == http.MethodPost {
+			s.chatConductorDisable(w, r, parts[1])
+			return
+		}
 		if len(parts) == 3 && parts[2] == "enable" && r.Method == http.MethodPost {
 			s.chatConductorEnable(w, r, parts[1])
 			return
@@ -1244,6 +1248,11 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request, sid string) {
 // use startOnly so their synchronous put callback can acknowledge admission
 // immediately instead of waiting for the entire streamed model response.
 func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string, startOnly bool) {
+	s.chatPostWithSender(w, r, sid, startOnly, "user")
+}
+
+// senderKind is server-owned, never decoded from an HTTP request.
+func (s *Server) chatPostWithSender(w http.ResponseWriter, r *http.Request, sid string, startOnly bool, senderKind string) {
 	var req struct {
 		Prompt              string        `json:"prompt"`
 		Files               []chatUpload  `json:"files"`
@@ -1279,8 +1288,7 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 		bad(w, 500, err.Error())
 		return
 	}
-	if cs.Conductor != nil && cs.Conductor.Role == conductorRoleWorker &&
-		(conductorTerminal(cs.Conductor.Status) || cs.Conductor.Status == "cancelling" || s.chatRunCanceled(cs.Conductor.ParentSessionID)) {
+	if !s.conductorChatRunnable(cs, senderKind) {
 		s.endChatRunOwned(sid, token)
 		bad(w, http.StatusConflict, "Conductor dispatch is no longer runnable")
 		return
@@ -1333,7 +1341,7 @@ func (s *Server) chatPostMode(w http.ResponseWriter, r *http.Request, sid string
 	if uid == "" {
 		uid = newChatID()
 	}
-	userMsg := chatMessage{ID: uid, Role: "user", Content: display, Files: saved, CreatedAt: time.Now().Unix()}
+	userMsg := chatMessage{ID: uid, Role: "user", SenderKind: senderKind, Content: display, Files: saved, CreatedAt: time.Now().Unix()}
 	runStartedAtMS := time.Now().UnixMilli()
 	selectedLLMNo := cs.Settings.LLMNo
 	pendingMsg := chatMessage{ID: newChatID(), Role: "assistant", LLMNo: &selectedLLMNo, CreatedAt: time.Now().Unix(), RunStartedAtMS: runStartedAtMS}

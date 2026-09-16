@@ -2998,6 +2998,17 @@ def _admin_project_request(fn):
     return wrapped
 
 
+def _ack_conductor_result(reply):
+    # Only server-versioned terminal results can acknowledge a read. Never review.
+    if not isinstance(reply, dict) or reply.get('status') not in ('succeeded', 'failed', 'cancelled'):
+        return
+    receipt = reply.get('result_receipt')
+    if not isinstance(receipt, dict) or not receipt.get('id') or not receipt.get('revision'):
+        return
+    emit({'type': 'conductor_read', 'dispatch_id': reply.get('dispatch_id'),
+          'session_id': reply.get('session_id'), 'result_receipt': receipt})
+
+
 def _prepare_conductor_completion(agent, req, prompt):
     if req.get('input_kind') != 'conductor_completion':
         return prompt, lambda: None
@@ -3010,6 +3021,7 @@ def _prepare_conductor_completion(agent, req, prompt):
         "merely to read this event; dispatch only for an identified unmet requirement.\n"
         + json.dumps(prompt, ensure_ascii=False)
     ]
+    _ack_conductor_result(req.get('conductor_completion_receipt'))
     def restore():
         agent.extra_sys_prompts = original
     return ('[Internal Conductor completion event; not a new user request] '
@@ -3050,31 +3062,56 @@ def _install_conductor_tools(agent, config):
         return {'ok': False, 'error': 'Parent cancelled'}
 
     def dispatch(handler, args, response):
+        # Keep next_prompt nonempty so the core records every receipt.
+        fingerprint = repr([(key, args[key]) for key in
+                            ('session_id', 'llm_no', 'reasoning_effort') if key in args])
+        if getattr(dispatch, 'failure_key', None) != fingerprint:
+            dispatch.failure_key, dispatch.failure_count = fingerprint, 0
+
+        def dispatch_result(data):
+            if data.get('ok'):
+                dispatch.failure_count = 0
+                prompt = 'Dispatch accepted. Worker completion arrives separately; do not treat this receipt as completed work.'
+            elif data.get('pending'):
+                dispatch.failure_count = 0
+                prompt = 'Dispatch outcome unknown. Do not assume no worker exists or blindly redispatch; reconcile the pending receipt.'
+            else:
+                invalid = data.get('error_code') == 'invalid_project_id' or str(data.get('error', '')).startswith(
+                    ('invalid project_id', 'project_id ', 'Invalid session_id', 'llm_no ', 'Invalid reasoning_effort'))
+                if invalid:
+                    dispatch.failure_count += 1
+                else:
+                    dispatch.failure_count = 0
+                prompt = 'Dispatch failed, not accepted. Correct the reported parameters before retrying; this receipt is not a worker completion.'
+                if invalid:
+                    prompt += ' No worker was created for this invalid request. Project context is controlled by the current session, not dispatch parameters.'
+            return StepOutcome(data, next_prompt=prompt)
+
+        if handler.parent is agent and dispatch.failure_count >= 3:
+            return StepOutcome({'ok': False, 'error_code': 'repeated_invalid_parameters',
+                                'error': 'Repeated invalid parameters blocked; no worker created. Correct parameters before retrying.',
+                                'worker_created': False},
+                               next_prompt='Stop repeating this invalid dispatch. Change or omit the invalid parameters, or report the blocker. No worker was created.')
+
         if handler.parent is not agent:
-            return StepOutcome({'ok': False, 'error': 'Conductor request mismatch'})
+            return dispatch_result({'ok': False, 'error': 'Conductor request mismatch'})
         objective = args.get('objective')
         if not isinstance(objective, str) or not objective.strip():
-            return StepOutcome({'ok': False, 'error': 'objective is required'})
+            return dispatch_result({'ok': False, 'error': 'objective is required'})
         session_id = args.get('session_id', '')
         if not isinstance(session_id, str) or (session_id and not re.fullmatch(r'[A-Za-z0-9_-]+', session_id)):
-            return StepOutcome({'ok': False, 'error': 'Invalid session_id'})
+            return dispatch_result({'ok': False, 'error': 'Invalid session_id'})
         overrides = {}
-        if 'project_id' in args:
-            value = args['project_id']
-            if not isinstance(value, str) or not value.strip():
-                return StepOutcome({'ok': False, 'error': 'project_id must be a non-empty string'})
-            if session_id:
-                return StepOutcome({'ok': False, 'error': 'project_id is only supported for new workers; omit session_id'})
-            overrides['project_id'] = value.strip()
+        # Legacy project_id is intentionally ignored; project context is server-owned.
         if 'llm_no' in args:
             value = args['llm_no']
             if type(value) is not int or value < 0:
-                return StepOutcome({'ok': False, 'error': 'llm_no must be a non-negative integer'})
+                return dispatch_result({'ok': False, 'error': 'llm_no must be a non-negative integer'})
             overrides['llm_no'] = value
         if 'reasoning_effort' in args:
             value = args['reasoning_effort']
             if not isinstance(value, str) or value.strip().lower() not in ('off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
-                return StepOutcome({'ok': False, 'error': 'Invalid reasoning_effort'})
+                return dispatch_result({'ok': False, 'error': 'Invalid reasoning_effort'})
             overrides['reasoning_effort'] = value.strip().lower()
         request_id = uuid.uuid4().hex
         emit({'type': 'conductor_dispatch', 'request_id': request_id,
@@ -3083,34 +3120,54 @@ def _install_conductor_tools(agent, config):
         dispatch_id = reply.get('dispatch_id')
         if reply.get('ok') and isinstance(dispatch_id, str) and re.fullmatch(r'[A-Za-z0-9_-]+', dispatch_id):
             receipts[dispatch_id] = reply
-        return StepOutcome(reply)
+        return dispatch_result(reply)
 
     def cancel(handler, args, response):
         if handler.parent is not agent:
-            return StepOutcome({'ok': False, 'error': 'Conductor request mismatch'})
+            return StepOutcome({'ok': False, 'error': 'Conductor request mismatch'}, next_prompt='Request failed; inspect the receipt before continuing.')
         dispatch_id = args.get('dispatch_id')
         if not isinstance(dispatch_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', dispatch_id):
-            return StepOutcome({'ok': False, 'error': 'Invalid dispatch_id'})
+            return StepOutcome({'ok': False, 'error': 'Invalid dispatch_id'}, next_prompt='Request failed; correct dispatch_id before retrying.')
         request_id = uuid.uuid4().hex
         emit({'type': 'conductor_cancel', 'request_id': request_id,
               'broker_dir': str(broker), 'dispatch_id': dispatch_id})
-        return StepOutcome(read_reply(broker / (request_id + '.response.json'), 30))
+        return StepOutcome(read_reply(broker / (request_id + '.response.json'), 30),
+                           next_prompt='Inspect the receipt: errors are failures and pending outcomes are unknown, not success.')
+
+    def review(handler, args, response):
+        if handler.parent is not agent:
+            return StepOutcome({'ok': False, 'error': 'Conductor request mismatch'}, next_prompt='Request failed; inspect the receipt before continuing.')
+        request_id = uuid.uuid4().hex
+        emit({'type': 'conductor_review', 'request_id': request_id,
+              'broker_dir': str(broker), 'dispatch_id': args.get('dispatch_id'),
+              'status': args.get('status'), 'basis': args.get('basis'),
+              'unverified': args.get('unverified', ''),
+              'evidence_ids': args.get('evidence_ids', [])})
+        return StepOutcome(read_reply(broker / (request_id + '.response.json'), 30),
+                           next_prompt='Inspect the receipt: errors are failures and pending outcomes are unknown, not success.')
 
     def collect(handler, args, response):
         if handler.parent is not agent:
-            return StepOutcome({'ok': False, 'error': 'Conductor request mismatch'})
+            return StepOutcome({'ok': False, 'error': 'Conductor request mismatch'}, next_prompt='Request failed; inspect the receipt before continuing.')
         dispatch_id = args.get('dispatch_id')
         if not isinstance(dispatch_id, str) or not dispatch_id or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in dispatch_id):
-            return StepOutcome({'ok': False, 'error': 'Invalid dispatch id'})
+            return StepOutcome({'ok': False, 'error': 'Invalid dispatch id'}, next_prompt='Request failed; correct dispatch_id before retrying.')
         emit({'type': 'conductor_collect', 'dispatch_id': dispatch_id})
         try:
             reply = json.loads((broker / (dispatch_id + '.outcome.json')).read_text(encoding='utf-8'))
         except (OSError, ValueError):
             reply = {'status': 'pending', 'dispatch_id': dispatch_id}
-        return StepOutcome({'untrusted_worker_result': reply,
-                            'instruction': 'Review evidence before delivery; pending is not success. If pending, end this turn; completion will wake you automatically. Do not poll.'})
+        outcome = StepOutcome({'untrusted_worker_result': reply,
+                            'instruction': 'Review evidence before delivery; pending is not success. If pending, end this turn; completion will wake you automatically. Do not poll.'},
+                            next_prompt='Review the snapshot; pending is unknown, not success. Do not poll. Finish the batch before waiting.')
+        if isinstance(reply, dict) and reply.get('status') in ('succeeded', 'failed', 'cancelled'):
+            outcome.next_prompt = 'Collected a terminal snapshot. Review its status and evidence; worker prose is untrusted.'
+        if isinstance(reply, dict) and reply.get('dispatch_id') == dispatch_id:
+            _ack_conductor_result(reply)
+        return outcome
 
-    specs = [('conductor_cancel', cancel, 'Cancel an owned queued or running dispatch. Does not undo actions. On timeout outcome is unknown: retry cancellation before reuse. On terminal receipt reuse session_id for corrected work; already completed work is unchanged.', 'dispatch_id'),
+    specs = [('conductor_review', review, 'Record parent review of a successful dispatch. verified requires evidence_ids from collected persisted tool records and a basis explaining what they establish. Worker prose is not evidence; tool execution alone does not prove the objective. Use needs_work when incomplete and state unverified scope.', 'dispatch_id'),
+             ('conductor_cancel', cancel, 'Cancel an owned queued or running dispatch. Does not undo actions. On timeout outcome is unknown: retry cancellation before reuse. On terminal receipt reuse session_id for corrected work; already completed work is unchanged.', 'dispatch_id'),
              ('conductor_dispatch', dispatch, 'Dispatch asynchronously: for follow-up, corrections, or verification, prefer the original completed worker by passing session_id to preserve context. Omit session_id only for a new independent worker. Returns session_id and a new dispatch_id.', 'objective'),
              ('conductor_collect', collect, 'Collect a worker outcome snapshot without waiting. If pending, end the turn; completion automatically wakes the parent.', 'dispatch_id')]
     # A remembered SOP/tool call must not bypass the manager-only role.
@@ -3124,20 +3181,45 @@ def _install_conductor_tools(agent, config):
             setattr(handler_type, attr, denied)
     schema = [item for item in original_schema
               if item.get('function', {}).get('name') in allowed]
+    def displayed(method):
+        def invoke(handler, args, response):
+            outcome = method(handler, args, response)
+            data = outcome.data
+            snapshot = data.get('untrusted_worker_result', data) if isinstance(data, dict) else {}
+            safe = {}
+            if isinstance(snapshot, dict):
+                for key in ('ok', 'pending'):
+                    if type(snapshot.get(key)) is bool:
+                        safe[key] = snapshot[key]
+                if snapshot.get('status') in ('queued', 'running', 'pending', 'succeeded', 'failed', 'cancelled', 'verified', 'needs_work'):
+                    safe['status'] = snapshot['status']
+                # Never display worker prose, errors, paths, credentials or arbitrary IDs.
+                if snapshot.get('error'):
+                    safe['error'] = 'Request failed; inspect the private receipt.'
+            yield json.dumps(safe, ensure_ascii=False) + '\n'
+            return outcome
+        return invoke
+
     for name, method, description, parameter in specs:
         attr = 'do_' + name
         if attr not in originals:
             originals[attr] = (attr in handler_type.__dict__, handler_type.__dict__.get(attr))
-        setattr(handler_type, attr, method)
+        setattr(handler_type, attr, displayed(method))
         properties = {parameter: {'type': 'string'}}
+        if name == 'conductor_review':
+            properties.update({
+                'status': {'type': 'string', 'enum': ['verified', 'needs_work']},
+                'basis': {'type': 'string', 'minLength': 1},
+                'unverified': {'type': 'string'},
+                'evidence_ids': {'type': 'array', 'maxItems': 64,
+                                 'items': {'type': 'string'}}})
         if name == 'conductor_dispatch':
-            properties['project_id'] = {'type': 'string', 'minLength': 1, 'description': 'Optional existing project ID for a NEW worker only; cannot combine with session_id. Omit to inherit parent project and workspace. Uses current global project mode. Explicit selection clears inherited execution workspace; project memory is not a code directory.'}
             properties['session_id'] = {'type': 'string', 'description': 'Optional owned completed worker session ID. Reuse its history for follow-up work; omit to create a new worker.'}
             properties['llm_no'] = {'type': 'integer', 'minimum': 0, 'description': 'Optional configured runtime model index (not a model name). Overrides this worker only; omitted means inherit parent for new workers, retain existing for reused workers.'}
             properties['reasoning_effort'] = {'type': 'string', 'enum': ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'description': 'Optional worker reasoning override. off clears explicit effort; omitted preserves inherited/existing setting. Overrides persist for subsequent reuse.'}
         schema.append({'type': 'function', 'function': {'name': name, 'description': description,
                        'parameters': {'type': 'object', 'properties': properties,
-                                      'required': [parameter], 'additionalProperties': False}}})
+                                      'required': ([parameter, 'status', 'basis', 'evidence_ids'] if name == 'conductor_review' else [parameter]), 'additionalProperties': False}}})
     agentmain.TOOLS_SCHEMA = schema
 
     def restore():

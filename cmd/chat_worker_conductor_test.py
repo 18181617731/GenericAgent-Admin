@@ -10,7 +10,7 @@ class ConductorDispatchOptionsTest(unittest.TestCase):
         dispatch = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'dispatch' and any(isinstance(x, ast.Constant) and x.value == 'conductor_dispatch' for x in ast.walk(n)))
         self.events = []
         self.agent = object()
-        self.env = dict(agent=self.agent, StepOutcome=lambda value: value,
+        self.env = dict(agent=self.agent, StepOutcome=lambda value, **kwargs: value,
                         re=__import__('re'), uuid=__import__('uuid'), broker=Path('unused'),
                         emit=self.events.append, receipts={},
                         read_reply=lambda *args: {'ok': True, 'dispatch_id': 'd'})
@@ -25,6 +25,89 @@ class ConductorDispatchOptionsTest(unittest.TestCase):
         self.assertNotIn('llm_no', self.events[0])
         self.assertNotIn('reasoning_effort', self.events[0])
 
+    def test_null_inherits_and_allows_reuse(self):
+        for options in ({'project_id': None}, {'project_id': None, 'session_id': 'worker'}):
+            self.assertTrue(self.call(**options)['ok'])
+            self.assertNotIn('project_id', self.events[-1])
+            self.assertEqual(self.events[-1]['session_id'], options.get('session_id', ''))
+
+    def test_outbound_schema_to_dispatch_payload(self):
+        import copy
+        import json
+        import os
+        import sys
+        import tempfile
+        import time
+        from types import ModuleType
+        from unittest.mock import patch
+        source = os.environ.get('GA_CORE_AGENT_LOOP')
+        if not source:
+            self.skipTest('Set GA_CORE_AGENT_LOOP to exercise the real outbound builder')
+        # Extract only pure request builders: no core module initialization or network.
+        tree = ast.parse(Path(source).with_name('llmcore.py').read_text(encoding='utf-8'))
+        names = {'_openai_stream', '_prepare_oai_tools', '_to_responses_input'}
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        self.assertEqual(len(nodes), len(names))
+        payloads = []
+        def capture(sess, url, headers, payload, parser):
+            payloads.append(copy.deepcopy(payload))
+            return iter(())
+        wire = dict(_stream_with_retry=capture, auto_make_url=lambda base, path: base + path,
+                    _RESP_CACHE_KEY='test', _RESP_CODEX_KEY='test',
+                    _stamp_oai_cache_markers=lambda *args: None)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<real-outbound>', 'exec'), wire)
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        module, loop = ModuleType('agentmain'), ModuleType('agent_loop')
+        module.GenericAgentHandler = type('Handler', (), {})
+        module.TOOLS_SCHEMA = []
+        loop.StepOutcome = lambda data, **kwargs: SimpleNamespace(data=data, **kwargs)
+        events = []
+        with tempfile.TemporaryDirectory() as directory:
+            def emit(event):
+                events.append(event)
+                reply = ({'ok': False, 'error': 'invalid project_id: missing'}
+                         if event.get('project_id') == 'missing' else {'ok': True, 'dispatch_id': 'd'})
+                (Path(directory) / (event['request_id'] + '.response.json')).write_text(json.dumps(reply), encoding='utf-8')
+            env = dict(Path=Path, re=__import__('re'), json=json, time=time, emit=emit)
+            exec(compile(ast.Module(body=[node], type_ignores=[]), '<installed-tools>', 'exec'), env)
+            agent = object()
+            with patch.dict(sys.modules, {'agentmain': module, 'agent_loop': loop}):
+                restore = env['_install_conductor_tools'](agent, {'role': 'parent', 'broker_dir': directory})
+                try:
+                    handler = module.GenericAgentHandler()
+                    handler.parent = agent
+                    for mode in ('responses', 'chat_completions'):
+                        sess = SimpleNamespace(model='gpt-test', api_mode=mode, temperature=1,
+                            api_key='dummy', user_agent='test', api_base='offline/', stream=False,
+                            system='', reasoning_effort='', max_tokens=0, service_tier='', tools=module.TOOLS_SCHEMA)
+                        list(wire['_openai_stream'](sess, []))
+                        tools = payloads[-1]['tools']
+                        funcs = tools if mode == 'responses' else [t['function'] for t in tools]
+                        schema = next(t['parameters'] for t in funcs if t['name'] == 'conductor_dispatch')
+                        self.assertNotIn('project_id', schema['properties'])
+                        self.assertNotIn('project_id', schema['required'])
+                        cases = [({}, True), ({'project_id': None}, True),
+                                 ({'project_id': 'target'}, True), ({'project_id': 'missing'}, True),
+                                 ({'session_id': 'worker'}, True),
+                                 ({'project_id': None, 'session_id': 'worker'}, True),
+                                 ({'project_id': 'target', 'session_id': 'worker'}, True)]
+                        for options, ok in cases:
+                            with self.subTest(mode=mode, options=options):
+                                args = json.loads(json.dumps({'objective': 'task', **options}))
+                                before = len(events)
+                                stream = handler.do_conductor_dispatch(args, None)
+                                self.assertEqual(json.loads(next(stream)), {'ok': ok})
+                                with self.assertRaises(StopIteration) as stopped:
+                                    next(stream)
+                                result = stopped.exception.value.data
+                                self.assertEqual(result['ok'], ok)
+                                self.assertEqual(len(events), before + 1)
+                                self.assertNotIn('project_id', events[-1])
+                                self.assertEqual(events[-1]['session_id'], options.get('session_id', ''))
+                finally:
+                    restore()
+
     def test_overrides_forwarded(self):
         for effort in ('off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
             self.assertTrue(self.call(llm_no=0, reasoning_effort=effort, session_id='worker')['ok'])
@@ -32,18 +115,92 @@ class ConductorDispatchOptionsTest(unittest.TestCase):
             self.assertEqual(self.events[-1]['reasoning_effort'], effort)
             self.assertEqual(self.events[-1]['session_id'], 'worker')
 
-    def test_project_forwarded(self):
-        self.assertTrue(self.call(project_id=' target ')['ok'])
-        self.assertEqual(self.events[-1]['project_id'], 'target')
-        for value in (None, '', ' ', 3):
-            self.assertFalse(self.call(project_id=value)['ok'])
-        self.assertFalse(self.call(project_id='target', session_id='worker')['ok'])
-        self.assertEqual(len(self.events), 1)
+    def test_legacy_project_ignored(self):
+        for value in (None, '', ' ', 3, False, [], {}, 'target', '../escape'):
+            for session in ('', 'worker'):
+                self.assertTrue(self.call(project_id=value, session_id=session)['ok'])
+                self.assertNotIn('project_id', self.events[-1])
+                self.assertEqual(self.events[-1]['session_id'], session)
+        self.assertEqual(len(self.events), 18)
+
+    def outcome(self, **options):
+        return self.env['dispatch'](SimpleNamespace(parent=self.agent), {'objective': 'test', **options}, None)
+
+    def test_repeated_invalid_project_and_recovery(self):
+        self.env['StepOutcome'] = lambda data, **kwargs: SimpleNamespace(data=data, **kwargs)
+        self.env['read_reply'] = lambda *args: {'ok': False, 'error': 'invalid project_id: missing'}
+        for _ in range(3):
+            result = self.outcome(project_id='web')
+            self.assertIn('No worker was created', result.next_prompt)
+        for _ in range(5):
+            result = self.outcome(project_id='web', objective='reworded task')
+            self.assertEqual(result.data['error_code'], 'repeated_invalid_parameters')
+        self.assertEqual(len(self.events), 3)
+        self.env['read_reply'] = lambda *args: {'ok': True, 'dispatch_id': 'd', 'status': 'queued'}
+        for options in ({'llm_no': 0}, {'llm_no': 1}, {'session_id': 'worker'}):
+            result = self.outcome(**options)
+            self.assertTrue(result.data['ok'])
+            self.assertIn('Dispatch accepted', result.next_prompt)
+        self.assertEqual(len(self.events), 6)
+        self.assertIn('d', self.env['receipts'])
+
+    def test_pending_is_not_rejection(self):
+        self.env['StepOutcome'] = lambda data, **kwargs: SimpleNamespace(data=data, **kwargs)
+        self.env['read_reply'] = lambda *args: {'ok': False, 'pending': True, 'error': 'timeout'}
+        for _ in range(4):
+            result = self.outcome()
+            self.assertIn('outcome unknown', result.next_prompt)
+            self.assertNotIn('No worker was created', result.next_prompt)
+        self.assertEqual(len(self.events), 4)
 
     def test_invalid_never_emits(self):
         for options in ({'llm_no': -1}, {'llm_no': True}, {'llm_no': 1.5}, {'llm_no': '1'}, {'llm_no': None}, {'reasoning_effort': None}, {'reasoning_effort': ''}, {'reasoning_effort': 'invalid'}):
             self.assertFalse(self.call(**options)['ok'])
         self.assertEqual(self.events, [])
+
+
+class ConductorReviewTest(unittest.TestCase):
+    def test_review_and_cancel_receipts_have_continuation(self):
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        for name in ('review', 'cancel'):
+            node = next(n for n in installer.body if isinstance(n, ast.FunctionDef) and n.name == name)
+            for reply in ({'ok': True}, {'ok': False, 'error': 'rejected'},
+                          {'ok': False, 'pending': True, 'error': 'timeout'}):
+                with self.subTest(name=name, reply=reply):
+                    agent = object()
+                    env = dict(agent=agent, StepOutcome=lambda data, **kw: SimpleNamespace(data=data, **kw),
+                               uuid=__import__('uuid'), re=__import__('re'), broker=Path('broker'),
+                               emit=lambda event: None, read_reply=lambda *args: reply)
+                    exec(compile(ast.Module(body=[node], type_ignores=[]), '<receipt>', 'exec'), env)
+                    result = env[name](SimpleNamespace(parent=agent), {'dispatch_id': 'd'}, None)
+                    self.assertEqual(result.data, reply)
+                    self.assertTrue(result.next_prompt)
+                    self.assertIn('unknown, not success', result.next_prompt)
+                    mismatch = env[name](SimpleNamespace(parent=object()), {}, None)
+                    self.assertFalse(mismatch.data['ok'])
+                    self.assertTrue(mismatch.next_prompt)
+
+    def test_review_forwards_evidence_and_rejects_wrong_parent(self):
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'review' and any(isinstance(x, ast.Constant) and x.value == 'conductor_review' for x in ast.walk(n)))
+        agent, events, replies = object(), [], []
+        def read_reply(path, timeout):
+            replies.append((path, timeout))
+            return {'ok': True}
+        env = dict(agent=agent, StepOutcome=lambda value, **kwargs: value,
+                   uuid=__import__('uuid'), broker=Path('broker'),
+                   emit=events.append, read_reply=read_reply)
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<review>', 'exec'), env)
+        args = dict(dispatch_id='d', status='verified', basis='Test output',
+                    evidence_ids=['d:0'], unverified='Production')
+        self.assertFalse(env['review'](SimpleNamespace(parent=object()), args, None)['ok'])
+        self.assertEqual(events, [])
+        self.assertTrue(env['review'](SimpleNamespace(parent=agent), args, None)['ok'])
+        self.assertEqual(len(events), 1)
+        for key, value in args.items():
+            self.assertEqual(events[0][key], value)
+        self.assertEqual(replies, [(Path('broker') / (events[0]['request_id'] + '.response.json'), 30)])
 
 
 class ConductorToolBoundaryTest(unittest.TestCase):
@@ -78,9 +235,14 @@ class ConductorToolBoundaryTest(unittest.TestCase):
                 install(object(), config)()
                 self.assertIs(module.TOOLS_SCHEMA, schema)
                 self.assertIs(Handler.do_file_read, original_read)
+                self.assertFalse(hasattr(Handler, 'do_conductor_dispatch'))
             restore = install(object(), {'role': 'parent', 'broker_dir': directory})
             try:
-                self.assertEqual({s['function']['name'] for s in module.TOOLS_SCHEMA}, {'ask_user', 'conductor_dispatch', 'conductor_collect', 'conductor_cancel'})
+                self.assertEqual({s['function']['name'] for s in module.TOOLS_SCHEMA}, {'ask_user', 'conductor_dispatch', 'conductor_collect', 'conductor_cancel', 'conductor_review'})
+                review_schema = next(s['function']['parameters'] for s in module.TOOLS_SCHEMA if s['function']['name'] == 'conductor_review')
+                self.assertEqual(set(review_schema['required']), {'dispatch_id', 'status', 'basis', 'evidence_ids'})
+                self.assertEqual(review_schema['properties']['status']['enum'], ['verified', 'needs_work'])
+                self.assertFalse(review_schema['additionalProperties'])
                 handler = Handler()
                 for name, args in [('code_run', {'script': 'python agentmain.py --task task'}), ('file_read', {'path': 'subagent_sop.md'})]:
                     result = getattr(handler, 'do_' + name)(args, None)
@@ -97,6 +259,173 @@ class ConductorToolBoundaryTest(unittest.TestCase):
             self.assertFalse(hasattr(Handler, 'do_conductor_dispatch'))
             Handler().do_code_run({}, None)
             self.assertEqual(calls, [{}])
+
+
+class ConductorCoreContractTest(ConductorDispatchOptionsTest):
+    def setUp(self):
+        super().setUp()
+        import importlib.util
+        import os
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+        source = os.environ.get('GA_CORE_AGENT_LOOP')
+        if not source:
+            self.skipTest('Set GA_CORE_AGENT_LOOP to the real GA agent_loop.py')
+        spec = importlib.util.spec_from_file_location('_conductor_core_contract', source)
+        core = importlib.util.module_from_spec(spec)
+        hooks = ModuleType('plugins.hooks')
+        hooks.trigger = lambda *args, **kwargs: None
+        with patch.dict(sys.modules, {spec.name: core, 'plugins.hooks': hooks}):
+            spec.loader.exec_module(core)
+        self.core = core
+        self.agent = SimpleNamespace(task_dir=None)
+        self.env.update(agent=self.agent, StepOutcome=core.StepOutcome)
+
+    def call(self, **options):
+        return super().call(**options).data
+
+    def exercise_loop(self, reply, first_args=None, legacy=False, receipt_args=None):
+        import json
+        import copy
+        core, env = self.core, self.env
+        reads, requests = [], []
+        def read_reply(path, timeout):
+            reads.append((path.name, timeout))
+            return reply
+        env['read_reply'] = read_reply
+        class Handler(core.BaseHandler):
+            parent = self.agent
+            _done_hooks = []
+            def do_conductor_dispatch(handler, args, response):
+                outcome = env['dispatch'](handler, args, response)
+                return core.StepOutcome(outcome.data) if legacy else outcome
+            def do_no_tool(handler, args, response):
+                return core.StepOutcome(None)
+        def tool(tid, args):
+            return SimpleNamespace(id=tid, function=SimpleNamespace(
+                name='conductor_dispatch', arguments=json.dumps(args)))
+        class Client:
+            def chat(client, messages, tools):
+                requests.append(copy.deepcopy(messages))
+                calls = [tool('first', first_args or receipt_args or {'objective': 'one'}),
+                         tool('second', receipt_args or {'objective': 'two'})] if len(requests) == 1 else []
+                if False:
+                    yield ''
+                return SimpleNamespace(content='', tool_calls=calls)
+        output = list(core.agent_runner_loop(Client(), '', 'coordinate', Handler(), [], max_turns=2))
+        if legacy:
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(len(reads), 1)
+            return
+        self.assertEqual(len(requests), 2)
+        results = requests[1][0]['tool_results']
+        self.assertEqual([r['tool_use_id'] for r in results], ['first', 'second'])
+        self.assertEqual(json.loads(results[1]['content']), reply)
+        self.assertEqual(json.loads(results[0]['content']), reply if first_args is None else
+                         {'ok': False, 'error': 'objective is required'})
+        self.assertTrue(requests[1][0]['content'])
+        # Dispatch, review and cancel share the same broker response protocol.
+        self.assertTrue(all(name.endswith('.response.json') and timeout == 30 for name, timeout in reads), reads)
+        self.assertEqual(len(reads), 2 if first_args is None else 1)
+        # Receipt data belongs in tool_results, not a second copy in streamed text.
+        self.assertNotIn(json.dumps(reply), ''.join(output))
+
+    def test_real_loop_review_cancel_receipts(self):
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        for name in ('review', 'cancel'):
+            node = next(n for n in installer.body if isinstance(n, ast.FunctionDef) and n.name == name)
+            exec(compile(ast.Module(body=[node], type_ignores=[]), '<real-receipt>', 'exec'), self.env)
+            # The harness dispatch entry executes the actual installed method.
+            self.env['dispatch'] = self.env[name]
+            for reply in ({'ok': True}, {'ok': False, 'error': 'rejected'},
+                          {'ok': False, 'pending': True, 'error': 'timeout'}):
+                with self.subTest(name=name, reply=reply):
+                    events = []
+                    self.env['emit'] = events.append
+                    self.exercise_loop(reply, receipt_args={'dispatch_id': 'd'})
+                    self.assertEqual([event['type'] for event in events],
+                                     ['conductor_' + name] * 2)
+
+    def test_collect_display_and_text_history(self):
+        import json
+        self.env['json'] = json
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        ack = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_ack_conductor_result')
+        exec(compile(ast.Module(body=[ack], type_ignores=[]), '<ack>', 'exec'), self.env)
+        import tempfile
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.env['broker'] = Path(directory.name)
+        for name in ('collect', 'displayed'):
+            node = next(n for n in installer.body if isinstance(n, ast.FunctionDef) and n.name == name)
+            exec(compile(ast.Module(body=[node], type_ignores=[]), '<receipt>', 'exec'), self.env)
+        import os
+        source = ast.parse(Path(os.environ['GA_CORE_AGENT_LOOP']).with_name('llmcore.py').read_text(encoding='utf-8'))
+        cls = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'ToolClient')
+        method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_build_protocol_prompt')
+        text_env = {}
+        exec(compile(ast.Module(body=[method], type_ignores=[]), '<text-client>', 'exec'), text_env)
+        for reply in ({'ok': True, 'status': 'succeeded', 'result': 'PRIVATE'},
+                      {'ok': True, 'pending': True, 'token': 'PRIVATE'},
+                      {'ok': False, 'error': 'PRIVATE'},
+                      {'ok': False, 'pending': True, 'error': 'PRIVATE timeout'}):
+            with self.subTest(reply=reply):
+                (self.env['broker'] / 'd.outcome.json').write_text(json.dumps(reply), encoding='utf-8')
+                handler = SimpleNamespace(parent=self.agent)
+                stream = self.env['displayed'](self.env['collect'])(handler, {'dispatch_id': 'd'}, None)
+                display = next(stream)
+                self.assertNotIn('PRIVATE', display)
+                self.assertLessEqual(set(json.loads(display)), {'ok', 'pending', 'status', 'error'})
+                with self.assertRaises(StopIteration) as stopped:
+                    next(stream)
+                outcome = stopped.exception.value
+                self.assertTrue(outcome.next_prompt)
+                self.assertEqual(outcome.data['untrusted_worker_result'], reply)
+                import copy
+                requests = []
+                core, env, owner = self.core, self.env, self.agent
+                class Handler(core.BaseHandler):
+                    parent = owner
+                    _done_hooks = []
+                    do_conductor_collect = env['displayed'](env['collect'])
+                    def do_no_tool(self, args, response):
+                        return core.StepOutcome(None)
+                class Client:
+                    def chat(self, messages, tools):
+                        requests.append(copy.deepcopy(messages))
+                        if False:
+                            yield ''
+                        calls = [SimpleNamespace(id='actual-call-id', function=SimpleNamespace(
+                            name='conductor_collect', arguments=json.dumps({'dispatch_id': 'd'})))] if len(requests) == 1 else []
+                        return SimpleNamespace(content='', tool_calls=calls)
+                output = list(core.agent_runner_loop(Client(), '', 'collect', Handler(), [], max_turns=2))
+                self.assertEqual(len(requests), 2)
+                receipt = requests[1][0]['tool_results'][0]
+                self.assertEqual(receipt['tool_use_id'], 'actual-call-id')
+                self.assertEqual(json.loads(receipt['content']), outcome.data)
+                self.assertNotIn('PRIVATE', ''.join(output))
+                client = SimpleNamespace(last_tools='TOOLS', total_cd_tokens=0, _prepare_tool_instruction=lambda tools: '')
+                content = receipt['content']
+                prompt = text_env['_build_protocol_prompt'](client, requests[1], None)
+                self.assertIn('<tool_result>' + content + '</tool_result>', prompt)
+
+    def test_real_loop_two_async_receipts(self):
+        self.exercise_loop({'ok': True, 'dispatch_id': 'd', 'session_id': 'worker', 'status': 'queued'})
+
+    def test_real_loop_error_and_timeout_receipts(self):
+        for reply in ({'ok': False, 'error': 'capacity'},
+                      {'ok': False, 'pending': True, 'error': 'Conductor wait timed out; outcome unknown'}):
+            with self.subTest(reply=reply):
+                self.exercise_loop(reply)
+
+    def test_real_loop_validation_does_not_cut_batch(self):
+        self.exercise_loop({'ok': True, 'dispatch_id': 'd'}, {'objective': ' '})
+
+    def test_legacy_contract_reproduces_early_exit(self):
+        self.exercise_loop({'ok': True, 'dispatch_id': 'd'}, legacy=True)
 
 
 if __name__ == '__main__':
