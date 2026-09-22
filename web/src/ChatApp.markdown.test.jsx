@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { ChatMessage, MessageList } from './ChatApp.jsx'
 import { mergeStreamTerminalMessage } from './lib/chatStream.js'
 import { reconcileHistoryPage } from './lib/chatHistoryPages.js'

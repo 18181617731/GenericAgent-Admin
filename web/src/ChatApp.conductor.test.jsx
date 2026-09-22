@@ -135,14 +135,14 @@ test.each(['light', 'dark', 'warm'])('review evidence remains distinct from exec
     let data = {}
     if (path === '/api/chat/sessions') data = { sessions }
     else if (path === '/api/chat/session/review-parent') data = { ...parent, messages: [], queue: [] }
-    else if (path === '/api/chat/conductor/review-parent/children') data = { children, dispatch_count: 3, dispatch_limit: 48, usage_summary: { parent: { prompt_tokens: 10, output_tokens: 2 }, children: { prompt_tokens: 50, output_tokens: 7 }, total: { prompt_tokens: 60, output_tokens: 9 }, missing_dispatches: 1 } }
+    else if (path === '/api/chat/conductor/review-parent/children') data = { children, dispatch_count: 53, usage_summary: { parent: { prompt_tokens: 10, output_tokens: 2 }, children: { prompt_tokens: 50, output_tokens: 7 }, total: { prompt_tokens: 60, output_tokens: 9 }, missing_dispatches: 1 } }
     return new Response(JSON.stringify({ ok: true, ...data, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }))
   render(<ChatApp />)
   fireEvent.click(await screen.findByRole('button', { name: 'Subagents' }))
   const workspace = within(await screen.findByRole('complementary', { name: 'Subagents' }))
   await waitFor(() => expect(workspace.getByText('Recorded total: 60 / 9')).toBeTruthy(), { timeout: 5000 })
-  expect(workspace.getByText('Dispatches: 3 / 48')).toBeTruthy()
+  expect(workspace.getByText('Dispatches: 53')).toBeTruthy()
   expect(workspace.getByText('Parent: 10 / 2')).toBeTruthy()
   expect(workspace.getByText('Finalized children: 50 / 7')).toBeTruthy()
   expect(workspace.getByText(/Missing usage snapshots: 1/)).toBeTruthy()
@@ -243,3 +243,42 @@ test('inline completion appears on detail update without becoming a user message
   await waitFor(() => expect(upgraded).toBe(true))
   delete document.documentElement.dataset.theme
  })
+
+for (const theme of ['light', 'dark', 'warm']) {
+ for (const project of ['Legacy project', { provider: 'admin', id: 'admin-project', name: 'Admin project' }, { provider: 'official', id: 'official-project', name: 'Official project' }]) {
+  test(`project menu creates bound Conductor: ${theme} ${typeof project === 'string' ? project : project.provider}`, async () => {
+   localStorage.setItem('ga-admin-lang', 'en')
+   document.documentElement.dataset.theme = theme
+   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+   vi.stubGlobal('EventSource', class { addEventListener() {} removeEventListener() {} close() {} })
+   Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+   const posts = []
+   let created = null
+   vi.stubGlobal('fetch', vi.fn(async (input, init = {}) => {
+    const url = new URL(typeof input === 'string' ? input : input.url, window.location.origin)
+    let data = {}
+    if (url.pathname === '/api/instances') data = { instances: [] }
+    else if (url.pathname === '/api/chat/session/new') {
+     const payload = JSON.parse(init.body); posts.push(payload)
+     created = session('project-conductor', 'Project Conductor', { ...payload, conductor: { role: 'parent' }, messages: [], queue: [] })
+     data = created
+    } else if (url.pathname === '/api/chat/sessions') data = { sessions: created ? [created] : [], project_items: [project], pinned_projects: [] }
+    else if (url.pathname.startsWith('/api/chat/session/')) data = created || {}
+    else if (url.pathname.startsWith('/api/chat/state')) data = { llms: [], settings: {} }
+    else if (url.pathname === '/api/extra-system-prompt-presets') data = { presets: [] }
+    return new Response(JSON.stringify({ ok: true, ...data, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+   }))
+   render(<ChatApp />)
+   fireEvent.click(await screen.findByRole('tab', { name: 'Projects', exact: true }))
+   fireEvent.click(await screen.findByRole('button', { name: 'Project actions' }))
+   fireEvent.click(await screen.findByRole('button', { name: 'New project Conductor' }))
+   await waitFor(() => expect(posts).toEqual([typeof project === 'string'
+    ? { project_mode: project, mode: 'conductor' }
+    : { project_provider: project.provider, project_id: project.id, mode: 'conductor' }]))
+   await screen.findByLabelText('Conductor session')
+   expect(screen.queryByRole('button', { name: 'New project Conductor' })).toBeNull()
+   delete document.documentElement.dataset.theme
+  })
+ }
+}

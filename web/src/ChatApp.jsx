@@ -75,6 +75,8 @@ import ChatSidebar, { ProjectManagerDialog } from './components/ChatSidebar.jsx'
 import ChatPrivacyCurtain from './components/ChatPrivacyCurtain.jsx'
 import { privateSessionTitle } from './lib/chatPrivacy.js'
 import { useChatPrivacyMode } from './hooks/useChatPrivacyMode.js'
+import { normalizeChatAttachments, chatAttachmentSource } from './lib/chatAttachments.js'
+import FileDownloadLink from './components/FileDownloadLink.jsx'
 
 export { ProviderModelCascade } from './components/ModelProviderCascade.jsx'
 
@@ -324,7 +326,7 @@ function InlineMarkdown({ text = '' }) {
   return <InlineNodes nodes={parseInline(text)} />
 }
 
-function CopyButton({ text, compact = false }) {
+function CopyButton({ text, compact = false, label = ct('复制', 'Copy'), copiedLabel = ct('已复制', 'Copied') }) {
   const [ok, setOk] = useState(false)
   const copy = async (e) => {
     e?.stopPropagation?.()
@@ -379,11 +381,11 @@ function JsonTree({ data, name = 'root', depth = 0 }) {
 }
 
 const MAX_CHAT_UPLOAD_FILES = 8
-const MAX_CHAT_UPLOAD_BYTES_PER_FILE = 20 * 1024 * 1024
-const MAX_CHAT_UPLOAD_BYTES_TOTAL = 40 * 1024 * 1024
+const MAX_CHAT_UPLOAD_BYTES_PER_FILE = 300 * 1024 * 1024
+const MAX_CHAT_UPLOAD_BYTES_TOTAL = 300 * 1024 * 1024
 
 const uploadFileName = (f) => String(f?.name || f?.Name || 'attachment')
-const uploadFileSource = (f) => String(f?.dataURL || f?.DataURL || f?.url || f?.URL || '')
+const uploadFileSource = chatAttachmentSource
 
 function isImageFile(f) {
   if (!f) return false
@@ -489,7 +491,7 @@ function FileAttachment({ path, resolvedPath = '' }) {
         <em>{directory || ct('本地文件', 'Local file')}</em>
       </span>}
     <span className="oa-file-actions">
-      <a href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></a>
+      <FileDownloadLink href={`/api/files/download?path=${encodeURIComponent(clean)}`} download={name} title="下载文件" aria-label={`下载文件 ${name}`}><Download size={15}/></FileDownloadLink>
       <button type="button" onClick={() => open('file')} title={ct('打开文件', 'Open file')} aria-label={`打开文件 ${name}`}><ExternalLink size={15}/></button>
       <button type="button" onClick={() => open('folder')} title={ct('打开所在位置', 'Open containing folder')} aria-label={`打开 ${name} 所在位置`}><FolderOpen size={15}/></button>
       <CopyButton text={displayPath || clean} compact />
@@ -2176,6 +2178,12 @@ const FileSummaryCard = memo(function FileSummaryCard({ content = '' }) {
               >
                 <ChevronDown size={11} className={'oa-file-chevron' + (expanded ? ' open' : '')} />
                 <span className="oa-file-name">{filename}</span>
+                <CopyButton
+                  text={group.path}
+                  compact
+                  label={ct(`复制路径：${group.path}`, `Copy path: ${group.path}`)}
+                  copiedLabel={ct('路径已复制', 'Path copied')}
+                />
                 {multi && <span className="oa-file-op-count">×{group.ops.length}</span>}
                 <span className="oa-file-stats">
                   {group.removed > 0 && <span className="stat-removed">-{group.removed}</span>}
@@ -3370,7 +3378,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const workerInstruction = '\n\n[Server-owned Conductor worker instruction]\nComplete only this delegated objective. Return a concise, evidence-based result for the parent. Do not attempt to dispatch other workers.'
   const delegated = conductorWorker && m.role === 'user' && typeof userText === 'string' && userText.endsWith(workerInstruction)
   const delegatedObjective = delegated ? userText.slice(0, -workerInstruction.length) : ''
-  const messageFiles = Array.isArray(m.files) ? m.files : []
+  const messageFiles = normalizeChatAttachments(m.files)
   const imageFiles   = messageFiles.filter(isImageFile)
   const nonImageFiles = messageFiles.filter(file => !isImageFile(file))
   const metadataFilePaths = nonImageFiles
@@ -5830,13 +5838,13 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     const tooLarge = files.find((file) => (Number(file.size) || 0) > MAX_CHAT_UPLOAD_BYTES_PER_FILE)
     if (tooLarge) {
-      setErr(ct(`附件过大：${tooLarge.name || 'attachment'}，单个限制 20MB`, `Attachment too large: ${tooLarge.name || 'attachment'}; limit 20 MB per file`))
+      setErr(ct(`附件过大：${tooLarge.name || 'attachment'}，单个限制 300MiB`, `Attachment too large: ${tooLarge.name || 'attachment'}; limit 300 MiB per file`))
       return
     }
     const totalBytes = attachments.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
       + files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
     if (totalBytes > MAX_CHAT_UPLOAD_BYTES_TOTAL) {
-      setErr(ct('附件总大小限制 40MB', 'Total attachment size is limited to 40 MB'))
+      setErr(ct('附件总大小限制 300MiB', 'Total attachment size is limited to 300 MiB'))
       return
     }
     const readOne = (file) => new Promise((resolve, reject) => {
@@ -6017,7 +6025,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const runSend = async (item = {}) => {
     const guidedQueueId = guidingQueueRef.current
     const text = String(item.text || '').trim()
-    const files = (item.files || []).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
+    const files = normalizeChatAttachments(item.files).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (!text && !files.length) return
     // Keep this as the first synchronous side effect of a send click so iOS
     // can authorize the later completion sound after the stream finishes.
@@ -6211,7 +6219,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const hasStringOverride = typeof textOverride === 'string'
     const sourceText = hasStringOverride ? textOverride : prompt
     const text = expandCustomSlashCommand(String(sourceText || '').trim())
-    const files = attachments.map(({ name, type, dataURL }) => ({ name, type, dataURL }))
+    const files = normalizeChatAttachments(attachments).map(({ name, type, dataURL }) => ({ name, type, dataURL }))
     if (text === '/new' && !files.length) {
       if (busy || activeRunRef.current) {
         setNotice(ct('当前正在执行，完成后可使用 /new 创建新对话', 'A run is in progress. Use /new after it completes.'))
@@ -6336,7 +6344,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       id:`guided-${next.id}`,
       role:'user',
       content:String(next.text || ''),
-      files:Array.isArray(next.files) ? next.files : [],
+      files:normalizeChatAttachments(next.files),
       created_at:Math.floor(Date.now()/1000),
     } : null
     let guideStarted = false
@@ -6509,7 +6517,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
               : null
             if (!stopped && activeSidRef.current === activeID) {
               setActiveSessionDetail(current => current && String(current.id) === String(after.id)
-                ? { ...current, ...after, ...(Array.isArray(metadata?.children) ? { conductor_children: metadata.children, conductor_usage_summary: metadata.usage_summary, conductor_dispatch_limit: metadata.dispatch_limit, conductor_dispatch_count: metadata.dispatch_count } : {}) }
+                ? { ...current, ...after, ...(Array.isArray(metadata?.children) ? { conductor_children: metadata.children, conductor_usage_summary: metadata.usage_summary, conductor_dispatch_count: metadata.dispatch_count } : {}) }
                 : current)
             }
           } else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {

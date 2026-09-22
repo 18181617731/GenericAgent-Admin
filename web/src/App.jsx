@@ -215,7 +215,7 @@ const OverviewPage = ({
   </section>
 }
 
-export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
+export default function App({ uiScale = 1, onUiScaleChange = () => {}, embedded = false, active = true, onClose }) {
   const defaultLang = 'zh'
   const [lang, setLang] = useState(() => localStorage.getItem('ga-admin-lang-explicit') === '1' ? (localStorage.getItem('ga-admin-lang') || defaultLang) : defaultLang)
   const chooseLang = (nextLang) => {
@@ -227,11 +227,25 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
   const [theme, setTheme] = useState(getInitialTheme)
   const [adminSidebarOpen, setAdminSidebarOpen] = useState(false)
+  const [settingsDetail, setSettingsDetail] = useState(false)
+  const settingsBackRef = useRef(null)
+  const settingsNavRef = useRef(null)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
     persistTheme(activeTheme.id)
   }, [theme])
   useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en' }, [lang])
+  useEffect(() => {
+    if (!embedded) return undefined
+    const syncTheme = event => setTheme(event.detail || getInitialTheme())
+    const syncLang = event => setLang(event.detail === 'en' ? 'en' : 'zh')
+    window.addEventListener('ga-admin-theme-change', syncTheme)
+    window.addEventListener('ga-admin-language-change', syncLang)
+    return () => {
+      window.removeEventListener('ga-admin-theme-change', syncTheme)
+      window.removeEventListener('ga-admin-language-change', syncLang)
+    }
+  }, [embedded])
   const t = I18N[lang] || I18N.en
   const settingsText = lang === 'zh' ? {
     title: '运行环境', summary: '集中管理 GA Admin 的本地路径与 Chat Python 网络环境。', configured: '配置已载入', unsavedHint: '修改后统一保存，写入前仍会二次确认。',
@@ -246,7 +260,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     autoTitle: 'Automatic titles', autoTitleDesc: 'Control whether new chats generate a title automatically, and which model does it.', autoTitleToggle: 'Generate chat titles automatically', autoTitleToggleHelp: 'When off, no model call is made for titles, so no extra tokens are spent.', autoTitleOn: 'On', autoTitleOff: 'Off', autoTitleModelHelp: 'Pick a dedicated title model, or follow the conversation model of each chat.', autoTitleSave: 'Save title settings',
     saveAll: 'Save all settings'
   }
-  const initialRoute = useMemo(() => parseRoute(), [])
+  const initialRoute = useMemo(() => embedded ? { tab: 'settings', taskSubTab: 'scheduled' } : parseRoute(), [embedded])
   const [tab, setTab] = useState(initialRoute.tab)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [cfg, setCfg] = useState(null), [persistedCfg, setPersistedCfg] = useState(null), [health, setHealth] = useState(null), [control, setControl] = useState(null), [services, setServices] = useState([])
@@ -334,7 +348,7 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       return () => { window.cancelAnimationFrame(raf); window.clearTimeout(guard); tl?.kill() }
     }, appScope)
     return () => ctx.revert()
-  }, { scope: appScope, dependencies: [tab, lang] })
+  }, { scope: appScope, dependencies: [tab, lang, embedded] })
 
   const inv = health?.inventory || {}
   const schedule = scheduleData || inv.schedule || {}
@@ -1222,6 +1236,11 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
     setAdminSidebarOpen(false)
     dismissMessage()
     if (nextTab === 'chat') {
+      if (embedded) {
+        setSettingsDetail(true)
+        setTab('chat')
+        return true
+      }
       if (hasUnsavedChanges && !window.confirm('当前有未保存的文件、任务或配置更改。进入独立 Chat 页面将放弃这些更改，是否继续？')) return false
       if (tab === 'tasks') invalidateScheduleArtifact(taskSubTab === 'scheduled')
       allowUnloadRef.current = true
@@ -1229,7 +1248,8 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
       return true
     }
     if (tab === 'tasks' && nextTab !== 'tasks') invalidateScheduleArtifact(taskSubTab === 'scheduled')
-    pushRoute(nextTab)
+    if (!embedded) pushRoute(nextTab)
+    if (embedded) setSettingsDetail(true)
     setTab(nextTab)
     return true
   }
@@ -1290,9 +1310,16 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
   }
 
   useEffect(() => {
+    if (embedded) return
     const route = buildRoute(tab, taskSubTab)
     if (window.location.pathname !== route || window.location.hash) window.history.replaceState({}, '', route)
-  }, [tab, taskSubTab])
+  }, [embedded, tab, taskSubTab])
+
+  useEffect(() => {
+    if (!embedded || !active || !window.matchMedia?.('(max-width: 900px)').matches) return
+    if (settingsDetail) settingsBackRef.current?.focus()
+    else settingsNavRef.current?.querySelector('[aria-current="page"]')?.focus()
+  }, [active, embedded, settingsDetail, tab])
 
   useEffect(() => {
     const onPopState = () => {
@@ -1390,17 +1417,18 @@ export default function App({ uiScale = 1, onUiScaleChange = () => {} }) {
         </div>
       </div>
     </div>}
-    <div ref={appScope} className={`app app-tab-${tab} ${adminSidebarOpen ? 'admin-sidebar-open' : ''}`} aria-busy={booting || busy || versionBusy || undefined}>
+    <div ref={appScope} className={`app app-tab-${tab} ${embedded ? `app-embedded ${settingsDetail ? 'settings-detail' : 'settings-list'}` : ''} ${adminSidebarOpen ? 'admin-sidebar-open' : ''}`} aria-busy={booting || busy || versionBusy || undefined}>
     <button type="button" className="admin-sidebar-scrim" aria-label={lang === 'zh' ? '关闭管理导航' : 'Close admin navigation'} onClick={() => setAdminSidebarOpen(false)} />
     <aside id="admin-sidebar" className="sidebar">
       <div className="admin-sidebar-heading"><div className="brand"><Bot aria-hidden="true"/><div><h1>{t.appName}</h1><p>{t.tagline}</p></div></div><button type="button" className="admin-sidebar-close" aria-label={lang === 'zh' ? '收起管理导航' : 'Collapse admin navigation'} onClick={() => setAdminSidebarOpen(false)}><PanelLeftClose size={20} aria-hidden="true"/></button></div>
+      {embedded && <button type="button" className="admin-back-to-chat" onClick={() => onClose?.()}>{lang === 'zh' ? '返回对话' : 'Back to chat'}</button>}
       <div className="lang-switch"><div className="lang-switch-label"><Globe2 size={15} aria-hidden="true"/><span>{t.language}</span></div><div className="lang-options" role="group" aria-label={t.language}><button type="button" aria-pressed={lang === 'zh'} aria-label={lang === 'zh' ? '中文' : 'Chinese'} className={lang === 'zh' ? 'active' : ''} onClick={()=>chooseLang('zh')}>中</button><button type="button" aria-pressed={lang === 'en'} aria-label={lang === 'en' ? 'English' : 'English'} className={lang === 'en' ? 'active' : ''} onClick={()=>chooseLang('en')}>EN</button></div><ThemePicker value={theme} onChange={setTheme} lang={lang} variant="compact"/><ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang}/></div>
       <button type="button" className="mobile-nav-trigger" onClick={()=>setMobileNavOpen(true)} aria-label="打开页面导航" aria-haspopup="dialog" aria-expanded={mobileNavOpen}><span>{icon(tab)}{navLabel(tab)}</span><ChevronDown size={17}/></button>
-      <nav aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
+      <nav ref={settingsNavRef} aria-label="主导航">{navGroups.map(group => <section key={group.key} className="nav-group"><span className="nav-group-label">{group.label[lang]}</span>{group.items.map(n => <button key={n} type="button" aria-current={tab===n ? 'page' : undefined} className={tab===n?'active':''} onClick={()=>navigateTo(n)}>{icon(n)}{navLabel(n)}</button>)}</section>)}</nav>
       <button type="button" className="refresh" onClick={refreshApp} disabled={booting || busy} aria-label={booting || busy ? t.busy : t.refresh}><RefreshCw size={15} aria-hidden="true"/><span>{booting || busy ? t.busy : t.refresh}</span></button>
       {serviceStatus}
     </aside>
-    <main className="main"><div className="admin-mobile-bar"><button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={() => setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button><span>{t.appName}</span>{serviceStatus}</div>{tab === 'chat' ? <header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header> : <header className="admin-page-header">
+    <main className="main"><div className="admin-mobile-bar"><button type="button" className="admin-sidebar-toggle" aria-label={lang === 'zh' ? '展开管理导航' : 'Open admin navigation'} aria-expanded={adminSidebarOpen} aria-controls="admin-sidebar" onClick={() => setAdminSidebarOpen(true)}><Menu size={21} aria-hidden="true"/></button><span>{t.appName}</span>{serviceStatus}</div>{embedded && <button ref={settingsBackRef} type="button" className="settings-back" onClick={() => setSettingsDetail(false)}>{lang === 'zh' ? '返回分类' : 'All categories'}</button>}{tab === 'chat' ? <header className="app-page-header"><div><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div><div className="badges"><span>{cfg?.host}:{cfg?.port}</span><span role="status" aria-live="polite" className={health?.ok?'ok':'err'}>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div></header> : <header className="admin-page-header">
       <div className="admin-page-heading"><span className="admin-page-icon" aria-hidden="true">{icon(tab)}</span><div className="admin-page-copy"><h2>{navLabel(tab)}</h2><p>{pageDescription(tab)}</p></div></div>
       <div className="admin-page-meta" aria-label={lang === 'zh' ? '服务状态' : 'Service status'}><span className="admin-page-endpoint"><Server size={14} aria-hidden="true"/><span>{cfg?.host}:{cfg?.port}</span></span><span role="status" aria-live="polite" className={`admin-page-health ${health?.ok ? 'is-ready' : 'is-error'}`}><span className="admin-page-health-dot" aria-hidden="true"/>{health?.ok ? t.ready : t.error}</span><NotificationCenter lang={lang} onOpen={openNotification}/></div>
     </header>}

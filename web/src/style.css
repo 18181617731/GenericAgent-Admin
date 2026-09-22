@@ -19964,14 +19964,16 @@ html { --ga-ui-scale: 1; }
   /* The !importants push back a legacy pass (see the .oa-composer-wrap block
      near line 3126) that pins the wrap with margin-right and an !important
      width of its own. */
+  /* Match the thread's scrollbar-free content box. Its stable 8px gutter shifts
+     the shared reading column 4px left of the main area's geometric center. */
   .oa-composer-wrap {
     position: absolute;
     left: 0;
-    right: 0;
+    right: 8px;
     bottom: 0;
     margin: 0 auto !important;
     z-index: 14;
-    width: min(var(--oa-chat-measure), calc(100% - 48px)) !important;
+    width: min(var(--oa-chat-measure), calc(100% - 60px)) !important;
     padding: 18px 0 18px !important;
     background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--surface-strong) 44%) !important;
     pointer-events: none;
@@ -22258,37 +22260,6 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
 .oa-sidebar .oa-session-title:has(> .oa-session-running-dot) {
   margin-inline-start: -4px;
   padding-inline-start: 4px;
-}
-
-/* Compact sidebar instance switcher; keep native selection and focus behavior. */
-.oa-sidebar-instance {
-  width:fit-content;
-  max-width:100%;
-  grid-template-columns:max-content minmax(0,112px);
-  column-gap:7px;
-}
-.oa-sidebar-instance select {
-  height:28px;
-  min-height:0;
-  padding:0 24px 0 8px;
-  border-radius:6px;
-  border-color:color-mix(in srgb, var(--oa-muted) 16%, transparent);
-  background-color:transparent;
-  font-size:12px;
-  font-weight:410;
-  text-overflow:ellipsis;
-  cursor:pointer;
-}
-.oa-sidebar-instance::after {
-  right:13px;
-  width:5px;
-  height:5px;
-}
-@media (max-width:680px) {
-  .oa-sidebar-instance select {
-    height:32px;
-    font-size:14px;
-  }
 }
 
 .oa-project-load-more {

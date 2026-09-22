@@ -371,6 +371,19 @@ func (s *Server) publishChatLoopState(sid string, state chatLoopState) {
 	s.publishChatRun(sid, map[string]interface{}{"type": "loop", "loop": state})
 }
 
+// Only completion events should wake a conductor with work still in flight.
+func chatLoopHasPendingConductorWork(cs chatSession) bool {
+	if cs.Conductor == nil || cs.Conductor.Role != conductorRoleParent {
+		return false
+	}
+	for _, child := range cs.ConductorChildren {
+		if !conductorTerminal(child.Status) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	s.resetChatAutorunAfterReply(sid)
 	if !success && s.chatRunCanceled(sid) {
@@ -395,6 +408,19 @@ func (s *Server) afterChatRunTerminal(sid string, success bool) {
 	// Then check loop mode
 	if !cs.Loop.Enabled || cs.Loop.Status == chatLoopStatusEvaluating {
 		s.SessionMu.Unlock()
+		return
+	}
+	if chatLoopHasPendingConductorWork(cs) {
+		if cs.Loop.Status != chatLoopStatusWaiting || cs.Loop.StopReason != "conductor_pending" {
+			cs.Loop.Status = chatLoopStatusWaiting
+			cs.Loop.StopReason = "conductor_pending"
+			appendChatLoopRecord(&cs.Loop, "waiting", "Waiting for Conductor workers to finish.", "")
+			err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+		}
+		s.SessionMu.Unlock()
+		if err == nil {
+			s.publishChatLoopState(sid, cs.Loop)
+		}
 		return
 	}
 	if success {
@@ -563,7 +589,7 @@ func (s *Server) evaluateChatLoop(sid string, epoch int64, cs chatSession) {
 		if attempt == 0 {
 			cmdReq["prompt"] = chatLoopControllerPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
 		} else {
-			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds))
+			cmdReq["prompt"] = chatLoopControllerRetryPrompt(state.ControllerPrompt, state.Round, normalizeChatLoopMaxRounds(state.MaxRounds)) + "\nRejected decision category: " + failureCategory + "."
 		}
 		s.SessionMu.Lock()
 		latest, loadErr := loadChatSession(s.CfgStore.Snapshot(), sid)
@@ -638,6 +664,17 @@ func (s *Server) finishChatLoop(sid string, epoch int64, status, reason string) 
 		s.SessionMu.Unlock()
 		return
 	}
+	if status == chatLoopStatusCompleted && (chatLoopHasPendingConductorWork(cs) || len(cs.QueuedMessages) > 0) {
+		cs.Loop.Status = chatLoopStatusWaiting
+		cs.Loop.StopReason = "conductor_pending"
+		err = saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
+		s.SessionMu.Unlock()
+		if err == nil {
+			s.publishChatLoopState(sid, cs.Loop)
+			s.processNextQueuedMessage(sid)
+		}
+		return
+	}
 	cs.Loop.Enabled = false
 	cs.Loop.Status = status
 	cs.Loop.StopReason = reason
@@ -670,6 +707,16 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 			return err
 		}
 		if !latest.Loop.Enabled || latest.Loop.Epoch != req.epoch || latest.Loop.Status != req.expectedStatus {
+			return errChatLoopStale
+		}
+		if chatLoopHasPendingConductorWork(latest) {
+			latest.Loop.Status = chatLoopStatusWaiting
+			latest.Loop.StopReason = "conductor_pending"
+			if err := saveChatSessionLocked(s.CfgStore.Snapshot(), latest); err != nil {
+				return err
+			}
+			waiting := latest.Loop
+			terminalLoop = &waiting
 			return errChatLoopStale
 		}
 		latest.Loop.MaxRounds = normalizeChatLoopMaxRounds(latest.Loop.MaxRounds)
@@ -984,6 +1031,11 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	}
 	// Internal completion evidence wakes the model, but is not a user turn.
 	internalCompletion := queuedItem.Kind == "conductor_completion"
+	if internalCompletion && cs.Loop.Enabled {
+		cs.Loop.Epoch++
+		cs.Loop.Status = chatLoopStatusRunning
+		cs.Loop.StopReason = ""
+	}
 	workerHistory := append([]chatMessage(nil), cs.Messages...)
 	if !internalCompletion {
 		cs.Messages = append(cs.Messages, queuedUserMsg)
