@@ -186,8 +186,13 @@ export const assistantTurnFallbackTitle = (chunk = '', turn = '') => {
   return turn === '' ? '' : `Turn ${turn}`
 }
 
-export const parseAssistantContent = (raw = '') => {
-  const full = String(raw || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+export const parseAssistantContent = (raw = '', runCache = null) => {
+  const source = String(raw || '')
+  // Text without protocol introducers cannot contain turns, fences or summaries.
+  // Preserve multiline whitespace normalization without splitting into marker lines.
+  // No retained source or append-only assumption: replacements stay equivalent.
+  if (!/[\r`~<[(]/.test(source)) return { runs: [], ...parseAssistantFinalBody(source) }
+  const full = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const markers = findTopLevelAssistantMarkers(full)
   const finalMarker = markers.find((m) => m.type === 'final')
   const turnMarkers = markers.filter((m) => m.type === 'turn' && (!finalMarker || m.index < finalMarker.index))
@@ -200,9 +205,16 @@ export const parseAssistantContent = (raw = '') => {
       const start = m.end
       const end = i + 1 < turnMarkers.length ? turnMarkers[i + 1].index : processEnd
       const chunk = full.slice(start, end).trim()
-      const summary = chunk.match(/<summary>([\s\S]*?)<\/summary>/i)
-      const title = summary?.[1]?.trim() || assistantTurnFallbackTitle(chunk, m.turn)
-      runs.push({ turn: m.turn, title, body: cleanAssistantRunBody(chunk) })
+      const cached = runCache?.get(m.turn)
+      if (cached?.chunk === chunk) {
+        runs.push(cached.run)
+      } else {
+        const summary = chunk.match(/<summary>([\s\S]*?)<\/summary>/i)
+        const title = summary?.[1]?.trim() || assistantTurnFallbackTitle(chunk, m.turn)
+        const run = { turn: m.turn, title, body: cleanAssistantRunBody(chunk) }
+        runs.push(run)
+        runCache?.set(m.turn, { chunk, run })
+      }
     })
     const final = parseAssistantFinalBody(finalText || '')
     return { runs, ...final }

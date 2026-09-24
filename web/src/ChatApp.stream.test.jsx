@@ -151,6 +151,53 @@ async function replayRace({ type = 'done', mirror = true, stateFirst = true } = 
   }
 }
 
+describe('background snapshot guards', () => {
+  test.each([false, true])('preserves live output despite an idle summary (active owner: %s)', async activeOwner => {
+    let applied = 0
+    let aborted = 0
+    const sandbox = {
+      activeSidRef: { current: 'selected' },
+      streamActivitySeqRef: { current: 1 },
+      streamAbortRef: { current: { abort: () => { aborted++ } } },
+      activeRunRef: { current: activeOwner },
+      sessionsRef: { current: [{ id: 'selected', running: false }] },
+      chatApi: async () => ({ id: 'selected', messages: [] }),
+      historyPages: { apply: () => { applied++ } },
+      addChatInstanceToURL: value => value,
+      chatInstanceRef: { current: '' },
+      contextOpen: false,
+      setPlanState: () => {},
+    }
+    vm.createContext(sandbox)
+    vm.runInContext(between('  const refreshActiveSessionSnapshot =', '  const loadWorldline =') + '\nglobalThis.refresh = refreshActiveSessionSnapshot', sandbox)
+    await sandbox.refresh('selected')
+    expect(aborted).toBe(0)
+    expect(applied).toBe(0)
+  })
+  test.each(['session switch', 'new stream', 'stream controller'])('discards snapshot after %s', async race => {
+    const gate = deferred()
+    let applied = 0
+    const sandbox = {
+      activeSidRef: { current: 'selected' },
+      streamActivitySeqRef: { current: 1 },
+      streamAbortRef: { current: null },
+      chatApi: () => gate.promise,
+      sessionsRef: { current: [{ id: 'selected', running: false }] },
+      activeRunRef: { current: null },
+      historyPages: { apply: () => { applied++; return {} } },
+    }
+    vm.createContext(sandbox)
+    vm.runInContext(between('  const refreshActiveSessionSnapshot =', '  const loadWorldline =') + '\nglobalThis.refresh = refreshActiveSessionSnapshot', sandbox)
+    const pending = sandbox.refresh('selected')
+    if (race === 'session switch') sandbox.activeSidRef.current = 'other'
+    if (race === 'new stream') sandbox.streamActivitySeqRef.current++
+    if (race === 'stream controller') sandbox.streamAbortRef.current = {}
+    gate.resolve({ id: 'selected', messages: [] })
+    await pending
+    expect(applied).toBe(0)
+  })
+})
+
 describe('concurrent session snapshots and completed stream replay', () => {
   test.each(['done', 'error'])('%s replay merges into history before any detail refresh', type => replayRace({ type }))
   test('does not depend on a fresh messagesRef', () => replayRace({ mirror: false }))
@@ -262,8 +309,9 @@ describe('stream animation lifecycle', () => {
     expectClean(harness)
   })
 
-  test('read errors preserve queued content and release listeners, frames, and the reader', async () => {
+  test.each(['Error', 'AbortError'])('%s preserves queued content and releases stream resources', async name => {
     const failure = new Error('Disconnected')
+    failure.name = name
     const harness = streamLifecycle(events('done').slice(0, 2), { tail: () => { throw failure } })
     await expect(harness.run()).rejects.toBe(failure)
     expect(failure.chatStreamOutcome).toMatchObject({ eventCount: 1, terminal: false })

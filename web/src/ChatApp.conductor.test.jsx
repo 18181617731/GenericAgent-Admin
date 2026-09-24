@@ -14,6 +14,45 @@ const session = (id, title, extra = {}) => ({
   ...extra,
 })
 
+test.each([['parent', false], ['worker', false], ['parent', true]])(
+  'background completion refreshes body: %s metadata failure=%s', async (role, failMetadata) => {
+    localStorage.setItem('ga-admin-lang', 'en')
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+    vi.stubGlobal('EventSource', class { addEventListener() {} removeEventListener() {} close() {} })
+    Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    let completed = false
+    let snapshots = 0
+    const data = () => session('poll-session', 'Polling session', {
+      count: completed ? 2 : 1,
+      updated_at: completed ? '2026-09-08T02:00:00Z' : '2026-09-08T01:00:00Z',
+      conductor: { role, status: 'idle' },
+    })
+    vi.stubGlobal('fetch', vi.fn(async input => {
+      const url = new URL(typeof input === 'string' ? input : input.url, window.location.origin)
+      let payload = {}
+      if (url.pathname === '/api/instances') payload = { instances: [] }
+      else if (url.pathname === '/api/chat/sessions') payload = { sessions: [data()], projects: [], pinned_projects: [] }
+      else if (url.pathname === '/api/chat/session/poll-session') {
+        snapshots++
+        payload = { ...data(), messages: [{ id: 'result', role: 'assistant', content: completed ? 'Background result arrived' : 'Initial body' }], queue: [] }
+      } else if (url.pathname.includes('/children')) {
+        if (failMetadata) throw new Error('mock metadata unavailable')
+        payload = { children: [] }
+      } else if (url.pathname.startsWith('/api/chat/state')) payload = { llms: [], settings: {} }
+      return new Response(JSON.stringify({ ok: true, ...payload, data: payload }), { headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<ChatApp />)
+    expect(await screen.findByText('Initial body')).toBeTruthy()
+    const initialSnapshots = snapshots
+    completed = true
+    window.dispatchEvent(new Event('online'))
+    expect(await screen.findByText('Background result arrived')).toBeTruthy()
+    expect(snapshots).toBe(initialSnapshots + 1)
+    expect(screen.queryByText('Initial body')).toBeNull()
+  },
+)
+
 const originalScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTo')
 
 afterEach(() => {
@@ -81,7 +120,8 @@ test('real ChatApp renders a Conductor workspace and navigates and stops workers
   const workspace = await screen.findByRole('complementary', { name: 'Subagents' })
   const badge = screen.getByLabelText('Conductor session')
   expect(badge.closest('.oa-session-row')).toBeTruthy()
-  expect(badge.nextElementSibling.tagName).toBe('B')
+  expect(badge.closest('.oa-session-title')).toBeTruthy()
+  expect(badge.previousElementSibling.tagName).toBe('B')
   expect(workspace.classList.contains('oa-conductor-agents')).toBe(true)
   expect(document.querySelector('.oa-main').firstElementChild.classList.contains('oa-topbar')).toBe(true)
   expect(within(workspace).getByRole('heading', { name: 'Run checks' })).toBeTruthy()
@@ -270,7 +310,9 @@ for (const theme of ['light', 'dark', 'warm']) {
     return new Response(JSON.stringify({ ok: true, ...data, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
    }))
    render(<ChatApp />)
-   fireEvent.click(await screen.findByRole('tab', { name: 'Projects', exact: true }))
+   const projectsSection = await screen.findByRole('button', { name: 'Projects', exact: true })
+   if (projectsSection.getAttribute('aria-expanded') !== 'true') fireEvent.click(projectsSection)
+   await waitFor(() => expect(projectsSection.getAttribute('aria-expanded')).toBe('true'))
    fireEvent.click(await screen.findByRole('button', { name: 'Project actions' }))
    fireEvent.click(await screen.findByRole('button', { name: 'New project Conductor' }))
    await waitFor(() => expect(posts).toEqual([typeof project === 'string'
@@ -282,3 +324,84 @@ for (const theme of ['light', 'dark', 'warm']) {
   })
  }
 }
+
+test.each(['light', 'dark', 'warm'])('review conflict is actionable without consuming review: %s', async theme => {
+ localStorage.setItem('ga-admin-lang', 'en')
+ document.documentElement.dataset.theme = theme
+ vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+ vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+ vi.stubGlobal('EventSource', class { addEventListener() {} removeEventListener() {} close() {} })
+ Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+ const parent = session('review-parent', 'Review parent', { conductor: { role: 'parent' }, conductor_children: [{session_id: 'review-worker', dispatch_id: 'review-dispatch', status: 'succeeded', review: {status: 'pending'}}] })
+ const worker = session('review-worker', 'Review worker', {conductor: {role: 'worker', parent_session_id: 'review-parent', dispatch_id: 'review-dispatch', status: 'succeeded'}})
+ const posts = []
+ vi.stubGlobal('fetch', vi.fn(async (input, init = {}) => {
+  const path = new URL(String(input), 'http://localhost').pathname
+  if (init.method === 'POST') posts.push(path)
+  if (path.endsWith('/disable')) return new Response(JSON.stringify({code: 'conductor_review_required', error: 'unprocessed review', session_id: 'review-worker', dispatch_id: 'review-dispatch'}), {status:409})
+  let data = {}
+  if (path === '/api/chat/sessions') data = {sessions: [parent, worker]}
+  else if (path === '/api/chat/session/review-parent') data = parent
+  else if (path === '/api/chat/session/review-worker') data = {...worker, messages: [{id: 'proof', role: 'assistant', content: 'Pending review result'}]}
+  else if (path.endsWith('/children')) data = {children: parent.conductor_children}
+  return new Response(JSON.stringify({ok: true, ...data, data}), {headers: {'Content-Type':'application/json'}})
+ }))
+ render(<ChatApp />)
+ await screen.findAllByText('Review parent')
+ fireEvent.click(screen.getByRole('button', {name: 'More actions'}))
+ const action = screen.getByRole('menuitem', {name:'Switch to ordinary chat'})
+ await waitFor(() => expect(action.disabled).toBe(false))
+ fireEvent.click(action)
+ const link = await screen.findByRole('button', {name:'Open task awaiting review'})
+ expect(screen.getByRole('alert').textContent).toContain('review-dispatch')
+ fireEvent.click(link)
+ await screen.findByText('Pending review result')
+ expect(posts).toEqual(['/api/chat/conductor/review-parent/disable'])
+ delete document.documentElement.dataset.theme
+})
+
+// Recovery is a response projection, not evidence of failure or completion.
+test.each(['light', 'dark', 'warm'])('recovery pending remains explicit (%s)', async theme => {
+  document.documentElement.dataset.theme = theme
+  localStorage.setItem('ga-admin-lang', 'en')
+  localStorage.setItem('ga-chat-last-session', 'recovery-parent')
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+  vi.stubGlobal('EventSource', class { addEventListener() {} removeEventListener() {} close() {} })
+  Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  const child = { session_id: 'recovery-child', dispatch_id: 'r1', title: 'Unconfirmed worker', status: 'running', recovery: 'pending_confirmation' }
+  const parent = session('recovery-parent', 'Recovery parent', { conductor: { role: 'parent' }, conductor_children: [child] })
+  vi.stubGlobal('fetch', vi.fn(async input => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    let data = {}
+    if (path === '/api/chat/sessions') data = { sessions: [parent, session('recovery-child', 'Unconfirmed worker', { conductor: { role: 'worker', parent_session_id: parent.id, dispatch_id: 'r1', status: 'running', recovery: 'pending_confirmation' } })] }
+    else if (path === '/api/chat/session/recovery-parent') data = { ...parent, messages: [], queue: [] }
+    else if (path === '/api/chat/conductor/recovery-parent/children') data = { children: [child] }
+    return new Response(JSON.stringify({ ok: true, ...data, data }), { headers: { 'Content-Type': 'application/json' } })
+  }))
+  render(<ChatApp />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Subagents' }))
+  const workspace = within(await screen.findByRole('complementary', { name: 'Subagents' }))
+  expect(await workspace.findByText('Recovery pending confirmation')).toBeTruthy()
+  expect(workspace.getByText(/no automatic replay/)).toBeTruthy()
+  expect(workspace.queryByText('Execution finished')).toBeNull()
+  const { registerDialogAdapter } = await import('./lib/danger')
+  let confirmed = false
+  const dialog = vi.fn(() => confirmed)
+  const unregister = registerDialogAdapter(dialog)
+  try {
+    const recoveryButton = workspace.getByRole('button', { name: 'Confirm interruption and return to conductor' })
+    expect(recoveryButton).toBeTruthy()
+    fireEvent.click(recoveryButton)
+    await waitFor(() => expect(dialog).toHaveBeenCalledTimes(1))
+    const recoveryPosts = () => fetch.mock.calls.filter(([url, init]) => String(url).includes('/recover') && init?.method === 'POST')
+    expect(recoveryPosts()).toHaveLength(0)
+    confirmed = true
+    fireEvent.click(recoveryButton)
+    await waitFor(() => expect(recoveryPosts()).toHaveLength(1))
+    expect(JSON.parse(recoveryPosts()[0][1].body)).toEqual({dispatch_id: 'r1', confirm_stopped: true})
+  } finally {
+    unregister()
+  }
+  delete document.documentElement.dataset.theme
+})

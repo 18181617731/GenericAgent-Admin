@@ -63,59 +63,58 @@
 
 :root,
 html[data-theme="warm"] {
-  --bg: #FEFCF7;
-  --bg-soft: #FAF7F0;
-  --surface: #F3EEE3;
-  --surface-strong: #FEFCF7;
-  --surface-muted: #F5F0E5;
+  --bg: #F4F0ED;
+  --bg-soft: #EEE6E1;
+  --surface: #FCFAF8;
+  --surface-strong: #FCFAF8;
+  --surface-muted: #EEE6E1;
   --surface-subtle: rgba(0, 0, 0, .025);
   --surface-subtle-hover: rgba(0, 0, 0, .045);
   --surface-hover: rgba(0, 0, 0, .03);
-  --border: #E0D8C8;
-  --border-strong: #C9BDA8;
+  --border: #DED3CB;
+  --border-strong: #C8B8AD;
   --border-subtle: rgba(0, 0, 0, .08);
   --border-muted: rgba(0, 0, 0, .12);
-  --text: #1A1610;
-  --muted: #5C5344;
-  /* Text colours below clear WCAG AA (4.5:1) on every warm surface, including
-     the deepest one (--surface #F3EEE3), not just on --bg. */
-  --muted-2: #7C674C;
-  --strong: #0F0D08;
-  --em: #5C5344;
+  --text: #362F2B;
+  --muted: #776A63;
+  /* Cocoa foregrounds keep warm paper surfaces readable. */
+  --muted-2: #776A63;
+  --strong: #302824;
+  --em: #776A63;
   --blue: #027590;
   --cyan: #0A7775;
   --violet: #7455C9;
   --green: #357838;
   --orange: #9A5C00;
   --red: #C62828;
-  --gold: #C9A961;  /* Reduced saturation */
-  --accent: #C9A961;  /* Reduced saturation */
-  --accent-hover: #A8914F;  /* Adjusted from new base */
-  --accent-bg: rgba(201, 169, 97, 0.08);
-  --accent-bg-strong: rgba(201, 169, 97, 0.15);
-  --accent-text: #806833;
-  /* Ink on the gold fill: white was 2.25:1, this ink reads 8:1. */
-  --text-on-accent: #1A1610;
+  --gold: #995D4D;  /* Muted terracotta: accents only, never the canvas. */
+  --accent: #995D4D;  /* Muted terracotta: accents only, never the canvas. */
+  --accent-hover: #824B3E;
+  --accent-bg: rgba(153, 93, 77, 0.08);
+  --accent-bg-strong: rgba(153, 93, 77, 0.15);
+  --accent-text: #824B3E;
+  /* White on terracotta clears AA for normal button labels. */
+  --text-on-accent: #FFFFFF;
   --success: #357838;
   --warning: #9A5C00;
   --error: #C62828;
   --info: #027590;
-  --focus-ring: rgba(201, 169, 97, .35);
-  --focus-glow: rgba(201, 169, 97, .1);
+  --focus-ring: rgba(153, 93, 77, .35);
+  --focus-glow: rgba(153, 93, 77, .1);
   --input-bg: rgba(0, 0, 0, .03);
   --hover-bg: rgba(0, 0, 0, .05);
-  --code-bg: #F5F0E5;
-  --code-text: #8b4513;
+  --code-bg: #EEE6E1;
+  --code-text: #805345;
   --code-inline-bg: rgba(0, 0, 0, .06);
-  --chat-table-border: #E0D8C8;
-  --chat-table-header-bg: #F5F0E5;
-  --chat-table-row-alt: rgba(92, 83, 68, .035);
-  --chat-table-row-hover: rgba(201, 169, 97, .12);
-  --chat-table-scrollbar: rgba(92, 83, 68, .28);
-  --pre-text: #1A1610;
-  --sidebar: #FAF7F0;
-  --topbar-bg: rgba(250, 247, 240, .98);
-  --main-bg: rgba(254, 252, 247, 0.5);
+  --chat-table-border: #DED3CB;
+  --chat-table-header-bg: #EEE6E1;
+  --chat-table-row-alt: rgba(119, 106, 99, .035);
+  --chat-table-row-hover: rgba(153, 93, 77, .12);
+  --chat-table-scrollbar: rgba(119, 106, 99, .28);
+  --pre-text: #362F2B;
+  --sidebar: #EEE6E1;
+  --topbar-bg: rgba(238, 230, 225, .98);
+  --main-bg: rgba(244, 240, 237, 0.5);
   --shadow: 0 24px 70px rgba(26, 22, 16, .08);
   --shadow-soft: 0 14px 42px rgba(26, 22, 16, .055);
   --shadow-tiny: 0 1px 2px rgba(26, 22, 16, .04);
@@ -277,7 +276,7 @@ button { user-select: none; }
   box-shadow: inset -1px 0 var(--g-ffffffa72);
 }
 .sidebar::-webkit-scrollbar, .main::-webkit-scrollbar, pre::-webkit-scrollbar, textarea::-webkit-scrollbar, .file-list::-webkit-scrollbar, .oa-session-list::-webkit-scrollbar, .oa-thread::-webkit-scrollbar { width: 8px; height: 8px; }
-.sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, .file-list::-webkit-scrollbar-thumb, .oa-session-list::-webkit-scrollbar-thumb, .oa-thread::-webkit-scrollbar-thumb { background: rgba(23,23,23,.14); border-radius: 99px; }
+.sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, .file-list::-webkit-scrollbar-thumb, .oa-session-list::-webkit-scrollbar-thumb, .oa-thread::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 99px; }
 
 .brand {
   display: flex;
@@ -1610,12 +1609,29 @@ html[data-color-scheme="dark"] .oa-project-manager-foot{border-color:var(--oa-li
 }
 .oa-empty p { display:none; }
 .oa-session-load { min-height:180px; display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:10px; padding:24px; color:var(--muted); font-size:14px; letter-spacing:0; }
+.oa-session-load[role="status"] {
+  width:fit-content;
+  min-height:40px;
+  margin:clamp(44px, 12vh, 112px) auto 0;
+  padding:7px 12px 7px 9px;
+  border:1px solid color-mix(in srgb, var(--muted) 18%, var(--border));
+  border-radius:var(--radius-pill);
+  background:color-mix(in srgb, var(--surface-strong) 96%, var(--info) 4%);
+  box-shadow:var(--shadow-tiny);
+}
 .oa-session-load button { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); cursor:pointer; }
 .oa-history-load { display:flex; align-items:center; justify-content:center; gap:6px; max-width:calc(100% - 32px); margin:12px auto; padding:7px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font:inherit; font-size:13px; letter-spacing:0; cursor:pointer; }
 .oa-history-load:disabled { opacity:.6; cursor:wait; }
-.oa-session-load-spinner, .oa-spin { flex:none; animation:oa-session-load-spin 1s linear infinite; }
+.oa-session-load-spinner {
+  flex:none;
+  color:var(--info);
+  transform-origin:center;
+  animation:oa-session-load-spin 1.45s cubic-bezier(.45, 0, .55, 1) infinite, oa-session-load-breathe 1.8s ease-in-out infinite;
+}
+.oa-spin { flex:none; animation:oa-session-load-spin 1s linear infinite; }
 @keyframes oa-session-load-spin { to { transform:rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .oa-session-load-spinner { animation:none; } }
+@keyframes oa-session-load-breathe { 0%, 100% { opacity:.52; } 50% { opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .oa-session-load-spinner { animation:none; opacity:.72; } }
 .oa-message {
   width:min(100% - 48px, 768px);
   display:flex;
@@ -1973,12 +1989,12 @@ html[data-color-scheme="dark"] .oa-cselect > ul li:hover,html[data-color-scheme=
   border-radius:10px;
   background:var(--surface-strong);
   scrollbar-width:thin;
-  scrollbar-color:var(--chat-table-scrollbar) transparent;
+  scrollbar-color: var(--scrollbar-colors);
   overscroll-behavior-inline:contain;
 }
 .oa-table-wrap::-webkit-scrollbar{height:8px}
-.oa-table-wrap::-webkit-scrollbar-track{background:transparent}
-.oa-table-wrap::-webkit-scrollbar-thumb{background:var(--chat-table-scrollbar);border:2px solid transparent;border-radius:999px;background-clip:padding-box}
+.oa-table-wrap::-webkit-scrollbar-track{background: var(--scrollbar-track)}
+.oa-table-wrap::-webkit-scrollbar-thumb{background: var(--scrollbar-thumb);border:2px solid transparent;border-radius:999px;background-clip:padding-box}
 .oa-prose a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
 .oa-prose a:hover { color: var(--primary-hover, var(--primary)); }
 .oa-md-file-link-wrap {
@@ -3897,10 +3913,14 @@ html[data-color-scheme="dark"] .setup-console-step.is-done .setup-console-step-m
 
 html, body, #root { min-height: 100%; }
 /* Chat owns the viewport and scrolls only inside its session/message panes.
-   Scope the root lock so narrow admin pages can keep their natural page scroll. */
-html:has(.oa-chat),
-body:has(.oa-chat),
-#root:has(> .oa-chat) {
+   Scope the root lock so narrow admin pages can keep their natural page scroll.
+   The chat host stays mounted after switching to /admin (drafts/scroll are kept),
+   so the lock must not apply while the standalone admin shell (.app, i.e. not the
+   embedded settings modal .app-embedded) is the visible view - otherwise the root
+   keeps overflow:hidden and narrow admin pages cannot be scrolled. */
+html:has(.oa-chat):not(:has(.app:not(.app-embedded))),
+body:has(.oa-chat):not(:has(.app:not(.app-embedded))),
+#root:has(> .oa-chat):not(:has(.app:not(.app-embedded))) {
   height: 100%;
   min-height: 100%;
   overflow: hidden;
@@ -3910,9 +3930,9 @@ body:has(.oa-chat),
    暗色主题下亮字压深底会明显发虚发糊;后者会让 YaHei 的字距在小字号上变得不均。
    保持默认即可。 */
 .app { width: 100%; min-width: 0; }
-.sidebar { scrollbar-width: thin; scrollbar-color: #d7d7d7 transparent; }
+.sidebar { scrollbar-width: thin; scrollbar-color: var(--scrollbar-colors); }
 .sidebar::-webkit-scrollbar, .main::-webkit-scrollbar, .entry-list::-webkit-scrollbar, .profiles::-webkit-scrollbar, .json-editor::-webkit-scrollbar, .file-editor::-webkit-scrollbar, .artifact-view::-webkit-scrollbar, .preview pre::-webkit-scrollbar { width: 10px; height: 10px; }
-.sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb, .entry-list::-webkit-scrollbar-thumb, .profiles::-webkit-scrollbar-thumb, .json-editor::-webkit-scrollbar-thumb, .file-editor::-webkit-scrollbar-thumb, .artifact-view::-webkit-scrollbar-thumb, .preview pre::-webkit-scrollbar-thumb { background: var(--n-d7d7d7); border: 3px solid transparent; border-radius: 999px; background-clip: padding-box; }
+.sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb, .entry-list::-webkit-scrollbar-thumb, .profiles::-webkit-scrollbar-thumb, .json-editor::-webkit-scrollbar-thumb, .file-editor::-webkit-scrollbar-thumb, .artifact-view::-webkit-scrollbar-thumb, .preview pre::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border: 3px solid transparent; border-radius: 999px; background-clip: padding-box; }
 .main { min-width: 0; height: 100vh; }
 .main > section { min-width: 0; }
 
@@ -4935,7 +4955,11 @@ pre, code { font-variant-ligatures: none; }
 }
 .oa-composer.is-dragging{border-color:#111 !important;background:var(--n-fbfbfb) !important}
 .oa-composer textarea,
-.oa-composer textarea:not(.file-editor){order:2;width:100% !important;min-height:34px !important;max-height:160px !important;padding:5px 4px 2px !important;font-size:15.5px !important;line-height:1.55 !important;color: var(--text) !important;background:transparent !important;border:0 !important;box-shadow:none !important;resize:none !important}
+.oa-composer textarea:not(.file-editor){order:2;width:100% !important;min-height:34px !important;max-height:max(34px, calc(100dvh - 220px)) !important;padding:5px 4px 2px !important;font-size:15.5px !important;line-height:1.55 !important;color: var(--text) !important;background:transparent !important;border:0 !important;box-shadow:none !important;resize:none !important}
+@media (max-width:680px){
+  .oa-composer textarea,
+  .oa-composer textarea:not(.file-editor){max-height:160px !important;resize:none !important}
+}
 .oa-composer .oa-attach-preview{order:1;margin:0 !important;padding:0 0 1px !important}
 .oa-composer .oa-composer-bar{order:3;display:flex !important;align-items:center !important;gap:8px !important;min-height:36px !important}
 .oa-composer .oa-composer-model{margin-left:auto !important;max-width:min(330px, 48%) !important;height:34px !important;background:var(--surface-strong) !important}
@@ -5634,7 +5658,7 @@ html[data-color-scheme="dark"] .primary {
   color: var(--i-08130f) !important;
 }
 /* subtle dark scrollbars */
-html[data-color-scheme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); }
+/* Scrollbar colors (including dark defaults) come from theme-tokens.css. */
 
 /* Explicit appearance picker: a separate control, never a theme-cycle button. */
 .theme-picker {
@@ -7056,6 +7080,16 @@ html[data-color-scheme="dark"] .oa-chat-help::after { box-shadow:0 16px 38px rgb
   --oa-chat-measure: 960px;
   --oa-chat-compact-shadow: 0 10px 32px rgba(0,0,0,.08);
 }
+.oa-message-list,
+.oa-message-slot {
+  width:100%;
+  min-width:0;
+}
+.oa-message-slot.is-placeholder {
+  flex:0 0 auto;
+  contain:layout style paint;
+  overflow:hidden;
+}
 .oa-message {
   width:min(var(--oa-chat-measure), calc(100% - 52px));
   grid-template-columns:30px minmax(0,1fr);
@@ -7271,8 +7305,8 @@ html[data-color-scheme="dark"] .oa-chat-help::after { box-shadow:0 16px 38px rgb
   padding: 4px 0;
 }
 .oa-cmd-drawer::-webkit-scrollbar { width: 6px; }
-.oa-cmd-drawer::-webkit-scrollbar-thumb { background: rgba(23,23,23,.12); border-radius: 99px; }
-.oa-cmd-drawer::-webkit-scrollbar-track { background: transparent; }
+.oa-cmd-drawer::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 99px; }
+.oa-cmd-drawer::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 .oa-cmd-item {
   display: flex;
   align-items: center;
@@ -7755,22 +7789,22 @@ html[data-color-scheme="dark"] .oa-cascade-reasoning button:hover { background: 
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-color: color-mix(in srgb, var(--muted) 34%, transparent) transparent;
+  scrollbar-color: var(--scrollbar-colors);
   scrollbar-width: thin;
   scrollbar-gutter: stable;
   padding: 2px 8px 4px 2px;
 }
 .oa-cascade-catalog::-webkit-scrollbar { width: 8px; }
-.oa-cascade-catalog::-webkit-scrollbar-track { background: transparent; }
+.oa-cascade-catalog::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 .oa-cascade-catalog::-webkit-scrollbar-thumb {
   min-height: 36px;
   border: 2px solid transparent;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 32%, transparent);
+  background: var(--scrollbar-thumb);
   background-clip: padding-box;
 }
 .oa-cascade-catalog::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--muted) 50%, transparent);
+  background: var(--scrollbar-hover);
   background-clip: padding-box;
 }
 .oa-cascade-group + .oa-cascade-group {
@@ -12499,9 +12533,9 @@ html[data-color-scheme="dark"] .oa-cascade-group-models button:hover { backgroun
   margin-inline: auto;
 }
 html[data-theme="warm"] .overview-page {
-  --overview-accent: #806833;
-  --overview-accent-soft: rgba(201, 169, 97, .13);
-  --overview-code: #6f5a2a;
+  --overview-accent: #995D4D;
+  --overview-accent-soft: rgba(153, 93, 77, .10);
+  --overview-code: #824B3E;
 }
 .overview-page .overview-stats {
   display: grid;
@@ -14534,17 +14568,15 @@ html[data-color-scheme="dark"] .set-card-icon { color: #67d9bd; background: rgba
   font-size: 11px;
 }
 
-/* Warm is the default theme, and it is the only light-scheme theme with a hue:
-   without this the page would drop a cool navy/blue-grey card onto warm paper.
-   Ink doubles as a button fill with white text, so it stays dark enough for AA. */
+/* Warm paper stays neutral; only deliberate actions carry the accent. */
 html[data-theme="warm"] .models-page {
-  --model-ink: #7A6330;
-  --model-ink-strong: #5C4A24;
-  --model-wash: #F5F0E5;
-  --model-wash-strong: #EDE4D2;
-  --model-paper: rgba(254, 252, 247, .94);
-  --model-panel: rgba(250, 247, 240, .82);
-  --model-focus: #A8914F;
+  --model-ink: #776A63;
+  --model-ink-strong: #362F2B;
+  --model-wash: #EEE6E1;
+  --model-wash-strong: #F0E1DA;
+  --model-paper: #FCFAF8;
+  --model-panel: #F4F0ED;
+  --model-focus: var(--accent);
   --model-ok: #357838;
   --model-warn: #9A5C00;
   --model-error: #C62828;
@@ -15344,12 +15376,12 @@ html[data-theme="warm"] .models-page {
   gap: 10px 12px;
 }
 
-.model-provider-modal .model-provider-models {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-models {
   display: grid;
   gap: 6px;
 }
 
-.model-provider-modal .model-provider-model-card {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-card {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -15358,18 +15390,18 @@ html[data-theme="warm"] .models-page {
   transition: border-color .16s ease, background-color .16s ease;
 }
 
-.model-provider-modal .model-provider-model-card:hover,
-.model-provider-modal .model-provider-model-card.is-expanded {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-card:hover,
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-card.is-expanded {
   border-color: var(--border-strong);
 }
 
-.model-provider-modal .model-provider-model-summary-row {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary-row {
   display: flex;
   align-items: stretch;
   min-width: 0;
 }
 
-.model-provider-modal .model-provider-model-toggle {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -15385,43 +15417,43 @@ html[data-theme="warm"] .models-page {
   cursor: pointer;
 }
 
-.model-provider-modal .model-provider-model-toggle:hover {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-toggle:hover {
   background: var(--hover-bg);
 }
 
-.model-provider-modal .model-provider-model-toggle:focus-visible {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-.model-provider-modal .model-provider-model-summary {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
 
-.model-provider-modal .model-provider-model-summary strong,
-.model-provider-modal .model-provider-model-summary em {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary strong,
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary em {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.model-provider-modal .model-provider-model-summary strong {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary strong {
   color: var(--text);
   font-size: 12px;
   font-weight: 650;
 }
 
-.model-provider-modal .model-provider-model-summary em {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary em {
   color: var(--muted);
   font-size: 10.5px;
   font-style: normal;
 }
 
-.model-provider-modal .model-provider-model-action {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-action {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -15431,21 +15463,21 @@ html[data-theme="warm"] .models-page {
   white-space: nowrap;
 }
 
-.model-provider-modal .model-provider-model-action svg {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-action svg {
   transition: transform .16s ease;
 }
 
-.model-provider-modal .model-provider-model-card.is-expanded .model-provider-model-action svg {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-card.is-expanded .model-provider-model-action svg {
   transform: rotate(180deg);
 }
 
-.model-provider-modal .model-provider-model-summary-row > .ant-btn {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-summary-row > .ant-btn {
   align-self: center;
   flex: 0 0 auto;
   margin-right: 5px;
 }
 
-.model-provider-modal .model-provider-model-config {
+:is(.model-provider-modal, .model-settings-detail) .model-provider-model-config {
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -19761,7 +19793,7 @@ html { --ga-ui-scale: 1; }
 
 .set-row-toggle { align-items: flex-start; }
 .set-toggle { display: flex; align-items: flex-start; gap: 11px; cursor: pointer; }
-.set-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.set-toggle input[type="checkbox"] { position: absolute; width: 1px; min-width: 0; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 .set-toggle-track {
   position: relative;
   width: 38px;
@@ -21634,7 +21666,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   font-weight: 410;
   line-height: 1.58;
   letter-spacing: .08px;
-  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+  scrollbar-color: var(--scrollbar-colors);
   scrollbar-width: thin;
 }
 
@@ -21704,7 +21736,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   border-radius: 7px;
   background: color-mix(in srgb, var(--surface-muted) 62%, transparent);
   line-height: 1.58;
-  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+  scrollbar-color: var(--scrollbar-colors);
   scrollbar-width: thin;
 }
 
@@ -21721,7 +21753,7 @@ html[data-ui-scale="90"] .app:not(.app-tab-chat) #admin-sidebar .ui-scale-contro
   font-weight: 410;
   line-height: 1.58;
   letter-spacing: 0.08px;
-  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+  scrollbar-color: var(--scrollbar-colors);
   scrollbar-width: thin;
 }
 

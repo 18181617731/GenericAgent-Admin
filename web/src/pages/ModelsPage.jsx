@@ -1,3 +1,9 @@
+import ModelDiscoveryList from './ModelDiscoveryList'
+import './models-workbench.css'
+import './models-redesign.css'
+import { modelAdvancedView } from './modelsAdvancedView'
+import { modelRiskView } from './modelsRiskView'
+import { UiSurface } from '../ui/UiHost'
 import {
   AlertTriangle,
   ArrowDown,
@@ -124,6 +130,10 @@ function optionalNumber(value) {
   return Number.isNaN(parsed) ? value : parsed
 }
 
+// Reject nested/unexpected values at the display boundary. Validation remains host-owned.
+const editorNumber = value => typeof value === 'number' || typeof value === 'string' ? value : ''
+const editorBool = value => typeof value === 'boolean' ? value : undefined
+
 function OptionalBoolSelect({ value, onChange, t, trueLabel, falseLabel }) {
   return (
     <Select
@@ -243,22 +253,22 @@ function ModelConfigRow({ config, index, officialIndex, protocol, onChange, onRe
             {fields.userAgent && (
               <label className="model-field">
                 <span className="model-field-label">User-Agent</span>
-                <Input value={config.user_agent || ''} onChange={event => onChange({ user_agent: event.target.value || undefined })} placeholder={text.optional} />
+                <Input aria-label="User-Agent" value={config.user_agent || ''} onChange={event => onChange({ user_agent: event.target.value || undefined })} placeholder={text.optional} />
               </label>
             )}
-            {fields.apiMode && (
+            {fields.apiMode && !advanced.handled.includes('api_mode') && (
               <label className="model-field">
                 <span className="model-field-label">{text.apiMode}</span>
                 <Select allowClear value={config.api_mode || undefined} onChange={api_mode => onChange({ api_mode })} placeholder={text.inherit} options={API_MODE_OPTIONS} />
               </label>
             )}
-            {fields.serviceTier && (
+            {fields.serviceTier && !advanced.handled.includes('service_tier') && (
               <label className="model-field">
                 <span className="model-field-label">{text.serviceTier}</span>
                 <Select allowClear value={config.service_tier || undefined} onChange={service_tier => onChange({ service_tier })} placeholder={text.inherit} options={SERVICE_TIER_OPTIONS} />
               </label>
             )}
-            {fields.thinkingType && (
+            {fields.thinkingType && !advanced.handled.includes('thinking_type') && (
               <label className="model-field">
                 <span className="model-field-label">{text.thinkingType}</span>
                 <Select allowClear value={config.thinking_type || undefined} onChange={thinking_type => onChange({ thinking_type })} placeholder={text.inherit} options={THINKING_TYPE_OPTIONS} />
@@ -267,7 +277,7 @@ function ModelConfigRow({ config, index, officialIndex, protocol, onChange, onRe
             {fields.thinkingType && (
               <label className="model-field">
                 <span className="model-field-label">thinking_budget_tokens</span>
-                <Input type="number" min={1} step={1} disabled={config.thinking_type !== 'enabled'} value={extra.thinking_budget_tokens ?? ''} onChange={event => updateExtra('thinking_budget_tokens', optionalNumber(event.target.value))} placeholder={text.inherit} />
+                <Input aria-label="thinking_budget_tokens" type="number" min={1} step={1} disabled={config.thinking_type !== 'enabled'} value={extra.thinking_budget_tokens ?? ''} onChange={event => updateExtra('thinking_budget_tokens', optionalNumber(event.target.value))} placeholder={text.inherit} />
               </label>
             )}
             {protocol === 'native_claude' && (
@@ -276,13 +286,13 @@ function ModelConfigRow({ config, index, officialIndex, protocol, onChange, onRe
                 <Select allowClear value={extra.api_key_header || undefined} onChange={value => updateExtra('api_key_header', value)} placeholder={text.inherit} options={['auto', 'x-api-key', 'bearer'].map(value => ({ value, label: value }))} />
               </label>
             )}
-            {fields.reasoningFamily && (
+            {fields.reasoningFamily && !advanced.handled.includes('reasoning_effort') && (
               <label className="model-field">
                 <span className="model-field-label">{text.reasoningEffort}</span>
                 <Select allowClear value={config.reasoning_effort || undefined} onChange={reasoning_effort => onChange({ reasoning_effort })} placeholder={text.inherit} options={reasoningEffortOptions(protocol)} />
               </label>
             )}
-            {fields.fakeClaudeCode && (
+            {fields.fakeClaudeCode && !advanced.handled.includes('fake_cc_system_prompt') && (
               <label className="model-field">
                 <span className="model-field-label">{text.fakeClaude}</span>
                 <OptionalBoolSelect value={config.fake_cc_system_prompt} onChange={fake_cc_system_prompt => onChange({ fake_cc_system_prompt })} t={t} />
@@ -367,7 +377,7 @@ function ProviderModal({ open, profile, index, profiles, onClose, onChange, onRe
       footer={(
         <div className="model-drawer-footer">
           <Button danger icon={<Trash2 size={14} />} onClick={onRemove}>{text.deleteProviderTitle}</Button>
-          <Button type="primary" onClick={onClose}>{t.close}</Button>
+          <Button onClick={onClose}>{t.close}</Button>
         </div>
       )}
     >
@@ -1952,6 +1962,7 @@ export function Models({
 
   const cancelBatchAvailability = () => batchProbeAbortRef.current?.abort()
 
+  const { view: riskView, retained: retainedRisks } = modelRiskView(risk, summary, text)
   const riskItems = [{
     key: 'risk',
     label: <Space size={7}><AlertTriangle size={14} />{text.riskTitle}</Space>,
@@ -2462,7 +2473,6 @@ export function Models({
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
         className="model-preview-drawer"
-        extra={<Button icon={<RefreshCw size={14} />} onClick={previewModels}>{text.refreshPreview}</Button>}
       >
         <Alert type="info" showIcon title={text.previewSecret} />
         <pre className="model-preview-pre">{modelPreview || (profiles.length ? text.generatingPreview : text.previewNeedsProvider)}</pre>

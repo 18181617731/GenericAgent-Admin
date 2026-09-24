@@ -35,6 +35,7 @@ type chatRuntime struct {
 	queueEventMu        sync.Mutex
 	queueEventRev       map[string]uint64
 	queueEventSubs      map[string]map[chan uint64]struct{}
+	conductorOwned      map[string]bool // guarded by SessionMu; never reconstructed from disk
 	runs                map[string]*chatRun
 	workers             map[string]*chatWorker
 	loopControllers     map[string]*chatLoopControllerRun
@@ -102,6 +103,7 @@ func (s *Server) chatRequestServer(cfgStore, baseStore *config.Store, runtime *c
 		ChatTitleJobs:           s.ChatTitleJobs,
 		ChatRuntimes:            s.ChatRuntimes,
 		ChatRuntime:             s.ChatRuntime,
+		ChatLLMCache:            s.ChatLLMCache,
 		BaseCfgStore:            baseStore,
 		titleBackfillStarted:    s.titleBackfillStarted,
 		chatSessionMutationHook: s.chatSessionMutationHook,

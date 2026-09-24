@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 
-const source = readFileSync('src/ChatApp.jsx', 'utf8')
+const source = readFileSync('src/ChatApp.jsx', 'utf8') + '\n' + readFileSync('src/ui/chatBody.jsx', 'utf8')
 
 describe('session-scoped guided-message queue wiring', () => {
   test('creates sessions through the active chat instance scope', () => {
@@ -133,26 +133,24 @@ describe('session-scoped guided-message queue wiring', () => {
   test('does not replace an optimistic guided turn with a heartbeat snapshot', () => {
     const refreshStart = source.indexOf('const refreshList = async')
     const attach = source.indexOf('void attachRunningStream(activeID, { waitForRun:true })', refreshStart)
-    const guardedSnapshot = source.indexOf('} else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {', attach)
-    const refreshSnapshot = source.indexOf('void refreshActiveSessionSnapshot(activeID)', guardedSnapshot)
+    const guardedSnapshot = source.indexOf('if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {', attach)
+    const refreshSnapshot = source.indexOf('await refreshActiveSessionSnapshot(activeID).catch(() => {})', guardedSnapshot)
     expect(refreshStart).toBeGreaterThan(-1)
     expect(attach).toBeGreaterThan(refreshStart)
     expect(guardedSnapshot).toBeGreaterThan(attach)
     expect(refreshSnapshot).toBeGreaterThan(guardedSnapshot)
   })
 
-  test('reconciles only the observed local stream after the backend reports a terminal session', () => {
+  test('leaves active stream reconciliation to its owner instead of an idle summary', () => {
     const helperStart = source.indexOf('const refreshActiveSessionSnapshot = async (id) =>')
     const helperEnd = source.indexOf('\n  const loadWorldline = async', helperStart)
     const helper = source.slice(helperStart, helperEnd)
     expect(helper).toContain('const streamActivityToken = streamActivitySeqRef.current')
-    expect(helper).toContain('const observedStream = streamAbortRef.current')
     expect(helper).toContain('streamActivitySeqRef.current !== streamActivityToken')
-    expect(helper).toContain('if (summary?.running || streamAbortRef.current !== observedStream) return')
-    expect(helper).toContain('observedStream?.abort?.()')
+    expect(helper).toContain('if (streamAbortRef.current || activeRunRef.current) return')
+    expect(helper).not.toContain('abort?.()')
     expect(helper).not.toContain('streamAbortRef.current = null')
-    expect(helper.indexOf('streamActivitySeqRef.current !== streamActivityToken')).toBeLessThan(helper.indexOf('observedStream?.abort?.()'))
-    expect(helper.indexOf('observedStream?.abort?.()')).toBeLessThan(helper.indexOf('historyPages.apply('))
+    expect(helper.indexOf('if (streamAbortRef.current || activeRunRef.current) return')).toBeLessThan(helper.indexOf('historyPages.apply('))
 
     const attachStart = source.indexOf('const attachRunningStream = async')
     const attachEnd = source.indexOf('\n  useEffect(() =>', attachStart)

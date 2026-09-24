@@ -51,7 +51,7 @@ test('pinned projects expose a persistent status outside the menu and collapsed 
 })
 
 test('new chat stays out of the session list until its first send', () => {
-  const main = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
+  const main = (readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../ui/chatBody.jsx', import.meta.url), 'utf8'))
 
   // Scoped to newSession alone. A project chat is persisted by the server the
   // moment it is created, so newProjectSession does refresh the list, and the

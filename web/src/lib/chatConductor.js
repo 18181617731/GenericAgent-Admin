@@ -13,7 +13,7 @@ export const conductorChildren = session => Array.isArray(session?.conductor_chi
   ? session.conductor_children
   : []
 
-export const workerStatus = worker => String(worker?.conductor?.status || worker?.status || '').toLowerCase()
+export const workerStatus = worker => (worker?.conductor?.recovery || worker?.recovery) ? 'recovery_pending' : String(worker?.conductor?.status || worker?.status || '').toLowerCase()
 export const isActiveConductorWorker = worker => ACTIVE_WORKER_STATUSES.has(workerStatus(worker))
 export const isTerminalConductorWorker = worker => TERMINAL_WORKER_STATUSES.has(workerStatus(worker))
 export const canStopConductorWorker = worker => isActiveConductorWorker(worker)
@@ -25,14 +25,19 @@ export const conductorStatusCounts = workers => (Array.isArray(workers) ? worker
   return counts
 }, { total: 0, queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 })
 
-export const conductorPollActions = (session, { streamAttached = false, runAttached = false } = {}) => ({
-  refreshMetadata: isConductorParent(session) || isConductorWorker(session),
+export const conductorPollActions = (session, {
+  streamAttached = false, runAttached = false,
+  metadataUnchanged = false, metadataAge = Infinity, workersActive = false,
+} = {}) => ({
+  refreshMetadata: (isConductorParent(session) || isConductorWorker(session))
+    && (!metadataUnchanged || metadataAge >= 30000 || Boolean(session?.running)
+      || isActiveConductorWorker(session) || workersActive),
   attachRunningStream: Boolean(session?.running) && !streamAttached && !runAttached,
 })
 
 export const shouldPollConductorSessions = sessions => (Array.isArray(sessions) ? sessions : []).some(session => (
   (isConductorParent(session) && conductorChildren(session).some(isActiveConductorWorker))
-  || (isConductorWorker(session) && isActiveConductorWorker(session))
+  || (isConductorWorker(session) && (isActiveConductorWorker(session) || Boolean(session?.conductor?.recovery)))
 ))
 
 export const conductorSessionTree = sessions => {
@@ -69,4 +74,15 @@ export const conductorWorkers = (session, sessions = []) => {
     workers.set(id, { ...dispatch, ...metadata, session_id: id })
   })
   return [...workers.values()]
+}
+
+// Search whole trees so a matching worker never loses its parent context.
+export const conductorSidebarSections = (sessions, query = '', showConductor = true) => {
+  const q = query.trim().toLowerCase()
+  const matches = session => !q || String(session?.title || '').toLowerCase().includes(q)
+  const trees = conductorSessionTree(sessions).filter(node => matches(node.session) || node.workers.some(matches))
+  const pinned = trees.filter(node => node.session.pinned)
+  const conductors = trees.filter(node => showConductor && !node.session.pinned && (isConductorParent(node.session) || isConductorWorker(node.session) || node.workers.length))
+  const recent = trees.filter(node => !node.session.pinned && (!showConductor || (!isConductorParent(node.session) && !isConductorWorker(node.session) && !node.workers.length)))
+  return { pinned, conductors, recent }
 }

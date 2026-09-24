@@ -10,25 +10,22 @@ const COPY = {
     total: '总 Token', input: '输入 Token', output: '输出 Token', sessions: '有用量运行', replies: '模型调用次数',
     models: '按模型', model: '模型', empty: '尚未记录到 Token 用量。',
     loading: '正在汇总会话用量…', failed: '无法加载用量总览', retry: '重试', refresh: '刷新', skipped: '个会话文件无法读取，已跳过。', unknown: '未知模型',
-    heatmap: '每日活跃度', heatmapHint: '过去 52 周 · 按每日 Token 用量着色', less: '少', more: '多',
+    heatmap: '每日活跃度', heatmapHint: '过去 26 周 · 按每日 Token 用量着色', less: '少', more: '多',
   },
   en: {
     title: 'Cumulative token usage', intro: 'Summarizes chat, background automation, Goal Mode, scheduled tasks, title generation, and model probes.',
     total: 'Total tokens', input: 'Input tokens', output: 'Output tokens', sessions: 'Runs with usage', replies: 'Model calls',
     models: 'By model', model: 'Model', empty: 'No token usage has been recorded yet.',
     loading: 'Aggregating session usage…', failed: 'Unable to load usage overview', retry: 'Retry', refresh: 'Refresh', skipped: 'session files could not be read and were skipped.', unknown: 'Unknown model',
-    heatmap: 'Daily activity', heatmapHint: 'Past 52 weeks · colored by daily token usage', less: 'Less', more: 'More',
+    heatmap: 'Daily activity', heatmapHint: 'Past 26 weeks · colored by daily token usage', less: 'Less', more: 'More',
   },
 }
 
-function Metric({ label, value, title, accent }) {
-  return <div className={`usage-metric${accent ? ' usage-metric-accent' : ''}`} title={title}><span>{label}</span><strong>{value}</strong></div>
-}
-
-function UsageHeatmap({ daily = [], lang, copy }) {
+function heatmapModel(daily = [], lang, copy, weeks) {
+  const hint = lang === 'zh' ? `过去 ${weeks} 周 · 按每日 Token 用量着色` : `Past ${weeks} weeks · colored by daily token usage`
   const values = new Map(daily.map(day => [day.date, day]))
   const end = new Date(); end.setHours(0, 0, 0, 0)
-  const start = new Date(end); start.setDate(end.getDate() - (51 * 7 + end.getDay()))
+  const start = new Date(end); start.setDate(end.getDate() - ((weeks - 1) * 7 + end.getDay()))
   const cells = []
   for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
     const date = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
@@ -54,21 +51,10 @@ function UsageHeatmap({ daily = [], lang, copy }) {
     }
   })
   const weekdays = lang === 'zh' ? ['一', '三', '五'] : ['Mon', 'Wed', 'Fri']
-  return <section className="usage-card usage-heatmap-card" aria-labelledby="usage-heatmap-title">
-    <div className="usage-section-head"><div><h2 id="usage-heatmap-title">{copy.heatmap}</h2><p>{copy.heatmapHint}</p></div></div>
-    <div className="usage-heatmap-scroll">
-      <div className="usage-heatmap-frame">
-        <div className="usage-months" aria-hidden="true">{months.map(month => <span key={month.key} style={{ gridColumn: month.column }}>{month.label}</span>)}</div>
-        <div className="usage-heatmap-body">
-          <div className="usage-weekdays" aria-hidden="true"><span>{weekdays[0]}</span><span>{weekdays[1]}</span><span>{weekdays[2]}</span></div>
-          <div className="usage-heatmap" role="img" aria-label={copy.heatmapHint}>
-            {cells.map(day => { const tokens = Number(day.totals?.total_tokens) || 0; const label = `${dateFormat.format(new Date(`${day.date}T00:00:00`))}: ${formatNumber(tokens, lang)} Token, ${formatNumber(day.assistant_replies, lang)} ${copy.replies}`; return <span key={day.date} className="usage-heat-cell" data-level={level(tokens)} title={label} aria-label={label} /> })}
-          </div>
-        </div>
-        <div className="usage-heat-legend"><span>{copy.less}</span>{[0, 1, 2, 3, 4].map(item => <i key={item} data-level={item} />)}<span>{copy.more}</span></div>
-      </div>
-    </div>
-  </section>
+  return { hint, months, weekdays, cells: cells.map(day => {
+    const tokens = Number(day.totals?.total_tokens) || 0
+    return { date: day.date, level: level(tokens), label: `${dateFormat.format(new Date(`${day.date}T00:00:00`))}: ${formatNumber(tokens, lang)} Token` }
+  }) }
 }
 
 export function UsagePage({ lang = 'zh' }) {
@@ -82,7 +68,12 @@ export function UsagePage({ lang = 'zh' }) {
   const [recordPage, setRecordPage] = useState(1)
   const [recordPageSize, setRecordPageSize] = useState(20)
 
+  const lifecycle = useRef({ mounted: false, ticket: 0, pending: false })
   const load = useCallback(async () => {
+    const state = lifecycle.current
+    if (!state.mounted || state.pending) return
+    const ticket = ++state.ticket
+    state.pending = true
     setLoading(true); setError('')
     try { setData(await api(`/api/usage/overview?${usageQueryString(recordFilters, recordPage, recordPageSize)}`)) }
     catch (err) { setError(err instanceof Error ? err.message : String(err)) }

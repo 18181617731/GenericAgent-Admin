@@ -1,56 +1,14 @@
-import React from 'react'
-import { Activity, CalendarClock, Code2, FileCode2, FolderCog, RefreshCw, Save, Server, ShieldAlert, SlidersHorizontal, Target, Terminal, XCircle } from 'lucide-react'
-import { Panel, ServiceRow } from '../components/common'
-import { TaskRow } from '../components/schedule'
+import React, { useState } from 'react'
 import { normalizeScheduleTasksPayload } from '../lib/schedule'
+import { modelLabel } from '../lib/format'
+import { UiSurface } from '../ui/UiHost'
+import { DefaultTasks } from '../ui/tasks'
+export { TaskFormEditor } from '../ui/tasks'
 
-const KNOWN_TASK_FIELDS = ['enabled','max_delay_hours','repeat','schedule','prompt']
-
-export function TaskFormEditor({ value, onChange, t }) {
-  const text = t.tasks
-  let data
-  try { data = JSON.parse(value) } catch { data = null }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return <textarea className="json-editor compact-editor" value={value} placeholder={text.parseFailed} onChange={e=>onChange(e.target.value)}/>
-  }
-  const updateField = (key, val) => onChange(JSON.stringify({ ...data, [key]: val }, null, 2))
-  const extraKeys = Object.keys(data).filter(k => !KNOWN_TASK_FIELDS.includes(k))
-  const repeatOptions = ['manual','daily','weekly','every_2h','every_4h','every_6h','every_8h','every_12h','once']
-
-  return <div className="schedule-form-editor">
-    <div className="form-field">
-      <label>{text.enabledLabel}</label>
-      <label className="toggle-switch">
-        <input type="checkbox" checked={!!data.enabled} onChange={e => updateField('enabled', e.target.checked)} />
-        <span className="toggle-slider"></span>
-        <span className="toggle-label">{data.enabled ? t.enabled : t.disabled}</span>
-      </label>
-    </div>
-    <div className="form-field">
-      <label>{text.maxDelay}</label>
-      <input type="number" value={data.max_delay_hours ?? ''} onChange={e => updateField('max_delay_hours', e.target.value ? parseInt(e.target.value, 10) : 0)} />
-    </div>
-    <div className="form-field">
-      <label>{text.repeat}</label>
-      <select value={data.repeat || ''} onChange={e => updateField('repeat', e.target.value)}>
-        <option value="">{text.choose}</option>
-        {repeatOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-      </select>
-    </div>
-    <div className="form-field">
-      <label>{text.schedule}</label>
-      <input type="text" value={data.schedule || ''} onChange={e => updateField('schedule', e.target.value)} placeholder={text.schedulePlaceholder}/>
-    </div>
-    <div className="form-field">
-      <label>{text.prompt}</label>
-      <textarea value={data.prompt || ''} onChange={e => updateField('prompt', e.target.value)} placeholder={text.promptPlaceholder}/>
-    </div>
-    {extraKeys.length > 0 && <details className="extra-fields">
-      <summary>{text.extraFields} ({extraKeys.length})</summary>
-      <pre>{JSON.stringify(Object.fromEntries(Object.entries(data).filter(([k]) => !KNOWN_TASK_FIELDS.includes(k))), null, 2)}</pre>
-    </details>}
-  </div>
-}
+const pick = (value, keys) => Object.fromEntries(keys.map(key => [key, value?.[key]]))
+const report = value => pick(value, ['path', 'name', 'size', 'mod_time'])
+const service = value => pick(value, ['name', 'kind', 'running', 'autostart', 'model_no', 'pid', 'returncode', 'return_code', 'started_at', 'workdir', 'command', 'log_path', 'log'])
+const task = value => ({ ...pick(value, ['id', 'name', 'enabled', 'schedule', 'repeat', 'status', 'prompt', 'path', 'next_run', 'last_run', 'result_file']), reports: (value.reports || []).map(report) })
 
 export function TasksPage({
   t, lang, section, onSection, schedule, scheduleState, taskSvcs, reflectSvcs, llms,
@@ -165,5 +123,4 @@ export function TasksPage({
     </div>}
   </section>
 }
-
 export default TasksPage

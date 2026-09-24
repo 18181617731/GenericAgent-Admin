@@ -145,3 +145,239 @@ test('persistTheme PUTs when the injected theme differs and skips when it matche
     else globalThis.fetch = previousFetch
   }
 })
+
+import {
+  CUSTOM_COLORS_STORAGE_KEY,
+  applyCustomColorsToDocument,
+  hydrateCustomColors,
+  normalizeCustomColors,
+  persistCustomColors,
+  persistCustomColorsLocal,
+  resetCustomColors,
+  sanitizeColorValue,
+} from '../themes.js'
+
+const fakeDocument = () => {
+  const head = { children: [], appendChild(node) { this.children = this.children.filter(child => child.id !== node.id); this.children.push(node) } }
+  const element = { id: '', textContent: '', removed: false, remove() { this.removed = true; head.children = head.children.filter(child => child.id !== this.id) } }
+  const doc = {
+    documentElement: { dataset: {} },
+    head,
+    createElement: () => element,
+    getElementById: id => head.children.find(child => child.id === id) || null,
+  }
+  return { doc, head, element }
+}
+
+test('green ships as a light palette with a full registry entry', () => {
+  const green = THEMES.find(theme => theme.id === 'green')
+  assert.ok(green, 'green theme must be registered')
+  assert.equal(green.colorScheme, 'light')
+  assert.equal(green.antdAlgorithm, 'default')
+  assert.deepEqual(green.preview, ['#E5EFE1', '#D2E3CC', '#2F7D4F'])
+  assert.equal(green.antdToken.colorBgElevated, '#EAF2E6')
+  for (const token of ['colorBgBase', 'colorBgContainer', 'colorBgLayout', 'colorBgElevated']) {
+    const hex = green.antdToken[token].slice(1)
+    const [r, g, b] = hex.match(/../g).map(value => parseInt(value, 16))
+    assert.ok(g - r >= 8 && g - b >= 12, `${token} must retain a visible green tint`)
+  }
+  assert.equal(typeof green.label?.zh, 'string')
+  assert.equal(typeof green.label?.en, 'string')
+  // Registry order is a product decision: green comes after dark.
+  assert.deepEqual(THEMES.map(theme => theme.id), ['light', 'warm', 'dark', 'green'])
+})
+
+test('custom colors accept only whitelisted tokens holding literal colors', () => {
+  assert.equal(sanitizeColorValue('#2F7D4F'), '#2F7D4F')
+  assert.equal(sanitizeColorValue('  #abc '), '#abc')
+  assert.equal(sanitizeColorValue('#11223344'), '#11223344')
+  assert.equal(sanitizeColorValue('rgb(47, 125, 79)'), 'rgb(47, 125, 79)')
+  assert.equal(sanitizeColorValue('rgba(47, 125, 79, .5)'), 'rgba(47, 125, 79, .5)')
+
+  // Rejections: CSS injection, unknown keywords, wrong arity, malformed hex.
+  assert.equal(sanitizeColorValue('red'), '')
+  assert.equal(sanitizeColorValue('red;} body{display:none'), '')
+  assert.equal(sanitizeColorValue('#12'), '')
+  assert.equal(sanitizeColorValue('#12345'), '')
+  assert.equal(sanitizeColorValue('rgb(1,2)'), '')
+  assert.equal(sanitizeColorValue('rgba(1,2,3,2)'), '')
+  assert.equal(sanitizeColorValue('url(http://x/y)'), '')
+  assert.equal(sanitizeColorValue('#' + 'a'.repeat(33)), '')
+  assert.equal(sanitizeColorValue(123), '')
+  assert.equal(sanitizeColorValue(null), '')
+
+  assert.deepEqual(normalizeCustomColors({ accent: '#2F7D4F', '--bg': '#fff', bogus: '#000', muted: 'red' }), {
+    accent: '#2F7D4F',
+    bg: '#fff',
+  })
+  assert.deepEqual(normalizeCustomColors(null), {})
+})
+
+test('applying custom colors writes one last stylesheet covering both scopes', () => {
+  const { doc, head, element } = fakeDocument()
+  const applied = applyCustomColorsToDocument({ accent: '#2F7D4F', 'oa-bg': '#F4FAF3', bogus: '#000' }, doc)
+
+  assert.deepEqual(applied, { accent: '#2F7D4F', 'oa-bg': '#F4FAF3' })
+  assert.equal(element.id, 'ga-custom-colors')
+  assert.equal(doc.documentElement.dataset.customColors, '1')
+  assert.deepEqual(head.children.map(child => child.id), ['ga-custom-colors'])
+  assert.match(element.textContent, /html:root\[data-custom-colors="1"\]\{--accent:#2F7D4F;\}/)
+  assert.match(element.textContent, /html:root\[data-custom-colors="1"\] \.oa-chat\{--oa-bg:#F4FAF3;\}/)
+  assert.doesNotMatch(element.textContent, /bogus/)
+
+  // Repainting keeps a single sheet and moves it behind later stylesheets.
+  applyCustomColorsToDocument({ text: '#14201A' }, doc)
+  assert.equal(head.children.length, 1)
+  assert.equal(element.textContent, 'html:root[data-custom-colors="1"]{--text:#14201A;}')
+
+  // Clearing drops both the sheet and the attribute.
+  assert.deepEqual(applyCustomColorsToDocument({}, doc), {})
+  assert.equal(head.children.length, 0)
+  assert.equal(element.removed, true)
+  assert.equal('customColors' in doc.documentElement.dataset, false)
+})
+
+test('storing a palette applies it locally and clearing removes the stored copy', () => {
+  const previousWindow = globalThis.window
+  const stored = {}
+  const events = []
+  globalThis.window = {
+    localStorage: {
+      getItem: key => stored[key] ?? null,
+      setItem: (key, value) => { stored[key] = String(value) },
+      removeItem: key => { delete stored[key] },
+    },
+    dispatchEvent: event => { events.push(event) },
+  }
+  try {
+    assert.deepEqual(persistCustomColorsLocal({ accent: '#2F7D4F', 'oa-line': 'red' }), { accent: '#2F7D4F' })
+    assert.equal(stored[CUSTOM_COLORS_STORAGE_KEY], JSON.stringify({ accent: '#2F7D4F' }))
+    assert.equal(events.at(-1).type, 'ga-admin-custom-colors-change')
+
+    assert.deepEqual(persistCustomColorsLocal({}), {})
+    assert.equal(CUSTOM_COLORS_STORAGE_KEY in stored, false)
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window
+    else globalThis.window = previousWindow
+  }
+})
+
+test('hydrate reconciles stale local palette with the authoritative server copy', async () => {
+  const previousWindow = globalThis.window
+  const previousFetch = globalThis.fetch
+  const { doc, head } = fakeDocument()
+  const stored = {}
+  const calls = []
+  globalThis.document = doc
+  globalThis.window = {
+    localStorage: {
+      getItem: key => stored[key] ?? null,
+      setItem: (key, value) => { stored[key] = String(value) },
+      removeItem: key => { delete stored[key] },
+    },
+    dispatchEvent: () => true,
+  }
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, method: init.method, body: init.body })
+    return { ok: true, status: 200, text: async () => JSON.stringify({ theme: 'green', custom: { accent: '#26653F' } }) }
+  }
+  try {
+    // A stale local palette must not shadow the server.
+    stored[CUSTOM_COLORS_STORAGE_KEY] = JSON.stringify({ accent: '#2F7D4F' })
+    assert.deepEqual(await hydrateCustomColors(), { accent: '#26653F' })
+    assert.equal(calls.length, 1)
+    assert.match(head.children[0].textContent, /--accent:#26653F/)
+
+    // Empty client: pulls the persisted palette and caches it locally.
+    delete stored[CUSTOM_COLORS_STORAGE_KEY]
+    assert.deepEqual(await hydrateCustomColors(), { accent: '#26653F' })
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0].url, '/api/ui/theme')
+    assert.equal(stored[CUSTOM_COLORS_STORAGE_KEY], JSON.stringify({ accent: '#26653F' }))
+  } finally {
+    delete globalThis.document
+    if (previousWindow === undefined) delete globalThis.window
+    else globalThis.window = previousWindow
+    if (previousFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = previousFetch
+  }
+})
+
+test('persistCustomColors PUTs the palette with the active theme and reset clears it', async () => {
+  const previousWindow = globalThis.window
+  const previousFetch = globalThis.fetch
+  const { doc } = fakeDocument()
+  const calls = []
+  globalThis.document = doc
+  globalThis.window = {
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    dispatchEvent: () => true,
+  }
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, method: init.method, headers: init.headers, body: init.body })
+    return { ok: true, status: 200, text: async () => '{}' }
+  }
+  const settle = async () => {
+    for (let i = 0; i < 50 && calls.length === 0; i += 1) await new Promise(resolve => setTimeout(resolve, 10))
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  try {
+    await persistCustomColors({ accent: '#F4FAF3', 'oa-text': '#14201A' }, 'green')
+    await settle()
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].url, '/api/ui/theme')
+    assert.equal(calls[0].method, 'PUT')
+    assert.equal(calls[0].headers['X-GA-Confirm'], 'dangerous')
+    assert.deepEqual(JSON.parse(calls[0].body), { theme: 'green', custom: { accent: '#F4FAF3', 'oa-text': '#14201A' } })
+
+    await resetCustomColors('green')
+    await settle()
+    assert.equal(calls.length, 2)
+    assert.deepEqual(JSON.parse(calls[1].body), { theme: 'green', custom: {} })
+  } finally {
+    delete globalThis.document
+    if (previousWindow === undefined) delete globalThis.window
+    else globalThis.window = previousWindow
+    if (previousFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = previousFetch
+  }
+})
+
+
+test('component scrollbars consume custom tokens and release standard rendering in WebKit', async () => {
+  const { readFileSync } = await import('node:fs')
+  for (const [file, selector] of [
+    ['../style.css', '#admin-sidebar'],
+    ['../chatSidebar.css', '.oa-chat .oa-sidebar .oa-sidebar-sections'],
+    ['../components/MessageNavigator.css', '.oa-message-nav-track'],
+  ]) {
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8')
+    const block = (suffix) => {
+      const key = selector + suffix
+      const start = css.indexOf(key)
+      assert.notEqual(start, -1, key)
+      return css.slice(start, css.indexOf('}', start) + 1)
+    }
+    assert.match(block('::-webkit-scrollbar-track {'), /background: var\(--scrollbar-track\)/)
+    assert.match(block('::-webkit-scrollbar-thumb {'), /background: var\(--scrollbar-thumb\)/)
+    assert.match(block('::-webkit-scrollbar-thumb:hover {'), /background: var\(--scrollbar-hover\)/)
+    assert.match(css, /@supports selector\(::-webkit-scrollbar\)\s*\{[^}]*scrollbar-(?:color|width): auto;[^}]*scrollbar-(?:color|width): auto;/)
+  }
+})
+
+
+test('explicit state colors survive real AntD algorithms and alias formatting; blanks inherit preset', async () => {
+  const { default: antd } = await import('antd')
+  const { createAntdTheme, customColorsToAntd } = await import('../themes.js')
+  const custom = { accent: '#123456', 'accent-hover': '#345678', 'on-accent': '#fedcba', text: '#abcdef', success: '#246810' }
+  for (const preset of THEMES) {
+    const baseline = antd.theme.getDesignToken(createAntdTheme(preset, antd.theme, {}))
+    const configured = createAntdTheme(preset, antd.theme, custom)
+    const actual = antd.theme.getDesignToken(configured)
+    for (const [key, value] of Object.entries(customColorsToAntd(custom))) assert.equal(actual[key], value, `${preset.id}: ${key}`)
+    for (const key of ['colorPrimaryActive', 'colorPrimaryBg', 'colorBgContainer', 'colorError']) assert.equal(actual[key], baseline[key], `${preset.id}: unfilled ${key}`)
+    const blank = antd.theme.getDesignToken(createAntdTheme(preset, antd.theme, { accent: '', 'accent-hover': '  ', 'on-accent': '' }))
+    assert.deepEqual(blank, baseline, `${preset.id}: cleared palette`)
+    assert.equal(configured.token.colorPrimary, preset.antdToken.colorPrimary || '#10a37f', 'custom primary is not reintroduced as a seed')
+  }
+})

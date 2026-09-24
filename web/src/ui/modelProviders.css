@@ -1,0 +1,91 @@
+.model-directory-status { display: block; font-size: 12px; color: var(--muted); }
+.studio-model-directory { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 3fr); gap: 24px; padding: 20px; }
+.studio-model-directory aside { border-inline-end: 1px solid var(--border); padding-inline-end: 20px; }
+.studio-model-directory h2 { margin: 0 0 12px; font-size: 18px; }
+.studio-model-directory p { color: var(--muted); line-height: 1.6; }
+.studio-model-directory-scroll { min-width: 0; overflow-x: auto; }
+.studio-model-directory table { border-collapse: collapse; width: 100%; text-align: start; }
+.studio-model-directory caption { text-align: start; font-weight: 600; padding-bottom: 12px; }
+.studio-model-directory th, .studio-model-directory td { text-align: start; padding: 12px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.studio-model-directory small { margin-top: 6px; font-weight: 400; }
+[data-model-providers-layout] button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 760px) {
+  .studio-model-directory { grid-template-columns: 1fr; padding: 12px; gap: 16px; }
+  .studio-model-directory aside { border-inline-end: 0; border-bottom: 1px solid var(--border); padding: 0 0 16px; }
+}
+
+/* Bound the embedded editor; keep directory controls outside its scroll area. */
+.models-page .model-settings-workspace {
+  height: min(72dvh, 900px);
+  min-height: 0;
+}
+.models-page .model-settings-nav {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.models-page .model-provider-navigation {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.models-page .model-provider-navigation > header,
+.models-page .model-provider-create { flex-shrink: 0; }
+.models-page .model-provider-navigation-list,
+.models-page .model-settings-detail {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+.models-page .model-provider-navigation-list { flex: 1; }
+
+/* Scoped, theme-aware scrollbars for both provider panes. */
+.models-page :is(.model-provider-navigation-list, .model-settings-detail) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail) {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail)::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail)::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail)::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 99px;
+    min-height: 32px;
+  }
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail)::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-hover);
+  }
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail)::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .models-page :is(.model-provider-navigation-list, .model-settings-detail)::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+.model-provider-entry { min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.models-page .model-provider-entry .model-connection-card { width: 100%; border: 0; border-radius: 0; }
+.model-provider-direct-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); }
+.model-provider-direct-actions button { width: auto; min-height: 36px; padding: 6px 10px; }
+.model-provider-direct-actions .model-provider-delete { color: var(--danger, #dc4446); margin-inline-start: auto; }
+@media (max-width: 800px) {
+ .model-provider-direct-actions button { min-height: 44px; }
+ .models-page .model-call-actions { flex-wrap: wrap; }
+ .models-page .model-call-actions .ant-btn { min-height: 44px; width: auto; }
+}

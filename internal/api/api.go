@@ -53,6 +53,7 @@ type Server struct {
 	ChatTitleJobs       map[string]bool
 	ChatRuntimes        *chatRuntimeRegistry
 	ChatRuntime         *chatRuntime
+	ChatLLMCache        *chatLLMCache
 	BaseCfgStore        *config.Store
 	// PasswordConfigured reports whether an admin password exists. The
 	// credential itself lives outside this package, so remote-access settings
@@ -94,6 +95,7 @@ func New(cfg *config.Store, svc *service.Manager, models *modelconfig.Store, sta
 		ChatRuns: defaultRuntime.runs, ChatWorkers: defaultRuntime.workers,
 		ChatLoopControllers: defaultRuntime.loopControllers,
 		ChatTitleJobs:       defaultRuntime.titleJobs, ChatRuntimes: chatRuntimes, ChatRuntime: defaultRuntime,
+		ChatLLMCache:         newChatLLMCache(),
 		instanceInstallTasks: make(map[string]*instanceInstallTask),
 	}
 	server.resumeInstanceInstalls()
@@ -959,7 +961,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveStaticData(w http.ResponseWriter, r *http.Request, name string, data []byte) {
 	if name == "index.html" {
-		data = injectUITheme(data, s.storedUITheme())
+		data = injectUIPalette(data, s.storedUITheme(), s.storedUICustomColors(), true)
 	}
 	if isHashedStaticAsset(name) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

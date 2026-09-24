@@ -1,6 +1,7 @@
-import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useMemo, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ConfigProvider, theme as antdTheme } from 'antd'
+import ConfigProvider from 'antd/es/config-provider'
+import antdTheme from 'antd/es/theme'
 import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
 import './fonts/misans.css'
@@ -9,10 +10,16 @@ import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AppDialogHost } from './components/AppDialogHost.jsx'
 import { GlobalImagePreview } from './components/GlobalImagePreview.jsx'
-import { applyThemeToDocument, getInitialTheme, getTheme, isThemeId } from './themes'
+import './theme-tokens.css'
+import { UiHost } from './ui/UiHost'
+import { applyThemeToDocument, createAntdTheme, getInitialCustomColors, getInitialTheme, getTheme, hydrateCustomColors, isThemeId } from './themes'
 
 // Chat is the primary interface: it owns "/" (and legacy "/chat").
 // The admin console lives under "/admin" and acts as the settings area.
+const uiMode = new URLSearchParams(window.location.search).get('ui')
+const isolatedUiRoute = /^\/admin(?:\/|$)/.test(window.location.pathname) && ['preview', 'safe'].includes(uiMode)
+const UiPreview = lazy(() => import('./ui/UiPreview.jsx'))
+const UiRecovery = lazy(() => import('./ui/UiRecovery.jsx'))
 const rootPath = window.location.pathname.replace(/\/+$/, '')
 const isAdmin = rootPath === '/admin' || rootPath.startsWith('/admin/')
 // Each route imports on its own line because the build pairs one dependency
@@ -55,6 +62,12 @@ const storedLanguage = () => localStorage.getItem('ga-admin-lang-explicit') === 
 function LocalizedRoot() {
   const [lang, setLang] = useState(storedLanguage)
   const [colorMode, setColorMode] = useState(getInitialTheme)
+  const [customColors, setCustomColors] = useState(getInitialCustomColors)
+  useEffect(() => {
+    const update = event => setCustomColors(event.detail || {})
+    window.addEventListener('ga-admin-custom-colors-change', update)
+    return () => window.removeEventListener('ga-admin-custom-colors-change', update)
+  }, [])
   useEffect(() => {
     const onLanguageChange = event => setLang(event.detail === 'en' ? 'en' : 'zh')
     window.addEventListener('ga-admin-language-change', onLanguageChange)
@@ -69,26 +82,23 @@ function LocalizedRoot() {
     const activeTheme = applyThemeToDocument(colorMode)
     localStorage.setItem('ga-admin-theme', activeTheme.id)
   }, [colorMode])
+  // Saved custom colors must be live on the very first paint; the injected
+  // boot script covers the same-origin index.html case, this covers the rest.
+  useEffect(() => {
+    if (!isolatedUiRoute) void hydrateCustomColors()
+  }, [])
   useEffect(() => {
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
   }, [lang])
   const loading = lang === 'en' ? 'Loading interface…' : '正在加载界面…'
   const activeTheme = getTheme(colorMode)
-  const algorithm = antdTheme[`${activeTheme.antdAlgorithm}Algorithm`] || antdTheme.defaultAlgorithm
-  return <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={{
-    algorithm,
-    token: {
-      colorPrimary: '#10a37f',
-      borderRadius: 10,
-      fontFamily: 'var(--font)',
-      ...activeTheme.antdToken,
-    },
-  }}>
+  const componentTheme = useMemo(() => createAntdTheme(activeTheme, antdTheme, customColors), [activeTheme, customColors])
+  return <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={componentTheme}>
     <AppDialogHost />
     <GlobalImagePreview />
     <ErrorBoundary>
       <Suspense fallback={<RouteFallback label={loading} />}>
-        <RoutedRoot />
+        {isolatedUiRoute ? (uiMode === 'safe' ? <UiRecovery/> : <UiPreview/>) : <UiHost><RoutedRoot /></UiHost>}
       </Suspense>
     </ErrorBoundary>
   </ConfigProvider>

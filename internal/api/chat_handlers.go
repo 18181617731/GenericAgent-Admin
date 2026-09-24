@@ -187,6 +187,10 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "conductor":
+		if len(parts) == 3 && parts[2] == "recover" && r.Method == http.MethodPost {
+			s.chatConductorRecover(w, r, parts[1])
+			return
+		}
 		if len(parts) == 3 && parts[2] == "disable" && r.Method == http.MethodPost {
 			s.chatConductorDisable(w, r, parts[1])
 			return
@@ -502,6 +506,7 @@ func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid stri
 		bad(w, 500, err.Error())
 		return
 	}
+	cs = s.conductorRecoveryView(cs)
 	view, status, err := chatSessionView(cs, r)
 	if err != nil {
 		bad(w, status, err.Error())
@@ -918,8 +923,8 @@ func (s *Server) chatGuidePost(w http.ResponseWriter, r *http.Request, sid, queu
 	// idempotent even when the item has already left the persisted queue.
 	s.ChatMu.Lock()
 	current := s.ChatRuns[sid]
-	matchingRun := current != nil && current.QueueID == queueID
-	anotherQueueRunning := current != nil && !current.Done && current.QueueID != "" && current.QueueID != queueID
+	matchingRun := chatRunContainsQueueID(current, queueID)
+	anotherQueueRunning := current != nil && !current.Done && current.QueueID != "" && !matchingRun
 	matchingDone := matchingRun && current.Done
 	s.ChatMu.Unlock()
 
@@ -1057,7 +1062,7 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 	}
 	cs.Settings = normalizeChatSettings(cs.Settings)
 	cfg := s.CfgStore.Snapshot()
-	llms, err := s.listGARuntimeLLMs(cfg)
+	llms, err := s.cachedGARuntimeLLMs(cfg)
 	markChatLLMActive(llms, cs.Settings.LLMNo)
 	backend := map[string]interface{}{"class": "GenericAgent worker", "source": "agentmain.GenericAgent.list_llms"}
 	if err != nil {
@@ -1069,7 +1074,8 @@ func (s *Server) chatState(w http.ResponseWriter, r *http.Request, sid string) {
 		backend["diagnosis"] = payload
 	}
 	running, pendingAssistantID, runStartedAtMS := s.chatRunState(sid)
-	writeJSON(w, map[string]interface{}{"settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "project_provider": cs.ProjectProvider, "project_id": cs.ProjectID, "loop": cs.Loop, "autorun": cs.Autorun})
+	cs = s.conductorRecoveryView(cs)
+	writeJSON(w, map[string]interface{}{"conductor": cs.Conductor, "conductor_children": cs.ConductorChildren, "settings": cs.Settings, "extra_sys_prompts": cs.ExtraSysPrompts, "extra_sys_prompt_preset_id": cs.ExtraSysPromptPresetID, "llm_no": cs.Settings.LLMNo, "llms": llms, "backend": backend, "running": running, "pending_assistant_id": pendingAssistantID, "run_started_at_ms": runStartedAtMS, "workspace": cs.Workspace, "project_mode": cs.ProjectMode, "project_provider": cs.ProjectProvider, "project_id": cs.ProjectID, "loop": cs.Loop, "autorun": cs.Autorun})
 }
 
 func (s *Server) maybeHandleWorkspaceCommand(w http.ResponseWriter, r *http.Request, sid string, cs *chatSession, prompt string) bool {
@@ -1352,9 +1358,9 @@ func (s *Server) chatPostWithSender(w http.ResponseWriter, r *http.Request, sid 
 	updateChatTitle(&cs)
 	owned, saveErr := s.saveChatRunPending(sid, token, pendingMsg.ID, runStartedAtMS, func() error {
 		if strings.TrimSpace(req.SourceUserMessageID) != "" {
-			return s.saveChatSessionExact(cs)
+			return s.saveChatSessionExactLocked(cs)
 		}
-		return s.saveChatSessionMerged(cs)
+		return s.saveChatSessionMergedLocked(cs)
 	})
 	if !owned {
 		s.endChatRunOwned(sid, token)

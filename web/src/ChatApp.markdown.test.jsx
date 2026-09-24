@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { ChatMessage, MessageList } from './ChatApp.jsx'
 import { mergeStreamTerminalMessage } from './lib/chatStream.js'
 import { reconcileHistoryPage } from './lib/chatHistoryPages.js'
@@ -415,6 +415,100 @@ describe('completion render identity', () => {
   })
 })
 
+describe('message list on-demand rendering', () => {
+  test('keeps the tail mounted and activates nearby messages one per frame within the active cap', () => {
+    const observers = []
+    const frames = []
+    const resizeObservers = []
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) { this.callback = callback; resizeObservers.push(this) }
+      observe(node) { this.node = node }
+      disconnect() {}
+    })
+    let frameID = 0
+    class MockIntersectionObserver {
+      constructor(callback) {
+        this.callback = callback
+        this.nodes = []
+        observers.push(this)
+      }
+      observe(node) { this.nodes.push(node) }
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+    vi.stubGlobal('requestAnimationFrame', callback => {
+      frames.push(callback)
+      frameID += 1
+      return frameID
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    try {
+      const messages = Array.from({ length: 15 }, (_, index) => ({
+        id: `virtual-${index}`,
+        role: index % 2 ? 'assistant' : 'user',
+        content: `message ${index}`,
+        files: [],
+        created_at: index + 1,
+      }))
+      const frame = sessionKey => <MessageList
+        messages={messages}
+        isCurrentRunning={false}
+        onAskReply={vi.fn()}
+        sessionKey={sessionKey}
+      />
+      const view = render(frame('session-a'))
+      const activeSlots = () => view.container.querySelectorAll('.oa-message-slot.is-active')
+      const placeholderSlots = () => view.container.querySelectorAll('.oa-message-slot.is-placeholder')
+
+      expect(activeSlots()).toHaveLength(2)
+      expect(placeholderSlots()).toHaveLength(13)
+      expect(view.container.querySelector('[data-message-id="virtual-13"]').classList).toContain('is-active')
+      expect(view.container.querySelector('[data-message-id="virtual-14"]').classList).toContain('is-active')
+
+      const observer = observers[0]
+      act(() => observer.callback(observer.nodes.map(target => ({ target, isIntersecting: true }))))
+      expect(frames).toHaveLength(1)
+      act(() => frames.shift()())
+      expect(activeSlots()).toHaveLength(3)
+
+      while (frames.length) act(() => frames.shift()())
+      expect(activeSlots()).toHaveLength(15)
+      expect(placeholderSlots()).toHaveLength(0)
+      expect(observer.nodes).toHaveLength(15)
+
+      const measured = resizeObservers.find(item => item.node === observer.nodes[0])
+      observer.nodes[0].getBoundingClientRect = () => ({ height: 700 })
+      act(() => measured.callback())
+      observer.nodes[0].getBoundingClientRect = () => ({ height: 90 })
+      act(() => measured.callback())
+      // A smaller viewport (or scrolling away) releases only offscreen bodies.
+      act(() => observer.callback(observer.nodes.slice(0, 10).map(target => ({ target, isIntersecting: false }))))
+      expect(activeSlots()).toHaveLength(12)
+      expect(placeholderSlots()).toHaveLength(3)
+      expect(observer.nodes[0].style.height).toBe('90px')
+      for (const node of observer.nodes.slice(10)) expect(node.classList).toContain('is-active')
+      // Previously active slots remain observed and can remount on reverse scroll.
+      act(() => observer.callback(observer.nodes.map(target => ({ target, isIntersecting: true }))))
+      while (frames.length) act(() => frames.shift()())
+      expect(activeSlots()).toHaveLength(15)
+      expect(placeholderSlots()).toHaveLength(0)
+      expect(view.container.querySelector('[data-message-id="virtual-13"]').classList).toContain('is-active')
+      expect(view.container.querySelector('[data-message-id="virtual-14"]').classList).toContain('is-active')
+
+      messages.push({ id: 'stream-tail', role: 'assistant', content: 'streaming', files: [], created_at: 20 })
+      view.rerender(<MessageList messages={[...messages]} isCurrentRunning={true} onAskReply={vi.fn()} sessionKey="session-a" />)
+      expect(view.container.querySelector('[data-message-id="stream-tail"]').classList).toContain('is-active')
+
+      view.rerender(frame('session-b'))
+      expect(activeSlots()).toHaveLength(2)
+      expect(placeholderSlots()).toHaveLength(14)
+      expect(observers).toHaveLength(3)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('assistant pre-token feedback', () => {
   test('progresses from connection feedback to elapsed model generation, then yields to the first token', () => {
     const startedAt = 10_000
@@ -551,3 +645,17 @@ describe('assistant pre-token feedback', () => {
     expect(refs.map(ref => ref.querySelector('a').getAttribute('href'))).toEqual(items.map(item => `#${item.id}`))
   })
 })
+
+ test('round totals show first model TTFT instead of summing later calls', () => {
+  const container = renderAssistant('Done', { elapsed_ms: 9000, first_token_ms: 3000, usages: [{ input_tokens: 10, ttft_ms: 1250 }, { output_tokens: 20, ttft_ms: 4000 }] })
+  expect(container.querySelector('.oa-usage-total .oa-usage-ttft').textContent).toContain('TTFT 1.25s')
+ })
+ test('round totals distinguish legacy first response from model TTFT', () => {
+  const container = renderAssistant('Done', { elapsed_ms: 9000, first_token_ms: 2300 })
+  expect(container.querySelector('.oa-usage-total .oa-usage-ttft').textContent).toContain('2.30s')
+  expect(container.querySelector('.oa-usage-total .oa-usage-ttft').textContent).not.toContain('TTFT')
+ })
+ test('round totals do not invent missing TTFT', () => {
+  const container = renderAssistant('Done', { elapsed_ms: 9000 })
+  expect(container.querySelector('.oa-usage-total .oa-usage-ttft').textContent).toContain('TTFT —')
+ })

@@ -47,7 +47,7 @@ func TestConductorParentPromptInjection(t *testing.T) {
 				}
 				return
 			}
-			if len(prompts) != 3 || prompts[0] != "existing" || prompts[1] != conductorParentPrompt {
+			if len(prompts) != 4 || prompts[0] != "existing" || prompts[1] != conductorParentPrompt || !strings.Contains(prompts[2], "conductor_defaults") || !strings.Contains(prompts[2], "conductor_models") {
 				t.Fatalf("wrong prompts: %v", prompts)
 			}
 			config := req["conductor"].(map[string]interface{})
@@ -63,6 +63,32 @@ func TestConductorParentPromptInjection(t *testing.T) {
 	}
 }
 
+func TestConductorWorkflowContract(t *testing.T) {
+    groups := map[string][]string{
+        "lightweight_delegation": {"Prefer one worker", "Pass only necessary known context", "Do not require a task template", "Trust workers", "Do not assume a new worker can see the parent conversation"},
+        "concurrency": {"Different worker sessions do not imply isolated workspaces", "serialize tasks that write the same files", "prerequisite evidence is adequate"},
+        "authorization": {"Carry forward explicit authorization", "Delegate safe inspection", "Do not automatically restart canceled work"},
+        "recovery": {"timeout is not proof that no worker was created", "reusable completed worker", "recovery_pending", "previous instance and child processes have stopped", "automatically replay side effects"},
+        "bounded_correction": {"failed worker may already have changed external state", "If corrections repeat without progress", "smallest decision or input needed"},
+        "delivery": {"one dispatch, not the whole user request", "required work is pending", "Synthesize one concise delivery against the user's original goal"},
+    }
+    for _, obsolete := range []string{"Every objective must be self-contained", "two consecutive corrections"} {
+        if strings.Contains(conductorParentPrompt, obsolete) {
+            t.Errorf("obsolete heavyweight rule %q", obsolete)
+        }
+    }
+    groups["event_driven"] = []string{"After dispatch, end this turn", "automatically starts a review turn", "Never poll or sleep", "original session_id"}
+    for name, rules := range groups {
+        t.Run(name, func(t *testing.T) {
+            for _, rule := range rules {
+                if !strings.Contains(conductorParentPrompt, rule) {
+                    t.Errorf("missing workflow rule %q", rule)
+                }
+            }
+        })
+    }
+}
+
 func TestConductorReuseRoster(t *testing.T) {
  s := newChatLoopTestServer(t)
  cs := chatSession{ID:"roster-test", Conductor:&chatConductorState{Role:conductorRoleParent}, ConductorChildren:[]chatConductorChild{
@@ -74,7 +100,8 @@ func TestConductorReuseRoster(t *testing.T) {
  if err:=s.prepareConductorWorkerRequest(cs,req);err!=nil {t.Fatal(err)}
  prompts:=req["extra_sys_prompts"].([]string)
  roster:=prompts[len(prompts)-1]
- if strings.Count(roster, `"session_id":"worker-a"`)!=1 || strings.Contains(roster, `"dispatch_id":"old"`) {t.Fatal(roster)}
- if !strings.Contains(roster, `"reusable":false,"session_id":"worker-a"`) || !strings.Contains(roster, `"reusable":true,"session_id":"worker-b"`) {t.Fatal(roster)}
+ if strings.Count(roster, `"session_id":"worker-a"`)!=2 || !strings.Contains(roster, `"dispatch_id":"old"`) {t.Fatal(roster)}
+ rows := req["conductor"].(map[string]interface{})["tasks"].([]map[string]interface{})
+ for _, row := range rows { if row["reusable"] != (row["session_id"] == "worker-b") { t.Fatal(row) } }
  if strings.Contains(conductorParentPrompt,"does not provide worker resume") || !strings.Contains(conductorParentPrompt,"original session_id") {t.Fatal("missing reuse guidance")}
 }

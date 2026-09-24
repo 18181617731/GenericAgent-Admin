@@ -318,6 +318,28 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "input_tokens_include_cache_read": 0,
         })
 
+    def test_generation_rate_uses_last_text_not_usage_log_time(self):
+        chat_worker._reset_usage()
+        with mock.patch.object(chat_worker.time, "perf_counter", side_effect=[10.0, 10.5]):
+            chat_worker._mark_generation_started("first", 9.0)
+            chat_worker._mark_generation_started("last", 9.0)
+            capture = chat_worker._UsageCapturingStderr(mock.Mock())
+            capture.write("[Output] tokens=30\n")
+        self.assertEqual(chat_worker._snapshot_turn_usages()[0]["generation_ms"], 500)
+        self.assertEqual(chat_worker._consume_generation_ms_locked(), 0)
+
+    def test_generation_rate_rejects_single_chunk_and_buffered_bursts(self):
+        for times in ([10.0], [10.0, 10.001]):
+            chat_worker._reset_usage()
+            with mock.patch.object(chat_worker.time, "perf_counter", side_effect=times):
+                for _ in times:
+                    chat_worker._mark_generation_started("text", 9.0)
+                capture = chat_worker._UsageCapturingStderr(mock.Mock())
+                capture.write("[Output] tokens=300\n")
+            usage = chat_worker._snapshot_turn_usages()[0]
+            self.assertNotIn("generation_ms", usage)
+            self.assertEqual(usage["ttft_ms"], 1000)
+
     def test_transport_error_attempt_seals_usage_before_fallback(self):
         class LeafSession:
             def __init__(self, model, result):

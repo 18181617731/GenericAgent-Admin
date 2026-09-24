@@ -977,9 +977,8 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	queuedItem := cs.QueuedMessages[queueIndex]
 	s.SessionMu.Unlock()
 
-	// Publish the queue identity before removing it from persisted state. Do not
-	// take ChatMu while holding SessionMu: saveChatRunPending uses the opposite
-	// lock order while atomically publishing the pending assistant identity.
+	// Publish the queue identity before removing it from persisted state.
+	// Revalidate the run because cancellation may have occurred since unlock.
 	s.ChatMu.Lock()
 	if current := s.ChatRuns[sid]; current != token || current.Done || current.Canceled {
 		s.ChatMu.Unlock()
@@ -1011,7 +1010,21 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 		s.endChatRunOwned(sid, token)
 		return false
 	}
-	cs.QueuedMessages = append(cs.QueuedMessages[:queueIndex], cs.QueuedMessages[queueIndex+1:]...)
+	batchCount := conductorCompletionBatchCount(cs, queueIndex, queueID)
+	batch := append([]chatQueuedMessage(nil), cs.QueuedMessages[queueIndex:queueIndex+batchCount]...)
+	s.ChatMu.Lock()
+	if current := s.ChatRuns[sid]; current != token || current.Done || current.Canceled {
+		s.ChatMu.Unlock()
+		s.SessionMu.Unlock()
+		s.endChatRunOwned(sid, token)
+		return false
+	}
+	token.QueueIDs = make([]string, 0, len(batch))
+	for _, item := range batch {
+		token.QueueIDs = append(token.QueueIDs, item.ID)
+	}
+	s.ChatMu.Unlock()
+	cs.QueuedMessages = append(cs.QueuedMessages[:queueIndex], cs.QueuedMessages[queueIndex+batchCount:]...)
 	cs.UpdatedAt = time.Now().Unix()
 
 	pendingID := newChatID()
@@ -1068,10 +1081,7 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 
 	if internalCompletion {
 		cmdReq["input_kind"] = "conductor_completion"
-		dispatchID := strings.TrimPrefix(queuedItem.ID, "conductor-")
-		if idx := conductorFindChild(cs.ConductorChildren, dispatchID); idx >= 0 {
-			cmdReq["conductor_completion_receipt"] = cs.ConductorChildren[idx]
-		}
+		prepareConductorCompletionBatch(cmdReq, cs, batch)
 	}
 
 	for key, value := range conductorReq {
@@ -1084,8 +1094,6 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	// without them a guided queue run only appears after the final session reload.
 	s.SessionMu.Unlock()
 	owned, saveErr := s.saveChatRunPending(sid, token, pendingID, runStartedAtMS, func() error {
-		s.SessionMu.Lock()
-		defer s.SessionMu.Unlock()
 		return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	})
 	if !owned || saveErr != nil {

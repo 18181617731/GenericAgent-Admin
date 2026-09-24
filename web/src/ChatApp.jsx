@@ -23,7 +23,8 @@ import {
 import { computeLineDiff, computeWriteRows } from './lib/lineDiff.js'
 import { modelDiagnosisAdvice, modelDiagnosisTitle } from './lib/modelDiagnosis.js'
 import { projectNameError, projectNameErrorText } from './lib/projectName.js'
-import { Collapse, Tag } from 'antd'
+import Collapse from 'antd/es/collapse'
+import Tag from 'antd/es/tag'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FilePenLine, FileSpreadsheet, FileText, FolderOpen, GitBranch, Hand, KeyRound, Lock, Maximize, Maximize2, Orbit, Paperclip, Menu, MessageSquarePlus, MoreHorizontal, PanelRightOpen, Plus, RotateCw, Search, Send, Sparkles, Square, Target, Trash2, Wrench, X, ZoomIn, ZoomOut } from 'lucide-react'
@@ -47,7 +48,8 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds, runChatSessionBatch } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, mergeChatSessionDraftSessions, saveChatSessionDraft } from './lib/chatSessionDrafts'
-import { groupProjectSessions } from './lib/chatProjectSessions.js'
+import { filterRecentNodes, groupProjectSessions } from './lib/chatProjectSessions.js'
+import { useRuntimeModelRefresh } from './lib/useRuntimeModelRefresh.js'
 import { hubSessions } from './lib/chatHubSessions.js'
 import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
 import { equalSessionSummaryValue, reconcileScalarList, reconcileSessionSummaries } from './lib/chatSessionReconcile.js'
@@ -1303,8 +1305,8 @@ const toolReceiptSummary = fold => {
   return { kind, tool, status, state, target }
 }
 
-const ToolReceiptSummary = ({ fold, target }) => {
-  const receipt = toolReceiptSummary(fold)
+const ToolReceiptSummary = ({ fold, target, receipt: derivedReceipt }) => {
+  const receipt = derivedReceipt ?? toolReceiptSummary(fold)
   const resolvedTarget = target || receipt.target
   return (
     <span className={`ga-receipt is-${receipt.state}`} data-state={receipt.state} aria-label={[receipt.kind, receipt.tool, receipt.status, resolvedTarget].filter(Boolean).join(' · ')}>
@@ -1933,6 +1935,29 @@ function reescapeControlChars(text) {
 }
 
 // Parse file_write/file_patch tool arguments
+// GA occasionally streams a JSON array/object where `content` should be a
+// string, and the poisoned payload is already persisted inside session files.
+// Rendering must therefore never assume a string: normalise to text while
+// keeping every meaningful piece, instead of crashing on `.split`.
+export function normalizeFileToolText(value) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      if (item == null) return ''
+      if (typeof item === 'string') return item
+      if (typeof item === 'object') {
+        try { return JSON.stringify(item) } catch { return String(item) }
+      }
+      return String(item)
+    }).join('\n')
+  }
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value, null, 2) } catch { return String(value) }
+  }
+  return String(value)
+}
+
 function parseFileToolArgs(toolName, argsText) {
   const isFileWrite = /file_write$/i.test(toolName)
   const isFilePatch = /file_patch$/i.test(toolName)
@@ -1976,17 +2001,17 @@ function parseFileToolArgs(toolName, argsText) {
   if (isFileWrite && parsed?.path) {
     return {
       type: 'file_write',
-      path: parsed.path,
-      content: parsed.content || '',
-      mode: parsed.mode || 'overwrite'
+      path: normalizeFileToolText(parsed.path),
+      content: normalizeFileToolText(parsed.content),
+      mode: normalizeFileToolText(parsed.mode) || 'overwrite'
     }
   }
   if (isFilePatch && parsed?.path) {
     return {
       type: 'file_patch',
-      path: parsed.path,
-      old_content: parsed.old_content || '',
-      new_content: parsed.new_content || ''
+      path: normalizeFileToolText(parsed.path),
+      old_content: normalizeFileToolText(parsed.old_content),
+      new_content: normalizeFileToolText(parsed.new_content)
     }
   }
   return null
@@ -2853,7 +2878,9 @@ const formatTokens = (count = 0) => {
   return num.toLocaleString(chatLocale())
 }
 
-const UsageRow = ({ u, usages = [], label, className, elapsedMs = 0, live = false, ctxChars = 0, ctxMsgs = 0 }) => {
+const UsageRow = ({ u, usages = [], label, className, elapsedMs = 0, live = false, ctxChars = 0, ctxMsgs = 0, showTTFT = false, firstTokenMs = 0 }) => {
+  const modelTTFT = usages.map(item => Number(item?.ttft_ms)).find(value => Number.isFinite(value) && value > 0) || 0
+  const ttft = modelTTFT || (Number.isFinite(Number(firstTokenMs)) && Number(firstTokenMs) > 0 ? Number(firstTokenMs) : 0)
   const hasTokens = usageHasTokens(u)
   const hasElapsed = elapsedMs > 0
   const hasCtx = ctxChars > 0 || ctxMsgs > 0
@@ -2861,10 +2888,13 @@ const UsageRow = ({ u, usages = [], label, className, elapsedMs = 0, live = fals
   const cachePercent = cacheHitPercent(usages)
   const hasOutputRate = outputRate > 0
   const hasCachePercent = cachePercent > 0
-  if (!hasTokens && !hasElapsed && !hasCtx) return null
+  if (!hasTokens && !hasElapsed && !hasCtx && !showTTFT) return null
   return <div className={`oa-usage ${className || ''}`}>
     {label && <span className="oa-usage-label">{label}</span>}
     {hasElapsed && <span className={live ? 'oa-usage-time is-live' : 'oa-usage-time'} title={live ? ct('实时耗时', 'Live elapsed time') : ct('耗时', 'Elapsed time')}><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1.5A4.5 4.5 0 1 1 8 11a4.5 4.5 0 0 1 0-7.5z"/><path d="M7.5 4.5h1v3.65l2.2 1.3-.5.9L7.5 9V4.5z"/></svg>{ct('耗时', 'Time')} <b>{formatElapsedMs(elapsedMs)}</b></span>}
+    {showTTFT && <span className="oa-usage-ttft" title={modelTTFT ? ct('本轮首次有效模型调用的首 token 耗时，不累计后续步骤', 'Time to first token of the first measured model call in this round; later steps are not summed') : ct('旧数据首响应耗时；无采样时不估算', 'Legacy first-response time; no estimate without a sample')}>
+      {modelTTFT || !ttft ? 'TTFT' : ct('首响应', 'First response')} <b>{ttft > 0 ? `${(ttft / 1000).toFixed(2)}s` : '—'}</b>
+    </span>}
     {u?.input_tokens > 0 && <span className="oa-usage-in" title={ct(`输入: ${u.input_tokens.toLocaleString()} tokens`, `Input: ${u.input_tokens.toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 11.5 3.5 7l1.1-1.1L8 9.3l3.4-3.4L12.5 7 8 11.5Z"/></svg>{ct('输入', 'Input')} <b>{formatTokens(u.input_tokens)}</b></span>}
     {u?.cache_creation_tokens > 0 && <span className="oa-usage-cache-write" title={ct(`缓存写入: ${u.cache_creation_tokens.toLocaleString()} tokens`, `Cache creation: ${u.cache_creation_tokens.toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 1v9m0 0 3-3m-3 3L5 7M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存写入', 'Cache write')} <b>{formatTokens(u.cache_creation_tokens)}</b></span>}
     {cacheReadTokens(u) > 0 && <span className="oa-usage-cache-read" title={ct(`缓存读取: ${cacheReadTokens(u).toLocaleString()} tokens`, `Cache read: ${cacheReadTokens(u).toLocaleString()} tokens`)}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M8 15V6m0 0 3 3M8 6 5 9M3 3h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>{ct('缓存读取', 'Cache read')} <b>{formatTokens(cacheReadTokens(u))}</b></span>}
@@ -3750,6 +3780,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   // Theme state: sync with localStorage and system preference
   const [conductorEventsOpen, setConductorEventsOpen] = useState(false)
   const [conductorWorkersOpen, setConductorWorkersOpen] = useState(false)
+  const [conductorConflict, setConductorConflict] = useState(null)
   const [theme, setTheme] = useState(getInitialTheme)
   useEffect(() => {
     const activeTheme = applyThemeToDocument(theme)
@@ -3918,6 +3949,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const threadRef = useRef(null)
   const endRef = useRef(null)
   const composerWrapRef = useRef(null)
+  const composerManualHeightRef = useRef(null)
+  const composerResizePointerRef = useRef(null)
   const fileRef = useRef(null)
   const composerActionsTriggerRef = useRef(null)
   const promptRef = useRef(null)
@@ -4164,13 +4197,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   }, [])
 
   useLayoutEffect(() => {
-    const el = promptRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    const next = Math.min(el.scrollHeight, COMPOSER_MAX_H)
-    el.style.height = next + 'px'
-    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden'
-  }, [prompt])
+    applyComposerHeight()
+  }, [applyComposerHeight, prompt])
 
   const toggleAutorun = useCallback(() => {
     const next = !autorunEnabledRef.current
@@ -4972,6 +5000,17 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     return () => window.clearTimeout(timer)
   }, [chatApi, chatInstanceID, sessionSearchOpen, sessionSearchQuery, sessionSearchScope])
 
+  // Saving provider configuration in the settings view dispatches this event.
+  // Refresh the runtime model list in place so the composer offers the new
+  // provider without reopening the session or reloading the page.
+  const fetchRuntimeState = useCallback(url => chatApi(url), [chatApi])
+  useRuntimeModelRefresh({
+    sidRef: activeSidRef,
+    fetchState: fetchRuntimeState,
+    setLlms,
+    setLlmNo,
+  })
+
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false, isCurrent = () => true } = options
     const d = await chatApi('/api/chat/sessions')
@@ -5040,6 +5079,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     const target = activeSidRef.current
     if (!target || conductorEnablingRef.current) return
     conductorEnablingRef.current = true
+    setConductorConflict(null)
     setConductorEnabling(true)
     setErr('')
     try {
@@ -5049,7 +5089,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         setActiveSessionDetail(current => current && String(current.id) === String(target) ? { ...current, conductor: result.conductor } : current)
       }
     } catch (error) {
-      if (activeSidRef.current === target) setErr(error.message || String(error))
+      if (activeSidRef.current === target) {
+        if (error.status === 409 && error.body?.code === 'conductor_review_required') {
+          setConductorConflict({ ...error.body, parent_session_id: target })
+          setConductorWorkersOpen(true)
+        } else setErr(error.message || String(error))
+      }
     } finally {
       conductorEnablingRef.current = false
       setConductorEnabling(false)
@@ -5058,6 +5103,29 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const newConductorSession = async () => {
     await createSession('', { mode:'conductor' })
+  }
+
+  const recoverConductorWorker = async (worker) => {
+    const parentID = activeSidRef.current
+    const instanceID = chatInstanceRef.current
+    const workerID = worker?.session_id || worker?.id
+    const dispatchID = worker?.dispatch_id
+    if (!parentID || !workerID || !dispatchID || conductorStoppingID) return
+    if (!await confirmDanger('conductor-recovery', ct('仅在确认旧 Admin 实例及其子任务均已停止后继续。此操作将封存中断并交回指挥家审查，可能继续派发并产生费用；不会撤销已有操作。确认已停止？', 'Continue only after verifying that the previous Admin owner and worker have stopped. This finalizes the interruption and returns it for conductor review, which may dispatch work and incur costs. Existing actions are not rolled back. Confirm stopped?'))) return
+    if (instanceID !== chatInstanceRef.current || parentID !== activeSidRef.current) return
+    setConductorStoppingID(workerID)
+    setErr('')
+    try {
+      await chatApi(`/api/chat/conductor/${encodeURIComponent(parentID)}/recover`, { method: 'POST', body: JSON.stringify({ dispatch_id: dispatchID, confirm_stopped: true }) })
+      if (instanceID !== chatInstanceRef.current || parentID !== activeSidRef.current) return
+      setNotice(ct('中断已封存，已交回指挥家；已停止的父任务需手动继续。', 'Interruption finalized and returned to conductor; a stopped parent requires manual continuation.'))
+      await loadSessions(parentID)
+      if (instanceID === chatInstanceRef.current && parentID === activeSidRef.current) await refreshActiveSessionSnapshot(parentID)
+    } catch (e) {
+      if (instanceID === chatInstanceRef.current && parentID === activeSidRef.current) setErr(e?.message || String(e))
+    } finally {
+      setConductorStoppingID('')
+    }
   }
 
   const stopConductorWorker = async (workerID) => {
@@ -5117,7 +5185,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
   const openProjectDraft = () => {
-    setSidebarTab('projects')
+    setProjectsExpanded(true)
     setProjectDraftName('')
     setProjectDraftOpen(true)
   }
@@ -6487,6 +6555,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   useEffect(() => {
     let stopped = false
     let inFlight = false
+    let metadataSessionID = ''
+    let metadataRefreshedAt = 0
     const refreshList = async () => {
       if (stopped || inFlight || document.hidden) return
       inFlight = true
@@ -6507,21 +6577,31 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           const conductorPoll = conductorPollActions(after, {
             streamAttached: Boolean(streamAbortRef.current),
             runAttached: Boolean(activeRunRef.current),
+            metadataUnchanged: metadataSessionID === activeID && equalSessionSummaryValue(before, after)
+              && equalSessionSummaryValue(
+                previous.filter(item => conductorParentID(item) === activeID),
+                next.filter(item => conductorParentID(item) === activeID),
+              ),
+            metadataAge: Date.now() - metadataRefreshedAt,
+            workersActive: next.some(item => conductorParentID(item) === activeID && canStopConductorWorker(item)),
           })
           if (conductorPoll.attachRunningStream) {
             void attachRunningStream(activeID, { waitForRun:true })
           }
-          if (conductorPoll.refreshMetadata) {
+          if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {
+            await refreshActiveSessionSnapshot(activeID).catch(() => {})
+          }
+          if (conductorPoll.refreshMetadata && !stopped && activeSidRef.current === activeID) {
             const metadata = (isConductorParent(after) || after?.conductor_children?.length > 0)
               ? await chatApi(`/api/chat/conductor/${encodeURIComponent(activeID)}/children`)
               : null
             if (!stopped && activeSidRef.current === activeID) {
+              metadataSessionID = activeID
+              metadataRefreshedAt = Date.now()
               setActiveSessionDetail(current => current && String(current.id) === String(after.id)
                 ? { ...current, ...after, ...(Array.isArray(metadata?.children) ? { conductor_children: metadata.children, conductor_usage_summary: metadata.usage_summary, conductor_dispatch_count: metadata.dispatch_count } : {}) }
                 : current)
             }
-          } else if (!guidingQueueRef.current && shouldRefreshChatSnapshot(before, after)) {
-            void refreshActiveSessionSnapshot(activeID).catch(() => {})
           }
         }
       } catch {
@@ -6531,8 +6611,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       }
     }
     const timer = window.setInterval(refreshList, 3000)
-    const onVisible = () => { if (!document.hidden) refreshList() }
-    const onOnline = () => refreshList()
+    const onVisible = () => { if (!document.hidden) { metadataRefreshedAt = 0; refreshList() } }
+    const onOnline = () => { metadataRefreshedAt = 0; refreshList() }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
     return () => {

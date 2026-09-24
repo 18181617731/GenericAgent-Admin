@@ -1,3 +1,4 @@
+import './overview-workbench.css'
 import React, { useEffect, useState } from 'react'
 import { Activity, CalendarClock, Download, FileCode2, MessageSquare, Play, Power, RefreshCw, Server, ShieldAlert } from 'lucide-react'
 import { navigateToNewChat } from '../lib/chatLaunchIntent'
@@ -37,7 +38,7 @@ function Stat({ icon, label, value }) {
 }
 
 function Panel({ area, title, children }) {
-  return <section className={`overview-panel overview-panel-${area}`}>
+  return <section id={`overview-${area}`} tabIndex={-1} aria-label={title} className={`overview-panel overview-panel-${area}`}>
     <h3 className="panel-title">{title}</h3>
     {children}
   </section>
@@ -45,7 +46,7 @@ function Panel({ area, title, children }) {
 
 export function OverviewPage({
   t, text, services, schedule, observability, observabilityError, onRefreshObservability, version, root,
-  githubMirror = '', onSaveGitHubMirror,
+  githubMirror = '', onSaveGitHubMirror, onDraftStateChange,
 }) {
   const copy = t.overview
   const [mirrorDraft, setMirrorDraft] = useState(githubMirror)
@@ -58,6 +59,8 @@ export function OverviewPage({
     setMirrorBaseline(nextMirror)
   }, [githubMirror])
   const mirrorDirty = mirrorDraft !== mirrorBaseline
+  useEffect(() => { onDraftStateChange?.({ dirty: mirrorDirty, busy: mirrorSaving }) }, [mirrorDirty, mirrorSaving, onDraftStateChange])
+  useEffect(() => () => onDraftStateChange?.({ dirty: false, busy: false }), [onDraftStateChange])
   const saveGitHubMirror = async () => {
     if (!mirrorDirty || typeof onSaveGitHubMirror !== 'function') return
     setMirrorSaving(true)
@@ -90,7 +93,16 @@ export function OverviewPage({
   const checkLabel = (state) => copy.checkStates?.[state] || state
   const displayedRoot = root || observability?.root || ''
 
+  const english = t.refresh === 'Refresh'
+  const labels = english
+    ? { status: 'Runtime status', maintenance: 'Maintenance', network: 'Download network', scope: 'Saves only the GitHub mirror. Updates and startup are controlled separately.' }
+    : { status: '运行状态', maintenance: '维护与更新', network: '下载网络', scope: '仅保存 GitHub 镜像，更新和开机启动需分别操作。' }
   return <div className="overview-page">
+    <nav className="overview-nav" aria-label={english ? 'Overview sections' : '总览分区'}>
+      <a href="#overview-status">{labels.status}</a>
+      <a href="#overview-updates">{labels.maintenance}</a>
+      <a href="#overview-network">{labels.network}</a>
+    </nav>
     <div className="overview-stats">
       <Stat icon={<Server size={16}/>} label={t.cards.processes} value={countOf(services)}/>
       <Stat icon={<Play size={16}/>} label={t.cards.running} value={running.length}/>
@@ -100,7 +112,7 @@ export function OverviewPage({
       <Stat icon={<ShieldAlert size={16}/>} label={copy.riskRules} value={countOf(observability?.riskItems)}/>
     </div>
 
-    <section className="overview-health" aria-label={copy.observability}>
+    <section id="overview-status" tabIndex={-1} className="overview-health" aria-label={copy.observability}>
       <div className="overview-health-head">
         <div>
           <b>{copy.observability}</b>
@@ -111,7 +123,8 @@ export function OverviewPage({
       </div>
 
       {observabilityError
-        ? <p className="err-text">{observabilityError}</p>
+        ? <p className="err-text" role="alert">{observabilityError}</p>
+        : !observability ? <p className="muted" role="status">{copy.awaitingSnapshot}</p>
         : <>
           <div className="overview-health-meta">
             {displayedRoot && <code>{displayedRoot}</code>}
@@ -174,24 +187,6 @@ export function OverviewPage({
             <p className={status.error ? 'err' : 'muted'}>{updateMessage}</p>
             <code>{status.stage}</code>
           </div>}
-          <form className="overview-mirror" onSubmit={(event) => { event.preventDefault(); saveGitHubMirror() }}>
-            <label htmlFor="overview-github-mirror">{text.network.githubMirror}</label>
-            <p id="overview-github-mirror-help" className="muted">{text.network.githubMirrorHelp}</p>
-            <div className="overview-mirror-control">
-              <input
-                id="overview-github-mirror"
-                type="url"
-                value={mirrorDraft}
-                onChange={(event) => { setMirrorDraft(event.target.value); setMirrorNotice(null) }}
-                placeholder={text.network.githubMirrorPlaceholder}
-                aria-describedby="overview-github-mirror-help"
-              />
-              <button className="primary" type="submit" disabled={mirrorSaving || !mirrorDirty || typeof onSaveGitHubMirror !== 'function'}>
-                {mirrorSaving ? t.busy : copy.saveGitHubMirror}
-              </button>
-            </div>
-            {mirrorNotice && <p className={`overview-mirror-notice ${mirrorNotice.kind}`} role="status">{mirrorNotice.message}</p>}
-          </form>
           <div className="overview-panel-actions">
             <button type="button" onClick={version.checkVersion} disabled={busy || status?.running}>{busy ? t.busy : copy.checkUpdate}</button>
             <button className="primary" type="button" onClick={version.updateVersion} disabled={busy || status?.running || !check?.update}>
@@ -247,6 +242,27 @@ export function OverviewPage({
             <MessageSquare size={14} aria-hidden="true"/>{copy.sourceSelfUpdateCta}
           </button>
         </div>
+      </Panel>
+      <Panel area="network" title={labels.network}>
+          <p className="overview-save-scope">{labels.scope}</p>
+          <form className="overview-mirror" onSubmit={(event) => { event.preventDefault(); saveGitHubMirror() }}>
+            <label htmlFor="overview-github-mirror">{text.network.githubMirror}</label>
+            <p id="overview-github-mirror-help" className="muted">{text.network.githubMirrorHelp}</p>
+            <div className="overview-mirror-control">
+              <input
+                id="overview-github-mirror"
+                type="url"
+                value={mirrorDraft}
+                onChange={(event) => { setMirrorDraft(event.target.value); setMirrorNotice(null) }}
+                placeholder={text.network.githubMirrorPlaceholder}
+                aria-describedby="overview-github-mirror-help"
+              />
+              <button className="primary" type="submit" disabled={mirrorSaving || !mirrorDirty || typeof onSaveGitHubMirror !== 'function'}>
+                {mirrorSaving ? t.busy : copy.saveGitHubMirror}
+              </button>
+            </div>
+            {mirrorNotice && <p className={`overview-mirror-notice ${mirrorNotice.kind}`} role="status">{mirrorNotice.message}</p>}
+          </form>
       </Panel>
     </div>
   </div>

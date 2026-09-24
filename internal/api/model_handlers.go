@@ -209,10 +209,11 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.invalidateGARuntimeLLMs(s.CfgStore.Snapshot())
 		writeJSON(w, d)
 		return
 	}
-	bad(w, 405, "method not allowed")
+	bad(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 func (s *Server) modelsRaw(w http.ResponseWriter, r *http.Request) {
@@ -598,6 +599,9 @@ func (s *Server) modelsExport(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, err.Error())
 		return
 	}
+	// Export has already rewritten the same runtime model files as save, so the cached runtime
+	// list is stale from here on: drop it before any later step can return early.
+	s.invalidateGARuntimeLLMs(s.CfgStore.Snapshot())
 	if err := s.reconcileChatTitleModel(profiles); err != nil {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return

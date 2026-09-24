@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, CircleHelp, Cpu, Download, Pencil, Plus, RefreshCw, Save, Server, Settings2, Star, Trash2, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
+import './instances-workbench.css'
 
 const EMPTY_FORM = { id: '', name: '', ga_root: '', python_path: '' }
 
@@ -125,7 +126,19 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
     }
   }, [hasInitializing, loadInstances])
 
-  const beginCreate = () => {
+  const activeID = items.some(item => item.id === selectedID) ? selectedID : (items.find(item => item.id === defaultID)?.id || items[0]?.id)
+  const canLeaveEditor = async () => !editor || (JSON.stringify(form) === JSON.stringify(editorInitial.current) && !templateFile && (editor !== 'install' || useTemplate === templateAvailable)) || await confirmDanger('discard_instance_edits', lang === 'zh' ? '\u653e\u5f03\u672a\u4fdd\u5b58\u7684\u5b9e\u4f8b\u7f16\u8f91\uff1f' : 'Discard unsaved instance edits?')
+  const cancelEditor = async () => { if (await canLeaveEditor()) setEditor(null) }
+  const selectInstance = async (id) => {
+    if (id === activeID && !editor) return
+    if (!await canLeaveEditor()) return
+    setSelectedID(id)
+    setEditor(null)
+    setTemplateFile(null)
+  }
+  const beginCreate = async () => {
+    if (!await canLeaveEditor()) return
+    editorInitial.current = EMPTY_FORM
     setForm(EMPTY_FORM)
     setTemplateFile(null)
     setEditor('create')
@@ -133,7 +146,9 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
     setNotice('')
   }
 
-  const beginInstall = () => {
+  const beginInstall = async () => {
+    if (!await canLeaveEditor()) return
+    editorInitial.current = EMPTY_FORM
     setForm(EMPTY_FORM)
     setTemplateFile(null)
     setUseTemplate(templateAvailable)
@@ -142,13 +157,18 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
     setNotice('')
   }
 
-  const beginEdit = (instance) => {
-    setForm({
+  const beginEdit = async (instance) => {
+    if (!await canLeaveEditor()) return
+    const next = {
       id: String(instance.id || ''),
       name: String(instance.name || ''),
       ga_root: String(instance.ga_root || ''),
       python_path: String(instance.python_path || ''),
-    })
+    }
+    editorInitial.current = next
+    setForm(next)
+    setTemplateFile(null)
+    setSelectedID(instance.id)
     setEditor(instance.id)
     setError('')
     setNotice('')
@@ -187,6 +207,8 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         body,
       })
       applyPayload(result)
+      setSelectedID(payload.id)
+      setTemplateFile(null)
       setEditor(null)
       setNotice(installing ? copy.installed : copy.saved)
     } catch (saveError) {
@@ -296,10 +318,19 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
       </div>
     </div>
 
-    {(error || notice) && <div className={`instances-message ${error ? 'error' : 'success'}`} role="status">
+    {(error || notice) && <div className={`instances-message ${error ? 'error' : 'success'}`} role={error ? 'alert' : 'status'}>
       {error ? <X size={16}/> : <CheckCircle2 size={16}/>}<span>{error || notice}</span>
     </div>}
 
+    <div className="instances-workspace">
+      <nav className="instances-index" aria-label={copy.title} tabIndex={0}>
+        {items.map(instance => <button type="button" key={instance.id} aria-current={activeID === instance.id ? 'true' : undefined} disabled={anyBusy} onClick={() => selectInstance(instance.id)}>
+          <span><strong>{instance.name || instance.id}</strong>{instance.id === defaultID && <Star size={13} aria-label={copy.default}/>}</span>
+          <small>{instance.id}</small>
+          <small>{instance.init_status === 'initializing' ? copy.initializing : instance.init_status === 'failed' ? copy.failed : copy.ready}</small>
+        </button>)}
+      </nav>
+      <div className="instances-detail" tabIndex={0}>
     {editor && <form className={`instance-editor is-${editor}`} onSubmit={submit} aria-labelledby="instance-editor-title">
       <div className="instance-editor-heading">
         <div className="instance-editor-heading-icon" aria-hidden="true">{editor === 'install' ? <Download size={18}/> : editor === 'create' ? <Plus size={18}/> : <Pencil size={17}/>}</div>
@@ -332,12 +363,12 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
         </fieldset>}
       </div>
       <div className="instance-editor-footer">
-        <div className="instance-editor-actions"><button type="button" onClick={() => setEditor(null)} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
+        <div className="instance-editor-actions"><button type="button" onClick={cancelEditor} disabled={anyBusy}>{copy.cancel}</button><button type="submit" className="primary" disabled={anyBusy}>{busy === 'install' ? <RefreshCw className="instances-spin" size={15}/> : <Save size={15}/>} {editor === 'create' ? copy.create : editor === 'install' ? copy.startInstall : copy.save}</button></div>
       </div>
     </form>}
 
-    {loading ? <div className="instances-empty"><RefreshCw className="spin" size={22}/><span>{copy.loading}</span></div> : items.length === 0 ? <div className="instances-empty"><Server size={28}/><span>{copy.empty}</span><button type="button" onClick={beginCreate}><Plus size={15}/>{copy.add}</button></div> : <div className="instances-grid">
-      {items.map(instance => {
+    {!editor && (loading ? <div className="instances-empty"><RefreshCw className="spin" size={22}/><span>{copy.loading}</span></div> : items.length === 0 ? <div className="instances-empty"><Server size={28}/><span>{copy.empty}</span><button type="button" onClick={beginCreate}><Plus size={15}/>{copy.add}</button></div> : <div className="instances-grid">
+      {items.filter(instance => instance.id === activeID).map(instance => {
         const isDefault = instance.id === defaultID
         const initStatus = normalizedInitStatus(instance)
         const isInitializing = initStatus === 'initializing'
@@ -379,7 +410,10 @@ export default function InstancesPage({ lang = 'zh', onConfigureModels }) {
           </footer>
         </article>
       })}
-    </div>}
+    </div>)}
+
+      </div>
+    </div>
 
     {deleteTarget && <div className="instance-delete-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget && !busy) cancelDelete()

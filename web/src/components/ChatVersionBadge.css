@@ -1,0 +1,23 @@
+.oa-chat .oa-sidebar .oa-side-head .oa-sidebar-brand {
+  display: flex;
+  align-items: baseline;
+  padding-right: 52px;
+  gap: 4px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.oa-sidebar-brand > span:not(.oa-chat-version) { flex-shrink: 0; }
+.oa-sidebar .oa-chat-version {
+  display: block;
+  margin: 0 0 0 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  opacity: .65;
+}

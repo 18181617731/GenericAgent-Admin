@@ -11,11 +11,42 @@ import (
 	"genericagent-admin-go/internal/config"
 )
 
-const chatSessionListIndexVersion = 5
+const chatSessionListIndexVersion = 6
 
 type chatSessionResult struct {
-	ID       string `json:"id"`
-	Revision string `json:"revision"`
+	ID              string `json:"id"`
+	Revision        string `json:"revision"`
+	VisibleRevision string `json:"visible_revision,omitempty"`
+}
+
+type chatVisibleResult struct {
+	ID                string                   `json:"id"`
+	Content           string                   `json:"content"`
+	Files             []map[string]interface{} `json:"files,omitempty"`
+	StructuredContent []map[string]interface{} `json:"structured_content,omitempty"`
+}
+
+func visibleChatSessionResult(m chatMessage) chatVisibleResult {
+	return chatVisibleResult{ID: m.ID, Content: m.Content, Files: m.Files, StructuredContent: m.StructuredContent}
+}
+
+func chatVisibleRevision(m chatMessage) string {
+	b, err := json.Marshal(visibleChatSessionResult(m))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+func chatResultRead(read, current chatSessionResult) bool {
+	if read.ID == "" || read.ID != current.ID {
+		return false
+	}
+	if read.VisibleRevision != "" && current.VisibleRevision != "" {
+		return read.VisibleRevision == current.VisibleRevision
+	}
+	// Receipts written before visible revisions were introduced remain valid.
+	return read.Revision != "" && read.Revision == current.Revision
 }
 
 func latestChatSessionResult(cs chatSession) *chatSessionResult {
@@ -35,7 +66,10 @@ func latestChatSessionResult(cs chatSession) *chatSessionResult {
 		if err != nil {
 			return nil
 		}
-		return &chatSessionResult{ID: m.ID, Revision: fmt.Sprintf("%x", sha256.Sum256(b))}
+		return &chatSessionResult{
+			ID: m.ID, Revision: fmt.Sprintf("%x", sha256.Sum256(b)),
+			VisibleRevision: chatVisibleRevision(m),
+		}
 	}
 	return nil
 }
@@ -115,6 +149,45 @@ func writeChatSessionListIndex(path string, entries map[string]chatSessionListIn
 		return err
 	}
 	return writeChatFileAtomic(path, b, 0644)
+}
+
+// loadChatSessionSummary reuses the list index for a single related session.
+// Callers hold SessionMu, as with loadChatSessionSummaries. Only the compact
+// summary is retained; unchanged worker histories are never decoded again.
+func (s *Server) loadChatSessionSummary(cfg config.AppConfig, sid string) (chatSessionSummary, error) {
+	path := chatSessionPath(cfg, sid)
+	info, err := os.Stat(path)
+	if err != nil {
+		return chatSessionSummary{}, err
+	}
+	runtime := s.ChatRuntime
+	if runtime == nil {
+		cs, err := loadChatSession(cfg, sid)
+		return summaryFromChatSession(cs), err
+	}
+	runtime.sessionListMu.Lock()
+	defer runtime.sessionListMu.Unlock()
+	indexPath := chatSessionListIndexPath(cfg)
+	if !runtime.sessionListLoaded || runtime.sessionListPath != indexPath {
+		runtime.sessionListPath = indexPath
+		runtime.sessionListEntries = readChatSessionListIndex(indexPath)
+		runtime.sessionListLoaded = true
+	}
+	key := filepath.Base(path)
+	cached, ok := runtime.sessionListEntries[key]
+	if ok && cached.Size == info.Size() && cached.ModTimeNS == info.ModTime().UnixNano() && cached.Summary.ID != "" {
+		return cached.Summary, nil
+	}
+	if runtime.sessionListLoadHook != nil {
+		runtime.sessionListLoadHook(sid)
+	}
+	cs, err := loadChatSession(cfg, sid)
+	if err != nil {
+		return chatSessionSummary{}, err
+	}
+	summary := summaryFromChatSession(cs)
+	runtime.sessionListEntries[key] = chatSessionListIndexEntry{Size: info.Size(), ModTimeNS: info.ModTime().UnixNano(), Summary: summary}
+	return summary, nil
 }
 
 func (s *Server) loadChatSessionSummaries(cfg config.AppConfig) ([]chatSessionSummary, error) {
